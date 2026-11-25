@@ -1,0 +1,523 @@
+{
+  "chrome": "156.0.8078.79",
+  "timeline": [
+    {
+      "step": "Five captured MIDI detents changed the live level during touch",
+      "seconds": 1.9,
+      "initial": 0.5,
+      "sampled": 0.7500000000000002,
+      "committedEdits": 0
+    },
+    {
+      "step": "Knob release grouped five samples into one Studio-visible edit",
+      "seconds": 4,
+      "node": {
+        "effect-label": "Ember",
+        "cue-label": "Ember",
+        "cue-id": "ember",
+        "after": 0.7500000000000002,
+        "id": 1,
+        "parent-id": 0,
+        "sequence": 1,
+        "effect-id": "ember",
+        "before": 0.5,
+        "parameter": "level",
+        "actor": "Push 2"
+      },
+      "dimmers": [
+        191,
+        255
+      ],
+      "observer": true
+    },
+    {
+      "step": "Second Push turn committed an independent edit",
+      "seconds": 8.5,
+      "node": {
+        "effect-label": "Ember",
+        "cue-label": "Ember",
+        "cue-id": "ember",
+        "after": 1,
+        "id": 2,
+        "parent-id": 1,
+        "sequence": 2,
+        "effect-id": "ember",
+        "before": 0.7500000000000002,
+        "parameter": "level",
+        "actor": "Push 2"
+      },
+      "dimmers": [
+        255,
+        255
+      ]
+    },
+    {
+      "step": "Undo restored the first turn",
+      "seconds": 12.7,
+      "cursor": 1,
+      "levels": [
+        0.7500000000000002,
+        null
+      ],
+      "dimmers": [
+        191,
+        255
+      ],
+      "observer": true
+    },
+    {
+      "step": "Redo restored the original second turn",
+      "seconds": 23.7,
+      "cursor": 2,
+      "levels": [
+        1,
+        null
+      ],
+      "dimmers": [
+        255,
+        255
+      ]
+    },
+    {
+      "step": "A new Push turn forked history and kept the original branch",
+      "seconds": 26.4,
+      "parents": [
+        null,
+        0,
+        1,
+        1
+      ],
+      "levels": [
+        0.39000000000000035,
+        null
+      ],
+      "dimmers": [
+        99,
+        255
+      ]
+    },
+    {
+      "step": "Cue filtering retained branch ancestors",
+      "seconds": 30.4,
+      "visible": [
+        0,
+        1,
+        3,
+        4
+      ]
+    },
+    {
+      "step": "Keyboard selected a read-only alternate preview",
+      "seconds": 32.8,
+      "navigation": [
+        [
+          "Home",
+          0
+        ],
+        [
+          "ArrowDown",
+          1
+        ],
+        [
+          "ArrowRight",
+          2
+        ],
+        [
+          "ArrowLeft",
+          1
+        ],
+        [
+          "End",
+          4
+        ],
+        [
+          "ArrowUp",
+          3
+        ],
+        [
+          "ArrowUp",
+          2
+        ]
+      ],
+      "beforeAfter": [
+        "0.7500000000000002",
+        "1"
+      ],
+      "cursor": 4,
+      "levels": [
+        0.39000000000000035,
+        0.8199999999999998
+      ],
+      "dimmers": [
+        99,
+        209
+      ],
+      "unchangedPackets": 22,
+      "commands": 0
+    },
+    {
+      "step": "Apply traversed both sides of the fork and committed captured output",
+      "seconds": 37.1,
+      "cursor": 2,
+      "levels": [
+        1,
+        0.5
+      ],
+      "dimmers": [
+        255,
+        128
+      ],
+      "observer": true
+    },
+    {
+      "step": "Redo at the fork required choosing a child",
+      "seconds": 45.2,
+      "hintAfterUndo": true,
+      "selected": 3,
+      "dimmers": [
+        99,
+        128
+      ]
+    },
+    {
+      "step": "Escape closed the modal and restored launcher focus",
+      "seconds": 46
+    },
+    {
+      "step": "390px touch view kept the branch, preview and controls within the viewport",
+      "seconds": 53.6,
+      "viewport": [
+        390,
+        844
+      ],
+      "document": [
+        390,
+        390
+      ],
+      "dialog": {
+        "x": 14,
+        "y": 143.3125,
+        "width": 362,
+        "height": 557.375
+      },
+      "widths": [
+        [
+          360,
+          360
+        ],
+        [
+          360,
+          360
+        ],
+        [
+          360,
+          360
+        ]
+      ],
+      "controls": [
+        {
+          "x": 317,
+          "y": 156.921875,
+          "width": 44,
+          "height": 44
+        },
+        {
+          "x": 29,
+          "y": 220.84375,
+          "width": 54.296875,
+          "height": 44
+        },
+        {
+          "x": 90.296875,
+          "y": 220.84375,
+          "width": 54.296875,
+          "height": 44
+        },
+        {
+          "x": 254,
+          "y": 220.84375,
+          "width": 107,
+          "height": 44
+        },
+        {
+          "x": 23.390625,
+          "y": 278.4375,
+          "width": 343.21875,
+          "height": 48
+        },
+        {
+          "x": 23.390625,
+          "y": 326.4375,
+          "width": 343.21875,
+          "height": 51.15625
+        },
+        {
+          "x": 23.390625,
+          "y": 377.59375,
+          "width": 343.21875,
+          "height": 51.15625
+        },
+        {
+          "x": 23.390625,
+          "y": 428.75,
+          "width": 343.21875,
+          "height": 51.15625
+        },
+        {
+          "x": 23.390625,
+          "y": 479.90625,
+          "width": 343.21875,
+          "height": 51.15625
+        },
+        {
+          "x": 29,
+          "y": 643.796875,
+          "width": 102.890625,
+          "height": 44
+        },
+        {
+          "x": 138.890625,
+          "y": 643.796875,
+          "width": 111.71875,
+          "height": 44
+        }
+      ]
+    },
+    {
+      "step": "390px touch applied the alternate branch and closed the modal",
+      "seconds": 55.3
+    }
+  ],
+  "movieStarted": 1795574000718,
+  "browserErrors": [],
+  "studioCommandPosts": 6,
+  "sourceRevisions": {
+    "tolglow": "bf204381bdbf8284ecc94d567592fefefc994098",
+    "afterglow": "e6b7b8e709f6d1d81bb8525305c2b3be4f88ed02"
+  },
+  "optimizedAsset": "/studio/js/main.js",
+  "optimizedAssetSha256": "14f84b179bf290b959dd87c2f37b042472e719f41642d545becb2b914d9aeb2e",
+  "stateSocket": [
+    "/api/state/stream"
+  ],
+  "transport": {
+    "midi": "simulated Push 2 with SysEx LED replies",
+    "dmx": "in-process capture sink"
+  },
+  "deviceErrors": [],
+  "ledReplies": 13,
+  "frameCount": 82,
+  "capturedOutput": {
+    "packets": 2042,
+    "changes": [
+      {
+        "packet": 1,
+        "frame": 0,
+        "dimmers": [
+          0,
+          0
+        ]
+      },
+      {
+        "packet": 2,
+        "frame": 2,
+        "dimmers": [
+          255,
+          255
+        ]
+      },
+      {
+        "packet": 483,
+        "frame": 531,
+        "dimmers": [
+          128,
+          255
+        ]
+      },
+      {
+        "packet": 490,
+        "frame": 537,
+        "dimmers": [
+          140,
+          255
+        ]
+      },
+      {
+        "packet": 492,
+        "frame": 539,
+        "dimmers": [
+          153,
+          255
+        ]
+      },
+      {
+        "packet": 495,
+        "frame": 541,
+        "dimmers": [
+          166,
+          255
+        ]
+      },
+      {
+        "packet": 496,
+        "frame": 543,
+        "dimmers": [
+          179,
+          255
+        ]
+      },
+      {
+        "packet": 499,
+        "frame": 546,
+        "dimmers": [
+          191,
+          255
+        ]
+      },
+      {
+        "packet": 677,
+        "frame": 729,
+        "dimmers": [
+          217,
+          255
+        ]
+      },
+      {
+        "packet": 678,
+        "frame": 730,
+        "dimmers": [
+          242,
+          255
+        ]
+      },
+      {
+        "packet": 680,
+        "frame": 733,
+        "dimmers": [
+          255,
+          255
+        ]
+      },
+      {
+        "packet": 784,
+        "frame": 838,
+        "dimmers": [
+          191,
+          255
+        ]
+      },
+      {
+        "packet": 1056,
+        "frame": 1127,
+        "dimmers": [
+          255,
+          255
+        ]
+      },
+      {
+        "packet": 1148,
+        "frame": 1212,
+        "dimmers": [
+          191,
+          255
+        ]
+      },
+      {
+        "packet": 1162,
+        "frame": 1228,
+        "dimmers": [
+          168,
+          255
+        ]
+      },
+      {
+        "packet": 1165,
+        "frame": 1231,
+        "dimmers": [
+          145,
+          255
+        ]
+      },
+      {
+        "packet": 1166,
+        "frame": 1233,
+        "dimmers": [
+          122,
+          255
+        ]
+      },
+      {
+        "packet": 1169,
+        "frame": 1235,
+        "dimmers": [
+          99,
+          255
+        ]
+      },
+      {
+        "packet": 1212,
+        "frame": 1280,
+        "dimmers": [
+          99,
+          128
+        ]
+      },
+      {
+        "packet": 1213,
+        "frame": 1282,
+        "dimmers": [
+          99,
+          148
+        ]
+      },
+      {
+        "packet": 1218,
+        "frame": 1287,
+        "dimmers": [
+          99,
+          189
+        ]
+      },
+      {
+        "packet": 1219,
+        "frame": 1288,
+        "dimmers": [
+          99,
+          209
+        ]
+      },
+      {
+        "packet": 1481,
+        "frame": 1569,
+        "dimmers": [
+          255,
+          128
+        ]
+      },
+      {
+        "packet": 1616,
+        "frame": 1712,
+        "dimmers": [
+          191,
+          128
+        ]
+      },
+      {
+        "packet": 1720,
+        "frame": 1831,
+        "dimmers": [
+          99,
+          128
+        ]
+      },
+      {
+        "packet": 2014,
+        "frame": 2136,
+        "dimmers": [
+          255,
+          128
+        ]
+      }
+    ]
+  }
+}
