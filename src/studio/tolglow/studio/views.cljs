@@ -364,7 +364,8 @@
        [:option {:value "auto"} "Auto quality"] [:option {:value "mobile"} "Mobile"]
        [:option {:value "desktop"} "Desktop"] [:option {:value "high"} "High"]]
       [:label "Fixture updates"
-       [:select {:aria-label "Preview fixture updates" :value (get-in db [:ui :preview-settings :lighting-mode] "hold")
+       [:select {:aria-label "Preview fixture updates" :value (get-in db [:ui :preview-settings :lighting-mode]
+                                                        (:lighting-mode events/default-preview-settings))
                  :on-change #(input! [:studio/preview-setting :lighting-mode (input-value %)])}
         [:option {:value "hold"} "Follow show frames"]
         [:option {:value "interpolate"} "Smooth · one frame delay"]]]
