@@ -45,7 +45,9 @@
                            (.querySelector js/document "dialog[open]"))
                (case (.-key event)
                  ("b" "B") (rf/dispatch [:studio/blackout-toggle])
-                 " " (do (.preventDefault event) (rf/dispatch [:studio/transport-toggle]))
+                 " " (when-not (.closest (.-target event) "button,[role=button]")
+                       (.preventDefault event)
+                       (rf/dispatch [:studio/transport-toggle]))
                  (when-let [route (pages/shortcut-routes (.-key event))]
                    (rf/dispatch [:studio/set-view route]))))))))
 
