@@ -132,7 +132,7 @@
            [(error (conj path :values) "Enum needs distinct portable values")])
          (when (and (= type :vector) (not (and (integer? size) (pos? size))))
            [(error (conj path :size) "Vector needs a positive integer size")])
-         (when (and (not= type :vector) (contains? schema :size))
+         (when (and (not= type :vector) (some? (:size schema)))
            [(error (conj path :size) "Only vector parameters declare a size")])
          (when (and (contains? schema :default)
                     (not (valid-value? schema (:default schema))))
