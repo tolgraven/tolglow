@@ -69,6 +69,38 @@ submit the same operation. Watch **In the mix** update in Studio.
                             :epoch epoch :runtime-id runtime-id})))
 ```
 
+### Set a running layer's priority
+
+In **Reorder**, choose **Move** on a running card, enter a **Layer priority**
+and select **Set priority**. Lower priorities compose first. If the selected
+layer joins an existing priority, it composes after the peers already there.
+An active native layer moves all of its current members together. Each launch
+keeps its ID, parameters and timing. The cards display committed priorities and
+order, including edits made through the REPL or OSC.
+
+```clojure
+(let [{:keys [revision epoch runtime-id]} (show/snapshot runtime)]
+  @(show/submit! runtime {:op :instance/set-priority :instance-id (:instance-id launched)
+                          :priority 4.5 :expected-revision revision
+                          :epoch epoch :runtime-id runtime-id}))
+
+;; Choose the initial priority at launch from a calculated or supplied value.
+(let [priority 4.5]
+  @(show/submit! runtime {:op :cue/launch :cue-id :ember
+                          :launch {:mode :persistent :priority priority}}))
+```
+
+An OSC session can map a numeric input to a known active launch and another
+input to the initial priority of a new launch. Each path takes one finite numeric
+argument. Create the session with `show/connect-device!` and include these
+entries in its `:mappings`. The live path addresses the specific launch selected
+when configuring it.
+
+```clojure
+{"/ember/priority" {:op :instance/set-priority :instance-id (:instance-id launched)}
+ "/ember/launch" {:op :cue/launch :cue-id :ember :priority-arg? true}}
+```
+
 ## Solo or mute running effects
 
 In **Perform → In the mix**, use **Solo** or **Mute** on a running card.
