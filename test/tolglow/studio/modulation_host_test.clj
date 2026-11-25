@@ -476,7 +476,7 @@
             (is (pos? original-byte))
             (input! 120 [0xb0 57 127])
             (input! 130 [0x90 0 127])
-            (input! 140 [0xb0 71 30])
+            (input! 140 [0xb0 71 20])
             (is (> (level) original))
             (is (> @dimmer original-byte))
             (let [live (readout)
