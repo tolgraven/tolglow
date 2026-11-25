@@ -9,6 +9,7 @@
             [tolglow.application :as app]
             [tolglow.clock :as clock]
             [tolglow.integrations.analysis-test :as audio-test]
+            [tolglow.integrations.reference-position :as reference-position]
             [tolglow.demo :as demo]
             [tolglow.event-subscribers :as sub]
             [tolglow.events.callbacks :as callbacks]
@@ -287,6 +288,75 @@
     (doseq [result [inert paused]]
       (is (not-any? #(= :music/section-pattern (:type %)) (:events result)))
       (is (empty? (:instances result))))))
+
+(defn- play-reference-boundary [interruption]
+  (let [clock-ms (atom 27000)
+        provenance {:source-id :local-player :session-id "test-session" :clock-id :physical}
+        reference {:id "bass-arrangement" :version "sections-v1"}
+        profile {:version 1 :reference reference :duration-ms 8000.0
+                 :sections [{:id 0 :start-position-ms 0.0 :end-position-ms 4000.0
+                             :start-beat 0.0 :boundary-confidence 1.0 :boundary-kind :file-start}
+                            {:id 1 :start-position-ms 4000.0 :end-position-ms 8000.0
+                             :start-beat 8.0 :boundary-confidence 0.9 :boundary-kind :confirmed-change
+                             :features {:signature {:bass-notes [40]}}}]}
+        runtime (show/create-runtime {:workspace-options nil :physical-now-ms #(deref clock-ms)
+                                      :section-patterns {:enabled? true :on :bar :show-seed 514
+                                                         :patterns [:warm :pulse :slow]}
+                                      :section-reference {:profile profile :provenance provenance}})
+        {:keys [publish! now-ms! state!]} (show/section-reference-callbacks runtime)
+        position (atom (reference-position/new-state provenance))
+        events (atom [])
+        observe (fn [type extra]
+                  (let [now (now-ms!)]
+                    (publish! (swap! position reference-position/advance now
+                                     (merge {:type type :provenance provenance :occurrence 0
+                                             :observed-at-ms now} extra)))))]
+    (try
+      (show/attach-observer! runtime :reference-patterns
+        (fn [] {:events! (fn [_ emitted _ _] (swap! events into emitted))
+                :frame! (fn [_]) :tracing? (constantly false) :close! (fn [])}))
+      (let [reply (show/register-event-subscriber! runtime
+                    {:id :reference-show :match {:type :music/section-pattern}
+                     :actions [{:op :effect/launch :select {:ids [:ember] :pick :first}}]})]
+        (show/tick! runtime 0)
+        (is (= :accepted (:status (deref reply 1000 ::timeout)))))
+      (doseq [position-ms [3700 3750 3800]]
+        (reset! clock-ms (+ 27000 position-ms))
+        (is (observe :match {:match {:reference reference :position-ms position-ms
+                                     :rate 1.0 :score 0.95}})))
+      (is (= :locked (:status (state!))))
+      (reset! clock-ms 30850)
+      (show/tick! runtime 3850)
+      (is (= :reference (get-in @(:state runtime) [:section-pattern-state :pending :mode])))
+      (when interruption
+        (let [stale @position]
+          (reset! clock-ms 30950)
+          (is (observe interruption {}))
+          (is (nil? (publish! stale)))
+          (is (= :unavailable (:status (state!))))))
+      (doseq [time-ms [4000 4025 4100]]
+        (reset! clock-ms (+ 27000 time-ms))
+        (show/tick! runtime time-ms))
+      {:patterns (filterv #(= :music/section-pattern (:type %)) @events)
+       :bars (filterv #(= :clock/bar (:type %)) @events)
+       :effects (mapv :effect-id (:instances (show/snapshot runtime)))}
+      (finally (show/stop! runtime)))))
+
+(deftest trusted-reference-uses-its-monotonic-clock-and-revokes-a-seeked-forecast
+  (let [first-run (play-reference-boundary nil)
+        repeated (play-reference-boundary nil)
+        seeked (play-reference-boundary :seek)
+        [intent] (:patterns first-run)]
+    (is (= 1 (count (:patterns first-run)) (count (:patterns repeated))))
+    (is (= [:reference 8.0 4000 "bass-arrangement"]
+           [(get-in intent [:data :mode]) (get-in intent [:data :show-beat])
+            (get-in intent [:data :time-ms]) (get-in intent [:data :reference :id])]))
+    (is (= (select-keys (:data intent) [:pattern :decision-seed :delivery-id])
+           (select-keys (get-in repeated [:patterns 0 :data]) [:pattern :decision-seed :delivery-id])))
+    (is (some #(= (:time %) (:time intent)) (:bars first-run)))
+    (is (= [:ember] (:effects first-run) (:effects repeated)))
+    (is (empty? (:patterns seeked)))
+    (is (empty? (:effects seeked)))))
 
 (deftest middleware-can-update-variables-and-queue-actions-without-blocking-the-owner
   (let [entered (promise) release (promise)

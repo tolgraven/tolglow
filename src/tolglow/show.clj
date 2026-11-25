@@ -71,6 +71,7 @@
             [tolglow.show.push-scene :as push-scene]
             [tolglow.show.lighting :as lighting]
             [tolglow.integrations.analysis :as analysis]
+            [tolglow.integrations.reference-position :as reference-position]
             [tolglow.integrations.section-patterns :as section-patterns]
             [tolglow.persistence :as persistence]
             [tolglow.connections :as connections]
@@ -259,9 +260,14 @@
                    calibration/disarm-restored photometry/disarm fog-scan/disarm)
          _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
              (throw (ex-info "Effect log sink must be callable" {})))
+         reference (:section-reference options)
          music (when-let [policy (:section-patterns options)]
-                 (let [planner (section-patterns/new-planner nil policy)]
+                 (let [planner (section-patterns/new-planner (:profile reference) policy)]
                    (when (get-in planner [:policy :enabled?]) planner)))
+         initial-position (when reference
+                            (when-not (and music (:profile reference))
+                              (throw (ex-info "A section reference requires an enabled pattern policy and track profile" {})))
+                            (reference-position/new-state (:provenance reference) (:position-options reference)))
          _ (lighting-scenes/validate-state! model)
          _ (lighting/validate! (:settings model))
          _ (variable-blocks/compile-model model)
@@ -342,6 +348,9 @@
       :capacity-plan (volatile! nil) :capacity-audio (volatile! nil)
       :audio-input (atom {:epoch (:epoch model) :events [] :features nil})
       :section-patterns music
+      :section-reference (when initial-position
+                           {:initial initial-position
+                            :input (atom {:epoch (:epoch model) :position initial-position})})
       :sync-input (atom {:epoch (:epoch model) :events []})
       :connections owned :devices (atom {}) :development development
       :rdm (rdm/create (merge (:rdm-options options)
@@ -369,7 +378,9 @@
   :compute-backend :native-gpu acquires one session owned by this show.
   :worker-timeout-ms sets the per-frame effect worker deadline (default 500).
   An enabled :section-patterns policy publishes pattern intents from opted-in
-  capture at owner boundaries. Actions require their own event subscriber."
+  capture at owner boundaries. :section-reference can supply a versioned
+  :profile, a source :provenance map, and :position-options. Actions still
+  require their own event subscriber."
   ([] (create-runtime {}))
   ([options]
    (let [owner (open-compute! options)]
@@ -921,6 +932,51 @@
         (seq (:events captured)) (assoc-in [:variables :audio :events] (:events captured))
         (seq (:events captured)) (update-in [:variables :audio :event-count] (fnil + 0) (count (:events captured)))) model)))
 
+(defn section-reference-callbacks
+  "Bind a trusted local player observer to the current show epoch. Capture
+  timestamps with :now-ms! and submit the adapter's reference-position state
+  with :publish!. The source provenance and clock must match the configured
+  reference. Discard callbacks and use fresh positioning after a restore.
+  :state! projects the reference lock for the caller. These operations avoid
+  the frame lock."
+  [runtime]
+  (when-let [{:keys [input initial]} (:section-reference runtime)]
+    (let [current-epoch #(get-in @(:state runtime) [:model :epoch])
+          epoch (current-epoch)
+          current? #(and @(:running runtime) (= epoch (current-epoch)))
+          now-ms! (get-in runtime [:publisher :now-ms])
+          position (fn [{stored-epoch :epoch stored :position}]
+                     (if (= epoch stored-epoch) stored initial))]
+      {:now-ms! now-ms!
+       :state! (fn []
+                 (when (current?)
+                   (let [state (position @input)]
+                     (reference-position/snapshot state (now-ms!)))))
+       :publish! (fn [candidate]
+                   (locking input
+                     (when (current?)
+                       (let [previous (position @input)
+                             candidate-time (:now-ms candidate)
+                             {:keys [occurrence generation]} candidate
+                             now (now-ms!)]
+                         (when (and (= (:provenance initial) (:provenance candidate))
+                                    (= (:options initial) (:options candidate))
+                                    (number? candidate-time) (Double/isFinite (double candidate-time))
+                                    (<= (:now-ms previous candidate-time) candidate-time now)
+                                    (integer? occurrence) (<= (:occurrence previous) occurrence)
+                                    (integer? generation) (<= (:generation previous) generation))
+                           ;; Verify the candidate without storing a projection for future frames.
+                           (reference-position/snapshot candidate now)
+                           (reset! input {:epoch epoch :position candidate})
+                           true)))))})))
+
+(defn- reference-evidence [runtime show-epoch]
+  (when-let [input (get-in runtime [:section-reference :input])]
+    (let [{:keys [epoch position]} @input]
+      (when (= show-epoch epoch)
+        {:reference-state position
+         :reference-now-ms ((get-in runtime [:publisher :now-ms]))}))))
+
 (defn- advance-section-patterns [runtime before next-state reset?]
   (if-let [initial (:section-patterns runtime)]
     (if reset?
@@ -947,11 +1003,12 @@
                                   (true? (get-in previous [:transport :playing?])))
                          (into #{} (map (comp keyword name :type))
                                (show-events/emitted {:before previous :after model})))
+            metrics {:now-ms (:time-ms model) :causal-stream stream :causal-events causal-events
+                     :transport {:show-epoch (:epoch model) :source (or source :manual)
+                                 :source-epoch (or source-epoch 0) :session-id clock-session
+                                 :playing? (boolean active-clock?) :beat beat :boundaries boundaries}}
             result (section-patterns/advance (or (:section-pattern-state before) initial)
-                     {:now-ms (:time-ms model) :causal-stream stream :causal-events causal-events
-                      :transport {:show-epoch (:epoch model) :source (or source :manual)
-                                  :source-epoch (or source-epoch 0) :session-id clock-session
-                                  :playing? (boolean active-clock?) :beat beat :boundaries boundaries}})]
+                                             (merge metrics (reference-evidence runtime (:epoch model))))]
         (-> next-state
             (assoc :section-pattern-state (:state result) :section-clock-session clock-session)
             (update :model staging/collect :music {:kind :music :id :section-patterns} (:events result)))))

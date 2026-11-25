@@ -137,12 +137,14 @@
   with :show-epoch, :source, :source-epoch, :beat, :playing? and the current
   owner tick's :boundaries set. Optional :session-id identifies the clock.
   Forecasts recheck a fresh lock and never supply their own owner boundary.
+  Supply :reference-now-ms in the reference clock's domain if it differs
+  from the show clock. Forecast deadlines then use the reference clock.
 
   For fallback, pass :causal-stream {:source-id :session-id} and new raw
   :causal-events from that capture run. A fallback boundary must have started
   after fallback began. :override? suppresses output and discards pending
   work. Callers must admit returned intents through the shared show owner."
-  [state {:keys [now-ms reference-state transport causal-stream causal-events override?]
+  [state {:keys [now-ms reference-now-ms reference-state transport causal-stream causal-events override?]
           :or {causal-events []}}]
   (let [{:keys [show-epoch beat playing? boundaries]} transport
         scope {:show-epoch show-epoch :clock (clock-id transport)}
@@ -156,7 +158,8 @@
                    (or (nil? stream) (every? id? ((juxt :source-id :session-id) stream)))
                    (vector? causal-events) (<= (count causal-events) 256))
       (throw (ex-info "Section patterns require current owner time, transport and capture provenance" {})))
-    (let [projected (current-projection state reference-state now-ms)
+    (let [reference-now-ms (or reference-now-ms now-ms)
+          projected (current-projection state reference-state reference-now-ms)
           reference-scope (when projected (select-keys projected [:provenance :occurrence]))
           state (cond-> state
                   (not= scope (:scope state)) (dissoc :pending :last-boundary :fallback-beat)
@@ -176,7 +179,7 @@
                                 (counter? (:sequence %))
                                 (> (:sequence %) (get state :causal-through 0))) causal-events))
           pending (case mode
-                    :reference (reference-forecast state projected now-ms scope)
+                    :reference (reference-forecast state projected reference-now-ms scope)
                     :causal (causal-candidate state fresh stream now-ms transport scope)
                     nil)
           boundary? (and (contains? boundaries (get-in state [:policy :on]))

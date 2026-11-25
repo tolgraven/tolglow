@@ -325,3 +325,36 @@ The PCM regression suite measures tones at 41.2, 700 and 3300 Hz in differently
 partitioned buffers. The host test feeds a measured 65 Hz signal into an active
 cue through the patchbay and checks its parameter and subsequent silence gate.
 [Analyzer tests](../test/tolglow/integrations/analysis_test.clj) · [Host routing test](../test/tolglow/studio/routing_host_test.clj)
+
+## Drive cue patterns from changes in track feel
+
+Set `:analyzer-options {:sections {}}` when starting capture to enable section
+detection. The detector compares repeated bass, accent and texture features
+over musical windows. It publishes `:audio/section-change` after confirming a
+change. The event carries the earlier boundary beat, confirmation beat,
+confidence and capture run.
+
+To turn those observations into show actions, create the show with an explicit
+pattern policy, for example `:section-patterns {:enabled? true :on :bar
+:show-seed 514 :patterns [:warm :pulse :slow]}`. Register a subscriber for
+`:music/section-pattern` and let it choose what to launch. Pattern decisions use
+the show's selected clock and wait for the configured beat, bar or phrase.
+Disabling that subscriber stops its actions.
+
+For earlier detection with a known recording, use
+`tolglow.integrations.track-profile/analyze-file` with a local WAV and its beat
+grid. Supply the result as `:profile` in the show's `:section-reference`
+configuration. `:provenance` identifies the trusted player's source, session
+and monotonic clock. From the player worker or REPL, call
+`tolglow.show/section-reference-callbacks`. Pass its `:now-ms!` clock to
+`tolglow.integrations.mpv-observations` and publish the adapter's `:alignment`
+state using `:publish!`. Connect the adapter's JSON lines to the same
+explicitly configured local mpv socket. Use the recording's absolute path in
+both mpv and the adapter catalog. Each show accepts one configured reference.
+
+Reference forecasts expire on uncertainty or a playback discontinuity. The
+live capture can then supply a newly confirmed section. The show still owns
+when a decision can fire. For the same profile, policy and starting show, the
+seeded reference chooses the same pattern when revisiting a section.
+The trusted player clock estimates when a boundary arrives. Its lookahead
+cap cannot guarantee the exact seek time on a buffered playback device.
