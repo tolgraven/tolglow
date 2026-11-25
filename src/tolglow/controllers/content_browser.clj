@@ -7,12 +7,17 @@
   (:import [java.util Locale]))
 
 (def kinds [:show :effect :cue :waveform])
+
 (def page-size 8)
+
 (def ^:private max-save-sources 128)
+
 (def ^:private max-query-length 64)
+
 (def ^:private builtin-waveforms (delay (signals/new-registry)))
 
 (defn- trim-to [limit value] (subs value 0 (min limit (count value))))
+
 (defn- fold [value] (.toLowerCase ^String (str value) Locale/ROOT))
 
 (defn- named? [value] (and (string? value) (not (str/blank? value))))

@@ -79,7 +79,9 @@
     (read-document reader)))
 
 (def ^:private link-options (make-array LinkOption 0))
+
 (def ^:private source-open-options (into-array OpenOption [LinkOption/NOFOLLOW_LINKS]))
+
 (def ^:private confirmation-key
   (delay (let [bytes (byte-array 32)]
            (.nextBytes (SecureRandom.) bytes)
