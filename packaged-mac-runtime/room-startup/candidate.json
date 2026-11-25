@@ -1,0 +1,76 @@
+{
+  "applicationBundle": "se.tolgraven.tolglow.studio",
+  "os": "Version 27.2.1 (Build 26B131)",
+  "webKitVersion": "22625.2.8.11.9",
+  "status": "qualified",
+  "reason": "rendered",
+  "linkedPrograms": 29,
+  "metalShaders": 58,
+  "scrollOnly": [
+    {
+      "activeElement": "BODY",
+      "documentFocused": true,
+      "documentHidden": false,
+      "ready": false,
+      "workerVisible": false
+    },
+    {
+      "activeElement": "BODY",
+      "documentFocused": true,
+      "documentHidden": false,
+      "ready": true,
+      "workerVisible": true
+    },
+    {
+      "activeElement": "BODY",
+      "documentFocused": true,
+      "documentHidden": false,
+      "ready": true,
+      "workerVisible": true
+    },
+    {
+      "activeElement": "BODY",
+      "documentFocused": true,
+      "documentHidden": false,
+      "ready": true,
+      "workerVisible": true
+    },
+    {
+      "activeElement": "BODY",
+      "documentFocused": true,
+      "documentHidden": false,
+      "ready": true,
+      "workerVisible": true
+    },
+    {
+      "activeElement": "BODY",
+      "documentFocused": true,
+      "documentHidden": false,
+      "ready": true,
+      "workerVisible": true
+    },
+    {
+      "activeElement": "BODY",
+      "documentFocused": true,
+      "documentHidden": false,
+      "ready": true,
+      "workerVisible": true
+    },
+    {
+      "activeElement": "BODY",
+      "documentFocused": true,
+      "documentHidden": false,
+      "ready": true,
+      "workerVisible": true
+    }
+  ],
+  "diagnosticFocus": false,
+  "completion": {
+    "intersectsViewport": true,
+    "ready": true,
+    "presented": true,
+    "route": "worker",
+    "device": "Apple GPU",
+    "activeHeads": 8
+  }
+}
