@@ -1,7 +1,9 @@
 (ns tolglow.studio.modulation-host-test
   (:require [afterglow.control.codecs.push-2 :as push-codec]
             [afterglow.control.devices.session :as device-session]
+            [afterglow.control.model :as control]
             [clojure.test :refer [deftest is]]
+            [tolglow.operator-history :as operator-history]
             [tolglow.show :as show]))
 
 (defn- apply-at!
@@ -10,6 +12,78 @@
    (let [receipt (show/submit! runtime type payload authority)]
      (show/tick! runtime time)
      (deref receipt 1000 ::missing))))
+
+(defn- turn! [runtime instance-id gesture-id value time authority]
+  (let [gesture {:instance-id instance-id :param :level :control-id "private-control" :gesture-id gesture-id}]
+    (is (= :accepted (:status (apply-at! runtime :command (assoc gesture :op :gesture/begin) time authority))))
+    (is (= :accepted (:status (apply-at! runtime :command (assoc gesture :op :gesture/sample :sequence 1 :value value)
+                                        (inc time) authority))))
+    (apply-at! runtime :command (assoc gesture :op :gesture/end :last-sequence 1) (+ time 2) authority)))
+
+(deftest snapshots-and-repl-share-committed-operator-history
+  (let [runtime (show/create-runtime {:workers 1 :workspace-options nil})
+        studio {:operator-id "studio/private-session"}
+        push {:operator-id "push-2/private-port/private-connection"}]
+    (try
+      (let [initial (show/snapshot runtime)
+            identity (mapv initial [:runtime-id :show-id :epoch])
+            launch! (fn [cue time]
+                      (:instance-id (apply-at! runtime :command
+                                               {:op :cue/launch :cue-id cue :launch {:params {:level 0.2}}} time)))
+            ember (launch! :ember 0)
+            ice (launch! :ice 1)]
+        (is (= {:identity identity :current-id nil :nodes []
+                :retention {:limit control/edit-history-limit :retained 0 :pruned? false}}
+               (:operator-history initial)))
+        (is (= 1 (:history-cursor (turn! runtime ember "private-ember-turn" 0.4 5 push))))
+        (is (= 2 (:history-cursor (turn! runtime ice "private-ice-turn" 0.7 10 studio))))
+        (is (= 1 (:history-cursor (apply-at! runtime :command {:op :history/undo :expected-cursor 2} 15 studio))))
+        (is (= 3 (:history-cursor (turn! runtime ice "private-alternate" 0.5 20 {:operator-id :caller}))))
+        (let [committed @(:state runtime)
+              projection (show/operator-history runtime)
+              [root first-edit second-edit alternate] (:nodes projection)]
+          (is (= projection (:operator-history (show/snapshot runtime))))
+          (is (identical? committed @(:state runtime)))
+          (is (= identity (:identity projection)))
+          (is (= 3 (:current-id projection)))
+          (is (= {:limit control/edit-history-limit :retained 4 :pruned? false} (:retention projection)))
+          (is (= {:id 0 :parent-id nil :sequence 0} root))
+          (is (= {:id 1 :parent-id 0 :sequence 1 :actor "Push 2" :parameter :level :before 0.2 :after 0.4
+                  :cue-id :ember :cue-label "Ember" :effect-id :ember :effect-label "Ember"}
+                 first-edit))
+          (is (= [2 1 "Studio" :ice "Ice" :ice "Ice"]
+                 (mapv second-edit [:id :parent-id :actor :cue-id :cue-label :effect-id :effect-label])))
+          (is (= [3 1 "Operator"] (mapv alternate [:id :parent-id :actor])))
+          (is (not (re-find #"private-" (pr-str projection)))))
+        (is (= :accepted (:status (apply-at! runtime :command {:op :instance/end :instance-id ember :force? true} 25))))
+        (let [[root first-edit second-edit alternate] (:nodes (show/operator-history runtime))]
+          (is (string? (:unavailable-reason root)))
+          (is (string? (:target-unavailable-reason first-edit)))
+          (is (= :level (:parameter first-edit)))
+          (is (every? #(nil? (:unavailable-reason %)) [first-edit second-edit alternate])))
+        (is (= 1 (:history-cursor (apply-at! runtime :command {:op :history/undo :expected-cursor 3} 30 studio))))
+        (is (= :target-unavailable
+               (:code (apply-at! runtime :command {:op :history/select :expected-cursor 1 :node-id 0} 35 studio))))
+        (let [before (show/operator-history runtime)
+              source (show/export-show-source runtime)
+              restored (apply-at! runtime :import {:source source} 40)
+              after (show/operator-history runtime)]
+          (is (= :accepted (:status restored)))
+          (is (= (update identity 2 inc) (:identity after)))
+          (is (= 1 (:current-id after)))
+          (is (= (dissoc before :identity) (dissoc after :identity)))))
+      (finally (show/stop! runtime)))))
+
+(deftest operator-history-reports-retention-after-pruning
+  (let [model (assoc-in (control/new-show) [:control :edit-history]
+                        {:limit 2 :cursor 9 :next-id 10
+                         :nodes {7 {:parent nil}
+                                 9 {:parent 7 :target [:unavailable-instance-param "0:1" :level 0]
+                                    :actor :caller :control-id :slider :before 0.2 :after 0.6 :generation 0}}})
+        projection (operator-history/project "runtime" model)]
+    (is (= {:limit 2 :retained 2 :pruned? true} (:retention projection)))
+    (is (= [7 9] (mapv :id (:nodes projection))))
+    (is (string? (get-in projection [:nodes 0 :unavailable-reason])))))
 
 (deftest operator-edits-publish-only-the-committed-parameter-changes
   (let [runtime (show/create-runtime {:workspace-options nil})

@@ -71,6 +71,7 @@
             [tolglow.show.lighting :as lighting]
             [tolglow.integrations.analysis :as analysis]
             [tolglow.persistence :as persistence]
+            [tolglow.operator-history :as operator-history]
             [tolglow.connections :as connections]
             [tolglow.repl.sessions :as repl-manager]
             [tolglow.development :as development]
@@ -172,6 +173,7 @@
                                                                (select-keys s [:opacity :gain :paused? :attack :release])))))
                              (sort-by :order (vals (:instances model))))
             :pending-cue-launches (cue-timing/pending model)
+            :operator-history (operator-history/project (:id runtime) model)
             :pages (mapv (fn [page] (update page :cells
                                            #(mapv (fn [[[x y] cue]] {:x x :y y :cue-id cue})
                                                   (sort-by key %)))) (sort-by (comp str :id) (vals (:pages model))))
@@ -206,6 +208,11 @@
                                    :output (or (get-in runtime [:sink :description]) {:type :preview})})})))
 
 (defn snapshot [runtime] (project-snapshot runtime @(:state runtime)))
+
+(defn operator-history
+  "Read the same committed operator history shown in Studio."
+  [runtime]
+  (operator-history/project (:id runtime) (:model @(:state runtime))))
 
 (defn variables
   "All show variables from one committed frame, for headless callers and the REPL."
