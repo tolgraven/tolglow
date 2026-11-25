@@ -62,7 +62,7 @@
   (let [key-bytes (byte-array 32)
         _ (.nextBytes (SecureRandom.) key-bytes)
         key (SecretKeySpec. key-bytes "HmacSHA256")
-        admitted (admit-operator handler)]
+        admitted (admit-operator #(handler (assoc % ::operator? true)))]
     (fn [request]
       (let [now (quot (System/currentTimeMillis) 1000)]
         (cond
