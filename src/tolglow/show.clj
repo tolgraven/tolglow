@@ -2088,7 +2088,8 @@
 (defn push-browser-display
   "Build a Push display transport using Studio's shared reactive components.
   Capture and waveform projection run on the display worker, not the show clock.
-  Supply the browser executable and optional injected sink in options."
+  Supply the browser executable and optional injected sink in options.
+  For Push 3 pad variations, set :presentation-receipts? true."
   [runtime options]
   (let [project-parameters (push-parameter-projector)
         pages (volatile! nil)
@@ -2135,7 +2136,10 @@
   Temporary edits cover typed cue params on Push 2 and numeric params on Push 3.
   Push 2 accepts :native-display? true for the Wayang parameter display.
   An explicit :display transport takes precedence. Set :cue-variations? true
-  for exact beat-ratio edits on both models and the Push 2 Note-button overlay."
+  for exact beat-ratio edits on both models and the Push 2 Note-button overlay.
+  Set :cue-variation-pads? true on Push 3 with captured pads and a dedicated
+  :variation/cycle button in :button-bindings. The display must support
+  presentation receipts. This option also enables exact beat-ratio edits."
   [runtime kind options]
   (let [id (:session-id options) epoch (get-in @(:state runtime) [:model :epoch])]
     (when-not (and (string? id) (seq id)) (throw (ex-info "Device requires session-id" {})))
@@ -2149,11 +2153,13 @@
                          :push-3-midi devices/open-push-3-midi! :seaboard devices/open-seaboard! :x-touch devices/open-x-touch!
                          :midi devices/open-midi! :osc devices/open-osc! :sensor devices/open-sensor!
                          (throw (ex-info "Unknown device kind" {:kind kind})))
+            push-3-variation-pads? (and (= kind :push-3) (true? (:cue-variation-pads? options)))
             options (cond-> options
                       push-source (assoc :operator-gestures? true :target-search targets/search
                                          :launch-receipt cue-timing/receipt)
-                      (and push-source (true? (:cue-variations? options)))
+                      (or push-3-variation-pads? (and push-source (true? (:cue-variations? options))))
                       (assoc :parameter-editor variations/edit-parameter)
+                      push-3-variation-pads? (assoc :pad-overlay push-variations/push-3-pad-overlay)
                       (and (= kind :push-2) (true? (:cue-variations? options)))
                       (assoc :pad-overlay push-variations/pad-overlay)
                       (and (= kind :push-2) (:native-display? options) (not (:display options)))

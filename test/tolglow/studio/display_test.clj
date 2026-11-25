@@ -325,7 +325,7 @@
            (get-in request ["view" "parameters" 0 "schema"])))))
 
 (deftest tethered-push-three-uses-the-browser-and-selected-image-sink
-  (let [calls (atom []) frame (promise)
+  (let [calls (atom []) frame (promise) receipt (promise)
         capture {:open! (constantly :browser)
                  :capture! (fn [_ view] (swap! calls conj (:display-mode view)) (image))
                  :close! (fn [_] (swap! calls conj :browser-closed))}
@@ -334,11 +334,16 @@
               :close! (fn [_] (swap! calls conj :usb-closed))}]
     (with-redefs [display/process-capture (constantly capture)
                   transports/wayang-display (fn [_] (throw (Exception. "Unexpected Push 2 display")))]
-      (let [transport (display/browser-display {:device :push-3 :sink sink}) handle ((:open! transport))]
+      (let [transport (display/browser-display {:device :push-3 :sink sink
+                                                :presentation-receipts? true
+                                                :presented! #(deliver receipt [(:display-mode %) (realized? frame)])})
+            handle ((:open! transport))]
         (is (= :push-3 (:device transport)))
+        (is (true? (:presentation-receipts? transport)))
         (try
           ((:render! transport) handle {:display-mode :rig})
           (is (= [960 160] (deref frame 2000 :timeout)))
+          (is (= [:rig true] (deref receipt 2000 :timeout)))
           (finally ((:close! transport) handle)))
         (is (= [:rig :browser-closed :usb-closed] @calls)))
       (is (thrown? Exception (display/browser-display {:device :push-2 :sink sink})))
