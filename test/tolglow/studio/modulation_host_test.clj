@@ -353,7 +353,7 @@
                             :buttons {:shift-button {:channel 4 :controller 23}}}
                    :button-bindings {:shift-button :shift}
                    :encoder-bindings {:level {:param :level :step 0.02}}
-                   :operator-gestures? true :temporary-encoder-modifier :shift :schedule! nil
+                   :schedule! nil
                    :display {:device :push-3 :input :view :open! (constantly :capture-display)
                              :render! (fn [_ _]) :close! (fn [_])}
                    :midi {:open! (fn [callback] (reset! receive callback) :capture)
@@ -374,7 +374,7 @@
               initial-dimmer @dimmer
               source {:adapter :push-3 :session-id "push3-owner"}]
           (is (= id (get-in (device-session/snapshot device) [:local :selected-instance])))
-          (input! 10 [0xb4 23 127])
+          (input! 10 [0xb0 57 127])
           (input! 20 [0x92 9 127])
           (let [{:keys [actor gesture-id control-id]} (open)
                 forged {:op :gesture/cancel :instance-id id :param :level :gesture-id gesture-id
@@ -391,7 +391,7 @@
             (is (> @dimmer initial-dimmer))
             (is (= initial (get-in model [:instances id :params :level])))
             (is (nil? frame-output))
-            (input! 40 [0xb4 23 0])
+            (input! 40 [0xb0 57 0])
             (is (= peak (level))))
           (@receive [0xb2 19 1])
           (dotimes [_ 255] (show/submit! runtime {:op :master/set :value 1}))
@@ -408,13 +408,16 @@
             (is (= [initial initial-dimmer] [(level) @dimmer]))
             (is (empty? (:open (history))))
             (is (= [0 0] ((juxt :cursor :position) (history)))))
+          (input! 55 [0xb4 23 127])
           (input! 60 [0x92 9 127])
+          (is (false? (boolean (:temporary? (open)))))
           (input! 70 [0xb2 19 1])
           (input! 80 [0x82 9 0])
           (let [committed (level)]
-            (is (= (+ initial 0.02) committed))
+            (is (< initial committed (+ initial 0.02)))
             (is (= [1 1] ((juxt :cursor :position) (history))))
-            (input! 90 [0xb4 23 127])
+            (input! 85 [0xb4 23 0])
+            (input! 90 [0xb0 57 127])
             (input! 100 [0x92 9 127])
             (@receive [0xb2 19 10])
             (let [old-receive @receive old-actor (:actor (open))]
@@ -426,7 +429,7 @@
                 (is (= :accepted (:status (deref reply 0 nil)))))
               (is (= committed (level)))
               (let [replacement (connect!)]
-                (input! 120 [0xb4 23 127])
+                (input! 120 [0xb0 57 127])
                 (input! 130 [0x92 9 127])
                 (is (not= old-actor (:actor (open))))
                 (old-receive [0x82 9 0])
@@ -444,7 +447,7 @@
               :send! (fn [_ _]) :close! (fn [_])}
         device (show/connect-device! runtime :push-2
                                      (merge {:session-id "manual-push" :midi midi
-                                             :operator-gestures? true :schedule! nil :timeout-ms 30000}
+                                             :schedule! nil :timeout-ms 30000}
                                             options))]
     (doseq [index (range 128)]
       (@input (assoc (push-codec/palette-write 0 index [0 0 0 0]) 6 4)))
@@ -458,7 +461,7 @@
                                                         (reset! dimmer (bit-and 255 (aget ^bytes (get packet 1) 0))))}})]
       (try
         (let [id (:instance-id (apply-at! runtime :command {:op :cue/launch :cue-id :ember} 0))
-              {:keys [device receive!]} (open-history-push! runtime {:temporary-encoder-modifier :shift})
+              {:keys [device receive!]} (open-history-push! runtime)
               model #(:model @(:state runtime))
               level #(get-in (model) [:instances id :params :level])
               hold #(get-in (model) [:modulation :holds id :level])
@@ -471,9 +474,9 @@
           (apply-at! runtime :modulation-hold (assoc target :until-beat 4) 110)
           (let [[original original-byte :as baseline] (readout)]
             (is (pos? original-byte))
-            (input! 120 [0xb0 49 127])
+            (input! 120 [0xb0 57 127])
             (input! 130 [0x90 0 127])
-            (input! 140 [0xb0 71 30])
+            (input! 140 [0xb0 71 20])
             (is (> (level) original))
             (is (> @dimmer original-byte))
             (let [live (readout)
@@ -483,7 +486,7 @@
               (is (= [0 0] (mapv #(get-in model [:control :edit-history %]) [:cursor :position])))
               (is (nil? frame-output))
               (is (= live (readout))))
-            (input! 150 [0xb0 49 0])
+            (input! 150 [0xb0 57 0])
             (is (> (level) original))
             (receive! [0xb0 71 5])
             (dotimes [_ 255] (show/submit! runtime {:op :master/set :value 1}))
