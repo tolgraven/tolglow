@@ -9,6 +9,7 @@
             [tolglow.effects :as fx]
             [tolglow.lighting-match :as matching]
             [tolglow.show :as show]
+            [tolglow.test-support.manual-show :as manual-show]
             [afterglow.control.devices.session :as session]
             [tolglow.visualization.cue-pads :as pads]
             [tolglow.studio.query-stream :as queries]))
@@ -145,40 +146,40 @@
   (let [model (-> (rig)
                   (assoc-in [:registry :cues :ember :swatch] "#ff0000")
                   (bench/command :recent-cue {:op :cue/launch :cue-id :ember})
-                  (bench/command :end-cue {:op :instance/end :instance-id "0:1" :force? true}))
-        runtime (show/start! {:model model :workspace-options nil} (constantly nil))
-        input (atom nil)
-        sent (atom [])
-        capture {:open! (fn [receive!] (reset! input receive!) :capture)
-                 :send! (fn [_ messages] (swap! sent into messages)) :close! (fn [_])}
-        click! (fn [cc] (@input [0xb0 cc 127]) (@input [0xb0 cc 0]))
-        ack-leds! (fn [] (dotimes [_ 5] (@input (codec/sysex 0 [0x09]))))
-        service (:cue-pad-previews runtime)
-        note (codec/pad-note 0 7)]
-    (try
-      (let [device (show/connect-device! runtime :push-2 {:session-id "recent-push" :midi capture
-                                                         :led-batch-size 16 :schedule! nil})
-            session #(session/snapshot device)]
-        (doseq [index (range 128)]
-          (@input (assoc (codec/palette-write 0 index [0 0 0 0]) 6 4)))
-        (ack-leds!)
-        (is (pos? (:clients (pads/status service))))
-        (reset! sent [])
-        (click! 51)
-        (click! 22)
-        (ack-leds!)
-        (is (= pages/recent-page-id (get-in (session) [:local :page-id])))
-        (is (empty? (:errors (session))))
-        (is (zero? (:clients (pads/status service))))
-        (is (some #{(codec/palette-write 0 note [64 0 0 0])} @sent))
-        (@input [0x90 note 127])
-        (let [id (get-in (session) [:local :selected-instance])]
-          (is (= :ember (get-in @(:state runtime) [:model :instances id :cue-id]))))
-        (is (empty? (:errors (session))))
-        (click! 20)
-        (is (= :main (get-in (session) [:local :page-id])))
-        (is (pos? (:clients (pads/status service)))))
-      (finally (show/stop! runtime)))))
+                  (bench/command :end-cue {:op :instance/end :instance-id "0:1" :force? true}))]
+    (manual-show/with-runtime! {:model model :workspace-options nil}
+      (fn [runtime]
+        (let [input (atom nil)
+              sent (atom [])
+              capture {:open! (fn [receive!] (reset! input receive!) :capture)
+                       :send! (fn [_ messages] (swap! sent into messages)) :close! (fn [_])}
+              click! (fn [cc] (@input [0xb0 cc 127]) (@input [0xb0 cc 0]))
+              ack-leds! (fn [] (dotimes [_ 5] (@input (codec/sysex 0 [0x09]))))
+              service (:cue-pad-previews runtime)
+              note (codec/pad-note 0 7)
+              device (show/connect-device! runtime :push-2 {:session-id "recent-push" :midi capture
+                                                             :led-batch-size 16 :schedule! nil})
+              session #(session/snapshot device)]
+          (doseq [index (range 128)]
+            (@input (assoc (codec/palette-write 0 index [0 0 0 0]) 6 4)))
+          (ack-leds!)
+          (is (true? (get-in (session) [:local :ready?])) (pr-str (select-keys (session) [:status :failure :errors])))
+          (is (pos? (:clients (pads/status service))))
+          (reset! sent [])
+          (click! 51)
+          (click! 22)
+          (ack-leds!)
+          (is (= pages/recent-page-id (get-in (session) [:local :page-id])))
+          (is (empty? (:errors (session))))
+          (is (zero? (:clients (pads/status service))))
+          (is (some #{(codec/palette-write 0 note [64 0 0 0])} @sent))
+          (@input [0x90 note 127])
+          (let [id (get-in (session) [:local :selected-instance])]
+            (is (= :ember (get-in @(:state runtime) [:model :instances id :cue-id]))))
+          (is (empty? (:errors (session))))
+          (click! 20)
+          (is (= :main (get-in (session) [:local :page-id])))
+          (is (pos? (:clients (pads/status service)))))))))
 
 (deftest idle-previews-follow-the-current-meter-and-hdr-mode
   (let [service (pads/manager)

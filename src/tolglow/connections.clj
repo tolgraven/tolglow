@@ -8,6 +8,7 @@
             [tolglow.agents :as agent-manager]
             [tolglow.audio.capture :as capture]
             [tolglow.agents.credentials :as credentials]
+            [tolglow.effects.reactive :as effect-inputs]
             [tolglow.fixtures.library :as fixture-manager]
             [tolglow.repl.sessions :as repl-manager]
             [tolglow.sensors :as sensor-manager]
@@ -137,9 +138,11 @@
               [:audio capture/close! (:audio bundle)]
               [:agents agent-manager/close! (:agents bundle)]
               [:fixtures fixture-manager/close! (:fixtures bundle)]
+              [:reactive-effect-inputs effect-inputs/close! (:reactive-effect-inputs bundle)]
               [:reactive graph/close! (:reactive bundle)]]))
 
 (defn- initialize-reactive! [system saved options]
+  (effect-inputs/register! system)
   (when-let [register! (:register-reactive! options)] (register! system))
   (when saved
     (let [key-of (juxt :kind :id)
@@ -174,7 +177,7 @@
             sensors (sensor-manager/create-manager (assoc (:sensor-options options) :model model))
             _ (vswap! resources assoc :sensors sensors)
             reactive (graph/create-system model)
-            _ (vswap! resources assoc :reactive reactive)]
+            _ (vswap! resources assoc :reactive reactive :reactive-effect-inputs (effect-inputs/create))]
         ;; Resolve handlers before looking up credentials. Neither operation
         ;; publishes effects or starts remote chats/capture.
         (initialize-reactive! reactive (when (:reactive model) (:reactive data)) options)
@@ -258,7 +261,7 @@
                              :sync (assoc (sync/export-state (:sync bundle)) :wanted? sync-wanted?)
                              :repl (repl-manager/export-state (:repls bundle))
                              :audio-capture audio-state)]
-     (portable! (cond-> {:integrations integrations :reactive (graph/export-registry (:reactive bundle))}
+     (portable! (cond-> {:integrations integrations :reactive (effect-inputs/export-registry (:reactive bundle))}
                   (contains? model :sensors) (assoc :sensors (sensor-manager/export-state model)))))))
 
 (defn publish!
@@ -268,11 +271,15 @@
   ([connections model trace?]
   (let [{:keys [bundle generation restoring?]} (live-state connections)]
     (when restoring? (fail! :restoring "Cannot publish during connection restoration"))
-    (let [result ((if trace? graph/publish-traced! graph/publish!) (:reactive bundle) model)]
+    (let [result (effect-inputs/publish! (:reactive-effect-inputs bundle) (:reactive bundle) model
+                                        (if trace? graph/publish-traced! graph/publish!))]
       (locking (:lock connections)
         (when (= generation (:generation (live-state connections)))
           (swap! (:state connections) assoc :model model :integrations (or (:integrations model) {}))))
       result))))
+
+(defn effect-frame-inputs [connections epoch]
+  (effect-inputs/frame-inputs (get-in (live-state connections) [:bundle :reactive-effect-inputs]) epoch))
 
 (defn drain-actions! [connections]
   (let [{:keys [bundle restoring?]} (live-state connections)]

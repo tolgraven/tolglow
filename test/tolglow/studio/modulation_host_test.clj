@@ -8,6 +8,7 @@
             [tolglow.show :as show]
             [tolglow.studio :as studio]
             [tolglow.studio.access :as access]
+            [tolglow.test-support.manual-show :as manual-show]
             [tolglow.transit :as transit])
   (:import [java.io StringReader]))
 
@@ -299,30 +300,43 @@
           (finally (show/stop! runtime)))))))
 
 (deftest captured-push-encoder-updates-become-one-operator-edit
-  (let [runtime (show/start! {:workspace-options nil} (constantly nil))
-        input (atom nil)
-        midi {:open! (fn [receive!] (reset! input receive!) :capture)
-              :send! (fn [_ _]) :close! (fn [_])}]
-    (try
-      (let [device (show/connect-device! runtime :push-2
+  (manual-show/with-runtime! {:workspace-options nil}
+    (fn [runtime]
+      (let [input (volatile! nil)
+            led-ack (push-codec/sysex 0 [0x09])
+            requested? (volatile! false)
+            midi {:open! (fn [receive!] (vreset! input receive!) :capture)
+                  :send! (fn [_ batch] (when (= led-ack (peek batch)) (vreset! requested? true)))
+                  :close! (fn [_])}
+            ack-leds! (fn []
+                        (dotimes [_ 4]
+                          (when @requested?
+                            (vreset! requested? false)
+                            (@input led-ack))))
+            receive! (fn [bytes] (@input bytes) (ack-leds!))
+            device (show/connect-device! runtime :push-2
                                          {:session-id "history-push" :midi midi
-                                          :operator-gestures? true :schedule! nil})]
+                                          :operator-gestures? true :led-batch-size 16 :schedule! nil})]
         (doseq [index (range 128)]
           (@input (assoc (push-codec/palette-write 0 index [0 0 0 0]) 6 4)))
+        (ack-leds!)
+        (let [state (device-session/snapshot device)]
+          (is (true? (get-in state [:local :ready?])) (pr-str (select-keys state [:status :failure :errors])))
+          (is (false? @requested?) "The captured LED batches must settle"))
         (let [model #(:model @(:state runtime))
               history #(get-in (model) [:control :edit-history])
               [x y] (some (fn [[coordinate cue]] (when (= :ember cue) coordinate))
                           (get-in (model) [:pages :main :cells]))
-              _ (@input [0x90 (push-codec/pad-note x y) 127])
+              _ (receive! [0x90 (push-codec/pad-note x y) 127])
               instance-id (get-in (device-session/snapshot device) [:local :selected-instance])
               level #(get-in (model) [:instances instance-id :params :level])
               initial (level)]
           (is (number? initial))
-          (@input [0x90 0 127])
-          (dotimes [_ 5] (@input [0xb0 71 1]))
+          (receive! [0x90 0 127])
+          (dotimes [_ 5] (receive! [0xb0 71 1]))
           (is (> (level) initial))
           (is (= 0 (:cursor (history))))
-          (@input [0x80 0 0])
+          (receive! [0x80 0 0])
           (let [{:keys [target actor before after]} (get-in (history) [:nodes (:cursor (history))])]
             (is (= [:instance-param instance-id :level] target))
             (is (re-find #"^push-2/history-push/" actor))
@@ -336,8 +350,7 @@
             (is (= [0 initial] [(submit {:op :history/undo :expected-cursor 1 :expected-history-position 1}) (level)]))
             (is (= [1 edited] [(submit {:op :history/redo :expected-cursor 0 :expected-history-position 2
                                       :node-id 1}) (level)])))
-          (is (empty? (:errors (device-session/snapshot device))))))
-      (finally (show/stop! runtime)))))
+          (is (empty? (:errors (device-session/snapshot device)))))))))
 
 (deftest captured-push-3-encoder-restores-through-the-durable-owner-queue
   (with-redefs [show/device-command-wait-ms 0]

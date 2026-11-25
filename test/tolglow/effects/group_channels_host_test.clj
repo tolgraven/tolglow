@@ -1,5 +1,6 @@
 (ns tolglow.effects.group-channels-host-test
   (:require [afterglow.control.model :as control]
+            [afterglow.control.devices.session :as device-session]
             [afterglow.render.frame :as render]
             [clojure.data.json :as json]
             [clojure.test :refer [deftest is]]
@@ -109,6 +110,112 @@
                                      "content-type" media}
                            :body (StringReader. (encode payload))})]
         [(:status response) (transit/decode (:body response))]))))
+
+(deftest xtouch-faders-use-committed-group-levels-across-banks-and-reconnect
+  (let [effect [:registry :effects :first]
+        model (-> (model)
+                  (assoc-in (conj effect :params :level) {:type :number :default 0.5 :bounds [0 1]})
+                  (assoc-in (conj effect :outputs :dimmer) {:op :param :key :level}))
+        runtime (show/create-runtime {:model model :workspace-options nil})
+        config (update grouping :manual into
+                       (mapv #(hash-map :id (keyword (str "spare-" %))) (range 7)))
+        time (atom 0)
+        receiver (atom nil)
+        sent (atom [])
+        transport {:open! (fn [receive!] (reset! receiver receive!) :captured)
+                   :send! (fn [_ batch] (swap! sent into batch)) :close! (fn [_])}
+        submit! show/submit!
+        input! (fn [bytes]
+                 (with-redefs [show/now-ms (constantly @time)
+                               show/submit! (fn [owner command]
+                                              (let [receipt (submit! owner :command command nil)]
+                                                (show/tick! owner (swap! time inc))
+                                                receipt))]
+                   (@receiver bytes)))
+        mixer #(show/effect-group-channels runtime)
+        motors #(filterv (fn [bytes] (= % (first bytes))) @sent)
+        post! (studio-post runtime time)]
+    (try
+      (accepted! runtime @time (configure config))
+      (let [device (show/connect-device! runtime :x-touch
+                                         {:session-id "group-mcu" :effect-group-view :manual :schedule! nil
+                                          :transport transport :channels [{:cue-id :first}]})
+            bank #(get-in (device-session/snapshot device) [:local :bank])
+            ack #(:last-ack (device-session/snapshot device))
+            first-id (launch! runtime (swap! time inc) :first)
+            last-id (launch! runtime (swap! time inc) :last)]
+        (is (some #{[224 127 127]} @sent))
+        (device-session/refresh! device)
+        (is (some #{[144 25 127]} @sent) "Nested group member lights its strip")
+        (is (= 191 (dmx runtime)))
+        (input! [225 0 0])
+        (is (= 1.0 (get-in (mixer) [:manual 0 :groups 0 :level])))
+        (input! [144 105 127])
+        (reset! sent [])
+        (input! [225 0 0])
+        (is (= [:manual :accent] (:channel-id (ack))))
+        (is (= 0.0 (get-in (mixer) [:manual 0 :groups 0 :level])))
+        (is (= 128 (dmx runtime)))
+        (is (empty? (motors 225)))
+        (input! [128 105 0])
+        (is (= [[225 0 0]] (motors 225)))
+        (input! [144 104 127])
+        (input! [144 47 127])
+        (is (= 8 (bank)))
+        (reset! sent [])
+        (input! [144 104 127])
+        (input! [224 0 0])
+        (is (= [:manual :mix] (:channel-id (ack))))
+        (is (= [0.0 1.0] (mapv :level ((juxt first peek) (:manual (mixer))))))
+        (is (empty? (motors 224)))
+        (input! [128 104 0])
+        (is (= [[224 127 127]] (motors 224)) "Release reasserts the new bank even at the cached level")
+        (input! [144 105 127])
+        (input! [225 127 127])
+        (input! [128 105 0])
+        (is (= 1.0 (get-in (committed-model runtime) [:instances first-id :params :level])))
+        (input! [144 46 127])
+        (is (= 0 (bank)))
+        (input! [144 104 127])
+        (reset! sent [])
+        (is (= 200 (first (post! "/api/command" "application/transit+json" transit/encode
+                                 (level [:manual :mix] 0.5)))))
+        (is (= 128 (dmx runtime)))
+        (device-session/refresh! device)
+        (is (empty? (motors 224)))
+        (input! [128 104 0])
+        (is (= [[224 0 64]] (motors 224)))
+        (accepted! runtime (swap! time inc) {:op :instance/end :instance-id last-id :force? true})
+        (reset! sent [])
+        (device-session/refresh! device)
+        (is (some #{[144 25 0]} @sent))
+        (is (= [:manual :accent] (get-in (mixer) [:manual 0 :groups 0 :id])))
+        (input! [144 104 127])
+        (device-session/suspend! device)
+        (reset! sent [])
+        (input! [224 127 127])
+        (is (empty? @sent))
+        (device-session/resume! device)
+        (is (= [[224 0 64]] (motors 224)))
+        (input! [224 127 127])
+        (let [old @receiver]
+          (device-session/reconnect! device)
+          (old [144 104 127])
+          (input! [224 127 127])
+          (is (= 0.5 (get-in (mixer) [:manual 0 :level]))))
+        (is (empty? (:errors (device-session/snapshot device)))))
+      (show/disconnect-device! runtime "group-mcu")
+      (accepted! runtime (swap! time inc) {:op :effect-groups/overlay-set :overlay :cue-pages})
+      (let [device (show/connect-device! runtime :x-touch
+                                         {:session-id "group-mcu" :effect-group-view :overlay
+                                          :schedule! nil :transport transport})]
+        (input! [144 104 127])
+        (input! [224 0 0])
+        (input! [128 104 0])
+        (is (= [:cue-pages :front] (get-in (device-session/snapshot device) [:last-ack :channel-id])))
+        (is (= [0.0 0.25] (mapv :level (:overlay (mixer)))))
+        (is (= 0.5 (get-in (mixer) [:manual 0 :level]))))
+      (finally (show/stop! runtime)))))
 
 (deftest studio-json-commands-address-committed-groups
   (let [runtime (show/create-runtime {:model (model) :workspace-options nil})
