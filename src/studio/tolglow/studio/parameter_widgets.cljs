@@ -282,10 +282,15 @@
      [:svg {:view-box "0 0 512 100" :preserve-aspect-ratio "none" :role "img"
              :aria-label (str "Captured PCM, " (count bins) " peak windows; fixed amplitude minus one to one")}
       [:line.audio-waveform-zero {:x1 0 :x2 512 :y1 50 :y2 50}]
-      (for [[index bin] (map-indexed vector bins)
-            :let [width (/ 512 (count bins))]]
-        ^{:key index} [:rect {:x (* width index) :y (- 50 (* 48 (:max bin))) :width (max 0.5 (- width 0.3))
-                              :height (* 48 (- (:max bin) (:min bin))) :fill (audio-bin-color (:bands bin))}])
+      (for [[index {:keys [bands] minimum :min maximum :max}] (map-indexed vector bins)
+            :when (or (not= minimum maximum) (not (zero? maximum)))
+            :let [column-width (/ 512 (count bins))
+                  x (* column-width index) y (- 50 (* 48 maximum))
+                  width (max 0.5 (- column-width 0.3))
+                  color (audio-bin-color bands)]]
+        (if (= minimum maximum)
+          ^{:key index} [:line {:x1 x :x2 (+ x width) :y1 y :y2 y :stroke color}]
+          ^{:key index} [:rect {:x x :y y :width width :height (* 48 (- maximum minimum)) :fill color}]))
       (when (and (finite? (:duration-ms waveform)) (pos? (:duration-ms waveform)))
         (for [[index marker] (map-indexed vector (take 128 (:beat-markers waveform)))
               :when (and (finite? (:offset-ms marker)) (<= 0 (:offset-ms marker) (:duration-ms waveform)))
