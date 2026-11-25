@@ -73,7 +73,8 @@
       (let [handler (studio/handler runtime)
             device (show/connect-device! runtime :push-2
                      (merge {:session-id "variations-capture" :schedule! nil :timeout-ms 60000
-                             :active-cue-grid? true :cue-variations? true :operator-gestures? true}
+                             :active-cue-grid? true :cue-variations? true :operator-gestures? true
+                             :temporary-encoder-modifier :shift}
                             (select-keys sink [:midi :display])))
             raw! #(while-ticking runtime (fn [] (receive! %)))
             current #(get-in (model runtime) [:instances (:selected-instance (:local (session/snapshot device)))])
@@ -166,12 +167,36 @@
                 (raw! [0x90 0 127])
                 (raw! [0xb0 71 1])
                 (raw! [0x80 0 0])
-                (let [{:keys [cursor nodes open]} (get-in (model runtime) [:control :edit-history])
-                      {:keys [target before after actor]} (get nodes cursor)]
+                (let [{:keys [cursor nodes open position]} (get-in (model runtime) [:control :edit-history])
+                      {:keys [target before after actor]} (get nodes cursor)
+                      undo (show/submit! runtime :command
+                             {:op :history/undo :expected-cursor cursor :expected-history-position position}
+                             {:operator-id "variation-capture-repl"})]
                   (is (= [:instance-param instance-id :period] target))
                   (is (= [1 ratio] [before after]))
                   (is (re-find #"^push-2/variations-capture/" actor))
-                  (is (empty? open)))))
+                  (is (empty? open))
+                  (show/tick! runtime 0)
+                  (is (= :accepted (:status @undo)))
+                  (is (= 1 (get-in (current) [:params :period]))))))
+            (testing "a captured temporary turn also uses the exact editor and restores its starting ratio"
+              (let [history #(get-in (model runtime) [:control :edit-history])
+                    position (select-keys (history) [:cursor :position :nodes])]
+                (is (= :accepted (:status (submit! runtime {:op :cue-variation/ratio-mode
+                                                           :instance-id instance-id :mode :free}))))
+                (is (= :accepted (:status (submit! runtime {:op :cue-variation/ratio-set :instance-id instance-id
+                                                           :param :period :numerator 5 :denominator 11}))))
+                (receive! [0xb0 49 127])
+                (raw! [0x90 0 127])
+                (receive! [0xb0 49 0])
+                (raw! [0xb0 71 1])
+                (let [audition (get-in (current) [:params :period])]
+                  (is (or (ratio? audition) (integer? audition)))
+                  (is (not= 5/11 audition)))
+                (raw! [0x80 0 0])
+                (is (= 5/11 (get-in (current) [:params :period])))
+                (is (= position (select-keys (history) [:cursor :position :nodes])))
+                (is (empty? (:open (history))))))
             (is (empty? (:errors (session/snapshot device)))))))
       (finally (show/stop! runtime)))))
 
