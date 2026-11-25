@@ -259,15 +259,18 @@
   every clock, so automatic windows can share one owned sample."
   ([definition fixtures] (compile-effect definition fixtures {}))
   ([definition fixtures options]
-   (let [step (build-effect definition fixtures options)
-         backend (:backend (meta step))]
-     (cond
-       (and (= :batch backend) (literal-wash? definition)) (keyframes/time-invariant step)
-       (not (compiler/predictable-outputs? definition)) step
-       (= :deferred backend)
-       (let [cpu (delay (build-effect definition fixtures (dissoc options :prepare-group)))]
-         (keyframes/predictable step (fn [ctx] (@cpu ctx))))
-       :else (keyframes/predictable step)))))
+   (if (:reactive definition)
+     (vary-meta (compiler/compile-effect definition nil nil fixtures)
+                assoc :backend :ordinary :fallback-reasons [:reactive-inputs])
+     (let [step (build-effect definition fixtures options)
+           backend (:backend (meta step))]
+       (cond
+         (and (= :batch backend) (literal-wash? definition)) (keyframes/time-invariant step)
+         (not (compiler/predictable-outputs? definition)) step
+         (= :deferred backend)
+         (let [cpu (delay (build-effect definition fixtures (dissoc options :prepare-group)))]
+           (keyframes/predictable step (fn [ctx] (@cpu ctx))))
+         :else (keyframes/predictable step))))))
 
 (defn compiler-for-rig
   "Return definition -> step, suitable for engine/advance and a shell-owned cache.

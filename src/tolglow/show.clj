@@ -1622,6 +1622,7 @@
                                                :keyframes (:keyframes before) :keyframe-params input-overrides
                                                :keyframe-generation (:responses model) :spatial-aims (get-in space [:fields :aims])
                                                :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
+                                              (connections/effect-frame-inputs (:connections runtime) (:epoch model))
                                               (:inputs sampling))
                            group-levels (group-channels/frame-levels model)
                            ;; Spatial membership is attached after the engine runs. Keep
