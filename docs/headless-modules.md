@@ -38,7 +38,9 @@ use `tolglow.expressive/preview` with a declared device kind.
 
 With a provider configured on the active show, start a chat with the same tool
 access as Studio. The returned handle has a `:result` promise and a `:cancel!`
-function. Tools from an earlier show session are rejected after a restore.
+function. If a restore changes the show session before the worker starts, the
+chat ends before any provider request. Tool calls from the previous show session
+are rejected.
 
 ```clojure
 (show/start-chat! runtime {:message "Inspect the current lighting."}

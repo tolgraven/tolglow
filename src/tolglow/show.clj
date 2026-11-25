@@ -1604,16 +1604,20 @@
       (deref (submit! runtime type payload) 5000 {:status :pending :message "Command remains queued"}))))
 
 (defn start-chat!
-  "Start a chat on this show. Tool calls retain the show session captured at
-  admission. Supply :emit! and :done! callbacks. Returns the cancellable agent
-  run handle, including its :result promise."
+  "Start a chat on this show. The initial snapshot and tool calls are bound to
+  the show session captured at admission. Supply :emit! and :done! callbacks.
+  Returns the cancellable agent run handle, including its :result promise."
   [runtime payload {:keys [emit! done!]}]
   (let [[manager show-identity] (locking (:lock runtime)
                                   [(agent-manager runtime)
                                    (select-keys (:model @(:state runtime)) [:epoch :show-id])])
         admission (assoc show-identity :expected-epoch (:epoch show-identity))]
     (agents/start-chat! manager payload
-                        {:snapshot! #(snapshot runtime)
+                        {:snapshot! (fn []
+                                      (let [state @(:state runtime)]
+                                        (when-not (= show-identity (select-keys (:model state) [:epoch :show-id]))
+                                          (throw (ex-info "Agent run belongs to a previous show session" {})))
+                                        (project-snapshot runtime state)))
                          :dispatch! #(dispatch-tool! runtime %1 %2 (merge %3 admission))
                          :emit! emit! :done! done!})))
 

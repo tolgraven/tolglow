@@ -487,3 +487,44 @@
       (finally
         (deliver allow-tool true)
         (show/stop! runtime)))))
+
+(deftest queued-chat-does-not-send-a-restored-show-to-its-provider
+  (let [provider-entered (promise)
+        release-provider (promise)
+        requests (atom [])
+        transport (fn [request consume! _]
+                    (swap! requests conj (json/read-str (:body request) :key-fn keyword))
+                    (deliver provider-entered true)
+                    (when (deref release-provider 10000 false)
+                      (consume! (stream-text "Done")))
+                    {:status 200})
+        runtime (show/create-runtime {:workspace-options nil
+                                      :agent-options {:workers 1 :transport transport}})
+        callbacks {:emit! identity :done! identity}]
+    (try
+      (configure-local! (show/agent-manager runtime))
+      (let [source (show/export-show-source runtime)
+            initial-epoch (:epoch (show/snapshot runtime))
+            active (show/start-chat! runtime {:message "Hold worker"} callbacks)]
+        (is (true? (deref provider-entered 5000 false)))
+        (let [queued (show/start-chat! runtime {:message "Inspect after waiting"} callbacks)
+              receipt (show/submit! runtime :import {:source source})
+              retire! connections/retire!]
+          (is (not (realized? (:result queued))))
+          ;; Keep the old manager alive just past publication so the queued job
+          ;; reaches its first snapshot before cancellation can hide the race.
+          (with-redefs [connections/retire! (fn [retired]
+                                             (try
+                                               (deliver release-provider true)
+                                               (await-result queued)
+                                               (finally (retire! retired))))]
+            (show/tick! runtime 1))
+          (is (= :accepted (:status (deref receipt 5000 ::timeout))))
+          (is (= (inc initial-epoch) (:epoch (show/snapshot runtime))))
+          (is (= :completed (:status (await-result active))))
+          (is (= {:status :error :error :chat-failed}
+                 (select-keys (await-result queued) [:status :error])))
+          (is (= 1 (count @requests)))))
+      (finally
+        (deliver release-provider true)
+        (show/stop! runtime)))))
