@@ -145,7 +145,7 @@ func studioWebView(origin: URL, navigation: StudioNavigation, qualification: Sha
     let configuration = WKWebViewConfiguration()
     configuration.allowsAirPlayForMediaPlayback = true
     qualification?.configure(configuration)
-    let view = WKWebView(frame: .zero, configuration: configuration)
+    let view = StudioContentView(frame: .zero, configuration: configuration)
     view.navigationDelegate = navigation
     view.load(URLRequest(url: origin))
     qualification?.start(view, revealRoom: true)

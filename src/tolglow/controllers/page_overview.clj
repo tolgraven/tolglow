@@ -1,8 +1,9 @@
 (ns tolglow.controllers.page-overview
-  "A display-worker projection of authored cue pages. Miniatures read definitions
+  "A display-worker projection of cue pages. Miniatures read definitions
   only, so browsing a hundred pages never starts an effect or a visual sampler."
   (:require [afterglow.control.categories :as categories]
             [afterglow.control.display :as display]
+            [afterglow.control.pages :as cue-pages]
             [thi.ng.color.core :as colors]))
 
 (def ^:private neutral "#727c78")
@@ -52,7 +53,7 @@
         {:keys [pages] :as window} (display/page-window ids (:page view) (:page-bank view))
         options (get-in model [:settings :controllers :push-display])]
     (assoc window :scheme (or (:page-colors view) (:page-colors options) :both)
-           :pages (mapv #(thumbnail (:registry model) (:tag-colors options) (get-in model [:pages %])) pages))))
+           :pages (mapv #(thumbnail (:registry model) (:tag-colors options) (cue-pages/page model %)) pages))))
 
 (defn project-display [cache model view]
   (if-not (= :pages (:display-mode view))
@@ -60,11 +61,16 @@
     (let [previous @cache
           selector (select-keys view [:page :page-bank :page-colors])
           options (get-in model [:settings :controllers :push-display])
+          recent-source (cue-pages/recent-page-source model)
           reused? (and (= selector (:selector previous)) (identical? options (:options previous))
                        (identical? (:pages model) (:pages previous))
+                       (or (not (:includes-recent? previous))
+                           (identical? recent-source (:recent-source previous)))
                        (identical? (:registry model) (:registry previous)))
           result (if reused? (:result previous) (project model view))]
       (when-not reused?
         (vreset! cache {:pages (:pages model) :registry (:registry model) :options options
+                        :recent-source recent-source
+                        :includes-recent? (some #(= cue-pages/recent-page-id (:id %)) (:pages result))
                         :selector selector :result result}))
       (assoc view :page-overview result))))

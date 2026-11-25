@@ -1,6 +1,7 @@
 (ns tolglow.studio-test
   (:require [clojure.test :refer :all]
             [clojure.data.json :as json]
+            [afterglow.control.pages :as cue-pages]
             [ring.core.protocols :as protocols]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
@@ -84,11 +85,13 @@
       (is (= "attachment; filename=tolglow-show.transit" (get-in response [:headers "Content-Disposition"])))
       (let [document (wire/decode exported)]
         (is (= 2 (:schema-version document)))
+        (is (not (contains? (get-in document [:model :pages]) cue-pages/recent-page-id)))
         (is (every? bytes? (vals (get-in document [:frame-output :universes])))))
       (is (= :accepted (:status (apply-at! r :import {:source exported} 100))))
       (is (= 1 (:epoch (show/snapshot r))))
       (is (= (:time-ms saved) (:time-ms (show/snapshot r))))
       (is (= (:frame-number saved) (:frame-number (show/snapshot r))))
+      (is (= (:recent-page saved) (:recent-page (show/snapshot r))))
       (is (= (:output saved) (:output (show/snapshot r))))
       (is (= 1 (count (:instances (show/snapshot r)))))
       (is (not= old-id (get-in (show/snapshot r) [:instances 0 :id])))
@@ -172,6 +175,26 @@
       (is (seq (:cells first-page)))
       (is (empty? (:placements (apply-at! r :page-generate {:page-id :library} 0))))
       (is (= first-page (get-in @(:state r) [:model :pages :library]))))))
+
+(deftest recent-placements-are-shared-by-repl-and-studio-and-remain-read-only
+  (with-runtime [r]
+    (let [authored (:pages (show/snapshot r))
+          id cue-pages/recent-page-id
+          cells [{:x 0 :y 0 :cue-id :ice} {:x 1 :y 0 :cue-id :ember}]]
+      (is (empty? (get-in (show/snapshot r) [:recent-page :cells])))
+      (is (= :accepted (:status (apply-at! r :command {:op :cue/launch :cue-id :ember} 0))))
+      (is (= :accepted (:status (apply-at! r :command {:op :cue/launch :cue-id :ice} 50))))
+      (is (= {:id id :name "Recent cues" :columns 8 :rows 8 :cells cells}
+             (:recent-page (show/snapshot r))))
+      (let [state (json/read-str (:body ((studio/handler r) {:request-method :get :uri "/api/state"})))]
+        (is (= id (get-in state ["recent-page" "id"])))
+        (is (= ["ice" "ember"] (mapv #(get % "cue-id") (get-in state ["recent-page" "cells"])))))
+      (doseq [[type payload] [[:command {:op :page/put :page {:id id :cells {}}}]
+                              [:page-generate {:page-id id}]
+                              [:agent-cue {:page-id id :cue {:id :attempted :effect-id :ember}}]]]
+        (is (= :rejected (:status (apply-at! r type payload 100)))))
+      (is (= authored (:pages (show/snapshot r))))
+      (is (nil? (get-in @(:state r) [:model :registry :cues :attempted]))))))
 
 (deftest graphical-rig-edits-preserve-existing-string-identities
   (with-runtime [r]
