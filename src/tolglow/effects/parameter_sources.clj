@@ -98,6 +98,34 @@
                 (evaluate phase))))))
       (catch Exception _ nil))))
 
+(def ^:private triangle-expression
+  (let [one {:op :const :value 1.0}
+        two {:op :const :value 2.0}
+        wrapped {:op :fract :args [{:op :param :key signals/phase-input}]}
+        ramp {:op :multiply :args [two wrapped]}]
+    {:op :subtract :args [one {:op :abs :args [{:op :subtract :args [ramp one]}]}]}))
+
+(defn- triangle-cycle [waveform schema {:keys [from to]} interpolate evaluate]
+  (when (and (= :triangle (:id waveform))
+             (.equals ^Object triangle-expression (:expression waveform))
+             (.equals ^Object [0.0 1.0] (:range waveform))
+             (case (:type schema)
+               :boolean true
+               :enum (every? #(or (keyword? %) (string? %)) [from to])
+               ;; Interpolating from integer 0 to 1 gives the triangle's own
+               ;; fraction. Rounding it uses the same half-amplitude switch.
+               :integer (and (zero? from) (= 1 to))
+               false))
+    (let [low (interpolate 0.0)
+          high (interpolate 1.0)]
+      (fn [phase]
+        (let [x (double phase)]
+          (if (Double/isFinite x)
+            ;; Keep the IR's floating-point operation order at both switches.
+            (let [value (- 1.0 (Math/abs (- (* 2.0 (- x (Math/floor x))) 1.0)))]
+              (if (< value 0.5) low high))
+            (evaluate phase)))))))
+
 (defn- prepare [registry waveform schema binding]
   (try
     (checked-binding schema waveform binding)
@@ -109,9 +137,12 @@
                      (let [value (sample {:params {signals/phase-input phase}})]
                        (require! (time/finite-number? value) "Waveform returned a non-finite value")
                        (interpolate (if (= lo hi) 0.0 (min 1.0 (max 0.0 (/ (- value lo) (- hi lo))))))))
-          cycle (pulse-cycle waveform schema binding interpolate evaluate)]
-      (cond-> {:evaluate (or cycle evaluate)}
-        cycle (assoc :cycle :pulse)))
+          pulse (pulse-cycle waveform schema binding interpolate evaluate)
+          triangle (triangle-cycle waveform schema binding interpolate evaluate)]
+      (cond
+        pulse {:evaluate pulse :cycle :pulse}
+        triangle {:evaluate triangle :cycle :triangle}
+        :else {:evaluate evaluate}))
     (catch Exception error {:error (.getMessage error)})))
 
 (defn- sample-one [model instance transport-clock private-clock previous result param {:keys [binding]}]
