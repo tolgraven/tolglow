@@ -1,0 +1,42 @@
+{
+  "recordingSteps": [
+    {
+      "name": "all-emitters.png",
+      "elapsedMs": 32556
+    },
+    {
+      "name": "keyword-emitter.png",
+      "elapsedMs": 37151
+    },
+    {
+      "name": "combined-no-match.png",
+      "elapsedMs": 39622
+    },
+    {
+      "name": "string-emitter.png",
+      "elapsedMs": 43252
+    }
+  ],
+  "releaseBundleSha256": "a74142690f5d2668b4afe28681f03c643b5ec2e4311cf13de0fac36f09890572",
+  "output": "preview",
+  "emitterChoices": [
+    "All",
+    "\"\" (text)",
+    "\"rig/spot\" (text)",
+    ":rig/spot (keyword)",
+    ":studio (keyword)"
+  ],
+  "keyword": {
+    "emitter": ":rig/spot",
+    "subscriber": "qa/keyword-listener",
+    "stamp": "2026-11-25T09:41:13.190Z"
+  },
+  "string": {
+    "emitter": "\"rig/spot\"",
+    "subscriber": "qa/string-listener",
+    "stamp": "2026-11-25T09:41:13.190Z"
+  },
+  "keyboardFocusRestored": true,
+  "chromium": "156.0.8078.79",
+  "playback": "Preview-only Ring, real Transit WebSocket, injected audio events committed on show tick"
+}
