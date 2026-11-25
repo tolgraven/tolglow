@@ -276,6 +276,49 @@
     (is (= [:ember] (mapv :effect-id (:instances healthy))))
     (is (empty? (:instances stopped)))))
 
+(deftest audio-stop-admission-fences-the-next-owner-frame
+  (let [policy {:enabled? true :on :bar :patterns [:midnight-groove] :show-seed 514}
+        session-operation! @#'show/session-operation!
+        advance sub/advance
+        stop-admitted (promise)
+        finish-stop (promise)
+        frame-ready (promise)
+        finish-frame (promise)
+        {:keys [instances]}
+        (capture-pattern-boundary policy false
+          (fn [runtime]
+            ;; Start the due frame just after Stop releases the owner lock.
+            ;; Hold the frame before subscriber advancement until Stop returns.
+            (with-redefs-fn {#'show/session-operation!
+                             (fn [owner payload operation!]
+                               (let [work (session-operation! owner payload operation!)]
+                                 (deliver stop-admitted true)
+                                 (deref finish-stop 5000 nil)
+                                 work))
+                             #'sub/advance
+                             (fn [model time-ms results]
+                               (deliver frame-ready true)
+                               (deref finish-frame 5000 nil)
+                               (advance model time-ms results))}
+              (fn []
+                (let [stop-call (future (show/audio-action! runtime :stop {}))
+                      due-frame (future
+                                  (when (deref stop-admitted 5000 nil)
+                                    (show/tick! runtime 4500)
+                                    true))]
+                  (try
+                    (is (true? (deref frame-ready 5000 nil)))
+                    (deliver finish-stop true)
+                    (is (true? (:stopped? (deref stop-call 5000 nil))))
+                    (is (empty? (:instances (show/snapshot runtime))))
+                    (finally
+                      (deliver finish-stop true)
+                      (deliver finish-frame true)
+                      (is (true? (deref due-frame 5000 nil)))
+                      (doseq [worker [stop-call due-frame] :when (not (realized? worker))]
+                        (future-cancel worker)))))))))]
+    (is (empty? instances))))
+
 (deftest opted-in-captured-patterns-publish-on-owner-bars-and-respect-a-pause
   (let [policy {:enabled? true :on :bar :patterns [:midnight-groove] :show-seed 514}
         cases [(capture-pattern-boundary policy false)

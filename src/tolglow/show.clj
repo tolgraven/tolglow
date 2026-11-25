@@ -2047,9 +2047,9 @@
                                (fn [config]
                                  (connections/start-audio! (:connections runtime) config (audio-callbacks runtime))
                                  (audio/status (connections/audio (:connections runtime)))))
-    :stop (let [generation (session-operation! runtime payload
-                                             (fn [_] (:generation (connections/status (:connections runtime)))))]
-            (connections/stop-audio! (:connections runtime) generation))
+    :stop (let [shutdown! (session-operation! runtime payload
+                             (fn [_] (connections/admit-audio-stop! (:connections runtime))))]
+            (shutdown!))
     (throw (ex-info "Unknown audio operation" {:operation operation}))))
 
 (defn sync-action!
