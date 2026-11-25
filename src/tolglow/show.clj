@@ -795,8 +795,12 @@
       (not= [(:show-id model) (:epoch model)] [(:show-id command) (:epoch command)])
       (reject :stale-epoch "The draft command belongs to another show session")
 
+      ;; The draft is gone once applied, so a retry is answered from its receipt.
       (and cached (= op :scene-draft/apply))
-      {:model model :ack (:ack cached) :replayed? true}
+      (let [intent #(select-keys % [:op :draft-id :expected-draft-revision])]
+        (if (= (intent command) (intent (:command cached)))
+          {:model model :ack (:ack cached) :replayed? true}
+          (reject :command-id-conflict "Command ID reused with different data")))
 
       (and pending-apply (= command-id (get-in pending-apply [:command :command-id])))
       (reply :scheduled (merge (select-keys pending-apply [:due-beat :grid]) {:draft-id (:id draft) :duplicate? true}))

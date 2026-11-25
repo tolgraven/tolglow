@@ -504,6 +504,35 @@
               (is (not-any? #(= :blue (:effect-id %)) (vals (:instances (model-of rt)))))))
           (finally (show/stop! (:runtime rt))))))))
 
+(deftest only-the-same-apply-replays-its-receipt
+  (let [rt (runtime nil)
+        take! (fn [time-ms draft-id command-id]
+                (let [reply (submit rt {:op :scene-draft/apply :draft-id draft-id :expected-draft-revision 0
+                                        :command-id command-id})]
+                  (tick rt time-ms)
+                  (receipt reply)))]
+    (try
+      (stage-live! rt)
+      (testing "the ID of another command is a conflict, not a success"
+        (is (= [:rejected :command-id-conflict] ((juxt :status :code) (take! 100 "scene" "live"))))
+        (is (= :auditioning (:status (show/scene-draft (:runtime rt)))))
+        (is (not-any? #(= :blue (:effect-id %)) (vals (:instances (model-of rt))))))
+      (let [taken (take! 125 "scene" "take")
+            revision (:revision (model-of rt))]
+        (is (= :accepted (:status taken)))
+        (testing "a retry after the draft is gone returns the first receipt"
+          (is (= taken (take! 150 "scene" "take")))
+          (is (= revision (:revision (model-of rt)))))
+        (testing "the same ID cannot apply a different draft"
+          (let [staged (submit rt {:op :scene-draft/stage :draft-id "other"
+                                   :operations [{:op :cue/launch :cue-id :indigo}]})]
+            (tick rt 175)
+            (is (= :accepted (:status (receipt staged))))
+            (is (= [:rejected :command-id-conflict] ((juxt :status :code) (take! 200 "other" "take"))))
+            (is (= "other" (get-in (show/scene-draft (:runtime rt)) [:draft :id])))
+            (is (= revision (:revision (model-of rt)))))))
+      (finally (show/stop! (:runtime rt))))))
+
 (deftest discarding-a-draft-leaves-no-trace
   (let [untouched (runtime nil) discarded (runtime nil)]
     (try
