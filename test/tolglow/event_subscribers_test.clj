@@ -214,7 +214,9 @@
                ((juxt :effect-id #(get-in % [:source :adapter])) (first instances)))))
       (finally (show/stop! runtime)))))
 
-(defn- capture-pattern-boundary [policy pause? & [after-admission]]
+(defn- capture-pattern-boundary
+  [policy pause? & [after-admission {:keys [confirmation-tick-ms source-id]
+                                    :or {confirmation-tick-ms 4000}}]]
   (let [owner (atom nil) observed (atom []) closed (atom 0) pause-receipt (atom nil)
         open (fn [_]
                (let [source (pcm-test/memory-source (pcm-test/section-pcm-values) 1280 closed)
@@ -230,7 +232,7 @@
                                  (when (and pause? (= 4000 time-ms))
                                    (reset! pause-receipt (show/submit! runtime {:op :transport/set
                                                                               :transport {:playing? false}})))
-                                 (show/tick! runtime time-ms))
+                                 (show/tick! runtime (if (= 4000 time-ms) confirmation-tick-ms time-ms)))
                                (read! out offset length)))))))
         runtime (show/create-runtime (cond-> {:workspace-options nil :audio-options {:open-source! open}}
                                        policy (assoc :section-patterns policy)))
@@ -249,7 +251,8 @@
         (is (= :accepted (:status (deref reply 1000 ::timeout)))))
       (let [handle (connections/start-audio! (:connections runtime)
                                              {:default? true :sample-rate 8000.0 :block-frames 640
-                                              :analyzer-options {:sections {:beats-per-window 2}}}
+                                              :analyzer-options (cond-> {:sections {:beats-per-window 2}}
+                                                                  (some? source-id) (assoc :source-id source-id))}
                                              (show/audio-callbacks runtime))
             result (deref (:result handle) 5000 ::timeout)]
         (is (= :completed (:status result)) (pr-str (:error result)))
@@ -345,6 +348,25 @@
     (doseq [result [inert paused]]
       (is (not-any? #(= :music/section-pattern (:type %)) (:events result)))
       (is (empty? (:instances result))))))
+
+(deftest capture-ingress-retains-a-confirmation-ahead-of-the-owner-tick
+  (let [policy {:enabled? true :on :bar :patterns [:midnight-groove]}
+        {:keys [events instances]} (capture-pattern-boundary policy false nil {:confirmation-tick-ms 3999})
+        [section :as sections] (filterv #(= :audio/section-change (:type %)) events)
+        [intent :as intents] (filterv #(= :music/section-pattern (:type %)) events)]
+    (is (= 1 (count sections) (count intents)))
+    (is (== 3999 (get-in section [:time :time-ms])))
+    (is (== 4000 (get-in section [:data :time-ms])))
+    (is (== 4001 (get-in intent [:time :time-ms])))
+    (is (= [:ember] (mapv :effect-id instances)))))
+
+(deftest legacy-empty-capture-source-does-not-interrupt-the-owner
+  (let [policy {:enabled? true :on :bar :patterns [:midnight-groove]}
+        {:keys [events instances model]} (capture-pattern-boundary policy false nil {:source-id ""})]
+    (is (= 5000 (:time-ms model)))
+    (is (some #(and (= :audio/section-change (:type %)) (= "" (get-in % [:data :source :id]))) events))
+    (is (not-any? #(= :music/section-pattern (:type %)) events))
+    (is (empty? instances))))
 
 (defn- play-reference-boundary [pattern interruption & [{:keys [delayed?]}]]
   (let [clock-ms (atom 27000)

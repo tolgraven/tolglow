@@ -8,6 +8,7 @@
 
 (def ^:private defaults {:enabled? false :version 1 :show-seed 0 :on :beat
                          :patterns [] :min-confidence 0.5 :max-causal-age-ms 750.0})
+(def ^:private max-causal-events 256)
 
 (defn- finite? [x] (and (number? x) (Double/isFinite (double x))))
 (defn- confidence? [x] (and (finite? x) (<= 0 x 1)))
@@ -111,30 +112,36 @@
                 :ready? (>= position-ms (:start-position-ms section))
                 :delivery-id [scope provenance occurrence reference (:id section)]})))))
 
-(defn- recent-causal? [{:keys [time-ms]} now-ms max-age]
-  (and (finite? time-ms) (<= 0 (- now-ms time-ms) max-age)))
-
 (defn- causal-candidate [state fresh stream now-ms owner scope]
   (let [{:keys [min-confidence max-causal-age-ms] :as policy} (:policy state)
         pending (:pending state)
         [source epoch session] (clock-id owner)
-        event (last (sort-by :sequence
-                             (filter (fn [{:keys [type boundary-beat confidence clock-source clock-epoch
-                                                  clock-session-id] :as event}]
-                                       (and (= :audio/section-change type) (= 1 (:version event))
-                                            (= [source epoch session] [clock-source clock-epoch clock-session-id])
-                                            (finite? boundary-beat) (<= (:fallback-beat state) boundary-beat (:beat owner))
-                                            (confidence? confidence) (>= confidence min-confidence)
-                                            (recent-causal? event now-ms max-causal-age-ms))) fresh)))]
-    (if event
-      (let [{:keys [boundary-beat confidence sequence]} event]
-        (merge (choose-pattern policy [(:source-id stream) boundary-beat])
-               {:mode :causal :scope scope :stream stream :ready? true
-                :observation (select-keys event [:time-ms :boundary-beat :confidence :sequence])
-                :section {:start-beat boundary-beat :boundary-confidence confidence}
-                :delivery-id [scope stream sequence]}))
-      (when (and (= :causal (:mode pending)) (= stream (:stream pending)) (= scope (:scope pending)))
-        pending))))
+        ordered (->> (into (get state :deferred-causal []) fresh)
+                     (filter (fn [{:keys [type version boundary-beat confidence clock-source clock-epoch
+                                          clock-session-id time-ms]}]
+                               (and (= :audio/section-change type) (= 1 version)
+                                    (= [source epoch session] [clock-source clock-epoch clock-session-id])
+                                    (finite? time-ms) (finite? boundary-beat)
+                                    (<= (:fallback-beat state) boundary-beat)
+                                    (confidence? confidence) (>= confidence min-confidence))))
+                     (sort-by :sequence))
+        event (last (filter #(and (<= (:boundary-beat %) (:beat owner))
+                                  (<= 0 (- now-ms (:time-ms %)) max-causal-age-ms)) ordered))
+        deferred (->> ordered
+                      (filter #(and (> (:time-ms %) now-ms)
+                                    (> (:sequence %) (:sequence event 0))))
+                      (take-last max-causal-events)
+                      vec)]
+    {:deferred deferred
+     :pending (if event
+                (let [{:keys [boundary-beat confidence sequence]} event]
+                  (merge (choose-pattern policy [(:source-id stream) boundary-beat])
+                         {:mode :causal :scope scope :stream stream :ready? true
+                          :observation (select-keys event [:time-ms :boundary-beat :confidence :sequence])
+                          :section {:start-beat boundary-beat :boundary-confidence confidence}
+                          :delivery-id [scope stream sequence]}))
+                (when (and (= :causal (:mode pending)) (= stream (:stream pending)) (= scope (:scope pending)))
+                  pending))}))
 
 (defn advance
   "Return {:state :mode :forecast :events :unqualified}. Supply monotonic
@@ -147,7 +154,9 @@
 
   For fallback, pass :causal-stream {:source-id :session-id} and new raw
   :causal-events from that capture run. Admit fresh evidence that started
-  after fallback began. The accepted decision waits for the next configured
+  after fallback began. A capture callback may arrive after the owner chose
+  this tick's time. Hold its evidence until the owner reaches its timestamp.
+  The accepted decision waits for the next configured
   owner boundary while the capture and clock remain current. :override?
   suppresses output and discards pending work. Callers must admit returned
   intents through the shared show owner."
@@ -163,19 +172,19 @@
                    (finite? beat) (boolean? playing?)
                    (or (nil? boundaries) (and (set? boundaries) (every? #{:beat :bar :phrase} boundaries)))
                    (or (nil? stream) (every? id? ((juxt :source-id :session-id) stream)))
-                   (vector? causal-events) (<= (count causal-events) 256))
+                   (vector? causal-events) (<= (count causal-events) max-causal-events))
       (throw (ex-info "Section patterns require current owner time, transport and capture provenance" {})))
     (let [reference-now-ms (or reference-now-ms now-ms)
           projected (current-projection state reference-state reference-now-ms)
           reference-scope (when projected (select-keys projected [:provenance :occurrence]))
           state (cond-> state
-                  (not= scope (:scope state)) (dissoc :pending :last-boundary :fallback-beat)
+                  (not= scope (:scope state)) (dissoc :pending :deferred-causal :last-boundary :fallback-beat)
                   (or (not= show-epoch (:show-epoch state))
                       (and reference-scope (not= reference-scope (:reference-scope state))))
                   (dissoc :reference-through)
                   projected (assoc :reference-fence (reference-fence projected))
                   reference-scope (assoc :reference-scope reference-scope)
-                  (not= stream (:causal-stream state)) (dissoc :causal-through))
+                  (not= stream (:causal-stream state)) (dissoc :causal-through :deferred-causal))
           active? (and (:enabled? (:policy state)) playing? (not override?))
           locked? (and (= :locked (:status projected))
                        (= (:reference projected) (get-in state [:profile :reference])))
@@ -185,9 +194,10 @@
                   (filter #(and (= (:source-id stream) (get-in % [:source :id]))
                                 (counter? (:sequence %))
                                 (> (:sequence %) (get state :causal-through 0))) causal-events))
+          causal (when (= :causal mode) (causal-candidate state fresh stream now-ms transport scope))
           pending (case mode
                     :reference (reference-forecast state projected reference-now-ms scope)
-                    :causal (causal-candidate state fresh stream now-ms transport scope)
+                    :causal (:pending causal)
                     nil)
           boundary? (and (contains? boundaries (get-in state [:policy :on]))
                          (or (nil? (:last-boundary state)) (> beat (:last-boundary state))))
@@ -198,6 +208,8 @@
                              :policy-version (get-in state [:policy :version]))))
           state (cond-> (assoc state :now-ms now-ms :show-epoch show-epoch :scope scope :mode mode
                                     :causal-stream stream :pending (when-not event pending))
+                  (seq (:deferred causal)) (assoc :deferred-causal (:deferred causal))
+                  (empty? (:deferred causal)) (dissoc :deferred-causal)
                   (seq fresh) (assoc :causal-through (apply max (map :sequence fresh)))
                   boundary? (assoc :last-boundary beat)
                   (= :reference (:mode event)) (assoc :reference-through (get-in event [:section :start-position-ms])))]

@@ -162,6 +162,21 @@
         (doseq [result [replaced stopped overridden]]
           (is (empty? (:events result))))))))
 
+(deftest deferred-causal-evidence-remains-bound-to-current-capture-and-clock
+  (let [planner (patterns/new-planner nil policy)
+        started (step planner 6000 nil 12.0 #{:beat})
+        deferred (step (:state started) 6010 nil 12.02 #{}
+                       {:causal-events [(causal 1 12.0 6012)]})
+        at-boundary #(step (:state %) 6500 nil 13.0 #{:beat})
+        replaced (step (:state deferred) 6011 nil 12.022 #{}
+                       {:causal-stream (assoc stream :session-id "capture-2")})
+        overridden (step (:state deferred) 6011 nil 12.022 #{} {:override? true})
+        expired (step (:state deferred) 7000 nil 14.0 #{:beat})]
+    (is (empty? (:events deferred)))
+    (is (= [12.0] (mapv #(get-in % [:section :start-beat]) (:events (at-boundary deferred)))))
+    (doseq [result [(at-boundary replaced) (at-boundary overridden) expired]]
+      (is (empty? (:events result))))))
+
 (deftest a-local-recording-profile-drives-a-verified-reference-pattern
   (let [path (Files/createTempFile "tolglow-section-plan-" ".wav" (make-array FileAttribute 0))
         ^bytes bytes (pcm-test/pcm (pcm-test/section-pcm-values) false)

@@ -1010,10 +1010,10 @@
 
 (defn- section-capture-stream
   [connection {capture-state :state :keys [run-id timing-valid? closed? config]}]
-  (when (and run-id timing-valid? (not closed?) (#{:running :completed} capture-state)
-             (connections/restart-requested? connection :audio))
-    {:source-id (get-in config [:analyzer-options :source-id] :audio-input)
-     :session-id run-id}))
+  (let [source-id (get-in config [:analyzer-options :source-id] :audio-input)]
+    (when (and run-id timing-valid? (not closed?) (#{:running :completed} capture-state)
+               (not= "" source-id) (connections/restart-requested? connection :audio))
+      {:source-id source-id :session-id run-id})))
 
 (defn- advance-section-patterns [runtime before next-state reset?]
   (if-let [initial (:section-patterns runtime)]
