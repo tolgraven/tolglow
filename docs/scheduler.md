@@ -138,11 +138,12 @@ place of a top-level timing key.
   destination keeps the written value. A `:gesture/begin` writes nothing, so the
   owner first commits the ramp's current frame value: the gesture takes over
   from where the ramp is, and cancelling the gesture returns to that value. A
-  refused gesture leaves the ramp running. A gesture, trusted operator authority, or
-  a Studio, web, Push, X-Touch (including the Extender), Seaboard, MPE, MIDI,
-  OSC, sensor or REPL source records `:reason :human-override`. Other sources, such as agents, reactive actions and
-  macro or automation commands, record `:reason :superseded`. `:by` holds the
-  writer's op, command ID and source from the shared receipt history.
+  refused gesture leaves the ramp running. A gesture, trusted operator
+  authority, or a Studio, web, Push, X-Touch (including the Extender),
+  Seaboard, MPE, MIDI, OSC, sensor or REPL source records
+  `:reason :human-override`. Other sources, such as agents, reactive actions
+  and macro or automation commands, record `:reason :superseded`. `:by` holds
+  the writer's op, command ID and source from the shared receipt history.
 - **Cancel.** `:schedule/cancel` stops a running ramp and commits its current
   frame value through the shared reducer, with the ramp's source. The
   destination holds where the ramp left it and does not return to the start
