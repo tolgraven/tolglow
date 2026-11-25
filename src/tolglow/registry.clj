@@ -55,7 +55,7 @@
 
 (defn valid-value?
   "Test a parameter value against a normalized schema. Does not coerce types."
-  [{:keys [type bounds values size]} value]
+  [{:keys [type bounds values size] :as schema} value]
   (let [numeric? #(and (finite-number? %) (bounded? bounds %))]
     (case type
       :number (numeric? value)
@@ -64,9 +64,50 @@
       :enum (and (vector? values) (boolean (some #(= value %) values)))
       :color (and (vector? value) (= 3 (count value))
                   (every? #(and (numeric? %) (<= 0 % 1)) value))
+      :gradient (params/valid-value? schema value)
       :vector (and (vector? value) (= size (count value)) (every? numeric? value))
       :range (and (ordered-pair? value) (every? numeric? value))
       false)))
+
+(defn- linear-rgb? [value]
+  (and (vector? value) (= 3 (count value))
+       (every? #(and (finite-number? %) (<= 0 % 1)) value)))
+
+(defn- gradient-errors
+  "Name the authored stop and field that make a gradient value invalid."
+  [value path]
+  (cond
+    (not (vector? value)) [(error path "Gradient must be a vector of stops")]
+    (empty? value) [(error path "Gradient needs at least one stop")]
+    :else
+    (let [position-ok? #(and (finite-number? %) (<= 0 % 1))]
+      (vec
+       (concat
+        (mapcat (fn [index stop]
+                  (let [stop-path (conj path index)]
+                    (cond
+                      (not (and (map? stop) (= #{:position :color} (set (keys stop)))))
+                      [(error stop-path "Gradient stop must be a map with only :position and :color")]
+                      :else
+                      (concat
+                       (when-not (position-ok? (:position stop))
+                         [(error (conj stop-path :position) "Gradient stop position must be finite and within [0,1]")])
+                       (when-not (linear-rgb? (:color stop))
+                         [(error (conj stop-path :color) "Gradient stop color must be three linear RGB components within [0,1]")])))))
+                (range) value)
+        (keep (fn [[index [previous stop]]]
+                (let [a (when (map? previous) (:position previous))
+                      b (when (map? stop) (:position stop))]
+                  (when (and (position-ok? a) (position-ok? b) (<= b a))
+                    (error (conj path index :position)
+                           "Gradient stop positions must strictly increase; duplicate positions are not allowed"))))
+              (map vector (rest (range)) (partition 2 1 value))))))))
+
+(defn- value-errors
+  "Specific diagnostics for an invalid value, falling back to a generic message."
+  [schema value path message]
+  (or (seq (when (= :gradient (:type schema)) (gradient-errors value path)))
+      [(error path message)]))
 
 (defn validate-parameter
   "Return path/message errors for one schema. Path is optional for embedding."
@@ -78,7 +119,7 @@
            numeric-types #{:number :integer :color :vector :range}]
        (vec
         (concat
-         (when-not (#{:number :integer :boolean :enum :color :vector :range} type)
+         (when-not (#{:number :integer :boolean :enum :color :gradient :vector :range} type)
            [(error (conj path :type) "Unsupported parameter type")])
          (when-not (contains? schema :default)
            [(error (conj path :default) "Parameter needs an explicit default")])
@@ -93,7 +134,8 @@
            [(error (conj path :size) "Vector needs a positive integer size")])
          (when (and (contains? schema :default)
                     (not (valid-value? schema (:default schema))))
-           [(error (conj path :default) "Default does not satisfy the parameter type or bounds")])
+           (value-errors schema (:default schema) (conj path :default)
+                         "Default does not satisfy the parameter type or bounds"))
          (when (and (contains? schema :recommended)
                     (not (and (numeric-types type) (ordered-pair? recommended)
                               (every? #(bounded? bounds %) recommended))))
@@ -118,7 +160,8 @@
                      (not (contains? schemas k))
                      [(error [:params k] "Unknown parameter")]
                      (not (valid-value? (get schemas k) value))
-                     [(error [:params k] "Value does not satisfy the parameter type or bounds")]
+                     (value-errors (get schemas k) value [:params k]
+                                   "Value does not satisfy the parameter type or bounds")
                      :else [])) values))))
 
 (defn resolve-params

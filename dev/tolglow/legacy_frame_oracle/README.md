@@ -92,4 +92,4 @@ their quantization. The translated report lists each remaining change as
 | Componentwise HTP with RGBW extraction | 6 |
 | Total | 39 |
 
-This witness covers one fixture in one universe. The checked-in 36-input functional replay remains the separate witness for worker reordering and seeded running-instance state. Cross-universe legacy output, live schedulers, graceful fades, larger rigs and physical fixtures require their own captures.
+This witness covers one fixture in one universe. `tolglow.worker-publication-oracle-test` reruns this scenario with bounded workers and owned publication and requires the serial paired bytes; see [worker publication comparison](../../../docs/runtime-replay.md#worker-publication-comparison). The checked-in 36-input functional replay remains the separate witness for worker reordering and seeded running-instance state. Cross-universe legacy output, live schedulers, graceful fades, larger rigs and physical fixtures require their own captures.
