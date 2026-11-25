@@ -30,7 +30,7 @@
                                0 1/8 3/8 (Math/nextDown 0.5) 0.5 (Math/nextUp 0.5)
                                (Math/nextDown 1.0) 1 9/8 3 Double/MAX_VALUE]
                        step (fn [out phase]
-                              (let [result (sources/sample model {:beat (* period phase) :time-ms 0} (:plans out))
+                              (let [result (sources/sample model {:beat (* period phase) :time-ms 0} out)
                                     value (get-in result [:overrides "0:1" :level])]
                                 {:plans (:plans result)
                                  :observations (conj (:observations out)
@@ -51,7 +51,7 @@
   (let [model (bind-to (fixture/model) :level pulse)
         frame (fixture/frame 1/4)
         first-sample (sources/sample model frame {})
-        sample #(sources/sample %1 %2 (:plans first-sample))
+        sample #(sources/sample %1 %2 first-sample)
         plan #(first (vals (:plans %)))
         value #(get-in % [:overrides "0:1" :level])
         seek (assoc frame :beat 3/4)
@@ -98,7 +98,7 @@
                                [-1.0 -0.75 -0.25 0.0 0.25 0.75 1.0 1.25 1.75]))
         sample (fn [model]
                  (rest (reductions (fn [prior beat]
-                                     (sources/sample model {:time-ms 0 :beat beat} (:plans prior)))
+                                     (sources/sample model {:time-ms 0 :beat beat} prior))
                                    {} points)))
         actual (vec (sample bound))
         direct (with-redefs-fn {#'sources/triangle-cycle (constantly nil)} #(vec (sample bound)))
@@ -112,7 +112,7 @@
     (let [new-waveform (assoc (get-in (signals/new-registry) [:waveforms :triangle]) :version 2
                               :expression {:op :const :value 0.1})
           replaced (assoc bound :waveforms (signals/publish (signals/new-registry) new-waveform))
-          next (sources/sample replaced (fixture/frame 1/2) (:plans (first actual)))]
+          next (sources/sample replaced (fixture/frame 1/2) (first actual))]
       (is (= {nil 6} (captured next)))
       (is (zero? (get-in next [:overrides "0:1" :binary]))))))
 
@@ -198,14 +198,14 @@
         bound (bind-to model :level (assoc saw :waveform :custom))
         frame {:time-ms 0 :beat 0} first-sample (sources/sample bound frame {})
         updated (update bound :waveforms signals/publish (constant 2 0.6))
-        next-sample (sources/sample updated frame (:plans first-sample))
+        next-sample (sources/sample updated frame first-sample)
         incompatible (assoc-in updated [:instances "0:1" :definition :params :level] {:type :boolean :default true})
-        failed (sources/sample incompatible frame (:plans next-sample))]
+        failed (sources/sample incompatible frame next-sample)]
     (is (= 0.2 (get-in first-sample [:overrides "0:1" :level])))
     (is (= 0.6 (get-in next-sample [:overrides "0:1" :level])))
     (is (string? (get-in failed [:sources "0:1" :level :error])))
     (is (empty? (:overrides failed)))
-    (is (empty? (:plans (sources/sample (assoc updated :instances {}) frame (:plans next-sample)))))))
+    (is (empty? (:plans (sources/sample (assoc updated :instances {}) frame next-sample))))))
 
 (defn- live-model []
   (control/new-show
@@ -546,9 +546,9 @@
         first-output (sample model {})
         replace-saw (assoc (get-in library [:waveforms :saw]) :version 2 :expression {:op :const :value 0.7})
         second-library (signals/publish first-library replace-saw)
-        captured (sample (assoc model :waveforms second-library) (:plans first-output))
+        captured (sample (assoc model :waveforms second-library) first-output)
         updated (sample (assoc model :waveforms (signals/publish second-library (composite second-library 2)))
-                        (:plans captured))]
+                        captured)]
     (is (= 0.25 (get-in first-output [:overrides "0:1" :level])))
     (is (= (:overrides first-output) (:overrides captured)))
     (is (= 0.7 (get-in updated [:overrides "0:1" :level])))))
@@ -605,4 +605,133 @@
         (is (nil? (get-in params [:level :error])))
         (is (= 0.7 (get-in params [:level :effective-value])))
         (is (= [{:type :response :id :gate-envelope}] (get-in params [:level :sources]))))
+      (finally (show/stop! rt)))))
+
+(deftest layer-priority-is-a-typed-bounded-destination
+  (let [model (fixture/model)
+        priority (fn [binding] (sources/bind model {:instance-id "0:1" :param sources/priority-param :binding binding}))
+        lfo (assoc saw :from -2 :to 3)
+        bound (priority lfo)]
+    (is (= sources/priority-schema (get-in bound [:instances "0:1" :parameter-bindings :layer/priority :schema])))
+    (is (= {:type :integer :bounds [-1000 1000] :default 0 :category :priority
+            :unit :layer-priority :name "Layer priority"}
+           sources/priority-schema))
+    (is (params/valid-schema? sources/priority-schema))
+    (testing "endpoints are integer tiers within the bounds"
+      (doseq [binding [(assoc lfo :from 0.5) (assoc lfo :to 1001) (assoc lfo :from ##NaN)]]
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"endpoints" (priority binding)))))
+    (testing "hysteresis is validated and accepted only by the priority destination"
+      (is (priority (assoc lfo :hysteresis {:band 0 :dwell {:beats 1/2}})))
+      (doseq [hysteresis [{:band -1} {:band 9} {:dwell {:ms 50}} {:width 1} []]]
+        (is (thrown? clojure.lang.ExceptionInfo (priority (assoc lfo :hysteresis hysteresis))) (pr-str hysteresis)))
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Only a layer priority"
+            (bind-to model :level (assoc saw :hysteresis {:band 0})))))
+    (testing "unknown instances and compound layer members are rejected"
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown running instance"
+            (sources/bind model {:instance-id "missing" :param :layer/priority :binding lfo})))
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Compound layer"
+            (sources/bind (assoc-in model [:instances "0:1" :source :native-layer] {:id :layer})
+                          {:instance-id "0:1" :param :layer/priority :binding lfo}))))
+    (testing "a waveform moves to and from priority with the destination's own policy"
+      (let [moving (bind-to model :level saw)
+            source-id (get-in (sources/sample moving (fixture/frame 0) {}) [:sources "0:1" :level :identity])
+            moved (sources/bind moving {:instance-id "0:1" :from-param :level :param :layer/priority
+                                        :expected-source source-id :binding {:from -1 :to 1}})
+            back-identity (get-in (sources/sample moved (fixture/frame 0) {}) [:sources "0:1" :layer/priority :identity])
+            hysteretic (assoc-in moved [:instances "0:1" :parameter-bindings :layer/priority :binding :hysteresis] {:band 0})
+            back (sources/bind hysteretic {:instance-id "0:1" :from-param :layer/priority :param :level
+                                           :expected-source back-identity :binding {:from 0.0 :to 1.0}})]
+        (is (= #{:layer/priority} (set (keys (get-in moved [:instances "0:1" :parameter-bindings])))))
+        (is (= #{:level} (set (keys (get-in back [:instances "0:1" :parameter-bindings])))))
+        (is (not (contains? (get-in back [:instances "0:1" :parameter-bindings :level :binding]) :hysteresis)))))))
+
+(deftest quantized-priority-uses-a-band-and-musical-dwell
+  (let [bounds [-1000 1000]
+        run (fn [hysteresis samples]
+              (mapv :value (rest (reductions (fn [previous [raw beat]]
+                                               (sources/quantize-priority hysteresis {:beats-per-bar 4 :bars-per-phrase 4} bounds
+                                                                          previous raw beat))
+                                             nil samples))))]
+    (testing "a Schmitt band around each tier boundary"
+      (is (= [0 0 0 1 1 1 0 0 -1 -1 0]
+             (run {:band 1/4} (map vector [0.0 0.5 0.74 0.75 0.5 0.26 0.25 -0.74 -0.75 -0.26 -0.25] (range))))))
+    (testing "no band switches at each rounded boundary"
+      (is (= [0 1 0 1] (run {:band 0} (map vector [0.49 0.5 0.49 0.5] (range))))))
+    (testing "a large jump changes several tiers at once and clamps at the bounds"
+      (is (= [0 3 1000] (run {:band 1/4} [[0 0] [3.2 1] [2000 2]]))))
+    (testing "dwell is measured in beats since the last change; a seek back re-arms it"
+      (is (= [0 0 1 1 0 0 1] (run {:band 0 :dwell {:beats 1}}
+                                 [[0 0] [1 0.5] [1 1] [0 1.5] [0 2] [1 2.25] [1 0.25]]))))
+    (testing "bars use the captured meter"
+      (is (= [0 0 1 1 0] (run {:band 0 :dwell {:bars 1}} [[0 0] [1 3.9] [1 4] [0 7.9] [0 8]]))))))
+
+(deftest captured-artdmx-modulated-priority-swaps-two-layers-at-predicted-frames
+  (let [packet (volatile! nil)
+        sink {:send! (fn [universes _] (vreset! packet (vec (artnet/artdmx-packet 1 1 (get universes 1)))))}
+        rt (show/create-runtime {:model (live-model) :sink sink})
+        now (atom 0)
+        submit! (fn [op body] (let [ack (show/submit! rt op body)] (show/tick! rt @now) ack))
+        app (web/app {:submit! submit! :heartbeat! (constantly nil)})
+        post (fn [data]
+               (:status (app {:request-method :post :uri "/api/modulation/bind"
+                              :headers {"host" "localhost" "content-type" "application/transit+json"}
+                              :body (ByteArrayInputStream. (.getBytes (transit/encode data) "UTF-8"))})))
+        launch (fn [level] (:instance-id @(submit! :command {:op :cue/launch :cue-id :wash :launch {:params {:level level}}})))
+        ;; ArtDMX data starts after the 18-byte header; the left head's dimmer is channel 1.
+        dimmer (fn [] (bit-and 255 (nth @packet 18)))
+        capture (fn [low times]
+                  (mapv (fn [t]
+                          (reset! now t)
+                          (show/tick! rt t)
+                          (let [snapshot (show/snapshot rt)
+                                low-view (some #(when (= low (:id %)) %) (:instances snapshot))]
+                            {:t t :dimmer (dimmer)
+                             :priority (get-in low-view [:parameter-sources :layer/priority :effective-value])
+                             :committed (:active-instance-order snapshot)
+                             :effective (:effective-instance-order snapshot)}))
+                        times))
+        swaps (fn [frames] (keep (fn [[a b]] (when (not= (:dimmer a) (:dimmer b)) (:t b))) (partition 2 1 frames)))]
+    (try
+      (let [low (launch 0.2) high (launch 0.8)
+            bind (fn [binding] (post {:instance-id low :param :layer/priority :binding binding}))
+            ;; Triangle over four beats: tier -1, rising through 0 to 1, then back.
+            ;; The half-frame phase keeps every hysteresis threshold between frames.
+            sweep {:type :lfo :waveform :triangle :period {:beats 4} :phase-reference :transport
+                   :phase 1/160 :from -1 :to 1}]
+        (is (= 204 (dimmer)) "the later equal-priority launch is on top")
+        (is (= 200 (bind sweep)))
+        (let [frames (capture low (range 25 4001 25))
+              on-top? (fn [t] (some #(<= (first %) t (second %)) [[875 1350] [2875 3350]]))]
+          (testing "the low layer is on top exactly while its tier is above the other layer"
+            (is (= (mapv #(if (on-top? (:t %)) 51 204) frames) (mapv :dimmer frames)))
+            (is (= [875 1375 2875 3375] (swaps frames)))
+            (is (= #{-1 0 1} (set (map :priority frames))))
+            (is (every? #(= (if (on-top? (:t %)) 1 (:priority %)) (:priority %)) frames)))
+          (testing "a tier tie keeps launch order and the committed model never changes"
+            (is (every? #(= [low high] (:committed %)) frames))
+            (is (= (mapv #(if (on-top? (:t %)) [high low] [low high]) frames) (mapv :effective frames)))
+            (is (= {:priority 0} (select-keys (get-in @(:state rt) [:model :instances low])
+                                              [:priority :render-priority :render-order])))))
+        (let [flutter (assoc sweep :period {:beats 1/4} :phase 0 :from 0 :to 1)]
+          (testing "without a band a fast LFO near the boundary swaps on its crossings"
+            (reset! now 4000)
+            (is (= 200 (bind (assoc flutter :hysteresis {:band 0}))))
+            (is (= 32 (count (swaps (capture low (range 4025 6001 25)))))))
+          (testing "a minimum dwell of one beat bounds the swap rate"
+            (reset! now 6000)
+            (is (= 200 (bind (assoc flutter :hysteresis {:band 0 :dwell {:beats 1}}))))
+            (let [times (swaps (capture low (range 6025 8001 25)))]
+              (is (<= 3 (count times) 4) (pr-str times))
+              (is (every? #(>= % 500) (map - (rest times) times)) (pr-str times))))
+          (testing "a half-tier band leaves the boundary oscillation with no swaps"
+            (reset! now 8000)
+            (is (= 200 (bind (assoc flutter :hysteresis {:band 1/2}))))
+            (let [frames (capture low (range 8025 9001 25))]
+              (is (empty? (swaps frames)))
+              (is (every? #(= 204 (:dimmer %)) frames)))))
+        (testing "holding priority restores the committed order and unbinding removes the source"
+          (is (= 200 (:status (app {:request-method :post :uri "/api/modulation/hold"
+                                    :headers {"host" "localhost" "content-type" "application/transit+json"}
+                                    :body (ByteArrayInputStream. (.getBytes (transit/encode {:instance-id low :params [:layer/priority]}) "UTF-8"))}))))
+          (is (= [low high] (:effective-instance-order (show/snapshot rt))))))
       (finally (show/stop! rt)))))

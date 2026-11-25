@@ -1,7 +1,8 @@
 (ns tolglow.effects.parameter-sources
   "Musical waveform inputs attached to one running cue. Only declarations live
   on instances. Compiled waveform functions belong to the frame owner."
-  (:require [afterglow.control.params :as params]
+  (:require [afterglow.control.instance-order :as instance-order]
+            [afterglow.control.params :as params]
             [afterglow.control.system :as system]
             [afterglow.render.ir :as ir]
             [afterglow.time :as time]
@@ -25,9 +26,44 @@
 (defn- require! [condition message]
   (when-not condition (throw (ex-info message {:type ::invalid-binding}))))
 
+(def priority-param
+  "Reserved waveform destination for an instance's render layer priority. It is
+  not an effect parameter, so it never enters effect parameter overlays."
+  :layer/priority)
+
+(def priority-schema
+  "Typed destination for modulated layer priority: integer render tiers within
+  explicit bounds, in the priority category."
+  {:type :integer :bounds [-1000 1000] :default 0 :category :priority
+   :unit :layer-priority :name "Layer priority"})
+
+(def default-hysteresis
+  "A sampled priority must pass a tier boundary by a quarter tier before it
+  changes, so an oscillator resting on a boundary cannot swap layers per frame."
+  {:band 1/4})
+
+(defn- priority-schema? [schema] (= :priority (:category schema)))
+
+(defn destination-schema
+  "Return the typed schema for a waveform destination on one definition."
+  [definition param]
+  (if (= priority-param param) priority-schema (get-in definition [:params param])))
+
+(defn- checked-hysteresis [{:keys [band dwell] :as hysteresis}]
+  (require! (and (map? hysteresis) (every? #{:band :dwell} (keys hysteresis)))
+            "Priority hysteresis accepts :band and :dwell")
+  (require! (or (nil? band) (and (time/finite-number? band) (<= 0 band 8)))
+            "Priority hysteresis band must be between 0 and 8 tiers")
+  (require! (or (nil? dwell) (oscillator/musical-period? dwell))
+            "Priority dwell needs positive beats, bars or phrases")
+  hysteresis)
+
 (defn- checked-binding [schema waveform binding]
-  (require! (and (map? binding) (every? #{:type :waveform :period :phase :phase-reference :from :to :inputs} (keys binding))
+  (require! (and (map? binding) (every? #{:type :waveform :period :phase :phase-reference :from :to :inputs :hysteresis} (keys binding))
                  (= :lfo (:type binding))) "Expected a waveform parameter binding")
+  (require! (or (not (contains? binding :hysteresis)) (priority-schema? schema))
+            "Only a layer priority destination accepts hysteresis")
+  (when (contains? binding :hysteresis) (checked-hysteresis (:hysteresis binding)))
   (let [{:keys [period phase inputs from to] :as binding}
         (merge {:period {:beats 1} :phase 0.0 :inputs {}} binding)]
     (require! (and waveform (= (:id waveform) (:waveform binding))) "Unknown waveform")
@@ -50,7 +86,7 @@
         bindings (:parameter-bindings instance)
         moving? (contains? payload :from-param)
         definition (if moving? (modulation/owner-definition model instance) (:definition instance))
-        schema (get-in definition [:params param])
+        schema (destination-schema definition param)
         registry (waveforms model)
         binding (if moving?
                   (let [source (get bindings from-param)
@@ -63,10 +99,13 @@
                     (require! (not (contains? bindings param)) "A waveform is already bound to the destination parameter")
                     (require! (and (map? binding) (= #{:from :to} (set (keys binding))))
                               "Moving a waveform requires both destination endpoints")
-                    (merge (:binding source) binding))
+                    (cond-> (merge (:binding source) binding)
+                      (not (priority-schema? schema)) (dissoc :hysteresis)))
                   binding)
         waveform (get-in registry [:waveforms (:waveform binding)])]
-    (require! schema "Unknown running instance or parameter")
+    (require! (and instance schema) "Unknown running instance or parameter")
+    (require! (not (and (= priority-param param) (get-in instance [:source :native-layer])))
+              "Compound layer members share one priority. Set it with the layer priority command.")
     (assoc-in model [:instances instance-id :parameter-bindings]
               (assoc (cond-> bindings moving? (dissoc from-param)) param
                      {:binding (checked-binding schema waveform binding)
@@ -180,15 +219,52 @@
         :else {:evaluate evaluate}))
     (catch Exception error {:error (.getMessage error)})))
 
+(defn quantize-priority
+  "Choose one integer priority tier from a continuous sample with explicit
+  hysteresis. previous is {:value tier :since-beat beat} or nil. A new tier is
+  adopted only after the sample passes the held tier's boundary by :band tiers
+  and, with :dwell, after that musical interval has elapsed on the instance
+  clock since the last change. The result is a pure function of its inputs."
+  [{:keys [band dwell]} meter [lo hi] previous raw beat]
+  (let [target (long (max lo (min hi (Math/round (double raw)))))
+        held (:value previous)]
+    (if (or (nil? held) (= target held))
+      (or previous {:value target :since-beat beat})
+      (let [crossed? (>= (Math/abs (- (double raw) (double held))) (+ 0.5 (double (or band 0))))
+            since (:since-beat previous)
+            dwelled? (or (nil? dwell) (< beat since)
+                         (>= (- beat since) (time/duration->beats dwell meter)))]
+        (if (and crossed? dwelled?) {:value target :since-beat beat} previous)))))
+
+(def ^:private continuous-priority-schema (assoc priority-schema :type :number))
+
+(defn- sample-priority [instance transport-clock private-clock previous-priorities plan source result binding]
+  (let [id (:id instance)
+        elapsed (when (= :launch (:phase-reference binding :launch))
+                  (- (:beat private-clock) (or (:started-at-beat instance) 0.0)))
+        raw ((:evaluate plan) (oscillator/phase binding transport-clock elapsed (:timing-meter instance)))
+        _ (require! (params/valid-value? continuous-priority-schema raw) "Waveform produced an invalid layer priority")
+        prior (get previous-priorities id)
+        prior (when (= (:identity source) (:identity prior)) prior)
+        beat (or (:beat private-clock) 0.0)
+        held (quantize-priority (merge default-hysteresis (:hysteresis binding))
+                                (:timing-meter instance) (:bounds priority-schema) prior raw beat)
+        tier (:value held)]
+    (-> result
+        (assoc-in [:priorities id] (assoc held :identity (:identity source)))
+        (assoc-in [:priority-overrides id] tier)
+        (assoc-in [:sources id priority-param] (assoc source :priority tier :raw-priority raw)))))
+
 (defn- sample-one [model instance transport-clock private-clock previous result param {:keys [binding] :as entry}]
   (let [id (:id instance)
         definition (modulation/owner-definition model instance)
-        schema (get-in definition [:params param])
+        priority? (= priority-param param)
+        schema (if priority? continuous-priority-schema (destination-schema definition param))
         registry (waveforms model)
         waveform (get-in registry [:waveforms (:waveform binding)])
         cache-key [(:show-id model) (:epoch model) (:id definition) (:version definition)
                    waveform schema binding]
-        plan (or (get previous cache-key) (get-in result [:plans cache-key])
+        plan (or (get-in previous [:plans cache-key]) (get-in result [:plans cache-key])
                  (prepare registry waveform schema binding))
         hold (get-in model [:modulation :holds id param])
         held? (boolean (and hold (or (nil? (:until-beat hold))
@@ -200,7 +276,12 @@
     (if-let [error (:error plan)]
       (diagnostic result error)
       (let [result (assoc-in result [:sources id param] source)]
-        (if held? result
+        (cond
+          held? result
+          priority? (try (sample-priority instance transport-clock private-clock (:priorities previous)
+                                          plan source result binding)
+                         (catch Exception error (diagnostic result (.getMessage error))))
+          :else
           (try
             (let [elapsed (when (= :launch (:phase-reference binding :launch))
                             (- (:beat private-clock) (or (:started-at-beat instance) 0.0)))
@@ -210,15 +291,21 @@
               (assoc-in result [:overrides id param] value))
             (catch Exception error (diagnostic result (.getMessage error)))))))))
 
-(defn sample [model frame previous-plans]
+(defn sample
+  "Sample every bound waveform once for a frozen owner frame. previous is the
+  prior frame's result (or {}); its compiled :plans are reused and its
+  :priorities carry layer-priority hysteresis. :overrides holds effect parameter
+  values. :priority-overrides holds integer layer priorities for the engine's
+  frame-local ordering and never enters effect parameters."
+  [model frame previous]
   (let [transport-clock (time/frame-clock frame)]
     (reduce-kv (fn [result _ instance]
                  (if-let [bindings (not-empty (:parameter-bindings instance))]
                    (let [private-clock (system/private-clock instance transport-clock)]
-                     (reduce-kv (partial sample-one model instance transport-clock private-clock previous-plans)
+                     (reduce-kv (partial sample-one model instance transport-clock private-clock previous)
                                 result bindings))
                    result))
-               {:plans {} :sources {} :overrides {}} (:instances model))))
+               {:plans {} :sources {} :overrides {} :priorities {} :priority-overrides {}} (:instances model))))
 
 (defn- append [sources id param entry] (update-in sources [id param] (fnil conj []) entry))
 
@@ -280,6 +367,12 @@
               (reduce #(update %1 %2 (fnil conj []) source) m params)))
           fields responses))
 
+(defn- priority-reading [instance entries]
+  (let [base (instance-order/effective-priority instance)
+        driving (some #(when-not (or (:held? %) (:error %)) %) entries)]
+    {:base-value base :effective-value (if driving (:priority driving) base)
+     :schema priority-schema :sources entries}))
+
 (defn project [instance sources resolve-inputs responses?]
   (let [blocks (parameter-blocks instance)]
     (if (or (seq sources) responses? (seq blocks))
@@ -288,9 +381,11 @@
             fields (reduce (fn [m [param source]] (update m param (fnil conj []) source))
                            (add-responses sources (:response-values context)) blocks)]
         (into {} (for [[param entries] fields]
-                   (let [error (or (:error context) (some :error (filter #(= :response (:type %)) entries)))]
-                     [param (cond-> {:base-value (get-in instance [:params param])
-                                     :effective-value (when-not error (get-in context [:instance :params param]))
-                                     :sources entries}
-                              error (assoc :error error))]))))
+                   (if (= priority-param param)
+                     [param (priority-reading instance entries)]
+                     (let [error (or (:error context) (some :error (filter #(= :response (:type %)) entries)))]
+                       [param (cond-> {:base-value (get-in instance [:params param])
+                                       :effective-value (when-not error (get-in context [:instance :params param]))
+                                       :sources entries}
+                                error (assoc :error error))])))))
       {})))

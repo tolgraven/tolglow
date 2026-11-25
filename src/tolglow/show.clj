@@ -194,6 +194,10 @@
             :cues (vec (sort-by (comp str :id) (vals (get-in model [:registry :cues]))))
             :groups (categories/group-view model)
             :active-instance-order (mapv :id (instance-order/ordered model))
+            :effective-instance-order (mapv :id (instance-order/ordered-with-priorities
+                                                 model (:priority-overrides parameter-samples)))
+            :layer-priority-destination {:param parameter-sources/priority-param
+                                         :schema parameter-sources/priority-schema}
             :instances (mapv #(-> % (dissoc :state :parameter-bindings)
                                   (assoc :definition (get definitions [(:definition %) (:targets %)])
                                          :parameter-sources (parameter-sources/project % (get sources (:id %)) resolve-inputs responses?)
@@ -1706,7 +1710,7 @@
                                      (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms routing/admit-sync)
                                      (routing/advance time-ms command))
                            parameter-samples (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)}
-                                                                      (get-in before [:parameter-samples :plans]))
+                                                                      (:parameter-samples before))
                            control-view (if (seq (:overrides parameter-samples))
                                           (update (:modulation-view before) :overrides
                                                   #(merge-with merge % (:overrides parameter-samples)))
@@ -1772,6 +1776,10 @@
                                            group-levels)
                            frame-input (cond-> frame-input
                                          variables (assoc :resolved-variables variable-inputs)
+                                         ;; Modulated layer priority is resolved once here and
+                                         ;; orders only this frame; the model keeps its own tiers.
+                                         (seq (:priority-overrides parameter-samples))
+                                         (assoc ::engine/priority-overrides (:priority-overrides parameter-samples))
                                          response-frame (assoc ::waveforms/response-frame response-frame)
                                          engine-levels (assoc ::engine/opacity-factors engine-levels))
                            response (response-middleware! runtime (:responses model []))

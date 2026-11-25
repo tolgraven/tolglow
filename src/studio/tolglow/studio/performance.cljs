@@ -544,6 +544,19 @@
 (defn- instance-title [cue instance]
   (or (:name cue) (:name instance) (widgets/label (:cue-id instance))))
 
+(defn- layer-priority-source
+  "Attach or edit the waveform that drives this launch's layer priority."
+  [instance {:keys [param schema]}]
+  (let [reading (sources/reading instance param)
+        title (:name schema "Layer priority")]
+    [:div.param-row.layer-priority-source {:data-param (events/wire-id param)}
+     [:label title]
+     [:span.live-effect-phase
+      (pr-str (if (sources/driven? instance param)
+                (:effective-value reading)
+                (render-priority instance)))]
+     [sources/trigger (:id instance) param title reading]]))
+
 (defn- layer-priority-form [capture source instance title draft]
   (let [value (or draft (pr-str (render-priority instance)))]
     [:form.live-priority-form
@@ -568,6 +581,7 @@
         paused? (get-in instance [:system :paused?])
         {:keys [state key target instances]} @(rf/subscribe [:performance/instance id])
         editing @(rf/subscribe [::sources/selection id])
+        priority (sources/priority-destination show)
         scope (resolve-monitor (driven-controls instance controls) (get-in state [:monitor id]) monitor)]
     [:article.live-effect-card {:data-live-instance id :aria-label (str title " · " id)
                                 :data-reorder-source (= id source-id)
@@ -600,9 +614,12 @@
        [:div.live-effect-body
         [parameter-bank show instance controls (not expanded?) parameter-control]
         (when (and (not expanded?) (:selected scope)) [strip-monitor instance scope])])
-     (when-let [schema (get-in definition [:params editing])]
+     (when-let [schema (sources/destination-schema {:definition definition} priority editing)]
        (let [group (some #(when (some (fn [[p _]] (= p editing)) (:components %)) (:components %)) controls)]
          ^{:key [id (or (ffirst group) editing)]} [sources/editor instance editing schema group]))
+     (when (and priority (= "running" (name (:phase instance)))
+                (or expanded? (sources/bound? instance (:param priority))))
+       [layer-priority-source instance priority])
      [instance-controls instance {:compact? true}]
      (when expanded?
        [:div.live-effect-advanced
