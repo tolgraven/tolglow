@@ -207,6 +207,54 @@
         (is (= :closed (:state (terminal/read-output terminal id 0))))
         (is (not (.exists started)))))))
 
+(defn- open-with-start-fixture
+  "Run open! against an injected Docker CLI whose `start` behaviour is supplied
+  as Python lines. Returns the open result or the thrown error, plus files."
+  [workspace-id start-lines options]
+  (fixtures/with-workspace {}
+    (fn [{:keys [manager root]}]
+      (workspace/create! manager {:id workspace-id})
+      (let [script (.toFile (.resolve ^Path root "docker-start-fixture"))
+            removed (.toFile (.resolve ^Path root "removed"))
+            _ (spit script (str "#!/usr/bin/python3\nimport pathlib,sys,time\np=pathlib.Path(__file__).parent\na=sys.argv[1:]\n"
+                                "if a[:2]==['image','inspect'] or a[0]=='create': print('fixture')\n"
+                                "elif a[0]=='start':\n" start-lines
+                                "elif a[0]=='inspect': print('false')\n"
+                                "elif a[0]=='rm': (p/'removed').touch()\n"
+                                "else: sys.exit(2)\n"))
+            _ (.setExecutable script true)
+            terminal (terminal/create-manager (merge {:resolve-workspace #(workspace/runtime-paths manager %)
+                                                      :docker (str script)} options))]
+        (try
+          (let [outcome (try (terminal/open! terminal {:workspace-id workspace-id}) (catch Throwable error error))]
+            {:outcome outcome :removed? (.exists removed) :status (terminal/status terminal)})
+          (finally (terminal/close! terminal)))))))
+
+(deftest docker-start-failure-surfaces-docker-output-and-removes-the-container
+  (let [{:keys [outcome removed? status]}
+        (open-with-start-fixture "start-fails"
+                                 " sys.stderr.write('Error response from daemon: fixture mount denied\\n'); sys.exit(1)\n" {})
+        session (first (:sessions status))]
+    (is (instance? clojure.lang.ExceptionInfo outcome))
+    (is (= :start-failed (:terminal/error (ex-data outcome))))
+    (is (re-find #"fixture mount denied" (str (:output (ex-data outcome)))) (str (ex-data outcome)))
+    (is (= 1 (:exit-code (ex-data outcome))))
+    (is (= :exited (:state session)))
+    (is (= (.getMessage ^Exception outcome) (:error session)))
+    (is removed?)
+    (is (empty? (:pending-containers status)))))
+
+(deftest docker-start-timeout-fails-the-open-and-removes-the-container
+  (let [started (System/nanoTime)
+        {:keys [outcome removed? status]}
+        (open-with-start-fixture "start-hangs"
+                                 " while not (p/'removed').exists(): time.sleep(.01)\n" {:start-timeout-ms 300})]
+    (is (= :start-timeout (:terminal/error (ex-data outcome))) (str outcome))
+    (is (< (- (System/nanoTime) started) (* 5 1000 1000 1000)) "The bounded wait does not wait for Docker indefinitely")
+    (is (= :exited (:state (first (:sessions status)))))
+    (is removed?)
+    (is (empty? (:pending-containers status)))))
+
 (deftest terminal-output-leases-isolate-the-owned-repository-and-publish-bounded-byte-pages
   (let [bytes (.getBytes (apply str (repeat 70000 "x")) java.nio.charset.StandardCharsets/UTF_8)
         base {:chunks [] :state :running :first-cursor 0 :cursor 0 :workspace-id "lighting" :repo :tolglow}
