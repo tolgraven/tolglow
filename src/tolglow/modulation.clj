@@ -2,11 +2,13 @@
   "Pure musical parameter modulation. One owner advances explicit controller
   RNG/schedules; immutable overlays are then shared by independent effect workers.
   Canonical instance parameters, IO and wall clocks are never changed here."
-  (:require [afterglow.time :as time]
+  (:require [afterglow.control.instance-order :as instance-order]
             [afterglow.control.params :as params]
+            [afterglow.time :as time]
             [tolglow.registry :as registry]
             [tolglow.automation.random :as random]
-            [tolglow.composition.tween :as tween]))
+            [tolglow.composition.tween :as tween])
+  (:import [java.util Comparator]))
 
 (def ^:private numeric-types #{:number :integer :color :vector :range})
 
@@ -276,7 +278,7 @@
   this frame's beat. First activation uses the owner's captured beat and meter."
   [state model frame]
   (let [state (bind-epoch state model) clock (clock model frame)
-        owners (->> (:instances model) vals (sort-by (juxt :priority :order :id))
+        owners (->> (:instances model) vals (sort instance-order/authored-instance-comparator)
                     (keep (fn [instance]
                             (let [definition (owner-definition model instance)
                                   instance (prepared-owner instance definition clock)]
@@ -357,6 +359,13 @@
     (constrain schema (tween/interpolate from to fraction))
     (if (< fraction 0.5) from to)))
 
+(def ^:private controller-comparator
+  (reify Comparator
+    (compare [_ left right]
+      (let [priority (instance-order/compare-priority (:priority (:config left))
+                                                      (:priority (:config right)))]
+        (if (zero? priority) (compare (:order left) (:order right)) priority)))))
+
 (defn source-index [model diagnostics]
   (let [errors (into {} (for [{:keys [controller-id instance-id param message]} diagnostics
                               :when message] [[controller-id instance-id param] message]))]
@@ -370,7 +379,7 @@
                                        (not (or held? cell)) (assoc :pending? true)
                                        error (assoc :error error)))))
                       result (targets model controller)))
-            {} (sort-by (juxt #(get-in % [:config :priority]) :order) (get-in model [:modulation :controllers])))))
+            {} (sort controller-comparator (get-in model [:modulation :controllers])))))
 
 (defn- sample-cell [schema cell beat]
   (if (and (= :glide (:mode cell)) (numeric-types (:type schema)))
@@ -442,7 +451,7 @@
               (let [selected (targets model controller)
                     cells (eligible-values (:values controller) selected holds last-beat)]
                 (merge-with merge result (cell-overrides cells selected last-beat))))
-            {} (sort-by (juxt #(get-in % [:config :priority]) :order) controllers))))
+            {} (sort controller-comparator controllers))))
 
 (defn- advance-controller [controller model holds beat]
   (let [targets (targets model controller)
@@ -477,7 +486,7 @@
   (let [previous state state (reconcile-cues state model frame) clock (clock model frame) beat (:beat clock)
         _ (when (and (:last-beat state) (< beat (:last-beat state)))
             (fail! ::stale-beat "Modulation beat cannot move backwards within an epoch" {}))
-        ordered (sort-by (juxt #(get-in % [:config :priority]) :order) (:controllers state))
+        ordered (sort controller-comparator (:controllers state))
         results (mapv #(advance-controller % model (:holds state) beat) ordered)
         by-id (into {} (map (juxt (comp :id :controller) :controller)) results)
         holds (into {} (keep (fn [[id parameters]]
