@@ -43,8 +43,8 @@
 
 (defn- show-state [context {:keys [load-file save-file restore actions]}]
   (let [runtime (need-show context)]
-    (when-not (contains? #{nil :recovery :named} restore)
-      (throw (ex-info "Show startup checkpoint must be :recovery or :named" {:restore restore})))
+    (when-not (contains? #{nil :recovery :named :prior} restore)
+      (throw (ex-info "Show startup checkpoint must be :recovery, :named, or :prior" {:restore restore})))
     (when load-file (accepted! (show/load-show! runtime load-file)))
     (when (and restore (contains? (:available (show/recovery-status runtime)) restore))
       (accepted! (show/load-latest-show! runtime restore)))

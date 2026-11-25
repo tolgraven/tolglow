@@ -1776,7 +1776,7 @@
                                  :source (persistence/write-string model output)))))
 
 (defn- publish-checkpoint! [runtime captured replace!]
-  ;; The prepared file is closed and forced. Only the same-directory rename
+  ;; Prepared files are closed and forced. Only the final same-directory moves
   ;; must be ordered with a change of show ownership or shutdown.
   (locking (:lock runtime)
     (when (and @(:running runtime)
@@ -1792,7 +1792,7 @@
           checkpoints (into {} (keep (fn [kind]
                                        (when-let [file (recovery/latest-file owner show-id kind)]
                                          [kind {:modified-at-ms (.lastModified file)}])))
-                            [:recovery :named])]
+                            [:recovery :named :prior])]
       (cond-> (assoc status :show-id show-id :checkpoints checkpoints :available (set (keys checkpoints)))
         (not= show-id (get-in status [:last-saved :show-id])) (dissoc :last-saved)))))
 
@@ -1807,7 +1807,7 @@
       (recovery/remember-manual! owner show-id saved))
     saved))
 
-(defn- load-checkpoint! [runtime path identity]
+(defn- read-checkpoint-source [path]
   (with-open [reader (io/reader (io/file path) :encoding "UTF-8")]
     (let [buffer (char-array 8192) source (StringBuilder.)]
       (loop []
@@ -1817,22 +1817,34 @@
               (throw (ex-info "Show file exceeds the document character limit" {})))
             (.append source buffer 0 n)
             (recur))))
-      (submit! runtime :import (assoc identity :source (str source))))))
+      (str source))))
 
 (defn load-show!
   "Read a bounded full show file and enqueue its atomic restore; returns a receipt."
   [runtime path]
-  (load-checkpoint! runtime path {}))
+  (submit! runtime :import {:source (read-checkpoint-source path)}))
 
 (defn load-latest-show!
-  "Load the active show's latest :recovery or :named checkpoint."
+  "Load the active show's latest :recovery, :named, or prior-session checkpoint."
   [runtime kind]
   (let [{:keys [show-id epoch]} (:model @(:state runtime))
         owner (some-> (:recovery runtime) deref)
-        path (when owner (recovery/latest-file owner show-id kind))]
-    (when-not path (throw (ex-info "Show checkpoint is unavailable" {:kind kind :show-id show-id})))
-    (load-checkpoint! runtime path {:runtime-id (:id runtime) :expected-epoch epoch
-                                    :expected-source-show-id show-id})))
+        source (when owner
+                 (if (= :prior kind)
+                   (recovery/read-prior owner show-id read-checkpoint-source)
+                   (some-> (recovery/latest-file owner show-id kind) read-checkpoint-source)))]
+    (when-not source (throw (ex-info "Show checkpoint is unavailable" {:kind kind :show-id show-id})))
+    (submit! runtime :import {:runtime-id (:id runtime) :expected-epoch epoch
+                              :expected-source-show-id show-id :source source})))
+
+(defn discard-prior-recovery!
+  "Dismiss the active show's prior-session checkpoint. Working and named saves
+  keep their files. Returns true when the dismissal was published."
+  [runtime]
+  (let [captured (show-identity (:model @(:state runtime)))]
+    (boolean
+      (when-let [owner (some-> (:recovery runtime) deref)]
+        (recovery/discard-prior! owner (:show-id captured) (partial publish-checkpoint! runtime captured))))))
 
 (defn activate-recovery!
   "Admit background checkpoints once the configured startup has settled."

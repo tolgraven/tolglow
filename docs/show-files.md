@@ -252,9 +252,11 @@ rules remain part of schema 2. Transit supplies the representation of its values
 
 ## Working recovery and manual checkpoints
 
-A scheduled show captures the last committed model and output every ten seconds. A background worker serializes and forces the prepared file outside the frame owner. The final local rename is ordered with show replacement and shutdown. When a write runs long, the worker waits until it finishes before starting the next interval. Shutdown keeps the last completed checkpoint. Named saves keep their own files and are bookmarked after a successful `save-show!`.
+A scheduled show captures the last committed model and output every ten seconds. A background worker serializes and forces the prepared file outside the frame owner. The final local moves are ordered with show replacement and shutdown. When a write runs long, the worker waits until it finishes before starting the next interval. Shutdown keeps the last completed checkpoint. Named saves keep their own files and are bookmarked after a successful `save-show!`.
 
-For a preview show, the same runtime can restore either file through the show owner's normal import operation.
+On reopening, `:prior` offers the previous session's working state. The first new autosave preserves it in one separate slot per show ID. Further autosaves replace `:recovery`, and repeated restarts retain the unresolved `:prior` checkpoint. Restoring it leaves the slot available. Explicitly discarding it leaves `:recovery` and `:named` available and also survives a restart before the next autosave.
+
+The show owner's import operation handles every restore. A default start discovers the prior checkpoint, runs the configured show, and leaves existing physical output startup rules in effect. A restore requires an explicit command or startup configuration and uses the existing show import and output safety rules.
 
 ```clojure
 (require '[tolglow.show :as show])
@@ -263,8 +265,10 @@ For a preview show, the same runtime can restore either file through the show ow
 (show/save-show! runtime "night-studies.transit")
 @(show/load-latest-show! runtime :recovery)
 @(show/load-latest-show! runtime :named)
+@(show/load-latest-show! runtime :prior)
+(show/discard-prior-recovery! runtime)
 ```
 
 Configure the interval or storage directory under `:show`, for example `{:recovery {:interval-ms 10000 :directory "/path/to/recovery"}}`. The default is `~/Library/Application Support/Tolglow/Recovery` on macOS and `${XDG_STATE_HOME:-~/.local/state}/tolglow/recovery` elsewhere. Give independent installations that use the same show IDs different directories. `:recovery false` disables background writes. Named bookmarks remain accessible.
 
-To resume a checkpoint at configured startup, enable `:show-state` and set `:restore` to `:recovery` or `:named`. An existing `:load-file` is loaded first, so it can establish the show ID. If that show has no checkpoint of the requested kind, startup proceeds with the configured state. A corrupt checkpoint produces a restore error. [Recovery issue](https://github.com/tolgraven/tolglow/issues/551)
+To resume a checkpoint at configured startup, enable `:show-state` and set `:restore` to `:recovery`, `:named`, or `:prior`. An existing `:load-file` is loaded first, so it can establish the show ID. If that show has no checkpoint of the requested kind, startup proceeds with the configured state. A corrupt checkpoint produces a restore error. [Recovery issue](https://github.com/tolgraven/tolglow/issues/551)

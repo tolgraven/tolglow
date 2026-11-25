@@ -94,7 +94,7 @@
               reopened (app/start! (assoc-in config [:show-state :restore] :recovery))]
           (try
             (is (nil? (:executor @(:recovery reopened))))
-            (is (= #{:recovery :named} (:available (show/recovery-status reopened))))
+            (is (= #{:recovery :named :prior} (:available (show/recovery-status reopened))))
             (is (= 0.4 (:master (show/snapshot reopened))))
             (let [working (recovery/latest-file @(:recovery reopened) :main :recovery)
                   different (show/create-runtime {:workspace-options nil :model (assoc (demo/model) :show-id :other)})]
@@ -128,6 +128,125 @@
             (is (= 0.3 (:master (show/snapshot reopened))))
             (is (await-result #(:last-saved (show/recovery-status reopened))))
             (finally (app/stop! reopened))))))))
+
+(defn- checkpoint-master [runtime kind]
+  (some-> (recovery/latest-file @(:recovery runtime) (:show-id (show/snapshot runtime)) kind)
+          slurp persistence/read-string :model :master))
+
+(defn- set-master! [runtime value]
+  (is (= :accepted (:status (deref (show/submit! runtime {:op :master/set :value value}) 5000 {})))))
+
+(deftest unresolved-prior-survives-new-autosaves-and-another-restart
+  (with-directory
+    (fn [directory]
+      (let [options {:workspace-options nil :recovery {:directory directory :interval-ms 25}}
+            config {:init {:components [:show] :modules [:inspect :show-state]}
+                    :show options :inspect true :show-state {}}
+            named (io/file directory "named.transit")
+            before-autosave (atom [])
+            before-modified (atom [])
+            registry (assoc app/registry :inspect
+                            (fn [context _]
+                              (let [runtime (get-in context [:modules :show])]
+                                (swap! before-autosave conj (mapv #(checkpoint-master runtime %) [:prior :recovery]))
+                                (swap! before-modified conj (get-in (show/recovery-status runtime) [:checkpoints :prior :modified-at-ms])))
+                              {:value :ready}))]
+        (let [first-show (show/start! options (constantly nil))]
+          (try
+            (set-master! first-show 0.5)
+            (show/save-show! first-show named)
+            (set-master! first-show 0.3)
+            (is (await-result #(= 0.3 (checkpoint-master first-show :recovery))))
+            (is (nil? (checkpoint-master first-show :prior)))
+            (finally (show/stop! first-show))))
+        (let [second-show (app/start! config registry)]
+          (try
+            (is (= [[0.3 0.3]] @before-autosave))
+            (is (= 1.0 (:master (show/snapshot second-show))))
+            (is (await-result #(= 1.0 (checkpoint-master second-show :recovery))))
+            (is (= 0.3 (checkpoint-master second-show :prior)))
+            (is (= (first @before-modified) (get-in (show/recovery-status second-show) [:checkpoints :prior :modified-at-ms])))
+            (is (= 0.5 (checkpoint-master second-show :named)))
+            (let [owner @(:recovery second-show) prior (recovery/latest-file owner :main :prior)]
+              (is (thrown-with-msg? clojure.lang.ExceptionInfo #"reserved for show recovery"
+                                    (show/save-show! second-show prior))))
+            (set-master! second-show 0.6)
+            (is (await-result #(= 0.6 (checkpoint-master second-show :recovery))))
+            (finally (app/stop! second-show))))
+        (let [other (show/start! (assoc options :model (assoc (demo/model) :show-id :other)) (constantly nil))]
+          (try
+            (set-master! other 0.8)
+            (is (await-result #(= 0.8 (checkpoint-master other :recovery))))
+            (is (= #{:recovery} (:available (show/recovery-status other))))
+            (is (false? (show/discard-prior-recovery! other)))
+            (finally (show/stop! other))))
+        (let [third-show (app/start! (assoc-in config [:show-state :restore] :prior) registry)]
+          (try
+            (is (= [[0.3 0.3] [0.3 0.6]] @before-autosave))
+            (is (= 0.3 (:master (show/snapshot third-show))))
+            (is (= 0.3 (checkpoint-master third-show :prior)))
+            (is (true? (show/discard-prior-recovery! third-show)))
+            (is (false? (show/discard-prior-recovery! third-show)))
+            (is (nil? (checkpoint-master third-show :prior)))
+            (is (= 0.5 (checkpoint-master third-show :named)))
+            (is (await-result #(= 0.3 (checkpoint-master third-show :recovery))))
+            (finally (app/stop! third-show))))))))
+
+(deftest discard-before-the-first-write-survives-restart-and-allows-a-new-candidate
+  (with-directory
+    (fn [directory]
+      (let [options {:workspace-options nil :recovery {:directory directory :interval-ms 25}}
+            inspect (assoc-in options [:recovery :enabled?] false)]
+        (let [runtime (show/start! options (constantly nil))]
+          (try
+            (set-master! runtime 0.3)
+            (is (await-result #(= 0.3 (checkpoint-master runtime :recovery))))
+            (finally (show/stop! runtime))))
+        (let [runtime (show/start! inspect (constantly nil))]
+          (try
+            (is (= 0.3 (checkpoint-master runtime :prior)))
+            (is (true? (show/discard-prior-recovery! runtime)))
+            (is (nil? (checkpoint-master runtime :prior)))
+            (is (= 0.3 (checkpoint-master runtime :recovery)))
+            (finally (show/stop! runtime))))
+        (let [runtime (show/start! (assoc options :defer-recovery? true) (constantly nil))]
+          (try
+            (is (nil? (checkpoint-master runtime :prior)))
+            (is (= :accepted (:status (deref (show/load-latest-show! runtime :recovery) 5000 {}))))
+            (is (= 0.3 (:master (show/snapshot runtime))))
+            (set-master! runtime 0.7)
+            (show/activate-recovery! runtime)
+            (is (await-result #(= 0.7 (checkpoint-master runtime :recovery))))
+            (is (nil? (checkpoint-master runtime :prior)))
+            (finally (show/stop! runtime))))
+        (let [runtime (show/start! inspect (constantly nil))]
+          (try
+            (is (= 0.7 (checkpoint-master runtime :prior)))
+            (finally (show/stop! runtime))))))))
+
+(deftest prior-restore-read-survives-the-first-working-file-replacement
+  (with-directory
+    (fn [directory]
+      (let [options (recovery/options {:directory directory :interval-ms 20})
+            commit! (fn [_ replace!] (replace!))
+            before (recovery/start! options true (constantly {:show-id :test :source "previous"}) commit!)]
+        (try
+          (is (await-result #(:last-saved (recovery/status before))))
+          (finally (recovery/close! before)))
+        (let [after (recovery/start! options false (constantly {:show-id :test :source "working"}) commit!)
+              reads (atom [])]
+          (try
+            (is (= "previous"
+                   (recovery/read-prior after :test
+                     (fn [file]
+                       (swap! reads conj (.getName file))
+                       (when (= 1 (count @reads))
+                         (recovery/activate! after)
+                         (is (await-result #(:last-saved (recovery/status after)))))
+                       (slurp file)))))
+            (is (= ["recovery.transit" "prior.checkpoint"] @reads))
+            (is (= "working" (slurp (recovery/latest-file after :test :recovery))))
+            (finally (recovery/close! after))))))))
 
 (deftest restoring-a-named-checkpoint-retires-a-staged-recovery-write
   (with-directory
