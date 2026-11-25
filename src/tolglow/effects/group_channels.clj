@@ -104,18 +104,46 @@
     (some (fn [[index group]] (when (= id (:id group)) [:overlays kind index]))
           (map-indexed vector (get overlays kind)))))
 
+(defn- resolve-text-id [id exact? recorded]
+  (if (and (string? id) (seq id))
+    (let [key-id (keyword id)]
+      (cond
+        (or (= recorded id) (= recorded key-id)) recorded
+        (exact? id) id
+        :else key-id))
+    id))
+
+(defn- resolve-text-pages [config pages previous]
+  (let [path [:overlays :cue-pages]
+        groups (get-in config path)
+        previous-groups (get-in previous path)
+        exact? #(contains? pages %)]
+    (if (vector? groups)
+      (assoc-in config path
+                (mapv (fn [group-index {:keys [page-ids] :as group}]
+                        (if (vector? page-ids)
+                          (let [recorded (get-in previous-groups [group-index :page-ids])]
+                            (assoc group :page-ids
+                                   (mapv (fn [page-index id] (resolve-text-id id exact? (get recorded page-index)))
+                                         (range) page-ids)))
+                          group))
+                      (range) groups))
+      config)))
+
 (defn resolve-text-address
-  "Resolve an untyped JSON group ID using the owner model. A receipt retains
-  the original typed address if the same spelling is retried after a reconfigure."
+  "Resolve untyped JSON group and cue page IDs using the owner model. A receipt
+  retains the typed IDs when the same spelling is retried after a change."
   [{:keys [op channel-id group-id] :as command} model previous]
   (let [previous (when (= op (:op previous)) previous)
-        resolve-id (fn [kind text recorded]
-                     (let [key-id (keyword text)]
-                       (cond
-                         (or (= recorded text) (= recorded key-id)) recorded
-                         (group-path (configuration model) [kind text]) text
-                         :else key-id)))]
+        resolve-id (fn [kind id recorded]
+                     (resolve-text-id id #(group-path (configuration model) [kind %]) recorded))]
     (case op
+      :effect-groups/configure
+      (reduce (fn [payload field]
+                (cond-> payload
+                  (contains? payload field) (update field resolve-text-pages (:pages model) (get previous field))))
+              command [:config :config-patch])
+
       :effect-groups/level-set
       (if (and (vector? channel-id) (= 2 (count channel-id))
                (string? (second channel-id)) (seq (second channel-id)))

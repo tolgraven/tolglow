@@ -111,7 +111,7 @@
   (case uri
     "/api/command"
     (case (:op data)
-      :effect-groups/configure (cond-> data
+      :effect-groups/configure (cond-> (vary-meta data assoc ::group-channels/text-addresses? true)
                                  (contains? data :config) (update :config normalize-active-overlay)
                                  (contains? data :config-patch) (update :config-patch normalize-active-overlay))
       :effect-groups/overlay-set (cond-> data (string? (:overlay data)) (update :overlay keyword))
@@ -121,7 +121,11 @@
       data)
 
     "/api/settings"
-    (cond-> data (= :effect-group-channels (:scope data)) (update :values normalize-active-overlay))
+    (if (= :effect-group-channels (:scope data))
+      (-> data
+          (vary-meta assoc ::group-channels/text-addresses? true)
+          (update :values normalize-active-overlay))
+      data)
 
     data))
 

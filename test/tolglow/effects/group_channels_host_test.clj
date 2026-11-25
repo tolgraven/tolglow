@@ -96,20 +96,23 @@
           (is (= (if (= :restart policy) 40 10) (:started-at-ms (instance)))))
         (finally (show/stop! runtime))))))
 
-(deftest studio-json-commands-address-committed-groups
-  (let [runtime (show/create-runtime {:model (model) :workspace-options nil})
-        time (atom 0)
-        app (web/app {:heartbeat! (constantly nil)
+(defn- studio-post [runtime time]
+  (let [app (web/app {:heartbeat! (constantly nil)
                       :submit! (fn [operation payload]
                                  (let [receipt (show/submit! runtime operation payload)]
                                    (show/tick! runtime (swap! time inc))
-                                   receipt))})
-        post! (fn [uri media encode payload]
-                (let [response (app {:request-method :post :uri uri
-                                     :headers {"host" "localhost" "accept" "application/transit+json"
-                                               "content-type" media}
-                                     :body (StringReader. (encode payload))})]
-                  [(:status response) (transit/decode (:body response))]))
+                                   receipt))})]
+    (fn [uri media encode payload]
+      (let [response (app {:request-method :post :uri uri
+                           :headers {"host" "localhost" "accept" "application/transit+json"
+                                     "content-type" media}
+                           :body (StringReader. (encode payload))})]
+        [(:status response) (transit/decode (:body response))]))))
+
+(deftest studio-json-commands-address-committed-groups
+  (let [runtime (show/create-runtime {:model (model) :workspace-options nil})
+        time (atom 0)
+        post! (studio-post runtime time)
         command! #(post! "/api/command" "application/json" json/write-str %)
         typed! #(post! "/api/command" "application/transit+json" transit/encode %)]
     (try
@@ -150,6 +153,43 @@
           (is (= :unknown-group (get-in (typed! (level [:manual :looks/mix] 0.75)) [1 :code])))
           (is (= :invalid-value (get-in (typed! (level ["manual" "looks/mix"] 0.75)) [1 :code])))
           (is (= 0.65 (get-in (show/effect-group-channels runtime) [:manual 0 :level])))))
+      (finally (show/stop! runtime)))))
+
+(deftest studio-json-cue-page-selectors-use-exact-ids-before-keywords
+  (let [runtime (show/create-runtime {:model (model) :workspace-options nil})
+        time (atom 0)
+        post! (studio-post runtime time)
+        command! #(post! "/api/command" "application/json" json/write-str %)
+        typed! #(post! "/api/command" "application/transit+json" transit/encode %)
+        config (fn [id] {:active-overlay :cue-pages
+                         :overlays {:cue-pages [{:id :selected :page-ids [id] :level 0}]}})
+        command {:op "effect-groups/configure" :command-id "page-group" :config (config "front")}
+        ids #(get-in (committed-model runtime) [:settings :effect-group-channels :overlays :cue-pages 0 :page-ids])
+        selected #(get-in (show/effect-group-channels runtime) [:instances 0 :overlay-group])]
+    (try
+      (launch! runtime 0 :last)
+      (let [receipt (command! command)]
+        (is (= 200 (first receipt)))
+        (is (= [:front] (ids)))
+        (is (= :selected (selected)))
+        (is (= 0 (dmx runtime)))
+        (accepted! runtime (swap! time inc) {:op :page/put :page {:id "front" :cells {[0 0] :first}}})
+        (is (= receipt (command! command)))
+        (is (= [:front] (ids))))
+      (is (= 200 (first (command! {:op "effect-groups/configure" :config-patch (config "front")}))))
+      (is (= ["front"] (ids)))
+      (is (nil? (selected)))
+      (is (= 64 (dmx runtime)))
+      (is (= 200 (first (post! "/api/settings" "application/json" json/write-str
+                              {:scope :effect-group-channels :values (config "encore")}))))
+      (is (= [:encore] (ids)))
+      (is (= :selected (selected)))
+      (is (= 200 (first (typed! (configure (config :front))))))
+      (is (= [:front] (ids)))
+      (is (= :selected (selected)))
+      (accepted! runtime (swap! time inc) (configure (config "front")))
+      (is (= ["front"] (ids)))
+      (is (nil? (selected)))
       (finally (show/stop! runtime)))))
 
 (deftest group-levels-use-owner-receipts-and-preserve-interleaved-output
