@@ -173,6 +173,48 @@
     (is (thrown? clojure.lang.ExceptionInfo
                  (composition/save (assoc-in model [:registry :cues :red :saved-params] {:level 2}) definition)))))
 
+(deftest appending-a-cue-uses-the-saved-macro-after-an-intervening-edit
+  (let [selected-id :opening-look
+        macro {:id selected-id :name "Opening look" :mode :macro
+               :slots [{:id :first :cue-id :red :params {:level 1/3}}]}
+        selected (-> (show)
+                     (composition/save ms-sequence)
+                     (composition/save macro)
+                     (composition/start selected-id 0))
+        ;; A REPL save lands after the operator selects the macro in Studio.
+        repl-edit (-> macro
+                      (assoc :name "Revised opening look")
+                      (update :slots conj {:id "slot-2" :cue-id :blue :params {:level 1/2}}))
+        committed (composition/save selected repl-edit)
+        appended (composition/append-macro-cue committed selected-id :spot)
+        saved (get-in committed [:compositions selected-id])
+        updated (get-in appended [:compositions selected-id])
+        slots (:slots updated)
+        playback-keys [:instances :composition-runs :composition-tokens]]
+    (is (= (dissoc saved :slots) (dissoc updated :slots)))
+    (is (= (:slots saved) (vec (butlast slots))))
+    (is (= {:cue-id :spot :params {}} (dissoc (last slots) :id)))
+    (is (= 3 (count (distinct (map :id slots)))))
+    (is (= (inc (:revision committed)) (:revision appended)))
+    (is (= (get-in committed [:compositions :sequence])
+           (get-in appended [:compositions :sequence])))
+    (is (= (select-keys committed playback-keys)
+           (select-keys appended playback-keys)))))
+
+(deftest appending-a-cue-requires-an-existing-macro-and-registered-cue
+  (let [model (-> (show)
+                  (composition/save ms-sequence)
+                  (composition/save {:id :macro :mode :macro :slots [{:cue-id :red}]}))]
+    (doseq [[macro-id cue-id path] [[:missing :red [:macro-id]]
+                                   [:sequence :red [:macro-id]]
+                                   [:macro :missing [:slots 1]]]]
+      (let [errors (try
+                     (composition/append-macro-cue model macro-id cue-id)
+                     nil
+                     (catch clojure.lang.ExceptionInfo error (:errors (ex-data error))))]
+        (is (= [path] (mapv :path errors)))
+        (is (string? (:message (first errors))))))))
+
 (deftest milliseconds-continue-to-drive-the-saved-sequence-with-owned-release
   (let [saved (composition/save (show) ms-sequence)
         start (-> saved (composition/start :sequence 0) (composition/advance 0))

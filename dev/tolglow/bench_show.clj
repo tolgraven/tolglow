@@ -152,14 +152,25 @@
   (into {} (for [collector (ManagementFactory/getGarbageCollectorMXBeans)]
              [(.getName collector) {:collections (.getCollectionCount collector) :ms (.getCollectionTime collector)}])))
 
+(defn spatial-sampling
+  "Field sampler options for a host under measurement. Run the JVM with
+  -Dtolglow.spatial.workers=1 for the serial path on the same revision. Any
+  other positive count bounds the workers. Unset uses the show's default."
+  []
+  (when-let [workers (some-> (System/getProperty "tolglow.spatial.workers") parse-long)]
+    {:workers workers}))
+
 (defn worker-counters
-  "Counters for the owner and currently active Afterglow worker threads. Capture after warmup."
+  "Counters for the owner and the live effect and field-sampling worker threads. Capture after warmup."
   []
   (let [bean (ManagementFactory/getThreadMXBean)
         owner (.getId (Thread/currentThread))
+        worker? (fn [thread-name]
+                  (or (str/starts-with? thread-name "afterglow-runtime-")
+                      (str/starts-with? thread-name "tolglow-spatial-field-")))
         relevant? (fn [id]
                     (or (= id owner)
-                        (some-> (.getThreadInfo bean (long id)) .getThreadName (str/starts-with? "afterglow-runtime-"))))
+                        (some-> (.getThreadInfo bean (long id)) .getThreadName worker?)))
         ids (filterv relevant? (.getAllThreadIds bean))
         total (fn [read-counter] (transduce (map #(max 0 (read-counter %))) + 0 ids))
         allocations? (and (instance? com.sun.management.ThreadMXBean bean)
