@@ -50,6 +50,7 @@
   (let [channels (channel-map (:channels template))
         heads (:heads template)
         definition (-> template (dissoc :heads) (assoc :channels channels :calibration (calibration template)))
+        placement (merge {:position [0 0 0] :rotation-deg [0 0 0]} (select-keys options [:position :rotation-deg]))
         body (merge (select-keys template [:bounds-m]) (select-keys options [:bounds-m]))]
     (when-let [problem (first (bounds/errors body))]
       (throw (ex-info "Invalid grouped fixture bounds" (assoc problem :id (:id options)))))
@@ -104,10 +105,11 @@
                                (not owns-fog?) (dissoc :fogger))
                        where (cond-> where
                                local (dissoc :bounds-m)
-                               local (assoc :position (bounds/world-position (:position options [0 0 0])
-                                                                             (:rotation-deg options [0 0 0]) local)))]
+                               local (assoc :position (bounds/world-position (:position placement)
+                                                                             (:rotation-deg placement) local)))]
                    (cond-> (instance authored where)
                      (pos? emitters) (assoc :emission-share (if (emits? part) (/ 1.0 emitters) 0.0))
                      local (assoc :fixture-id (:id options))
-                     (and body-on-head? (zero? i)) (assoc :fixture-bounds-m (bounds/relative-to (:bounds-m body) local)))))
+                     (and body-on-head? (zero? i)) (assoc :fixture-bounds-m (:bounds-m body)
+                                                        :fixture-bounds-pose placement))))
                (range) sorted)}))))

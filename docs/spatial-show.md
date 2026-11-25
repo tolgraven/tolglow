@@ -26,9 +26,9 @@ Open **Rig → Spatial** to edit, throw and inspect. The subscriptions guide cov
 
 Declare `:bounds-m {:min [0 -0.2 -1] :max [0 0.2 1]}` on a fixture type, a patch placement or a builder head. These are metre coordinates in the fixture or head's local space. In Studio, add the field in **Fixture Library → Advanced definition · EDN** before publishing and patching the type.
 
-Resolve a strip segment from the current rig before launching a cue. The reference can be a fixture or an individual head with declared bounds. A fixture with only head channels anchors its body extent to its first patched head. The selection projects the rotated bounds onto the requested venue axis and includes the named strip's pixel centers on either boundary. Use the strip's fixture or pixel-layout ID.
+Resolve a strip segment from the current rig before launching a cue. The reference can be a fixture or an individual head with declared bounds. For a fixture with only head channels, the first patched head stores the body's original placement and extent. The selection projects the rotated bounds onto the requested venue axis and includes the named strip's pixel centers on either boundary. Use the strip's fixture or pixel-layout ID.
 
-Quarter turns use exact rotation coefficients. For an oblique projection, the inclusive comparison allows one floating-point step outward at each projected edge before adding the fixture's venue position. Pixel centers keep their original coordinates.
+The projection reduces angles in degrees before computing the rotation coefficients. Selection compares the original pixel centers with the projected edges.
 
 ```clojure
 (require '[tolglow.show :as show] '[tolglow.spatial.targets :as targets])
