@@ -72,11 +72,35 @@ Use `true` in the same command to suspend patterns from the REPL.
 
 ## Reconnect a local track reference
 
-The REPL audio integration owns reattachment after a player reconnect, show
-restart or restore. The Studio Connections control and alignment status are
-tracked in [#549](https://github.com/tolgraven/tolglow/issues/549). Verify the
-old session's queued forecast is fenced, then reattach from Studio and confirm
-that fresh aligned evidence resumes the same configured pattern.
+Supply the local mpv socket and track catalog in the host's `:section-reference`
+configuration. The catalog uses canonical absolute track paths and the
+configured profile's identity and duration.
+
+```clojure
+;; Add this to the show options alongside the enabled :section-patterns policy.
+{:section-reference {:profile profile
+                     :provenance {:source-id :mpv :session-id (random-uuid) :clock-id :show-monotonic}
+                     :mpv {:socket-path "/home/operator/.local/run/mpv.sock"
+                           :catalog {track (select-keys profile [:reference :duration-ms])}}}}
+```
+
+After player reconnect, show restart or restore, open **Connections → Track
+reference** and choose **Reconnect mpv**. The status distinguishes unavailable,
+acquiring, aligned, ambiguous and stale. A fresh session waits for matching
+observations from the configured player. **Patterns suspended** reports the current manual
+override, which reconnect preserves.
+
+```clojure
+(require '[tolglow.show :as show])
+
+(show/section-reference-status runtime)
+(let [{:keys [runtime-id epoch]} (show/section-reference-status runtime)]
+  (show/reconnect-section-reference! runtime {:runtime-id runtime-id :expected-epoch epoch}))
+```
+
+The REPL and Studio receive the fresh reference session ID or a refusal from
+the same show operation. For manually owned mpv connections, use the existing
+[REPL adapter flow](../src/tolglow/integrations/README.md#observe-a-known-local-recording-in-mpv).
 
 ## Reviewing a show feature
 

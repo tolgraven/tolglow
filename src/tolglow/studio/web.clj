@@ -285,7 +285,7 @@
 
 (defn- get-routes
   [{:keys [snapshot! materials! definition! export! heartbeat! provider-get! chat-history! patch!
-           app-agent! fixture! rdm! audio! sync! waveform! workspace! terminal! sensor! repl! calibration! photometry! fog-calibration! event-subscribers!]}]
+           app-agent! fixture! rdm! audio! sync! section-reference! waveform! workspace! terminal! sensor! repl! calibration! photometry! fog-calibration! event-subscribers!]}]
   (merge
    {"/api/event-subscribers" (available event-subscribers! "Event subscribers unavailable" (fn [_] (ok (event-subscribers!))))
     "/api/fog-calibration" (available fog-calibration! "Venue calibration unavailable" (fn [_] (ok (fog-calibration!))))
@@ -319,6 +319,7 @@
     "/api/audio/returns/mixers" (read-action audio! :return-mixers "Audio service unavailable")
     "/api/audio/returns" (read-action audio! :return-status "Audio service unavailable")
     "/api/sync" (read-action sync! :status "Synchronization unavailable")
+    "/api/section-reference" (read-action section-reference! :status "Section reference unavailable")
     "/api/sync/ports" (read-action sync! :ports "Synchronization unavailable")
     "/api/waveforms" (read-action waveform! :registry "Waveform registry unavailable")
     "/api/sensors/stage/qr" (available sensor! "Stage invitation unavailable"
@@ -348,7 +349,7 @@
               (available service unavailable-message #(respond (service operation (:json-params %))))])))
 
 (defn- post-routes [{:keys [material-preview! variable-sources! spatial-search! submit! submit-history! heartbeat! provider-put! chat! chat-select! app-agent!
-                             sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync!]
+                             sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync! section-reference!]
                      :or {material-preview! materials/preview}}]
   (merge
    (into {} (for [[path op] operations]
@@ -373,6 +374,7 @@
    (post-actions "/api/audio/returns/" audio! ok {"start" :return-start "stop" :return-stop})
    (post-actions "/api/sync/" sync! ok {"configure" :configure "start" :start "stop" :stop "source" :source "handoff" :handoff "arrange" :arrange
                                       "learn-parameter" :learn-parameter "forget-parameter" :forget-parameter})
+   (post-actions "/api/section-reference/" section-reference! acknowledgement {"reconnect" :reconnect})
    (post-actions "/api/" sync! ok {"live" :live})
    {"/api/materials/preview" #(ok (material-preview! (:json-params %)))
     "/api/variable-block/sources" (available variable-sources! "Show variables unavailable" #(ok (variable-sources! (:json-params %))))

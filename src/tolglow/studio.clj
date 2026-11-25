@@ -65,7 +65,11 @@
                                       :close! #(cue-pads/release! service lease)}))}
                       :client-fault! #(faults/offer! (:effect-logs runtime) [%])
                       :observe-status! #(connections/observe-status! (:connections runtime) %)
-                      :capture-status #(connections/status-at-commit (:connections runtime))})
+                      :capture-status (fn []
+                                        (let [status (connections/status-at-commit (:connections runtime))]
+                                          (fn [committed]
+                                            (when-let [view (status committed)]
+                                              (assoc view :section-reference (show/section-reference-status runtime committed))))))})
             compute (workers/create (get-in runtime [:compute :pool]) (System/getenv "TOLGLOW_COMPUTE_TOKEN")
                                     {:guest-bridge (System/getenv "TOLGLOW_AUDIENCE_COMPUTE_TOKEN")
                                      :verification (keyword (or (System/getenv "TOLGLOW_AUDIENCE_VERIFICATION") "full"))})
@@ -159,6 +163,10 @@
             :fixture! #(show/fixture-action! runtime %1 %2)
             :rdm! #(show/rdm-action! runtime %1 %2)
             :sync! #(show/sync-action! runtime %1 %2)
+            :section-reference! (fn [op payload]
+                                  (case op
+                                    :status (show/section-reference-status runtime)
+                                    :reconnect (show/reconnect-section-reference! runtime payload)))
             :waveform! #(show/waveform-action! runtime %1 %2)
             :expressive! (partial show/expressive-preview runtime)
             :patch! #(:patch (show/snapshot runtime))

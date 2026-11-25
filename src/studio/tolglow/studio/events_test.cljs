@@ -824,6 +824,29 @@
     (is (every? #(nil? (:body %)) requests))
     (is (= #{:db} (set (keys (transition (:db pushed) [:connections/pushed])))))))
 
+(deftest reconnecting-the-track-reference-sends-only-show-session-identity
+  (let [reference {:configured? true :status "stale" :reason "show-changed" :override? true}
+        db (-> base (assoc-in [:show :runtime-id] "reference-host")
+                    (assoc-in [:show :epoch] 5)
+                    (assoc-in [:show :connection-status :section-reference] reference))
+        open (:db (transition db [:connections/open]))
+        pushed (:db (transition open [:connections/pushed]))
+        chosen (transition pushed [:connections/action :reference-reconnect])
+        request (get-in chosen [:fx 0 1])
+        waiting (:db chosen)
+        receipt (conj (:on-failure request) "Reconnect belongs to a previous show session")
+        refused (:db (transition waiting receipt))]
+    (is (= reference (get-in pushed [:connections :section-reference])))
+    (is (= "/api/section-reference/reconnect" (:path request)))
+    (is (= {:runtime-id "reference-host" :expected-epoch 5} (:body request)))
+    (is (contains? (get-in waiting [:connections :pending]) :reference-reconnect))
+    (is (not (contains? (get-in refused [:connections :pending]) :reference-reconnect)))
+    (is (nil? (:db (transition (assoc-in waiting [:show :epoch] 6) receipt))))
+    (is (= "Reconnect belongs to a previous show session"
+           (get-in refused [:connections :errors :reference-reconnect])))
+    (is (true? (get-in refused [:connections :section-reference :override?])))
+    (is (nil? (get-in (transition pushed [:connections/close]) [:db :connections :section-reference])))))
+
 (deftest device-refresh-failure-leaves-a-running-stage-operable
   (let [running (-> base
                     (assoc-in [:show :runtime-id] "stage-host")

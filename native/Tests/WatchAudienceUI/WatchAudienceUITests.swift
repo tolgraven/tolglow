@@ -54,39 +54,46 @@ final class WatchAudienceUITests: XCTestCase {
 
     func testCancelInterruptedStage() {
         let app = XCUIApplication()
+        continueAfterFailure = false
         app.launchArguments = ["--preview-audience-reconnection"]
         app.launch()
-        let floor = app.buttons["dance-floor"]
-        guard floor.waitForExistence(timeout: 12) else {
-            XCTFail("Dance floor is missing from the Watch home screen")
+        let status = app.staticTexts["reconnection-stage-status"]
+        guard status.waitForExistence(timeout: 12), status.label == "Reconnecting to West floor · 1 of 3" else {
+            failReconnection("The Watch did not present the interrupted stage fixture", app: app, status: status)
             return
         }
-        let nearbyStage = app.buttons["route-direct"]
-        floor.tap()
-        // A cold simulator can drop the first tap. Retry only while the
-        // home-screen link is still visible and can receive the tap.
-        if !nearbyStage.waitForExistence(timeout: 4), floor.isHittable {
-            floor.tap()
-        }
-        guard nearbyStage.waitForExistence(timeout: 5) else {
-            XCTFail("The Watch did not navigate to Dance floor")
-            return
-        }
-        let message = app.staticTexts["Reconnecting to West floor · 1 of 3"]
         let cancel = app.buttons["Cancel reconnection"]
-        XCTAssertTrue(message.waitForExistence(timeout: 5))
         for _ in 0..<3 where !cancel.isHittable { app.swipeUp() }
         guard cancel.isHittable else {
-            XCTFail("Cancel reconnection is not available in Dance floor")
+            failReconnection("Cancel reconnection is not available in Dance floor", app: app, status: status)
             return
         }
         capture("04-interrupted-stage", app)
         cancel.tap()
+
         let find = app.buttons["Find stages"]
         for _ in 0..<3 where !find.isHittable { app.swipeDown() }
-        XCTAssertTrue(find.waitForExistence(timeout: 5))
-        XCTAssertFalse(cancel.exists)
+        let disconnected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == YES AND label == %@", "Disconnected"),
+                                                     object: status)
+        guard XCTWaiter.wait(for: [disconnected], timeout: 5) == .completed,
+              find.exists, find.isEnabled, !cancel.exists else {
+            failReconnection("Cancelling did not return to disconnected stage discovery", app: app, status: status)
+            return
+        }
         capture("05-reconnection-cancelled", app)
+    }
+
+    private func failReconnection(_ message: String, app: XCUIApplication, status: XCUIElement) {
+        capture("reconnection-failure", app)
+        let route = app.buttons["route-direct"]
+        let label = status.exists ? status.label : "stage status missing"
+        let state = (status.exists ? status.value as? String : nil) ?? (route.exists ? route.value as? String : nil)
+        let observed = "\(label) · \(state ?? "fixture state unavailable")"
+        let details = XCTAttachment(string: "\(observed)\n\n\(app.debugDescription)")
+        details.name = "reconnection-accessibility-and-state"
+        details.lifetime = .keepAlways
+        add(details)
+        XCTFail("\(message). \(observed)")
     }
 
     private func capture(_ name: String, _ app: XCUIApplication) {
