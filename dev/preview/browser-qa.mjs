@@ -26,6 +26,15 @@ try {
     await panel.scrollIntoViewIfNeeded();
     await page.waitForFunction(() => document.querySelector('#preview')?.tolglowPreview?.ready);
     console.log(`${name}: real renderer ready`);
+    const fixtureUpdates = page.getByLabel('Preview fixture updates', {exact: true});
+    const waitForMode = mode => page.waitForFunction(expected =>
+      document.querySelector('#preview')?.tolglowPreview?.getTelemetry().lightingMode === expected, mode);
+    assert.equal(await fixtureUpdates.inputValue(), 'interpolate');
+    await waitForMode('interpolate');
+    await fixtureUpdates.selectOption('hold');
+    await waitForMode('hold');
+    await fixtureUpdates.selectOption('interpolate');
+    await waitForMode('interpolate');
     const automatic = await page.evaluate(async () => {
       const engine = document.querySelector('#preview').tolglowPreview;
       engine.pause(); return engine.getTelemetry();

@@ -1,5 +1,6 @@
 (ns tolglow.studio.subscriber-editor
   (:require [clojure.string :as str]
+            [cognitect.transit :as transit]
             [re-frame.core :as rf]
             [tolglow.transit :as wire]))
 
@@ -70,12 +71,29 @@
 (defn- seed-form [catalog]
   {:id "" :enabled? true :match (if-let [t (get-in catalog [:events 0 :type])] {:type t} {})
    :actions [(new-action :cue/launch)]})
+
+(def ^:private decimal-id #"[+-]?\d+")
+(def ^:private uuid-id
+  #"#uuid\s+\"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\"")
+
+(defn- pattern-text [id]
+  (cond
+    (transit/uuid? id) (pr-str id)
+    (transit/bigint? id) (aget id "rep")
+    (and (string? id)
+         (or (not= id (str/trim id)) (re-matches decimal-id id)
+             (some #(str/starts-with? id %) [":" "\"" "#uuid"])))
+    (js/JSON.stringify id)
+    :else (str id)))
+
 (rf/reg-event-db :subscribers/edit
   (fn [db [_ subscriber]]
     (if-not (get-in db [:debug :handle]) db
-      (-> db (assoc-in [:debug :form] (or subscriber (seed-form (get-in db [:debug :catalog]))))
-          (assoc-in [:debug :original] subscriber) (assoc-in [:debug :editing-show] (show-identity db))
-          (update :debug dissoc :catalog-error :saved)))))
+      (let [form (or subscriber (seed-form (get-in db [:debug :catalog])))
+            form (cond-> form (contains? (:match form) :pattern) (update-in [:match :pattern] pattern-text))]
+        (-> db (assoc-in [:debug :form] form)
+            (assoc-in [:debug :original] subscriber) (assoc-in [:debug :editing-show] (show-identity db))
+            (update :debug dissoc :catalog-error :saved))))))
 (rf/reg-event-db :subscribers/cancel
   (fn [db _] (update db :debug dissoc :form :original :editing-show :catalog-error)))
 (rf/reg-event-db :subscribers/field
@@ -110,14 +128,45 @@
     (and select (nil? (:page-id select))) (update :select dissoc :page-id)
     (seq delay) (assoc :delay (interval-map delay))
     (get-in action [:launch :duration]) (update-in [:launch :duration] interval-map)))
+
+(defn- named-id [id]
+  (if (and (string? id) (str/starts-with? id ":")) (keyword (subs id 1)) id))
+
+(defn- integer-pattern-id [text]
+  (let [n (js/Number text)]
+    (if (js/Number.isSafeInteger n)
+      n
+      (let [exact (js/BigInt text)]
+        (if (< (js/BigInt "-9223372036854775809") exact (js/BigInt "9223372036854775808"))
+          (transit/integer (str exact))
+          (transit/bigint (str exact)))))))
+
+(defn- pattern-id [text]
+  (cond
+    (not (string? text)) text
+    (re-matches decimal-id text) (integer-pattern-id text)
+    (str/starts-with? text "#uuid")
+    (if-let [[_ id] (re-matches uuid-id text)]
+      (uuid (str/lower-case id))
+      (throw (js/Error. "Enter a UUID as #uuid followed by its quoted value.")))
+    (str/starts-with? text "\"") (js/JSON.parse text)
+    :else (named-id text)))
+
+(defn- clean-match [match]
+  (let [match (cond-> match (string? (:pattern match)) (update :pattern #(not-empty (str/trim %))))
+        match (into {} (remove (comp nil? val)) match)]
+    (cond-> match
+      (contains? match :emitter-id) (update :emitter-id named-id)
+      (not= :music/section-pattern (:type match)) (dissoc :pattern)
+      (and (= :music/section-pattern (:type match)) (contains? match :pattern))
+      (update :pattern pattern-id))))
+
 (defn clean-form [form]
   (let [id (str/trim (title (:id form)))]
     (when (or (str/blank? id) (str/includes? id " ")) (throw (js/Error. "Enter a subscriber ID without spaces.")))
     (when (empty? (:actions form)) (throw (js/Error. "Add at least one action.")))
     (-> form (assoc :id (keyword id))
-        (update :match #(into {} (remove (comp nil? val)) %))
-        (cond-> (string? (get-in form [:match :emitter-id]))
-          (update-in [:match :emitter-id] #(if (str/starts-with? % ":") (keyword (subs % 1)) %)))
+        (update :match clean-match)
         (update :actions #(mapv normalize-step %)))))
 (rf/reg-event-fx :subscribers/submit
   (fn [{:keys [db]} [_ op]]
@@ -258,6 +307,9 @@
            #(input! [:match :category] %)]
           [:label "Emitter ID" [:input {:value (str (:emitter-id match)) :placeholder ":audio/input or device ID"
                                         :on-change #(let [v (raw %)] (input! [:match :emitter-id] (not-empty v)))}]]
+          (when (= :music/section-pattern (:type match))
+            [:label "Pattern ID" [:input {:value (str (:pattern match)) :placeholder ":slow, slow, 42, or #uuid \"…\""
+                                          :on-change #(input! [:match :pattern] (raw %))}]])
           [:label.debug-check [:input {:type "checkbox" :checked (get form :enabled? true)
                                        :on-change #(input! [:enabled?] (.. % -target -checked))}] "Enabled"]]
          (for [[i action] (map-indexed vector (:actions form))]

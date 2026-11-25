@@ -368,7 +368,8 @@
        [:option {:value "auto"} "Auto quality"] [:option {:value "mobile"} "Mobile"]
        [:option {:value "desktop"} "Desktop"] [:option {:value "high"} "High"]]
       [:label "Fixture updates"
-       [:select {:aria-label "Preview fixture updates" :value (get-in db [:ui :preview-settings :lighting-mode] "hold")
+       [:select {:aria-label "Preview fixture updates" :value (get-in db [:ui :preview-settings :lighting-mode]
+                                                        (:lighting-mode events/default-preview-settings))
                  :on-change #(input! [:studio/preview-setting :lighting-mode (input-value %)])}
         [:option {:value "hold"} "Follow show frames"]
         [:option {:value "interpolate"} "Smooth · one frame delay"]]]
@@ -457,6 +458,17 @@
           [button nil "Remove" [:studio/response-action :delete (:id response)] "text-button"]]])
       [:p.small.muted "Attack and release share one unit. Release fades to zero and holds there; remove the envelope to restore the unaffected parameters."]]]))
 
+(defn- section-pattern-panel [db]
+  (when-let [{:keys [override? pending? connected?]} (events/section-pattern-control db)]
+    [:section.panel {:aria-label "Section patterns"}
+     [:div.panel-top
+      [:div [:span.section-label "SECTION PATTERNS"]
+       [:span.small.muted {:role "status"} (if override? "Override active" "Override off")]]
+      [:button.button {:type "button" :disabled (or pending? (not connected?))
+                       :aria-label (if override? "Resume automatic patterns" "Suspend automatic patterns")
+                       :on-click #(send! [:studio/section-pattern-override (not override?)])}
+       (cond pending? "Applying…" override? "Resume" :else "Suspend")]]]))
+
 (defn- perform-view [db]
   (let [section (get-in db [:ui :performance-section] "cues")
         count-active (count (get-in db [:show :instances]))]
@@ -470,7 +482,8 @@
                               :on-click #(set-ui! [:performance-section] id)} title])]]
      [:div.performance-layout {:class (when (get-in db [:ui :preview-expanded?]) "preview-expanded")}
       [:div.performance-launch [cue-grid db]]
-      [:div.performance-live [performance/board db parameter-control] [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
+      [:div.performance-live [section-pattern-panel db] [performance/board db parameter-control]
+       [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
       [:div.performance-room [preview-panel db]]
       [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]]]))
 

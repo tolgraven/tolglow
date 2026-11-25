@@ -164,6 +164,48 @@
     (is (false? (get-in (events/history-inspector late) [:apply-status :pending?])))
     (is (nil? (get-in (events/history-inspector late) [:apply-status :message])))))
 
+(deftest section-pattern-override-follows-committed-show-settings
+  (let [view (assoc (:show base) :runtime-id "pattern-owner" :show-id :main
+                                :section-patterns-enabled? true :settings {})
+        db (:db (full-frame base view))
+        suspend (transition db [:studio/section-pattern-override true])
+        request (:studio/http suspend)
+        ack (transition (:db suspend) (conj (:on-success request) {:status "accepted" :revision 4}))
+        committed (:db (stream-event (:db ack)
+                         {:protocol projection/protocol :kind :patch :token "suspended" :base-token "full"
+                          :identity (projection/identity-of view)
+                          :changes [[:set [:revision] 4]
+                                    [:set [:settings :section-patterns] {:override? true}]]}))
+        resumed (:db (stream-event committed
+                       {:protocol projection/protocol :kind :patch :token "resumed" :base-token "suspended"
+                        :identity (projection/identity-of view)
+                        :changes [[:set [:revision] 5] [:set [:settings :section-patterns :override?] false]]}))]
+    (is (= "/api/settings" (:path request)))
+    (is (true? (:typed? request)))
+    (is (= {:scope :section-patterns :values {:override? true} :expected-epoch 7 :runtime-id "pattern-owner"}
+           (:body request)))
+    (is (= {:override? false :pending? true :connected? true} (events/section-pattern-control (:db ack))))
+    (is (empty? (transition (:db ack) [:studio/section-pattern-override true])))
+    (is (= {:override? true :pending? false :connected? true} (events/section-pattern-control committed)))
+    (is (= {:scope :section-patterns :values {:override? false} :expected-epoch 7 :runtime-id "pattern-owner"}
+           (get-in (transition committed [:studio/section-pattern-override false]) [:studio/http :body])))
+    (is (= {:override? false :pending? false :connected? true} (events/section-pattern-control resumed)))
+    (is (empty? (transition (assoc-in db [:connection :connected?] false) [:studio/section-pattern-override true])))
+    (is (nil? (events/section-pattern-control (:db (full-frame base (dissoc view :section-patterns-enabled?))))))))
+
+(deftest rejected-section-pattern-override-retains-committed-state
+  (let [view (assoc (:show base) :runtime-id "pattern-owner" :show-id :main
+                                :section-patterns-enabled? true :settings {:section-patterns {:override? true}})
+        db (:db (full-frame base view))
+        resume (transition db [:studio/section-pattern-override false])
+        reply (conj (get-in resume [:studio/http :on-failure]) "Stale show epoch")
+        rejection (transition (:db resume) reply)
+        restored (:db (full-frame (:db resume) (assoc view :epoch 8)))]
+    (is (= [:studio/failure "Section pattern override: Stale show epoch"] (:dispatch rejection)))
+    (is (= {:override? true :pending? false :connected? true} (events/section-pattern-control (:db rejection))))
+    (is (false? (:pending? (events/section-pattern-control restored))))
+    (is (empty? (transition restored reply)))))
+
 (deftest rapid-rotary-keypresses-use-current-app-db-instead-of-a-stale-rendered-value
   (let [schema {:type "number" :bounds [0 1]}
         initial (assoc-in base [:show :instances 0 :params :level] 0)
@@ -900,12 +942,15 @@
     (is (some #{[:studio/preview [:worklight 0.4]]} (:fx mounted)))
     (is (true? (get-in mounted [:db :ui :preview-controls?])))))
 
-(deftest preview-fixture-updates-are-local-and-replay-on-remount
-  (let [change (transition base [:studio/preview-setting :lighting-mode "interpolate"])
-        mount (transition (:db change) [:studio/preview-ready true])]
-    (is (= [:lighting-mode "interpolate"] (:studio/preview change)))
+(deftest preview-fixture-updates-default-to-interpolation-and-replay-user-selection
+  (let [initial (transition base [:studio/preview-ready true])
+        change (transition base [:studio/preview-setting :lighting-mode "hold"])
+        remount (transition (:db change) [:studio/preview-ready true])]
+    (is (= "interpolate" (get-in base [:ui :preview-settings :lighting-mode])))
+    (is (some #{[:studio/preview [:lighting-mode "interpolate"]]} (:fx initial)))
+    (is (= [:lighting-mode "hold"] (:studio/preview change)))
     (is (nil? (:studio/http change)))
-    (is (some #{[:studio/preview [:lighting-mode "interpolate"]]} (:fx mount)))
+    (is (some #{[:studio/preview [:lighting-mode "hold"]]} (:fx remount)))
     (is (nil? (:db (transition base [:studio/preview-setting :lighting-mode "extrapolate"]))))))
 
 (deftest reset-camera-updates-the-selector-and-the-engine-together

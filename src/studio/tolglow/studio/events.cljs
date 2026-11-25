@@ -21,11 +21,14 @@
 (defn- selected-grid [db]
   (some (fn [[choice _ grid]] (when (= choice (get-in db [:ui :launch-grid])) grid)) launch-grids))
 
+(def default-preview-settings
+  {:worklight 0.12 :quality "auto" :camera "audience" :lighting-mode "interpolate"})
+
 (defn initial-db [session]
   {:session session :show nil :pointers {} :pending-params {} :drafts {} :stream-id nil
    :connection {:connected? false :error "Connecting to the studio…"}
    :ui {:view :perform :page-id nil :selected-instance nil :launch-mode "toggle" :launch-grid "off" :edit? false
-        :preview-settings {:worklight 0.12 :quality "auto" :camera "audience"} :preview-expanded? false :preview-controls? false
+        :preview-settings default-preview-settings :preview-expanded? false :preview-controls? false
         :definition-search "" :assign-cue "" :toast nil :action-cell nil :clipboard nil :prompt nil
         :composition {:id "evening-drift" :name "Evening drift" :mode "sequence" :loop "once" :slots []}
         :definition {:kind "effects" :source initial-source :version 1 :engine :textarea :mode :source
@@ -347,7 +350,7 @@
                     (assoc-in [:ui :page-id] (if (some #(= page-id (:id %)) (:pages show)) page-id (:id (first (:pages show))))))
         updated (settle-connection-drafts updated (:server-presentation db) (get-in db [:server-projection :view]))
         updated (cond-> updated
-                  epoch-changed? (dissoc :ending-holds)
+                  epoch-changed? (dissoc :ending-holds :section-pattern-request)
                   epoch-changed? (update-in [:ui :definition] dissoc :publishing? :publication)
                   epoch-changed? (update-in [:ui :auto-form] dissoc :target-activity? :activity-target))
         updated (if (some #(= selected (:id %)) (:instances show)) updated
@@ -497,6 +500,38 @@
   (fn [{:keys [db]} _] {:dispatch [:studio/command "transport/set" {:transport {:playing? (not (get-in db [:show :transport :playing?] true))}}]}))
 
 (rf/reg-cofx :studio/unique (fn [cofx _] (assoc cofx :unique (str (random-uuid)))))
+
+(defn section-pattern-control [db]
+  (let [view (get-in db [:server-projection :view])
+        {:keys [id accepted-revision]} (:section-pattern-request db)]
+    (when (:section-patterns-enabled? view)
+      {:override? (true? (get-in view [:settings :section-patterns :override?]))
+       :pending? (and (some? id) (or (nil? accepted-revision) (< (:revision view) accepted-revision)))
+       :connected? (true? (get-in db [:connection :connected?]))})))
+
+(rf/reg-event-fx :studio/section-pattern-override [(rf/inject-cofx :studio/unique)]
+  (fn [{:keys [db unique]} [_ override?]]
+    (let [control (section-pattern-control db)]
+      (when (and (:connected? control) (not (:pending? control)) (boolean? override?)
+                 (not= override? (:override? control)))
+        {:db (assoc db :section-pattern-request {:id unique})
+         :studio/http {:path "/api/settings" :typed? true
+                       :body {:scope :section-patterns :values {:override? override?}}
+                       :on-success [:studio/section-pattern-saved unique]
+                       :on-failure [:studio/section-pattern-failed unique]}}))))
+
+(rf/reg-event-fx :studio/section-pattern-saved
+  (fn [{:keys [db]} [_ id {:keys [status revision message]}]]
+    (when (= id (get-in db [:section-pattern-request :id]))
+      (if (and (= "accepted" status) (integer? revision))
+        {:db (assoc-in db [:section-pattern-request :accepted-revision] revision)}
+        {:dispatch [:studio/section-pattern-failed id (or message "The show did not acknowledge the change.")]}))))
+
+(rf/reg-event-fx :studio/section-pattern-failed
+  (fn [{:keys [db]} [_ id message]]
+    (when (= id (get-in db [:section-pattern-request :id]))
+      {:db (dissoc db :section-pattern-request)
+       :dispatch [:studio/failure (str "Section pattern override: " message)]})))
 
 (defn launch-fx [db cue-id mode on-success & [{:keys [grid command-id gesture-id]}]]
   (let [cue (cue db cue-id)]
@@ -1098,7 +1133,7 @@
     {:db (assoc-in db [:ui :preview-controls?] (boolean supported?))
      :fx (into [[:studio/preview (cond-> [:fog (get-in db [:ui :fog])] owner (conj owner))]]
                (when supported? (mapv (fn [[key value]] [:studio/preview (cond-> [key value] owner (conj owner))])
-                                      (merge {:worklight 0.12 :quality "auto" :camera "audience"} (get-in db [:ui :preview-settings])))))}))
+                                      (merge default-preview-settings (get-in db [:ui :preview-settings])))))}))
 (rf/reg-event-fx :studio/preview-setting
   (fn [{:keys [db]} [_ key value]]
     (let [valid? (case key :worklight (and (number? value) (js/Number.isFinite value) (<= 0 value 1))

@@ -10,58 +10,190 @@ git config user.name 'Native CI test'
 git config user.email 'ci@example.invalid'
 
 expect() {
-  local description=$1 expected=$2 actual
-  shift 2
-  actual=$("$selector" "$@")
+  local description=$1 audience=$2 linux=$3 actual expected
+  shift 3
+  actual=$("$selector" "$@" 2>.git/selection.log)
+  expected=$(printf 'audience=%s\nlinux_audience=%s\n' "$audience" "$linux")
   if [[ "$actual" != "$expected" ]]; then
-    printf '%s expected %s, got %s\n' "$description" "$expected" "$actual" >&2
+    printf '%s expected:\n%s\ngot:\n%s\n' "$description" "$expected" "$actual" >&2
+    cat .git/selection.log >&2
     exit 1
   fi
-  printf 'PASS    %-5s    %s\n' "$actual" "$description"
+  printf 'PASS audience=%-5s linux=%-5s  %s\n' "$audience" "$linux" "$description"
 }
 
-mkdir -p native .github/{workflows,scripts}
-touch README native/Fixture.swift .github/workflows/tests.yml .github/scripts/native-build-required
+change() {
+  local path=$1
+  mkdir -p -- "$(dirname -- "$path")"
+  printf '%s\n' "changed $path" >> "$path"
+  git add -- "$path"
+  git commit --quiet -m "Change $path"
+}
+
+mkdir -p native/{macOS,iOS} .github/{workflows,scripts}
+touch README native/{macOS/Studio.swift,iOS/Mobile.swift,Fixture.swift} \
+  .github/workflows/tests.yml .github/scripts/{native-build-required,test-native-build-required}
+cat > native/project.yml <<'YAML'
+name: Tolglow
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+targets:
+  TolglowStudio:
+    type: application
+    platform: macOS
+    sources: [macOS]
+  TolglowPhone:
+    type: application
+    platform: iOS
+    sources:
+      - path: iOS
+        excludes: ["**/AGENTS.md"]
+      - Shared
+  TolglowAudienceClip:
+    type: application.on-demand-install-capable
+    platform: iOS
+    sources: [AppClip, Audience]
+  TolglowAudienceBridge:
+    type: tool
+    platform: macOS
+    sources: [AudienceBridge, Audience/AudienceRadio.swift]
+  TolglowWatch:
+    type: application
+    platform: watchOS
+    sources: [watchOS, Shared]
+schemes:
+  TolglowStudio:
+    build:
+      targets:
+        TolglowStudio: all
+YAML
 git add .
 git commit --quiet -m 'Common base'
 base=$(git rev-parse HEAD)
 
 git switch --quiet -c topic
-echo docs > README
-git commit --quiet -am 'Edit documentation on the topic branch'
+change README
 topic=$(git rev-parse HEAD)
 
 git switch --quiet main
-echo native > native/Fixture.swift
-git commit --quiet -am 'Advance the base with an Apple change'
+change native/Fixture.swift
 advanced=$(git rev-parse HEAD)
 git merge --quiet --no-ff topic -m 'Synthetic PR merge'
-expect 'Concurrent Apple edit only on the base' false pull_request "$base" "$topic"
-expect 'Topic branch started before the event base' false pull_request "$advanced" "$topic"
-expect 'Direct push to native sources' true push "$base" "$advanced"
-expect 'Documentation push' false push "$base" "$topic"
-expect 'Force push removes a native change' true push "$advanced" "$topic"
+expect 'Concurrent Apple edit only on the base' false false pull_request "$base" "$topic"
+expect 'Topic branch started before the event base' false false pull_request "$advanced" "$topic"
+expect 'Direct push to unknown native source' true true push "$base" "$advanced"
+expect 'Documentation push' false false push "$base" "$topic"
+expect 'Force push removes a native change' true true push "$advanced" "$topic"
 
-git switch --quiet topic
-echo proposed > native/Fixture.swift
-git commit --quiet -am 'Propose an Apple change'
-expect 'Pull request changes an Apple source file' true pull_request "$base" "$(git rev-parse HEAD)"
-git rm --quiet native/Fixture.swift
-git commit --quiet -m 'Delete Apple source'
-expect 'Pull request deletes an Apple source file' true pull_request "$base" "$(git rev-parse HEAD)"
+git switch --quiet -c desktop "$base"
+for path in \
+  .github/workflows/apple-studio.yml \
+  native/Tests/{capture-macos,qualify-metal,shader-qualification.test.mjs,verify-metal.swift} \
+  native/macOS/{SHADER-TRANSLATION.md,ShaderQualification.js,ShaderQualification.swift,TolglowStudioApp.swift} \
+  js/preview/worker.js resources/studio/preview.js src/studio/tolglow/studio/events.cljs \
+  dev/preview/measure-room.mjs test/js/preview/fog.test.mjs; do
+  mkdir -p -- "$(dirname "$path")"
+  touch -- "$path"
+done
+python3 - <<'PY'
+from pathlib import Path
+project = Path("native/project.yml")
+project.write_text(project.read_text().replace(
+    '    sources: [macOS]\n',
+    '    sources:\n'
+    '      - path: macOS\n'
+    '        excludes: ["ShaderQualification.js"]\n'
+    '      - path: macOS/ShaderQualification.js\n'
+    '        buildPhase: resources\n',
+))
+PY
+git add .
+git commit --quiet -m 'Add macOS-only Room shader qualification'
+desktop=$(git rev-parse HEAD)
+if python3 -c 'import yaml' >/dev/null 2>&1; then
+  expect 'Exact #489 manifest change and desktop workflow and sources' false false pull_request "$base" "$desktop"
+  expect 'Desktop-only push' false false push "$base" "$desktop"
+else
+  expect 'Unavailable YAML parser retains both lanes' true true pull_request "$base" "$desktop"
+fi
+[[ $(python3 -IS "$selector" pull_request "$base" "$desktop" 2>.git/selection.log) == $'audience=true\nlinux_audience=true' ]]
+printf 'PASS both lanes with Python site packages disabled\n'
 
-git switch --quiet -c workflow "$topic"
-echo workflow > .github/workflows/tests.yml
-git commit --quiet -am 'Edit the workflow'
-expect 'Pull request changes the build workflow' true pull_request "$base" "$(git rev-parse HEAD)"
-previous=$(git rev-parse HEAD)
-echo selector > .github/scripts/native-build-required
-git commit --quiet -am 'Edit the selector'
-expect 'Pull request changes the selection rule' true pull_request "$previous" "$(git rev-parse HEAD)"
-expect 'Unresolved base requests Apple' true pull_request missing "$topic"
-expect 'Absent head requests Apple' true pull_request "$base" ''
-expect 'New branch push requests Apple' true push 0000000000000000000000000000000000000000 "$topic"
+git switch --quiet -c mixed "$desktop"
+change native/iOS/Mobile.swift
+expect 'Desktop and iOS changes together' true true pull_request "$base" HEAD
+git switch --quiet -c shared-config "$desktop"
+sed -i "s/'5.0'/'6.0'/" native/project.yml
+git commit --quiet -am 'Change shared Xcode build settings'
+expect 'Desktop and shared manifest change together' true true pull_request "$base" HEAD
+
+git switch --quiet -c mobile-dependency "$base"
+sed -i '/- Shared/a\      - macOS/Studio.swift' native/project.yml
+git commit --quiet -am 'Give the phone a macOS source dependency'
+dependency=$(git rev-parse HEAD)
+change native/macOS/Studio.swift
+expect 'A mobile target imports a macOS source' true true pull_request "$dependency" HEAD
+
+git switch --quiet -c mobile-prefixed-dependency "$base"
+sed -i '/  TolglowPhone:/a\    settings:\n      SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/macOS/Bridge.h' native/project.yml
+git commit --quiet -am 'Point the phone bridge at a prefixed macOS path'
+dependency=$(git rev-parse HEAD)
+change native/macOS/Bridge.h
+expect 'A build setting can use a project-relative macOS source' true true pull_request "$dependency" HEAD
+
+git switch --quiet -c local-package "$base"
+printf '\npackages:\n  DesktopCore:\n    path: macOS\n' >> native/project.yml
+git commit --quiet -am 'Add a local macOS package to the shared project'
+dependency=$(git rev-parse HEAD)
+change native/macOS/Studio.swift
+expect 'A shared project package can use macOS sources' true true pull_request "$dependency" HEAD
+
+git switch --quiet -c ambiguous-config "$base"
+printf 'targets: {}\n' >> native/project.yml
+git commit --quiet -am 'Supply an ambiguous project mapping'
+expect 'Duplicate manifest keys retain both lanes' true true pull_request "$base" HEAD
+git rm --quiet native/project.yml
+git commit --quiet -m 'Delete the project'
+expect 'Unavailable committed manifest retains both lanes' true true pull_request "$base" HEAD
+
+for path in \
+  native/{AppClip,Audience,AudienceBridge,AudienceCompute,Core,EmbeddedHost,Shared,iOS,watchOS}/Changed.swift \
+  native/Packaging/archive-companion \
+  native/Tests/{AudienceClient/main.swift,WatchAudienceUI/Changed.swift,capture_audience.sh,capture_watch_audience.sh,check_macos.sh}; do
+  git switch --quiet --detach "$base"
+  change "$path"
+  expect "$path requests both lanes" true true pull_request "$base" HEAD
+done
+
+for path in .github/workflows/tests.yml .github/scripts/{native-build-required,test-native-build-required}; do
+  git switch --quiet --detach "$base"
+  change "$path"
+  expect "$path requests both lanes" true true pull_request "$base" HEAD
+done
+
+for path in linux/audience/project.clj src/tolglow/sensors.clj src/shared/wire.clj .github/scripts/install-lein; do
+  git switch --quiet --detach "$base"
+  change "$path"
+  expect "$path requests the Linux receiver only" false true pull_request "$base" HEAD
+done
+
+git switch --quiet -c moves "$base"
+git mv native/iOS/Mobile.swift native/macOS/Mobile.swift
+git commit --quiet -m 'Move a mobile file out of the iOS target'
+expect 'Move out of a mobile target' true true pull_request "$base" HEAD
+git switch --quiet -c deletion "$base"
+git rm --quiet native/iOS/Mobile.swift
+git commit --quiet -m 'Delete a mobile file'
+expect 'Delete a mobile source' true true pull_request "$base" HEAD
+change $'native/watchOS/odd\n name.swift'
+expect 'Unusual native filenames are handled without splitting' true true push HEAD^ HEAD
+
+expect 'Unresolved base requests both lanes' true true pull_request missing "$topic"
+expect 'Absent head requests both lanes' true true pull_request "$base" ''
+expect 'New branch push requests both lanes' true true push 0000000000000000000000000000000000000000 "$topic"
+expect 'Unknown event requests both lanes' true true workflow_dispatch "$base" "$topic"
 
 git switch --quiet --orphan independent
 git commit --quiet --allow-empty -m 'Independent history'
-expect 'Histories without a merge base request Apple' true pull_request "$base" "$(git rev-parse HEAD)"
+expect 'Histories without a merge base request both lanes' true true pull_request "$base" HEAD
