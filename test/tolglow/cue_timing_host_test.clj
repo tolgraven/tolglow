@@ -1,5 +1,6 @@
 (ns tolglow.cue-timing-host-test
   (:require [afterglow.sync :as sync]
+            [afterglow.sync.session :as session]
             [clojure.data.json :as json]
             [clojure.test :refer [deftest is]]
             [tolglow.connections :as connections]
@@ -165,10 +166,27 @@
     (try
       (is (= :pending (:status (apply-at! runtime :cue-schedule intent 100))))
       (is (= :repl (get-in (show/snapshot runtime) [:pending-cue-launches 0 :source])))
-      (sync/select-source! manager :unseen)
+      (sync/select-source! manager :midi-clock)
       (sync/select-source! manager :manual)
       (show/tick! runtime 500)
       (is (= :missed (:status (show/quantized-cue-status runtime "old"))))
+      (is (empty? (:instances (model runtime))))
+      (finally (show/stop! runtime)))))
+
+(deftest an-explicit-forward-transport-jump-misses-the-old-boundary
+  (let [runtime (show/create-runtime {:workspace-options nil})
+        manager (connections/sync (:connections runtime))
+        clock! (fn [position at discontinuity?]
+                 (session/apply-clock! manager nil {:type :clock :source-id :midi-clock :time-ms at
+                                                    :beat position :bpm 120 :playing? true :confidence 1
+                                                    :discontinuity? discontinuity?}))]
+    (try
+      (sync/select-source! manager :midi-clock)
+      (clock! 0.25 125 false)
+      (is (= :pending (:status (apply-at! runtime :cue-schedule (launch "seek" :ember {:beats 1}) 125))))
+      (clock! 32 150 true)
+      (show/tick! runtime 150)
+      (is (= :missed (:status (show/quantized-cue-status runtime "seek"))))
       (is (empty? (:instances (model runtime))))
       (finally (show/stop! runtime)))))
 

@@ -231,7 +231,7 @@
     (is (nil? (get-in (transition db [:studio/open-actions cell]) [:db :ui :action-cell])))
     (is (empty? (transition db [:studio/gesture-down (dissoc cell :cue-id)])))
     (is (nil? (:dispatch-later down)))
-    (is (= [:studio/launch "ember" "toggle"] (:dispatch up)))
+    (is (= [:studio/launch "ember" "toggle" {:grid nil :owner {:epoch 7}}] (:dispatch up)))
     (is (nil? (events/selected-recent-page (:db returned))))
     (is (true? (get-in returned [:db :ui :edit?])))
     (is (some #{[:dispatch [:studio/persist-ui]]} (:fx returned)))
