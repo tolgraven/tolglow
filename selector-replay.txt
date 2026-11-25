@@ -1,0 +1,92 @@
+Tolglow #575 · CLI replay of #574 and a synthetic trigger control
+Pull request base   efd5f50f9a2b1a448500c1606dcd0301e151eb90
+Pull request head   a3fa1f0ef03b07b740d01c121fcfb29692ab883e
+Selector before    52ae6fd81e37c596cca9d3f9cfc89943161971b9
+Selector candidate fa76d94f7dd4a7b751bd66bad0dcab347100692e
+Trigger control    bdca387c4f8b03a0a866d53c5a8af091c56dcaca
+
+$ git diff --numstat efd5f50f a3fa1f0e -- .github/workflows
+1	1	.github/workflows/performance.yml
+3	3	.github/workflows/tests.yml
+
+$ python3 .git/selector-before pull_request efd5f50f a3fa1f0e
+audience=true
+linux_audience=true
+
+$ python3 .git/selector-after pull_request efd5f50f a3fa1f0e
+audience=false
+linux_audience=true
+
+$ git diff --unified=0 a3fa1f0e bdca387c -- .github/workflows/tests.yml
+diff --git a/.github/workflows/tests.yml b/.github/workflows/tests.yml
+index 1e08d902..995486bd 100644
+--- a/.github/workflows/tests.yml
++++ b/.github/workflows/tests.yml
+@@ -4 +4 @@ on:
+-    branches: [master, effects]
++    branches: [master]
+
+$ python3 .git/selector-after pull_request efd5f50f bdca387c
+audience=true
+linux_audience=true
+
+$ .github/scripts/test-native-build-required
+PASS audience=false linux=false  Concurrent Apple edit only on the base
+PASS audience=false linux=false  Topic branch started before the event base
+PASS audience=true  linux=true   Direct push to unknown native source
+PASS audience=false linux=false  Documentation push
+PASS audience=true  linux=true   Force push removes a native change
+PASS audience=false linux=true   Paired Afterglow pins request only the paired Linux receiver on pushes
+PASS audience=false linux=true   Paired Afterglow pins and Clojure changes keep the simulators off
+PASS both lanes for checkout pins with Python site packages disabled
+PASS audience=true  linux=true   Pin update and workflow trigger edit
+PASS audience=true  linux=true   Pin update and checkout tool edit
+PASS audience=true  linux=true   Pin update and native tool edit
+PASS audience=true  linux=true   Pin update and simulator step edit
+PASS audience=true  linux=true   Pin update and checkout repository edit
+PASS audience=true  linux=true   Replacing a pinned SHA with a branch ref
+PASS audience=true  linux=true   Pin update and tests workflow mode change
+PASS audience=true  linux=true   Tests workflow deletion
+PASS audience=true  linux=true   Pin update and shared XcodeGen manifest edit
+PASS audience=true  linux=true   Changing a checkout ref in the native job requests both lanes
+PASS audience=false linux=false  Exact #489 manifest change and desktop workflow and sources
+PASS audience=false linux=false  Desktop-only push
+PASS both lanes with Python site packages disabled
+PASS audience=true  linux=true   Desktop and iOS changes together
+PASS audience=true  linux=true   Desktop and shared manifest change together
+PASS audience=true  linux=true   A mobile target imports a macOS source
+PASS audience=true  linux=true   A build setting can use a project-relative macOS source
+PASS audience=true  linux=true   A shared project package can use macOS sources
+PASS audience=true  linux=true   Duplicate manifest keys retain both lanes
+PASS audience=true  linux=true   Unavailable committed manifest retains both lanes
+PASS audience=true  linux=true   native/AppClip/Changed.swift requests both lanes
+PASS audience=true  linux=true   native/Audience/Changed.swift requests both lanes
+PASS audience=true  linux=true   native/AudienceBridge/Changed.swift requests both lanes
+PASS audience=true  linux=true   native/AudienceCompute/Changed.swift requests both lanes
+PASS audience=true  linux=true   native/Core/Changed.swift requests both lanes
+PASS audience=true  linux=true   native/EmbeddedHost/Changed.swift requests both lanes
+PASS audience=true  linux=true   native/Shared/Changed.swift requests both lanes
+PASS audience=true  linux=true   native/iOS/Changed.swift requests both lanes
+PASS audience=true  linux=true   native/watchOS/Changed.swift requests both lanes
+PASS audience=true  linux=true   native/Packaging/archive-companion requests both lanes
+PASS audience=true  linux=true   native/Tests/AudienceClient/main.swift requests both lanes
+PASS audience=true  linux=true   native/Tests/WatchAudienceUI/Changed.swift requests both lanes
+PASS audience=true  linux=true   native/Tests/capture_audience.sh requests both lanes
+PASS audience=true  linux=true   native/Tests/capture_watch_audience.sh requests both lanes
+PASS audience=true  linux=true   native/Tests/check_macos.sh requests both lanes
+PASS audience=true  linux=true   .github/workflows/tests.yml requests both lanes
+PASS audience=true  linux=true   .github/scripts/native-build-required requests both lanes
+PASS audience=true  linux=true   .github/scripts/test-native-build-required requests both lanes
+PASS audience=false linux=true   linux/audience/project.clj requests the Linux receiver only
+PASS audience=false linux=true   src/tolglow/sensors.clj requests the Linux receiver only
+PASS audience=false linux=true   src/shared/wire.clj requests the Linux receiver only
+PASS audience=false linux=true   .github/scripts/install-lein requests the Linux receiver only
+PASS audience=true  linux=true   Move out of a mobile target
+PASS audience=true  linux=true   Delete a mobile source
+PASS audience=true  linux=true   Unusual native filenames are handled without splitting
+PASS audience=true  linux=true   Unresolved base requests both lanes
+PASS audience=true  linux=true   Absent head requests both lanes
+PASS audience=true  linux=true   New branch push requests both lanes
+PASS audience=true  linux=true   Unknown event requests both lanes
+PASS audience=true  linux=true   Histories without a merge base request both lanes
+58 selector checks passed
