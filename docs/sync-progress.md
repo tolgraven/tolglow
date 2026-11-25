@@ -132,13 +132,15 @@ HTTP service.
 
 The pure Ableton bridge maps an 8x8 page to notes, preserves normalized RGB and
 supports lighting/Live ownership modes. MIDI cue commands include source note,
-source ID and sync-run ID. The host must return launch acknowledgements through
-`acknowledge!`; note-off/handoff then targets the exact accepted activation.
-Off-before-ack and stop-before-ack retain the pending ownership. Late receipts
-are matched by command ID and optional run ID against the originating run;
-they cannot take over a new held note. At most 16 retired runs may retain pending
-acknowledgements: further starts are rejected until those receipts are resolved,
-rather than discarding ownership silently.
+source ID, sync-run ID and the logical time when the adapter received the MIDI
+message. Set `:live :launch-grid` to `:off` (the default), `{:beats 1/2}`,
+`{:bars 1}` or `{:phrases 1}`. Each note mapping can override it with `:grid`.
+The show owner schedules launches against the selected transport. Note-off
+before an accepted launch receipt asks the owner to cancel that specific launch.
+Note-off after acceptance ends the instance named by the receipt. Graceful
+handoff or stop releases held cues and asks the owner to cancel pending
+launches. The host returns receipts through `acknowledge!`. A receipt from a
+prior run or an earlier press leaves the current note binding alone.
 
 After publishing a control receipt, the host calls
 `record! manager stamped-command acknowledgement`. Recording requires fresh,
@@ -146,7 +148,10 @@ armed, writable Live recording state. The native CC route also checks automation
 arming. Parameter velocity lanes use ordinary MIDI note recording. Echo origins and duplicate command receipts are suppressed. Musical cue
 launch durations remain beats/bars/phrases; clip time is supplied by Live. Clip
 loop position and absolute song beat are distinct so held-note lengths survive
-loop wraparound.
+loop wraparound. The adapter writes a cue at the Live clip position corresponding
+to actual show admission. The clip-write request carries `:cue-timing` with the
+raw gesture, grid, due beat and actual admission. The show receipt retains this
+timing for later comparison. Live's MIDI note stores its clip position and duration.
 
 Exactly one recording route is selected:
 
@@ -157,7 +162,7 @@ Exactly one recording route is selected:
   Connections can pair either a Session slot or an Arrangement clip and place
   finished clips at a chosen song beat.
 - `:midi`: sends actual note/CC bytes to the configured MIDI output. This reports
-  delivery only; MIDI transmission cannot prove that Live recorded a clip.
+  delivery only. Live determines where it records the incoming bytes.
 
 DrumPad exposes no color setter and its name is read-only. The companion updates
 existing chains under pads and reports nearest-palette colors/empty-pad limits.
