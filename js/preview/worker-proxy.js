@@ -6,7 +6,7 @@ import {cameraControls, cameraPreset} from './camera.js';
 import {PreviewActivity} from './preview-activity.js';
 import {CameraNavigator} from './camera-navigation.js';
 import {LatestStateChannel} from './mailbox.js';
-import {presentFrame, showIdentity} from './presentation.js';
+import {CommittedFrames, presentFrame, showIdentity} from './presentation.js';
 import {clamp, roomDimensions} from './math.js';
 
 const sceneFields = ['rig', 'editor', 'sculpt-guide', 'spatial-volumes', 'volume-guides', 'glass-meshes', 'glass-volumes'];
@@ -34,6 +34,7 @@ export class WorkerRoomPreview {
     this.filmSettings = {}; this.lightingMode = 'hold'; this.fogOverride = null; this.workLight = .12; this.qualityChoice = 'auto'; this.actions = []; this.actionId = 0;
     this.lastFrame = 0; this.discardedFrames = 0; this.telemetry = {}; this.rendering = false;
     this.surfaceAllowed = options.surface !== false; this.surface = false;
+    this.readers = new CommittedFrames(frames => this.readCommitted(frames));
     this.navigationListeners = new Set();
     this.abort = new AbortController(); this.whenReady = new Promise(resolve => {this.resolveReady = resolve;});
     this.camera = new THREE.PerspectiveCamera(49, 1, .08, 100);
@@ -195,22 +196,19 @@ export class WorkerRoomPreview {
       this.discardedFrames++; this.retryDraw(); return;
     }
     this.presented = true; this.accepted(message);
-    if (!this.canvas.tolglowCaptureVideo && !this.observedFrame) return;
-    // The page's copy of the canvas receives this image at the worker's next
-    // commit. Readers run on the following animation frame, in frame order.
-    this.committed ||= [];
-    if (this.committed.push(message) > 240) this.committed.shift();
-    this.commitFrame ??= requestAnimationFrame(() => {
-      const frames = this.committed; this.committed = []; this.commitFrame = null;
-      if (this.disposed || this.error || !this.visible) return;
-      try {
-        this.canvas.tolglowCaptureVideo?.(this.canvas);
-        for (const frame of frames) {
-          if (frame.generation === this.generation && this.frameIdentity(frame) === this.identity)
-            this.observedFrame?.(this.canvas, frame.showId, frame.epoch, frame.showFrame);
-        }
-      } catch (error) {this.fail(error);}
-    });
+    // The page's copy of the canvas receives this image at the display's next
+    // frame. Readers are called once it has, in frame order.
+    if (this.canvas.tolglowCaptureVideo || this.observedFrame) this.readers.add(message);
+  }
+  readCommitted(frames) {
+    if (this.disposed || this.error || !this.visible) return;
+    try {
+      this.canvas.tolglowCaptureVideo?.(this.canvas);
+      for (const frame of frames) {
+        if (frame.generation === this.generation && this.frameIdentity(frame) === this.identity)
+          this.observedFrame?.(this.canvas, frame.showId, frame.epoch, frame.showFrame);
+      }
+    } catch (error) {this.fail(error);}
   }
   update(snapshot) {
     if (this.fallback) return this.fallback.update(snapshot);
@@ -307,8 +305,7 @@ export class WorkerRoomPreview {
     this.editorInput?.dispose(); this.editorInput = null;
     clearTimeout(this.startupTimer); this.navigation?.dispose(); this.abort.abort();
     this.resizeObserver?.disconnect(); this.activity?.dispose(); this.controls.dispose(); this.channel?.close();
-    if (this.commitFrame != null) cancelAnimationFrame(this.commitFrame);
-    this.commitFrame = null; this.committed = [];
+    this.readers.clear();
     const worker = this.worker; this.worker = null;
     if (!worker) return;
     // Only the worker can blank a canvas it presents. Let it retire its own

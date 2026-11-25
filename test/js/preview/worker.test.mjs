@@ -121,15 +121,45 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
     assert.equal(atmosphere.fog.atmosphere.referencePathM,5);
     assert.equal(atmosphere.fog.atmosphere.fogLevel,.060587);
     assert.ok(Math.abs(atmosphere.fog.massEstimate - 3.5)<.00001);
+    // Page-side readers of a handed-over canvas are called once its copy on the
+    // page holds the reported frame. Alternate two very different images while
+    // paused, so a reader that ran too early would return the previous one.
+    // Software rendering commits early enough to pass either way; on a hardware
+    // GPU a reader on the first animation frame saw the previous image in 17
+    // of 30 draws. `CommittedFrames` has the deterministic test.
+    const readers = await page.evaluate(async () => {
+      const probe = document.createElement('canvas'); probe.width = probe.height = 8;
+      const context = probe.getContext('2d', {willReadFrequently: true});
+      window.canvasLevel = source => {
+        context.clearRect(0, 0, 8, 8); context.drawImage(source, 0, 0, 8, 8);
+        return context.getImageData(0, 0, 8, 8).data.reduce((sum, value) => sum + value, 0);
+      };
+      const results = [];
+      for (let trial = 0; trial < 6; trial++) {
+        const captured = new Promise(resolve => {engine.canvas.tolglowCaptureVideo = pixels => resolve(canvasLevel(pixels));});
+        engine.setWorkLight(trial % 2 ? 0 : 1); await engine.draw();
+        const seen = await captured; delete engine.canvas.tolglowCaptureVideo;
+        await new Promise(resolve => setTimeout(resolve, 250));
+        results.push({seen, settled: canvasLevel(engine.canvas)});
+      }
+      return results;
+    });
+    assert.ok(readers.every((sample, i) => !i || sample.settled !== readers[i - 1].settled),
+      `the alternating images must differ: ${JSON.stringify(readers)}`);
+    assert.deepEqual(readers.map(sample => sample.seen), readers.map(sample => sample.settled),
+      'a capture reader must see the frame it was called for, not the one before it');
     const resized = await page.evaluate(async () => {
       engine.canvas.style.width = '480px'; engine.canvas.style.height = '300px'; engine.resize(); await engine.draw();
-      const telemetry = engine.getTelemetry(); const canvas = engine.canvas; engine.dispose();
-      return {telemetry, disposed: engine.disposed, terminated: engine.worker === null,
+      const telemetry = engine.getTelemetry(); const canvas = engine.canvas;
+      await new Promise(resolve => setTimeout(resolve, 250));
+      const backing = [canvas.width, canvas.height]; engine.dispose();
+      return {telemetry, disposed: engine.disposed, terminated: engine.worker === null, backing,
         channelClosed: engine.channel.closed, ownerRemoved: !canvas.tolglowPreview, drawAfterDispose: await engine.draw()};
     });
     const scale = resized.telemetry.renderScale;
     assert.ok(scale >= .5 && scale <= 1);
     assert.deepEqual(resized.telemetry.displayPixels, [480, 300]);
+    assert.deepEqual(resized.backing, [480, 300], 'page-side readers size themselves from the handed-over canvas');
     assert.equal(resized.telemetry.displayRange, 'sdr');
     assert.deepEqual(resized.telemetry.pixels, [Math.round(360 * scale), Math.round(225 * scale)]);
     assert.ok(resized.disposed && resized.terminated && resized.channelClosed && resized.ownerRemoved);
@@ -162,6 +192,6 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
     assert.deepEqual(fallback.observed, fallback.navigation);
     assert.deepEqual(fallback.secondaryObserved, fallback.navigation); assert.equal(fallback.cameraShared, true);
     assert.deepEqual(errors, []);
-    t.diagnostic(JSON.stringify({scope: 'Chromium SwiftShader, not physical GPU/Safari', first, heartbeat, starved, fenced, resized, fallback}));
+    t.diagnostic(JSON.stringify({scope: 'Chromium SwiftShader, not physical GPU/Safari', first, heartbeat, starved, fenced, readers, resized, fallback}));
   } finally {await browser?.close(); await new Promise(resolve => server.close(resolve));}
 });
