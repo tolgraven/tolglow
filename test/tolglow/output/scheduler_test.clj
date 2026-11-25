@@ -139,6 +139,78 @@
       (is (= 2 (count @sent)) "A second expired slot does not resend an unchanged cutoff")
       (finally (show/stop! runtime)))))
 
+(deftest expired-repatches-qualify-held-bytes-against-the-wire-patch
+  (let [lamp {:id :lamp :universe 1 :address 512 :channels {:dimmer [1 2]}}
+        inverted (assoc lamp :channels {:dimmer {:offset 1 :fine-offset 2 :inverted-from 0}})
+        withdrawn (assoc inverted :id :withdrawn :universe 3)
+        wash {:id :wash :universe 1 :address 10 :channels {:dimmer 1}}
+        fog {:id :fog :universe 1 :address 20 :channels {:fog [1 2]}
+             :fogger {:flow-m3-min 60 :dmx-range [196.5 0]}}
+        registry {:effects {:wash {:id :wash :name "Wash" :version 1 :params {}
+                                   :targets [:wash :withdrawn] :outputs {:dimmer 0.5}}
+                            :lamp {:id :lamp :name "Lamp" :version 1 :params {}
+                                   :targets [:lamp] :outputs {:dimmer 1.0}}}
+                  :cues {:wash {:id :wash :effect-id :wash :version 1}
+                         :lamp {:id :lamp :effect-id :lamp :version 1}}}
+        slots [[1 511] [2 0] [1 19] [1 20] [3 511] [4 0] [1 9]]]
+    (doseq [fail-first-new-send? [false true]]
+      (let [clock (atom 0) stall? (atom false) partial? (atom false) sent (atom [])
+            runtime (show/create-runtime
+                     {:model (control/new-show {:registry registry :rig {:fixtures [lamp withdrawn wash]}})
+                      :workspace-options nil :independent-output? true :physical-now-ms #(deref clock)
+                      :sink {:send! (fn [universes _]
+                                      (let [bytes (bytes-copy (if @partial? (select-keys universes [1]) universes))]
+                                        (swap! sent conj (mapv #(get-in bytes %) slots)))
+                                      (when @partial? (throw (ex-info "Second universe write failed" {}))))}})
+            owner (update (:publisher runtime) :prepare-output
+                          (fn [prepare]
+                            (fn [buffers source]
+                              (let [packet (prepare buffers source)]
+                                (when @stall? (swap! clock + 26))
+                                packet))))
+            clocked! (fn [time]
+                       (reset! clock time)
+                       (show/tick! runtime time)
+                       (is (nil? (get-in @(:state runtime) [:status :error]))))
+            submit! (fn [time operation payload]
+                      (let [receipt (show/submit! runtime operation payload)]
+                        (clocked! time)
+                        (is (= :accepted (:status @receipt)) (str @receipt))))
+            repatch! (fn [time dimmer]
+                       (let [model (:model @(:state runtime))]
+                         (submit! time :rig (assoc (:rig model) :fixtures [dimmer fog wash]
+                                                  :expected-epoch (:epoch model)))))
+            publish! (partial publish-fog! {:clock clock :owner owner})]
+        (try
+          (submit! 0 :command {:op :cue/launch :cue-id :wash})
+          (publish! 25)
+          (is (= [0 0 0 0 128 0 128] (peek @sent)))
+          (repatch! 40 inverted)
+          (submit! 45 :command {:op :cue/launch :cue-id :lamp})
+          (when fail-first-new-send?
+            (reset! partial? true)
+            (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Second universe write failed" (publish! 50)))
+            (is (= [0 nil 196 128 nil nil 128] (peek @sent)))
+            (reset! partial? false))
+          (clocked! 65)
+          (reset! stall? true)
+          (is (= {:expired-before-send? true :safety-output? true :sent-at-ms 101}
+                 (select-keys (publish! 75) [:expired-before-send? :safety-output? :sent-at-ms])))
+          (is (= [255 255 196 128 255 255 128] (peek @sent)))
+          (let [count-before (count @sent)]
+            (clocked! 110)
+            (is (not (:safety-output? (publish! 125))))
+            (is (= count-before (count @sent))))
+          (repatch! 160 lamp)
+          (is (:safety-output? (publish! 175)))
+          (is (= [0 0 196 128 255 255 128] (peek @sent))
+              "The reverse repatch must use the actual layout of the safety packet on the wire.")
+          (reset! stall? false)
+          (clocked! 210)
+          (is (not (:expired-before-send? (publish! 225))))
+          (is (= [255 255 196 128 255 255 128] (peek @sent)))
+          (finally (show/stop! runtime)))))))
+
 (deftest a-published-fog-cutoff-outlasts-the-producer-history
   (let [{:keys [runtime sent clock stall?] :as capture} (fog-capture 196)]
     (try

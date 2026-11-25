@@ -832,19 +832,39 @@
                                  ((get-in runtime [:publisher :now-ms])) stale-source?)
       packet)))
 
-(defn- prepare-safety-output [runtime universes {:keys [output-context stale-source? uncertain?] :as source}]
+(defn- hold-unchanged-fixtures
+  "Start with current idle output. Preserve complete wire values for compatible
+  channels and use current off values for fog."
+  [compiled wire-patch universes]
+  (let [output (render/idle-universes compiled)
+        mapping [:universe :address :footprint :channels]]
+    (doseq [{:keys [id compiled-channels] :as fixture} (:fixtures compiled)
+            :let [previous (get-in wire-patch [:by-id id])]
+            :when (and previous (= (select-keys fixture mapping) (select-keys previous mapping)))
+            [attribute channel] compiled-channels
+            :when (not= :fog attribute)
+            :let [slots (keep channel [:coarse :fine])]
+            :when (every? (fn [[universe _]] (contains? universes universe)) slots)
+            [universe index] slots]
+      (aset-byte ^bytes (get output universe) (int index)
+                 (aget ^bytes (get universes universe) (int index))))
+    output))
+
+(defn- prepare-safety-output
+  [runtime universes {:keys [output-context wire-patch stale-source? uncertain?] :as source}]
   (let [{:keys [compiled retirement]} output-context
+        layout-changed? (and (contains? source :wire-patch) (not= wire-patch compiled))
         off-bytes (:fog-off-bytes compiled)
-        corrected (prepare-output runtime output-context universes source)
-        corrected (if (and (or stale-source? uncertain?) (seq off-bytes))
-                    ;; Old light bytes may now address a pump. Recover it using
-                    ;; the current patch, even if its universe was absent before.
+        corrected (if layout-changed?
+                    (retirement/include-retired retirement (hold-unchanged-fixtures compiled wire-patch universes))
+                    (prepare-output runtime output-context universes source))
+        corrected (if (and (not layout-changed?) (or stale-source? uncertain?) (seq off-bytes))
                     (let [missing (into #{} (comp (map (comp first key)) (remove #(contains? corrected %))) off-bytes)
                           packet (if (seq missing) (merge corrected (select-keys (render/idle-universes compiled) missing)) corrected)]
                       (fog-deadline/apply-off-bytes packet off-bytes))
                     corrected)]
     ;; A transport can fail after writing only part of the attempted packet.
-    (when (or (and uncertain? (or (seq off-bytes) (seq (:held retirement))))
+    (when (or (and uncertain? (or layout-changed? (seq off-bytes) (seq (:held retirement))))
               (and (not (identical? universes corrected))
                    (some (fn [[universe ^bytes bytes]]
                            (not (Arrays/equals ^bytes (get universes universe) bytes)))
