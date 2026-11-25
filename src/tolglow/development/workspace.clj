@@ -23,6 +23,25 @@
 
 (defn- path [value] (.normalize (.toAbsolutePath (Paths/get (str value) (make-array String 0)))))
 
+(defn canonical-configured-path
+  "Resolve operator configuration once. The ancestors of the configured path go
+  through toRealPath at their nearest existing directory (macOS /var ->
+  /private/var, a symlinked home) and the not-yet-created remainder is appended.
+  The configured leaf itself is never followed. Later checks then reject any
+  symbolic link that appears on this canonical path instead of refusing the
+  platform's own system links."
+  [value]
+  (let [p ^Path (path value)]
+    (if-let [leaf (.getFileName p)]
+      (loop [existing (.getParent p) missing (list leaf)]
+        (cond
+          (nil? existing) p
+          (Files/exists existing (make-array LinkOption 0))
+          (reduce (fn [^Path parent ^Path name] (.resolve parent name))
+                  (.toRealPath ^Path existing (make-array LinkOption 0)) missing)
+          :else (recur (.getParent ^Path existing) (cons (.getFileName ^Path existing) missing))))
+      p)))
+
 (defn- id? [value] (and (string? value) (boolean (re-matches #"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}" value))))
 
 (defn- now-ms [] (System/currentTimeMillis))
@@ -151,10 +170,17 @@
                    (integer? (:timeout-ms profile 60000)) (<= 1 (:timeout-ms profile 60000) 300000)
                    (integer? (:max-output-bytes profile 1048576)) (<= 1 (:max-output-bytes profile 1048576) 8388608))
       (fail! :invalid-options "Check profile needs a known repo, fixed argv and bounded timeout/output")))
-  (let [parent (path workspace-parent) repositories (into {} (map (fn [[id root]] [id (path root)]) repositories))]
+  (let [parent (canonical-configured-path workspace-parent)
+        repositories (into {} (map (fn [[id root]] [id (path root)]) repositories))]
     (when-not (= (count repositories) (count (set (vals repositories))))
       (fail! :invalid-options "Each paired repository must have a distinct root"))
-    (when (some (fn [[_ root]] (or (.startsWith parent ^Path root) (.startsWith ^Path root parent))) repositories)
+    ;; create! follows repository roots with toRealPath, so compare those.
+    (when (some (fn [[_ ^Path root]]
+                  (let [root (if (Files/exists root (make-array LinkOption 0))
+                               (.toRealPath root (make-array LinkOption 0))
+                               (canonical-configured-path (str root)))]
+                    (or (.startsWith parent ^Path root) (.startsWith ^Path root parent))))
+                repositories)
       (fail! :invalid-parent "Workspace parent must be separate from configured repository roots"))
     {:lock (Object.) :parent parent :repositories repositories :runner runner :profiles check-profiles :now-ms now-ms :max-workspaces max-workspaces
      :fingerprint-max-file-bytes fingerprint-max-file-bytes :fingerprint-max-bytes fingerprint-max-bytes

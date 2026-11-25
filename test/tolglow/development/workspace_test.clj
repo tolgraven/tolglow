@@ -190,6 +190,62 @@
         (is (thrown? clojure.lang.ExceptionInfo
                      (workspace/write-file! manager "confined" :tolglow "missing-parent/file.clj" {:expected-hash :missing :content "new"})))))))
 
+(deftest workspace-parent-is-canonicalized-once-and-later-planted-links-are-rejected
+  ;; Characterizes issue #638: macOS temp roots (/var -> /private/var) and
+  ;; symlinked operator homes are resolved at construction; a link that appears
+  ;; on the canonical parent afterwards still refuses creation.
+  (let [root (Files/createTempDirectory "tolglow-workspace-parent-test-" attrs)
+        real (.toRealPath root (make-array LinkOption 0))
+        first (repo! root "original-tolglow") second (repo! root "original-afterglow")
+        configure (fn [parent] (workspace/create-manager {:repositories {:tolglow (str first) :afterglow (str second)}
+                                                          :workspace-parent (str parent)}))
+        symlink-error (fn [manager id] (:workspace/error (ex-data (try (workspace/create! manager {:id id})
+                                                                       (catch clojure.lang.ExceptionInfo error error)))))]
+    (try
+      (Files/createDirectory (.resolve root "real-home") attrs)
+      (Files/createSymbolicLink (.resolve root "linked-home") (.resolve real "real-home") attrs)
+      (testing "configured symbolic links resolve once at construction"
+        (let [manager (configure (.resolve root "linked-home/agent-workspaces"))]
+          (try
+            (is (= (str (.resolve real "real-home/agent-workspaces/configured"))
+                   (:root (workspace/create! manager {:id "configured"}))))
+            (finally (workspace/close! manager)))))
+      (testing "a link planted in a parent after construction is rejected"
+        (Files/createDirectory (.resolve root "planted") attrs)
+        (Files/createDirectory (.resolve root "elsewhere") attrs)
+        (let [manager (configure (.resolve root "planted/agent-workspaces"))]
+          (try
+            (Files/delete (.resolve root "planted"))
+            (Files/createSymbolicLink (.resolve root "planted") (.resolve real "elsewhere") attrs)
+            (is (= :symlink (symlink-error manager "planted")))
+            (is (not (Files/exists (.resolve root "elsewhere/agent-workspaces") (make-array LinkOption 0))))
+            (finally (workspace/close! manager)))))
+      (testing "the workspace parent itself replaced by a link is rejected"
+        (let [parent (.resolve root "replaced")
+              manager (configure parent)]
+          (try
+            (Files/createSymbolicLink parent (.resolve real "elsewhere") attrs)
+            (is (= :symlink (symlink-error manager "replaced")))
+            (finally (workspace/close! manager)))))
+      (testing "a configured parent that is itself a link is not followed"
+        (let [parent (.resolve root "linked-parent")]
+          (Files/createSymbolicLink parent (.resolve real "elsewhere") attrs)
+          (let [manager (configure parent)]
+            (try
+              (is (= :symlink (symlink-error manager "linked-parent")))
+              (finally (workspace/close! manager))))))
+      (testing "repository separation compares canonical locations"
+        (Files/createSymbolicLink (.resolve root "linked-tolglow") first attrs)
+        (is (= :invalid-parent
+               (:workspace/error (ex-data (try (workspace/create-manager
+                                                {:repositories {:tolglow (str (.resolve root "linked-tolglow")) :afterglow (str second)}
+                                                 :workspace-parent (str (.resolve first "agent-workspaces"))})
+                                               (catch clojure.lang.ExceptionInfo error error)))))))
+      (finally
+        (doseq [repo [first second]]
+          (try (command! repo ["git" "worktree" "prune"]) (catch Exception _)))
+        (delete-tree! root)))))
+
 (deftest bounded-tree-and-binary-read-report-real-files
   (with-workspace {}
     (fn [{:keys [manager]}]

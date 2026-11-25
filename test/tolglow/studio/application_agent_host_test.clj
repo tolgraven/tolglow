@@ -114,6 +114,37 @@
           (is (thrown? clojure.lang.ExceptionInfo (agents/restore-configuration! owner)))
           (finally (agents/close! owner)))))))
 
+(deftest application-settings-resolve-configured-parents-but-not-planted-links
+  ;; Issue #638: macOS temp/home paths pass through system symbolic links.
+  (fixtures/with-workspace {}
+    (fn [{:keys [manager root]}]
+      (let [real (.toRealPath ^Path root (make-array LinkOption 0))
+            linked (.resolve ^Path root "linked-settings")
+            options (fixture-agent/options manager fixture-agent/completed!)]
+        (Files/createDirectory (.resolve ^Path root "settings-home") fixtures/attrs)
+        (Files/createSymbolicLink linked (.resolve real "settings-home") fixtures/attrs)
+        (let [owner (agents/create-manager (assoc options :config-path (str (.resolve linked "settings.edn"))))]
+          (try
+            (is (:configuration-persisted? (agents/configure-provider! owner {:credential-ref fixture-agent/reference})))
+            (is (Files/isRegularFile (.resolve real "settings-home/settings.edn") (make-array LinkOption 0)))
+            (finally (agents/close! owner))))
+        (let [outside (.resolve ^Path root "outside-settings.edn")
+              target (.resolve ^Path root "preexisting-link.edn")]
+          (spit (str outside) "private unrelated file")
+          (Files/createSymbolicLink target outside fixtures/attrs)
+          (let [owner (agents/create-manager (assoc options :config-path (str target)))]
+            (try
+              (is (thrown? clojure.lang.ExceptionInfo (agents/configure-provider! owner {:credential-ref fixture-agent/reference})))
+              (is (= "private unrelated file" (slurp (str outside))))
+              (finally (agents/close! owner)))))
+        (Files/createDirectory (.resolve ^Path root "planted-home") fixtures/attrs)
+        (let [owner (agents/create-manager (assoc options :config-path (str (.resolve ^Path root "planted-home/settings.edn"))))]
+          (try
+            (Files/delete (.resolve ^Path root "planted-home"))
+            (Files/createSymbolicLink (.resolve ^Path root "planted-home") (.resolve real "settings-home") fixtures/attrs)
+            (is (thrown? clojure.lang.ExceptionInfo (agents/configure-provider! owner {:credential-ref fixture-agent/reference})))
+            (finally (agents/close! owner))))))))
+
 (deftest unavailable-application-agent-service-does-not-fall-back-to-show-chat
   (let [app (web/app {})]
     (is (= 503 (:status (request app :get "/api/application-agents" nil nil))))
