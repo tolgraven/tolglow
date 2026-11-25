@@ -101,7 +101,8 @@
                             (release-unused-interest! hub)
                             (when (seq prior) (release-queries! hub prior {}))
                             [removed prior]))]
-    (when (seq prior) (query-demand-changed! hub nil (vals prior)))
+    (when (and (seq prior) (not @(:closed? hub)))
+      (query-demand-changed! hub nil (vals prior)))
     removed))
 
 (defn- retire! [hub socket code reason]
@@ -122,9 +123,10 @@
                         (let [wire (transit/encode (message base target))]
                           (vswap! cache assoc key wire)
                           wire))]
-        (when (compare-and-set! client before (-> before
-                                                (dissoc :removed-queries)
-                                                (assoc :pending target :sending token :deltas (if base (inc (:deltas before 0)) 0))))
+        (when (and (not @(:closed? hub))
+                   (compare-and-set! client before (-> before
+                                                      (dissoc :removed-queries)
+                                                      (assoc :pending target :sending token :deltas (if base (inc (:deltas before 0)) 0)))))
           (ws/send socket encoded
                    (fn []
                      (swap! client #(if (= token (:sending %)) (dissoc % :sending) %))
@@ -228,11 +230,18 @@
                                  (.setDaemon true) (.start))))))))
 
 (defn close! [hub]
-  (locking (:closed? hub)
-    (reset! (:closed? hub) true)
-    (when (realized? (:worker hub)) (.interrupt ^Thread @(:worker hub))))
-  (doseq [socket (keys @(:clients hub))] (retire! hub socket 1001 "Studio stopped"))
-  (when-let [store (:query-store hub)] (queries/close! store)))
+  (when (locking (:closed? hub) (compare-and-set! (:closed? hub) false true))
+    (wake! hub)
+    (let [worker (when (realized? (:worker hub)) @(:worker hub))
+          store (:query-store hub)
+          external? (not (identical? worker (Thread/currentThread)))]
+      (try
+        (doseq [socket (keys @(:clients hub))] (retire! hub socket 1001 "Studio stopped"))
+        (finally
+          ;; Terminal query teardown owns the remaining leases as a batch.
+          (when store (queries/close! store external?))
+          (when (and worker external? (not (and store (queries/retiring-on? store worker))))
+            (.interrupt ^Thread worker)))))))
 
 (defn- grant-lease! [hub session clock]
   ;; An acknowledged stream may run at 40Hz. One renewal per second suffices
