@@ -623,6 +623,13 @@
         (is (= {:event-id "up" :status :cancelled :reason :operator-cancel}
                (select-keys (last (recent rt)) [:event-id :status :reason])))
         (is (empty? (:ramps (show/schedule rt))))
+        (testing "a JSON caller names a variable destination as text"
+          (at! rt 3050 {:op :variable/set :variable :energy :value 0.0 :source agent})
+          (at! rt 3100 {:op :param/ramp :event-id "rise" :target :variable :variable :energy :to 1.0
+                        :over {:beats 8} :source agent})
+          (is (= :rejected (:status (at! rt 3150 {:op :schedule/cancel :destination "energy" :source agent}))))
+          (is (= ["rise"] (:event-ids (at! rt 3200 {:op :schedule/cancel :source agent
+                                                    :destination {:target "variable" :variable "energy"}})))))
         (testing "a ramp stopped on its first frame has nothing to commit"
           (at! rt 3250 {:op :param/ramp :event-id "again" :instance-id id :param :level :to 1.0
                         :over {:beats 8} :source agent})

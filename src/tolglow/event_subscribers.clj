@@ -1114,8 +1114,13 @@
          "Cancel by event IDs, source, label or destination" {})
   (check (or (nil? event-ids) (and (vector? event-ids) (every? identifier? event-ids))) "Event IDs must be a vector" {})
   (let [criteria (select-keys request [:event-ids :posted-by :label :destination])
-        criteria (cond-> criteria
-                   (:destination criteria) (update :destination #(update % :target textual-keyword)))
+        ;; JSON callers name the target, parameter and variable as text, as events do.
+        textual #(cond-> % (contains? % :target) (update :target textual-keyword)
+                   (contains? % :param) (update :param textual-keyword)
+                   (contains? % :variable) (update :variable textual-keyword))
+        _ (check (or (not (contains? criteria :destination)) (map? (:destination criteria)))
+                 "A destination is a map with :target and optional :instance-id, :param or :variable" {})
+        criteria (cond-> criteria (:destination criteria) (update :destination textual))
         ;; A non-human requester reaches only its own work, whatever criteria it supplies.
         may-cancel? (if (human-source? source) (constantly true) #(owner? source %))
         reason (or reason :operator-cancel)
