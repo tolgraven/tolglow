@@ -1,0 +1,222 @@
+{
+  "previous": {
+    "quadrature": [
+      {
+        "mode": "mobile",
+        "shape": [
+          537,
+          322
+        ],
+        "steps": 32,
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+        "crossing": {
+          "n": 19231,
+          "p95": 0.10473288158076716,
+          "rmse": 0.010081083586880224,
+          "maxOver": 0.14181469726562496
+        },
+        "full": {
+          "n": 143653,
+          "p95": 0.05207609552144903,
+          "rmse": 0.0038605987642164434,
+          "maxOver": 0.14181469726562496
+        },
+        "finite": true
+      },
+      {
+        "mode": "desktop",
+        "shape": [
+          480,
+          270
+        ],
+        "steps": 48,
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+        "crossing": {
+          "n": 14173,
+          "p95": 0.05492375280817008,
+          "rmse": 0.005807913929010475,
+          "maxOver": 0.06060649414062497
+        },
+        "full": {
+          "n": 107824,
+          "p95": 0.023163385732112882,
+          "rmse": 0.002226958418125791,
+          "maxOver": 0.06060649414062497
+        },
+        "finite": true
+      }
+    ],
+    "twoBeam": [
+      {
+        "config": {
+          "quality": "mobile",
+          "raster": [
+            840,
+            496
+          ],
+          "fogRaster": [
+            285,
+            168
+          ],
+          "display": [
+            840,
+            496
+          ],
+          "samples": 4,
+          "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)"
+        },
+        "separation": 0,
+        "sumDelta": {
+          "volume": 0.0000019073486328125,
+          "linear": 0.000002452305385047121
+        },
+        "bloomPeak": [
+          0,
+          0,
+          0
+        ],
+        "highGainVolumePeak": 1.056640625
+      },
+      {
+        "config": {
+          "quality": "high",
+          "raster": [
+            1320,
+            780
+          ],
+          "fogRaster": [
+            884,
+            522
+          ],
+          "display": [
+            1320,
+            780
+          ],
+          "samples": 4,
+          "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)"
+        },
+        "separation": 2,
+        "sumDelta": {
+          "volume": 0.0000019836425781266653,
+          "linear": 0.0000024912308673463723
+        },
+        "bloomPeak": [
+          0,
+          0,
+          0
+        ],
+        "highGainVolumePeak": 1.01171875
+      }
+    ]
+  },
+  "revised": {
+    "quadrature": [
+      {
+        "mode": "mobile",
+        "shape": [
+          537,
+          322
+        ],
+        "steps": 32,
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+        "crossing": {
+          "n": 19231,
+          "p95": 0.026946352543603107,
+          "rmse": 0.003150930480193326,
+          "maxOver": 0.047662133789062505
+        },
+        "full": {
+          "n": 143653,
+          "p95": 0.014119303165848605,
+          "rmse": 0.0015564713719983475,
+          "maxOver": 0.047662133789062505
+        },
+        "finite": true
+      },
+      {
+        "mode": "desktop",
+        "shape": [
+          480,
+          270
+        ],
+        "steps": 48,
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+        "crossing": {
+          "n": 14173,
+          "p95": 0.008676279127871653,
+          "rmse": 0.001151510802804378,
+          "maxOver": 0.029641723632812478
+        },
+        "full": {
+          "n": 107824,
+          "p95": 0.005148537632999241,
+          "rmse": 0.0008149330539081445,
+          "maxOver": 0.029641723632812478
+        },
+        "finite": true
+      }
+    ],
+    "twoBeam": [
+      {
+        "config": {
+          "quality": "mobile",
+          "raster": [
+            840,
+            496
+          ],
+          "fogRaster": [
+            285,
+            168
+          ],
+          "display": [
+            840,
+            496
+          ],
+          "samples": 4,
+          "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)"
+        },
+        "separation": 0,
+        "sumDelta": {
+          "volume": 0.0000045299530029296875,
+          "linear": 0.0000036200698541113963
+        },
+        "bloomPeak": [
+          0,
+          0,
+          0
+        ],
+        "highGainVolumePeak": 1.056640625
+      },
+      {
+        "config": {
+          "quality": "high",
+          "raster": [
+            1320,
+            780
+          ],
+          "fogRaster": [
+            884,
+            522
+          ],
+          "display": [
+            1320,
+            780
+          ],
+          "samples": 4,
+          "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)"
+        },
+        "separation": 2,
+        "sumDelta": {
+          "volume": 0.0000019836425781266653,
+          "linear": 0.000003814697265625
+        },
+        "bloomPeak": [
+          0,
+          0,
+          0
+        ],
+        "highGainVolumePeak": 1.01171875
+      }
+    ]
+  }
+}
