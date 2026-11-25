@@ -290,6 +290,62 @@ The same operation is available through the typed bind endpoint or the show API.
 
 An occupied destination, invalid endpoints, or an intervening source or effect revision change reject the move and retain both parameters' previous sources. Studio waits for the committed projection before releasing a pending edit. For clients that supply `:request-id`, the projection's bounded `:parameter-source-outcomes` also exposes terminal results for requests whose HTTP reply is pending.
 
+### Layer priority as a destination
+
+A waveform can also drive the launch's render layer priority through the
+reserved destination `:layer/priority`. Its typed schema is
+`tolglow.effects.parameter-sources/priority-schema`: an integer from −1000 to
+1000 in the `:priority` category. Both endpoints must be integer tiers. The
+destination is not an effect parameter, so it never enters effect parameter
+overlays or random-controller selection.
+
+```clojure
+(show/submit! runtime :modulation-bind
+  {:instance-id instance-id :param :layer/priority
+   :binding {:type :lfo :waveform :triangle :period {:beats 4}
+             :phase-reference :transport :from -1 :to 1
+             :hysteresis {:band 1/4 :dwell {:beats 1/2}}}})
+```
+
+The owner samples the waveform once per frame as a continuous value between the
+endpoints. `quantize-priority` then chooses a tier:
+
+- `:band` (default `1/4`, 0–8 tiers) is a Schmitt band. The held tier changes
+  only after the sample passes the boundary by at least the band. With a quarter
+  band, rising from tier 0 switches at 0.75 and falling back switches at 0.25.
+- `:dwell` (optional beats, bars or phrases, using the captured meter) keeps a
+  new tier for at least that interval on the launch's own clock. A transport
+  seek backwards re-arms it.
+
+A large jump can change several tiers at once; the result is clamped to the
+bounds. Hysteresis state is a tier and the beat it started, carried with the
+previous frame's samples and keyed by the source identity. Rebinding, a show
+epoch change, a manual hold or a restored show starts it again from the next
+sample. Because the band follows the sampled path, sparse and dense frame
+sampling can differ at a boundary.
+
+The frame passes the tiers to `afterglow.runtime.engine/advance` as
+`::engine/priority-overrides`. The engine resolves positions once from that
+frozen frame input and uses them to order evaluation and merge contributions. A tier equal to
+the launch's effective priority keeps its committed place. A different tier
+places the launch in that tier after any explicitly reordered peers, then in
+launch order. The committed `:priority`, `:render-priority`, `:render-order`
+and `:active-instance-order` stay unchanged. The snapshot adds
+`:effective-instance-order`, and the launch's
+`[:parameter-sources :layer/priority]` reading has the committed priority as
+`:base-value` and the current tier as `:effective-value`. Each source also
+records `:priority` and `:raw-priority`. Holding the destination restores the
+committed order for that launch. An accepted `:instance/set-priority` or
+`:instance/move-after` on a launch with a bound priority waveform holds that
+destination with `:reason :manual-priority` (`modulation/hold` accepts an
+optional keyword `:reason`), so the operator's priority is lit until the
+waveform is resumed. Only the `:layer/priority` destination accepts
+`:hysteresis`. A definition parameter that shares the `:priority` category
+does not. A waveform cannot target a member of a
+compound native layer, because its members share one priority. A move between
+`:layer/priority` and an effect parameter drops the hysteresis on the way out
+and uses the default band on the way in.
+
 Registered waveform values are normalized from their declared range, clamped to 0–1, and interpolated between the two typed endpoints. Colors, coordinates and ranges interpolate component-wise. Integers round to the nearest value and boolean or enum inputs select the second endpoint at halfway. Live revisions of the selected waveform recompile its plan. A composite authored with `signals/sample` captures the nested expression at publication. Republishing the composite picks up a new constituent waveform. An incompatible destination or waveform input is reported on that source while the underlying parameter remains usable. Show files retain bindings, original schema, waveform registry and manual holds across instance-ID changes.
 
 Committed Studio snapshots include the registered waveform choices in `:parameter-waveforms`. Each bound entry under `[:instances n :parameter-sources param]` exposes its base value, effective input and sources, including held and constant-valued sources. A random controller waiting for its next legal sample is marked pending. A rejected sample carries a diagnostic on that frame. The input pipeline applies the random controller, instance waveform, spatial overrides and response middleware in order. Parameter blocks inside an effect can yield a different result per fixture. Live destinations list the MIDI controller and current ports while the lighting bridge owns them. Handing the device back to Live or stopping the input removes that source. Patch destinations include their captured route and source IDs, including audio pitch or level. A spatial field reports its configured variable, cue parameter or volume control. Their authored block source contains the path for `:runtime/block-trace`, which returns the committed result for the requested fixture.
