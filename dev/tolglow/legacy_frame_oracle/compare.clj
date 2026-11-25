@@ -52,7 +52,8 @@
 (defn- ordering [model]
   (mapv :cue-id (instance-order/ordered model)))
 
-(defn- run-scenario [rig authored-rgb compile-effect]
+(defn- run-scenario [rig authored-rgb compile-effect {:keys [map-work render-output]
+                                                      :or {map-work mapv render-output replay/render-output}}]
   (loop [operations (map-indexed vector scenario/operations), model (initial-show rig authored-rgb)
          previous nil, launches {}, first-launches {}, history [], frames []]
     (if-let [[index [op time-ms label :as input]] (first operations)]
@@ -62,9 +63,9 @@
         (case op
           :frame
           (let [frame {:time-ms time-ms :show-id (:show-id model) :epoch (:epoch model) :fixtures rig}
-                result (engine/advance model frame compile-effect)
+                result (engine/advance model frame compile-effect map-work)
                 model (:model result)
-                output (replay/render-output model frame (:contributions result) previous)
+                output (render-output model frame (:contributions result) previous)
                 ordering (ordering model)
                 sources (mapv #(get-in % [:source :cue-id]) (:contributions result))]
             (when-not (= ordering sources)
@@ -100,6 +101,15 @@
                    (conj history {:input input :epoch (:epoch model) :active (ordering model)}) frames))))
       {:history history :frames frames})))
 
+(defn paired-run
+  "Run the legacy scenario through the paired functional runtime. Options take
+  :map-work (default serial mapv, the whole-frame oracle) and :render-output with
+  the afterglow.runtime.replay/render-output signature, so a caller can supply
+  a bounded worker mapper and publish each completed frame."
+  ([legacy compile-effect] (paired-run legacy compile-effect {}))
+  ([legacy compile-effect options]
+   (run-scenario rig (:authored-rgb legacy) compile-effect options)))
+
 (defn- ensure-equal! [message expected observed]
   (when-not (= expected observed)
     (let [[only-expected only-observed] (data/diff expected observed)]
@@ -119,8 +129,8 @@
 (def ^:private frame-fields [:label :epoch :time-ms :active])
 
 (defn- compare-scenario [legacy rig]
-  (let [paired (run-scenario rig (:authored-rgb legacy) (batch/compiler-for-rig rig))
-        scalar (run-scenario rig (:authored-rgb legacy) compiler/compile-effect)
+  (let [paired (run-scenario rig (:authored-rgb legacy) (batch/compiler-for-rig rig) {})
+        scalar (run-scenario rig (:authored-rgb legacy) compiler/compile-effect {})
         history-fields [:input :epoch :active :outcome]
         project (fn [fields entries] (mapv #(select-keys % fields) entries))]
     (ensure-equal! "Scalar and typed execution must agree" scalar paired)

@@ -1,6 +1,7 @@
 (ns tolglow.autopilot.config
   "Portable controls shared by the performer, REPL, Studio and renderer."
-  (:require [afterglow.time :as time]
+  (:require [afterglow.render.hdr :as hdr]
+            [afterglow.time :as time]
             [tolglow.autopilot.signal :as signal]
             [tolglow.autopilot.target-response :as target-response]
             [tolglow.registry :as registry]))
@@ -42,7 +43,9 @@
     (when-not (and (map? opts) (every? (into (set (keys hdr-defaults))
                                               [:enabled? :scope :cue-gains :source-gains :instance-gains]) (keys opts))
                    (boolean? (:enabled? s false)) (scope? (:scope s :global))
-                   (#{:linear :smoothstep :quadratic} (:falloff s))
+                   ;; A preset keyword or an authored [[distance-fraction weight] ...]
+                   ;; curve. The renderer owns the vocabulary and its compiled form.
+                   (hdr/falloff? (:falloff s))
                    (every? (fn [[k [lo hi]]] (between? (s k) lo hi)) hdr-ranges)
                    (every? (fn [k] (let [g (s k {})]
                                      (and (map? g) (every? id? (keys g))

@@ -155,7 +155,7 @@
   (try
     (when-not (and (string? text) (<= (count text) 1024))
       (throw (ex-info "Expected a bounded control message" {})))
-    (let [{:keys [op cursor universe token]} (wire/decode text)]
+    (let [{:keys [op cursor universe token]} (wire/decode-command text)]
       (when-let [client (@(:clients hub) socket)]
         (case op
           :ack (swap! client #(if (and (integer? cursor) (= cursor (:events-pending %)))

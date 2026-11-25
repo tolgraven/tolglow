@@ -74,6 +74,7 @@
             [afterglow.output.scheduler :as output-scheduler]
             [tolglow.output.pause-look :as pause-look]
             [tolglow.effects.faults :as effect-faults]
+            [tolglow.effects.state-migration :as state-migration]
             [tolglow.show.preview :as preview]
             [tolglow.show.push-scene :as push-scene]
             [tolglow.show.scene-draft :as scene-draft]
@@ -200,6 +201,10 @@
             :cues (vec (sort-by (comp str :id) (vals (get-in model [:registry :cues]))))
             :groups (categories/group-view model)
             :active-instance-order (mapv :id (instance-order/ordered model))
+            :effective-instance-order (mapv :id (instance-order/ordered-with-priorities
+                                                 model (:priority-overrides parameter-samples)))
+            :layer-priority-destination {:param parameter-sources/priority-param
+                                         :schema parameter-sources/priority-schema}
             :instances (mapv #(-> % (dissoc :state :parameter-bindings)
                                   (assoc :definition (get definitions [(:definition %) (:targets %)])
                                          :parameter-sources (parameter-sources/project % (get sources (:id %)) resolve-inputs responses?)
@@ -477,6 +482,7 @@
                               :publish! #(submit! @runtime-ref :rdm-update (merge %1 %2))}))
       :response-cache (atom {:responses [] :middleware identity})
       :compute compute-owner :compiler-context compiler-context :batch? batch?
+      :state-migrations (atom {})
       :parameter-precision (atom nil)
       :optics-plan (atom (reflections/plan (:rig model)))
       :patch (atom {:fixtures fixtures :compiled patch :retirement (retirement/plan nil nil patch)
@@ -535,8 +541,25 @@
   [runtime]
   (group-channels/projection (:model @(:state runtime))))
 
-(defn- hold-manual-params [model result {:keys [op source instance-id param control-id gesture-id]} authority]
-  (let [owner (when (#{:gesture/sample :gesture/end :gesture/cancel} op)
+(def ^:private manual-priority-ops
+  "Operator commands that set a running layer's priority or position."
+  #{:instance/set-priority :instance/move-after})
+
+(defn- hold-manual-priority
+  "A manual priority or reorder command takes precedence over a waveform bound
+  to that launch's layer priority, as a parameter edit does over its source.
+  The hold records why, and the operator resumes the waveform explicitly."
+  [model result {:keys [op instance-id]}]
+  (if (and (manual-priority-ops op)
+           (get-in model [:instances instance-id :parameter-bindings parameter-sources/priority-param]))
+    (update-in result [:model :modulation] (fnil modulation/hold (modulation/new-state))
+               {:instance-id instance-id :params [parameter-sources/priority-param] :until-beat nil
+                :reason :manual-priority})
+    result))
+
+(defn- hold-manual-params [model result {:keys [op source instance-id param control-id gesture-id] :as payload} authority]
+  (let [result (hold-manual-priority model result payload)
+        owner (when (#{:gesture/sample :gesture/end :gesture/cancel} op)
                 [(:operator-id authority) control-id gesture-id])]
     (cond
       (#{:gesture/end :gesture/cancel} op)
@@ -728,6 +751,7 @@
      :variable-plan (volatile! nil) :scene-plans (volatile! {})
      :optics-plan (atom (reflections/plan (:rig model)))
      :compiler-context context :compile (cached-compile context)
+     :state-migrations (atom {})
      :compute nil :executor nil :spatial-sampling nil}))
 
 (defn- begin-audition
@@ -1738,7 +1762,7 @@
   Nothing here sends output, invokes callbacks or performs device IO."
   [runtime before model time-ms {:keys [started frame-start-ns photo-session sampling-session audition?]}]
   (let [parameter-samples (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)}
-                                                   (get-in before [:parameter-samples :plans]))
+                                                   (:parameter-samples before))
         control-view (if (seq (:overrides parameter-samples))
                        (update (:modulation-view before) :overrides
                                #(merge-with merge % (:overrides parameter-samples)))
@@ -1783,12 +1807,6 @@
         model (variable-blocks/collect-events model (:variable-observation before) variables)
         variable-inputs (when variables (:variables (variable-blocks/resolved model variables)))
         sampling (when sampling-session (vreset! sampling-session (cadence/begin runtime before model)))
-        frame-input (merge {:time-ms time-ms :epoch (:epoch model) :show-id (:show-id model)
-                            :keyframes (:keyframes before) :keyframe-params input-overrides
-                            :keyframe-generation (:responses model) :spatial-aims (get-in space [:fields :aims])
-                            :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
-                           (connections/effect-frame-inputs (:connections runtime) (:epoch model))
-                           (:inputs sampling))
         ;; Display response leases poll external predicates; only the live owner reads them.
         response-frame (when (and (not audition?)
                                   (some #(not= false (:enabled? %)) (:responses model))
@@ -1798,6 +1816,12 @@
                           :frame-number (inc (get model :frame-number 0))
                           :responses (:responses model)
                           :adaptive-intervals (get-in sampling [:inputs :keyframe-intervals])})
+        frame-input (merge {:time-ms time-ms :epoch (:epoch model) :show-id (:show-id model)
+                            :keyframes (:keyframes before) :keyframe-params input-overrides
+                            :keyframe-generation (:responses model) :spatial-aims (get-in space [:fields :aims])
+                            :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
+                           (connections/effect-frame-inputs (:connections runtime) (:epoch model))
+                           (:inputs sampling))
         group-levels (group-channels/frame-levels model)
         ;; Spatial membership is attached after the engine runs. Keep
         ;; those contributions intact until their native member mix.
@@ -1809,8 +1833,12 @@
                         group-levels)
         frame-input (cond-> frame-input
                       variables (assoc :resolved-variables variable-inputs)
-                      engine-levels (assoc ::engine/opacity-factors engine-levels)
-                      response-frame (assoc ::waveforms/response-frame response-frame))
+                      ;; Modulated layer priority is resolved once here and
+                      ;; orders only this frame; the model keeps its own tiers.
+                      (seq (:priority-overrides parameter-samples))
+                      (assoc ::engine/priority-overrides (:priority-overrides parameter-samples))
+                      response-frame (assoc ::waveforms/response-frame response-frame)
+                      engine-levels (assoc ::engine/opacity-factors engine-levels))
         response (response-middleware! runtime (:responses model []))
         inputs (if response-frame
                  (fn [context]
@@ -1821,7 +1849,10 @@
                        (let [step (spatial-cues/with-aims definition ((:compile runtime) definition))]
                          ;; Certified literals have no parameter schemas, and
                          ;; these transforms touch only declared parameters.
-                         (keyframes/with-inputs step inputs {:preserve-time-invariance? true})))
+                         ;; :migrate reloads call this pure transform once, at takeover.
+                         ;; Its compiled form is cached per declaration and version.
+                         (state-migration/attach (:state-migrations runtime) definition
+                                                 (keyframes/with-inputs step inputs {:preserve-time-invariance? true}))))
         result (if audition?
                  (engine/advance model frame-input compile-step)
                  (engine/advance model frame-input compile-step
@@ -1905,8 +1936,8 @@
                   updated (advance-light-scenes runtime (lighting/publish with-fog frame) patch frame time-ms bypass?)]
               (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
      :output frame :variable-observation variables
-     ::show-events/intent-emissions (:intent-emissions result)
      ::waveforms/response-frame response-frame
+     ::show-events/intent-emissions (:intent-emissions result)
      :preview-hdr (when (:hdr? frame-input) (or hdr-opts {}))
      :keyframes (:keyframes result) :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
      :lighting-history (:state finished) :fault-events (:fault-events result)

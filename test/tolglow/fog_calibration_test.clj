@@ -72,3 +72,28 @@
             (is (nil? (scan/current saved)))
             (is (= (:extinction-per-m fit) (get-in (show/snapshot rt) [:output :atmosphere :extinction-per-m]))))))
       (finally (show/stop! rt)))))
+
+(deftest the-scan-trace-records-flow-through-the-configured-curve
+  (let [curved (assoc-in nozzle [:fogger :flow-curve] [[0 0] [0.2 0] [0.6 0.4] [1 1]])
+        half {:id :half :name "Half fog" :version 1 :targets [:jet] :params {} :outputs {:fog 0.6}}
+        m (-> model
+              (assoc-in [:registry :effects :half] half)
+              (assoc-in [:registry :cues :half] {:id :half :name "Half" :version 1 :effect-id :half})
+              (assoc-in [:rig :fixtures] [curved]))
+        now (atom 0) out (atom [])
+        rt (show/create-runtime {:model m :physical-now-ms #(deref now)
+                                 :sink {:send! (fn [packet _] (swap! out conj (bit-and 255 (first (get packet 0)))))}})
+        issue (fn [type data] (let [p (show/submit! rt type data)] (show/tick! rt @now) @p))]
+    (try
+      (is (= :accepted (:status (issue :fog-calibration {:expected-epoch (:epoch m) :runtime-id (:id rt)
+                                                          :session-id "phone" :op :start
+                                                          :fixture-id "jet" :path-m 3}))))
+      (reset! now 1000)
+      (issue :command {:op :cue/launch :cue-id :half})
+      (is (= 153 (last @out)))
+      (let [flows (get-in @(:venue-fog rt) [:trace :flows])
+            rate (:flow-m3-s (last flows))]
+        (is (= 1000 (:elapsed-ms (last flows))))
+        ;; 60% DMX maps to 40% of the rated 1 m³/s, not the linear 60%.
+        (is (< (abs (- rate 0.4)) 1e-9) (str flows)))
+      (finally (show/stop! rt)))))
