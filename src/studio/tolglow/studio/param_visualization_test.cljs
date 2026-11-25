@@ -24,10 +24,25 @@
     (let [schema {:type :number :bounds [0 1] :dmx-bits bits}
           point [value 0 1]
           [_ _ _ caption] (visual/space (assoc schema :type :vector :size 3) point point)
-          [_ _ [_ readings] _ axis] (visual/history-chart schema [{:beat 0 :values [value]}] 4)]
+          [_ _ [_ _ readings] _ axis] (visual/history-chart schema [{:beat 0 :values [value]}] 4)]
       (is (= [:figcaption (str expected " · 0 · 1")] caption))
       (is (= expected (peek (first readings))))
       (is (= [:figcaption [:span "0 … 1"] [:span "4 beats"]] axis)))))
+
+(deftest push-slots-show-supplied-signals-until-touched-and-label-rounded-components
+  (let [level {:id "level" :schema {:type :number :bounds [0 1] :unit "%"} :value 0.25
+               :preview-samples [0 0.5 1 0.5]}
+        [_ trace [reading]] (visual/push {:parameter-view "controls"} level)
+        point {:type :vector :size 3 :bounds [-1 1] :dmx-bits 16}
+        [_ _ [_ attrs & spans]] (visual/history-chart point [{:beat 0 :values [0.123456 -0.5 1]}] 4 nil nil true)
+        [_ {:keys [title]} [_ label] shown] (ffirst spans)]
+    (is (= :svg.parameter-sparkline (first trace)))
+    (is (= :output.push-signal-value reading))
+    (is (= widgets/typed-display (first (visual/push {:parameter-view "controls"} level true))))
+    (is (= widgets/typed-display (first (visual/push {:parameter-view "controls"} (dissoc level :preview-samples)))))
+    (is (= {:class "push-reading" :data-components 3} attrs))
+    (is (= ["X" "0.123"] [label shown]))
+    (is (= "X 0.12346" title) "the title keeps destination precision")))
 
 (deftest dmx-domain-labels-distinguish-narrow-bounds
   (let [bounds [0.50001 0.50004]
