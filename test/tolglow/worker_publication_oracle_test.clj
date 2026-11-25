@@ -21,9 +21,10 @@
 (defn- unsigned-universes [universes]
   (into (sorted-map) (map (fn [[id bytes]] [id (scenario/unsigned-bytes bytes)])) universes))
 
-(defn- reversed-completion
+(defn- first-job-completes-last
   "Hold the first job until every other job in the same frame has completed, so
-  worker completion order is the reverse of semantic order on every frame."
+  the first semantic job always finishes last. A full reversal would need one
+  worker per job; this rotation works with any pool of two or more workers."
   [map-work]
   (fn [f jobs]
     (let [jobs (vec jobs)
@@ -78,7 +79,14 @@
   "Render with the oracle's renderer, then hand the completed frame to the owned
   publisher and present it at the frame's physical deadline. The physical clock
   advances before the completion identity is captured: the presentation policy
-  admits only strictly increasing source times."
+  admits only strictly increasing source times.
+
+  The replay hook runs after evaluation, so begin-frame! is called after the
+  workers finish rather than before them as the scheduler contract describes.
+  The token is still captured before rendering and complete!, and every frame
+  here runs serially on one owner, so no gate can change in between. Gate
+  invalidation across a restart is covered separately by
+  a-completion-from-before-a-restart-is-never-published."
   [owner patch clock]
   (fn [model frame contributions previous]
     (reset! clock (:time-ms frame))
@@ -96,15 +104,24 @@
       output)))
 
 (defn- worker-lanes
-  "Call run with [label map-work] for each worker count, in normal and reversed
-  completion order where reversal is possible. Each pool is closed afterwards."
+  "Call run with [label map-work] for each worker count, in normal completion
+  order and, where a pool has two or more workers, with the first job forced to
+  complete last. Each pool is closed afterwards."
   [run]
   (vec (for [workers worker-counts
-             reversed? (if (= 1 workers) [false] [false true])]
+             first-last? (if (= 1 workers) [false] [false true])]
          (with-open [^java.io.Closeable pool (executor/create {:workers workers :queue-size 4
                                                                :timeout-ms 10000})]
-           (let [map-work (cond-> (executor/mapper pool) reversed? reversed-completion)]
-             (run {:workers workers :reversed? reversed?} map-work))))))
+           (let [map-work (cond-> (executor/mapper pool) first-last? first-job-completes-last)]
+             (run {:workers workers :first-last? first-last?} map-work))))))
+
+(defn- publication-checks
+  "Structural publication facts for one lane: one send per frame with distinct
+  IDs, and no completion dropped by the presentation policy."
+  [owner sent]
+  (let [status (scheduler/status owner)]
+    {:sends (count sent) :distinct-ids (count (distinct (map :id sent)))
+     :published (:published status) :dropped (:dropped status)}))
 
 ;; Representative multi-universe rig. :span starts at universe 1 address 507:
 ;; its dimmer word, RGB and pan coarse are in universe 1, while the pan fine byte
@@ -141,6 +158,12 @@
    :sweep {:priority 0 :targets [:span]
            :outputs [{:attribute :pan :value beat-phase}
                      {:attribute :tilt :value {:op :subtract :args [1.0 {:op :multiply :args [0.7 beat-phase]}]}}]}
+   ;; Raw red channel writes. A channel attribute replaces the red lane that the
+   ;; color mix would drive, whatever the color's priority. Between the two
+   ;; channel writes, priority decides: red-hold (-5) is launched first and
+   ;; still beats raw-red (-20) on :bar.
+   :red-hold {:priority -5 :targets [:bar]
+              :outputs [{:attribute :red :value (/ 200.0 255.0)}]}
    :raw-red {:priority -20 :targets [:wash-b :bar]
              :outputs [{:attribute :red :value (/ 49.0 255.0)}]}
    :accent {:priority 5 :targets [:span :wash-a :bar]
@@ -151,7 +174,10 @@
    :cover-b {:priority 5 :targets [:wash-b :bar]
              :outputs [{:attribute :color :blend :replace :value [0.0 1.0 0.5]}]}
    :peak {:priority 10 :targets [:span :bar :spot]
-          :outputs [{:attribute :dimmer :value {:op :multiply :args [0.9 beat-phase]}}]}})
+          :outputs [{:attribute :dimmer :value {:op :multiply :args [0.9 beat-phase]}}]}
+   ;; Launched after :peak at a lower priority, so recency alone would pick it.
+   :soft-dim {:priority 3 :targets [:span :wash-a]
+              :outputs [{:attribute :dimmer :value 0.2}]}})
 
 (defn- command [id epoch op payload]
   {:kind :command
@@ -183,15 +209,16 @@
                (command [:cue id] 0 :cue/put {:cue {:id id :effect-id id :priority priority}})])
             (sort-by key effects))
     [(frame 0)
-     (launch 0 :base 0) (launch 0 :level 0) (launch 0 :aim 0) (launch 0 :raw-red 0) (launch 0 :sweep 0)
+     (launch 0 :base 0) (launch 0 :level 0) (launch 0 :aim 0)
+     (launch 0 :red-hold 0) (launch 0 :raw-red 0) (launch 0 :sweep 0)
      (frame 40) (frame 80)
      (launch 0 :accent 100) (launch 0 :cover-a 100)
      (frame 120) (frame 160)
-     (launch 0 :cover-b 170) (launch 0 :peak 170)
+     (launch 0 :cover-b 170) (launch 0 :peak 170) (launch 0 :soft-dim 180)
      (frame 200) (frame 240)
-     (end 0 :cover-b "0:8" 250)
+     (end 0 :cover-b "0:9" 250) (end 0 :red-hold "0:4" 250)
      (frame 280)
-     (end 0 :peak "0:9" 300) (end 0 :raw-red "0:4" 300)
+     (end 0 :peak "0:10" 300) (end 0 :soft-dim "0:11" 300) (end 0 :raw-red "0:5" 300)
      (frame 320)
      (launch 0 :cover-b 330)
      (frame 360) (frame 400)
@@ -235,14 +262,22 @@
     (testing "HTP: the accent's componentwise maximum over the base color"
       (is (= [61 77 204] (at 3 1 [509 510 511]))))
     (testing "LTP among equal priorities, release, reveal and relaunch"
-      (is (= [49 0 64] (wash-b-rgb 4)) "cover-a, with the low-priority raw red channel")
+      (is (= [49 0 64] (wash-b-rgb 4)) "cover-a, with its red lane replaced by the raw red channel")
       (is (= [49 255 128] (wash-b-rgb 5)) "later cover-b takes over")
       (is (= [49 0 64] (wash-b-rgb 7)) "ending cover-b reveals cover-a")
-      (is (= [255 0 64] (wash-b-rgb 8)) "ending the raw red channel reveals cover-a red")
+      (is (= [255 0 64] (wash-b-rgb 8)) "ending the raw red channel returns red to cover-a's color")
       (is (= [0 255 128] (wash-b-rgb 9)) "relaunched cover-b is latest again"))
     (testing "priority: the high-priority dimmer launched mid-run and released mid-run"
       (is (= [13 211] (span-dimmer 5)) "peak, 30 ms after launch")
-      (is (= [184 81] (span-dimmer 8)) "the base level after peak ends"))
+      (is (= [[13 211] [32 65] [50 176]] (mapv span-dimmer [5 6 7]))
+          "peak (10) beats soft-dim (3), which was launched after it")
+      (is (= [51 51 51] (mapv #(byte-at (nth frames %) 2 23) [5 6 7]))
+          "soft-dim is live: it sets wash-a's dimmer, where peak has no write")
+      (is (= [184 81] (span-dimmer 8)) "the base level after peak and soft-dim end"))
+    (testing "priority between channel writes: red-hold (-5) beats raw-red (-20), launched after it"
+      (is (= [200 200 200 200 200 200] (mapv #(byte-at (nth frames %) 3 3) (range 1 7))))
+      (is (= 49 (byte-at (nth frames 7) 3 3)) "ending red-hold reveals raw-red")
+      (is (= 163 (byte-at (nth frames 8) 3 3)) "ending raw-red returns red to the color mix"))
     (testing "restart and stale epoch"
       (is (= (first frames) (nth frames 11)) "the restarted show is idle")
       (is (= :stale-epoch (:code (last acks))) "the old-epoch end is rejected")
@@ -262,9 +297,10 @@
                                                         {:map-work map-work
                                                          :render-output (publishing-render owner patch physical)})]
                             (assoc lane :verified verified :sent @sent :seen (vec seen)
-                                   :snapshots (frozen-snapshots seen)))
+                                   :snapshots (frozen-snapshots seen)
+                                   :publication (publication-checks owner @sent)))
                           (finally (scheduler/close! owner))))))]
-      (testing (pr-str (select-keys result [:workers :reversed?]))
+      (testing (pr-str (select-keys result [:workers :first-last?]))
         (is (= (count (:steps recording)) (get-in result [:verified :verified-steps]))
             "Every model, state, event, intent and full output digest matches the serial oracle")
         (is (= output (get-in result [:verified :output])))
@@ -273,7 +309,13 @@
         (is (= {:frames 13 :frozen? true} (:snapshots result))
             "Each of the 13 frames with active effects gave all workers one frozen snapshot")
         (is (every? #(.startsWith ^String (:thread %) "afterglow-runtime-") (:seen result))
-            "Effect steps ran on the bounded pool, not the caller")))))
+            "Effect steps ran on the bounded pool, not the caller")
+        ;; ThreadPoolExecutor starts a new core thread for each submission until
+        ;; it has :workers threads, so a frame with two or more jobs uses two.
+        (is (= (min 2 (:workers result)) (min 2 (count (distinct (map :thread (:seen result))))))
+            "Pools with two or more workers evaluated on more than one thread")
+        (is (= {:sends 15 :distinct-ids 15 :published 15 :dropped 0} (:publication result))
+            "One packet per frame, with distinct send IDs and no dropped completion")))))
 
 (deftest scalar-and-batch-compilers-share-the-worker-oracle
   (let [{:keys [frames]} (oracle)
@@ -310,13 +352,13 @@
                     (fn [lane map-work]
                       (let [physical (atom 0.0) sent (atom []) owner (publisher physical sent)]
                         (try
-                          (assoc lane
-                                 :run (compare/paired-run legacy compile
-                                                          {:map-work map-work
-                                                           :render-output (publishing-render owner patch physical)})
-                                 :sent @sent)
+                          (let [run (compare/paired-run legacy compile
+                                                        {:map-work map-work
+                                                         :render-output (publishing-render owner patch physical)})]
+                            (assoc lane :run run :sent @sent :publication (publication-checks owner @sent)))
                           (finally (scheduler/close! owner))))))]
-      (testing (pr-str (select-keys result [:workers :reversed?]))
+      (testing (pr-str (select-keys result [:workers :first-last?]))
         (is (= serial (:run result)) "Frames, contribution order, intents, events and lifecycle history")
         (is (= (mapv :universes (:frames serial)) (mapv :universes (:sent result)))
-            "All 512 bytes of every published frame match the serial oracle")))))
+            "All 512 bytes of every published frame match the serial oracle")
+        (is (= {:sends 8 :distinct-ids 8 :published 8 :dropped 0} (:publication result)))))))
