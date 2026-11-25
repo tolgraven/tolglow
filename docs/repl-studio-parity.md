@@ -37,6 +37,47 @@ Use **Release** on the card or submit the form below. The release envelope can k
 @(show/submit! runtime {:op :instance/end :instance-id (:instance-id launched)})
 ```
 
+## Migrate a running cue's state
+
+A cue whose `:reload-policy` is `:migrate` transforms its private state when a
+newer effect revision is published. Studio and the REPL publish through the
+same `:definition` operation and read the same instance projection. The
+running card's effect inspector header shows `v2 · migrate`. From the
+REPL, publish a revision with a portable `:state-migration`
+([declaration](effect-recipes.md#migrate-running-effect-state)):
+
+```clojure
+@(show/submit! runtime {:op :cue/launch :cue-id :ember
+                        :launch {:mode :persistent :reload-policy :migrate}})
+
+(let [{:keys [registry]} (:model (show/export-show runtime))
+      effect (get-in registry [:effects (get-in registry [:cues :ember :effect-id])])]
+  @(show/submit! runtime :definition
+     {:kind :effects
+      :definition (-> effect (update :version inc)
+                      (assoc :state-migration {:from {(:version effect) [{:op :default :path [:phase] :value 0}]}}))}))
+```
+
+The `:launch` option opts this one instance in; a cue's own `:reload-policy`
+sets the default for its launches. The snapshot shows `:effect-version` and
+`:reload-policy` for the instance. A failing migration leaves the instance on its last good
+revision with a `:reload-fault` whose `:stage` is `:migrate`. Studio lists it
+in that inspector's diagnostics as `migrate · <message>`, with each cause's
+location, such as `{:path ["state-migration" "from" 2 0 "path"]}`.
+The REPL reads the identical map from the snapshot or the durable subscription:
+
+```clojure
+(require '[afterglow.reactive :as reactive])
+@(reactive/subscribe (show/reactions runtime) [:runtime/effect-faults])
+```
+
+Gaps: Studio has no control that sets a cue's reload policy; author it in cue
+EDN or the REPL. The diagnostics summary does not print `:from-version`, which
+is present in the projected fault data. The automated check compares the REPL
+subscription with Studio's Ring `/api/state` projection
+([test](../test/tolglow/effects/state_migration_test.clj)); the rendered
+inspector has not had a browser review for this policy.
+
 ## View recent cues
 
 In **Perform**, the **Recent cues** tab puts the latest successful launch in
@@ -47,6 +88,10 @@ compare the tab with the committed page in the snapshot.
 ```clojure
 (:recent-page (show/snapshot runtime))
 ```
+
+## Match strip pixels to a fixture
+
+Publish a fixture type with `:bounds-m` using **Fixture Library → Advanced definition · EDN**. Its patched extent appears in the rig snapshot in both Studio and the REPL. The REPL's `strip-segment-selector` produces the fixture IDs that either client can submit with a cue launch. Studio's picker still requires a resolved selection. [Strip extent example](spatial-show.md#match-a-strip-to-a-fixtures-extent)
 
 ## Select and reorder running cues
 
@@ -100,6 +145,65 @@ when configuring it.
 {"/ember/priority" {:op :instance/set-priority :instance-id (:instance-id launched)}
  "/ember/launch" {:op :cue/launch :cue-id :ember :priority-arg? true}}
 ```
+
+### Modulate a running layer's priority
+
+Layer priority is a typed waveform destination, `:layer/priority`: an integer
+tier from −1000 to 1000 in the `:priority` category. In **Perform → In the mix**,
+open a card's **Detail** and select **Source** on its **Layer priority** row, or
+open the **Source** editor of an LFO already on that launch and choose
+**Layer priority** under **Destination**. Set the **From** and **To** tiers. The
+**Hysteresis band (tiers)**, **Minimum dwell** and **Dwell unit** (beats, bars
+or phrases) fields control how far past a tier boundary the waveform must go,
+and how long a tier is kept, before the layer changes order. A dwell authored in
+bars or phrases at the REPL keeps that unit in the editor. **Use base value**
+holds the committed priority and **Detach LFO** removes the source.
+
+The **In the mix** cards appear in the order the latest frame composed them,
+from `:effective-instance-order`. A card whose waveform tier differs from its
+committed priority shows both, for example **Priority 1 · set 0**, in its header
+and on the **Layer priority** row. **Reorder** captures and **Place after**
+targets still use the committed order (`:active-instance-order`), because those
+commands change committed state.
+
+A manual priority change takes precedence over the waveform. **Set priority**,
+**Place after**, `:instance/set-priority` and `:instance/move-after` on a launch
+with a bound layer priority waveform also hold that source, recorded with
+`:reason :manual-priority`. The row shows **Held after a manual priority
+change**, and the projected source has `:held? true :hold-reason
+:manual-priority`. **Resume LFO** or `:modulation-resume` with
+`:params [:layer/priority]` returns the layer to the waveform. This matches how a
+parameter edit holds a waveform on that parameter.
+
+The REPL uses the same validated `:modulation-bind`, `:modulation-hold`,
+`:modulation-resume` and `:modulation-unbind` operations. Each frame the show
+owner samples the waveform once, applies the hysteresis and orders that frame
+by the resulting tier. Ties keep launch order. The committed priority and
+`:active-instance-order` do not change. The snapshot's
+`:effective-instance-order` lists the order used for the latest frame, and the
+launch's `[:parameter-sources :layer/priority]` reports the committed priority
+as `:base-value` and the frame tier as `:effective-value`.
+
+```clojure
+(show/submit! runtime :modulation-bind
+  {:instance-id (:instance-id launched) :param :layer/priority
+   :binding {:type :lfo :waveform :triangle :period {:beats 4}
+             :phase-reference :transport :from -1 :to 1
+             :hysteresis {:band 1/4 :dwell {:beats 1/2}}}})
+
+(let [{:keys [effective-instance-order instances]} (show/snapshot runtime)]
+  [effective-instance-order
+   (some #(when (= (:instance-id launched) (:id %))
+            (get-in % [:parameter-sources :layer/priority :effective-value]))
+         instances)])
+```
+
+Studio's destination list and binding fields come from the snapshot's
+`:layer-priority-destination`, so the REPL and Studio share one schema. Members
+of a compound native layer share one priority. A priority waveform on a member
+is rejected; use **Set priority** or `:instance/set-priority` for the whole
+layer. The remaining gap is a Push or OSC control surface for the hysteresis
+fields; both can still bind the waveform through the shared command.
 
 ## Solo or mute running effects
 
@@ -180,6 +284,25 @@ override, which reconnect preserves.
 The REPL and Studio receive the fresh reference session ID or a refusal from
 the same show operation. For manually owned mpv connections, use the existing
 [REPL adapter flow](../src/tolglow/integrations/README.md#observe-a-known-local-recording-in-mpv).
+## Add a cue to a saved macro
+
+In **Perform**, open a cue cell’s actions and choose **Add to macro**. Select a saved macro and press **Add cue**. Studio confirms the accepted save and the new slot appears in **Compose**. If the reply is lost, **Retry append** resends the same operation. If the cell changed before the save reached the show owner, reopen actions on the cue you want.
+
+From the running REPL, use the IDs from `show/snapshot`, preserving keyword and string IDs as shown. Replace `:opening-look` with the ID of your saved macro.
+
+```clojure
+(require '[tolglow.show :as show])
+
+(def append-request
+  (let [{:keys [runtime-id epoch revision]} (show/snapshot runtime)]
+    {:runtime-id runtime-id :expected-epoch epoch :base-revision revision
+     :macro-id :opening-look :cue-id :ember :command-id (str (random-uuid))}))
+
+@(show/submit! runtime :composition-append append-request)
+(some #(when (= (:macro-id append-request) (:id %)) %) (:compositions (show/snapshot runtime)))
+```
+
+To retry an uncertain reply, resubmit `append-request` unchanged. If it has expired, inspect the committed slots before starting another append. The shared operation saves cue membership and leaves running instances in place.
 
 ## Reviewing a show feature
 
@@ -206,3 +329,22 @@ At revision `0681a694`, Studio's effect keyframe editor offers **Sample at a fix
 ```
 
 The global toggle and ranked timing view were missing from Studio at that revision. The **Perceptual scheduling and interpolation** owner tracks this in [issue #307](https://github.com/tolgraven/tolglow/issues/307). Close the gap when an operator can find and change the global policy in Studio, inspect the same committed setting in the REPL and compare diagnostics for the same show. [Keyframe editor](../src/studio/tolglow/studio/keyframe_editor.cljs) · [Scheduler behavior tests](../test/tolglow/predictive_keyframes_test.clj) · [GitHub Issues](https://github.com/tolgraven/tolglow/issues)
+
+Studio and Push read one committed response sample instead of evaluating the response again. The owner retains that sample only while a reader holds a lease. An open Push display, a connected Studio client and an explicit REPL lease all count. A REPL can take a lease and read faults from lease predicates that threw:
+
+```clojure
+(def release (show/lease-response-samples! runtime))
+(show/response-sample-faults runtime)
+(release)
+```
+
+Studio does not display these lease faults yet. Close the gap when Studio shows the same fault records as the REPL. [Issue #533](https://github.com/tolgraven/tolglow/issues/533) · [PR #624](https://github.com/tolgraven/tolglow/pull/624)
+
+Calibrated paired aim arrival uses one host operation from both surfaces. In Studio, **Rig & space → Draw path → Arrive together using calibrated motor rates** lists, reopens, publishes and converts synchronized paths. Studio always sends `:sync-arrival?` explicitly and shows the solved arrival time or the refusal. The REPL submits the same `:aim-path` operation and reads `:arrival-duration-ms` from the acknowledgement. Launch refusals (`:stale-calibration`, `:tempo-exceeds-motor-rate`, `:start-wrap-mismatch`) come back from the shared launch command on both surfaces. [Aim paths](aim-paths.md#calibrated-paired-arrival) · [Issue #481](https://github.com/tolgraven/tolglow/issues/481)
+
+```clojure
+@(show/submit! runtime :aim-path {:id :paired :sync-arrival? true :targets [:head-a :head-b]
+                                  :points [[-1 0 0] [1 0 0]] :duration {:bars 2}})
+```
+
+The remaining gaps are tracked in issue #481. Studio has no editor for `:calibration :motor-rate-deg-per-sec`, so rates are set through the rig data or the REPL. Studio also cannot display the physical `:minimum-travel-ms` or the fingerprint behind a stale-calibration refusal. Close these gaps when an operator can enter rates in the fixture inspector and see why a launch was refused without the REPL.

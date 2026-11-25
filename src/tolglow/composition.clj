@@ -24,13 +24,13 @@
          {:steps (:slots definition) :timebase (:timebase definition :beats)
           :mode (:loop definition :once) :seed (:seed definition 0)}))
 
-(defn- validate-slot! [model index slot]
+(defn- validate-cue-slot! [model index slot]
   (let [cue (get-in model [:registry :cues (:cue-id slot)])
         effect (registry/cue-effect (:registry model) cue)
         launch (:launch slot {})
         mode (:mode launch :persistent)]
-    (when-not (and (map? slot) (identifier? (:id slot)) cue effect)
-      (fail! [:slots index] "Slot needs an ID and a registered cue/effect reference"))
+    (when-not (and cue effect)
+      (fail! [:slots index] "Cue slot needs a registered cue/effect reference"))
     (when-not (and (map? (:params slot)) (map? launch)
                    (map? (:params launch {})) (#{:persistent :held :timed :one-shot} mode))
       (fail! [:slots index :launch] "Slot needs parameter maps and a supported launch mode"))
@@ -61,6 +61,29 @@
         (throw (ex-info "Invalid slot parameter values"
                         {:errors (mapv #(update % :path (fn [path] (into [:slots index] path))) errors)}))))))
 
+(defn- validate-slot! [model mode index slot]
+  (when-not (and (map? slot) (identifier? (:id slot)))
+    (fail! [:slots index :id] "Slot needs a stable ID"))
+  (let [empty? (= :empty (:kind slot))]
+    (when (and (= :macro mode) (or empty? (:muted? slot)))
+      (fail! [:slots index] "Empty and muted steps require a sequence"))
+    (when-not empty?
+      (validate-cue-slot! model index slot))))
+
+(defn- assign-slot-ids
+  "Keep authored slot IDs. Give each unidentified slot the first free
+  \"slot-N\" from its index, so adding after a deletion cannot collide.
+  Taken IDs compare by name, matching the JSON boundary's keyword IDs."
+  [slots]
+  (let [taken (set (map sequence/step-key (keep :id slots)))]
+    (first
+     (reduce (fn [[result taken] [i slot]]
+               (if (contains? slot :id)
+                 [(conj result slot) taken]
+                 (let [id (first (remove taken (map #(str "slot-" %) (iterate inc i))))]
+                   [(conj result (assoc slot :id id)) (conj taken id)])))
+             [[] taken] (map-indexed vector slots)))))
+
 (defn save
   "Validate and save a macro or sequence. New sequences default to one-beat slots.
   :duration maps support beats, bars, phrases and explicit milliseconds. Slot overrides and
@@ -80,17 +103,29 @@
                                                         :timebase (:timebase definition)}))
         duration {:duration (if (= :beats timebase) {:beats 1} {:ms 1000})}
         slots (mapv (fn [i slot]
-                      (merge {:id (str "slot-" i) :params {}}
+                      (merge {:params {}}
                              (when (and (= :sequence (:mode definition))
                                         (not-any? #(contains? slot %) [:duration :duration-ms :duration-beats])) duration) slot))
-                    (range) (:slots definition))
+                    (range) (assign-slot-ids (:slots definition)))
         definition (assoc definition :timebase timebase :slots slots)]
-    (doseq [[i slot] (map-indexed vector slots)] (validate-slot! model i slot))
+    (doseq [[i slot] (map-indexed vector slots)] (validate-slot! model (:mode definition) i slot))
     (if (= :sequence (:mode definition))
       (let [errors (sequence/validate-sequence (sequence-spec definition))]
         (when (seq errors) (throw (ex-info "Invalid sequence" {:errors errors}))))
       (macro/launch-plan (:id definition) slots))
     (-> model (assoc-in [:compositions (:id definition)] definition) (update :revision inc))))
+
+(defn append-macro-cue
+  "Append a cue slot to an existing saved macro in the current model. Running
+  executions keep the definition they captured at launch."
+  [model macro-id cue-id]
+  (let [definition (get-in model [:compositions macro-id])
+        slots (:slots definition)]
+    (when-not (= :macro (:mode definition))
+      (fail! [:macro-id] "Choose an existing saved macro"))
+    (let [used-ids (into #{} (map :id) slots)
+          slot-id (first (remove used-ids (map #(str "slot-" %) (iterate inc (count slots)))))]
+      (save model (update definition :slots conj {:id slot-id :cue-id cue-id})))))
 
 (defn- time! [time-ms]
   (when-not (and (registry/finite-number? time-ms) (not (neg? time-ms)))
@@ -106,6 +141,10 @@
   (-> model
       (update :composition-tokens #(apply dissoc % (owned-tokens model execution)))
       (update :composition-runs dissoc id)))
+
+(def max-faults
+  "Recent refused composition launches kept in :composition-faults."
+  32)
 
 (defn- perform [model time-ms definition intent]
   (let [token (:token intent) id (get-in model [:composition-tokens token])
@@ -123,9 +162,20 @@
     (if (and (not launch?) (not (get-in model [:instances id])))
       (update model :composition-tokens dissoc token)
       (let [{:keys [model ack]} (spatial/apply-command model command)]
-        (when (= :rejected (:status ack)) (throw (ex-info "Composition command rejected" {:ack ack})))
-        (if launch? (assoc-in model [:composition-tokens token] (:instance-id ack))
-            (update model :composition-tokens dissoc token))))))
+        (cond
+          ;; A refused slot launch is a recorded fault; the run keeps playing.
+          (and launch? (= :rejected (:status ack)))
+          (update model :composition-faults
+                  (fn [faults] (vec (take-last max-faults
+                                               (conj (vec faults)
+                                                     (merge (select-keys ack [:code :message])
+                                                            {:type :composition/launch-refused :owner-id (:owner-id intent)
+                                                             :member (:member intent) :cue-id (:cue-id intent)
+                                                             :epoch (:epoch model) :time-ms time-ms}))))))
+
+          (= :rejected (:status ack)) (throw (ex-info "Composition command rejected" {:ack ack}))
+          launch? (assoc-in model [:composition-tokens token] (:instance-id ack))
+          :else (update model :composition-tokens dissoc token))))))
 
 (defn stop
   "Release only this execution's captured instance IDs, then discard its tokens.
@@ -153,7 +203,8 @@
   (time! time-ms)
   (let [definition (get-in model [:compositions id])]
     (when-not definition (fail! [:id] "Composition does not exist"))
-    (doseq [[i slot] (map-indexed vector (:slots definition))] (validate-slot! model i slot))
+    (doseq [[i slot] (map-indexed vector (:slots definition))]
+      (validate-slot! model (:mode definition) i slot))
     (let [model (stop model id time-ms)
           owner (str (:epoch model) ":" (:revision model) ":" (pr-str id))
           spec (sequence-spec definition)
@@ -215,7 +266,9 @@
                               :playback {:kind :sequence :timebase (:timebase spec :ms)
                                          :playing? (:playing? clock) :started? (not waiting?)
                                          :slot-count (count (:steps spec)) :index (:step-index state)
-                                         :slot-id (:id step) :cue-id (:cue-id step) :phase (some-> phase double)
+                                         :slot-id (:id step) :cue-id (:cue-id step)
+                                         :step-kind (when step (:kind step :cue)) :muted? (boolean (:muted? step))
+                                         :phase (some-> phase double)
                                          :remaining-ms (when (:playing? clock) (some-> remaining-ms double))
                                          :remaining-beats (some-> remaining-beats double) :done? done?}))))
 

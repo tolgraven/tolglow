@@ -1,0 +1,226 @@
+{:source
+ {:tolglow "40c922664c6c330d9c5eab7f4b2974f5807e2b88",
+  :afterglow "d0ee56528aafb6d73cbe86b53d618a23b64c081e"},
+ :matching-lifecycle-operations 16,
+ :stale-rejection :stale-epoch,
+ :frames
+ [{:label :idle,
+   :epoch 0,
+   :time-ms 0,
+   :active [],
+   :legacy-reductions [],
+   :legacy-resolution-order [],
+   :paired-contributions [],
+   :byte-differences [[1 42 0 255]]}
+  {:label :base-with-override,
+   :epoch 0,
+   :time-ms 100,
+   :active [:raw-red :aim-front :base :dimmer :shutter],
+   :legacy-reductions
+   [{:kind :color,
+     :target :beam,
+     :sources [:base],
+     :value [0.875 0.5756108077667996 0.125]}
+    {:kind :aim,
+     :target :beam,
+     :sources [:aim-front],
+     :value [1.2 2.75 4.0]}
+    {:kind :channel, :target [1 44], :sources [:raw-red], :value 49}
+    {:kind :function,
+     :target [:beam :dimmer],
+     :sources [:dimmer],
+     :value 75}
+    {:kind :function,
+     :target [:beam :shutter-open],
+     :sources [:shutter],
+     :value 0}],
+   :legacy-resolution-order
+   [[:color :beam]
+    [:aim :beam]
+    [:channel [1 44]]
+    [:function [:beam :dimmer]]
+    [:function [:beam :shutter-open]]],
+   :paired-contributions [:raw-red :aim-front :base :dimmer :shutter],
+   :byte-differences
+   [[1 37 132 131]
+    [1 38 7 138]
+    [1 39 0 24]
+    [1 40 0 133]
+    [1 45 146 115]
+    [1 46 31 0]
+    [1 47 31 32]]}
+  {:label :overlapping-colors,
+   :epoch 0,
+   :time-ms 200,
+   :active [:aim-front :base :dimmer :shutter :accent],
+   :legacy-reductions
+   [{:kind :color,
+     :target :beam,
+     :sources [:base :accent],
+     :value [0.16744493118921222 0.125 0.875]}
+    {:kind :aim,
+     :target :beam,
+     :sources [:aim-front],
+     :value [1.2 2.75 4.0]}
+    {:kind :function,
+     :target [:beam :dimmer],
+     :sources [:dimmer],
+     :value 75}
+    {:kind :function,
+     :target [:beam :shutter-open],
+     :sources [:shutter],
+     :value 0}],
+   :legacy-resolution-order
+   [[:color :beam]
+    [:aim :beam]
+    [:function [:beam :dimmer]]
+    [:function [:beam :shutter-open]]],
+   :paired-contributions [:aim-front :base :dimmer :shutter :accent],
+   :byte-differences
+   [[1 37 132 131]
+    [1 38 7 138]
+    [1 39 0 24]
+    [1 40 0 133]
+    [1 44 42 76]
+    [1 45 31 0]
+    [1 46 223 76]
+    [1 47 31 147]]}
+  {:label :equal-priority-cover,
+   :epoch 0,
+   :time-ms 300,
+   :active [:aim-front :base :dimmer :shutter :accent :cover],
+   :legacy-reductions
+   [{:kind :color,
+     :target :beam,
+     :sources [:base :accent :cover],
+     :value [1.0 1.0 1.0]}
+    {:kind :aim,
+     :target :beam,
+     :sources [:aim-front],
+     :value [1.2 2.75 4.0]}
+    {:kind :function,
+     :target [:beam :dimmer],
+     :sources [:dimmer],
+     :value 75}
+    {:kind :function,
+     :target [:beam :shutter-open],
+     :sources [:shutter],
+     :value 0}],
+   :legacy-resolution-order
+   [[:color :beam]
+    [:aim :beam]
+    [:function [:beam :dimmer]]
+    [:function [:beam :shutter-open]]],
+   :paired-contributions
+   [:aim-front :base :dimmer :shutter :accent :cover],
+   :byte-differences
+   [[1 37 132 131]
+    [1 38 7 138]
+    [1 39 0 24]
+    [1 40 0 133]
+    [1 44 255 0]
+    [1 45 255 0]
+    [1 46 255 0]]}
+  {:label :back-aim-with-history,
+   :epoch 0,
+   :time-ms 400,
+   :active [:aim-back :base :dimmer :shutter :accent],
+   :legacy-reductions
+   [{:kind :color,
+     :target :beam,
+     :sources [:base :accent],
+     :value [0.16744493118921222 0.125 0.875]}
+    {:kind :aim,
+     :target :beam,
+     :sources [:aim-back],
+     :value [0.1 0.75 -4.0]}
+    {:kind :function,
+     :target [:beam :dimmer],
+     :sources [:dimmer],
+     :value 75}
+    {:kind :function,
+     :target [:beam :shutter-open],
+     :sources [:shutter],
+     :value 0}],
+   :legacy-resolution-order
+   [[:color :beam]
+    [:aim :beam]
+    [:function [:beam :dimmer]]
+    [:function [:beam :shutter-open]]],
+   :paired-contributions [:aim-back :base :dimmer :shutter :accent],
+   :byte-differences
+   [[1 38 93 53]
+    [1 39 14 0]
+    [1 40 252 0]
+    [1 44 42 76]
+    [1 45 31 0]
+    [1 46 223 76]
+    [1 47 31 147]]}
+  {:label :base-revealed,
+   :epoch 0,
+   :time-ms 500,
+   :active [:aim-back :base :dimmer :shutter],
+   :legacy-reductions
+   [{:kind :color,
+     :target :beam,
+     :sources [:base],
+     :value [0.875 0.5756108077667996 0.125]}
+    {:kind :aim,
+     :target :beam,
+     :sources [:aim-back],
+     :value [0.1 0.75 -4.0]}
+    {:kind :function,
+     :target [:beam :dimmer],
+     :sources [:dimmer],
+     :value 75}
+    {:kind :function,
+     :target [:beam :shutter-open],
+     :sources [:shutter],
+     :value 0}],
+   :legacy-resolution-order
+   [[:color :beam]
+    [:aim :beam]
+    [:function [:beam :dimmer]]
+    [:function [:beam :shutter-open]]],
+   :paired-contributions [:aim-back :base :dimmer :shutter],
+   :byte-differences
+   [[1 38 93 53]
+    [1 39 14 0]
+    [1 40 252 0]
+    [1 44 223 191]
+    [1 45 146 115]
+    [1 46 31 0]
+    [1 47 31 32]]}
+  {:label :after-restart,
+   :epoch 1,
+   :time-ms 600,
+   :active [],
+   :legacy-reductions [],
+   :legacy-resolution-order [],
+   :paired-contributions [],
+   :byte-differences [[1 42 0 255]]}
+  {:label :relaunch-survives,
+   :epoch 1,
+   :time-ms 750,
+   :active [:aim-front :base],
+   :legacy-reductions
+   [{:kind :color,
+     :target :beam,
+     :sources [:base],
+     :value [0.875 0.5756108077667996 0.125]}
+    {:kind :aim,
+     :target :beam,
+     :sources [:aim-front],
+     :value [1.2 2.75 4.0]}],
+   :legacy-resolution-order [[:color :beam] [:aim :beam]],
+   :paired-contributions [:aim-front :base],
+   :byte-differences
+   [[1 37 132 131]
+    [1 38 7 138]
+    [1 39 0 24]
+    [1 40 0 133]
+    [1 42 0 255]
+    [1 44 223 191]
+    [1 45 146 115]
+    [1 46 31 0]
+    [1 47 31 32]]}]}

@@ -4,6 +4,7 @@
             [afterglow.runtime.keyframes.values :as keyframe-values]
             [afterglow.reactive.registry :as reactive-registry]
             [clojure.string :as str]
+            [tolglow.fixtures.bounds :as bounds]
             [tolglow.fixtures.shutter :as shutter]
             [afterglow.time :as time]
             [afterglow.render.layers :as layers]
@@ -11,7 +12,8 @@
             [afterglow.control.categories :as categories]
             [afterglow.control.params :as params]
             [afterglow.control.system :as system]
-            [afterglow.control.targets :as selection]))
+            [afterglow.control.targets :as selection]
+            [tolglow.effects.state-migration :as state-migration]))
 
 (defn valid-public-query-ids?
   "Show-configured subscriptions exposed to Studio are an explicit collection of names."
@@ -53,7 +55,7 @@
 
 (defn valid-value?
   "Test a parameter value against a normalized schema. Does not coerce types."
-  [{:keys [type bounds values size]} value]
+  [{:keys [type bounds values size] :as schema} value]
   (let [numeric? #(and (finite-number? %) (bounded? bounds %))]
     (case type
       :number (numeric? value)
@@ -62,9 +64,51 @@
       :enum (and (vector? values) (boolean (some #(= value %) values)))
       :color (and (vector? value) (= 3 (count value))
                   (every? #(and (numeric? %) (<= 0 % 1)) value))
+      :gradient (params/valid-value? schema value)
       :vector (and (vector? value) (= size (count value)) (every? numeric? value))
       :range (and (ordered-pair? value) (every? numeric? value))
       false)))
+
+(defn- linear-rgb? [value]
+  (and (vector? value) (= 3 (count value))
+       (every? #(and (finite-number? %) (<= 0 % 1)) value)))
+
+(defn- gradient-errors
+  "Name the authored stop and field that make a gradient value invalid."
+  [value path]
+  (cond
+    (not (vector? value)) [(error path "Gradient must be a vector of stops")]
+    (empty? value) [(error path "Gradient needs at least one stop")]
+    :else
+    (let [position-ok? #(and (finite-number? %) (<= 0 % 1))
+          shape-ok? #(and (map? %) (= #{:position :color} (set (keys %))))]
+      (vec
+       (concat
+        (mapcat (fn [index stop]
+                  (let [stop-path (conj path index)]
+                    (cond
+                      (not (shape-ok? stop))
+                      [(error stop-path "Gradient stop must be a map with only :position and :color")]
+                      :else
+                      (concat
+                       (when-not (position-ok? (:position stop))
+                         [(error (conj stop-path :position) "Gradient stop position must be finite and within [0,1]")])
+                       (when-not (linear-rgb? (:color stop))
+                         [(error (conj stop-path :color) "Gradient stop color must be three linear RGB components within [0,1]")])))))
+                (range) value)
+        (keep (fn [[index [previous stop]]]
+                (let [a (when (shape-ok? previous) (:position previous))
+                      b (when (shape-ok? stop) (:position stop))]
+                  (when (and (position-ok? a) (position-ok? b) (<= b a))
+                    (error (conj path index :position)
+                           "Gradient stop positions must strictly increase; duplicate positions are not allowed"))))
+              (map vector (rest (range)) (partition 2 1 value))))))))
+
+(defn- value-errors
+  "Specific diagnostics for an invalid value, falling back to a generic message."
+  [schema value path message]
+  (or (seq (when (= :gradient (:type schema)) (gradient-errors value path)))
+      [(error path message)]))
 
 (defn validate-parameter
   "Return path/message errors for one schema. Path is optional for embedding."
@@ -76,7 +120,7 @@
            numeric-types #{:number :integer :color :vector :range}]
        (vec
         (concat
-         (when-not (#{:number :integer :boolean :enum :color :vector :range} type)
+         (when-not (#{:number :integer :boolean :enum :color :gradient :vector :range} type)
            [(error (conj path :type) "Unsupported parameter type")])
          (when-not (contains? schema :default)
            [(error (conj path :default) "Parameter needs an explicit default")])
@@ -89,9 +133,12 @@
            [(error (conj path :values) "Enum needs distinct portable values")])
          (when (and (= type :vector) (not (and (integer? size) (pos? size))))
            [(error (conj path :size) "Vector needs a positive integer size")])
+         (when (and (not= type :vector) (some? (:size schema)))
+           [(error (conj path :size) "Only vector parameters declare a size")])
          (when (and (contains? schema :default)
                     (not (valid-value? schema (:default schema))))
-           [(error (conj path :default) "Default does not satisfy the parameter type or bounds")])
+           (value-errors schema (:default schema) (conj path :default)
+                         "Default does not satisfy the parameter type or bounds"))
          (when (and (contains? schema :recommended)
                     (not (and (numeric-types type) (ordered-pair? recommended)
                               (every? #(bounded? bounds %) recommended))))
@@ -102,6 +149,8 @@
                     (not (and (finite-number? (:max-change random))
                               (not (neg? (:max-change random))))))
            [(error (conj path :random :max-change) "Maximum change must be finite and nonnegative")])
+         (when (and (= type :gradient) (map? random) (true? (:enabled? random)))
+           [(error (conj path :random :enabled?) "Gradient parameters do not support randomization")])
          (when-not (data? schema)
            [(error path "Parameter schema must contain portable data only")])))))))
 
@@ -116,7 +165,8 @@
                      (not (contains? schemas k))
                      [(error [:params k] "Unknown parameter")]
                      (not (valid-value? (get schemas k) value))
-                     [(error [:params k] "Value does not satisfy the parameter type or bounds")]
+                     (value-errors (get schemas k) value [:params k]
+                                   "Value does not satisfy the parameter type or bounds")
                      :else [])) values))))
 
 (defn resolve-params
@@ -293,7 +343,9 @@
                         (= [] (:outputs definition))))
              [] (validate-outputs (:outputs definition)))
            (when (and (contains? definition :modulation) (not (map? (:modulation definition))))
-             [(error [:modulation] "Modulation must be a portable configuration map")]))
+             [(error [:modulation] "Modulation must be a portable configuration map")])
+           (when (contains? definition :state-migration)
+             (state-migration/errors (:state-migration definition) version)))
           :cues
           (concat
            (when (and (contains? definition :selector) (not (selection/selector? (:selector definition))))
@@ -302,10 +354,13 @@
            (when-not (or (nil? params) (map? params)) [(error [:params] "Cue parameter values must be a map")])
            (when (and (contains? definition :saved-params) (not (map? (:saved-params definition))))
              [(error [:saved-params] "Saved cue parameter values must be a map")])
-           (when (and (some? priority) (not (finite-number? priority))) [(error [:priority] "Priority must be finite")]))
+           (when (and (some? priority) (not (finite-number? priority))) [(error [:priority] "Priority must be finite")])
+           (when (contains? definition :reload-policy)
+             (state-migration/reload-policy-errors (:reload-policy definition))))
           :fixtures
           (let [channels (:channels definition)]
             (concat
+             (bounds/errors definition)
              (photometry/errors definition)
              (when-not (map? channels) [(error [:channels] "Fixture channels must be an attribute-to-offset map")])
              (when (map? channels)

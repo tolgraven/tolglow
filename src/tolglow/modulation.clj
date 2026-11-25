@@ -186,15 +186,18 @@
 
 (defn hold
   "Suspend overlays for selected instance parameters. nil :until-beat holds
-  until release-hold; otherwise the hold expires at that exact beat. The host
+  until release-hold; otherwise the hold expires at that exact beat. An optional
+  keyword :reason records why the owner held it, such as a manual priority edit. The host
   applies the human edit to canonical params, then records this pure hold.
   Old interpolation cells are removed so resuming cannot jump to stale values."
-  [state {:keys [instance-id params until-beat]}]
+  [state {:keys [instance-id params until-beat reason]}]
   (valid-state! state)
   (when-not (and (string? instance-id) (keys? params)
-                 (or (nil? until-beat) (time/finite-number? until-beat)))
-    (fail! ::invalid-hold "Hold needs an instance ID, parameter keys and optional finite deadline" {}))
-  (-> (reduce #(assoc-in %1 [:holds instance-id %2] {:until-beat until-beat}) state params)
+                 (or (nil? until-beat) (time/finite-number? until-beat))
+                 (or (nil? reason) (keyword? reason)))
+    (fail! ::invalid-hold "Hold needs an instance ID, parameter keys, optional finite deadline and keyword reason" {}))
+  (-> (reduce #(assoc-in %1 [:holds instance-id %2] (cond-> {:until-beat until-beat} reason (assoc :reason reason)))
+              state params)
       (update :controllers
               #(mapv (fn [controller] (update-in controller [:values instance-id]
                                                (fn [values] (apply dissoc (or values {}) params)))) %))))
@@ -248,9 +251,12 @@
   (when-let [hold (get-in holds [id param])]
     (or (nil? (:until-beat hold)) (< beat (:until-beat hold)))))
 
-(defn owner-definition [model instance]
+(defn owner-definition
+  "Select the definition for the next frame. Paused instances defer hot reload."
+  [model instance]
   (let [current (get-in model [:registry :effects (:effect-id instance)])]
-    (if (and (not= :pinned (:reload-policy instance :pinned)) current
+    (if (and (not (get-in instance [:system :paused?]))
+             (not= :pinned (:reload-policy instance :pinned)) current
              (not= (:version current) (get-in instance [:reload-fault :effect-version]))
              (> (:version current) (:effect-version instance))) current (:definition instance))))
 

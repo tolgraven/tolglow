@@ -391,6 +391,24 @@
     (is (clojure.string/starts-with? new-id "10:"))
     (is (= :releasing (get-in next-model [:instances old-id :phase])))))
 
+(deftest restored-sequence-resumes-from-an-empty-step-without-a-launch-token
+  (let [definition {:id :steps :mode :sequence
+                    :slots [{:id :rest :kind :empty :duration {:beats 1/2}}
+                            {:id :muted :cue-id :ice :duration {:beats 1/2} :muted? true}
+                            {:id :cue :cue-id :sage}]}
+        running (-> (demo/model) (composition/save definition)
+                    (composition/start :steps 0) (composition/advance 0))
+        model (restored running)
+        muted (-> model (assoc-in [:transport :beat] 1/2) (composition/advance 250))
+        audible (-> muted (assoc-in [:transport :beat] 1) (composition/advance 500))
+        instance-id (first (vals (:composition-tokens audible)))]
+    (is (= :rest (get-in model [:composition-runs :steps :playback :slot-id])))
+    (is (= {:beats 1/2} (get-in model [:compositions :steps :slots 0 :duration])))
+    (is (empty? (:composition-tokens model)))
+    (is (true? (get-in muted [:composition-runs :steps :playback :muted?])))
+    (is (empty? (:composition-tokens muted)))
+    (is (= :sage (get-in audible [:instances instance-id :cue-id])))))
+
 (deftest restoring-a-paused-transport-does-not-fast-forward-musical-timers
   (let [model (-> (rich-model) (assoc-in [:transport :playing?] false))
         result (restored model)
@@ -639,3 +657,24 @@
         instance (first (vals (:instances result)))]
     (is (= (:ui/layout effect) (get-in instance [:definition :ui/layout])))
     (is (= (:ui/layout cue) (get-in result [:registry :cues :breathe :ui/layout])))))
+
+(deftest gradient-definitions-survive-a-show-roundtrip
+  (let [base (demo/model)
+        wash [{:position 0 :color [1 0 0]} {:position 1/2 :color [0 1 0]} {:position 1.0 :color [0 0 1]}]
+        effect (-> (get-in base [:registry :effects :breathe])
+                   (assoc :version 2)
+                   (assoc-in [:params :wash] {:type :gradient :default wash}))
+        published (:model (command base :effect {:op :registry/publish :kind :effects :definition effect}))
+        running (command published :launch {:op :cue/launch :cue-id :breathe
+                                            :launch {:params {:wash [(first wash)]}}})
+        result (files/thaw base (files/read-string (files/write-string (:model running))))
+        instance (first (vals (:instances result)))]
+    (is (= (:params effect) (get-in result [:registry :effects :breathe :params])))
+    (is (= wash (get-in result [:registry :effects :breathe :params :wash :default])))
+    (is (= [(first wash)] (get-in instance [:params :wash])))
+    (let [document (-> (files/freeze published)
+                       (assoc-in [:model :registry :effects :breathe :params :wash :default] [(last wash) (first wash)])
+                       (assoc-in [:model :registry :versions [:effects :breathe 2] :params :wash :default]
+                                 [(last wash) (first wash)]))]
+      (is (thrown? clojure.lang.ExceptionInfo (files/thaw base document))
+          "an out-of-order saved gradient is rejected on open"))))

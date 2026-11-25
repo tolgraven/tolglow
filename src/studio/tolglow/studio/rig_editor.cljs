@@ -13,7 +13,15 @@
 
 (def defaults {:tool "navigate" :plane "xz" :plane-value 0 :snap 0.1 :points [] :targets [] :undo []
                :aim-mode "together" :along "u" :surface-id "floor" :aim-point [0 0 0]
-               :path {:id "drawn-path" :name "Drawn path" :duration-value 4 :duration-unit "bars" :mode "loop" :curve "linear" :closed? false}})
+               :path {:id "drawn-path" :name "Drawn path" :duration-value 4 :duration-unit "bars" :mode "loop" :curve "linear" :closed? false
+                      :sync-arrival? false}})
+
+(def path-types
+  "Editor types Studio lists and reopens. Synchronized paths share the host operation."
+  #{"aim-path" "synchronized-aim-path"})
+
+(defn path-effects [db]
+  (filter #(contains? path-types (some-> (get-in % [:editor :type]) name)) (get-in db [:show :effects])))
 
 (defn editor [db]
   (let [state (get-in db [:ui :rig-editor])]
@@ -152,6 +160,16 @@
                                                         "Surface aim applied.") result)))) db))))
 (rf/reg-event-db :rig-editor/set
   (fn [db [_ path value]] (put-editor db (assoc-in (editor db) path value))))
+(defn set-sync-arrival
+  "Toggle synchronized arrival. An ordinary path needs a positive duration, so
+  leaving sync with a zero minimum restores the default musical length."
+  [path on?]
+  (cond-> (assoc path :sync-arrival? on?)
+    (and (not on?) (not (pos? (:duration-value path))))
+    (merge (select-keys (:path defaults) [:duration-value :duration-unit]))))
+
+(rf/reg-event-db :rig-editor/sync-arrival
+  (fn [db [_ on?]] (put-editor db (update (editor db) :path set-sync-arrival on?))))
 (rf/reg-event-db :rig-editor/pixels
   (fn [db [_ command]] (pixel-edit db (editor db) command true)))
 (rf/reg-event-db :rig-editor/pixel-value
@@ -216,25 +234,30 @@
     (put-editor db (update (editor db) :targets #(if active? (vec (distinct (conj % id))) (filterv (fn [target] (not= id target)) %))))))
 (rf/reg-event-db :rig-editor/load-path
   (fn [db [_ id]]
-    (if-let [effect (first (filter #(and (= id (:id %)) (= "aim-path" (get-in % [:editor :type]))) (get-in db [:show :effects])))]
+    (if-let [effect (first (filter #(= id (:id %)) (path-effects db)))]
       (let [source (:editor effect) [unit amount] (first (:duration source))
             cue (first (filter #(= id (:effect-id %)) (get-in db [:show :cues])))]
         (put-editor db (-> (remember db (editor db))
                           (assoc :points (:points source) :targets (:targets effect) :tool "draw" :selected-point nil
                                  :published {:effect-id id :cue-id (:id cue) :version (:version effect)}
                                  :path (merge (select-keys source [:mode :curve :closed?])
-                                              {:id id :name (:name effect) :duration-unit (name unit) :duration-value amount}))))) db)))
+                                              {:id id :name (:name effect) :duration-unit (name unit) :duration-value amount
+                                               :sync-arrival? (true? (:sync-arrival? source))}))))) db)))
 (defn publish-request [db run? request]
   (let [state (editor db) path (:path state)]
     {:path "/api/aim-path"
      :body (merge (select-keys path [:id :name :mode :curve :closed?])
+                  ;; Always explicit: an omitted flag would inherit the saved path's choice.
+                  {:sync-arrival? (true? (:sync-arrival? path))}
+                  (when (:sync-arrival? path) {:mode "once" :curve "linear" :closed? false})
                   {:points (:points state) :targets (:targets state)
                    :duration {(keyword (:duration-unit path)) (:duration-value path)}
                    :page-id (get-in db [:ui :page-id])
                    :expected-epoch (get-in db [:show :epoch]) :runtime-id (get-in db [:show :runtime-id])
                    :expected-version nil}
                   (when (= (:id path) (get-in state [:published :effect-id])) {:expected-version (get-in state [:published :version]) :cue-id (get-in state [:published :cue-id])}))
-     :on-success [:rig-editor/published (identity-key db) request (when run? (if (= "once" (:mode path)) "one-shot" "persistent"))]
+     :on-success [:rig-editor/published (identity-key db) request
+                  (when run? (if (and (= "once" (:mode path)) (not (:sync-arrival? path))) "one-shot" "persistent"))]
      :on-failure [:rig-editor/failed (identity-key db) request]}))
 (rf/reg-event-fx :rig-editor/publish
   (fn [{:keys [db]} [_ run?]]
@@ -244,11 +267,16 @@
         (:publishing state) {}
         :else {:db (put-editor db (assoc state :publishing request :message "Validating path…"))
                :studio/http (publish-request db run? request)}))))
+(defn published-message [result]
+  (str (if (:page-full? result) "Cue created. The page is full; find it in the cue library." "Aim path cue created.")
+       (when-let [ms (:arrival-duration-ms result)]
+         (str " Heads arrive together after " (.toFixed (/ ms 1000) 2) " s at the current tempo."))))
+
 (rf/reg-event-fx :rig-editor/published
   (fn [{:keys [db]} [_ identity request launch-mode result]]
     (let [state (editor db)]
       (when (and (= identity (identity-key db)) (= request (:publishing state)))
-        (cond-> {:db (put-editor db (-> state (dissoc :publishing) (assoc :published result :message (if (:page-full? result) "Cue created. The page is full; find it in the cue library." "Aim path cue created."))))}
+        (cond-> {:db (put-editor db (-> state (dissoc :publishing) (assoc :published result :message (published-message result))))}
           launch-mode (assoc :studio/send-command {:op "cue/launch" :fields {:cue-id (:cue-id result) :launch {:mode launch-mode}}
                                             :epoch (get-in db [:show :epoch]) :runtime-id (get-in db [:show :runtime-id]) :session (:session db)
                                             :on-success [:studio/success "Aim path running."]}))))))
@@ -324,16 +352,26 @@
      [:label "Saved paths"
       [:select {:aria-label "Saved aim paths" :value "" :on-change #(dispatch! [:rig-editor/load-path (value %)])}
        [:option {:value ""} "Open a saved path…"]
-       (for [effect (filter #(= "aim-path" (get-in % [:editor :type])) (get-in db [:show :effects]))]
+       (for [effect (path-effects db)]
          ^{:key (:id effect)} [:option {:value (:id effect)} (or (:name effect) (:id effect))])]]
      [:div.rig-form-grid
       [:label "Path ID" [:input {:aria-label "Path ID" :value (:id path) :on-change #(dispatch! [:rig-editor/set [:path :id] (value %)])}]]
       [:label "Name" [:input {:aria-label "Path name" :value (:name path) :on-change #(dispatch! [:rig-editor/set [:path :name] (value %)])}]]
-      [fields/number-field "Duration" (:duration-value path) [:rig-editor/set [:path :duration-value]] {:min 0.015625 :step 0.25}]
-      [choice "Musical unit" (:duration-unit path) [["beats" "Beats"] ["bars" "Bars"] ["phrases" "Phrases"]] [:path :duration-unit]]
-      [choice "Playback" (:mode path) [["loop" "Loop"] ["ping-pong" "Back and forth"] ["once" "Once"]] [:path :mode]]
-      [choice "Curve" (:curve path) [["linear" "Linear"] ["smoothstep" "Smooth"] ["sine" "Sine"] ["ease-in" "Ease in"] ["ease-out" "Ease out"]] [:path :curve]]]
-     [:label.rig-checkbox [:input {:type "checkbox" :checked (:closed? path) :on-change #(dispatch! [:rig-editor/set [:path :closed?] (.. % -target -checked)])}] "Close the path"]
+      [fields/number-field (if (:sync-arrival? path) "Minimum duration" "Duration") (:duration-value path)
+       [:rig-editor/set [:path :duration-value]] {:min (if (:sync-arrival? path) 0 0.015625) :step 0.25}]
+      [choice "Musical unit" (:duration-unit path)
+       (cond-> [["beats" "Beats"] ["bars" "Bars"] ["phrases" "Phrases"]]
+         (or (:sync-arrival? path) (= "ms" (:duration-unit path))) (conj ["ms" "Milliseconds"])) [:path :duration-unit]]
+      (when-not (:sync-arrival? path)
+        [:<>
+         [choice "Playback" (:mode path) [["loop" "Loop"] ["ping-pong" "Back and forth"] ["once" "Once"]] [:path :mode]]
+         [choice "Curve" (:curve path) [["linear" "Linear"] ["smoothstep" "Smooth"] ["sine" "Sine"] ["ease-in" "Ease in"] ["ease-out" "Ease out"]] [:path :curve]]])]
+     [:label.rig-checkbox [:input {:type "checkbox" :checked (true? (:sync-arrival? path))
+                                   :on-change #(dispatch! [:rig-editor/sync-arrival (.. % -target -checked)])}]
+      "Arrive together using calibrated motor rates"]
+     (if (:sync-arrival? path)
+       [:p.small.muted "Two points, played once. Every selected head needs pan and tilt motor rates in its calibration. The slowest head sets the travel time; the duration is a lower bound."]
+       [:label.rig-checkbox [:input {:type "checkbox" :checked (:closed? path) :on-change #(dispatch! [:rig-editor/set [:path :closed?] (.. % -target -checked)])}] "Close the path"])
      [target-fields db state]
      [:div.rig-editor-actions
       [:button.button {:on-click #(dispatch! [:rig-editor/add-point]) :disabled (>= (count (:points state)) 256)} "Add point"]

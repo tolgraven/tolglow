@@ -5,13 +5,16 @@
             [tolglow.studio.projection :as projection]
             [tolglow.studio.query-stream :as queries]
             [tolglow.transit :as transit])
-  (:import [java.util UUID]
+  (:import [java.lang System$Logger System$Logger$Level]
+           [java.util UUID]
            [java.util.concurrent Semaphore]
            [java.util.concurrent.atomic AtomicLong AtomicReference]))
 
 (def protocol "tolglow-state/2")
 
 (def ^:private max-clients 32)
+
+(def ^:private ^System$Logger logger (System/getLogger "tolglow.studio.state-stream"))
 
 (defn- identity-of [view] (select-keys view [:runtime-id :show-id :epoch]))
 
@@ -35,36 +38,47 @@
   (.set ^AtomicReference (:latest hub) committed)
   (when (seq @(:clients hub)) (wake! hub)))
 
-(defn- release-unused-interest! [hub]
+(defn- take-unused-interest! [hub]
   (when-let [interest @(:status-interest hub)]
     (when-not (some (fn [[_ client]] (:interest @client)) @(:clients hub))
-      ((:detach! interest))
-      (reset! (:status-interest hub) nil))))
+      (reset! (:status-interest hub) nil)
+      interest)))
+
+(defn- release-interest! [interest]
+  (when-let [detach! (:detach! interest)]
+    (try (detach!)
+         (catch Throwable error
+           (.log logger System$Logger$Level/WARNING "Could not detach Studio connection status" error)))))
 
 (defn- set-interest! [hub socket enabled?]
   (when-not (and (boolean? enabled?) (:observe-status! hub))
     (throw (ex-info "Invalid Connections subscription" {})))
-  (locking (:clients hub)
-    (when-let [client (get @(:clients hub) socket)]
-      (when (not= enabled? (boolean (:interest @client)))
-        (let [interest (when enabled?
-                         (or @(:status-interest hub)
-                             (let [version (AtomicLong.)
-                                   detach! ((:observe-status! hub) #(do (.incrementAndGet version) (wake! hub)))
-                                   active {:version version :detach! detach! :snapshot (volatile! nil)
-                                           :projection (volatile! nil)}]
-                               (reset! (:status-interest hub) active))))]
-          ;; Each change of scope starts a full acknowledged baseline. Old ACKs
-          ;; cannot promote a frame produced for a different scope.
-          (swap! client #(-> % (dissoc :pending :base) (assoc :interest interest)))
-          (release-unused-interest! hub)
-          (wake! hub))))))
+  (let [unused (locking (:clients hub)
+                 (when-let [client (get @(:clients hub) socket)]
+                   (when (not= enabled? (boolean (:interest @client)))
+                     (let [interest (when enabled?
+                                      (or @(:status-interest hub)
+                                          (let [version (AtomicLong.)
+                                                detach! ((:observe-status! hub) #(do (.incrementAndGet version) (wake! hub)))
+                                                active {:version version :detach! detach! :snapshot (volatile! nil)
+                                                        :projection (volatile! nil)}]
+                                            (reset! (:status-interest hub) active))))]
+                       ;; Scope changes start a full baseline and invalidate old ACKs.
+                       (swap! client #(-> % (dissoc :pending :base) (assoc :interest interest)))
+                       (wake! hub)
+                       (take-unused-interest! hub)))))]
+    (release-interest! unused)))
+
+(defn- query-cleanups [hub before after]
+  (when-let [release! (:release-query! hub)]
+    (for [[query producer] before
+          :when (and (contains? (:scoped-queries hub) (first query)) (not (contains? after query)))]
+      #(try (release! producer)
+            (catch Throwable error
+              (.log logger System$Logger$Level/WARNING (str "Could not release scoped Studio query " (first query)) error))))))
 
 (defn- release-queries! [hub before after]
-  (when-let [release! (:release-query! hub)]
-    (doseq [[query producer] before
-            :when (and (contains? (:scoped-queries hub) (first query)) (not (contains? after query)))]
-      (release! producer))))
+  (doseq [cleanup! (query-cleanups hub before after)] (cleanup!)))
 
 (defn- wanted-queries [hub]
   (locking (:clients hub)
@@ -72,14 +86,14 @@
 
 (defn- query-demand-changed! [hub client removed]
   (try
-    (queries/release-unused-graph-leases! (:query-store hub) #(wanted-queries hub) removed)
+    (queries/release-unused-leases! (:query-store hub) #(wanted-queries hub) removed)
     (finally
       (when client (swap! client update :query-releases dec))
       (wake! hub))))
 
 (defn- set-queries! [hub socket desired]
   (when-not (:query-store hub) (throw (ex-info "Signal streaming unavailable" {})))
-  (when-let [[client removed] (locking (:clients hub)
+  (when-let [[client prior next removed] (locking (:clients hub)
                                (when-let [client (get @(:clients hub) socket)]
                                  (let [prior (:queries @client {})]
                                    (when-not (= desired (set (keys prior)))
@@ -90,23 +104,31 @@
                                        (swap! client #(cond-> (-> % (assoc :queries next) (dissoc :pending :base))
                                                         (seq removed) (-> (update :query-releases (fnil inc 0))
                                                                           (update :removed-queries (fnil into #{}) removed))))
-                                       (release-queries! hub prior next)
-                                       [client removed])))))]
+                                       [client prior next removed])))))]
+    (release-queries! hub prior next)
     (if (seq removed) (query-demand-changed! hub client removed) (wake! hub))))
 
+(defn- take-client! [hub socket]
+  (locking (:clients hub)
+    (when-let [client (get (first (swap-vals! (:clients hub) dissoc socket)) socket)]
+      [(:queries @client) (take-unused-interest! hub)])))
+
+(defn- release-client! [hub [prior interest]]
+  (release-interest! interest)
+  (release-queries! hub prior {})
+  (when (and (seq prior) (not @(:closed? hub)))
+    (query-demand-changed! hub nil (vals prior))))
+
 (defn- forget! [hub socket]
-  (let [[removed prior] (locking (:clients hub)
-                          (let [removed (get (first (swap-vals! (:clients hub) dissoc socket)) socket)
-                                prior (:queries (some-> removed deref))]
-                            (release-unused-interest! hub)
-                            (when (seq prior) (release-queries! hub prior {}))
-                            [removed prior]))]
-    (when (seq prior) (query-demand-changed! hub nil (vals prior)))
-    removed))
+  (when-let [client (take-client! hub socket)] (release-client! hub client)))
+
+(defn- close-socket! [socket code reason]
+  (try (ws/close socket code reason) (catch Exception _)))
 
 (defn- retire! [hub socket code reason]
-  (when (forget! hub socket)
-    (try (ws/close socket code reason) (catch Exception _))))
+  (when-let [client (take-client! hub socket)]
+    (close-socket! socket code reason)
+    (release-client! hub client)))
 
 (defn- ready? [state]
   (not (or (:sending state) (:pending state) (pos? (:query-releases state 0)))))
@@ -122,9 +144,10 @@
                         (let [wire (transit/encode (message base target))]
                           (vswap! cache assoc key wire)
                           wire))]
-        (when (compare-and-set! client before (-> before
-                                                (dissoc :removed-queries)
-                                                (assoc :pending target :sending token :deltas (if base (inc (:deltas before 0)) 0))))
+        (when (and (not @(:closed? hub))
+                   (compare-and-set! client before (-> before
+                                                      (dissoc :removed-queries)
+                                                      (assoc :pending target :sending token :deltas (if base (inc (:deltas before 0)) 0)))))
           (ws/send socket encoded
                    (fn []
                      (swap! client #(if (= token (:sending %)) (dissoc % :sending) %))
@@ -228,11 +251,19 @@
                                  (.setDaemon true) (.start))))))))
 
 (defn close! [hub]
-  (locking (:closed? hub)
-    (reset! (:closed? hub) true)
-    (when (realized? (:worker hub)) (.interrupt ^Thread @(:worker hub))))
-  (doseq [socket (keys @(:clients hub))] (retire! hub socket 1001 "Studio stopped"))
-  (when-let [store (:query-store hub)] (queries/close! store)))
+  (when (locking (:closed? hub) (compare-and-set! (:closed? hub) false true))
+    (wake! hub)
+    (let [[clients interest] (locking (:clients hub)
+                              [(first (reset-vals! (:clients hub) {})) (take-unused-interest! hub)])
+          releases (into [] (mapcat #(query-cleanups hub (:queries @%) {})) (vals clients))
+          worker (when (realized? (:worker hub)) @(:worker hub))
+          store (:query-store hub)
+          external? (not (identical? worker (Thread/currentThread)))]
+      (doseq [socket (keys clients)] (close-socket! socket 1001 "Studio stopped"))
+      (queries/close! store external? {:detachments (when interest [#(release-interest! interest)])
+                                       :releases releases})
+      (when (and worker external? (not (and store (queries/owns-query-work? store worker))))
+        (.interrupt ^Thread worker)))))
 
 (defn- grant-lease! [hub session clock]
   ;; An acknowledged stream may run at 40Hz. One renewal per second suffices
@@ -270,7 +301,7 @@
     (try
       (when-not (and (string? text) (<= (count text) 8192))
         (throw (ex-info "Invalid stream control" {})))
-      (let [{:keys [op token enabled? queries fault] :as message} (transit/decode text)]
+      (let [{:keys [op token enabled? queries fault] :as message} (transit/decode-command text)]
         (case op
           :ack (let [[old _] (swap-vals! client
                                 (fn [{:keys [pending] :as state}]

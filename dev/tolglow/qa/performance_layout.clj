@@ -14,6 +14,7 @@
   (let [script (case scenario
                  nil "dev/studio/performance-layout-qa.mjs"
                  "gestures" "dev/studio/cue-gesture-qa.mjs"
+                 "cue-actions" "dev/studio/cue-action-qa.mjs"
                  "authoring" "dev/studio/compose-rig-layout-qa.mjs"
                  "shell-alignment" "dev/studio/shell-alignment-qa.mjs"
                  (throw (ex-info "Unknown Studio browser scenario" {:scenario scenario})))
@@ -45,6 +46,12 @@
       (doseq [cue [:ember :breathe :sweep :orbital]]
         (let [ack @(show/submit! host :command {:op :cue/launch :cue-id cue :launch {:mode :persistent}})]
           (when-not (= :accepted (:status ack)) (throw (ex-info "Could not launch performance fixture" ack)))))
+      (when (= "cue-actions" scenario)
+        (doseq [definition [{:id :qa/night-set :name "Night set" :mode :macro :slots [{:cue-id :breathe}]}
+                            {:id "qa/early-set" :name "Early set" :mode :macro :slots [{:cue-id :sweep}]}
+                            {:id :qa/steps :name "Timed steps" :mode :sequence :slots [{:cue-id :ice}]}]]
+          (let [ack @(show/submit! host :composition definition)]
+            (when-not (= :accepted (:status ack)) (throw (ex-info "Could not save composition fixture" ack))))))
       (let [{:keys [exit out err]} (shell/sh "node" script origin directory)]
         (print out) (flush)
         (when-not (zero? exit)

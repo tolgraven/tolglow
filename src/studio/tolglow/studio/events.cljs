@@ -53,7 +53,7 @@
 (defn- dispatch-result [event result] (when event (rf/dispatch (conj event result))))
 
 (def guarded-paths
-  #{"/api/definition" "/api/materials" "/api/rig" "/api/composition" "/api/composition/run"
+  #{"/api/definition" "/api/materials" "/api/rig" "/api/composition" "/api/composition/append" "/api/composition/run"
     "/api/composition/stop" "/api/import" "/api/auto" "/api/response"
     "/api/response/release" "/api/response/delete" "/api/page/generate" "/api/settings"
     "/api/fixtures/publish" "/api/fixtures/patch"
@@ -381,6 +381,8 @@
                   (checkpoints/replaces-rig-draft? db (:view server)) (assoc-in [:ui :rig-dirty?] false)
                   epoch-changed? (dissoc :ending-holds :section-pattern-request)
                   epoch-changed? (update-in [:ui :definition] dissoc :publishing? :publication)
+                  epoch-changed? (update :ui dissoc :macro-append-intents :typed-page-id)
+                  (and epoch-changed? (get-in db [:ui :macro-picker])) (update :ui dissoc :macro-picker :action-cell)
                   epoch-changed? (update-in [:ui :auto-form] dissoc :target-activity? :activity-target))
         updated (if (some #(= selected (:id %)) (:instances show)) updated
                   (assoc-in updated [:ui :selected-instance] (:id (last (:instances show)))))
@@ -512,11 +514,11 @@
        :dispatch-later (when (= page :perform) [{:ms 30 :dispatch [:studio/preview-resize]}])})))
 
 (rf/reg-event-fx :studio/set-page
-  (fn [{:keys [db]} [_ id]]
+  (fn [{:keys [db]} [_ id typed-id]]
     (let [recent? (recent-page? db id)]
       {:db (cond-> (assoc-in db [:ui :recent-page?] recent?)
-             recent? (assoc-in [:ui :action-cell] nil)
-             (not recent?) (assoc-in [:ui :page-id] id))
+             recent? (update :ui dissoc :action-cell :macro-picker)
+             (not recent?) (update :ui assoc :page-id id :typed-page-id typed-id))
        :fx (cond-> [[:dispatch [:studio/release-pointers]]]
              (not recent?) (conj [:dispatch [:studio/persist-ui]]))})))
 (rf/reg-event-fx :studio/set-launch
@@ -625,12 +627,15 @@
     (if-let [pointer (get-in db [:pointers pointer-id])]
       (if (> (js/Math.hypot (- client-x (:client-x pointer)) (- client-y (:client-y pointer))) 12)
         (assoc-in db [:pointers pointer-id :moved?] true) db) db)))
+
+(def ^:private action-cell-keys [:page-id :cue-id :typed-page-id :typed-cue-id :cue-name :owner :x :y])
+
 (rf/reg-event-fx :studio/gesture-long
   (fn [{:keys [db]} [_ id press-id]]
     (let [pointer (get-in db [:pointers id])]
       (when (and press-id (= press-id (:press-id pointer)) (not-any? pointer [:moved? :recent-page?]))
         {:db (assoc-in db [:pointers id :long?] true)
-         :dispatch [:studio/open-actions (select-keys pointer [:page-id :cue-id :x :y])]}))))
+         :dispatch [:studio/open-actions (select-keys pointer action-cell-keys)]}))))
 
 (defn- end-held [db {:keys [press-id epoch runtime-id] :as owner} id beacon?]
   (let [fields (cond-> {:instance-id id} press-id (assoc :command-id (str press-id "-end")))]
@@ -727,7 +732,7 @@
         (and pointer (current-show? (:show db) pointer) (not-any? pointer [:held? :moved? :long?]))
         (assoc :dispatch (if (and (not (:recent-page? pointer))
                                   (or (get-in db [:ui :edit?]) (nil? (:cue-id pointer))))
-                           [:studio/open-actions (select-keys pointer [:cue-id :x :y])]
+                           [:studio/open-actions (select-keys pointer action-cell-keys)]
                            [:studio/launch (:cue-id pointer) (:mode pointer)
                             {:grid (:grid pointer) :owner (select-keys pointer [:epoch :runtime-id])}]))))))
 (rf/reg-event-fx :studio/gesture-cancel
@@ -785,9 +790,91 @@
   (fn [db [_ cell]]
     (let [page-id (or (:page-id cell) (:id (selected-recent-page db)) (get-in db [:ui :page-id]))]
       (if (recent-page? db page-id) db
-        (-> db (assoc-in [:ui :action-cell] (assoc cell :page-id page-id))
+        (-> db (update :ui dissoc :macro-picker)
+            (assoc-in [:ui :action-cell] (assoc cell :page-id page-id
+                                                :owner (or (:owner cell) (select-keys (:show db) [:runtime-id :epoch]))))
             (assoc-in [:ui :assign-cue] (:id (first (get-in db [:show :cues])))))))))
-(rf/reg-event-db :studio/close-actions (fn [db _] (assoc-in db [:ui :action-cell] nil)))
+
+(defn- close-actions [db] (update db :ui dissoc :action-cell :macro-picker))
+(rf/reg-event-db :studio/close-actions (fn [db _] (close-actions db)))
+
+(defn saved-macros [db]
+  (filterv #(= :macro (:mode %)) (get-in db [:server-projection :view :compositions])))
+
+(def ^:private changed-cue-cell "The cue cell changed. Open its actions again.")
+
+(defn- typed-action-cue [db {:keys [typed-page-id typed-cue-id x y]}]
+  (let [show (get-in db [:server-projection :view])
+        page (some #(when (= typed-page-id (:id %)) %) (:pages show))]
+    (when (some #(and (= [x y] [(:x %) (:y %)]) (= typed-cue-id (:cue-id %))) (:cells page))
+      (some #(when (= typed-cue-id (:id %)) %) (:cues show)))))
+
+(defn macro-picker-retry? [db {:keys [cue-id macro-id]}]
+  (contains? (get-in db [:ui :macro-append-intents]) [cue-id macro-id]))
+
+(rf/reg-event-fx :studio/macro-picker-open
+  (fn [{:keys [db]} _]
+    (when-let [{:keys [owner] :as cell} (get-in db [:ui :action-cell])]
+      (let [cue (when (current-show? (:show db) owner) (typed-action-cue db cell))]
+        (if cue
+          {:db (assoc-in db [:ui :macro-picker] {:cue-id (:id cue) :cue-name (or (:name cue) (:cue-name cell)) :owner owner})}
+          {:db (assoc-in db [:ui :action-cell :error] changed-cue-cell)})))))
+
+(rf/reg-event-db :studio/macro-picker-back
+  (fn [db _] (update db :ui dissoc :macro-picker)))
+
+(rf/reg-event-fx :studio/macro-picker-submit [(rf/inject-cofx :studio/unique)]
+  (fn [{:keys [db unique]} _]
+    (let [{:keys [cue-id macro-id owner request]} (get-in db [:ui :macro-picker])
+          {:keys [typed-page-id x y] :as cell} (get-in db [:ui :action-cell])
+          path [:ui :macro-append-intents [cue-id macro-id]]
+          prior (get-in db path)]
+      (when (and cue-id macro-id (not request) (current-show? (:show db) owner)
+                 (get-in db [:connection :connected?]) (some #(= macro-id (:id %)) (saved-macros db)))
+        (if (or prior (= cue-id (:id (typed-action-cue db cell))))
+          (let [body (or prior {:macro-id macro-id :cue-id cue-id :command-id unique
+                                :base-revision (get-in db [:show :revision])
+                                :cell {:page-id typed-page-id :x x :y y}})]
+            {:db (-> db (assoc-in path body) (update-in [:ui :macro-picker] assoc :request unique :error nil))
+             :studio/http {:path "/api/composition/append" :typed? true :raw-response? true :timeout-ms 7000
+                           :body body
+                           :on-success [:studio/macro-picker-reply owner unique body]
+                           :on-failure [:studio/macro-picker-failed owner unique body]
+                           :on-uncertain [:studio/macro-picker-uncertain owner unique]}})
+          {:db (assoc-in db [:ui :macro-picker :error] changed-cue-cell)})))))
+
+(rf/reg-event-fx :studio/macro-picker-reply
+  (fn [{:keys [db]} [_ owner request {:keys [cue-id macro-id command-id]} receipt]]
+    (when (and (current-show? (:show db) owner) (= request (get-in db [:ui :macro-picker :request])))
+      (if (and (= :accepted (:status receipt)) (= macro-id (:macro-id receipt)) (= command-id (:command-id receipt)))
+        (let [macro (some #(when (= macro-id (:id %)) %) (saved-macros db))]
+          {:db (-> db close-actions (update-in [:ui :macro-append-intents] dissoc [cue-id macro-id]))
+           :fx [(notice (str "Added to " (or (:name macro) (wire-id macro-id)) "."))]})
+        {:db (update-in db [:ui :macro-picker] assoc :request nil
+                        :error (if (= :pending (:status receipt)) "Macro update is still processing."
+                                   "The show did not confirm the macro update."))}))))
+
+(defn- current-macro-request? [db owner request]
+  (and (current-show? (:show db) owner) (= request (get-in db [:ui :macro-picker :request]))))
+
+;; A definite rejection did not change the show. Forget its command so the next
+;; attempt validates the current cell instead of replaying a refused intent.
+(rf/reg-event-db :studio/macro-picker-failed
+  (fn [db [_ owner request {:keys [cue-id macro-id] :as body} error]]
+    (if (current-macro-request? db owner request)
+      (cond-> (update-in db [:ui :macro-picker] assoc :request nil :error error)
+        (= body (get-in db [:ui :macro-append-intents [cue-id macro-id]]))
+        (update-in [:ui :macro-append-intents] dissoc [cue-id macro-id]))
+      db)))
+
+;; No reply leaves the outcome unknown. Keep the command for an exact retry.
+(rf/reg-event-db :studio/macro-picker-uncertain
+  (fn [db [_ owner request]]
+    (if (current-macro-request? db owner request)
+      (update-in db [:ui :macro-picker] assoc :request nil
+                 :error "The show did not reply. Retry append to confirm the same change.")
+      db)))
+
 (defn put-cell [db {:keys [page-id x y]} cue-id]
   (let [page (some #(when (= page-id (:id %)) %) (get-in db [:show :pages]))
         cells (filterv #(not (and (= x (:x %)) (= y (:y %)))) (:cells page))
@@ -1201,8 +1288,9 @@
 (defn response-definition [db]
   (let [{:keys [id params scope attack-value decay-value sustain release-value unit curve]
          :or {decay-value 0 sustain 1}} (get-in db [:ui :response-form])
-        instance (some #(when (= (:id %) (get-in db [:ui :selected-instance])) %) (get-in db [:show :instances]))
-        params (->> (str/split (or params "") #"[,\s]+") (remove str/blank?) distinct vec)]
+        selected (get-in db [:ui :selected-instance])
+        instance (some #(when (= (:id %) selected) %) (get-in db [:server-projection :view :instances]))
+        params (->> (str/split (or params "") #"[,\s]+") (remove str/blank?) distinct (mapv keyword))]
     (when (or (str/blank? id) (empty? params)) (throw (js/Error. "Name the response and choose at least one numeric parameter.")))
     (when (and (not= scope "all") (nil? instance)) (throw (js/Error. "Select a running effect before targeting this response.")))
     (when-not (and (number? sustain) (js/Number.isFinite sustain) (<= 0 sustain 1))
@@ -1210,20 +1298,20 @@
     (let [decay (musical-duration decay-value unit)
           envelope (cond-> {:attack (musical-duration attack-value unit)
                             :release (musical-duration release-value unit)
-                            :curve curve}
+                            :curve (keyword curve)}
                      (pos? decay-value) (assoc :decay decay)
                      (not= sustain 1) (assoc :sustain sustain))]
-      (cond-> {:id id :params params :operation "multiply" :range [0 1] :envelope envelope}
+      (cond-> {:id (keyword id) :params params :operation :multiply :range [0 1] :envelope envelope}
         (= scope "instance") (assoc :select {:instance-ids [(:id instance)]})
         (= scope "effect") (assoc :select {:effect-ids [(:effect-id instance)]})))))
 (rf/reg-event-fx :studio/response-start
   (fn [{:keys [db]} _]
-    (try {:studio/http {:path "/api/response" :body (response-definition db)
+    (try {:studio/http {:path "/api/response" :typed? true :body (response-definition db)
                        :on-success [:studio/success "Response started. Release fades down; remove restores the original parameters."]}}
          (catch :default error {:dispatch [:studio/failure (error-message error)]}))))
 (rf/reg-event-fx :studio/response-action
   (fn [_ [_ action id]]
-    {:studio/http {:path (str "/api/response/" (if (= action :release) "release" "delete")) :body {:id id}
+    {:studio/http {:path (str "/api/response/" (if (= action :release) "release" "delete")) :typed? true :body {:id id}
                    :on-success [:studio/success (if (= action :release) "Response release started." "Response removed; original parameters restored.")]}}))
 (rf/reg-event-fx :studio/generate-page
   (fn [_ _] {:studio/http {:path "/api/page/generate" :body {:page-id "registry" :options {:columns 8 :rows 8}}

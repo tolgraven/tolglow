@@ -71,31 +71,107 @@
       db)))
 
 (rf/reg-sub ::waveforms (fn [db _] (get-in db [:server-projection :view :parameter-waveforms])))
+(defn priority-destination
+  "The show's layer priority destination with its parameter as a keyword. The
+  projection carries keyword values as text, as the request must send a keyword."
+  [show]
+  (when-let [destination (:layer-priority-destination show)]
+    (update destination :param #(if (keyword? %) % (keyword (events/wire-id %))))))
+
+(rf/reg-sub ::priority-destination
+  (fn [db _] (or (priority-destination (:show db))
+                 (priority-destination (get-in db [:server-projection :view])))))
+
+(defn priority-param?
+  "Is param the show's reserved layer priority destination?"
+  [destination param]
+  (and (some? param) (= (:param destination) param)))
+
+(defn destination-schema
+  "Typed schema for a waveform destination: an effect parameter or layer priority."
+  [instance destination param]
+  (if (priority-param? destination param)
+    (:schema destination)
+    (get-in instance [:definition :params param])))
 (rf/reg-sub ::raw-instance
   (fn [db [_ id]]
     (some #(when (= id (:id %)) %) (get-in db [:server-projection :view :instances]))))
 
-(defn- context [db] ((juxt :runtime-id :epoch) (:show db)))
+(defn- identity-of [show] ((juxt :runtime-id :epoch) show))
 
-(defn- request-key [db id param] [(context db) id param])
-(rf/reg-sub ::request (fn [db [_ id param]] (get-in db [:ui :source-requests (request-key db id param)])))
+(defn- context [db] (identity-of (:show db)))
 
-(defn request [db path id param binding]
-  (let [[runtime epoch] (context db)
-        key (request-key db id param)]
-    (if (get-in db [:ui :source-requests key :pending?]) {}
-      {:db (assoc-in db [:ui :source-requests key] {:pending? true})
-       :studio/http {:path (str "/api/modulation/" path) :typed? true
-                     :body (cond-> {:expected-epoch epoch :runtime-id runtime :instance-id id :param param}
-                             binding (assoc :binding binding))
-                     :on-success [::complete key] :on-failure [::failed key]}})))
-(rf/reg-event-fx ::bind (fn [{:keys [db]} [_ id param binding]] (request db "bind" id param binding)))
-(rf/reg-event-fx ::unbind (fn [{:keys [db]} [_ id param]] (request db "unbind" id param nil)))
-(rf/reg-event-db ::complete (fn [db [_ key]] (update-in db [:ui :source-requests] dissoc key)))
+(def ^:private requests-path [:ui :source-requests])
+
+(defn- request-status [db [owner :as key] {:keys [id accepted-revision] :as request}]
+  (when (and request (= owner (context db)))
+    (let [view (get-in db [:server-projection :view])
+          current? (= owner (identity-of view))
+          receipt (when current?
+                    (some #(when (and (= id (:request-id %)) (= (second owner) (:epoch %))) %)
+                          (rseq (:parameter-source-outcomes view []))))]
+      (cond
+        (= :rejected (:status receipt)) {:error (or (:message receipt) "The show rejected the source edit.")}
+        (= :accepted (:status receipt)) nil
+        (and current? (integer? accepted-revision) (>= (:revision view -1) accepted-revision)) nil
+        :else (select-keys request [:pending? :waiting? :error])))))
+
+(defn request-state [db id param]
+  (let [owner (context db)
+        key [owner id param]
+        requests (get-in db requests-path)
+        direct (request-status db key (get requests key))]
+    (or (when (:pending? direct) direct)
+        (some (fn [[[session instance from :as other-key] request]]
+                (when (and (= owner session) (= id instance) (not= from param) (= param (:target request)))
+                  (let [status (request-status db other-key request)]
+                    (when (:pending? status) status)))) requests)
+        direct)))
+
+(rf/reg-sub ::context (fn [db _] (context db)))
+(rf/reg-sub ::request (fn [db [_ id param]] (request-state db id param)))
+
+(defn request [db path id param binding request-id & [{:keys [from-param expected-source owner]}]]
+  (let [[runtime epoch :as current] (context db)
+        source (or from-param param)
+        key [current id source]
+        reply [::reply key request-id]]
+    (if (or (and from-param (not= owner current))
+            (:pending? (request-state db id source)) (:pending? (request-state db id param))) {}
+      {:db (assoc-in db (conj requests-path key) {:id request-id :pending? true :target param})
+       :dispatch-later [{:ms 20000 :dispatch (conj reply {:status :expired})}]
+       :studio/http {:path (str "/api/modulation/" path) :typed? true :raw-response? true
+                     :body (cond-> {:expected-epoch epoch :runtime-id runtime :instance-id id :param param :request-id request-id}
+                             binding (assoc :binding binding)
+                             from-param (assoc :from-param from-param :expected-source expected-source))
+                     :on-success reply :on-failure [::failed key request-id]
+                     :on-uncertain (conj reply {:status :pending})}})))
+
+(defn record-reply [db [owner :as key] request-id {:keys [status revision message]}]
+  (let [path (conj requests-path key)
+        request (get-in db path)]
+    (if (and (= owner (context db)) (= request-id (:id request)))
+      (case status
+        :accepted (if (integer? revision) (assoc-in db (conj path :accepted-revision) revision) db)
+        :pending (assoc-in db (conj path :waiting?) true)
+        :rejected (update-in db path merge {:pending? false :error (events/error-message message)})
+        :expired (if-let [visible (request-status db key request)]
+                   (if (:pending? visible)
+                     (update-in db path merge {:pending? false :error "The show has not confirmed this edit. Check the current source before retrying."})
+                     (assoc-in db path (merge request visible {:pending? false})))
+                   (update-in db requests-path dissoc key))
+        db)
+      db)))
+
+(rf/reg-event-fx ::bind [(rf/inject-cofx :studio/unique)]
+  (fn [{:keys [db unique]} [_ id param binding]] (request db "bind" id param binding unique)))
+(rf/reg-event-fx ::unbind [(rf/inject-cofx :studio/unique)]
+  (fn [{:keys [db unique]} [_ id param]] (request db "unbind" id param nil unique)))
+(rf/reg-event-fx ::move [(rf/inject-cofx :studio/unique)]
+  (fn [{:keys [db unique]} [_ id param endpoints move]] (request db "bind" id param endpoints unique move)))
+(rf/reg-event-db ::reply (fn [db [_ key request-id receipt]] (record-reply db key request-id receipt)))
 (rf/reg-event-db ::failed
-  (fn [db [_ [owner :as key] error]]
-    (if (= owner (context db))
-      (assoc-in db [:ui :source-requests key] {:error (events/error-message error)}) db)))
+  (fn [db [_ key request-id message]] (record-reply db key request-id {:status :rejected :message message})))
 
 (rf/reg-sub ::fixture-limits
   (fn [[_ id] _] (rf/subscribe [::raw-instance id]))
@@ -189,8 +265,16 @@
 (defn- options [schema]
   (or (when (seq (:choices schema)) (mapv :value (:choices schema))) (:values schema) (:options schema)))
 
+(defn- numeric-bounds [schema [lo hi]]
+  (case (keyword (:type schema))
+    :integer [(when (some? lo) (js/Math.ceil lo)) (when (some? hi) (js/Math.floor hi))]
+    :color [(max 0 (or lo 0)) (min 1 (or hi 1))]
+    [lo hi]))
+
 (defn- bounds [schema base]
-  (let [[lo hi] (or (:bounds schema) (:recommended schema) [0 1])]
+  (let [[lo hi :as limits] (numeric-bounds schema (or (:bounds schema) (:recommended schema) [0 1]))
+        ;; A recommendation can miss the color range or contain no integer.
+        [lo hi] (if (<= lo hi) limits [0 1])]
     (cond
       (seq (options schema)) [(first (options schema)) (last (options schema))]
       (= :boolean (keyword (:type schema))) [false true]
@@ -205,16 +289,25 @@
      :from (get binding :from lo) :to (get binding :to hi)
      :inputs (or (:inputs binding) {})}))
 
+(defn- priority-schema? [schema] (= :priority (keyword (:category schema))))
+
 (defn binding-config [form]
   (let [period (motion/number-value (:period form) "Period")]
     (when-not (pos? period) (throw (js/Error. "Period must be positive.")))
-    {:type :lfo :waveform (:waveform form) :period {(:unit form) period}
-     :phase-reference (:phase-reference form) :phase (motion/number-value (:phase form) "Phase")
-     :from (:from form) :to (:to form)
-     :inputs (:inputs form)}))
+    (cond-> {:type :lfo :waveform (:waveform form) :period {(:unit form) period}
+             :phase-reference (:phase-reference form) :phase (motion/number-value (:phase form) "Phase")
+             :from (:from form) :to (:to form)
+             :inputs (:inputs form)}
+      (contains? form :band)
+      (assoc :hysteresis
+             (let [band (motion/number-value (:band form) "Hysteresis band")
+                   dwell (if (str/blank? (str (:dwell form))) 0 (motion/number-value (:dwell form) "Minimum dwell"))]
+               (when (neg? band) (throw (js/Error. "Hysteresis band cannot be negative.")))
+               (when (neg? dwell) (throw (js/Error. "Minimum dwell cannot be negative.")))
+               (cond-> {:band band} (pos? dwell) (assoc :dwell {(keyword (:dwell-unit form :beats)) dwell})))))))
 
 (defn- number-field [label value change! schema]
-  (let [[low high] (:bounds schema)]
+  (let [[low high] (numeric-bounds schema (:bounds schema))]
     [:label.source-field [:span label]
      [:input {:type "number" :aria-label label :value value :min low :max high
               :step (if (= :integer (keyword (:type schema))) 1 "any")
@@ -239,56 +332,116 @@
     :else [number-field label value change! schema]))
 
 (defn editor-draft [schema base binding catalog]
-  (let [form (draft schema base binding)]
+  (let [form (cond-> (draft schema base binding)
+               ;; Layer priority quantizes with hysteresis; a quarter tier is the show default.
+               (priority-schema? schema)
+               (assoc :band (str (get-in binding [:hysteresis :band] 0.25))
+                      ;; Keep the authored musical unit; a bar dwell stays in bars.
+                      :dwell (str (or (second (first (get-in binding [:hysteresis :dwell]))) 0))
+                      :dwell-unit (keyword (or (ffirst (get-in binding [:hysteresis :dwell])) :beats)))
+               ;; A whole-range sweep of every tier is rarely meant; start one tier either side.
+               (and (priority-schema? schema) (nil? binding)) (assoc :from -1 :to 1))]
     (if (or binding (some #(= :sine (:id %)) catalog)) form
       (assoc form :waveform (:id (first catalog))))))
 
-(defn- lfo-editor [id param schema base source catalog]
+(defn destination-options
+  "Destinations on the same activation that can take the waveform: unbound effect
+  parameters, then the show's layer priority destination when it is free."
+  [instance param & [priority]]
+  (let [free? (fn [target] (not (or (= param target) (source-of (reading instance target) :lfo))))]
+    (cond-> (->> (get-in instance [:definition :params])
+                 (filter (comp free? first))
+                 (sort-by (comp str first))
+                 vec)
+      (and priority (free? (:param priority))) (conj [(:param priority) (:schema priority)]))))
+
+(defn- lfo-editor [id param schema base source catalog instance]
   (let [lfo (source-of source :lfo)]
-    (r/with-let [form (r/atom (editor-draft schema base (:binding lfo) catalog)) error (r/atom nil)]
-      (let [{:keys [waveform period unit phase-reference phase from to inputs]} @form
+    (r/with-let [form (r/atom (editor-draft schema base (:binding lfo) catalog))
+                 move (r/atom nil) error (r/atom nil)]
+      (let [{:keys [waveform period unit phase-reference phase inputs band dwell dwell-unit]} @form
             in-flight @(rf/subscribe [::request id param])
+            owner @(rf/subscribe [::context])
+            priority @(rf/subscribe [::priority-destination])
+            destinations (when lfo (destination-options instance param priority))
+            destination (:param @move)
+            target-schema (destination-schema instance priority destination)
+            {:keys [from to]} (or @move @form)
             wave (if (some? waveform)
                    (some #(when (= waveform (:id %)) %) catalog)
                    (first catalog))
             update! (fn [key value] (swap! form assoc key value))
+            update-endpoint! (fn [key value] (swap! (if destination move form) assoc key value))
             apply! (fn [e]
                      (.preventDefault e)
-                     (try (let [config (binding-config (assoc @form :waveform (:id wave)))] (reset! error nil) (rf/dispatch [::bind id param config]))
+                     (reset! error nil)
+                     (try (if destination
+                            (rf/dispatch [::move id destination {:from from :to to} (:source @move)])
+                            (rf/dispatch [::bind id param (binding-config (assoc @form :waveform (:id wave)))]))
                           (catch :default problem (reset! error (events/error-message problem)))))]
         [:form.live-source-form {:on-submit apply!}
          [:div.source-fields
-          [:label.source-field [:span "Waveform"]
-           [:select {:aria-label "Waveform source" :value (pr-str (:id wave))
-                     :on-change #(let [selected (.. % -target -value)
-                                       id (:id (some (fn [item] (when (= selected (pr-str (:id item))) item)) catalog))]
-                                   (swap! form assoc :waveform id :inputs {}))}
-            (for [{:keys [id name]} catalog] ^{:key (pr-str id)} [:option {:value (pr-str id)} (or name (widgets/label id))])]]
-          [:label.source-field [:span "Period"]
-           [:input {:type "text" :aria-label "Source period" :value period :required true
-                    :on-change #(update! :period (.. % -target -value))}]]
-          [:label.source-field [:span "Unit"]
-           [:select {:aria-label "Source period unit" :value (name unit) :on-change #(update! :unit (keyword (.. % -target -value)))}
-            (for [u [:beats :bars :phrases]] ^{:key u} [:option {:value (name u)} (widgets/label u)])]]
-          [:label.source-field [:span "Phase reference"]
-           [:select {:value (name phase-reference)
-                     :on-change #(update! :phase-reference (keyword (.. % -target -value)))}
-            [:option {:value "launch"} "Cue launch"]
-            [:option {:value "transport"} "Show transport"]]]
-          [number-field "Phase (cycles)" phase #(update! :phase %) {}]
-          [endpoint "From" schema from #(update! :from %)]
-          [endpoint "To" schema to #(update! :to %)]]
-         (when (seq (:params wave))
+          (when-not destination
+            [:<>
+             [:label.source-field [:span "Waveform"]
+              [:select {:aria-label "Waveform source" :value (pr-str (:id wave))
+                        :on-change #(let [selected (.. % -target -value)
+                                          id (:id (some (fn [item] (when (= selected (pr-str (:id item))) item)) catalog))]
+                                      (swap! form assoc :waveform id :inputs {}))}
+               (for [{:keys [id name]} catalog] ^{:key (pr-str id)} [:option {:value (pr-str id)} (or name (widgets/label id))])]]
+             [:label.source-field [:span "Period"]
+              [:input {:type "text" :aria-label "Source period" :value period :required true
+                       :on-change #(update! :period (.. % -target -value))}]]
+             [:label.source-field [:span "Unit"]
+              [:select {:aria-label "Source period unit" :value (name unit) :on-change #(update! :unit (keyword (.. % -target -value)))}
+               (for [u [:beats :bars :phrases]] ^{:key u} [:option {:value (name u)} (widgets/label u)])]]
+             [:label.source-field [:span "Phase reference"]
+              [:select {:value (name phase-reference)
+                        :on-change #(update! :phase-reference (keyword (.. % -target -value)))}
+               [:option {:value "launch"} "Cue launch"]
+               [:option {:value "transport"} "Show transport"]]]
+             [number-field "Phase (cycles)" phase #(update! :phase %) {}]
+             (when (priority-schema? schema)
+               [:<>
+                [number-field "Hysteresis band (tiers)" band #(update! :band %) {:bounds [0 8]}]
+                [number-field "Minimum dwell" dwell #(update! :dwell %) {:bounds [0 nil]}]
+                [:label.source-field [:span "Dwell unit"]
+                 [:select {:aria-label "Minimum dwell unit" :value (name (or dwell-unit :beats))
+                           :on-change #(update! :dwell-unit (keyword (.. % -target -value)))}
+                  (for [u [:beats :bars :phrases]] ^{:key u} [:option {:value (name u)} (widgets/label u)])]]])])
+          (when (or destination (seq destinations))
+            [:label.source-field [:span "Destination"]
+             [:select {:aria-label "Destination" :value (pr-str (or destination param)) :disabled (:pending? in-flight)
+                       :on-change #(let [value (.. % -target -value)
+                                         [target spec] (some (fn [[key :as entry]] (when (= value (pr-str key)) entry)) destinations)
+                                         [lo hi] (if (priority-param? priority target)
+                                                   [-1 1]
+                                                   (bounds spec (get-in instance [:params target] (:default spec))))]
+                                     (reset! move (when target {:param target :from lo :to hi
+                                                                :source {:owner owner :from-param param
+                                                                         :expected-source (:identity lfo)}})))}
+              [:option {:value (pr-str param)} (or (:name schema) (widgets/label param))]
+              (when (and destination (not-any? #(= destination (first %)) destinations))
+                [:option {:value (pr-str destination) :disabled true} (or (:name target-schema) (widgets/label destination))])
+              (for [[key spec] destinations] ^{:key (pr-str key)}
+                [:option {:value (pr-str key)} (or (:name spec) (widgets/label key))])]])
+          [endpoint "From" (or target-schema schema) from #(update-endpoint! :from %)]
+          [endpoint "To" (or target-schema schema) to #(update-endpoint! :to %)]]
+         (when (and (not destination) (seq (:params wave)))
            [:div.source-fields
             (for [[key input] (:params wave)] ^{:key key}
               [number-field (or (:name input) (widgets/label key)) (get inputs key (:default input))
                #(swap! form assoc-in [:inputs key] %) input])])
          (when-let [message (or @error (:error in-flight))] [:p.performance-error {:role "alert"} message])
+         (when (and (:pending? in-flight) (:waiting? in-flight))
+           [:p {:role "status"} "Waiting for the show to confirm the source change."])
          [:div.source-actions
-          [:button.button.primary {:type "submit" :disabled (or (:pending? in-flight) (not wave))} (if lfo "Update LFO" "Attach LFO")]
-          (when lfo
+          [:button.button.primary {:type "submit" :disabled (or (:pending? in-flight) (not wave))}
+           (cond destination "Move LFO" lfo "Update LFO" :else "Attach LFO")]
+          (when (and lfo (not destination))
             [:<>
-             [:button.button {:type "button" :on-click #(rf/dispatch [(if (:held? lfo) :modulation/resume :modulation/hold) id param])}
+             [:button.button {:type "button" :disabled (:pending? in-flight)
+                              :on-click #(rf/dispatch [(if (:held? lfo) :modulation/resume :modulation/hold) id param])}
               (if (:held? lfo) "Resume LFO" "Use base value")]
              [:button.button {:type "button" :disabled (:pending? in-flight) :on-click #(rf/dispatch [::unbind id param])} "Detach LFO"]])]]))))
 
@@ -308,9 +461,13 @@
         params (editor-parameters param components)
         owner (first params)
         raw @(rf/subscribe [::raw-instance id])
-        typed (get-in raw [:definition :params param] schema)
+        priority @(rf/subscribe [::priority-destination])
+        priority? (priority-param? priority param)
+        typed (if priority? (:schema priority) (get-in raw [:definition :params param] schema))
         source (or (reading raw param) (reading instance param)) catalog @(rf/subscribe [::waveforms])
-        base (get-in raw [:params param] (get-in instance [:params param] (:default schema)))]
+        base (if priority?
+               (:base-value (or (reading raw param) (reading instance param)) 0)
+               (get-in raw [:params param] (get-in instance [:params param] (:default schema))))]
     [:section.live-source-editor {:id (editor-id id owner) :aria-labelledby (heading-id id owner)
                                  :on-key-down #(when (= "Escape" (.-key %)) (.stopPropagation %) (close! id params))}
      [:header [:h4 {:id (heading-id id owner) :tab-index -1} (str title " source")]
@@ -328,5 +485,5 @@
         (for [[i input] (map-indexed vector (:sources source))]
           ^{:key i} [:span (source-label input)
                      (cond (:held? input) " · using base" (:pending? input) " · awaiting sample") (when-let [error (:error input)] [:span.performance-error {:role "alert"} error])])])
-     ^{:key [id param (:binding (source-of source :lfo))]} [lfo-editor id param typed base source catalog]
-     [motion/parameter-widget id param schema base]]))
+     ^{:key [id param (:binding (source-of source :lfo))]} [lfo-editor id param typed base source catalog raw]
+     (when-not priority? [motion/parameter-widget id param schema base])]))

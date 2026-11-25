@@ -1,7 +1,10 @@
 (ns tolglow.autopilot-host-test
   (:require [afterglow.control.model :as control]
+            [afterglow.time :as time]
             [clojure.test :refer [deftest is testing]]
+            [tolglow.autopilot.signal :as signal]
             [tolglow.persistence :as save]
+            [tolglow.rig.pixel-layout :as pixels]
             [tolglow.show :as show]))
 
 (defn- fixture [id address group]
@@ -147,3 +150,88 @@
         (is (= [:b] (:ids (:hdr-scope @(:state rt)))))
         (is (= [0.4 0.8] (levels rt [:a :b]))))
       (finally (show/stop! rt)))))
+
+(defn- reds [rt n]
+  (vec (take-nth 3 (map #(bit-and 255 %) (take (* 3 n) (get-in @(:state rt) [:output :universes 1]))))))
+
+(defn- rgb-line [ids xs]
+  (mapv (fn [id i x] {:id id :universe 1 :address (inc (* 3 i)) :position [x 0 0]
+                      :channels {:red 1 :green 2 :blue 3}})
+        ids (range) xs))
+
+(def ^:private receiver-distances [0.1 0.2 0.3 0.4])
+
+(defn- expected-spill
+  "Red bytes on receivers for 0.21 excess, linear falloff and no whitening."
+  [spill radius]
+  (mapv #(Math/round (* 255.0 (* 0.21 spill (max 0.0 (- 1.0 (/ % radius)))))) receiver-distances))
+
+(defn- modulated-run [seed]
+  (let [ids [:hot :r1 :r2 :r3 :r4]
+        rt (runtime (rgb-line ids (cons 0 receiver-distances))
+                    [(look :hot-red [:hot] {:color [1.21 0.0 0.0]})] true)
+        radius {:random {:seed seed} :period {:beats 1} :range [0.15 0.45]}
+        spill {:waveform :sine :period {:beats 4} :range [0.25 1.0]}]
+    (try
+      (submit rt 0 :settings {:scope :hdr :values {:enabled? true :white-mix 0.0 :spill-white-mix 0.0
+                                                   :falloff :linear :radius radius :spill spill}})
+      (submit rt 25 :command {:op :cue/launch :cue-id :hot-red})
+      (vec (for [t (range 50 4050 125)]
+             (do (tick rt t)
+                 (let [model (assoc (:model @(:state rt)) :time-ms t)
+                       context {:start-clock (get-in model [:extensions :tolglow.autopilot/hdr-clock])}
+                       clock (time/frame-clock model)
+                       r (signal/value model radius context)
+                       s (signal/value model spill context)]
+                   {:beat (long (Math/floor (:beat clock))) :radius r :spill s
+                    :expected (expected-spill s r) :red (subvec (reds rt 5) 1)}))))
+      (finally (show/stop! rt)))))
+
+(deftest seeded-lfo-and-random-signals-drive-spill-radius-and-strength-per-frame
+  (let [frames (modulated-run 97)]
+    (testing "every frame spills exactly what the resolved radius and strength predict"
+      (doseq [{:keys [red expected] :as frame} frames]
+        (is (= expected red) (pr-str frame))))
+    (testing "the sample-and-hold radius stays in range, holds for a beat and changes between beats"
+      (is (every? #(<= 0.15 (:radius %) 0.45) frames))
+      (is (every? #(= 1 (count (set (map :radius %)))) (vals (group-by :beat frames))))
+      (is (<= 4 (count (set (map :radius frames)))) (pr-str (map :radius frames)))
+      (is (< 1 (count (set (map #(count (filter pos? (:red %))) frames)))) "the lit neighbour count follows the radius"))
+    (testing "the LFO sweeps spill strength across its range"
+      (is (< (reduce min (map :spill frames)) 0.3))
+      (is (> (reduce max (map :spill frames)) 0.95)))
+    (testing "the same seed replays identically and another seed differs"
+      (is (= (map :red frames) (map :red (modulated-run 97))))
+      (is (not= (map :radius frames) (map :radius (modulated-run 98)))))))
+
+(deftest excess-spills-to-neighbouring-strip-pixels-by-distance
+  (doseq [batch? [false true]]
+    (let [strip (pixels/fixtures {:id :strip :group :strip :shape :path :color-layout :rgb
+                                  :universe 1 :address 1 :pixels 9 :points [[0 0 0] [0.8 0 0]]})
+          ids (mapv :id strip)
+          rt (runtime strip [(look :hot [(nth ids 4)] {:color [1.21 0.0 0.0]})] batch?)
+          hdr {:enabled? true :scope {:group-id :strip} :white-mix 0.0 :spill-white-mix 0.0
+               :spill 1.0 :radius 0.35}
+          set-hdr! (fn [t values] (submit rt t :settings {:scope :hdr :values values}) (reds rt 9))]
+      (try
+        (is (= [0.1 0.0 0.0] (:position (nth strip 1))) "pixels are 0.1 m apart")
+        ;; Overrange light needs HDR. Without spill only the source clamps.
+        (submit rt 0 :settings {:scope :hdr :values (assoc hdr :spill 0.0)})
+        (submit rt 10 :command {:op :cue/launch :cue-id :hot})
+        (is (= [0 0 0 0 255 0 0 0 0] (reds rt 9)) "without spill the clamped pixel keeps its excess")
+        ;; Linear weights at 0.1, 0.2 and 0.3 m are 5/7, 3/7 and 1/7 of 0.21 excess.
+        (is (= [0 8 23 38 255 38 23 8 0] (set-hdr! 25 (assoc hdr :falloff :linear))))
+        (is (= [0 1 10 27 255 27 10 1 0] (set-hdr! 50 (assoc hdr :falloff :quadratic))))
+        (let [curve [[0 1] [0.3 1] [0.6 0.8] [1 0]]]
+          (is (= [0 15 44 54 255 54 44 15 0] (set-hdr! 75 (assoc hdr :falloff curve))))
+          (is (= curve (get-in (show/snapshot rt) [:settings :hdr :falloff])))
+          (is (= curve (get-in (save/read-string (show/export-show-source rt)) [:model :settings :hdr :falloff]))
+              "an authored curve is portable show data"))
+        (is (= [0 0 0 38 255 38 0 0 0]
+               (set-hdr! 100 (assoc hdr :falloff :linear :scope {:fixture-ids (subvec ids 3 6)}))))
+        (let [receipt (show/submit! rt :settings {:scope :hdr :values (assoc hdr :falloff [[0 1] [0.5 2] [1 0]])})]
+          (show/tick! rt 125)
+          (is (= :rejected (:status (deref receipt 1000 {:status :timeout})))
+              "an out-of-range weight is rejected before rendering")
+          (is (= [0 0 0 38 255 38 0 0 0] (reds rt 9)) "the previous settings stay in force"))
+        (finally (show/stop! rt))))))

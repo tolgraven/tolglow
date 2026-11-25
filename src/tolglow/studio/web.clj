@@ -138,7 +138,7 @@
     (let [text (read-body-text request)
           mime (some-> (get-in request [:headers "content-type"]) (str/split #";" 2) first str/trim str/lower-case)
           transit? (= mime transit-type)
-          decoded (cond transit? (transit/decode text)
+          decoded (cond transit? (transit/decode-command text)
                      (str/blank? text) {}
                      :else (json/read-str text :key-fn keyword))
           data (if (and transit? (= "/api/import" (:uri request))
@@ -228,7 +228,7 @@
    "/api/command" :command "/api/spatial/cues" :spatial-cue "/api/definition" :definition "/api/rig" :rig
    "/api/aim-path" :aim-path "/api/surface-aim" :surface-aim
    "/api/lighting-scene" :lighting-scene "/api/audio/returns/configure" :audio-return-configure
-   "/api/composition" :composition "/api/composition/run" :composition-run
+   "/api/composition" :composition "/api/composition/append" :composition-append "/api/composition/run" :composition-run
    "/api/composition/stop" :composition-stop "/api/import" :import "/api/auto" :auto
    "/api/response" :response "/api/response/release" :response-release
    "/api/response/delete" :response-delete "/api/page/generate" :page-generate "/api/settings" :settings

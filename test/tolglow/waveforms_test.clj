@@ -1,10 +1,13 @@
 (ns tolglow.waveforms-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [clojure.test :refer [deftest is testing]]
             [afterglow.runtime :as runtime]
             [clojure.data.json :as json]
             [tolglow.clock :as clock]
+            [tolglow.composition.response :as response]
+            [tolglow.demo :as demo]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
+            [tolglow.studio.state-stream :as state-stream]
             [tolglow.waveforms :as waveforms]
             [tolglow.audio.capture :as audio]
             [tolglow.audio.capture-test :as pcm]
@@ -143,6 +146,189 @@
         params (waveforms/effective-params snapshot (get-in snapshot [:model :instances "0:1"]))]
     (is (near? 0.4 (:width params)))
     (is (= 0.25 (get-in snapshot [:model :instances "0:1" :params :width])))))
+
+(defn- response-show [update-definition]
+  (-> (demo/model)
+      (update-in [:registry :effects :ember] update-definition)
+      (assoc :responses [{:id :gain :select {:cue-ids [:ember]} :params [:level]
+                          :operation :multiply :range [0.0 1.0] :envelope {:attack {:beats 1}}
+                          :state {:started-at-ms 0 :started-at-beat 0}}])))
+
+(defn- command-at! [runtime at command]
+  (let [reply (show/submit! runtime command)]
+    (show/tick! runtime at)
+    (deref reply 1000 ::timeout)))
+
+(defn- counted-response [calls]
+  (let [compile-response response/compile-response]
+    (fn [spec]
+      (let [evaluate (compile-response spec)]
+        (fn [context]
+          (let [result (evaluate context)]
+            (when (not= (:response-values result) (:response-values context))
+              (swap! calls conj (get-in context [:frame :beat])))
+            result))))))
+
+(deftest studio-and-push-read-the-committed-exact-response
+  (let [calls (atom [])
+        model (response-show
+                #(assoc % :blocks {[:outputs :color] {:stages [{:block :optics/gel}]}}))
+        runtime (show/create-runtime {:model model :workspace-options nil :worker-timeout-ms 10000})
+        display (with-redefs [display/browser-display (fn [options] {:open! (constantly {}) :close! (fn [_])
+                                                                       :project! (:project! options)})]
+                  (show/push-browser-display runtime {}))
+        project (:project! display)
+        handle ((:open! display))]
+    (try
+      (with-redefs [response/compile-response (counted-response calls)]
+        (let [{:keys [instance-id status]} (command-at! runtime 0 {:op :cue/launch :cue-id :ember})
+              _ (reset! calls [])
+              _ (show/tick! runtime 125)
+              snap @(:state runtime)
+              instance (get-in snap [:model :instances instance-id])
+              view (assoc (push/display-view {:selected-instance instance-id :selected-cue :ember
+                                              :page-id :main :origin [0 0]} (:model snap))
+                          :display-mode :parameters)]
+          (is (= :accepted status))
+          (is (= [0.25] @calls))
+          (is (= 0.175 (get-in (studio/stream-view runtime snap) [:instances 0 :parameter-sources :level :effective-value])))
+          (is (= 0.175 (:effective-value (first (filter #(= :level (:param %)) (:parameters (project view)))))))
+          (is (= 45 (Byte/toUnsignedInt (aget ^bytes (get-in snap [:output :universes 1]) 0))))
+          (is (seq (:stages (runtime/observe instance [[:outputs :color] :head-1]))))
+          (is (= [0.25] @calls))
+          (is (= 0.1 (:level (waveforms/effective-params
+                              (assoc-in snap [:resolved-param-overrides instance-id :level] 0.4) instance))))
+          (is (= 0.35 (:level (waveforms/effective-params snap (assoc-in instance [:system :last-clock :beat] 0.5)))))
+          (is (= 0.175 (:level (waveforms/effective-params (update snap :transport-generation inc) instance))))
+          (is (= 0.175 (:level (waveforms/effective-params
+                                (assoc-in snap [:model :epoch] 1) instance))))
+          (is (= 0.175 (:level (waveforms/effective-params
+                                snap (assoc-in instance [:definition :params :level :bounds] [0 2])))))
+          (is (= [0.25 0.25 0.5 0.25 0.25 0.25] @calls))
+          (is (= :accepted (:status (command-at! runtime 175 {:op :param/set :instance-id instance-id
+                                                              :param :level :value 0.4}))))
+          (is (near? 0.14 (:effective-value (first (filter #(= :level (:param %)) (:parameters (project view)))))))
+          (is (= 0.35 (last @calls)))
+          (is (= 7 (count @calls)))))
+      (finally ((:close! display) handle) (show/stop! runtime)))))
+
+(deftest response-samples-are-retained-only-while-a-display-reads-them
+  (let [model (response-show identity)
+        runtime (show/create-runtime {:model model :workspace-options nil :worker-timeout-ms 10000})
+        display (with-redefs [display/browser-display (fn [_] {:open! (constantly {:sink :open}) :close! (fn [_])})]
+                  (show/push-browser-display runtime {}))
+        sample (fn []
+                 (let [snap @(:state runtime)
+                       instance (first (vals (get-in snap [:model :instances])))]
+                   [(some? (::waveforms/response-frame snap))
+                    (some? (runtime/observe instance [::waveforms/response-inputs nil]))]))]
+    (try
+      (is (= :accepted (:status (command-at! runtime 0 {:op :cue/launch :cue-id :ember}))))
+      (show/tick! runtime 125)
+      (testing "no reader leaves the owner frame without a retained sample"
+        (is (= [false false] (sample))))
+      (let [handle ((:open! display))]
+        (is (= :open (:sink handle)))
+        (show/tick! runtime 150)
+        (testing "an open Push display leases exact response inputs"
+          (is (= [true true] (sample))))
+        ((:close! display) handle)
+        ((:close! display) handle))
+      (show/tick! runtime 175)
+      (testing "closing the display releases the lease once"
+        (is (empty? @(:response-sample-readers runtime)))
+        (is (= [false false] (sample))))
+      (testing "a failed Studio bind does not leak its lease"
+        (is (thrown? clojure.lang.ExceptionInfo
+                     (with-redefs [state-stream/publish! (fn [& _] (throw (ex-info "publish failed" {})))]
+                       (studio/handler runtime))))
+        (is (empty? @(:response-sample-readers runtime))))
+      (studio/handler runtime)
+      (let [clients (get-in @(:observers runtime) [:studio :state-stream :clients])]
+        (show/tick! runtime 200)
+        (is (= [false false] (sample)) "an idle Studio stream does not demand samples")
+        (swap! clients assoc :socket (atom {}))
+        (show/tick! runtime 225)
+        (is (= [true true] (sample)) "a connected Studio client demands samples")
+        (swap! clients dissoc :socket)
+        (show/tick! runtime 250)
+        (is (= [false false] (sample)) "the last client leaving drops demand")
+        (show/detach-observer! runtime :studio)
+        (is (empty? @(:response-sample-readers runtime)) "closing the Studio observer releases its lease"))
+      (finally (show/stop! runtime)))))
+
+(deftest a-throwing-response-sample-predicate-does-not-fault-the-tick
+  (let [runtime (show/create-runtime {:model (response-show identity) :workspace-options nil :worker-timeout-ms 10000})
+        _ (show/lease-response-samples! runtime #(throw (ex-info "earlier reader failed" {:reader :earlier})))
+        broken (show/lease-response-samples! runtime #(throw (ex-info "reader failed" {:reader :broken})))]
+    (try
+      (is (= :accepted (:status (command-at! runtime 0 {:op :cue/launch :cue-id :ember}))))
+      (let [before (get-in @(:state runtime) [:model :frame-number])
+            _ (show/tick! runtime 125)
+            _ (show/tick! runtime 150)
+            snap @(:state runtime)]
+        (is (nil? (get-in snap [:status :error])))
+        (is (= (+ 2 before) (get-in snap [:model :frame-number])) "the owner kept committing frames")
+        (is (nil? (::waveforms/response-frame snap)) "a failing predicate counts as not demanded"))
+      (is (= #{{:message "earlier reader failed" :details {:reader :earlier} :count 3}
+               {:message "reader failed" :details {:reader :broken} :count 3}}
+             (set (show/response-sample-faults runtime))) "one bounded record per lease")
+      (let [release (show/lease-response-samples! runtime)]
+        (show/tick! runtime 175)
+        (is (some? (::waveforms/response-frame @(:state runtime))) "other leases still demand samples")
+        (is (= #{4} (set (map :count (show/response-sample-faults runtime))))
+            "every lease is polled even when one already demands samples")
+        (release))
+      (broken)
+      (is (= [:earlier] (map (comp :reader :details) (show/response-sample-faults runtime))))
+      (testing "an interrupted reader restores the thread's interrupt flag"
+        (let [release (show/lease-response-samples! runtime #(throw (ex-info "wrapped" {} (InterruptedException.))))]
+          (try
+            (show/tick! runtime 200)
+            (is (Thread/interrupted) "interrupt flag restored, then cleared here")
+            (finally (release)))))
+      (finally (show/stop! runtime)))))
+
+(deftest virtual-machine-errors-from-a-response-sample-predicate-propagate
+  (let [runtime (show/create-runtime {:model (response-show identity) :workspace-options nil :worker-timeout-ms 10000})]
+    (try
+      (is (= :accepted (:status (command-at! runtime 0 {:op :cue/launch :cue-id :ember}))))
+      (show/lease-response-samples! runtime #(throw (StackOverflowError.)))
+      (is (thrown? StackOverflowError (show/tick! runtime 125)))
+      (is (empty? (show/response-sample-faults runtime)) "an Error is not recorded as a reader fault")
+      (finally (show/stop! runtime)))))
+
+(deftest forecast-and-fault-observations-keep-their-own-response-semantics
+  (let [forecast (response-show #(assoc % :keyframes {:interval {:beats 1}}))
+        fails-at-zero (response-show #(assoc-in % [:outputs :dimmer]
+                                               {:op :divide :args [0.1 {:op :param :key :level}]}))]
+    (doseq [[model fault?] [[forecast false] [fails-at-zero true]]]
+      (let [runtime (show/create-runtime {:model model :workspace-options nil :worker-timeout-ms 10000
+                                          :effect-log! (fn [_])})
+            _ (show/lease-response-samples! runtime)
+            calls (atom [])]
+        (try
+          (with-redefs [response/compile-response (counted-response calls)]
+            (let [{:keys [instance-id status]} (command-at! runtime 125 {:op :cue/launch :cue-id :ember})]
+              (is (= :accepted status))
+              (if fault?
+                (let [reply (command-at! runtime 175 {:op :param/set :instance-id instance-id :param :level :value 0.0})
+                      snapshot @(:state runtime)
+                      instance (get-in snapshot [:model :instances instance-id])]
+                  (is (= :accepted (:status reply)))
+                  (is (= :evaluate (get-in instance [:fault :stage])))
+                  (is (= [0.25 0.35] @calls))
+                  (is (zero? (:level (waveforms/effective-params snapshot instance))))
+                  (is (= [0.25 0.35 0.35] @calls)))
+                (do
+                  (is (= [0.25 1.25] @calls))
+                  (show/tick! runtime 250)
+                  (let [snapshot @(:state runtime)
+                        instance (get-in snapshot [:model :instances instance-id])]
+                    (is (= [0.25 1.25] @calls))
+                    (is (= 0.35 (:level (waveforms/effective-params snapshot instance))))
+                    (is (= [0.25 1.25 0.5] @calls)))))))
+          (finally (show/stop! runtime)))))))
 
 (deftest clock-bound-shape-inputs-use-the-captured-private-frame
   (let [snapshot (assoc-in (fixture) [:model :instances "0:1" :definition :params :waveform :choices 0 :params :duty]
@@ -331,7 +517,7 @@
       (is (= :accepted (:status (apply! :definition {:kind :effects :definition definition} 0))))
       (is (= :accepted (:status (apply! :command {:op :cue/put :cue {:id :shape :effect-id :shape}} 0))))
       (let [id (:instance-id (apply! :command {:op :cue/launch :cue-id :shape} 0))
-            project-browser (with-redefs [display/browser-display :project!] (show/push-browser-display runtime {}))
+            project-browser (:project! (with-redefs [display/browser-display identity] (show/push-browser-display runtime {})))
             browser-view (push/display-view {:selected-instance id :selected-cue :shape :page-id :main :origin [0 0]}
                                             (:model @(:state runtime)))
             browser-rows #(into {} (map (juxt :param identity))

@@ -50,7 +50,7 @@
           (workspace/recover! manager)
           (let [agent-options (:app-agent-options options {})
                 agents (app-agents/create-manager
-                        (merge {:config-path (str (io/file (:workspace-parent options) ".tolglow-application-agents.edn"))
+                        (merge {:config-path (str (.resolve ^java.nio.file.Path (:parent manager) ".tolglow-application-agents.edn"))
                                 :check-profiles required
                                 :execute! (when terminal (terminal/streaming-runner terminal))}
                                agent-options {:workspaces manager}))]
