@@ -47,6 +47,12 @@
 
 ;; Window and grid ------------------------------------------------------------------
 
+(deftest positions-are-zero-based-transport-coordinates
+  (is (= {:bar 64 :beat 2.0 :phrase 16} (timeline/position {:beats-per-bar 4 :bars-per-phrase 4} 258.0)))
+  (is (= {:bar 3 :beat 0.25 :phrase 1} (timeline/position {:beats-per-bar 7/2 :bars-per-phrase 2} 10.75)))
+  (is (= {:bar -1 :beat 3.5 :phrase -1} (timeline/position {:beats-per-bar 4 :bars-per-phrase 4} -0.5)))
+  (is (nil? (timeline/position {:beats-per-bar 4 :bars-per-phrase 4} nil))))
+
 (deftest window-options-are-validated
   (is (= {:bars 8} (timeline/options nil)))
   (is (= {:bars 2} (timeline/options {:bars 2})))
@@ -59,7 +65,8 @@
         at (fn [beat] (first (filter #(= beat (:beat %)) lines)))]
     (testing "the window is the visible span plus one bar, snapped to bars"
       (is (= {:bars 2 :past-beats 8.0 :future-beats 8.0 :from-beat 4.0 :to-beat 32.0} (:window view)))
-      (is (= {:beats-per-bar 4 :bars-per-phrase 4} (:meter view))))
+      (is (= {:beats-per-bar 4 :bars-per-phrase 4} (:meter view)))
+      (is (= {:bar 4 :beat 2.5 :phrase 1} (:position view)) "now, in the scheduler's zero-based coordinates"))
     (testing "every quarter note is listed once, with the strongest boundary kind"
       (is (= (map double (range 4 33)) (map :beat lines)))
       (is (= {:beat 16.0 :kind :phrase :bar 4 :phrase 1} (at 16.0)))
@@ -135,7 +142,8 @@
             (is (= :operator-cancel (:reason cancelled)))
             (is (= 3.5 (:beat cancelled)))
             (is (not-any? #(and (= "gone" (:event-id %)) (= :pending (:state %))) events)))
-          (is (= [:pending 12.0] ((juxt :state :beat) (by-id events "later"))))
+          (is (= [:pending 12.0 {:bar 3 :beat 0.0 :phrase 0}] ((juxt :state :beat :position) (by-id events "later")))
+              "the position reads back as the :at {:bar 3} it was posted with")
           (is (apply <= (map :beat events)) "events are in beat order")))
       (finally (show/stop! rt)))))
 
@@ -156,6 +164,8 @@
                     :from 0.0 :to 1.0 :label "Swell" :cancellable? true :category :ramp}
                    (select-keys swell [:state :start-beat :end-beat :unit :curve :from :to :label :cancellable? :category])))
             (is (= {:target :param :instance-id id :param :level} (:destination swell)))
+            (is (= [{:bar 0 :beat 0.5 :phrase 0} {:bar 2 :beat 0.5 :phrase 0}]
+                   ((juxt :start-position :end-position) swell)))
             (is (= agent-source (select-keys (:source swell) [:adapter :session-id])))
             (testing "the drawn curve is the owner's easing function, sampled as data"
               (is (= 17 (count (:shape swell))))
@@ -262,10 +272,11 @@
         items (get-in (timeline/view {:model model} {:bars 8}) [:sections :items])]
     (is (= 4 (count (get-in model [:variables :audio :sections]))) "only section changes are remembered")
     (is (= [{:key "causal/8.0" :source :causal :state :confirmed :start-beat 8.0 :end-beat 24.0
-             :label "Bass change" :drivers [:bass-pattern] :confidence 0.9 :confirmed-at-beat 16.0}
+             :label "Bass change" :drivers [:bass-pattern] :confidence 0.9 :confirmed-at-beat 16.0
+             :start-position {:bar 2 :beat 0.0 :phrase 0}}
             {:key "causal/24.0" :source :causal :state :confirmed :start-beat 24.0 :open? true
              :label "Bass + Groove change" :drivers [:bass-pattern :groove-accents] :confidence 0.7
-             :confirmed-at-beat 32.0}]
+             :confirmed-at-beat 32.0 :start-position {:bar 6 :beat 0.0 :phrase 1}}]
            items)
         "another clock epoch and a boundary ahead of the transport are not history on this clock")
     (testing "history is bounded"

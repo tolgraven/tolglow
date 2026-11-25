@@ -80,6 +80,22 @@
     ;; Later kinds win where lines coincide: phrase over bar over beat.
     {:lines (vec (vals (into (sorted-map) (concat beats bar-lines phrases))))}))
 
+;; Positions ---------------------------------------------------------------------
+
+(defn position
+  "Zero-based transport coordinates of a beat, as the scheduler's :at accepts
+  them: {:phrase p :bar b :beat x}, with :bar counted from beat zero and :beat
+  inside that bar."
+  [meter beat]
+  (when (finite? beat)
+    (let [{:keys [beats-per-bar bars-per-phrase]} meter
+          bar (long (Math/floor (double (/ beat beats-per-bar))))]
+      {:bar bar :beat (round-to (- beat (* bar beats-per-bar)) 3)
+       :phrase (long (Math/floor (/ (double bar) bars-per-phrase)))})))
+
+(defn- with-position [meter from to entry]
+  (cond-> entry (finite? (get entry from)) (assoc to (position meter (get entry from)))))
+
 ;; Events and ramps --------------------------------------------------------------
 
 (defn- title [{:keys [label op event-id]}]
@@ -400,12 +416,17 @@
          {:keys [events ramps]} (events-and-ramps model beat window)]
      {:version version
       :beat beat :bpm (:bpm transport) :playing? (boolean (:playing? transport))
+      :position (position meter beat)
       :time-ms (:time-ms model) :epoch (:epoch model)
       :meter meter :window window
       :grid (grid meter window)
-      :events events :ramps ramps
-      :sections {:items (vec (concat (causal-sections model beat window)
-                                     (reference-sections model beat window reference)))
+      :events (mapv #(with-position meter :beat :position %) events)
+      :ramps (mapv #(->> % (with-position meter :start-beat :start-position)
+                         (with-position meter :end-beat :end-position))
+                   ramps)
+      :sections {:items (mapv #(with-position meter :start-beat :start-position %)
+                              (concat (causal-sections model beat window)
+                                      (reference-sections model beat window reference)))
                  :match (match-status reference)}
       :audio (audio-lane model beat window waveform reference-waveform)
       :meters (meters model output)
