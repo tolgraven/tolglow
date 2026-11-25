@@ -8,6 +8,8 @@
 
 (defn- close? [a b] (< (js/Math.abs (- a b)) 1e-9))
 
+(defn- near? [a b] (< (js/Math.abs (- a b)) 1e-6))
+
 (deftest interpolates-the-projected-transport-between-samples
   (let [anchor (breath/next-anchor nil {:beat 8 :bpm 120 :playing? true :time-ms 1000} 0 5000)]
     (is (close? 0 (breath/breath-phase anchor 5000)))
@@ -62,6 +64,13 @@
             seek (breath/next-anchor slow {:beat 2.1 :bpm 60 :playing? true :time-ms 1300} 1 5300)]
         (is (close? 4700 (breath/start-time slow)))
         (is (close? 5200 (breath/start-time seek)))))))
+
+(deftest start-times-a-whole-beat-apart-share-a-phase
+  (is (close? 0 (breath/phase-offset-ms 5375 4875 500)))
+  (is (close? 0 (breath/phase-offset-ms 4875 6875 500)))
+  (is (close? 25 (breath/phase-offset-ms 5400 4875 500)))
+  (is (close? -25 (breath/phase-offset-ms 4850 5375 500)))
+  (is (close? -250 (breath/phase-offset-ms 5125 4875 500)) "half a beat away is the far side"))
 
 (deftest release-blink-keyframes-keep-afterglow-phase
   (let [css (.readFileSync (js/require "fs") "resources/studio/console.css" "utf8")]
@@ -206,6 +215,36 @@
       (breath/sample! ctl (assoc playing :beat 12.45 :time-ms 3100) 0 true)
       (is (= :live (:mode @ctl)))
       (is (= 1 (count (:timers @state)))))))
+
+(defn- counting-animation
+  "A fake animation that counts writes to its start time."
+  [name]
+  (let [animation #js {:animationName name :held nil :sets 0}]
+    (js/Object.defineProperty animation "startTime"
+                              #js {:get (fn [] (.-held animation))
+                                   :set (fn [value] (set! (.-held animation) value)
+                                          (set! (.-sets animation) (inc (.-sets animation))))})
+    animation))
+
+(deftest steady-samples-do-not-rewrite-start-times
+  (let [animation (counting-animation "pad-breath")
+        flash (counting-animation "pad-queued-flash")
+        state (atom {:now 5000 :grid :grid :animations [animation flash] :writes [] :timers {} :walks 0})
+        ctl (breath/controller (fake-host state))
+        ;; `delay` is how stale the projected beat is when it reaches the clock.
+        sample! (fn [now delay]
+                  (swap! state assoc :now now)
+                  (breath/sample! ctl {:beat (+ 8.25 (/ (- now 5000 delay) 500)) :bpm 120 :playing? true
+                                       :time-ms (- now 4000 delay)}
+                                  0 true))]
+    (breath/attach! ctl)
+    (sample! 5000 0)
+    (is (near? 4875 (.-startTime animation)))
+    (is (= [1 1] [(.-sets animation) (.-sets flash)]))
+    (testing "a later beat with the same phase is the same alignment"
+      (doseq [now [5500 6000 6533.3 7250]] (sample! now 0))
+      (is (= [1 1] [(.-sets animation) (.-sets flash)]) "one write, not one per beat")
+      (is (near? 4875 (.-startTime animation))))))
 
 (def ^:private cues
   [{:id :ember :name "Ember"} {:id :haze :name "Haze"} {:id :strobe :name "Strobe"}

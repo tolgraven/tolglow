@@ -130,12 +130,22 @@
 (defn controller [host]
   (atom {:host host :anchor nil :animate? false :timer nil :written nil :unwatch nil}))
 
+(defn phase-offset-ms
+  "Signed distance in ms from start time `b` to start time `a` for animations
+  that repeat every `period` ms, in [-period/2, period/2). Start times a whole
+  number of beats apart show the same phase, so their offset is zero."
+  [a b period]
+  (let [half (/ period 2)]
+    (- (mod (+ (- a b) half) period) half)))
+
 (defn- align! [host el anchor]
   (when-let [target (start-time anchor)]
-    (doseq [^js animation ((:animations host) el)]
-      (let [current (.-startTime animation)]
-        (when (or (nil? current) (> (js/Math.abs (- current target)) sync-tolerance-ms))
-          (set! (.-startTime animation) target))))))
+    (let [duration (beat-duration-ms anchor)]
+      (doseq [^js animation ((:animations host) el)]
+        (let [current (.-startTime animation)]
+          (when (or (nil? current)
+                    (> (js/Math.abs (phase-offset-ms current target duration)) sync-tolerance-ms))
+            (set! (.-startTime animation) target)))))))
 
 (declare refresh!)
 
