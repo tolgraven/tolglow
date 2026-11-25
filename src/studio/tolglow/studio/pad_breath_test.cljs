@@ -82,7 +82,7 @@
                              (swap! state #(-> % (assoc :last-timer id) (assoc-in [:timers id] {:f f :ms ms})))
                              id))
    :clear-timeout (fn [id] (swap! state update :timers dissoc id))
-   :animations (fn [_] (:animations @state))
+   :animations (fn [_] (swap! state update :walks inc) (:animations @state))
    :write! (fn [el mode duration] (swap! state update :writes conj [el mode duration]))
    :watch (fn [callbacks] (swap! state assoc :watching callbacks)
             #(swap! state assoc :watching nil :unwatched? true))})
@@ -96,7 +96,7 @@
 
 (deftest clock-driver-lifecycle
   (let [animation #js {:animationName "pad-breath" :startTime nil}
-        state (atom {:now 5000 :grid :grid :animations [animation] :writes [] :timers {}})
+        state (atom {:now 5000 :grid :grid :animations [animation] :writes [] :timers {} :walks 0})
         ctl (breath/controller (fake-host state))]
     (breath/attach! ctl)
     (is (fn? (:changed (:watching @state))) "listens for visibility and reduced-motion changes")
@@ -114,11 +114,26 @@
       (is (= 1 (count (:writes @state))))
       (is (close? 4875 (.-startTime animation)))
       (is (= 1 (count (:timers @state)))))
+    (testing "jitter under the tolerance leaves animations alone"
+      (swap! state assoc :now 5140)
+      (breath/sample! ctl (assoc playing :beat 8.55 :time-ms 1140) 0 true)
+      (is (close? 4875 (.-startTime animation)) "10 ms off the transport, below the 20 ms tolerance"))
+    (testing "re-renders with an unchanged sample do not walk the animations or reset the timer"
+      (let [walks (:walks @state) timers (:timers @state)]
+        (dotimes [_ 3] (breath/sample! ctl (assoc playing :beat 8.55 :time-ms 1140) 0 true))
+        (is (= walks (:walks @state)))
+        (is (= timers (:timers @state)))))
+    (testing "tempo jitter below 0.1 ms of beat length does not rewrite the duration"
+      (let [writes (count (:writes @state))]
+        (swap! state assoc :now 5160)
+        (breath/sample! ctl (assoc playing :beat 8.57 :bpm 120.0001 :time-ms 1160) 0 true)
+        (is (= 500 (breath/beat-duration-ms {:bpm 120.0001})))
+        (is (= writes (count (:writes @state))))))
     (testing "a new pad animation is aligned when it starts"
       (let [late #js {:animationName "pad-release-blink" :startTime 9999}]
         (swap! state update :animations conj late)
         ((:animation-started (:watching @state)))
-        (is (close? 4874.5 (.-startTime late)) "aligned to the latest sample")))
+        (is (close? 4875 (.-startTime late)) "aligned to the latest sample")))
     (testing "a stalled stream goes still once and schedules nothing more"
       (swap! state assoc :now 7200)
       (fire-timers! state)

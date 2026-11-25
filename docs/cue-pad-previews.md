@@ -49,9 +49,11 @@ timers. One clock per page aligns the animations to the transport. On each
 new projected transport sample (`:beat`, `:bpm`, `:playing?`) or transport
 generation, it sets every pad animation's start time on the document timeline
 to the local time of the last downbeat. A tempo change or seek therefore takes
-effect with the next sample. Animations already within 6 ms are left alone, so
-stream jitter does not nudge them. The clock writes `data-breath` and
-`--beat-duration` on `#cue-grid` only when they change. Pads show the steady
+effect with the next sample. Animations already within 20 ms are left alone, so
+frame quantisation and stream jitter do not nudge them. Alignment runs only
+when the anchor changes or a pad animation starts. The clock writes
+`data-breath` and `--beat-duration` (rounded to 0.1 ms) on `#cue-grid` only
+when they change. Pads show the steady
 indicator when nothing on the page animates, the transport is paused or has no
 tempo, two seconds pass without a sample, the page is hidden or motion is
 reduced. The next sample, visibility change or reduced-motion change restarts

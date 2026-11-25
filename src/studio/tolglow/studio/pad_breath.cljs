@@ -30,9 +30,11 @@
   #{"pad-breath" "pad-breath-held" "pad-release-blink" "pad-queued-flash" "pad-queued-dot"})
 
 (def sync-tolerance-ms
-  "Leave an animation alone when it is already this close to the transport,
-  so stream jitter does not nudge every pad on every sample."
-  6)
+  "Leave an animation alone when it is already this close to the transport.
+  The document timeline advances once per display frame and samples arrive
+  with receive jitter, so a tighter bound would reset every pad on most
+  samples and add visible edge jitter."
+  20)
 
 (defn sample-key
   "Identity of one projected transport sample. Unrelated re-renders reuse the
@@ -68,7 +70,11 @@
   (let [beat (beat-at anchor now-ms) phase (- beat (js/Math.floor beat))]
     (if (js/Number.isFinite phase) phase 0)))
 
-(defn beat-duration-ms [{:keys [bpm]}] (when bpm (/ 60000 bpm)))
+(defn beat-duration-ms
+  "Beat length rounded to 0.1 ms, so tempo jitter from a Link source does not
+  rewrite --beat-duration and restyle the grid."
+  [{:keys [bpm]}]
+  (when bpm (/ (js/Math.round (/ 600000 bpm)) 10)))
 
 (defn start-time
   "Document-timeline start time that makes a once-per-beat animation's
@@ -133,10 +139,11 @@
 
 (defn refresh!
   "Apply the current mode to the grid. Writes the grid only when its mode or
-  beat duration changed, aligns animations while live and keeps a single
-  stale-stream timer."
+  beat duration changed. Aligns animations only when the anchor, grid or
+  duration changed while live; new pad animations align on animationstart.
+  Keeps a single stale-stream timer per anchor."
   [ctl]
-  (let [{:keys [host anchor animate? timer written]} @ctl
+  (let [{:keys [host anchor animate? timer timer-key written aligned]} @ctl
         now ((:now host))
         el ((:grid host))
         next-mode (mode anchor now {:animate? animate? :hidden? ((:hidden? host)) :reduced? ((:reduced? host))})
@@ -144,13 +151,18 @@
         fresh? (not= el (:el written))
         write-duration (when (and duration (or fresh? (not= duration (:duration written)))) duration)
         wanted {:el el :mode next-mode :duration (or duration (when-not fresh? (:duration written)))}
-        stale-in (when (= :live next-mode) (max 0 (- (+ (:at anchor) max-extrapolation-ms) now)))]
-    (when timer ((:clear-timeout host) timer))
+        live? (and el (= :live next-mode))
+        alignment (when live? [el (:key anchor) duration])
+        keep-timer? (and live? timer (= timer-key (:key anchor)))
+        stale-in (when (and live? (not keep-timer?)) (max 0 (- (+ (:at anchor) max-extrapolation-ms) now)))]
+    (when (and timer (not keep-timer?)) ((:clear-timeout host) timer))
     (when (and el (not= wanted written))
       ((:write! host) el next-mode write-duration))
-    (when (and el (= :live next-mode)) (align! host el anchor))
-    (let [timer (when stale-in ((:set-timeout host) #(refresh! ctl) stale-in))]
-      (swap! ctl assoc :timer timer :mode next-mode :written (when el wanted)))))
+    (when (and live? (not= alignment aligned)) (align! host el anchor))
+    (let [timer (cond keep-timer? timer
+                      stale-in ((:set-timeout host) #(refresh! ctl) stale-in))]
+      (swap! ctl assoc :timer timer :timer-key (when timer (:key anchor)) :mode next-mode
+             :written (when el wanted) :aligned alignment))))
 
 (defn sample!
   "Record the latest projection and refresh. Reads the clock before updating
@@ -176,7 +188,7 @@
   (let [{:keys [host timer unwatch]} @ctl]
     (when timer ((:clear-timeout host) timer))
     (when unwatch (unwatch))
-    (swap! ctl assoc :timer nil :unwatch nil :mode nil :written nil :animate? false)))
+    (swap! ctl assoc :timer nil :timer-key nil :unwatch nil :mode nil :written nil :aligned nil :animate? false)))
 
 (defn- motion-query []
   (when (exists? js/matchMedia) (js/matchMedia "(prefers-reduced-motion: reduce)")))
