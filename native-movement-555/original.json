@@ -1,0 +1,471 @@
+[
+  {
+    "matched": 160,
+    "movement-frames": {
+      "cpu": 160
+    },
+    "compute": {
+      "active": "cpu",
+      "requested": "cpu"
+    },
+    "lane": "cpu-first",
+    "capture-ms": null,
+    "first-time": 8025,
+    "different": [],
+    "fence-ms": null,
+    "delta": {
+      "native-dispatches": 0,
+      "cpu-fallbacks": 0,
+      "deadline-fallbacks": 0
+    },
+    "tick-ms": {
+      "count": 160,
+      "p50": 2.439792,
+      "p95": 4.397542,
+      "max": 7.793708
+    },
+    "final-time": 12000
+  },
+  {
+    "matched": 159,
+    "movement-frames": {
+      "cpu": 160
+    },
+    "compute": {
+      "active": "native-gpu",
+      "requested": "native-gpu",
+      "session": {
+        "draws": 1515,
+        "evictions": 0,
+        "hits": 2036,
+        "renderer": "Apple M4",
+        "queued": 0,
+        "resident": 5,
+        "closed?": false,
+        "terminated?": false,
+        "version": "4.1 Metal - 91.7",
+        "misses": 5
+      },
+      "last-fallback": {
+        "stage": "deadline",
+        "type": "budget-exhausted",
+        "message": "GPU result exceeded this frame's deadline"
+      }
+    },
+    "lane": "expressions",
+    "capture-ms": {
+      "count": 549,
+      "p50": 0.460167,
+      "p95": 1.559791,
+      "max": 5.700291
+    },
+    "first-time": 8025,
+    "different": [
+      {
+        "time": 9075,
+        "id": 364,
+        "movement": {
+          "requested": "cpu",
+          "backend": "cpu"
+        },
+        "last-fallback": {
+          "stage": "deadline",
+          "type": "budget-exhausted",
+          "message": "GPU result exceeded this frame's deadline"
+        },
+        "differences": [
+          {
+            "universe": 1,
+            "channel": 55,
+            "cpu": 18,
+            "candidate": 17,
+            "fixture": "head-5",
+            "attribute": "pan",
+            "cpu-value": {
+              "pan": 0.43777375209801617,
+              "tilt": 0.2513586399183886,
+              "direction": [
+                -0.27062171901833426,
+                -0.7040822101531191,
+                0.6565303698546326
+              ],
+              "aim": [
+                -0.4392796365045701,
+                0.9261703921760138,
+                0.9
+              ],
+              "focus": 0.42
+            },
+            "candidate-value": {
+              "pan": 0.4377736445948485,
+              "tilt": 0.2513586836719301,
+              "direction": [
+                -0.2706221993621852,
+                -0.7040821125432067,
+                0.6565302765364817
+              ],
+              "aim": [
+                -0.43928152322769165,
+                0.9261704087257385,
+                0.8999999761581421
+              ],
+              "focus": 0.41999998688697815
+            }
+          }
+        ]
+      }
+    ],
+    "fence-ms": {
+      "count": 549,
+      "p50": 0.4325,
+      "p95": 1.494333,
+      "max": 5.652833
+    },
+    "delta": {
+      "native-dispatches": 728,
+      "cpu-fallbacks": 0,
+      "deadline-fallbacks": 0
+    },
+    "tick-ms": {
+      "count": 160,
+      "p50": 4.319792,
+      "p95": 7.949541,
+      "max": 12.107291
+    },
+    "final-time": 12000
+  },
+  {
+    "matched": 158,
+    "movement-frames": {
+      "native-gpu": 159,
+      "cpu": 1
+    },
+    "compute": {
+      "active": "cpu",
+      "requested": "cpu"
+    },
+    "lane": "movement",
+    "capture-ms": {
+      "count": 167,
+      "p50": 0.661584,
+      "p95": 3.211,
+      "max": 5.860125
+    },
+    "first-time": 8025,
+    "different": [
+      {
+        "time": 8250,
+        "id": 331,
+        "movement": {
+          "requested": "native-gpu",
+          "backend": "native-gpu",
+          "gpu-heads": 14,
+          "cpu-heads": 0
+        },
+        "last-fallback": null,
+        "differences": [
+          {
+            "universe": 1,
+            "channel": 31,
+            "cpu": 150,
+            "candidate": 151,
+            "fixture": "head-3",
+            "attribute": "pan",
+            "cpu-value": {
+              "pan": 0.6429312543168513,
+              "tilt": 0.3830927096282204,
+              "direction": [
+                0.7299614482808796,
+                -0.3590735794251311,
+                0.5815689542801478
+              ],
+              "aim": [
+                1.3623813573277492,
+                2.018186735591825,
+                0.9
+              ],
+              "focus": 0.42
+            },
+            "candidate-value": {
+              "pan": 0.6429312825202942,
+              "tilt": 0.3830927312374115,
+              "direction": [
+                0.7299614482808796,
+                -0.3590735794251311,
+                0.5815689542801478
+              ],
+              "aim": [
+                1.3623813573277492,
+                2.018186735591825,
+                0.9
+              ],
+              "focus": 0.42
+            }
+          }
+        ]
+      },
+      {
+        "time": 11850,
+        "id": 475,
+        "movement": {
+          "requested": "native-gpu",
+          "backend": "native-gpu",
+          "gpu-heads": 14,
+          "cpu-heads": 0
+        },
+        "last-fallback": null,
+        "differences": [
+          {
+            "universe": 1,
+            "channel": 31,
+            "cpu": 169,
+            "candidate": 170,
+            "fixture": "head-3",
+            "attribute": "pan",
+            "cpu-value": {
+              "pan": 0.6549400897896182,
+              "tilt": 0.3544356453111998,
+              "direction": [
+                0.7419049782229494,
+                -0.44153065579848805,
+                0.5046064637697006
+              ],
+              "aim": [
+                1.878634838391054,
+                1.4,
+                0.9
+              ],
+              "focus": 0.42
+            },
+            "candidate-value": {
+              "pan": 0.654940128326416,
+              "tilt": 0.35443565249443054,
+              "direction": [
+                0.7419049782229494,
+                -0.44153065579848805,
+                0.5046064637697006
+              ],
+              "aim": [
+                1.878634838391054,
+                1.4,
+                0.9
+              ],
+              "focus": 0.42
+            }
+          }
+        ]
+      }
+    ],
+    "fence-ms": {
+      "count": 167,
+      "p50": 0.545125,
+      "p95": 2.982166,
+      "max": 5.74875
+    },
+    "delta": {
+      "native-dispatches": 0,
+      "cpu-fallbacks": 0,
+      "deadline-fallbacks": 0
+    },
+    "tick-ms": {
+      "count": 160,
+      "p50": 3.297666,
+      "p95": 8.084875,
+      "max": 17.634042
+    },
+    "final-time": 12000
+  },
+  {
+    "matched": 158,
+    "movement-frames": {
+      "native-gpu": 158,
+      "cpu": 2
+    },
+    "compute": {
+      "active": "native-gpu",
+      "requested": "native-gpu",
+      "session": {
+        "draws": 1566,
+        "evictions": 0,
+        "hits": 2103,
+        "renderer": "Apple M4",
+        "queued": 0,
+        "resident": 5,
+        "closed?": false,
+        "terminated?": false,
+        "version": "4.1 Metal - 91.7",
+        "misses": 5
+      },
+      "last-fallback": {
+        "stage": "deadline",
+        "type": "budget-exhausted",
+        "message": "GPU result exceeded this frame's deadline"
+      }
+    },
+    "lane": "both",
+    "capture-ms": {
+      "count": 713,
+      "p50": 0.478583,
+      "p95": 1.16075,
+      "max": 5.745708
+    },
+    "first-time": 8025,
+    "different": [
+      {
+        "time": 9075,
+        "id": 364,
+        "movement": {
+          "requested": "native-gpu",
+          "backend": "native-gpu",
+          "gpu-heads": 14,
+          "cpu-heads": 0
+        },
+        "last-fallback": {
+          "stage": "deadline",
+          "type": "budget-exhausted",
+          "message": "GPU result exceeded this frame's deadline"
+        },
+        "differences": [
+          {
+            "universe": 1,
+            "channel": 55,
+            "cpu": 18,
+            "candidate": 17,
+            "fixture": "head-5",
+            "attribute": "pan",
+            "cpu-value": {
+              "pan": 0.43777375209801617,
+              "tilt": 0.2513586399183886,
+              "direction": [
+                -0.27062171901833426,
+                -0.7040822101531191,
+                0.6565303698546326
+              ],
+              "aim": [
+                -0.4392796365045701,
+                0.9261703921760138,
+                0.9
+              ],
+              "focus": 0.42
+            },
+            "candidate-value": {
+              "pan": 0.4377736449241638,
+              "tilt": 0.25135862827301025,
+              "direction": [
+                -0.2706221993621852,
+                -0.7040821125432067,
+                0.6565302765364817
+              ],
+              "aim": [
+                -0.43928152322769165,
+                0.9261704087257385,
+                0.8999999761581421
+              ],
+              "focus": 0.41999998688697815
+            }
+          }
+        ]
+      },
+      {
+        "time": 11850,
+        "id": 475,
+        "movement": {
+          "requested": "native-gpu",
+          "backend": "native-gpu",
+          "gpu-heads": 14,
+          "cpu-heads": 0
+        },
+        "last-fallback": {
+          "stage": "deadline",
+          "type": "budget-exhausted",
+          "message": "GPU result exceeded this frame's deadline"
+        },
+        "differences": [
+          {
+            "universe": 1,
+            "channel": 31,
+            "cpu": 169,
+            "candidate": 170,
+            "fixture": "head-3",
+            "attribute": "pan",
+            "cpu-value": {
+              "pan": 0.6549400897896182,
+              "tilt": 0.3544356453111998,
+              "direction": [
+                0.7419049782229494,
+                -0.44153065579848805,
+                0.5046064637697006
+              ],
+              "aim": [
+                1.878634838391054,
+                1.4,
+                0.9
+              ],
+              "focus": 0.42
+            },
+            "candidate-value": {
+              "pan": 0.654940128326416,
+              "tilt": 0.35443565249443054,
+              "direction": [
+                0.7419049758161903,
+                -0.44153066287545994,
+                0.5046064611159223
+              ],
+              "aim": [
+                1.8786348104476929,
+                1.399999976158142,
+                0.8999999761581421
+              ],
+              "focus": 0.41999998688697815
+            }
+          }
+        ]
+      }
+    ],
+    "fence-ms": {
+      "count": 713,
+      "p50": 0.443375,
+      "p95": 1.019167,
+      "max": 5.665583
+    },
+    "delta": {
+      "native-dispatches": 722,
+      "cpu-fallbacks": 6,
+      "deadline-fallbacks": 6
+    },
+    "tick-ms": {
+      "count": 160,
+      "p50": 5.146,
+      "p95": 10.703666,
+      "max": 14.048375
+    },
+    "final-time": 12000
+  },
+  {
+    "matched": 160,
+    "movement-frames": {
+      "cpu": 160
+    },
+    "compute": {
+      "active": "cpu",
+      "requested": "cpu"
+    },
+    "lane": "cpu-last",
+    "capture-ms": null,
+    "first-time": 8025,
+    "different": [],
+    "fence-ms": null,
+    "delta": {
+      "native-dispatches": 0,
+      "cpu-fallbacks": 0,
+      "deadline-fallbacks": 0
+    },
+    "tick-ms": {
+      "count": 160,
+      "p50": 4.153292,
+      "p95": 7.272334,
+      "max": 12.088209
+    },
+    "final-time": 12000
+  }
+]
