@@ -16,6 +16,12 @@
 (defn request [uri data]
   {:request-method :post :uri uri :headers {"host" "localhost"}
    :body (ByteArrayInputStream. (.getBytes (json/write-str (web/json-data data)) "UTF-8"))})
+(defn- transit-request [uri data studio-form?]
+  {:request-method :post :uri uri
+   :headers (cond-> {"host" "localhost" "content-type" "application/transit+json"
+                     "accept" "application/transit+json"}
+              studio-form? (assoc "x-tolglow-form" "studio-v1"))
+   :body (ByteArrayInputStream. (.getBytes (transit/encode data) "UTF-8"))})
 (defn result [response] (json/read-str (:body response) :key-fn keyword))
 (def config
   {:devices {"push-main" {:enabled? true :auto? true :disabled-axes #{:glide}
@@ -70,7 +76,7 @@
         (is (empty? @(:devices runtime)) "Preview never opens hardware"))
       (finally (show/stop! runtime)))))
 
-(deftest json-settings-save-and-full-show-roundtrip-restore-policy-only
+(deftest settings-save-and-full-show-roundtrip-restore-policy-only
   (let [runtime (show/create-runtime {:workspace-options nil})]
     (try
       (let [app (web/app {:heartbeat! (fn [_])
@@ -100,7 +106,16 @@
           (is (= 200 (:status (app (request "/api/settings" {:scope :expressive :device-id id :values {:enabled? false}}))))))
         (let [policies (get-in @(:state runtime) [:model :settings :expressive :devices])]
           (is (= {:enabled? false} (get policies :stage/a) (get policies :stage/b)))
-          (is (= (:devices stored) (dissoc policies :stage/a :stage/b)))))
+          (is (= (:devices stored) (dissoc policies :stage/a :stage/b))))
+        (let [save (fn [values]
+                     (app (transit-request "/api/settings"
+                            {:scope "expressive" :device-id "stage/a" :values values} true)))
+              values {"cues" {"stage/ember" {"params" {"light/level" {"axis" "lift" "range" [0.2 0.6]}}}}}]
+          (is (= 200 (:status (save values))))
+          (is (= {:axis :lift :range [0.2 0.6]}
+                 (get-in @(:state runtime) [:model :settings :expressive :devices :stage/a
+                                            :cues :stage/ember :params :light/level])))
+          (is (= 422 (:status (save (assoc-in values ["cues" "stage/ember" "params" "light/level" "range"] [0.2 "0.6"])))))))
       (finally (show/stop! runtime)))))
 
 (deftest invalid-imported-policy-is-rejected-before-restoring-state
@@ -159,6 +174,21 @@
         (is (= #{:strike :pressure :glide :slide :lift} (set (keys (:axes configured)))))
         (is (= :lift (get-in configured [:mappings 0 :axis])))
         (is (empty? (:mappings (preview (assoc payload :policy {:params {:level nil}})))))
+        (let [policy {:cues {:ember {:params {:level {:axis :lift :curve :ease-in :range [0.2 0.6]}}}}}
+              expected (show/expressive-preview runtime (assoc payload :policy policy))
+              studio-policy (web/json-data policy)
+              submit (fn [policy studio-form?]
+                       (app (transit-request "/api/expressive/preview" (assoc payload :policy policy) studio-form?)))]
+          (doseq [[body studio-form?] [[studio-policy true] [policy false]]
+                  :let [response (submit body studio-form?)]]
+            (is (= 200 (:status response)))
+            (is (= expected (transit/decode (:body response)))))
+          (is (= :connected (:profile-source expected)))
+          (is (= [0.2 0.6] (get-in expected [:mappings 0 :range])))
+          (is (= 400 (:status (submit (assoc-in studio-policy ["cues" "ember" "params" "level" "range"] [0.2 "0.6"]) true))))
+          (let [ambiguous (submit (assoc-in studio-policy ["cues" "ember" "params" "level" :axis] :slide) true)]
+            (is (= 400 (:status ambiguous)))
+            (is (= {:key :axis} (:details (transit/decode (:body ambiguous)))))))
         (is (= configured (show/expressive-preview runtime payload)))
         (is (= :accepted (:status (dispatch! :settings {:scope :expressive
                                                        :values {:devices {"roli/policy" {:params {:level :slide}}}}}))))
