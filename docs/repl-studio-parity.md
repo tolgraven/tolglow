@@ -71,6 +71,15 @@ The REPL reads the identical map from the snapshot or the durable subscription:
 @(reactive/subscribe (show/reactions runtime) [:runtime/effect-faults])
 ```
 
+A rejected revision does not disturb modulation. A controller owned by the cue,
+or one that modulates it, keeps its seed and schedule, and a bound waveform
+keeps its value. Both surfaces read the same controller projection, so its
+`:ticks` and `:next-beat` continue across the rejected publication:
+
+```clojure
+(get-in (show/snapshot runtime) [:modulation :controllers])
+```
+
 Gaps: Studio has no control that sets a cue's reload policy; author it in cue
 EDN or the REPL. The diagnostics summary does not print `:from-version`, which
 is present in the projected fault data. The automated check compares the REPL

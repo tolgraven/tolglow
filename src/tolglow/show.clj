@@ -1632,6 +1632,24 @@
     (compare [_ left right]
       (Long/compare (:ingress-order left) (:ingress-order right)))))
 
+(defn- last-good-inputs
+  "Sample modulation for the frame that rejects a pending hot reload, from the
+  same prior controller state as the candidate samples. Return the engine's
+  reload fallback and the state behind it, or nil when both outcomes read the
+  same inputs. An outcome whose own controllers cannot advance has no fallback."
+  [model candidate candidate-samples samples spatial-overrides time-ms]
+  (when-let [result (try (modulation/advance (:modulation model) (modulation/last-good-view model)
+                                             {:time-ms time-ms :transport (:transport model)})
+                         (catch clojure.lang.ExceptionInfo _ nil))]
+    (let [sampled #(select-keys % [:overrides :priorities :priority-overrides])]
+      (when (or (not= (:state result) (:state candidate)) (not= (:overrides result) (:overrides candidate))
+                (not= (sampled samples) (sampled candidate-samples)))
+        (let [overrides (merge-with merge (:overrides result) (:overrides samples) spatial-overrides)]
+          {:modulation result :parameter-samples samples :overrides overrides
+           :frame (assoc modulation/last-good-frame
+                         :keyframe-params overrides
+                         ::engine/priority-overrides (:priority-overrides samples {}))})))))
+
 (defn tick!
   "Advance one owner cycle; restore resources/model together, then retire IO
   outside the owner lock. Reactive actions from the previous publication enter
@@ -1763,6 +1781,12 @@
                                      (routing/advance time-ms command))
                            parameter-samples (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)}
                                                                       (:parameter-samples before))
+                           ;; This frame's engine pass may reject a pending hot reload. Sample the
+                           ;; waveforms for that outcome too, from the same prior state.
+                           last-good-samples (when (modulation/reload-pending? model)
+                                               (parameter-sources/sample (modulation/last-good-view model)
+                                                                         {:time-ms time-ms :transport (:transport model)}
+                                                                         (:parameter-samples before)))
                            control-view (if (seq (:overrides parameter-samples))
                                           (update (:modulation-view before) :overrides
                                                   #(merge-with merge % (:overrides parameter-samples)))
@@ -1795,10 +1819,15 @@
                                                                               control-view hdr-scope) {}))
                            modulation-result (modulation/advance (:modulation model) model
                                                                   {:time-ms time-ms :transport (:transport model)})
+                           last-good (when last-good-samples
+                                       (last-good-inputs model modulation-result parameter-samples last-good-samples
+                                                         (get-in space [:fields :overrides]) time-ms))
                            model (assoc model :modulation (:state modulation-result))
                            input-overrides (merge-with merge (:overrides modulation-result) (:overrides parameter-samples)
                                                        (get-in space [:fields :overrides]))
-                           modulation-middleware (modulation/middleware input-overrides)
+                           modulation-middleware (if last-good
+                                                   (modulation/reload-middleware input-overrides (:overrides last-good))
+                                                   (modulation/middleware input-overrides))
                            _ (prepare-compiler! runtime (get-in model [:rig :fixtures]))
                            variable-plan (variable-blocks/prepare! (:variable-plan runtime) (get-in model [:settings :variable-blocks]) (prefabs/catalog model))
                            variables (variable-blocks/sample variable-plan model time-ms (:variable-observation before))
@@ -1834,7 +1863,10 @@
                                          (seq (:priority-overrides parameter-samples))
                                          (assoc ::engine/priority-overrides (:priority-overrides parameter-samples))
                                          response-frame (assoc ::waveforms/response-frame response-frame)
-                                         engine-levels (assoc ::engine/opacity-factors engine-levels))
+                                         engine-levels (assoc ::engine/opacity-factors engine-levels)
+                                         ;; The engine reads these instead, for the whole frame,
+                                         ;; if it rejects any pending reload.
+                                         last-good (assoc ::engine/reload-fallback (:frame last-good)))
                            response (response-middleware! runtime (:responses model []))
                            inputs (if response-frame
                                     (fn [context]
@@ -1901,6 +1933,14 @@
                                       (if spatial-groups
                                         #(spatial-cues/mask-contributions % spatial-groups spatial-levels) identity))
                            result (:result resolved)
+                           ;; Commit the controller and waveform state behind the inputs the
+                           ;; engine read, so a rejected reload leaves no trace in either.
+                           last-good? (= :fallback (:reload-inputs result))
+                           modulation-result (if last-good? (:modulation last-good) modulation-result)
+                           parameter-samples (if last-good? (:parameter-samples last-good) parameter-samples)
+                           input-overrides (if last-good? (:overrides last-good) input-overrides)
+                           result (cond-> result
+                                    last-good? (assoc-in [:model :modulation] (:state modulation-result)))
                            finished (when (or (get-in model [:settings :output-response :enabled?])
                                               (get-in model [:settings :lighting-budget :enabled?])
                                               (get-in model [:settings :lighting-activity :enabled?]))

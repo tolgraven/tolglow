@@ -25,6 +25,7 @@ one already-evaluated result removed; healthy effect code is never run twice.
 | Current version throws or returns invalid output | Preserve committed state; discard attempt; store `:fault`; suppress version |
 | New candidate fails preparation, compile or evaluation | Store `:reload-fault`; evaluate captured last-good code in the same frame |
 | Renderer rejects a candidate | Drop its attempt this frame; captured code resumes next frame |
+| Candidate that modulation follows is rejected at any stage | Every instance renders its captured revision with the last-good modulation in the same frame; other reloads of that frame wait one frame |
 | New valid version with preserve/restart policy | Adopt using the existing state/time policy and emit recovery |
 | Explicit Retry | Try the same version with current parameters and retained state |
 | Faulted one-shot/release reaches deadline | Finish normally; quarantine does not make instances immortal |
@@ -35,10 +36,21 @@ send Retry after correcting it, or publish a new version under the cue's reload
 policy. Failed attempts never hold stale emission indefinitely.
 
 Known quarantined modulation owners are removed before the next modulation
-reconciliation; rejected candidates retain their captured modulation config.
-Modulation overlays are computed before effect evaluation, so the frame that
-first discovers a new owner failure has already used that frame's overlay.
-Dependent effects are not rerun to undo that prior computation.
+reconciliation. Modulation overlays are computed before effect evaluation, so
+the frame that first discovers a failure of an owner's current revision has
+already used that frame's overlay. Dependent effects are not rerun to undo
+that prior computation.
+
+A hot reload is different, because modulation follows the candidate before the
+engine has accepted it. While a reload is pending, the show owner samples
+random controllers and bound waveforms for both outcomes from the same prior
+state and passes the last-good samples to the engine as its reload fallback.
+A candidate rejected at preparation, compilation, migration, evaluation or
+renderer output then leaves the frame, the controller's seed and schedule and
+a held layer priority exactly as they are in a show that never published it.
+The owner supplies the fallback only when the outcomes differ; other rejected
+reloads keep the per-instance recovery in the table. See
+[modulation](modulation.md#a-frame-with-a-pending-hot-reload).
 
 Full backups preserve faults and event history. Restore remaps active diagnostic
 instance IDs/epochs; historical events remain historical evidence. Restore does

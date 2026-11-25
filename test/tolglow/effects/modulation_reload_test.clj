@@ -114,7 +114,7 @@
       (let [control-frames (capture! control control-output cues (:control-publications options {}) times)
             broken-frames (capture! broken broken-output cues publications times)]
         {:control control-frames :broken broken-frames
-         :owner (instance broken :modulator) :wash (instance broken :wash)
+         :owner (instance broken :modulator) :wash (instance broken :wash) :plain (instance broken :plain)
          :events (get-in @(:state broken) [:model :variables :runtime :events])
          :snapshot-error (try (show/snapshot broken) nil (catch Exception error (ex-message error)))})
       (finally (show/stop! broken) (show/stop! control)))))
@@ -195,6 +195,21 @@
     (is (= [1 :evaluate] [(:effect-version owner) (get-in owner [:reload-fault :stage])]))
     (is (= [2 nil nil] [(:effect-version wash) (:reload-fault wash) (:fault wash)])
         "The healthy revision is deferred, never faulted")
+    (frames-match control broken)))
+
+(deftest reloads-that-modulation-does-not-follow-are-not-deferred
+  (let [plain {:id :plain :version 1 :name "Plain" :targets [:head-3]
+               :params {:level level} :outputs {:dimmer (param :level)}}
+        show-model (model {:modulator :pinned :wash :preserve-state :plain :preserve-state} [wash owner plain])
+        rejected (rejected-revision plain :evaluate)
+        brighter (assoc wash :version 2 :outputs {:dimmer {:op :min :args [{:op :const :value 1.0}
+                                                                        {:op :add :args [(param :level) {:op :const :value 0.1}]}]}})
+        ;; Neither revision changes what the controller samples, so the engine
+        ;; keeps its single pass and the healthy one takes over in the same frame.
+        {:keys [control broken wash plain]}
+        (twin-run show-model [:wash :modulator :plain] {300 [rejected brighter]} {:control-publications {300 [brighter]}})]
+    (is (= [1 :evaluate] [(:effect-version plain) (get-in plain [:reload-fault :stage])]))
+    (is (= [2 nil] [(:effect-version wash) (:reload-fault wash)]))
     (frames-match control broken)))
 
 (deftest serial-and-two-worker-evaluation-agree-around-a-rejected-reload

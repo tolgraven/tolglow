@@ -137,6 +137,54 @@ if they do not fit. Target reloads use new defaults and retained compatible
 parameters, so removing or adding a schema key does not leave obsolete overlays
 that prevent the first reloaded frame from completing.
 
+### A frame with a pending hot reload
+
+`reload-candidate [model instance]` is the newer definition the engine attempts
+for an instance on the next frame, and `owner-definition` is that candidate or
+the captured definition. A pinned or paused instance has no candidate, and
+neither does one whose retained parameters the newer schemas reject, because
+the engine refuses that revision at preparation.
+
+A controller follows candidates in both roles. Its owner's candidate supplies
+the `:modulation` config, and each target's candidate supplies the parameter
+schemas. Only the engine decides whether a candidate is accepted, and it decides
+during the frame those samples feed. So the owner samples both outcomes from the
+same prior state and lets the engine read one of them:
+
+```clojure
+(defn advance-frame [show frame]
+  (let [candidate (modulation/advance (:modulation show) show frame)
+        last-good (when (modulation/reload-pending? show)
+                    (modulation/advance (:modulation show) (modulation/last-good-view show) frame))
+        overlay (if last-good
+                  (modulation/reload-middleware (:overrides candidate) (:overrides last-good))
+                  (modulation/middleware (:overrides candidate)))
+        result (engine/advance (assoc show :modulation (:state candidate))
+                               (cond-> frame
+                                 last-good (assoc ::engine/reload-fallback modulation/last-good-frame))
+                               (fn [definition] (comp (compiler/compile-effect definition) overlay)))]
+    (cond-> result
+      (= :fallback (:reload-inputs result))
+      (assoc-in [:model :modulation] (:state last-good)))))
+```
+
+`last-good-view` is the model as a show reads it when the revision was never
+published: every instance keeps its captured definition. Sampling it is a pure
+call on the same prior state, so no seed, schedule or cell advances twice.
+With `::engine/reload-fallback` the engine attempts the candidates first. If it
+accepts them all, the whole frame reads the candidate overlays and
+`:reload-inputs` is `:frame`. If it rejects one at preparation, compilation,
+migration, evaluation or renderer output, every instance renders its captured
+revision with the last-good overlays and `:reload-inputs` is `:fallback`; a
+healthy revision published for that same frame waits one frame, without a
+fault. The owner commits the state behind the inputs that were read. The frames
+and the controller's seed, ticks, anchor and cells are then those of a show
+that never published the rejected revision. An accepted revision still
+switches its controller once, on the takeover frame. The show owner supplies
+the fallback only when the two outcomes differ, so an ordinary hot reload keeps
+the engine's single pass. See Afterglow's
+[effect failure isolation](../../afterglow/doc/architecture/effect-fault-isolation.md#frame-inputs-that-follow-a-candidate).
+
 Controllers sample in priority/activation order. Within one controller, instance
 IDs and parameter keys have stable ordering (`:all` sorts keys; an explicit key
 vector keeps its order). A late frame samples every missed boundary with the
@@ -191,7 +239,10 @@ their captured config. With preserve-state reload, unchanged config retains
 RNG/schedule; changed modulation config restarts at the current beat using its
 declared seed. A restart reload restarts the controller even when config is
 unchanged. These rules are explicit and tested rather than treating every
-registry refresh as a new random activation.
+registry refresh as a new random activation. They apply to a reload the engine
+accepts. A revision it rejects leaves the controller exactly as it was, under
+`:preserve-state`, `:restart` and `:migrate` alike; see
+[a frame with a pending hot reload](#a-frame-with-a-pending-hot-reload).
 
 ## Persistence and restart
 
@@ -233,12 +284,14 @@ as if the transport had continued normally after a known seek.
 
 ## Verification and limits
 
-The focused `tolglow.modulation-test` suite passed **16 tests / 124 assertions**
-with reflection warnings enabled and none emitted. It covers musical fractions and captured
+The focused `tolglow.modulation-test` suite covers musical fractions and captured
 meters, pause and catch-up equivalence, schema types/bounds, missing ranges,
 curved glides, categories and precedence, manual holds, cue timing/reload,
 portable state restoration, explicit loop/seek rebasing, target-schema reload,
-and actual compiler/engine worker equivalence.
+reload candidates and both reload outcomes, and actual compiler/engine worker
+equivalence. `tolglow.effects.modulation-reload-test` runs the show owner beside
+a twin that never published the revision and compares captured DMX and
+controller state frame by frame, for each reload policy and rejection stage.
 Canonical parameters remain unchanged across those frames. The replay lane in
 [runtime-replay.md](runtime-replay.md) supplies complementary explicit-state
 recording infrastructure; a complete host trace must also capture modulation
@@ -271,6 +324,8 @@ Studio uses the same operations through typed Transit POSTs to `/api/modulation/
 - **Show transport** (`:transport`) measures beats from transport beat zero. Equal periods and offsets align across cue launches. A transport seek changes the phase immediately. Bars and phrases use the shared meter of the current frame, so a meter change can also change their phase. An instance pause leaves the source following the shared beat. When the shared beat stops advancing, the waveform holds its phase.
 
 Holding the parameter exposes its base while the waveform keeps its clock reference. Ending the activation releases its bindings and the compiled plan is retired on the next frame.
+
+A bound waveform is sampled against the destination schema of the revision the engine evaluates. While a hot reload of its instance is pending, the owner samples it for both outcomes, as it does for [random controllers](#a-frame-with-a-pending-hot-reload). A rejected revision therefore leaves the waveform's value and a modulated layer priority's held tier as they were.
 
 To switch a running waveform to another parameter, open its **Source** editor, choose a **Destination**, set that parameter's **From** and **To** values, and select **Move LFO**. Studio lists parameters on the same activation that can accept a waveform. The move takes effect together at the next owner update. The original parameter returns to its underlying input, and the waveform keeps its shape, period, inputs, and clock phase. Manual holds stay with their parameters.
 
