@@ -14,6 +14,7 @@
     tolglow.authoring.cue-variations-test tolglow.authoring.variation-control-test
     tolglow.composition.tween-test tolglow.composition.envelope-test
     tolglow.composition.sequence-test tolglow.composition.macro-test
+    tolglow.composition.sequence-edit-test
     tolglow.composition.response-test tolglow.native-composition-test
     tolglow.automation.random-test tolglow.automation.policy-test
     tolglow.integrations.fixtures-test tolglow.integrations.ableton-test

@@ -1073,6 +1073,17 @@
     (is (= 0.7 (:level (events/slot-parameters (:db reset) 0))))
     (is (= 0.7 (get-in y [:db :show :instances 0 :params :level])))))
 
+(deftest composition-steps-name-empty-and-muted-saved-steps
+  (let [cues [{:id "ember" :name "Ember"}]]
+    (is (= "Ember" (views/slot-title cues {:cue-id "ember"})))
+    (is (= "Ember · muted" (views/slot-title cues {:cue-id "ember" :muted? true})))
+    (is (= "Empty step" (views/slot-title cues {:id "rest" :kind "empty"})))
+    (is (= "Empty step · muted" (views/slot-title cues {:kind :empty :muted? true})))
+    (is (not (views/empty-slot? {:cue-id "ember" :kind "cue"})))
+    (is (views/sequence-only-steps? [{:cue-id "ember"} {:kind "empty"}]))
+    (is (views/sequence-only-steps? [{:cue-id "ember" :muted? true}]))
+    (is (not (views/sequence-only-steps? [{:cue-id "ember" :muted? false}])))))
+
 (deftest saved-cue-defaults-apply-before-slot-overrides-and-component-edits
   (let [db (-> base
                (assoc-in [:show :effects 0 :params] {:level {:default 0.2} :aim {:default [0 0 0]}})
