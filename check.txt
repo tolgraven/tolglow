@@ -1,0 +1,5 @@
+
+Testing proof.code-cue-test
+
+Ran 3 tests containing 33 assertions.
+0 failures, 0 errors.
