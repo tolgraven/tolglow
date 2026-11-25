@@ -378,7 +378,8 @@
         callback (atom nil) surface (atom nil)
         captured {:session-id "push3-encoder-chooser" :user-mode? true :schedule! nil
                   :cue-variation-pads? true
-                  :layout {:pads {[0 7] {:channel 3 :note 13} [1 6] {:channel 3 :note 14}}
+                  :layout {:pads {[0 7] {:channel 3 :note 13} [1 6] {:channel 3 :note 14}
+                                  [3 7] {:channel 3 :note 15} [0 6] {:channel 3 :note 16}}
                            :encoder-touches {:period {:channel 2 :note 9} :level {:channel 2 :note 10}}
                            :encoders {:period {:channel 2 :controller 19} :level {:channel 2 :controller 20}}
                            :buttons {:cycle {:channel 4 :controller 28}}}
@@ -399,10 +400,13 @@
             press! #(packet! [0x93 % 100])
             lift! #(packet! [0x83 % 0])
             present! #(presentation/presented! @surface)
-            overlay #(get @surface :pad-overlay)]
+            overlay #(get @surface :pad-overlay)
+            cell (fn [position] (some #(when (= position (:position %)) %) (:cells (overlay))))]
         (packet! [0x92 9 127])
         (is (= :beat-ratios (:layout (overlay))))
-        (is (= [{:position [1 6] :label "4/3" :selected? false}] (:cells (overlay))))
+        (is (= {:position [1 6] :label "4/3" :selected? false} (cell [1 6])))
+        (is (nil? (cell [0 7])))
+        (is (true? (:selected? (cell [0 6]))))
         (press! 14)
         (present!)
         (press! 14)
@@ -421,7 +425,7 @@
         (press! 14)
         (is (= 4/3 (param :period)))
         (is (= "4/3" (:current-ratio (overlay))))
-        (is (true? (get-in (overlay) [:cells 0 :selected?])))
+        (is (true? (:selected? (cell [1 6]))))
         (is (= #{id} (set (keys (:instances (model runtime))))))
         (let [expected (:value (variations/edit-parameter (model runtime) (instance) :period 1 {:mode :relative}))]
           (packet! [0xb2 19 1])
@@ -436,6 +440,21 @@
           (is (= [:instance-param id :period] (:target last-change)))
           (is (= 1 (:before last-change)))
           (is (= (param :period) (:after last-change))))
+        (doseq [[approximate exact position note] [[0.3333333333333333 1/3 [3 7] 15]
+                                                   [1.0 1 [0 6] 16]]]
+          (is (= :accepted (:status (submit! runtime {:op :param/set :instance-id id
+                                                      :param :period :value approximate}))))
+          (is (= approximate (param :period)))
+          (packet! [0x92 9 127])
+          (is (false? (:selected? (cell position))))
+          (present!)
+          (press! note)
+          (is (= exact (param :period)))
+          (is (= (str exact) (:current-ratio (overlay))))
+          (is (true? (:selected? (cell position))))
+          (lift! note)
+          (packet! [0x82 9 0])
+          (present!))
         (is (empty? (:errors (session/snapshot device)))))
       (finally (show/stop! runtime)))))
 

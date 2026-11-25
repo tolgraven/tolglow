@@ -12,19 +12,18 @@
 (defn- ratio-projection [{:keys [instance-id param positions] :as selection} model]
   (let [{:keys [cue-id phase definition params]} (get-in model [:instances instance-id])
         schema (get-in definition [:params param])
-        value (get params param)
+        current (get params param)
         mode (get-in model [:extensions variations/state-key cue-id :ratio-mode] :preferred)]
     (when (and (= :running phase) (get-in model [:registry :cues cue-id])
-               (number? value) (ratios/ratio-schema? schema))
+               (number? current) (ratios/ratio-schema? schema))
       (let [choices (filterv #(and (positions (:position %))
-                                   (ratios/valid-beat-ratio? schema (:value %) mode)) ratio-grid)
-            current (if (decimal? value) (rationalize value) value)]
+                                   (ratios/valid-beat-ratio? schema (:value %) mode)) ratio-grid)]
         (when (seq choices)
           {:view (assoc selection :cells choices :value current :ratio-mode mode)
            :display {:layout :beat-ratios :param param :title (:name schema)
-                     :ratio-mode mode :current-ratio (str value)
+                     :ratio-mode mode :current-ratio (str current)
                      :cells (mapv (fn [{:keys [position value]}]
-                                    {:position position :label (str value) :selected? (== current value)})
+                                    {:position position :label (str value) :selected? (= current value)})
                                   choices)}})))))
 
 (defn- open-ratio-encoder [model instance-id param positions]
@@ -36,7 +35,8 @@
         value (some #(when (= position (:position %)) (:value %)) (:cells presented))]
     {:state selection
      :encoder-sample? true
-     :commands (when (and value (not (== value (:value presented)))
+     ;; A pad can replace a decimal approximation with an exact ratio.
+     :commands (when (and value (not= value (:value presented))
                           (= presented (:view (ratio-projection selection model))))
                  [{:op :cue-variation/ratio-set :instance-id instance-id :param param
                    :value value
