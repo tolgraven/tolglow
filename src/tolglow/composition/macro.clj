@@ -10,7 +10,7 @@
   (when-not (and (some? owner-id) (registry/data? owner-id)
                  (vector? slots) (registry/data? slots)
                  (every? #(and (some? (:id %)) (some? (:cue-id %))) slots)
-                 (= (count slots) (count (distinct (map :id slots)))))
+                 (= (count slots) (count (distinct (map #(let [id (:id %)] (if (keyword? id) (subs (str id) 1) id)) slots)))))
     (throw (ex-info "Macro needs portable slots with distinct IDs and cue references" {})))
   {:owner-id owner-id
    :tokens (mapv #(vector owner-id (:id %)) slots)

@@ -3,6 +3,7 @@
   path advances an effect, consumes RNG, reads a clock or opens a device."
   (:require [afterglow.control.system :as system]
             [afterglow.render.ir :as ir]
+            [afterglow.runtime :as runtime]
             [afterglow.time :as time]
             [tolglow.audio.pcm :as pcm]
             [tolglow.composition.response :as response]
@@ -10,7 +11,8 @@
             [tolglow.effects :as fx]
             [tolglow.oscillator :as oscillator]
             [tolglow.registry :as registry]
-            [tolglow.signals :as signals]))
+            [tolglow.signals :as signals])
+  (:import [java.util Objects]))
 
 (defn- fail! [message data] (throw (ex-info message (assoc data :type ::invalid-projection))))
 
@@ -33,17 +35,60 @@
                         (max 0 (- (:beat clock) (:started-at-beat instance))))
        :meter (time/normalize-meter (:timing-meter instance))})))
 
+(defn- response-instance [instance]
+  (select-keys instance [:id :cue-id :effect-id :effect-version :phase :started-at-ms :started-at-beat]))
+
+(defn capture-response
+  "Attach the typed inputs of an exact live response to the effect observation."
+  [{:keys [frame instance]} resolved]
+  (let [owner (::response-frame frame)]
+    (if (and owner (seq (:response-values resolved))
+             (not (or (get-in instance [:definition :keyframes])
+                      (get-in instance [:definition :reactive])
+                      (contains? (:adaptive-intervals owner) (:id instance)))))
+      (let [sample {:owner owner
+                    :instance (response-instance instance)
+                    :clock (time/frame-clock frame)
+                    :schemas (get-in instance [:definition :params])
+                    :params (:params instance)
+                    :effective (get-in resolved [:instance :params])
+                    :responses (:response-values resolved)}]
+        (vary-meta resolved assoc ::runtime/observe
+                   (fn [query] (when (= [::response-inputs nil] query) sample))))
+      resolved)))
+
+(defn- response-frame [{:keys [model status transport-generation] :as snapshot}]
+  (let [owner (::response-frame snapshot)]
+    (when (and owner (nil? (:error status))
+               (= (:transport-generation owner) transport-generation)
+               (= (:show-id owner) (:show-id model))
+               (= (:epoch owner) (:epoch model))
+               (= (:frame-number owner) (:frame-number model))
+               (= (:time-ms owner) (:time-ms model))
+               (Objects/equals (:responses owner) (:responses model)))
+      owner)))
+
 (defn resolved-inputs
-  "Resolve one committed snapshot's modulation and response inputs. Compile the
-  response chain once for all projected instances, respecting private clocks."
+  "Read typed responses from the matching successful owner frame, with an
+  independent resolver for absent, faulted or differently timed samples."
   ([snapshot] (resolved-inputs snapshot response/compile-middleware))
-  ([{:keys [model resolved-param-overrides modulation-view]} compile-responses]
-  (let [overrides (or resolved-param-overrides (:overrides modulation-view))
-        responses (filterv #(not= false (:enabled? %)) (:responses model []))
-        middleware (if (seq responses) (compile-responses responses) identity)]
-    (fn [instance]
-      (middleware {:instance (update instance :params merge (get overrides (:id instance)))
-                   :frame (instance-clock model instance)})))))
+  ([{:keys [model resolved-param-overrides modulation-view] :as snapshot} compile-responses]
+   (let [owner (response-frame snapshot)
+         overrides (or resolved-param-overrides (:overrides modulation-view))
+         middleware (delay (let [responses (filterv #(not= false (:enabled? %)) (:responses model []))]
+                             (if (seq responses) (compile-responses responses) identity)))]
+     (fn [instance]
+       (let [sample (when owner (runtime/observe instance [::response-inputs nil]))
+             instance (update instance :params merge (get overrides (:id instance)))
+             clock (instance-clock model instance)]
+         (if (and sample (identical? owner (:owner sample))
+                  (= (response-instance instance) (:instance sample))
+                  (Objects/equals clock (:clock sample))
+                  (Objects/equals (:schemas sample) (get-in instance [:definition :params]))
+                  (Objects/equals (:params sample) (:params instance)))
+           {:instance (assoc instance :params (:effective sample)) :frame clock
+            :response-values (:responses sample)}
+           (@middleware {:instance instance :frame clock})))))))
 
 (defn effective-params [snapshot instance]
   (get-in ((resolved-inputs snapshot) instance) [:instance :params]))

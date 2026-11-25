@@ -49,9 +49,12 @@
                   (assoc :path (if enabled? [:geometry] [])))))))
 (rf/reg-event-db ::combine
   (fn [db [_ operation]]
-    (let [{:keys [path add-shape] :as draft} (model db)
+    (let [{:keys [volume path add-shape] :as draft} (model db)
+          whole-ball? (and (empty? path) (= :ball (:shape volume)))
+          path (if whole-ball? [:geometry] path)
           node-path (into [:volume] path)
-          node (get-in draft node-path)]
+          node (or (get-in draft node-path)
+                   (when whole-ball? (assoc (geo/primitive :sphere) :radius (:radius volume))))]
       (put db (-> (remember draft)
                   (assoc-in node-path (geo/combine node operation add-shape))
                   (assoc :path (conj path :parts 1)))))))
