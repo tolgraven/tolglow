@@ -114,8 +114,13 @@
                  {:source text}
                  decoded)
           form? (and (or (not transit?) (= "studio-v1" (get-in request [:headers "x-tolglow-form"])))
-                     (not (str/starts-with? (:uri request) "/api/fixtures/")))]
-      (handler (assoc request :json-params (if form? (normalize-form (:uri request) data) data))))))
+                     (not (str/starts-with? (:uri request) "/api/fixtures/")))
+          params (cond
+                   (str/starts-with? (:uri request) "/api/show/checkpoints/")
+                   (assoc data ::text-checkpoint-id? (not transit?))
+                   form? (normalize-form (:uri request) data)
+                   :else data)]
+      (handler (assoc request :json-params params)))))
 
 (defn wrap-errors [handler]
   (fn [request]

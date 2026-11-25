@@ -105,7 +105,10 @@
 
 (defn- checkpoint-action! [runtime action payload]
   (try
-    (let [identity (select-keys payload [:runtime-id :show-id :epoch])]
+    (let [current-id (get-in @(:state runtime) [:model :show-id])
+          identity (cond-> (select-keys payload [:runtime-id :show-id :epoch])
+                     (and (::web/text-checkpoint-id? payload) (= (:show-id payload) (web/json-data current-id)))
+                     (assoc :show-id current-id))]
       (case action
         :status (select-keys (show/recovery-status runtime)
                             [:runtime-id :show-id :epoch :checkpoints :enabled?])

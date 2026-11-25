@@ -1,5 +1,6 @@
 (ns tolglow.show.recovery-test
   (:require [clojure.java.io :as io]
+            [clojure.data.json :as json]
             [clojure.test :refer [deftest is]]
             [tolglow.application :as app]
             [tolglow.demo :as demo]
@@ -258,6 +259,32 @@
         (let [runtime (show/start! inspect (constantly nil))]
           (try
             (is (= 0.7 (checkpoint-master runtime :prior)))
+            (finally (show/stop! runtime))))))))
+
+(deftest checkpoint-wire-format-preserves-the-current-show-id
+  (with-directory
+    (fn [directory]
+      (doseq [id ["venue/east" :venue/east]]
+        (let [runtime (show/start! {:model (assoc (demo/model) :show-id id) :workspace-options nil
+                                    :recovery {:directory directory :enabled? false}} (constantly nil))]
+          (try
+            (show/save-show! runtime (io/file directory "named.transit"))
+            (set-master! runtime 0.3)
+            (let [handler (studio/handler runtime)
+                  view (json/read-str (:body (handler {:request-method :get :uri "/api/show/checkpoints"}))
+                                      :key-fn keyword)
+                  identity (select-keys view [:runtime-id :show-id :epoch])
+                  request {:request-method :post :uri "/api/show/checkpoints/restore"}
+                  alternate (if (keyword? id) "venue/east" :venue/east)]
+              (is (= "venue/east" (:show-id identity)))
+              (is (= 400 (:status (handler (assoc request :headers {"content-type" "application/transit+json"
+                                                                    "x-tolglow-form" "studio-v1"}
+                                                          :body (java.io.StringReader.
+                                                                 (wire/encode (assoc identity :kind :named :show-id alternate))))))))
+              (is (= 200 (:status (handler (assoc request :headers {"content-type" "application/json"}
+                                                          :body (java.io.StringReader.
+                                                                 (json/write-str (assoc identity :kind "named"))))))))
+              (is (= 1.0 (:master (show/snapshot runtime)))))
             (finally (show/stop! runtime))))))))
 
 (deftest prior-restore-read-survives-the-first-working-file-replacement
