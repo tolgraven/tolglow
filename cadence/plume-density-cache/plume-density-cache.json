@@ -1,0 +1,653 @@
+{
+  "browser": "158.0.8127.88",
+  "results": [
+    {
+      "auto": true,
+      "grid": 32,
+      "extent": [
+        5.4,
+        2.916666666666667,
+        4.5
+      ],
+      "fogRaster": [
+        301,
+        135
+      ],
+      "deviceRenderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "repeat": {
+        "changed": 0,
+        "peak": 0,
+        "noticeable": 0,
+        "illuminated": 656688,
+        "litPeakChannelRms": 0,
+        "maxScattering": 0,
+        "maxTransmission": 0
+      },
+      "candidate": {
+        "changed": 188583,
+        "peak": 18,
+        "noticeable": 38515,
+        "illuminated": 657353,
+        "litPeakChannelRms": 1.7261244694866489,
+        "maxScattering": 0.06005859375,
+        "maxTransmission": 0.075439453125
+      },
+      "elapsed": [
+        {
+          "cached": false,
+          "ms": 7.232166
+        },
+        {
+          "cached": true,
+          "ms": 10.501791
+        },
+        {
+          "cached": true,
+          "ms": 5.443499
+        },
+        {
+          "cached": false,
+          "ms": 6.953791
+        },
+        {
+          "cached": false,
+          "ms": 5.105624
+        },
+        {
+          "cached": true,
+          "ms": 3.521125
+        },
+        {
+          "cached": true,
+          "ms": 3.110416
+        },
+        {
+          "cached": false,
+          "ms": 5.235916
+        },
+        {
+          "cached": false,
+          "ms": 3.43125
+        },
+        {
+          "cached": true,
+          "ms": 2.462541
+        },
+        {
+          "cached": true,
+          "ms": 2.41875
+        },
+        {
+          "cached": false,
+          "ms": 3.002624
+        },
+        {
+          "cached": false,
+          "ms": 3.865916
+        },
+        {
+          "cached": true,
+          "ms": 2.34775
+        },
+        {
+          "cached": true,
+          "ms": 2.256833
+        },
+        {
+          "cached": false,
+          "ms": 3.010583
+        },
+        {
+          "cached": false,
+          "ms": 3.036458
+        },
+        {
+          "cached": true,
+          "ms": 2.248291
+        },
+        {
+          "cached": true,
+          "ms": 2.300125
+        },
+        {
+          "cached": false,
+          "ms": 3.07525
+        },
+        {
+          "cached": false,
+          "ms": 3.024041
+        },
+        {
+          "cached": true,
+          "ms": 2.270249
+        },
+        {
+          "cached": true,
+          "ms": 2.28275
+        },
+        {
+          "cached": false,
+          "ms": 3.016749
+        },
+        {
+          "cached": false,
+          "ms": 3.005458
+        },
+        {
+          "cached": true,
+          "ms": 2.268749
+        },
+        {
+          "cached": true,
+          "ms": 2.261458
+        },
+        {
+          "cached": false,
+          "ms": 3.029208
+        },
+        {
+          "cached": false,
+          "ms": 3.026624
+        },
+        {
+          "cached": true,
+          "ms": 2.249874
+        },
+        {
+          "cached": true,
+          "ms": 2.249166
+        },
+        {
+          "cached": false,
+          "ms": 3.018791
+        }
+      ]
+    },
+    {
+      "auto": true,
+      "grid": 48,
+      "extent": [
+        5.4,
+        2.916666666666667,
+        4.5
+      ],
+      "fogRaster": [
+        301,
+        135
+      ],
+      "deviceRenderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "repeat": {
+        "changed": 0,
+        "peak": 0,
+        "noticeable": 0,
+        "illuminated": 656688,
+        "litPeakChannelRms": 0,
+        "maxScattering": 0,
+        "maxTransmission": 0
+      },
+      "candidate": {
+        "changed": 147991,
+        "peak": 12,
+        "noticeable": 11767,
+        "illuminated": 656864,
+        "litPeakChannelRms": 0.9925828353097425,
+        "maxScattering": 0.0311279296875,
+        "maxTransmission": 0.044189453125
+      },
+      "elapsed": [
+        {
+          "cached": false,
+          "ms": 3.026
+        },
+        {
+          "cached": true,
+          "ms": 2.281749
+        },
+        {
+          "cached": true,
+          "ms": 2.292708
+        },
+        {
+          "cached": false,
+          "ms": 4.411708
+        },
+        {
+          "cached": false,
+          "ms": 3.312041
+        },
+        {
+          "cached": true,
+          "ms": 2.278666
+        },
+        {
+          "cached": true,
+          "ms": 2.287624
+        },
+        {
+          "cached": false,
+          "ms": 3.0235
+        },
+        {
+          "cached": false,
+          "ms": 4.23625
+        },
+        {
+          "cached": true,
+          "ms": 2.418374
+        },
+        {
+          "cached": true,
+          "ms": 2.303499
+        },
+        {
+          "cached": false,
+          "ms": 3.007999
+        },
+        {
+          "cached": false,
+          "ms": 3.035791
+        },
+        {
+          "cached": true,
+          "ms": 2.352749
+        },
+        {
+          "cached": true,
+          "ms": 2.277541
+        },
+        {
+          "cached": false,
+          "ms": 3.020041
+        },
+        {
+          "cached": false,
+          "ms": 3.017166
+        },
+        {
+          "cached": true,
+          "ms": 2.282375
+        },
+        {
+          "cached": true,
+          "ms": 2.289583
+        },
+        {
+          "cached": false,
+          "ms": 3.0315
+        },
+        {
+          "cached": false,
+          "ms": 3.007999
+        },
+        {
+          "cached": true,
+          "ms": 2.28525
+        },
+        {
+          "cached": true,
+          "ms": 2.27475
+        },
+        {
+          "cached": false,
+          "ms": 3.0365
+        },
+        {
+          "cached": false,
+          "ms": 3.016625
+        },
+        {
+          "cached": true,
+          "ms": 2.291624
+        },
+        {
+          "cached": true,
+          "ms": 2.274375
+        },
+        {
+          "cached": false,
+          "ms": 3.020708
+        },
+        {
+          "cached": false,
+          "ms": 3.010374
+        },
+        {
+          "cached": true,
+          "ms": 3.538999
+        },
+        {
+          "cached": true,
+          "ms": 2.278291
+        },
+        {
+          "cached": false,
+          "ms": 3.02175
+        }
+      ]
+    },
+    {
+      "auto": false,
+      "grid": 32,
+      "extent": [
+        4.125,
+        2.7777777777777777,
+        3.75
+      ],
+      "fogRaster": [
+        480,
+        270
+      ],
+      "deviceRenderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "repeat": {
+        "changed": 0,
+        "peak": 0,
+        "noticeable": 0,
+        "illuminated": 121075,
+        "litPeakChannelRms": 0,
+        "maxScattering": 0,
+        "maxTransmission": 0
+      },
+      "candidate": {
+        "changed": 30844,
+        "peak": 16,
+        "noticeable": 5039,
+        "illuminated": 121122,
+        "litPeakChannelRms": 1.4366633513730975,
+        "maxScattering": 0.038330078125,
+        "maxTransmission": 0.0592041015625
+      },
+      "elapsed": [
+        {
+          "cached": false,
+          "ms": 11.95025
+        },
+        {
+          "cached": true,
+          "ms": 7.040833
+        },
+        {
+          "cached": true,
+          "ms": 6.628166
+        },
+        {
+          "cached": false,
+          "ms": 7.346333
+        },
+        {
+          "cached": false,
+          "ms": 7.315708
+        },
+        {
+          "cached": true,
+          "ms": 7.729083
+        },
+        {
+          "cached": true,
+          "ms": 6.503
+        },
+        {
+          "cached": false,
+          "ms": 7.310666
+        },
+        {
+          "cached": false,
+          "ms": 8.202541
+        },
+        {
+          "cached": true,
+          "ms": 6.503083
+        },
+        {
+          "cached": true,
+          "ms": 6.67375
+        },
+        {
+          "cached": false,
+          "ms": 8.184083
+        },
+        {
+          "cached": false,
+          "ms": 7.133291
+        },
+        {
+          "cached": true,
+          "ms": 6.523749
+        },
+        {
+          "cached": true,
+          "ms": 7.354375
+        },
+        {
+          "cached": false,
+          "ms": 7.333958
+        },
+        {
+          "cached": false,
+          "ms": 7.299874
+        },
+        {
+          "cached": true,
+          "ms": 7.193041
+        },
+        {
+          "cached": true,
+          "ms": 6.530416
+        },
+        {
+          "cached": false,
+          "ms": 7.344874
+        },
+        {
+          "cached": false,
+          "ms": 8.200666
+        },
+        {
+          "cached": true,
+          "ms": 6.7775
+        },
+        {
+          "cached": true,
+          "ms": 6.506458
+        },
+        {
+          "cached": false,
+          "ms": 8.267375
+        },
+        {
+          "cached": false,
+          "ms": 7.324333
+        },
+        {
+          "cached": true,
+          "ms": 6.527125
+        },
+        {
+          "cached": true,
+          "ms": 7.112416
+        },
+        {
+          "cached": false,
+          "ms": 7.310624
+        },
+        {
+          "cached": false,
+          "ms": 7.308625
+        },
+        {
+          "cached": true,
+          "ms": 7.097374
+        },
+        {
+          "cached": true,
+          "ms": 6.555291
+        },
+        {
+          "cached": false,
+          "ms": 7.316958
+        }
+      ]
+    },
+    {
+      "auto": false,
+      "grid": 48,
+      "extent": [
+        4.125,
+        2.7777777777777777,
+        3.75
+      ],
+      "fogRaster": [
+        480,
+        270
+      ],
+      "deviceRenderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "repeat": {
+        "changed": 0,
+        "peak": 0,
+        "noticeable": 0,
+        "illuminated": 121075,
+        "litPeakChannelRms": 0,
+        "maxScattering": 0,
+        "maxTransmission": 0
+      },
+      "candidate": {
+        "changed": 24673,
+        "peak": 11,
+        "noticeable": 1015,
+        "illuminated": 121106,
+        "litPeakChannelRms": 0.7691590867896203,
+        "maxScattering": 0.0308837890625,
+        "maxTransmission": 0.040771484375
+      },
+      "elapsed": [
+        {
+          "cached": false,
+          "ms": 7.359666
+        },
+        {
+          "cached": true,
+          "ms": 6.554291
+        },
+        {
+          "cached": true,
+          "ms": 6.514249
+        },
+        {
+          "cached": false,
+          "ms": 8.282791
+        },
+        {
+          "cached": false,
+          "ms": 7.115
+        },
+        {
+          "cached": true,
+          "ms": 6.574375
+        },
+        {
+          "cached": true,
+          "ms": 7.444874
+        },
+        {
+          "cached": false,
+          "ms": 7.312083
+        },
+        {
+          "cached": false,
+          "ms": 7.309333
+        },
+        {
+          "cached": true,
+          "ms": 7.20625
+        },
+        {
+          "cached": true,
+          "ms": 6.516791
+        },
+        {
+          "cached": false,
+          "ms": 7.321708
+        },
+        {
+          "cached": false,
+          "ms": 8.179625
+        },
+        {
+          "cached": true,
+          "ms": 6.539541
+        },
+        {
+          "cached": true,
+          "ms": 6.556999
+        },
+        {
+          "cached": false,
+          "ms": 8.253749
+        },
+        {
+          "cached": false,
+          "ms": 7.318583
+        },
+        {
+          "cached": true,
+          "ms": 6.517291
+        },
+        {
+          "cached": true,
+          "ms": 8.481374
+        },
+        {
+          "cached": false,
+          "ms": 7.303499
+        },
+        {
+          "cached": false,
+          "ms": 7.330749
+        },
+        {
+          "cached": true,
+          "ms": 7.308125
+        },
+        {
+          "cached": true,
+          "ms": 6.497624
+        },
+        {
+          "cached": false,
+          "ms": 7.314624
+        },
+        {
+          "cached": false,
+          "ms": 8.273999
+        },
+        {
+          "cached": true,
+          "ms": 6.7545
+        },
+        {
+          "cached": true,
+          "ms": 6.537125
+        },
+        {
+          "cached": false,
+          "ms": 8.265416
+        },
+        {
+          "cached": false,
+          "ms": 7.302041
+        },
+        {
+          "cached": true,
+          "ms": 6.532375
+        },
+        {
+          "cached": true,
+          "ms": 7.423583
+        },
+        {
+          "cached": false,
+          "ms": 7.322291
+        }
+      ]
+    }
+  ]
+}
