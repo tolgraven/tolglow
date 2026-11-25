@@ -3,11 +3,19 @@
   Only the delivery worker installs leases; graph callbacks publish immutable
   values and wake it. A disconnected socket never owns the underlying graph."
   (:require [afterglow.reactive :as reactive]
-            [tolglow.registry :as registry]))
+            [tolglow.registry :as registry])
+  (:import [java.lang System$Logger System$Logger$Level]
+           [java.util.concurrent TimeUnit]))
 
 (def defaults
   #{:clock/beat :clock/beat-in-bar :clock/bar :clock/phrase :clock/phase
     :runtime/keyframe :runtime/block-trace :runtime/block-library :spatial/scene :spatial/body :spatial/members :rdm/status})
+
+(def ^:private ^System$Logger logger (System/getLogger "tolglow.studio.query-stream"))
+
+(def ^:private close-wait-ms 1000)
+
+(def ^:private unavailable-lease {:result (delay {:error :unavailable})})
 
 (defn create
   ([get-graph wake!] (create get-graph wake! {}))
@@ -44,47 +52,92 @@
     (finally
       (when-let [close! (:close! lease)] (close!)))))
 
-(defn close! [store]
-  (let [[before _] (locking store (reset-vals! (:state store) {:closed? true}))]
-    (doseq [lease (vals (:leases before))] (close-lease! lease))))
+(defn- close-lease-safely! [query lease]
+  (try
+    (close-lease! lease)
+    true
+    (catch Throwable error
+      (.log logger System$Logger$Level/WARNING (str "Could not retire Studio query " (first query)) error)
+      false)))
+
+(defn- await-retirements! [completions]
+  (let [deadline (+ (System/nanoTime) (.toNanos TimeUnit/MILLISECONDS close-wait-ms))]
+    (try
+      (when-not (every? #(deref % (max 0 (.toMillis TimeUnit/NANOSECONDS (- deadline (System/nanoTime)))) false)
+                        completions)
+        (.log logger System$Logger$Level/WARNING "Studio query cleanup is still running after shutdown"))
+      (catch InterruptedException _ (.interrupt (Thread/currentThread))))))
+
+(defn close!
+  ([store] (close! store true))
+  ([store wait?]
+   (when-let [{:keys [leases retiring]}
+              (locking store
+                (let [state (:state store) before @state]
+                  (when-not (:closed? before)
+                    (reset! state {:closed? true :retiring (:retiring before)})
+                    before)))]
+     (let [in-flight (vals retiring)
+           done (promise)]
+       (if (seq leases)
+         ;; A producer callback can block. Keep its cleanup owned after the
+         ;; caller's wait budget and let it run without a store or hub lock.
+         (doto (Thread. (fn []
+                          (try
+                            (doseq [[query lease] leases] (close-lease-safely! query lease))
+                            (finally (deliver done true))))
+                        "tolglow-query-cleanup")
+           (.setDaemon true)
+           (.start))
+         (deliver done true))
+       (when (and wait? (not-any? #(identical? (Thread/currentThread) (:thread %)) in-flight))
+         (await-retirements! (cons done (map :done in-flight))))))
+   nil))
 
 (defn- surface-query? [store query]
   (contains? (:surfaces store) (first query)))
 
 (defn retiring-queries [store]
-  (:retiring @(:state store)))
+  (set (keys (:retiring @(:state store)))))
+
+(defn retiring-on? [store thread]
+  (some #(identical? thread (:thread %)) (vals (:retiring @(:state store)))))
+
+(defn- claim-retirements [leases]
+  (let [thread (Thread/currentThread)]
+    (into {} (map (fn [[query lease]] [query {:lease lease :thread thread :done (promise)}])) leases)))
 
 (defn- finish-retirement! [store retired]
-  (let [state (:state store)
-        failure (reduce (fn [first-error [query lease]]
-                          (try
-                            (close-lease! lease)
-                            first-error
-                            (catch Exception error (or first-error error))
-                            (finally
-                              (locking store
-                                (when-not (:closed? @state)
-                                  (swap! state update :retiring disj query)))
-                              ((:wake! store)))))
-                        nil retired)]
-    (when failure (throw failure))))
+  (doseq [[query {:keys [lease done]}] retired]
+    (let [closed? (close-lease-safely! query lease)]
+      (locking store
+        (swap! (:state store)
+               (fn [state]
+                 (cond-> (update state :retiring dissoc query)
+                   (and (not closed?) (not (:closed? state)))
+                   (update :failed-retirements (fnil conj #{}) query)))))
+      (deliver done true)
+      ((:wake! store)))))
 
 (defn release-unused-leases!
   "Retire unobserved graph and surface queries independently of projection delivery."
   [store wanted-queries candidates]
   (let [state (:state store)
         retired (locking store
-                  (let [before @state wanted (wanted-queries)
-                        unused (filterv #(and (contains? (:leases before) %)
-                                              (not (contains? wanted %)))
-                                        candidates)]
-                    (when (seq unused)
-                      (reset! state (-> before
-                                        (update :leases #(apply dissoc % unused))
-                                        (update :wanted #(apply disj % unused))
-                                        (update :missing #(apply disj % unused))
-                                        (update :retiring (fnil into #{}) unused)))
-                      (select-keys (:leases before) unused))))]
+                  (let [before @state]
+                    (when-not (:closed? before)
+                      (let [wanted (wanted-queries)
+                            unused (filterv #(and (contains? (:leases before) %)
+                                                  (not (contains? wanted %)))
+                                            candidates)]
+                        (when (seq unused)
+                          (let [retired (claim-retirements (select-keys (:leases before) unused))]
+                            (reset! state (-> before
+                                              (update :leases #(apply dissoc % unused))
+                                              (update :wanted #(apply disj % unused))
+                                              (update :missing #(apply disj % unused))
+                                              (update :retiring merge retired)))
+                            retired))))))]
     (finish-retirement! store retired)))
 
 (defn- open-graph-lease [system query allowed? wake!]
@@ -117,7 +170,7 @@
           (let [state (:state store) before @state
                 ;; Opening while its old watcher is still alive would reuse
                 ;; the retired query's cached value and in-flight producer.
-                wanted (reduce disj (wanted-queries) (:retiring before))]
+                wanted (reduce disj (wanted-queries) (keys (:retiring before)))]
             (when-not (or (:closed? before) (and (empty? wanted) (empty? (:leases before))))
               (let [model (:model source)
                     configured (get-in model [:settings :studio :public-queries])
@@ -136,19 +189,19 @@
                   [prior]
                   (let [{surfaces true graph false}
                         (group-by #(surface-query? store (key %)) (remove #(keep? (key %)) prior))
-                        surface-queries (map key surfaces)
-                        wanted (reduce disj wanted surface-queries)
+                        retiring (claim-retirements surfaces)
+                        wanted (reduce disj wanted (keys retiring))
                         leases (into {} (map (fn [q] [q (or (when (keep? q) (get prior q))
-                                                             (open-lease store system q public))])
+                                                            ;; A failed detach or close may still own resources.
+                                                            (when (contains? (:failed-retirements before) q) unavailable-lease)
+                                                            (open-lease store system q public))])
                                           wanted))]
-                    (reset! state {:system system :identity identity :leases leases :wanted wanted :public public
-                                   :retiring (into (or (:retiring before) #{}) surface-queries)
-                                   :missing (into #{} (keep (fn [[q lease]] (when (:await-registration? lease) q))) leases)})
-                    [leases graph surfaces]))))))]
-    (try
-      (doseq [[_ lease] retired-graph] (close-lease! lease))
-      (finally
-        (finish-retirement! store retired-surfaces)))
+                    (reset! state (assoc before :system system :identity identity :leases leases :wanted wanted :public public
+                                                :retiring (merge (:retiring before) retiring)
+                                                :missing (into #{} (keep (fn [[q lease]] (when (:await-registration? lease) q))) leases)))
+                    [leases graph retiring]))))))]
+    (doseq [[query lease] retired-graph] (close-lease-safely! query lease))
+    (finish-retirement! store retired-surfaces)
     leases))
 
 (defn reconcile! [store source wanted]

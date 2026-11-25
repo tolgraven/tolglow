@@ -42,6 +42,7 @@
 (defn- connect [server session]
   (let [port (.getLocalPort (first (.getConnectors server)))
         messages (LinkedBlockingQueue.)
+        closed (promise)
         buffer (StringBuilder.)
         client (HttpClient/newHttpClient)
         uri (URI. (str "ws://127.0.0.1:" port "/api/state/stream?session=" session))
@@ -54,8 +55,11 @@
                                         (.offer messages (transit/decode (.toString buffer)))
                                         (.setLength buffer 0))
                                       (.request ws 1)
+                                      nil)
+                                    (onClose [_ _ code reason]
+                                      (deliver closed [code reason])
                                       nil))) 5 TimeUnit/SECONDS)]
-    {:socket socket :messages messages}))
+    {:socket socket :messages messages :closed closed}))
 
 (defn- receive [client]
   (or (.poll ^LinkedBlockingQueue (:messages client) 3 TimeUnit/SECONDS)
@@ -595,6 +599,7 @@
                                {:host "127.0.0.1" :port 0 :join? false})
         projection-started (CountDownLatch. 1)
         finish-projection (CountDownLatch. 1)
+        replacement-demand (CountDownLatch. 1)
         next-projection-started (CountDownLatch. 1)
         finish-next-projection (CountDownLatch. 1)
         take! (fn [client] (let [frame (receive client)] (acknowledge client frame) frame))
@@ -603,10 +608,13 @@
     (try
       (stream/publish! hub {:model model})
       (let [spectator (connect server "spectator")
-            a (connect server "surface-a&view=queries") b (connect server "surface-b&view=queries")]
+            a (connect server "surface-a&view=queries")
+            _ (take! a)
+            a-state (first (filter #(:query-only? @%) (vals @(:clients hub))))
+            b (connect server "surface-b&view=queries")]
         (try
+          (take! b)
           (doseq [client [a b]]
-            (take! client)
             (send-control client {:op :queries :queries [query]})
             (is (= {:color :blue :fixture :fixture/one :generation 1} (observed-value (take! client)))))
           (let [spectator-base (take! spectator)]
@@ -620,10 +628,16 @@
             (is (= 1 (.poll closing 3 TimeUnit/SECONDS)) "The final unsubscribe starts cleanup while projection is blocked")
             (is (zero? (watch-count)))
             (reset! observed {:color :green})
+            (add-watch a-state ::surface-demand
+                       (fn [_ _ _ next] (when (seq (:queries next)) (.countDown replacement-demand))))
             (send-control a {:op :queries :queries [query]})
+            (is (.await replacement-demand 3 TimeUnit/SECONDS))
             (.countDown finish-projection)
-            (is (= 1 (:frame-number (apply-patch (:view spectator-base) (take! spectator)))))
-            (is (= 1 @mounts) "New demand waits for the retiring producer")
+            (let [first-pass (apply-patch (:view spectator-base) (take! spectator))]
+              (is (= 1 (:frame-number first-pass)))
+              (stream/publish! hub {:model (assoc model :frame-number 2)})
+              (is (= 2 (:frame-number (apply-patch first-pass (take! spectator)))))
+              (is (= 1 @mounts) "A fresh delivery pass sees the new demand and waits for the retiring producer"))
             (.countDown finish-close)
             (is (empty? (get-in (take! b) [:view :subscriptions])))
             (let [remounted (take! a)]
@@ -631,18 +645,155 @@
               (is (= {:color :green :fixture :fixture/one :generation 2} (observed-value remounted))))
             (is (= [[1 :blue] [2 :green]] @samples) "The pre-removal delivery pass cannot sample the retired lease")
             (is (= 1 (watch-count)))
-            (stream/publish! hub {:model (assoc model :frame-number 2)
+            (stream/publish! hub {:model (assoc model :frame-number 3)
                                   :projection-started next-projection-started :finish-projection finish-next-projection})
             (is (.await next-projection-started 3 TimeUnit/SECONDS))
             (.abort ^WebSocket (:socket a))
             (is (= 2 (.poll closing 3 TimeUnit/SECONDS)) "Disconnecting the last reader releases the replacement")
             (is (zero? (watch-count))))
           (finally
+            (remove-watch a-state ::surface-demand)
             (.countDown finish-projection)
             (.countDown finish-next-projection)
             (.countDown finish-close)
             (doseq [client [a b spectator]] (.abort ^WebSocket (:socket client))))))
       (finally (stream/close! hub) (.stop server)))))
+
+(deftest failed-detach-fences-the-surface-on-a-new-socket
+  (let [query [::faulty-surface]
+        observed (atom :blue)
+        mounts (atom 0)
+        closes (atom 0)
+        test-detach! (promise)
+        hub (stream/create identity (constantly nil)
+                           {:get-graph (constantly nil)
+                            :surfaces {::faulty-surface
+                                       (fn [_]
+                                         (swap! mounts inc)
+                                         (let [lease (observation/selected observed identity identity)]
+                                           (assoc lease :observe! (fn [wake!]
+                                                                    (deliver test-detach! ((:observe! lease) wake!))
+                                                                    #(throw (ex-info "Surface detach failed" {})))
+                                                        :close! #(swap! closes inc))))}})
+        server (jetty/run-jetty (wrap-params #(stream/response hub %))
+                               {:host "127.0.0.1" :port 0 :join? false})
+        take! (fn [client] (let [frame (receive client)] (acknowledge client frame) frame))]
+    (try
+      (stream/publish! hub {:model {:show-id :fixture-show :epoch 0}})
+      (let [first-reader (connect server "original&view=queries")]
+        (try
+          (take! first-reader)
+          (send-control first-reader {:op :queries :queries [query]})
+          (is (= {:value :blue} (get-in (take! first-reader) [:view :subscriptions query])))
+          (send-control first-reader {:op :queries :queries []})
+          (is (= {} (get-in (take! first-reader) [:view :subscriptions])))
+          (let [replacement (connect server "replacement&view=queries")]
+            (try
+              (take! replacement)
+              (send-control replacement {:op :queries :queries [query]})
+              (is (= {:error :unavailable} (get-in (take! replacement) [:view :subscriptions query])))
+              (is (= 1 @mounts @closes (count (.getWatches observed))))
+              (finally (.abort ^WebSocket (:socket replacement)))))
+          (finally (.abort ^WebSocket (:socket first-reader)))))
+      (finally
+        (stream/close! hub)
+        (.stop server)
+        (when (realized? test-detach!) (@test-detach!))))))
+
+(deftest shutdown-closes-all-sockets-and-leases-after-a-surface-close-fails
+  (let [observed (atom :blue)
+        closed-queries (atom [])
+        surface (fn [query]
+                  (assoc (observation/selected observed identity identity)
+                         :close! (fn []
+                                   (swap! closed-queries conj query)
+                                   (when (= query [::broken])
+                                     (throw (ex-info "Surface close failed" {}))))))
+        hub (stream/create identity (constantly nil)
+                           {:get-graph (constantly nil) :surfaces {::broken surface ::healthy surface}})
+        server (jetty/run-jetty (wrap-params #(stream/response hub %))
+                               {:host "127.0.0.1" :port 0 :join? false})]
+    (try
+      (stream/publish! hub {:model {:show-id :fixture-show :epoch 0}})
+      (let [broken (connect server "broken&view=queries")
+            healthy (connect server "healthy&view=queries")]
+        (try
+          (doseq [[client query] [[broken [::broken]] [healthy [::healthy]]]]
+            (acknowledge client (receive client))
+            (send-control client {:op :queries :queries [query]})
+            (is (= {:value :blue} (get-in (receive client) [:view :subscriptions query]))))
+          (is (= 2 (count (.getWatches observed))))
+          (stream/close! hub)
+          (doseq [client [broken healthy]]
+            (is (= [1001 "Studio stopped"] (deref (:closed client) 3000 nil))))
+          (stream/close! hub)
+          (is (= {[::broken] 1 [::healthy] 1} (frequencies @closed-queries)))
+          (is (empty? (.getWatches observed)))
+          (finally
+            (doseq [client [broken healthy]] (.abort ^WebSocket (:socket client))))))
+      (finally (stream/close! hub) (.stop server)))))
+
+(deftest shutdown-waits-for-a-retirement-already-claimed-by-a-socket
+  (let [query [::surface]
+        closing (CountDownLatch. 1)
+        finish-close (CountDownLatch. 1)
+        closes (atom 0)
+        hub (stream/create identity (constantly nil)
+                           {:get-graph (constantly nil)
+                            :surfaces {::surface (fn [_] {:sample! (constantly :blue)
+                                                         :close! (fn []
+                                                                   (.countDown closing)
+                                                                   (.await finish-close 10 TimeUnit/SECONDS)
+                                                                   (swap! closes inc))})}})
+        server (jetty/run-jetty (wrap-params #(stream/response hub %))
+                               {:host "127.0.0.1" :port 0 :join? false})]
+    (try
+      (stream/publish! hub {:model {:show-id :fixture-show :epoch 0}})
+      (let [reader (connect server "reader&view=queries")]
+        (try
+          (acknowledge reader (receive reader))
+          (send-control reader {:op :queries :queries [query]})
+          (is (= {:value :blue} (get-in (receive reader) [:view :subscriptions query])))
+          (send-control reader {:op :queries :queries []})
+          (is (.await closing 3 TimeUnit/SECONDS))
+          (let [shutdown (future (stream/close! hub) :stopped)]
+            (try
+              (is (= [1001 "Studio stopped"] (deref (:closed reader) 3000 nil)))
+              (is (= :waiting (deref shutdown 100 :waiting)))
+              (finally (.countDown finish-close)))
+            (is (= :stopped (deref shutdown 3000 nil)))
+            (is (= 1 @closes)))
+          (finally (.abort ^WebSocket (:socket reader)))))
+      (finally
+        (.countDown finish-close)
+        (stream/close! hub)
+        (.stop server)))))
+
+(deftest terminal-query-cleanup-keeps-ownership-after-the-shutdown-wait
+  (let [query [::surface]
+        source {:model {:show-id :fixture-show :epoch 0}}
+        closing (CountDownLatch. 1)
+        finish-close (CountDownLatch. 1)
+        closed (promise)
+        attempts (atom 0)
+        store (query-stream/create (constantly nil) (constantly nil)
+                                   {::surface (fn [_] {:sample! (constantly :blue)
+                                                        :close! (fn []
+                                                                  (swap! attempts inc)
+                                                                  (.countDown closing)
+                                                                  (deliver closed (.await finish-close 10 TimeUnit/SECONDS)))})})]
+    (try
+      (query-stream/reconcile! store source #{query})
+      (let [shutdown (future (query-stream/close! store) :stopped)]
+        (is (.await closing 3 TimeUnit/SECONDS))
+        (is (= :stopped (deref shutdown 3000 nil)))
+        (is (not (realized? closed)))
+        (is (nil? (query-stream/reconcile! store source #{query})))
+        (query-stream/close! store)
+        (.countDown finish-close)
+        (is (true? (deref closed 3000 nil)))
+        (is (= 1 @attempts)))
+      (finally (.countDown finish-close) (query-stream/close! store)))))
 
 (deftest subscription-baselines-wait-for-a-retiring-query
   (let [query [::mount]
