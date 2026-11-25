@@ -15,7 +15,7 @@
     slots))
 
 (defn- slot-index! [slots step-id]
-  (let [[index other] (keep-indexed #(when (= step-id (:id %2)) %1) slots)]
+  (let [[index other] (keep-indexed #(when (= (sequence/step-key step-id) (sequence/step-key (:id %2))) %1) slots)]
     (when (or (nil? step-id) (nil? index) (some? other))
       (fail! :unknown-step {:step-id step-id} "Choose an existing step by its unique ID"))
     index))
@@ -45,7 +45,7 @@
         index (if (nil? after-id) (count slots) (inc (slot-index! slots after-id)))]
     (when-not (and (map? step) (or (keyword? id) (and (string? id) (not (str/blank? id)))))
       (fail! :invalid-step-id {:step-id id} "Provide a new step ID"))
-    (when (some #(= id (:id %)) slots)
+    (when (some #(= (sequence/step-key id) (sequence/step-key (:id %))) slots)
       (fail! :duplicate-step-id {:step-id id} "A step already uses this ID"))
     (let [default-timebase (:timebase (sequence/normalize-spec (sequence-spec definition slots)))
           step (cond-> (merge {:params {}} step)

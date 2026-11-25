@@ -554,13 +554,26 @@
          [:p (str (label (:mode item)) " · " (count (:slots item)) " slots" (when (:running? item) " · playing"))]]
         [button nil "Open" [:studio/composition-open item]]])]))
 
+(defn empty-slot?
+  "Sequence steps authored with :kind :empty occupy time without a cue."
+  [slot]
+  (= "empty" (some-> (:kind slot) name)))
+
+(defn sequence-only-steps?
+  "Empty and muted steps only have meaning in a step sequence."
+  [slots]
+  (boolean (some #(or (empty-slot? %) (:muted? %)) slots)))
+
 (defn- composition-settings [composition macro?]
   [:div.compose-settings
    [:label "Name" [:input#composition-name {:value (:name composition "") :max-length 80
                                             :on-change #(set-ui! [:composition :name] (input-value %))}]]
    [:label "Identifier" [:input#composition-id {:value (:id composition "") :on-change #(set-ui! [:composition :id] (input-value %))}]]
    [:label "Behavior" [:select#composition-mode {:value (:mode composition "sequence") :on-change #(set-ui! [:composition :mode] (input-value %))}
-                       [:option {:value "sequence"} "Step sequence"] [:option {:value "macro"} "Macro · together"]]]
+                       [:option {:value "sequence"} "Step sequence"] (let [blocked? (sequence-only-steps? (:slots composition))]
+                         [:option {:value "macro" :disabled blocked?
+                                   :title (when blocked? "Remove empty and muted steps to play these cues together")}
+                          (if blocked? "Macro · needs no empty or muted steps" "Macro · together")])]]
    (when-not macro?
      [:label "Playback" [:select#composition-loop {:value (:loop composition "once") :on-change #(set-ui! [:composition :loop] (input-value %))}
                          [:option {:value "once"} "Once"] [:option {:value "loop"} "Loop"] [:option {:value "ping-pong"} "Back and forth"] [:option {:value "random"} "Random"]]])
@@ -573,11 +586,6 @@
                                           :disabled (or (and (= offset -1) (zero? index)) (and (= offset 1) last?))
                                           :on-click #(send! (if (zero? offset) [:studio/composition-remove index]
                                                              [:studio/composition-move index offset]))} caption])])
-
-(defn empty-slot?
-  "Sequence steps authored with :kind :empty occupy time without a cue."
-  [slot]
-  (= "empty" (some-> (:kind slot) name)))
 
 (defn slot-title
   "Name a step from the saved program, including empty and muted steps."

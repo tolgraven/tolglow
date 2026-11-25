@@ -135,3 +135,8 @@
     (is (= [:chase 3] (get-in next [:intents 0 :token])))
     (is (= [:composition/launch] (mapv :op (:intents next))))
     (is (= (:intents gap) (:intents (sample live 3))))))
+
+(deftest step-ids-are-unique-by-name
+  (is (seq (sequence/validate-sequence {:steps [{:id :a :cue-id :red :duration-ms 1}
+                                                {:id "a" :cue-id :red :duration-ms 1}]
+                                        :timebase :ms}))))

@@ -5,6 +5,12 @@
             [afterglow.time :as time]
             [tolglow.automation.random :as random]))
 
+(defn step-key
+  "Compare step IDs by name. Studio's JSON boundary turns textual :id values
+  into keywords, so :slot-1 and \"slot-1\" name the same step."
+  [id]
+  (if (keyword? id) (subs (str id) 1) id))
+
 (defn- validate-normalized-sequence [{:keys [steps mode seed timebase] :or {mode :once seed 0 timebase :ms}}]
   (vec
    (concat
@@ -17,7 +23,7 @@
       [{:path [:timebase] :message "Timebase must be ms or beats"}])
     (when (vector? steps)
       (concat
-       (when-not (= (count steps) (count (distinct (map :id steps))))
+       (when-not (= (count steps) (count (distinct (map (comp step-key :id) steps))))
          [{:path [:steps] :message "Slot IDs must be unique"}])
        (mapcat
         (fn [[i {:keys [id cue-id muted? params] :as step}]]

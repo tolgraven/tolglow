@@ -65,16 +65,17 @@
   (when-not (and (map? slot) (identifier? (:id slot)))
     (fail! [:slots index :id] "Slot needs a stable ID"))
   (let [empty? (= :empty (:kind slot))]
-    (when (and (= :macro mode) (or empty? (contains? slot :muted?)))
+    (when (and (= :macro mode) (or empty? (:muted? slot)))
       (fail! [:slots index] "Empty and muted steps require a sequence"))
     (when-not empty?
       (validate-cue-slot! model index slot))))
 
 (defn- assign-slot-ids
   "Keep authored slot IDs. Give each unidentified slot the first free
-  \"slot-N\" from its index, so adding after a deletion cannot collide."
+  \"slot-N\" from its index, so adding after a deletion cannot collide.
+  Taken IDs compare by name, matching the JSON boundary's keyword IDs."
   [slots]
-  (let [taken (set (keep :id slots))]
+  (let [taken (set (map sequence/step-key (keep :id slots)))]
     (first
      (reduce (fn [[result taken] [i slot]]
                (if (contains? slot :id)

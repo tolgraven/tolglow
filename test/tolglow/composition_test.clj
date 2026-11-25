@@ -3,8 +3,11 @@
             [afterglow.control.model :as control]
             [afterglow.runtime.engine :as engine]
             [tolglow.compiler :as compiler]
+            [clojure.data.json :as json]
             [tolglow.composition :as composition]
-            [tolglow.composition.sequence-edit :as edit]))
+            [tolglow.composition.sequence-edit :as edit]
+            [tolglow.data :as data]
+            [tolglow.studio.web :as web]))
 
 (defn command [model id op time & fields]
   (let [result (control/apply-command model
@@ -85,6 +88,35 @@
     (is (= ["slot-0" "slot-1"] (mapv :id (get-in saved [:compositions :c :slots]))))
     (is (= ["slot-1" "slot-2"] (mapv :id (get-in resaved [:compositions :c :slots]))))
     (is (= [:blue :spot] (mapv :cue-id (get-in resaved [:compositions :c :slots]))))))
+
+;; Studio sends the projected program back as JSON; textual IDs become keywords.
+(defn- through-studio-wire [definition]
+  (data/normalize-json (json/read-str (json/write-str (web/json-data definition)) :key-fn keyword)))
+
+(deftest studio-wire-saves-keep-slot-ids-unique-by-name
+  (let [saved (composition/save (show) (through-studio-wire {:id :c :mode :sequence
+                                                             :slots [{:cue-id :red} {:cue-id :blue}]}))
+        reopened (through-studio-wire (get-in saved [:compositions :c]))
+        edited (update reopened :slots #(conj (subvec % 1) {:cue-id :spot}))
+        resaved (composition/save saved (through-studio-wire edited))
+        again (composition/save resaved (through-studio-wire (get-in resaved [:compositions :c])))
+        ids #(mapv :id (get-in % [:compositions :c :slots]))]
+    (is (= [:slot-1] (mapv :id (butlast (:slots edited)))))
+    (is (= [:slot-1 "slot-2"] (ids resaved)))
+    (is (= [:slot-1 :slot-2] (ids again)))
+    (is (= [:blue :spot] (mapv :cue-id (get-in again [:compositions :c :slots]))))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (composition/save (show) {:id :d :mode :sequence
+                                           :slots [{:id :a :cue-id :red} {:id "a" :cue-id :blue}]})))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (composition/save (show) {:id :d :mode :macro
+                                           :slots [{:id :a :cue-id :red} {:id "a" :cue-id :blue}]})))))
+
+(deftest unmuted-flags-do-not-block-macros
+  (let [program {:id :m :mode :macro :slots [{:id :a :cue-id :red :muted? false}]}]
+    (is (= [:a] (mapv :id (get-in (composition/save (show) program) [:compositions :m :slots]))))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (composition/save (show) (assoc-in program [:slots 0 :muted?] true))))))
 
 (deftest canonical-musical-slots-save-and-play-with-captured-meter
   (let [definition {:id :bars :mode :sequence

@@ -1079,7 +1079,10 @@
     (is (= "Ember · muted" (views/slot-title cues {:cue-id "ember" :muted? true})))
     (is (= "Empty step" (views/slot-title cues {:id "rest" :kind "empty"})))
     (is (= "Empty step · muted" (views/slot-title cues {:kind :empty :muted? true})))
-    (is (not (views/empty-slot? {:cue-id "ember" :kind "cue"})))))
+    (is (not (views/empty-slot? {:cue-id "ember" :kind "cue"})))
+    (is (views/sequence-only-steps? [{:cue-id "ember"} {:kind "empty"}]))
+    (is (views/sequence-only-steps? [{:cue-id "ember" :muted? true}]))
+    (is (not (views/sequence-only-steps? [{:cue-id "ember" :muted? false}])))))
 
 (deftest saved-cue-defaults-apply-before-slot-overrides-and-component-edits
   (let [db (-> base
