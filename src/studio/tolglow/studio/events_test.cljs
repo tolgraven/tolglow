@@ -1574,7 +1574,8 @@
         [_ dropped] (first (:fx discarding))
         failed (transition (:db discarding) (conj (:on-failure dropped) "Stale draft"))
         idle (:db (full-frame base (:show base)))]
-    (is (= {:id "scene" :revision 2 :operations 2 :status :auditioning :due-beat nil :pending? false :connected? true}
+    (is (= {:id "scene" :revision 2 :operations 2 :status :auditioning :due-beat nil :stale nil :missed nil
+            :pending? false :connected? true}
            (events/scene-draft-control db)))
     (is (= "scene-draft/apply" (:op sent)))
     (is (= {:draft-id "scene" :expected-draft-revision 2 :grid {:bars 1}} (dissoc (:fields sent) :command-id)))
@@ -1594,3 +1595,38 @@
                             [:output :values])))))
     (is (nil? (events/scene-draft-control idle)))
     (is (empty? (transition idle [:studio/scene-draft-discard])))))
+
+(deftest room-draft-banner-reports-what-the-repl-reports
+  (let [view (assoc (:show base) :runtime-id "draft-owner" :show-id :main)
+        draft {:id "scene" :revision 2 :operations [{:op :cue/launch}]}
+        control (fn [scene-draft] (events/scene-draft-control (:db (full-frame base (assoc view :scene-draft scene-draft)))))
+        note (comp events/scene-draft-note control)
+        missed (fn [code] {:status :missed :draft-id "scene" :draft-revision 2 :due-beat 8 :code code})]
+    (is (= "" (note {:draft draft :status :auditioning})))
+    (is (= " · applies at beat 8" (note {:draft draft :status :scheduled :pending-apply {:due-beat 8}})))
+    (is (= " · audition failed" (note {:draft draft :status :error :error {:message "boom"}})))
+    (testing "a stale draft names the dependency that changed"
+      (is (= :stale-registry (:stale (control {:draft draft :status :stale :stale :stale-registry}))))
+      (is (= " · stale: the rig changed. Stage it again" (note {:draft draft :status :stale :stale :stale-patch})))
+      (is (= " · stale: a cue or effect changed. Stage it again"
+             (note {:draft draft :status "stale" :stale "stale-registry"})))
+      (is (= " · stale: the material library changed. Stage it again"
+             (note {:draft draft :status :stale :stale :stale-prefabs}))))
+    (testing "a scheduled apply that missed its boundary stays visible until the next attempt"
+      (is (= {:due-beat 8 :code :clock-changed}
+             (:missed (control {:draft draft :status :auditioning :last-outcome (missed :clock-changed)}))))
+      (is (= " · the apply at beat 8 was missed: the clock source changed"
+             (note {:draft draft :status :auditioning :last-outcome (missed :clock-changed)})))
+      (is (= " · the apply at beat 8 was missed: the beat moved back"
+             (note {:draft draft :status :auditioning :last-outcome (missed "clock-moved-back")})))
+      (is (= " · stale: a cue or effect changed. Stage it again · the apply at beat 8 was missed: a cue or effect changed"
+             (note {:draft draft :status :stale :stale :stale-registry :last-outcome (missed :stale-registry)})))
+      (is (= " · the apply at beat 8 was missed: stale-instance"
+             (note {:draft draft :status :auditioning :last-outcome (missed :stale-instance)})))
+      (is (= " · applies at beat 12"
+             (note {:draft draft :status :scheduled :pending-apply {:due-beat 12} :last-outcome (missed :clock-changed)}))))
+    (testing "an outcome of another draft or revision is not this draft's"
+      (is (nil? (:missed (control {:draft draft :status :auditioning
+                                   :last-outcome (assoc (missed :clock-changed) :draft-revision 1)}))))
+      (is (nil? (:missed (control {:draft draft :status :auditioning
+                                   :last-outcome {:status :applied :draft-id "scene" :draft-revision 2}})))))))

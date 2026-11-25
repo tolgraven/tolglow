@@ -368,18 +368,16 @@
                :on-change #(when-let [v (number-value %)] (input! [:studio/preview-setting key v]))}]])])
 
 (defn- scene-draft-banner [db]
-  (when-let [{:keys [id revision operations status due-beat pending? connected?]} (events/scene-draft-control db)]
+  (when-let [{:keys [id revision operations status pending? connected?] :as control} (events/scene-draft-control db)]
     (let [busy? (or pending? (not connected?))
           scheduled? (= :scheduled status)]
       [:div.scene-draft-banner {:role "status" :aria-label "Room draft audition" :data-draft-id id}
        [:div [:strong "Draft audition"]
         [:span.small.muted (str " · " id " · revision " revision " · " operations " staged"
-                                (case status
-                                  :scheduled (str " · applies at beat " due-beat)
-                                  :stale " · stale: the rig changed"
-                                  :error " · audition failed"
-                                  nil))]
-        [:p.small.muted "The Room shows this draft. Live output is unchanged until you apply it."]]
+                                (events/scene-draft-note control))]
+        [:p.small.muted (if (#{:stale :error} status)
+                          "The Room shows the live show. Live output is unchanged."
+                          "The Room shows this draft. Live output is unchanged until you apply it.")]]
        [:div.button-row
         [:button.button.primary {:type "button" :disabled (or busy? scheduled? (#{:stale :error} status))
                                  :on-click #(send! [:studio/scene-draft-apply nil])} "Apply"]

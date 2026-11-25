@@ -593,15 +593,41 @@
   (fn [{:keys [db]} [_ owner {:keys [instance-id]}]]
     (when (and instance-id (current-show? (:show db) owner))
       {:db (assoc-in db [:ui :selected-instance] instance-id)})))
+
 (defn scene-draft-control
-  "The staged Room draft as Studio shows it, or nil."
+  "The staged Room draft as Studio shows it, or nil. :stale is the refusal an
+  apply would get. :missed is the last scheduled apply of this draft revision
+  that did not land, as `show/scene-draft` reports it under :last-outcome."
   [db]
-  (when-let [{:keys [draft status pending-apply]} (get-in db [:server-projection :view :scene-draft])]
+  (when-let [{:keys [draft status pending-apply stale last-outcome]} (get-in db [:server-projection :view :scene-draft])]
     (when draft
       {:id (:id draft) :revision (:revision draft) :operations (count (:operations draft))
        :status (keyword status) :due-beat (:due-beat pending-apply)
+       :stale (some-> stale keyword)
+       :missed (when (and (= :missed (keyword (:status last-outcome)))
+                          (= [(:id draft) (:revision draft)] [(:draft-id last-outcome) (:draft-revision last-outcome)]))
+                 {:due-beat (:due-beat last-outcome) :code (some-> (:code last-outcome) keyword)})
        :pending? (= (:id draft) (get-in db [:scene-draft-request :draft-id]))
        :connected? (true? (get-in db [:connection :connected?]))})))
+
+(def ^:private scene-draft-reasons
+  {:stale-patch "the rig changed" :stale-registry "a cue or effect changed"
+   :stale-prefabs "the material library changed"
+   :clock-changed "the clock source changed" :clock-moved-back "the beat moved back"})
+
+(defn scene-draft-note
+  "The banner's status text for a draft control: when it applies, why it is
+  stale, and a scheduled apply that missed its boundary."
+  [{:keys [status due-beat stale missed]}]
+  (let [reason #(get scene-draft-reasons % (some-> % name))]
+    (str (case status
+           :scheduled (str " · applies at beat " due-beat)
+           :stale (str " · stale: " (reason (or stale :stale-patch)) ". Stage it again")
+           :error " · audition failed"
+           "")
+         (when (and missed (not= :scheduled status))
+           (str " · the apply at beat " (:due-beat missed) " was missed"
+                (when-let [why (reason (:code missed))] (str ": " why)))))))
 
 (defn room-show
   "The show the Room preview renders. A staged draft's audition frame replaces
