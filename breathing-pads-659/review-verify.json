@@ -1,0 +1,87 @@
+{
+  "phase120": {
+    "bpm": 120,
+    "duration": 500,
+    "beatDuration": "500ms",
+    "pads": 3,
+    "meanAbsErrorBeats": 0.04166417725000193,
+    "maxAbsErrorBeats": 0.06668233200000184,
+    "queuedFlashMaxErrorHalfBeats": 0.13336466400000369,
+    "overlayRange": [
+      0.120658,
+      0.719342
+    ],
+    "meanRttMs": 5.64770833371828
+  },
+  "phase96": {
+    "bpm": 96,
+    "duration": 625,
+    "beatDuration": "625ms",
+    "pads": 3,
+    "meanAbsErrorBeats": 0.03222230566666448,
+    "maxAbsErrorBeats": 0.05334360159999241,
+    "queuedFlashMaxErrorHalfBeats": 0.10668720319998504,
+    "overlayRange": [
+      0.130568,
+      0.718259
+    ],
+    "meanRttMs": 5.8391666654497385
+  },
+  "paused": {
+    "mode": "still",
+    "animations": 0,
+    "overlay": "0.4",
+    "queuedDot": "1"
+  },
+  "frameCost": [
+    {
+      "label": "idle page, nothing running",
+      "running": 5,
+      "rafMedianMs": 16.665000000000873,
+      "rafP95Ms": 16.670000000000073,
+      "perFrameMs": {
+        "recalcStyle": 0.20132,
+        "layout": 0.03881333333333333,
+        "script": 1.8336933333333336,
+        "task": 2.811453333333333
+      },
+      "styleRecalcs": 442
+    },
+    {
+      "label": "64 running pads breathing",
+      "running": 64,
+      "rafMedianMs": 16.665000000000873,
+      "rafP95Ms": 16.67000000000189,
+      "perFrameMs": {
+        "recalcStyle": 0.41520999999999997,
+        "layout": 0.040319999999999995,
+        "script": 2.021226666666667,
+        "task": 3.479936666666666
+      },
+      "styleRecalcs": 450
+    }
+  ],
+  "phase64": {
+    "bpm": 120,
+    "duration": 500,
+    "beatDuration": "500ms",
+    "pads": 64,
+    "meanAbsErrorBeats": 0.03471957991666722,
+    "maxAbsErrorBeats": 0.06667141599999837,
+    "queuedFlashMaxErrorHalfBeats": null,
+    "overlayRange": [
+      0.120091,
+      0.717524
+    ],
+    "meanRttMs": 6.534166667610407
+  },
+  "reducedMotion": {
+    "mode": "still",
+    "animations": 0,
+    "overlays": [
+      "0.4"
+    ]
+  },
+  "afterReducedMotion": "live",
+  "consoleErrors": []
+}
