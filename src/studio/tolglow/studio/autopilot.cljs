@@ -162,7 +162,16 @@
        [signal/field [:hdr active] "Override gain" (get-in controls active 1) gain-opts signals
         #(edit! :hdr active %)])]))
 
-(defn- hdr-fields [section base controls signals]
+(defn falloff-choices
+  "Preset spill falloffs and the current authored curve. When a preset replaces
+  the committed curve in the draft, a restore option keeps that curve reachable."
+  [current saved]
+  (cond-> [[:linear "Linear"] [:quadratic "Quadratic"] [:smoothstep "Smoothstep"]]
+    (vector? current) (conj [current (str "Authored curve · " (count current) " points")])
+    (and (vector? saved) (not= saved current))
+    (conj [saved (str "Restore authored curve · " (count saved) " points")])))
+
+(defn- hdr-fields [section base controls signals saved-falloff]
   [:<>
    [:div.conduct-fields
     (for [[k label opts] [[:gain "Emission gain" gain-opts] [:max-excess "Allowed excess" gain-opts]
@@ -170,9 +179,11 @@
                           [:radius "Spill radius (m)" {:min 0 :max 20 :step 0.05}]
                           [:spill-white-mix "Neighbor whitening" unit-opts]]]
       ^{:key k} [bound section controls signals (conj base k) label opts])]
-   [signal/choice "Spill falloff" (get-in controls (conj base :falloff))
-    [[:linear "Linear"] [:quadratic "Quadratic"] [:smoothstep "Smoothstep"]]
-    #(edit! section (conj base :falloff) %)]])
+   ;; An authored [[distance-fraction weight] ...] curve from the REPL or a
+   ;; show file stays selected. Its points are edited from the REPL.
+   (let [falloff (get-in controls (conj base :falloff))]
+     [signal/choice "Spill falloff" falloff (falloff-choices falloff saved-falloff)
+      #(edit! section (conj base :falloff) %)])])
 
 (defn- apply-button [section label draft busy?]
   [:div.performance-actions [:button.button {:type "button" :disabled (or busy? (empty? draft))
@@ -230,7 +241,7 @@
         [:input {:type "text" :input-mode "text" :value (str (:blend v))
                  :on-change #(write! {:blend (.. % -target -value)})}]])]))
 
-(defn- settings-panel [controls draft signals busy?]
+(defn- settings-panel [controls draft signals busy? saved-falloff]
   (let [section :autopilot edit #(edit! section [%1] %2)]
     [:fieldset {:disabled busy?}
      [scope-field (:scope controls) #(edit :scope %)]
@@ -261,7 +272,7 @@
        [:label "Rotation seed" [:input {:type "text" :input-mode "numeric" :value (:seed controls)
                                          :on-change #(edit :seed (.. % -target -value))}]]
        [signal/duration-field "One-shot duration" (:duration controls) #(edit :duration %)]]]
-     [:details.source-readings [:summary "Highlight spill"] [hdr-fields section [:hdr] controls signals]]
+     [:details.source-readings [:summary "Highlight spill"] [hdr-fields section [:hdr] controls signals saved-falloff]]
      [shared-signals signals]
      [apply-button section "Apply autopilot settings" draft busy?]]))
 
@@ -277,7 +288,7 @@
      (when (and running? (not (:enabled? settings)) (:enable-cue settings))
        [:p.conduct-action (str "Running with cue " (events/wire-id (:enable-cue settings)))])
      [telemetry]
-     [settings-panel controls draft (:signals controls {}) busy?]
+     [settings-panel controls draft (:signals controls {}) busy? (get-in settings [:hdr :falloff])]
      (when-let [error (:error ui)] [:p.performance-error {:role "alert"} error])]))
 
 (defn hdr-panel []
@@ -288,6 +299,6 @@
      [:header [:h2 "HDR emission"] [enable :hdr "Enable HDR emission" (:enabled? settings) busy?]]
      [:fieldset {:disabled busy?}
       [scope-field (:scope controls) #(edit! :hdr [:scope] %)]
-      [:details.source-readings [:summary "Gain and spatial spill"] [hdr-fields :hdr [] controls signals]]
+      [:details.source-readings [:summary "Gain and spatial spill"] [hdr-fields :hdr [] controls signals (:falloff settings)]]
       [gain-override controls signals]
       [apply-button :hdr "Apply HDR settings" draft busy?]]]))

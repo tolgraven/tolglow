@@ -146,6 +146,65 @@ when configuring it.
  "/ember/launch" {:op :cue/launch :cue-id :ember :priority-arg? true}}
 ```
 
+### Modulate a running layer's priority
+
+Layer priority is a typed waveform destination, `:layer/priority`: an integer
+tier from −1000 to 1000 in the `:priority` category. In **Perform → In the mix**,
+open a card's **Detail** and select **Source** on its **Layer priority** row, or
+open the **Source** editor of an LFO already on that launch and choose
+**Layer priority** under **Destination**. Set the **From** and **To** tiers. The
+**Hysteresis band (tiers)**, **Minimum dwell** and **Dwell unit** (beats, bars
+or phrases) fields control how far past a tier boundary the waveform must go,
+and how long a tier is kept, before the layer changes order. A dwell authored in
+bars or phrases at the REPL keeps that unit in the editor. **Use base value**
+holds the committed priority and **Detach LFO** removes the source.
+
+The **In the mix** cards appear in the order the latest frame composed them,
+from `:effective-instance-order`. A card whose waveform tier differs from its
+committed priority shows both, for example **Priority 1 · set 0**, in its header
+and on the **Layer priority** row. **Reorder** captures and **Place after**
+targets still use the committed order (`:active-instance-order`), because those
+commands change committed state.
+
+A manual priority change takes precedence over the waveform. **Set priority**,
+**Place after**, `:instance/set-priority` and `:instance/move-after` on a launch
+with a bound layer priority waveform also hold that source, recorded with
+`:reason :manual-priority`. The row shows **Held after a manual priority
+change**, and the projected source has `:held? true :hold-reason
+:manual-priority`. **Resume LFO** or `:modulation-resume` with
+`:params [:layer/priority]` returns the layer to the waveform. This matches how a
+parameter edit holds a waveform on that parameter.
+
+The REPL uses the same validated `:modulation-bind`, `:modulation-hold`,
+`:modulation-resume` and `:modulation-unbind` operations. Each frame the show
+owner samples the waveform once, applies the hysteresis and orders that frame
+by the resulting tier. Ties keep launch order. The committed priority and
+`:active-instance-order` do not change. The snapshot's
+`:effective-instance-order` lists the order used for the latest frame, and the
+launch's `[:parameter-sources :layer/priority]` reports the committed priority
+as `:base-value` and the frame tier as `:effective-value`.
+
+```clojure
+(show/submit! runtime :modulation-bind
+  {:instance-id (:instance-id launched) :param :layer/priority
+   :binding {:type :lfo :waveform :triangle :period {:beats 4}
+             :phase-reference :transport :from -1 :to 1
+             :hysteresis {:band 1/4 :dwell {:beats 1/2}}}})
+
+(let [{:keys [effective-instance-order instances]} (show/snapshot runtime)]
+  [effective-instance-order
+   (some #(when (= (:instance-id launched) (:id %))
+            (get-in % [:parameter-sources :layer/priority :effective-value]))
+         instances)])
+```
+
+Studio's destination list and binding fields come from the snapshot's
+`:layer-priority-destination`, so the REPL and Studio share one schema. Members
+of a compound native layer share one priority. A priority waveform on a member
+is rejected; use **Set priority** or `:instance/set-priority` for the whole
+layer. The remaining gap is a Push or OSC control surface for the hysteresis
+fields; both can still bind the waveform through the shared command.
+
 ## Solo or mute running effects
 
 In **Perform → In the mix**, use **Solo** or **Mute** on a running card.

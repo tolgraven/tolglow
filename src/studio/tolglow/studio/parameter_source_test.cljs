@@ -82,7 +82,44 @@
         instance {:definition {:params {:cue/level {} :cue/hue hue :cue/step step :occupied {}}}
                   :parameter-sources {:occupied {:sources [{:type :lfo :held? true}]}
                                       :cue/step {:sources [{:type :random}]}}}]
-    (is (= [[:cue/hue hue] [:cue/step step]] (source/destination-options instance :cue/level)))))
+    (is (= [[:cue/hue hue] [:cue/step step]] (source/destination-options instance :cue/level)))
+    (let [schema {:type :integer :bounds [-1000 1000] :default 0 :category :priority :name "Layer priority"}
+          priority {:param :layer/priority :schema schema}]
+      (testing "the layer priority destination follows the effect parameters while it is free"
+        (is (= [[:cue/hue hue] [:cue/step step] [:layer/priority schema]]
+               (source/destination-options instance :cue/level priority)))
+        (is (= [[:cue/hue hue] [:cue/step step]]
+               (source/destination-options (assoc-in instance [:parameter-sources :layer/priority :sources] [{:type :lfo}])
+                                           :cue/level priority)))
+        (is (= [[:cue/hue hue] [:cue/level {}] [:cue/step step]]
+               (source/destination-options instance :layer/priority priority))))
+      (testing "the projected destination name becomes the keyword the bind request sends"
+        (is (= :layer/priority (:param (source/priority-destination {:layer-priority-destination {:param "layer/priority" :schema schema}}))))
+        (is (nil? (source/priority-destination {}))))
+      (testing "the schema of either kind of destination comes from the projection"
+        (is (= schema (source/destination-schema instance priority :layer/priority)))
+        (is (= hue (source/destination-schema instance priority :cue/hue)))
+        (is (nil? (source/destination-schema instance nil :layer/priority)))))))
+
+(deftest layer-priority-bindings-carry-typed-hysteresis
+  (let [schema {:type :integer :bounds [-1000 1000] :default 0 :category :priority}
+        form (source/editor-draft schema 0 nil [{:id :sine}])]
+    (is (= [-1 1 "0.25" "0" :beats] ((juxt :from :to :band :dwell :dwell-unit) form)))
+    (testing "a dwell authored in bars or phrases keeps its unit through the editor"
+      (doseq [dwell [{:bars 1} {:phrases 0.5} {:beats 3}]]
+        (let [bound {:type :lfo :waveform :sine :period {:beats 1} :phase 0 :phase-reference :launch
+                     :from -1 :to 1 :inputs {} :hysteresis {:band 0.25 :dwell dwell}}
+              draft (source/editor-draft schema 0 bound [{:id :sine}])]
+          (is (= (ffirst dwell) (:dwell-unit draft)))
+          (is (= {:band 0.25 :dwell dwell} (:hysteresis (source/binding-config draft)))))))
+    (is (= {:band 0.25} (:hysteresis (source/binding-config form))))
+    (is (= {:band 0 :dwell {:beats 0.5}} (:hysteresis (source/binding-config (assoc form :band "0" :dwell "1/2")))))
+    (is (thrown? js/Error (source/binding-config (assoc form :band "-1"))))
+    (let [bound {:type :lfo :waveform :triangle :period {:beats 4} :phase 0 :phase-reference :transport
+                 :from -2 :to 3 :inputs {} :hysteresis {:band 0.5 :dwell {:beats 2}}}]
+      (is (= bound (source/binding-config (assoc (source/editor-draft schema 0 bound [{:id :sine}]) :period "4")))))
+    (testing "effect parameters never send hysteresis"
+      (is (not (contains? (source/binding-config (source/editor-draft {:type :number} 0 nil [{:id :sine}])) :hysteresis))))))
 
 (deftest source-controls-wait-for-their-committed-revision-and-correlate-queued-results
   (let [view {:runtime-id "studio" :epoch 2 :revision 12}
@@ -120,3 +157,17 @@
     (is (empty? (source/fixture-options rig {:launch-targets []})))
     (is (= [:b :a] (mapv :id (source/fixture-options rig {:launch-targets [:b :c :a] :targets [:a :b]}))))
     (is (= [:a :b :c] (mapv :id (source/fixture-options rig {:outputs {:dimmer 1}}))))))
+
+(deftest cards-follow-the-composed-order-and-show-a-modulated-tier
+  (let [low {:id "0:1" :priority 0
+             :parameter-sources {:layer/priority {:base-value 0 :effective-value 1 :sources [{:type :lfo}]}}}
+        high {:id "0:2" :priority 0}
+        show {:instances [high low] :active-instance-order ["0:1" "0:2"] :effective-instance-order ["0:2" "0:1"]}
+        destination {:param :layer/priority}]
+    (is (= ["0:2" "0:1"] (mapv :id (performance/effective-instances show))))
+    (is (= ["0:1" "0:2"] (mapv :id (performance/ordered-instances show))))
+    (is (= ["0:1" "0:2"] (mapv :id (performance/effective-instances (dissoc show :effective-instance-order)))))
+    (is (= 1 (performance/modulated-priority low destination)))
+    (is (nil? (performance/modulated-priority high destination)))
+    (is (nil? (performance/modulated-priority (assoc-in low [:parameter-sources :layer/priority :effective-value] 0) destination)))
+    (is (nil? (performance/modulated-priority (assoc-in low [:parameter-sources :layer/priority :sources 0 :held?] true) destination)))))

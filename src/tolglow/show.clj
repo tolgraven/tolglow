@@ -196,6 +196,10 @@
             :cues (vec (sort-by (comp str :id) (vals (get-in model [:registry :cues]))))
             :groups (categories/group-view model)
             :active-instance-order (mapv :id (instance-order/ordered model))
+            :effective-instance-order (mapv :id (instance-order/ordered-with-priorities
+                                                 model (:priority-overrides parameter-samples)))
+            :layer-priority-destination {:param parameter-sources/priority-param
+                                         :schema parameter-sources/priority-schema}
             :instances (mapv #(-> % (dissoc :state :parameter-bindings)
                                   (assoc :definition (get definitions [(:definition %) (:targets %)])
                                          :parameter-sources (parameter-sources/project % (get sources (:id %)) resolve-inputs responses?)
@@ -520,8 +524,25 @@
   [runtime]
   (group-channels/projection (:model @(:state runtime))))
 
-(defn- hold-manual-params [model result {:keys [op source instance-id param control-id gesture-id]} authority]
-  (let [owner (when (#{:gesture/sample :gesture/end :gesture/cancel} op)
+(def ^:private manual-priority-ops
+  "Operator commands that set a running layer's priority or position."
+  #{:instance/set-priority :instance/move-after})
+
+(defn- hold-manual-priority
+  "A manual priority or reorder command takes precedence over a waveform bound
+  to that launch's layer priority, as a parameter edit does over its source.
+  The hold records why, and the operator resumes the waveform explicitly."
+  [model result {:keys [op instance-id]}]
+  (if (and (manual-priority-ops op)
+           (get-in model [:instances instance-id :parameter-bindings parameter-sources/priority-param]))
+    (update-in result [:model :modulation] (fnil modulation/hold (modulation/new-state))
+               {:instance-id instance-id :params [parameter-sources/priority-param] :until-beat nil
+                :reason :manual-priority})
+    result))
+
+(defn- hold-manual-params [model result {:keys [op source instance-id param control-id gesture-id] :as payload} authority]
+  (let [result (hold-manual-priority model result payload)
+        owner (when (#{:gesture/sample :gesture/end :gesture/cancel} op)
                 [(:operator-id authority) control-id gesture-id])]
     (cond
       (#{:gesture/end :gesture/cancel} op)
@@ -1782,7 +1803,7 @@
                            ramp-frame (subscribers/frame-overlays model time-ms)
                            frame-master (get ramp-frame :master (:master model))
                            parameter-samples (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)}
-                                                                      (get-in before [:parameter-samples :plans]))
+                                                                      (:parameter-samples before))
                            control-view (if (seq (:overrides parameter-samples))
                                           (update (:modulation-view before) :overrides
                                                   #(merge-with merge % (:overrides parameter-samples)))
@@ -1854,6 +1875,10 @@
                                          variables (assoc :resolved-variables variable-inputs)
                                          (seq (:variables ramp-frame))
                                          (update :resolved-variables #(merge (or % (:variables model)) (:variables ramp-frame)))
+                                         ;; Modulated layer priority is resolved once here and
+                                         ;; orders only this frame; the model keeps its own tiers.
+                                         (seq (:priority-overrides parameter-samples))
+                                         (assoc ::engine/priority-overrides (:priority-overrides parameter-samples))
                                          response-frame (assoc ::waveforms/response-frame response-frame)
                                          engine-levels (assoc ::engine/opacity-factors engine-levels))
                            response (response-middleware! runtime (:responses model []))

@@ -108,3 +108,17 @@
     (is (= {:ms 0} (autopilot/target-stage {:ms "0"})))
     (is (= {:blend 0.25} (autopilot/target-stage {:blend "1/4"})))
     (is (thrown? js/Error (autopilot/target-stage {:blend 2})))))
+
+(deftest an-authored-falloff-curve-stays-selectable-and-restorable
+  (let [curve [[0 1] [0.3 1] [0.6 0.8] [1 0]]
+        db (assoc-in db [:server-projection :view :settings :hdr] {:enabled? true :falloff curve})
+        current #(get-in (policy/visible-settings % :hdr) [:falloff])
+        labels #(set (map second (autopilot/falloff-choices %1 %2)))]
+    (is (contains? (labels curve curve) "Authored curve · 4 points"))
+    (is (not-any? #(re-find #"Restore" %) (labels curve curve)))
+    (let [picked (autopilot/edit-db db :hdr [:falloff] :quadratic)
+          save #(get-in (transition % [::autopilot/save :hdr]) [:studio/http :body :values :falloff])
+          choices (autopilot/falloff-choices :quadratic (current db))]
+      (is (= :quadratic (save picked)))
+      (is (= [curve "Restore authored curve · 4 points"] (last choices)))
+      (is (= curve (save (autopilot/edit-db picked :hdr [:falloff] (first (last choices)))))))))

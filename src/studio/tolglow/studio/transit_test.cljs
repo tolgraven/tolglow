@@ -113,3 +113,10 @@
     (let [t (wire/decode text)]
       (is (= ms (inst-ms t)))
       (is (= ms (.getTime (js/Date. (inst-ms t))))))))
+
+(deftest exact-falloff-curve-points-round-trip-as-typed-fractions
+  (let [curve (wire/decode "[[0,1],[[\"~#tolglow/ratio.v1\",[\"1\",\"3\"]],[\"~#tolglow/ratio.v1\",[\"1\",\"2\"]]],[1,0]]")]
+    (is (vector? curve))
+    (is (wire/fraction? (get-in curve [1 0])))
+    (is (= (/ 1 3) (wire/fraction-value (get-in curve [1 0]))))
+    (is (= curve (wire/decode (wire/encode curve))))))
