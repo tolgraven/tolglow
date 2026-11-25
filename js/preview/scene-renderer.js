@@ -171,13 +171,9 @@ export class SceneRenderer {
     this.applyTier(next);
   }
   applyTier(next) {
-    const previousFog = this.fog, nextFog = new VolumetricFog(this.renderer, {quality: TIERS[next].fog || next});
-    if (previousFog) { nextFog.field.copyFrom(previousFog.field); nextFog.showAtmosphere = previousFog.showAtmosphere; nextFog.uniforms.room.value.fromArray(this.room); nextFog.upload(); }
-    else nextFog.setRoom(this.room);
-    nextFog.setAmount(this.fogAmount);
+    this.fog.setQuality(TIERS[next].fog || next);
     this.quality = next; this.options = TIERS[next]; this.frameInterval = 1000 / this.targetHz;
-    this.fog = nextFog; previousFog?.dispose();
-    if (this.width) nextFog.setSize(this.width, this.height);
+    if (this.width) this.fog.setSize(this.width, this.height);
     if (this.snapshot) this.update(this.snapshot, true);
     this.resize();
   }
