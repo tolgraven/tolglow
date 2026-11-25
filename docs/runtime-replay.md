@@ -209,3 +209,29 @@ functional runtime and sends its completed frames to an in-memory capture.
 The fixture-local tilt translation has its own [verified receipt](../dev/tolglow/legacy_frame_oracle/translated-report.edn).
 It checks all universe bytes, the two aim reachability results, and the exact
 reasons for the 39 remaining historical byte differences.
+
+## Worker publication comparison
+
+`tolglow.worker-publication-oracle-test` (pure lane) treats the serial
+`replay/record` run as the whole-frame oracle. It replays the same inputs with
+bounded pools of 1, 2 and 12 workers. Each pool with two or more workers
+runs twice: in normal completion order, and with the first job held until every
+other job in its frame has completed. Every lane publishes every rendered frame through
+`afterglow.output.scheduler` to a capturing `send!`. Each lane must verify every
+recorded model, state, event, intent and output digest, and every published
+universe must match the serial render byte for byte. Its rig has three
+universes, 16-bit words including a pan word split across universes 1 and 2,
+HTP and equal-priority LTP color, and a priority-10 dimmer launched and ended
+mid-run. A priority-3 dimmer launched after it does not take over, so recency
+alone cannot explain the result. It also has raw red channel writes. A channel
+attribute replaces the red lane of the color mix whatever the color's priority.
+Between the two channel writes, priority -5 beats -20 even though it was
+launched earlier. The run ends with a restart and a stale end. Each lane
+publishes one packet per frame with distinct send IDs and no dropped completion.
+Pools with two or more workers evaluate on more than one thread. A step probe
+checks that all workers in a frame received the same shared snapshot data and
+fixture vector, apart from each instance's private clock. The same lanes rerun
+the legacy oracle scenario above through `compare/paired-run` and must reproduce
+its serial frames, lifecycle history and published bytes. This does not cover
+the studio's full frame pipeline, scheduled publication slots or physical
+devices.

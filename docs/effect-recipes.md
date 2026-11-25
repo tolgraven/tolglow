@@ -219,6 +219,53 @@ overwrite a running instance's explicit parameter values.
                    :wave {:period {:bars 4}}})})
 ```
 
+### Migrate running effect state
+
+A cue or launch with `:reload-policy :migrate` adopts a newer revision like
+`:preserve-state` and, once at the frame where the new revision takes over,
+transforms the instance's private `:state`. The new definition declares the
+transform as portable data, which publication and show loading validate:
+
+```clojure
+(assoc effect :version 4
+       :state-migration {:from {1 [{:op :rename :from [:count] :to [:frames]}]
+                                2 []
+                                3 [{:op :default :path [:phase] :value 0}
+                                   {:op :scale :path [:frames] :by 2}]}})
+```
+
+`:from` maps each previous version to the steps that bring its state up to the
+next listed version, or to this definition's version for the highest key. An
+instance on v1 runs the lists for 1, 2 and 3 in order; one on v3 runs only 3's.
+A version without a key faults, so list `[]` when its state already fits. Keys
+must be below the definition's own version, and validation names any that are
+not.
+
+Steps are `:assoc`, `:default`, `:dissoc`, `:rename` and `:scale`.
+`:dissoc` and `:rename` only remove map keys and leave an absent or non-map
+parent unchanged. A `:rename` whose source is absent does nothing, and one whose
+target already holds a value fails rather than overwriting it. `:scale`
+multiplies two whole numbers exactly and fails on 64-bit overflow. Any other
+combination, including ratios and big decimals, becomes a finite double. Every
+runtime failure, including `assoc` through a number or past the end of a
+vector, names its step, for example `[:state-migration :from 3 1 :path]`. [`tolglow.effects.state-migration`](../src/tolglow/effects/state_migration.clj)
+compiles them into Afterglow's pure `(old-state old-version new-version context)`
+function. The show owner compiles each declaration once per definition version
+and attaches it to the compiled step; automation prediction attaches it the
+same way, so a pending migration renders identically there. Imported shows
+never resolve vars or run code to migrate. Effects compiled from `:outputs` do not
+read `:state` today; the migrated map is retained, persisted and visible to steps
+that do.
+
+If the migration throws, for example scaling a value that is absent, the
+instance keeps its last good revision and state. It records a bounded
+`:reload-fault` with `:stage :migrate`, `:effect-version`, `:from-version` and the
+authored cause path, such as `[:state-migration :from 2 0 :path]`. Other cues keep
+rendering the same bytes. Publish a newer revision or submit `:instance/retry`
+to try again. Cue-owned modulation can briefly follow a rejected candidate;
+see [#653](https://github.com/tolgraven/tolglow/issues/653). The engine contract is in Afterglow's
+[effect failure isolation](../../afterglow/doc/architecture/effect-fault-isolation.md#state-migration-on-reload).
+
 The focused tests render real scalar and typed contributions at quarter-cycle
 positions, compare final DMX bytes, exercise fractional periods, captured meter
 and pause, compose target-aware layers, resolve world-space aiming, round-trip

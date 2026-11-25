@@ -37,6 +37,47 @@ Use **Release** on the card or submit the form below. The release envelope can k
 @(show/submit! runtime {:op :instance/end :instance-id (:instance-id launched)})
 ```
 
+## Migrate a running cue's state
+
+A cue whose `:reload-policy` is `:migrate` transforms its private state when a
+newer effect revision is published. Studio and the REPL publish through the
+same `:definition` operation and read the same instance projection. The
+running card's effect inspector header shows `v2 · migrate`. From the
+REPL, publish a revision with a portable `:state-migration`
+([declaration](effect-recipes.md#migrate-running-effect-state)):
+
+```clojure
+@(show/submit! runtime {:op :cue/launch :cue-id :ember
+                        :launch {:mode :persistent :reload-policy :migrate}})
+
+(let [{:keys [registry]} (:model (show/export-show runtime))
+      effect (get-in registry [:effects (get-in registry [:cues :ember :effect-id])])]
+  @(show/submit! runtime :definition
+     {:kind :effects
+      :definition (-> effect (update :version inc)
+                      (assoc :state-migration {:from {(:version effect) [{:op :default :path [:phase] :value 0}]}}))}))
+```
+
+The `:launch` option opts this one instance in; a cue's own `:reload-policy`
+sets the default for its launches. The snapshot shows `:effect-version` and
+`:reload-policy` for the instance. A failing migration leaves the instance on its last good
+revision with a `:reload-fault` whose `:stage` is `:migrate`. Studio lists it
+in that inspector's diagnostics as `migrate · <message>`, with each cause's
+location, such as `{:path ["state-migration" "from" 2 0 "path"]}`.
+The REPL reads the identical map from the snapshot or the durable subscription:
+
+```clojure
+(require '[afterglow.reactive :as reactive])
+@(reactive/subscribe (show/reactions runtime) [:runtime/effect-faults])
+```
+
+Gaps: Studio has no control that sets a cue's reload policy; author it in cue
+EDN or the REPL. The diagnostics summary does not print `:from-version`, which
+is present in the projected fault data. The automated check compares the REPL
+subscription with Studio's Ring `/api/state` projection
+([test](../test/tolglow/effects/state_migration_test.clj)); the rendered
+inspector has not had a browser review for this policy.
+
 ## View recent cues
 
 In **Perform**, the **Recent cues** tab puts the latest successful launch in
