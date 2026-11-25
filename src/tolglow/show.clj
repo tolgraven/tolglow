@@ -553,9 +553,10 @@
   [show-id epoch (:source transport) (:source-epoch transport)
    (:source-selection-epoch transport) @(:presentation-clock runtime)])
 
-(defn- push-gesture-end? [payload {::keys [push-session-id]}]
-  (and (= :gesture/end (:op payload)) push-session-id
-       (= {:adapter :push-2 :session-id push-session-id} (:source payload))))
+(defn- push-gesture-terminal? [payload {::keys [push-source]}]
+  (and (#{:gesture/end :gesture/cancel} (:op payload))
+       (#{:push-2 :push-3} (:adapter push-source)) (:session-id push-source)
+       (= push-source (:source payload))))
 
 (defn- push-gesture-key [{:keys [instance-id param control-id gesture-id]} {:keys [operator-id]}]
   [[:instance-param instance-id param] operator-id control-id gesture-id])
@@ -578,7 +579,7 @@
     (= :cue/cancel-launch (:op payload))
     (cue-timing/cancel-owned model (cue-clock-identity runtime model) time-ms payload command)
 
-    (push-gesture-end? payload authority)
+    (and (= :gesture/end (:op payload)) (push-gesture-terminal? payload authority))
     (let [gesture (open-push-gesture model (push-gesture-key payload authority))]
       (command model (cond-> payload gesture (assoc :last-sequence (:last-sequence gesture))) time-ms authority))
 
@@ -1787,7 +1788,7 @@
 
 (defn- enqueue-push-gesture-end! [runtime {:keys [payload authority reply expected-epoch] :as message}]
   ;; Under the owner lock, each open gesture or queued begin can reserve only
-  ;; one end. Both sources are bounded and drained in the same owner cycle.
+  ;; one end or cancel. Both sources are bounded and drained in the same owner cycle.
   (let [ends (:push-gesture-ends runtime)
         key (push-gesture-key payload authority)
         queued-begin? (fn [queued]
@@ -1849,7 +1850,7 @@
                                                        :ingress-order (vswap! (:ingress-order runtime) inc)}
                                                 (and (= :command type) authority) (assoc :authority authority)
                                                 checkpoint-request (assoc ::checkpoint-request checkpoint-request))]
-                                  (if (and (= :command type) (push-gesture-end? payload authority))
+                                  (if (and (= :command type) (push-gesture-terminal? payload authority))
                                     (do (enqueue-push-gesture-end! runtime message) true)
                                     (.offer ^LinkedBlockingQueue queue message)))))]
            (when-not accepted? (throw (ex-info "Show changed or command queue is full" {})))))
@@ -2074,17 +2075,21 @@
   "Explicit REPL connection; no devices open at application startup. kind is
   :push-2/:push-3/:push-3-midi/:seaboard/:x-touch/:midi/:osc/:sensor. Options select ports,
   expression modes and bindings; imported namespaces never acquire devices.
-  Push 2 accepts :native-display? true for the Wayang parameter display and
-  :operator-gestures? true to record held scalar encoder edits. An explicit
-  :display transport takes precedence."
+  Push 2 and Push 3 accept :operator-gestures? true to record held scalar
+  encoder edits. Set :temporary-encoder-modifier to :shift, a button CC on
+  Push 2, or a captured button ID on Push 3 to restore the value on release.
+  Temporary edits cover typed cue params on Push 2 and numeric params on Push 3.
+  Push 2 accepts :native-display? true for the Wayang parameter display.
+  An explicit :display transport takes precedence."
   [runtime kind options]
   (let [id (:session-id options) epoch (get-in @(:state runtime) [:model :epoch])]
     (when-not (and (string? id) (seq id)) (throw (ex-info "Device requires session-id" {})))
     (locking (:devices runtime)
       (when-not @(:running runtime) (throw (ex-info "Show is stopped" {})))
       (when (get @(:devices runtime) id) (throw (ex-info "Device session already connected" {:session-id id})))
-      (let [operator-id (when (and (= :push-2 kind) (true? (:operator-gestures? options)))
-                          (str "push-2/" id "/" (UUID/randomUUID)))
+      (let [push-source (when (and (#{:push-2 :push-3} kind) (true? (:operator-gestures? options)))
+                          {:adapter kind :session-id id})
+            operator-id (when push-source (str (name kind) "/" id "/" (UUID/randomUUID)))
             open! (case kind :push-2 devices/open-push-2! :push-3 devices/open-push-3!
                          :push-3-midi devices/open-push-3-midi! :seaboard devices/open-seaboard! :x-touch devices/open-x-touch!
                          :midi devices/open-midi! :osc devices/open-osc! :sensor devices/open-sensor!
@@ -2103,15 +2108,16 @@
                                           :dispatch! (fn [command]
                                                        (heartbeat! runtime id)
                                                        (let [payload (assoc command :expected-epoch epoch)
-                                                             gesture? (and operator-id (#{:gesture/begin :gesture/sample :gesture/end :gesture/cancel}
-                                                                                         (:op command)))
+                                                             gesture? (and push-source (= push-source (:source command))
+                                                                           (#{:gesture/begin :gesture/sample :gesture/end :gesture/cancel}
+                                                                            (:op command)))
                                                              quantized? (or (= :cue/cancel-launch (:op command))
                                                                             (and (= :cue/launch (:op command))
                                                                                  (contains? command :grid)))
                                                              reply (if gesture?
                                                                      (submit! runtime :command
                                                                               (update payload :command-id #(str operator-id "/" %))
-                                                                              {:operator-id operator-id ::push-session-id id})
+                                                                              {:operator-id operator-id ::push-source push-source})
                                                                      (submit! runtime payload))]
                                                          (deref reply (if quantized? 0 device-command-wait-ms)
                                                                 (cond-> {:status :pending :command-id (:command-id command)}
