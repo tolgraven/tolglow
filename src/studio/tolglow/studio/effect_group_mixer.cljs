@@ -192,14 +192,13 @@
       (for [instance instances]
         ^{:key (:instance-id instance)} [instance-row instance 0])]]))
 
-(defn panel []
+(defn- mixer-body []
   (let [{:keys [mixer overlays connected? requests] :as state} @(rf/subscribe [:effect-group-mixer/panel])
         {:keys [manual overlay instances active-overlay]} mixer
         selected (get requests :overlay)
         state (assoc state :instances-by-id (into {} (map (juxt :instance-id identity)) instances))]
-    [:section.panel.effect-group-mixer {:aria-label "Effect group mixer"}
+    [:div.effect-group-mixer-body
      [:header.effect-group-mixer-heading
-      [:h2 "Group mixer"]
       (when (some pending? (vals requests)) [:span.effect-group-mixer-pending {:role "status"} "Applying…"])
       [:label "Overlay"
        [:select {:value (or (some-> (if (pending? selected) (:value selected) active-overlay) name) "")
@@ -232,3 +231,9 @@
               (for [group overlay]
                 ^{:key (pr-str (:id group))} [group-node group state true 0])])
            [loose-members "No overlay match" (filter (comp nil? :overlay-group) instances)]])])]))
+
+(defn panel []
+  [:section.panel.effect-group-mixer {:aria-label "Effect group mixer"}
+   [:details
+    [:summary.effect-group-mixer-summary "Group mixer"]
+    [mixer-body]]])

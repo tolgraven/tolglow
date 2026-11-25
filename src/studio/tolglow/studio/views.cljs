@@ -19,6 +19,7 @@
             [tolglow.studio.events :as events]
             [tolglow.studio.keyframe-editor :as keyframes]
             [tolglow.studio.expressive-mapping :as expressive]
+            [tolglow.studio.effect-group-mixer :as effect-group-mixer]
             [tolglow.studio.fixture-library :as fixture-library]
             [tolglow.studio.fog-fields :as fog-fields]
             [tolglow.studio.rdm :as rdm]
@@ -497,6 +498,7 @@
      [:div.performance-layout {:class (when (get-in db [:ui :preview-expanded?]) "preview-expanded")}
       [:div.performance-launch [cue-grid db]]
       [:div.performance-live [section-pattern-panel db] [performance/board db parameter-control]
+       [effect-group-mixer/panel]
        [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
       [:div.performance-room [preview-panel db]]
       [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]]]))
