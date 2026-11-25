@@ -1,4 +1,4 @@
-(ns tolglow.studio.parameter-visualization
+(ns tolglow.studio.param-visualization
   "Passive visualizations of published parameter values. Geometry uses normalized
   coordinates only for display. History keeps the observed beat and components."
   (:require [clojure.string :as str]
@@ -154,18 +154,21 @@
          [:figcaption (str/join " · " (map-indexed #(compact-number schema %1 %2) (take 3 actual)))]
          [:small.parameter-domain caption]]))))
 
-(defn append-sample [previous clock values]
-  (let [{:keys [time-ms beat]} clock
-        sample {:t time-ms :beat beat :values values :source (:source clock)}
-        last-sample (peek previous)]
-    (cond
-      (not (every? widgets/finite? [time-ms beat])) previous
-      (nil? last-sample) [sample]
-      (or (not= (:source clock) (:source last-sample)) (< time-ms (:t last-sample)) (< beat (:beat last-sample))) [sample]
-      (= beat (:beat last-sample)) (if (= values (:values last-sample)) previous (conj (pop previous) sample))
-      (< (- time-ms (:t last-sample)) (max 100 (or (:sample-period-ms clock) 0))) previous
-      :else (let [samples (conj previous sample)]
-              (if (> (count samples) 256) (into [] (subvec samples 1)) samples)))))
+(defn append-sample
+  ([previous clock values]
+   (append-sample previous clock values (max 100 (or (:sample-period-ms clock) 0)) 256))
+  ([previous clock values interval-ms capacity]
+   (let [{:keys [time-ms beat]} clock
+         sample {:t time-ms :beat beat :values values :source (:source clock)}
+         last-sample (peek previous)]
+     (cond
+       (not (every? widgets/finite? [time-ms beat])) previous
+       (nil? last-sample) [sample]
+       (or (not= (:source clock) (:source last-sample)) (< time-ms (:t last-sample)) (< beat (:beat last-sample))) [sample]
+       (= beat (:beat last-sample)) (if (= values (:values last-sample)) previous (conj (pop previous) sample))
+       (< (- time-ms (:t last-sample)) interval-ms) previous
+       :else (let [samples (conj previous sample)]
+               (if (> (count samples) capacity) (into [] (subvec samples 1)) samples))))))
 
 (defn- window-samples [history start]
   (let [[earlier visible] (split-with #(< (:beat %) start) history)
@@ -177,10 +180,10 @@
         (cons {:beat start :values (mapv blend av bv)} visible))
       visible)))
 
-(defn chart-paths [history window schema]
+(defn chart-paths [history window schema & [lead]]
   (let [last-beat (:beat (peek history))
         start (when (number? last-beat) (- last-beat window))
-        values (when start (window-samples history start))
+        values (when start (window-samples history (- start (or lead 0))))
         all (mapcat :values values)]
     (when (seq all)
       (let [[low high] (or (widgets/numeric-range schema)
@@ -195,8 +198,8 @@
                           ["" false] values))]
         {:bounds [low high] :paths (mapv (comp first row) (range (apply max (map #(count (:values %)) values))))}))))
 
-(defn history-chart [schema history window]
-  (let [{:keys [bounds paths]} (chart-paths history window schema)]
+(defn history-chart [schema history window & [attach lead]]
+  (let [{:keys [bounds paths]} (chart-paths history window schema lead)]
     [:figure.parameter-history {:aria-label "Observed parameter history" :data-dmx-bits (:dmx-bits schema)}
      [:div.history-reading
       (for [[i v] (map-indexed vector (:values (peek history)))]
@@ -205,15 +208,46 @@
                      (str (get (or (:component-labels schema)
                                    (if (= :color (widgets/parameter-kind schema)) ["R" "G" "B" "A"] ["X" "Y" "Z" "W"])) i) " "))
                    (compact-number schema i v)])]
-     [:svg {:view-box "0 0 100 44" :preserve-aspect-ratio "none" :role "img"
+     [:svg {:view-box "0 0 100 44" :preserve-aspect-ratio "none" :role "img" :style {:overflow "hidden"}
             :aria-label (str "Last " window " beats")}
       (for [x [0 25 50 75 100]]
         ^{:key x} [:line.time-grid {:x1 x :x2 x :y1 0 :y2 44}])
-      (for [[i d] (map-indexed vector paths)]
-        ^{:key i} [:path {:d d :stroke (colors i) :fill "none" :stroke-width 1.6
-                          :vector-effect "non-scaling-stroke"}])]
+      [:g {:ref attach}
+       (for [[i d] (map-indexed vector paths)]
+         ^{:key i} [:path {:d d :stroke (colors i) :fill "none" :stroke-width 1.6
+                           :vector-effect "non-scaling-stroke"}])]]
      [:figcaption [:span (if bounds (domain-label schema bounds) "Awaiting samples")]
       [:span (str window " beats")]]]))
+
+(defn history-motion [observations window]
+  (when (<= 2 (count observations))
+    (let [prior (nth observations (- (count observations) 2)) last (peek observations)
+          beats (- (:beat last) (:beat prior)) elapsed (- (:t last) (:t prior))]
+      (when (and (= (:source prior) (:source last)) (< 0 beats window) (<= 1 elapsed 1000))
+        {:beats beats :duration elapsed :offset (* 100 (/ beats window))}))))
+
+(defn- scrolling-history [schema history window]
+  (r/with-let [element (atom nil) animation (atom nil) seen (atom nil)
+               attach (fn [node] (reset! element node) nil)]
+    (let [current (peek history) position [(:source current) window (:beat current)]
+          {:keys [beats duration offset]} (history-motion history window)]
+      (r/after-render
+        (fn []
+          (when-let [node @element]
+            (when (not= @seen position)
+              (when-let [active @animation] (.cancel active))
+              (let [[source prior-window prior-beat] @seen]
+                (when (and offset (= source (:source current)) (= prior-window window)
+                           (< prior-beat (:beat current))
+                           (not (.-matches (js/matchMedia "(prefers-reduced-motion: reduce)")))
+                           (fn? (aget node "animate")))
+                  (reset! animation (.animate node
+                                      #js [#js {:transform (str "translateX(" offset "px)")}
+                                           #js {:transform "translateX(0px)"}]
+                                      #js {:duration duration :easing "linear"}))))
+              (reset! seen position)))))
+      [history-chart schema history window attach beats])
+    (finally (when-let [active @animation] (.cancel active)))))
 
 (defn selected-mode [schema preference]
   (view-kind schema (if (#{:auto nil} (tag preference)) (:visualization schema) preference)))
@@ -272,8 +306,12 @@
 
 (defn- record! [this]
   (let [[_ mode schema value clock observed] (r/argv this)
-        retain (if (= mode :spatial) spatial-keyframe append-sample)]
-    (swap! observed retain clock (components schema value))))
+        values (components schema value)]
+    (if (= mode :spatial)
+      (swap! observed spatial-keyframe clock values)
+      ;; The browser already has these committed samples. The cue-pad sampling
+      ;; governor governs additional host work, including Push snapshots.
+      (swap! observed append-sample clock values 0 1024))))
 
 (def observed-visual
   (r/create-class
@@ -282,7 +320,7 @@
     :reagent-render (fn [mode schema value clock observed window]
                       (if (= mode :spatial)
                         [space schema value (spatial-value schema @observed (:time-ms clock))]
-                        [history-chart schema @observed window]))}))
+                        [scrolling-history schema @observed window]))}))
 
 (defn- visible-visual [mode schema value window]
   (r/with-let [observed (r/atom (when (= mode :history) []))]

@@ -1,5 +1,5 @@
 (ns tolglow.controllers.content-browser-display
-  "Saved-show navigation and confirmed checkpoint restore for tethered Push."
+  "Saved shows, registered library previews and checkpoint restore for tethered Push."
   (:require [afterglow.control.codecs.midi :as midi-codec]
             [afterglow.control.devices.transports :as device-transports]
             [tolglow.controllers.content-browser :as browser]
@@ -8,18 +8,24 @@
 
 (def ^:private closed {:open? false :page 0})
 
+(def ^:private next-kind {:show :effect :effect :cue :cue :show})
+
 (def ^:private source-labels (array-map :recovery "Working recovery" :named "Latest named"))
 
 (defn navigate
   "Apply a catalog action against the last presented page. A row press captures
-  its exact identity. Paging and returning from a preview preserve selection."
-  [{:keys [open? preview? page source] :as state} {:keys [page-count items] presented-page :page} action]
+  its exact identity. Paging and returning from a preview preserve selection.
+  Changing library starts at its first page."
+  [{:keys [open? preview? page source kind] :or {kind :show} :as state}
+   {:keys [page-count items] presented-page :page} action]
   (cond
     (= :toggle action) (if open? closed (assoc closed :open? true))
     (not open?) state
     (= :back action) (cond source (dissoc state :source :name)
                            preview? (dissoc state :preview?)
                            :else closed)
+    (and (= :next-kind action) (not preview?))
+    (-> state (assoc :kind (next-kind kind) :page 0) (dissoc :selected))
     (and (not preview?) (vector? action) (= :select (first action)))
     (if-let [entry (get items (second action))]
       (assoc state :page presented-page :selected (:selection entry) :preview? true)
@@ -45,16 +51,23 @@
 (defn display-view
   "Publish only display fields. Selection identities, handles and file paths
   stay on the host. A row preview reports current owner metadata."
-  [{:keys [preview?]} {:keys [items selected-key page page-count total]} preview]
-  (cond-> {:page page :page-count page-count :total total
-           :rows (mapv (fn [entry] {:name (:name entry) :selected? (= selected-key (:key entry))
-                                   :sources (mapv :label (sources entry))}) items)}
-    preview? (assoc :preview (if-let [entry (:entry preview)]
-                              {:name (:name entry) :sources (sources entry)}
-                              {:unavailable? true}))))
+  [{:keys [preview?]} {:keys [kind items selected-key page page-count total]} preview]
+  (let [registered? (#{:effect :cue} kind)]
+    (cond-> {:kind kind :page page :page-count page-count :total total
+             :rows (mapv (fn [entry]
+                           (merge {:name (:name entry) :selected? (= selected-key (:key entry))}
+                                  (if registered?
+                                    (select-keys entry [:version])
+                                    {:sources (mapv :label (sources entry))})))
+                         items)}
+      preview? (assoc :preview (if-let [entry (:entry preview)]
+                                 (if registered?
+                                   (select-keys entry [:name :version :effect-version :categories :usage])
+                                   {:name (:name entry) :sources (sources entry)})
+                                 {:unavailable? true})))))
 
 (defn- valid-action? [action]
-  (or (#{:toggle :back :previous :next :confirm} action)
+  (or (#{:toggle :back :previous :next :next-kind :confirm} action)
       (and (vector? action) (= 2 (count action)) (= :select (first action))
            (nat-int? (second action)) (< (second action) browser/page-size))
       (and (vector? action) (= 2 (count action)) (= :checkpoint (first action))
@@ -96,12 +109,15 @@
             (if-let [source (get-in presented [:entry :sources (second action)])]
               (assoc navigation :source source :name (get-in presented [:entry :name]))
               navigation)
-            (navigate navigation (:page presented) action))]
+            (navigate navigation (:page presented) action))
+          scope-changed? (not= (select-keys navigation [:open? :kind])
+                               (select-keys next-navigation [:open? :kind]))]
       (cond-> (assoc state :navigation next-navigation)
-        (not= (:open? navigation) (:open? next-navigation))
+        scope-changed?
         (assoc :catalog-generation (when (:open? next-navigation) (Object.)))
-        (not= (select-keys navigation [:open? :preview? :source])
-              (select-keys next-navigation [:open? :preview? :source]))
+        (or scope-changed?
+            (not= (select-keys navigation [:preview? :source])
+                  (select-keys next-navigation [:preview? :source])))
         (dissoc :presented :choice)))))
 
 (defn- route-button! [state addresses generation packet]
@@ -154,7 +170,7 @@
         (swap! state assoc :choice choice)))
     choice))
 
-(defn- catalog-projection! [state project! preview! confirm! source-buttons view]
+(defn- catalog-projection! [state {:keys [project! preview! confirm! source-buttons next-kind?]} view]
   (when-let [request (:request @state)] (advance-restore! state confirm! request))
   (let [{:keys [navigation midi-generation display-generation catalog-generation request choice result]} @state
         scope [midi-generation display-generation catalog-generation]]
@@ -162,9 +178,9 @@
       (not (and display-generation catalog-generation)) view
       (:pad-overlay view) (vary-meta view assoc ::presented {:scope scope :navigation navigation})
       :else
-      (let [{:keys [selected page preview? source name]} navigation
+      (let [{:keys [selected page preview? source name kind] :or {kind :show}} navigation
             projection (when (and (nil? result) (or (nil? source) (nil? choice)))
-                         (project! {:kind :show :page page :selected-key (:key selected)}))
+                         (project! {:kind kind :page page :selected-key (:key selected)}))
             preview (when (and preview? selected (nil? source))
                       (preview! {:runtime-id (:runtime-id projection) :selection selected}))
             choice (when source (or choice (read-choice! state preview! navigation (:runtime-id projection))))
@@ -173,11 +189,12 @@
                       source {:checkpoint (assoc (source-view source) :name name
                                                   :status (if request :pending (:status choice)))}
                       :else (cond-> (display-view navigation projection preview)
-                              (and (seq source-buttons) (:entry preview))
+                              next-kind? (assoc :next-kind? true)
+                              (and (= :show kind) (seq source-buttons) (:entry preview))
                               (assoc-in [:preview :load-options]
                                         (into [] (keep (fn [[kind label]]
                                                          (when (and (source-buttons kind)
-                                                                    (get-in preview [:entry :sources kind])) label)))
+                                                                  (get-in preview [:entry :sources kind])) label)))
                                               source-labels))))]
         (vary-meta (assoc view :display-mode :saved-shows
                                :saved-show-catalog catalog)
@@ -219,7 +236,9 @@
             (throw (ex-info "Restore requires checkpoint buttons, Confirm and an owner callback" {})))
         state (atom (cond-> {:navigation closed :held {}}
                       result (assoc :navigation (assoc closed :open? true) :catalog-generation (Object.) :result result)))
-        display (display! {:pre-project! (partial catalog-projection! state project! preview! confirm! source-buttons)
+        project-options {:project! project! :preview! preview! :confirm! confirm!
+                         :source-buttons source-buttons :next-kind? (contains? controls :next-kind)}
+        display (display! {:pre-project! (partial catalog-projection! state project-options)
                            :presented! (partial present! state)})]
     {:midi (assoc midi
                   :open! (fn [receive!]
@@ -244,9 +263,10 @@
                                ((:close! display) handle)))}))
 
 (defn connect-device!
-  "Connect one dedicated Push 2 or Push 3 with a saved-show display.
+  "Connect one dedicated Push 2 or Push 3 with a content library display.
   Supply :catalog-controls {action {:channel c :controller n}} using unused
-  User Mode buttons. Restore adds [:checkpoint :named], [:checkpoint :recovery]
+  User Mode buttons. Optional :next-kind cycles saved shows, effects and cues.
+  Restore adds [:checkpoint :named], [:checkpoint :recovery]
   (one or both), and :confirm. Supply :display-options for the browser and
   :catalog-saves as the trusted descriptor vector used by content-browser-host."
   [runtime kind {:keys [midi transport catalog-controls catalog-saves display-options] :as options}]

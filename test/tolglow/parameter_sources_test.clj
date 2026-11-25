@@ -84,6 +84,38 @@
     (is (every? #(nil? (:cycle %)) (mapcat (comp vals :plans) results)))
     (is (= [to from] (mapv #(get-in % [:overrides "0:1" :level]) results)))))
 
+(def triangle (assoc saw :waveform :triangle :phase-reference :transport :phase 0))
+
+(deftest triangle-cycle-replays-only-proven-discrete-values
+  (let [effect (assoc-in fixture/all-types [:params :binary] {:type :integer :default 0 :bounds [0 1]})
+        endpoints {:binary [0 1] :gate [false true] :shape [:sine :square]
+                   :level [0.0 1.0] :steps [1 4] :color [[0 0 0] [1 1 1]]}
+        bound (reduce-kv (fn [m k [low high]] (bind-to m k (assoc triangle :from low :to high)))
+                         (fixture/model effect) endpoints)
+        points (concat [(- Double/MAX_VALUE) (- Double/MIN_VALUE) -0.0 0 1/4 1/2 3/4 1
+                        0.25M (float 0.75) Double/MAX_VALUE]
+                       (mapcat (fn [phase] [(Math/nextDown (double phase)) phase (Math/nextUp (double phase))])
+                               [-1.0 -0.75 -0.25 0.0 0.25 0.75 1.0 1.25 1.75]))
+        sample (fn [model]
+                 (rest (reductions (fn [prior beat]
+                                     (sources/sample model {:time-ms 0 :beat beat} (:plans prior)))
+                                   {} points)))
+        actual (vec (sample bound))
+        direct (with-redefs-fn {#'sources/triangle-cycle (constantly nil)} #(vec (sample bound)))
+        observations (fn [results] (mapv #(dissoc % :plans) results))
+        captured (fn [result] (frequencies (map :cycle (vals (:plans result)))))
+        binary (fn [i] (get-in actual [i :overrides "0:1" :binary]))]
+    (is (= {:triangle 3 nil 3} (captured (first actual))))
+    (is (= (observations direct) (observations actual)))
+    (is (= [0 1 1 1 0] (mapv binary [3 4 5 6 7])))
+    (is (every? #(instance? Long (get-in % [:overrides "0:1" :binary])) actual))
+    (let [new-waveform (assoc (get-in (signals/new-registry) [:waveforms :triangle]) :version 2
+                              :expression {:op :const :value 0.1})
+          replaced (assoc bound :waveforms (signals/publish (signals/new-registry) new-waveform))
+          next (sources/sample replaced (fixture/frame 1/2) (:plans (first actual)))]
+      (is (= {nil 6} (captured next)))
+      (is (zero? (get-in next [:overrides "0:1" :binary]))))))
+
 (deftest phase-reference-aligns-separate-launches-on-the-shared-clock
   (let [old (assoc (fixture/instance "0:1" fixture/effect) :started-at-beat 5/2)
         recent (assoc (fixture/instance "0:2" fixture/effect) :started-at-beat 17/4

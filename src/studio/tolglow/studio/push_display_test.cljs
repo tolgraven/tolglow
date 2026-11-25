@@ -42,6 +42,19 @@
     (is (= "saved-shows" (:display-mode normalized)))
     (is (not (contains? (:saved-show-catalog normalized) :confirmation)))))
 
+(deftest registered-preview-retains-only-display-metadata
+  (let [catalog {:kind "cue" :next-kind? true
+                 :rows [{:name "Amber" :version 5 :selected? true :selection {:key [:cue :amber]}}]
+                 :preview {:name "Amber" :version 5 :effect-version 3 :effect-id :amber
+                           :categories (concat [{:internal :discard}] (repeat 8 "emission"))
+                           :usage {:page-count 1 :running-count 0 :internal :discard}}}
+        normalized (:saved-show-catalog (display/normalize-view {:saved-show-catalog catalog}))]
+    (is (= {:kind "cue" :next-kind? true
+            :rows [{:name "Amber" :version 5 :selected? true}]
+            :preview {:name "Amber" :version 5 :effect-version 3 :sources []
+                      :categories (vec (repeat 6 "emission")) :usage {:page-count 1 :running-count 0}}}
+           normalized))))
+
 (deftest web-and-push-widgets-render-the-shared-color-record
   (let [v (color/rgba 1 0 0 0.5)]
     (is (= [1 0 0 0.5] (widgets/color-components v)))
@@ -64,6 +77,15 @@
     (is (= 8 (count (:active-effects view))))
     (is (nil? (display/bank-label {:index 0 :count 1 :total 8 :offset 0}))))
   (is (nil? (display/bank-label nil))))
+
+(deftest beat-ratio-overlay-retains-exact-display-labels
+  (let [cell {:position [1 6] :label "4/3" :selected? true}
+        normalized (:pad-overlay (display/normalize-view
+                                   {:pad-overlay {:layout "beat-ratios" :param "period" :current-ratio "4/3"
+                                                  :cells (repeat 20 (assoc cell :value (/ 4 3)))}}))]
+    (is (= {:layout "beat-ratios" :param "period" :current-ratio "4/3"}
+           (dissoc normalized :cells)))
+    (is (= (vec (repeat 16 cell)) (:cells normalized)))))
 
 (deftest explicit-audio-mode-keeps-the-actual-capture-projection
   (let [waveform {:bins [{:min -0.5 :max 0.4 :rms 0.2 :bands {:low 0.8}}] :sample-end 512}

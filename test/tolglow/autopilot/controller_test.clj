@@ -209,6 +209,16 @@
     (is (near? 0.45 (level 0.04)))
     (is (near? 0.5 (level 0.06)))))
 
+(deftest a-glowing-source-can-be-lit-without-counting-as-active
+  (let [in (-> (inputs 0 [] 0.43 0.0)
+               (assoc :sources [{:id :quiet :level 1e-12 :capacity 1/3}
+                                {:id :bright :level 1/2 :capacity 2M}])
+               (assoc-in [:targets :brightness] 1.0))
+        out (control/advance nil in)]
+    (is (= #{:bright} (get-in out [:state :active])))
+    (is (= [:quiet :bright] (get-in out [:actions 0 :lit-fixture-ids])))
+    (is (near? (/ (+ (* 2e-12 1/3) 2.0) (+ 1/3 2.0)) (get-in out [:report :estimated-brightness])))))
+
 (deftest calibrated-allocation-preserves-seeded-show-playback
   (let [sources (mapv (fn [id level capacity] {:id id :level level :capacity capacity})
                       [:a :b :c :d :e] [1.0 0.75 0.5 0.9 0.1] [1.0 2.0 1.0 4.0 0.5])

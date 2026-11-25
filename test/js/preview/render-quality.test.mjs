@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {SceneRenderer} from '../../../js/preview/scene-renderer.js';
-import {TIERS, rasterSizes, sceneSamples, supportedSamples, configureDisplayRange} from '../../../js/preview/render-quality.js';
+import {TIERS, rasterBudget, rasterSizes, sceneSamples, supportedSamples, configureDisplayRange} from '../../../js/preview/render-quality.js';
 
 test('present at panel DPR up to UHD regardless of the current fog and scene budget', () => {
   const size = (w, h, dpr, tier, scale = 1) => rasterSizes(w, h, dpr, TIERS[tier], scale, 16384);
@@ -23,6 +23,19 @@ test('multisample count requires common FP16/depth support and bounded intermedi
   assert.equal(sceneSamples('low', 512, 256, 4), 0);
   gl.getInternalformatParameter = () => [];
   assert.equal(supportedSamples(gl), 0);
+});
+
+test('hardware Auto keeps the Mobile raster when reducing the fog and shadow tier', () => {
+  const engine = {qualityChoice: 'auto', quality: 'mobile', options: TIERS.mobile, targetHz: 60, draws: 10,
+    visible: true, renderScale: .5, scaleChangedAt: 0,
+    applyTier(next) {this.quality = next; this.options = TIERS[next];}};
+  for (let i = 0; i < 8; i++) SceneRenderer.prototype.measureLoad.call(engine, 28, 2000 + i);
+  assert.equal(engine.quality, 'low');
+  assert.equal(engine.renderScale, .5);
+  const budget = rasterBudget(engine.quality, engine.qualityChoice, false);
+  assert.deepEqual(rasterSizes(1817, 1092, 1.8, budget, engine.renderScale, 16384).scene, [790, 475]);
+  assert.equal(rasterBudget('low', 'low', false), TIERS.low);
+  assert.equal(rasterBudget('low', 'auto', true), TIERS.low);
 });
 
 test('HDR requires observed float storage and extended compositor mode', () => {

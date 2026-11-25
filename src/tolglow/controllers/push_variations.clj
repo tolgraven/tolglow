@@ -1,6 +1,106 @@
 (ns tolglow.controllers.push-variations
   "Push interaction for the common cue parameter variation projection."
-  (:require [tolglow.authoring.variation-control :as variations]))
+  (:require [tolglow.authoring.cue-variations :as ratios]
+            [tolglow.authoring.variation-control :as variations]))
+
+(def ^:private ratio-grid
+  (for [[y values] [[7 [1/8 1/6 1/4 1/3 3/8 1/2 2/3 3/4]]
+                    [6 [1 4/3 3/2 2 3 4 6 8]]]
+        [x value] (map-indexed vector values)]
+    {:position [x y] :value value}))
+
+(defn- ratio-basis [model instance-id param]
+  (let [{:keys [cue-id phase definition params effect-version]} (get-in model [:instances instance-id])
+        cue (get-in model [:registry :cues cue-id])
+        schema (get-in definition [:params param])
+        current (get params param)
+        mode (get-in model [:extensions variations/state-key cue-id :ratio-mode] :preferred)]
+    (when (and (= :running phase) cue (number? current) (ratios/ratio-schema? schema))
+      {:instance-id instance-id :param param :cue-id cue-id :cue-version (:version cue)
+       :cue-name (or (:name cue) (name cue-id)) :effect-version effect-version
+       :schema schema :current current :mode mode})))
+
+(defn- spread [choices limit]
+  (let [size (count choices)]
+    (cond
+      (>= limit size) choices
+      (= 1 limit) [(nth choices (quot size 2))]
+      :else (mapv #(nth choices (quot (* % (dec size)) (dec limit))) (range limit)))))
+
+(defn- free-ratios [schema current]
+  (cond-> (ratios/beat-ratio-choices schema current :free)
+    (ratios/valid-beat-ratio? schema (:default schema) :free) (conj (:default schema))))
+
+(defn- free-pad-choices [captured schema current]
+  (let [fixed (filterv #(and (= [1 6] (:position %))
+                             (ratios/valid-beat-ratio? schema (:value %) :free)) captured)
+        fixed-positions (into #{} (map :position) fixed)
+        fixed-values (into #{} (map :value) fixed)
+        remaining (into [] (comp (map :position) (remove fixed-positions)) captured)
+        selected (cond-> [] (and (seq remaining) (not (fixed-values current))
+                                  (ratios/valid-beat-ratio? schema current :free)) (conj current))
+        limit (- (count remaining) (count selected))
+        values (if (pos? limit)
+                 (let [excluded (into fixed-values selected)
+                       candidates (into [] (comp (remove excluded) (distinct))
+                                        (free-ratios schema current))
+                       {common true additional false} (group-by #(ratios/valid-beat-ratio? schema % :preferred) candidates)
+                       extra (spread (vec (sort additional)) limit)]
+                   (into (into selected extra) (spread (vec (sort common)) (- limit (count extra)))))
+                 selected)
+        choices (into fixed (map (fn [position value] {:position position :value value}) remaining values))]
+    ;; A sole captured pad can offer a change even when the current value is allowed.
+    (if (and (= 1 (count captured)) (= current (:value (first choices))))
+      (if-let [different (first (remove #{current} (free-ratios schema current)))]
+        (assoc-in choices [0 :value] different)
+        choices)
+      choices)))
+
+(defn- ratio-pad-choices [{:keys [schema current mode]} positions]
+  (let [captured (filterv #(positions (:position %)) ratio-grid)]
+    (if (= :free mode)
+      (free-pad-choices captured schema current)
+      (filterv #(ratios/valid-beat-ratio? schema (:value %) mode) captured))))
+
+(defn- ratio-projection [{:keys [instance-id param positions] :as selection} model prior]
+  (when-let [{:keys [schema current mode cue-name] :as basis} (ratio-basis model instance-id param)]
+    (let [key [selection basis]]
+      (if (= key (:cache-key prior))
+        prior
+        (let [choices (ratio-pad-choices basis positions)]
+          (when (seq choices)
+            {:cache-key key :view (assoc selection :cells choices :basis basis)
+             :display {:layout :beat-ratios :param param :title (str cue-name " · " (or (:name schema) (name param)))
+                       :ratio-mode mode :current-ratio (str current)
+                       :cells (mapv (fn [{:keys [position value]}]
+                                      {:position position :label (str value) :selected? (= current value)})
+                                    choices)}}))))))
+
+(defn- open-ratio-encoder [model instance-id param positions]
+  (let [selection {:layout :beat-ratios :instance-id instance-id :param param :positions (set positions)}]
+    (when (ratio-projection selection model nil) selection)))
+
+(defn- ratio-input [selection position presented model]
+  (let [{:keys [instance-id param basis positions]} presented
+        {:keys [value] :as choice} (some #(when (= position (:position %)) %) (:cells presented))]
+    {:state selection
+     :encoder-sample? true
+     :sample-context {::ratio-pad {:basis basis :positions positions :choice choice}}
+     ;; A pad can replace a decimal approximation with an exact ratio.
+     :commands (when (and value (not= value (:current basis))
+                          (= basis (ratio-basis model instance-id param)))
+                 [{:op :cue-variation/ratio-set :instance-id instance-id :param param
+                   :value value
+                   :numerator (if (ratio? value) (numerator value) value)
+                   :denominator (if (ratio? value) (denominator value) 1)}])}))
+
+(defn admissible-ratio-pad-sample?
+  "Recheck the presented pad against the show owner's current ratio state."
+  [model {:keys [instance-id param sample-context value]}]
+  (let [{:keys [basis positions choice]} (::ratio-pad sample-context)
+        current (ratio-basis model instance-id param)]
+    (and current (= basis current) (set? positions) (some? value) (= value (:value choice))
+         (some #{choice} (ratio-pad-choices current positions)))))
 
 (defn- projection [selection model prior]
   (let [{:keys [instance-id]} selection
@@ -71,4 +171,13 @@
 
 (def pad-overlay {:input push-2-input :project projection})
 
-(def push-3-pad-overlay {:input input :project projection})
+(def push-3-pad-overlay
+  {:open-encoder open-ratio-encoder
+   :input (fn [selection event model context]
+            (if (= :beat-ratios (:layout selection))
+              (ratio-input selection (:position event) (:presented context) model)
+              (input selection event model context)))
+   :project (fn [selection model prior]
+              (if (= :beat-ratios (:layout selection))
+                (ratio-projection selection model prior)
+                (projection selection model prior)))})

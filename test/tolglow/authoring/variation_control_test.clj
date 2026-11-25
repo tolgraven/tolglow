@@ -1,5 +1,6 @@
 (ns tolglow.authoring.variation-control-test
   (:require [afterglow.control.codecs.push-2 :as codec]
+            [afterglow.control.display :as presentation]
             [afterglow.control.devices.push-3.display :as push-3-display]
             [afterglow.control.devices.session :as session]
             [clojure.test :refer [deftest is testing]]
@@ -369,6 +370,237 @@
           (is (= period (:period (current))))
           (encoder! 60 [0xb0 57 0])
           (encoder! 70 [0xb0 49 0]))
+        (is (empty? (:errors (session/snapshot device)))))
+      (finally (show/stop! runtime)))))
+
+(defn- ratio-pad-session [runtime mode pads options]
+  (let [callback (atom nil) surface (atom nil)
+        captured {:session-id "push3-encoder-chooser" :user-mode? true :schedule! nil :expression-mode mode
+                  :cue-variation-pads? true
+                  :layout {:pads (update-vals pads #(hash-map :channel 3 :note %))
+                           :encoder-touches {:period {:channel 2 :note 9} :level {:channel 2 :note 10}}
+                           :encoders {:period {:channel 2 :controller 19} :level {:channel 2 :controller 20}}
+                           :buttons {:cycle {:channel 4 :controller 28}}}
+                  :encoder-bindings {:period {:param :period} :level {:param :level}}
+                  :button-bindings {:cycle :variation/cycle}
+                  :display {:device :push-3 :input :view :presentation-receipts? true
+                            :open! (constantly :capture) :render! (fn [_ view] (reset! surface view))
+                            :close! (fn [_])}
+                  :midi {:open! #(do (reset! callback %) :capture) :close! (fn [_])
+                         :send! (fn [_ _] (throw (ex-info "Unexpected Push 3 MIDI output" {})))}}
+        device (show/connect-device! runtime :push-3 (merge captured options))
+        receive! #(@callback %)
+        packet! #(while-ticking runtime (fn [] (receive! %)))
+        overlay #(:pad-overlay @surface)]
+    {:device device :receive! receive! :packet! packet! :view #(deref surface)
+     :press! #(packet! [0x93 % 100]) :lift! #(packet! [0x83 % 0])
+     :present! #(presentation/presented! @surface) :overlay overlay
+     :cell (fn [position] (some #(when (= position (:position %)) %) (:cells (overlay))))}))
+
+(defn- exercise-ratio-pads [mode]
+  (let [runtime (show/create-runtime {:model (fixture-model) :workspace-options nil})]
+    (try
+      (let [{id :instance-id} (submit! runtime {:op :cue/launch :cue-id :ember})
+            {:keys [device packet! press! lift! present! overlay cell]}
+            (ratio-pad-session runtime mode {[0 7] 13 [1 6] 14 [3 7] 15 [0 6] 16} {})
+            instance #(get-in (model runtime) [:instances id])
+            param #(get-in (instance) [:params %])
+            history #(get-in (model runtime) [:control :edit-history])]
+        (packet! [0x92 9 127])
+        (is (= :beat-ratios (:layout (overlay))))
+        (is (= {:position [1 6] :label "4/3" :selected? false} (cell [1 6])))
+        (is (nil? (cell [0 7])))
+        (is (true? (:selected? (cell [0 6]))))
+        (press! 14)
+        (present!)
+        (press! 14)
+        (is (= 1 (param :period)))
+        (lift! 14)
+        (packet! [0x92 10 127])
+        (let [level (param :level)]
+          (packet! [0xb2 20 1])
+          (is (> (param :level) level)))
+        (packet! [0x82 10 0])
+        (is (= :beat-ratios (:layout (overlay))))
+        (press! 13)
+        (lift! 13)
+        (is (= 1 (param :period)))
+        (present!)
+        (press! 14)
+        (is (= 4/3 (param :period)))
+        (is (= "4/3" (:current-ratio (overlay))))
+        (is (true? (:selected? (cell [1 6]))))
+        (is (= #{id} (set (keys (:instances (model runtime))))))
+        (let [expected (:value (variations/edit-parameter (model runtime) (instance) :period 1 {:mode :relative}))]
+          (packet! [0xb2 19 1])
+          (is (= expected (param :period)))
+          (is (not= 4/3 expected)))
+        (packet! [0x82 9 0])
+        (is (nil? (overlay)))
+        (present!)
+        (lift! 14)
+        (is (empty? (:open (history))))
+        (let [last-change (get-in (history) [:nodes (:cursor (history))])]
+          (is (= [:instance-param id :period] (:target last-change)))
+          (is (= 1 (:before last-change)))
+          (is (= (param :period) (:after last-change))))
+        (doseq [[approximate exact position note] [[0.3333333333333333 1/3 [3 7] 15]
+                                                   [1.0 1 [0 6] 16]]]
+          (is (= :accepted (:status (submit! runtime {:op :param/set :instance-id id
+                                                      :param :period :value approximate}))))
+          (is (= approximate (param :period)))
+          (packet! [0x92 9 127])
+          (is (false? (:selected? (cell position))))
+          (present!)
+          (press! note)
+          (is (= exact (param :period)))
+          (is (= (str exact) (:current-ratio (overlay))))
+          (is (true? (:selected? (cell position))))
+          (lift! note)
+          (packet! [0x82 9 0])
+          (present!))
+        (is (empty? (:errors (session/snapshot device)))))
+      (finally (show/stop! runtime)))))
+
+(deftest push-3-ratio-pads-share-the-encoder-gesture-and-exact-owner-value
+  (doseq [mode [:poly-aftertouch :mono-aftertouch]]
+    (testing (name mode)
+      (exercise-ratio-pads mode))))
+
+(deftest push-3-free-ratios-include-the-current-value-at-a-bounded-grid-position
+  (let [runtime (show/create-runtime {:model (fixture-model) :workspace-options nil})]
+    (try
+      (let [{id :instance-id} (submit! runtime {:op :cue/launch :cue-id :ember})
+            {:keys [packet! overlay cell]} (ratio-pad-session runtime :poly-aftertouch
+                                             {[0 6] 16 [1 6] 14} {})]
+        (is (= :accepted (:status (submit! runtime {:op :cue-variation/ratio-mode :instance-id id :mode :free}))))
+        (is (= :accepted (:status (submit! runtime {:op :cue-variation/ratio-set :instance-id id
+                                                    :param :period :numerator 5 :denominator 11}))))
+        (packet! [0x92 9 127])
+        (is (= :free (:ratio-mode (overlay))))
+        (is (= "4/3" (:label (cell [1 6]))))
+        (is (= "5/11" (:label (cell [0 6]))))
+        (is (= "5/11" (:current-ratio (overlay))))
+        (is (= ["5/11"] (mapv :label (filter :selected? (:cells (overlay))))))
+        (is (= 2 (count (:cells (overlay)))))
+        (packet! [0x82 9 0]))
+      (finally (show/stop! runtime)))))
+
+(deftest push-3-free-mode-reserves-the-only-captured-pad-for-an-actionable-ratio
+  (doseq [[position current] [[[0 6] 1/3] [[1 6] 4/3]]]
+    (let [runtime (show/create-runtime {:model (fixture-model) :workspace-options nil})]
+      (try
+        (let [{id :instance-id} (submit! runtime {:op :cue/launch :cue-id :ember})
+              {:keys [packet! press! lift! present! overlay cell]}
+              (ratio-pad-session runtime :poly-aftertouch {position 14} {})
+              period #(get-in (model runtime) [:instances id :params :period])]
+          (is (= :accepted (:status (submit! runtime {:op :cue-variation/ratio-mode :instance-id id :mode :free}))))
+          (is (= :accepted (:status (submit! runtime {:op :param/set :instance-id id :param :period :value current}))))
+          (packet! [0x92 9 127])
+          (is (= :free (:ratio-mode (overlay))))
+          (let [{:keys [label selected?]} (cell position)]
+            (is (string? label))
+            (is (false? selected?))
+            (present!)
+            (press! 14)
+            (is (not= current (period)))
+            (is (= label (str (period)))))
+          (lift! 14)
+          (packet! [0x82 9 0]))
+        (finally (show/stop! runtime))))))
+
+(deftest push-3-ratio-chooser-names-its-cue-through-a-scheduled-selection-change
+  (let [runtime (show/create-runtime {:model (fixture-model) :workspace-options nil})]
+    (try
+      (let [{ember :instance-id} (submit! runtime {:op :cue/launch :cue-id :ember})
+            {:keys [device receive! packet! press! lift! present! view overlay]}
+            (ratio-pad-session runtime :poly-aftertouch {[1 0] 13 [1 6] 14} {:launch-grid {:beats 1}})]
+        (show/tick! runtime 100)
+        (receive! [0x93 13 100])
+        (show/tick! runtime 100)
+        (let [pending (:pending-cue-launches (show/snapshot runtime))]
+          (is (= [:merlot] (mapv :cue-id pending))))
+        (packet! [0x92 9 127])
+        (is (= "Ember · period" (:title (overlay))))
+        (show/tick! runtime 510)
+        (session/refresh! device)
+        (is (= :merlot (get-in (view) [:cue :id])))
+        (is (= "Ember · period" (:title (overlay))))
+        (present!)
+        (press! 14)
+        (is (= 4/3 (get-in (model runtime) [:instances ember :params :period])))
+        (is (= #{:ember :merlot} (set (map :cue-id (vals (:instances (model runtime)))))))
+        (lift! 14)
+        (packet! [0x82 9 0])
+        (is (nil? (overlay)))
+        (lift! 13)
+        (is (empty? (:errors (session/snapshot device)))))
+      (finally (show/stop! runtime)))))
+
+(defn- queue-captured-pad! [runtime receive! note]
+  (let [before @(:ingress-order runtime)
+        result (future (receive! [0x93 note 100]))
+        deadline (+ (System/nanoTime) 3000000000)]
+    (try
+      (loop []
+        (when (= before @(:ingress-order runtime))
+          (when (> (System/nanoTime) deadline)
+            (throw (ex-info "Captured pad did not enqueue its sample" {})))
+          (Thread/sleep 2)
+          (recur)))
+      (show/tick! runtime 0)
+      (when (= ::timeout (deref result 6000 ::timeout))
+        (throw (ex-info "Captured sample did not receive an owner receipt" {})))
+      (finally (future-cancel result)))))
+
+(deftest push-3-free-only-schema-and-stale-queued-pad-samples
+  (let [schema {:type :number :default 5/4 :bounds [1 2] :semantic/type :beat-ratio
+                :ratio-components {:numerator [5 5] :denominator [4 4]}}
+        configured (assoc-in (fixture-model) [:registry :effects :ember :params :period] schema)
+        runtime (show/create-runtime {:model configured :workspace-options nil})]
+    (try
+      (let [{id :instance-id} (submit! runtime {:op :cue/launch :cue-id :ember})
+            {:keys [device receive! packet! press! lift! present! overlay cell]}
+            (ratio-pad-session runtime :mono-aftertouch {[1 6] 14} {})
+            period #(get-in (model runtime) [:instances id :params :period])
+            set-mode {:op :cue-variation/ratio-mode :instance-id id}
+            write-approximation {:op :param/set :instance-id id :param :period :value 1.25}
+            touch! #(packet! [0x92 9 127])
+            release! #(do (packet! [0x82 9 0]) (present!))]
+        (touch!)
+        (is (nil? (overlay)))
+        (release!)
+        (is (= :accepted (:status (submit! runtime (assoc set-mode :mode :free)))))
+        (is (= :accepted (:status (submit! runtime write-approximation))))
+        (touch!)
+        (is (= [{:position [1 6] :label "5/4" :selected? false}] (:cells (overlay))))
+        (present!)
+        (press! 14)
+        (is (= 5/4 (period)))
+        (is (true? (:selected? (cell [1 6]))))
+        (lift! 14)
+        (release!)
+        (doseq [earlier [(assoc set-mode :mode :preferred) {:op :cue/delete :cue-id :ember}]]
+          (is (= :accepted (:status (submit! runtime write-approximation))))
+          (is (= :accepted (:status (submit! runtime (assoc set-mode :mode :free)))))
+          (touch!)
+          (is (= :free (:ratio-mode (overlay))))
+          (present!)
+          (let [prior (show/submit! runtime earlier)]
+            (is (not (realized? prior)))
+            (queue-captured-pad! runtime receive! 14)
+            (is (= :accepted (:status @prior))))
+          (is (= :stale-ratio-pad (get-in (session/snapshot device) [:last-ack :code])))
+          (is (= 1.25 (period)))
+          (is (nil? (overlay)))
+          (lift! 14)
+          (release!)
+          (is (empty? (get-in (model runtime) [:control :edit-history :open]))))
+        (let [forged (submit! runtime {:op :gesture/sample :instance-id id :param :period :value 5/4
+                                       :source {:adapter :push-3 :session-id "push3-encoder-chooser"}
+                                       :sample-context {}})]
+          (is (= :operator-required (:code forged)))
+          (is (= 1.25 (period))))
         (is (empty? (:errors (session/snapshot device)))))
       (finally (show/stop! runtime)))))
 

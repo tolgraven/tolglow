@@ -1,3 +1,10 @@
+// Advance the intended cadence, not callback jitter. Skip missed deadlines
+// without a catch-up burst; early display callbacks retain the same phase.
+export function nextDisplayDeadline(deadline, time, interval) {
+  return deadline == null ? time + interval
+    : deadline + Math.max(1, Math.floor((time - deadline) / interval) + 1) * interval;
+}
+
 // One outstanding wakeup per renderer. Use the display's timestamp on both
 // Window and dedicated Worker, with timer pacing where worker RAF is absent.
 export class DisplayClock {
@@ -10,11 +17,11 @@ export class DisplayClock {
     if (this.timerId != null) this.cancelTimer(this.timerId);
     this.rafId = this.timerId = null; this.pending = false;
   }
-  at(deadline, draw) {
+  at(deadline, draw, tolerance = .5) {
     this.cancel(); this.pending = true;
     const tick = timestamp => {
       this.rafId = this.timerId = null;
-      if (timestamp + .5 < deadline) {schedule(); return;}
+      if (timestamp + tolerance < deadline) {schedule(); return;}
       this.pending = false; draw(timestamp);
     };
     const schedule = () => {
@@ -65,11 +72,14 @@ export class DisplayRefresh {
       this.raf = this.host.requestAnimationFrame(this.tick);
       return;
     }
-    // A missed callback doubles a refresh interval. The faster quartile is
-    // insensitive to occasional misses and represents an attainable cadence.
+    // Normalize missed refreshes using the faster quartile, then take the
+    // median. Individual callback timestamps jitter; their fastest quartile
+    // alone can mislabel a 60 Hz panel as 62 Hz.
     if (this.gaps.length >= 8) {
       this.gaps.sort((a, b) => a - b);
-      const rate = Math.round(1000 / this.gaps[Math.floor(this.gaps.length / 4)]);
+      const period = this.gaps[Math.floor(this.gaps.length / 4)];
+      const normalized = this.gaps.map(gap => gap / Math.max(1, Math.round(gap / period))).sort((a, b) => a - b);
+      const rate = Math.round(1000 / normalized[Math.floor(normalized.length / 2)]);
       if (this.hz == null || Math.abs(this.hz - rate) >= 2) {
         this.hz = rate;
         this.changed(rate);

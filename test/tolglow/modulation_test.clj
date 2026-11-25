@@ -158,6 +158,37 @@
         owner (assoc (instance "0:2" definition) :order 1 :priority 4)]
     (-> show (assoc-in [:registry :effects :modulator] definition) (assoc-in [:instances "0:2"] owner))))
 
+(deftest mixed-instance-priorities-advance-without-cue-controllers
+  (let [show (-> (model)
+                 (assoc-in [:instances "0:1" :priority] 0.25M)
+                 (assoc-in [:instances "0:2"] (assoc (instance "0:2" effect) :order 1 :priority 1/3)))
+        result (modulation/advance nil show (frame 0))]
+    (is (empty? (get-in result [:state :controllers])))
+    (is (= {} (:overrides result)))))
+
+(deftest mixed-cue-controller-priorities-order-sampling-and-projections
+  (let [owner (fn [id effect-id order priority value]
+                (assoc (instance id {:id effect-id :version 1 :params {}
+                                     :modulation {:priority priority :params [:level]
+                                                  :ranges {:level [value value]}}})
+                       :order order))
+        first-id [:cue "0:2"]
+        second-id [:cue "0:3"]]
+    (doseq [[first-priority second-priority expected-ids expected-value]
+            [[1/3 0.333333333333333333M [second-id first-id] 0.8]
+             [1/2 0.5M [first-id second-id] 0.2]]]
+      (let [show (-> (model)
+                     (assoc-in [:instances "0:2"]
+                               (assoc (owner "0:2" :first-modulator 1 first-priority 0.8)
+                                      :render-priority 99 :render-order 0))
+                     (assoc-in [:instances "0:3"] (owner "0:3" :second-modulator 2 second-priority 0.2)))
+            result (modulation/advance nil show (frame 0))
+            captured (assoc show :modulation (:state result))
+            sources (get-in (modulation/source-index captured (:diagnostics result)) ["0:1" :level])]
+        (is (= expected-ids (mapv :controller-id (:events result)) (mapv :controller-id sources)))
+        (is (= expected-value (level result)))
+        (is (= (:overrides result) (modulation/captured-overrides captured)))))))
+
 (deftest launchable-cues-reconcile-and-stop-at-the-exact-musical-duration-boundary
   (let [show (with-owner (model) {:params [:level] :ranges {:level [0.7 0.7]} :every {:beats 1/4}})
         show (-> show (assoc-in [:instances "0:2" :duration] {:beats 1/2})

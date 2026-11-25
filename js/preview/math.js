@@ -63,5 +63,14 @@ export function beamAngle(fixture, output = {}) {
   return radians(full / 2);
 }
 export function structuralKey(rig) {
-  return JSON.stringify({room: rig?.room, surfaces: rig?.surfaces, reflections: (rig?.fixtures || []).filter(f => f['pseudo-fixture']).length, fixtures: (rig?.fixtures || []).map(f => ({id: f.id, type: f['fixture-type'], aperture: f['lens-radius-m']})), trusses: (rig?.trusses || []).map(t => ({id: t.id, length: t.length}))});
+  const fixtures = rig?.fixtures || [];
+  return JSON.stringify({
+    room: rig?.room, surfaces: rig?.surfaces,
+    reflections: fixtures.filter(f => f['pseudo-fixture']).length,
+    fixtures: fixtures.map(f => ({
+      id: f.id, type: f['fixture-type'], aperture: f['lens-radius-m'],
+      diffuser: f['diffuser-radius-m'] && [f['diffuser-radius-m'], f['pixel-layout-id'], f['pixel-index'], f.position]
+    })),
+    trusses: (rig?.trusses || []).map(t => ({id: t.id, length: t.length}))
+  });
 }

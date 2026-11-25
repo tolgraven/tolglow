@@ -194,13 +194,17 @@
         draft (get-in @(rf/subscribe [::form]) [:drafts [scope location]])
         saved (get-in settings location)
         controls (merge {:limit 1.0 :strategy :proportional :standby-level 0.0 :standby-mode :shed} saved draft)
+        limit (:limit controls)
         edit #(edit! scope location %1 %2)]
     [:section.output-policy {:aria-label "Light output budget" :data-location (pr-str location)}
      [:header [:h3 "Output budget"] [toggle scope "Enable budgets" (:enabled? settings) disabled?]]
      [budget-reading location]
      [:fieldset {:disabled disabled?}
       [:div.policy-grid
-       [percent-input "Emitter power budget" (:limit controls) #(edit :limit %)]
+       (if (map? limit)
+         [:div.scene-target [:span "Emitter power budget"]
+          [:output (str (events/wire-id (:cue-id limit)) " · " (events/wire-id (:param limit)))]]
+         [percent-input "Emitter power budget" limit #(edit :limit %)])
        [:label "Maximum active sources"
         [:input {:type "number" :min 0 :step 1 :input-mode "numeric"
                  :placeholder "Unlimited" :value (or (:max-active controls) "")
