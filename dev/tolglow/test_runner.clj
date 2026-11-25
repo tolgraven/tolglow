@@ -6,7 +6,8 @@
     tolglow.clock-test tolglow.observations-test tolglow.system-controls-test tolglow.aim-paths-test tolglow.studio.aim-paths-host-test
     tolglow.studio.http-transit-test tolglow.transit-test tolglow.studio.state-stream-test tolglow.studio.debug-stream-test
     tolglow.compiler-test tolglow.block-bindings-test tolglow.material-library-test tolglow.material-inputs-test
-    tolglow.effects.material-design-test tolglow.effects.variable-edit-test tolglow.compiler.batch-test tolglow.predictive-keyframes-test
+    tolglow.effects.material-design-test tolglow.effects.variable-edit-test tolglow.effects.group-channels-test
+    tolglow.effects.group-channels-host-test tolglow.compiler.batch-test tolglow.predictive-keyframes-test
     tolglow.perf.effect-samples-test
     tolglow.spatial.actions-test tolglow.spatial-cues-test tolglow.spatial-host-test tolglow.authoring.output-patch-test
     tolglow.authoring.cue-variations-test tolglow.authoring.variation-control-test

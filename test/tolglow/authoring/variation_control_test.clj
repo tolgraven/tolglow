@@ -1,13 +1,17 @@
 (ns tolglow.authoring.variation-control-test
   (:require [afterglow.control.codecs.push-2 :as codec]
+            [afterglow.control.devices.push-3.display :as push-3-display]
             [afterglow.control.devices.session :as session]
             [clojure.test :refer [deftest is testing]]
             [tolglow.authoring.variation-control :as variations]
             [tolglow.demo :as demo]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
+            [tolglow.studio.display :as display]
             [tolglow.transit :as transit])
-  (:import [java.io ByteArrayInputStream]))
+  (:import [java.awt.image BufferedImage]
+           [java.io ByteArrayInputStream]
+           [java.util.concurrent LinkedBlockingQueue TimeUnit]))
 
 (defn- fixture-model []
   (-> (demo/model)
@@ -26,15 +30,17 @@
     (show/tick! runtime 0)
     @reply))
 
-(defn- while-ticking [runtime f]
-  (let [operation (future (f))
-        deadline (+ (System/nanoTime) (long 6000000000))]
-    (try
-      (loop []
-        (cond (realized? operation) @operation
-              (> (System/nanoTime) deadline) (throw (ex-info "Owner command did not settle" {}))
-              :else (do (show/tick! runtime 0) (Thread/sleep 2) (recur))))
-      (finally (future-cancel operation)))))
+(defn- while-ticking
+  ([runtime f] (while-ticking runtime 0 f))
+  ([runtime time f]
+   (let [operation (future (f))
+         deadline (+ (System/nanoTime) (long 6000000000))]
+     (try
+       (loop []
+         (cond (realized? operation) @operation
+               (> (System/nanoTime) deadline) (throw (ex-info "Owner command did not settle" {}))
+               :else (do (show/tick! runtime time) (Thread/sleep 2) (recur))))
+       (finally (future-cancel operation))))))
 
 (defn- post [runtime handler uri payload]
   (let [response (while-ticking runtime
@@ -197,6 +203,173 @@
                 (is (= position (select-keys (history) [:cursor :position :nodes])))
                 (is (empty? (:open (history))))))
             (is (empty? (:errors (session/snapshot device)))))))
+      (finally (show/stop! runtime)))))
+
+(deftest push-3-encoder-uses-the-same-exact-ratio-editor
+  (let [runtime (show/create-runtime {:model (fixture-model) :workspace-options nil})
+        receive (atom nil)
+        options {:session-id "push3-ratio-capture" :user-mode? true :expression-mode :poly-aftertouch
+                 :cue-variations? true :schedule! nil
+                 :layout {:encoder-touches {:period {:channel 2 :note 9}}
+                          :encoders {:period {:channel 2 :controller 19}}}
+                 :encoder-bindings {:period {:param :period}}
+                 :display {:device :push-3 :input :view :open! (constantly :capture-display)
+                           :render! (fn [_ _]) :close! (fn [_])}
+                 :midi {:open! (fn [callback] (reset! receive callback) :capture)
+                        :send! (fn [_ _] (throw (ex-info "Unexpected Push 3 MIDI output" {})))
+                        :close! (fn [_])}}]
+    (try
+      (let [{id :instance-id} (submit! runtime {:op :cue/launch :cue-id :ember})
+            free-mode {:op :cue-variation/ratio-mode :instance-id id :mode :free}
+            set-ratio {:op :cue-variation/ratio-set :instance-id id :param :period :numerator 5 :denominator 11}
+            _ (is (= :accepted (:status (submit! runtime free-mode))))
+            _ (is (= :accepted (:status (submit! runtime set-ratio))))
+            device (show/connect-device! runtime :push-3 options)
+            current #(get-in (model runtime) [:instances id])
+            ratio #(get-in (current) [:params :period])
+            expected (:value (variations/edit-parameter (model runtime) (current) :period 1 {:mode :relative}))
+            input! (fn [time bytes]
+                       (while-ticking runtime time #(@receive bytes))
+                       (show/tick! runtime time))]
+        (is (= id (get-in (session/snapshot device) [:local :selected-instance])))
+        (is (= 5/11 (ratio)))
+        (is (and (ratio? expected) (not= 5/11 expected)))
+        (input! 20 [0xb2 19 1])
+        (is (= expected (ratio)))
+        (let [reply (show/submit! runtime set-ratio)]
+          (show/tick! runtime 30)
+          (is (= :accepted (:status @reply))))
+        (input! 40 [0xb0 49 127])
+        (input! 50 [0xb0 57 127])
+        (input! 60 [0x92 9 127])
+        (input! 70 [0xb2 19 1])
+        (is (= expected (ratio)))
+        (input! 80 [0xb0 57 0])
+        (input! 90 [0x82 9 0])
+        (is (= 5/11 (ratio)))
+        (input! 100 [0xb0 49 0])
+        (is (empty? (get-in (model runtime) [:control :edit-history :open])))
+        (is (empty? (:errors (session/snapshot device)))))
+      (finally (show/stop! runtime)))))
+
+(deftest push-3-pad-selection-waits-for-transfer-and-compares-the-presented-owner-basis
+  (let [runtime (show/create-runtime {:model (fixture-model) :workspace-options nil})
+        receive (atom nil)
+        transfer (atom nil)
+        staged (LinkedBlockingQueue.)
+        image (BufferedImage. 960 160 BufferedImage/TYPE_INT_RGB)
+        sink (push-3-display/sink {:backend {:open! (constantly :captured)
+                                            :write! (fn [_ _]) :close! (fn [_])}
+                                  :schedule! #(do (reset! transfer %) (fn []))})
+        screen (assoc (display/transport
+                        {:presentation-receipts? true :max-fps 60
+                         :capture {:open! (constantly :capture) :capture! (fn [_ view] view) :close! (fn [_])}
+                         :sink (assoc sink :render-with-receipt!
+                                           (fn [handle view receipt]
+                                             ((:render-with-receipt! sink) handle image receipt)
+                                             (.add staged
+                                                   (if-let [overlay (:pad-overlay view)]
+                                                     (assoc overlay :captured-level
+                                                            (some #(when (= :level (:param %)) (:value %))
+                                                                  (:parameters view)))
+                                                     {}))))})
+                      :device :push-3 :input :view)
+        options {:session-id "push3-variation-capture" :user-mode? true :expression-mode :poly-aftertouch
+                 :cue-variation-pads? true :schedule! nil :display screen
+                 :layout {:pads {[0 0] {:channel 3 :note 12} [0 1] {:channel 3 :note 13}}
+                          :encoder-touches {:period {:channel 2 :note 9}}
+                          :encoders {:period {:channel 2 :controller 19}}
+                          :buttons {:cycle {:channel 4 :controller 28} :record {:channel 4 :controller 29}
+                                    :ratio {:channel 4 :controller 30}}}
+                 :encoder-bindings {:period {:param :period}}
+                 :button-bindings {:cycle :variation/cycle :record :variation/record
+                                   :ratio :variation/ratio-mode}
+                 :midi {:open! #(do (reset! receive %) :captured)
+                        :send! (fn [_ _] (throw (ex-info "Unexpected Push 3 MIDI output" {})))
+                        :close! (fn [_])}}
+        next-frame! (fn [expected?]
+                      (loop [attempt 0]
+                        (let [frame (.poll staged 2 TimeUnit/SECONDS)]
+                          (cond
+                            (and frame (expected? frame)) frame
+                            (or (nil? frame) (= 15 attempt))
+                            (throw (ex-info "Expected captured display projection" {:frame frame}))
+                            :else (recur (inc attempt))))))]
+    (try
+      (let [{id :instance-id} (submit! runtime {:op :cue/launch :cue-id :ember})
+            device (show/connect-device! runtime :push-3 options)
+            current #(get-in (model runtime) [:instances id :params])
+            projection (fn [layout] (show/cue-variation-preview runtime {:instance-id id :layout layout}))
+            before (current)
+            packet! #(while-ticking runtime (fn [] (@receive %)))
+            cc! (fn [button value] (packet! [0xb4 button value]))
+            button! (fn [button] (cc! button 127) (cc! button 0))
+            pad! (fn [note] (packet! [0x93 note 100]) (packet! [0x93 note 0]))
+            saved? #(some (fn [cell] (= :saved (:kind cell))) (:cells %))]
+        (next-frame! empty?)
+        (button! 28)
+        (let [full (next-frame! #(= :full (:layout %)))]
+          (is (= [[0 1]] (mapv :position (:cells full)))))
+        (pad! 13)
+        (is (= before (current)))
+        (@transfer)
+        (cc! 29 127)
+        (button! 28)
+        (cc! 29 0)
+        (let [frame (next-frame! saved?)]
+          (is (= [[:saved [0 0]] [:generated [0 1]]]
+                 (mapv (juxt :kind :position) (:cells frame)))))
+        (@transfer)
+        (is (= :accepted (:status (submit! runtime {:op :param/set :instance-id id
+                                                   :param :level :value 0.77}))))
+        (packet! [0x93 13 100])
+        (is (= :stale-variation (get-in (session/snapshot device) [:last-ack :code])))
+        (is (= 0.77 (:level (current))))
+        (next-frame! #(and (saved? %) (= 0.77 (:captured-level %))))
+        (@transfer)
+        (packet! [0x93 13 100])
+        (is (= 0.77 (:level (current))) "A rejected pad remains overlay-owned until lift")
+        (packet! [0x93 13 0])
+        (let [choice (some #(when (= [0 1] (:position %)) %) (:cells (projection :full)))]
+          (pad! 13)
+          (is (= (:params choice) (select-keys (current) (keys (:params choice))))))
+        (next-frame! #(and (saved? %) (= (:level (current)) (:captured-level %))))
+        (@transfer)
+        (pad! 12)
+        (is (= before (current)))
+        (button! 28)
+        (let [rows (next-frame! #(= :rows (:layout %)))]
+          (is (= :period (get-in rows [:rows 0 :param]))))
+        (button! 30)
+        (is (= :preferred (:ratio-mode (projection :rows))))
+        (@transfer)
+        (button! 30)
+        (is (= :free (:ratio-mode (projection :rows))))
+        (next-frame! #(= :free (:ratio-mode %)))
+        (@transfer)
+        (is (= :accepted (:status (submit! runtime {:op :param/set :instance-id id
+                                                   :param :level :value 0.61}))))
+        (session/refresh! device)
+        (next-frame! #(and (saved? %) (= 0.61 (:captured-level %))))
+        (@transfer)
+        (cc! 29 127)
+        (pad! 12)
+        (cc! 29 0)
+        (is (= :accepted (get-in (session/snapshot device) [:last-ack :status])))
+        (let [saved (filter #(= :saved (:kind %)) (:cells (projection :rows)))]
+          (is (= [0.61] (mapv #(get-in % [:params :level]) saved))))
+        (let [period (:period (current))
+              encoder! (fn [time bytes] (while-ticking runtime time #(@receive bytes)) (show/tick! runtime time))]
+          (encoder! 10 [0xb0 49 127])
+          (encoder! 20 [0xb0 57 127])
+          (encoder! 30 [0x92 9 127])
+          (encoder! 40 [0xb2 19 1])
+          (is (and (ratio? (:period (current))) (not= period (:period (current)))))
+          (encoder! 50 [0x82 9 0])
+          (is (= period (:period (current))))
+          (encoder! 60 [0xb0 57 0])
+          (encoder! 70 [0xb0 49 0]))
+        (is (empty? (:errors (session/snapshot device)))))
       (finally (show/stop! runtime)))))
 
 (deftest exact-ratios-and-banked-states-survive-the-owned-save-restore

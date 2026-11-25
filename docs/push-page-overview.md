@@ -31,6 +31,30 @@ touch strip step through exact ratios for bounded beat-ratio parameters,
 independent of Shift fine tuning. Studio's **Cue variations** panel under a
 running cue's Detail controls also accepts numerator and denominator directly.
 
+### Push 3 User Mode
+
+For encoders alone, set `:cue-variations? true` on the connection and bind a
+captured encoder to the beat-ratio parameter. Hold Accent before touching
+the encoder to try a ratio and restore its previous value when you lift.
+
+With a [tethered Push 3 display](push-display-packaging.md#tethered-push-3), use
+Poly or Mono Aftertouch and add `:cue-variation-pads? true` to the connection
+options. Set `:presentation-receipts? true` in the browser display options.
+Map the following actions under `:button-bindings` to the IDs of dedicated
+buttons in your captured `:layout`.
+
+| Action | Control |
+| --- | --- |
+| `:variation/cycle` | Cycle full states, parameter rows and regular cues. |
+| `:variation/record` | Hold while pressing Cycle to append, or while pressing a saved pad to overwrite. |
+| `:variation/ratio-mode` | Toggle Preferred and Free. |
+| `:variation/previous-page`, `:variation/next-page` | Move through extra parameter rows. |
+
+The screen marks the captured pad positions and distinguishes generated
+choices from saved states. Choose a pad once the corresponding frame arrives.
+A cue pad held before entering the overlay keeps its release binding. This
+route was exercised with injected MIDI and USB transfers.
+
 ```clojure
 (let [options {:instance-id instance-id :layout :full :seed 0}
       preview (show/cue-variation-preview runtime options)

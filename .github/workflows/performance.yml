@@ -96,7 +96,7 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: ${{ inputs.afterglow_ref || matrix.companion == 'upstream' && 'master' || '811ee88f0d2ac4143ab495ca0d1449601acb857d' }}
+          ref: ${{ inputs.afterglow_ref || matrix.companion == 'upstream' && 'master' || '8b0e005fbf8035476bd9c6aedba30c4d90b8bc8c' }}
           path: afterglow
       - name: Resolve optional Afterglow baseline once
         if: inputs.compare_afterglow_ref != ''
