@@ -1,6 +1,7 @@
 (ns tolglow.studio.cue-variations
   "Studio controls for the shared running-cue variation grid and saved row."
   (:require [clojure.string :as str]
+            [cognitect.transit :as wire]
             [re-frame.core :as rf]
             [tolglow.studio.events :as events]
             [tolglow.studio.parameter-widgets :as widgets]
@@ -60,9 +61,11 @@
         {:dispatch [::load instance-id layout row-page]}))))
 
 (defn- value-text [value]
-  (if (transit/fraction? value)
-    (str (:numerator value) "/" (:denominator value))
-    (widgets/value-label {} value)))
+  (cond
+    (transit/fraction? value) (str (:numerator value) "/" (:denominator value))
+    (or (wire/bigint? value) (wire/bigdec? value)) (aget value "rep")
+    (wire/integer? value) (str value)
+    :else (widgets/value-label {} value)))
 
 (defn- choice-label [{:keys [param value params]}]
   (if param (value-text value)
@@ -71,7 +74,7 @@
 
 (defn- ratio-entry [{:keys [param value]} pending? commit!]
   (let [[numerator denominator] (cond (transit/fraction? value) [(:numerator value) (:denominator value)]
-                                      (and (integer? value) (pos? value)) [value 1])
+                                      (or (wire/bigint? value) (wire/integer? value)) [(value-text value) 1])
         submit! (fn [event]
                   (.preventDefault event)
                   (let [fields (js/FormData. (.-currentTarget event))
