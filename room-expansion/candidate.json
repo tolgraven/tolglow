@@ -1,0 +1,168 @@
+{
+  "studio": "f9d9c933e3997c6763b40ae80fa4ddf65c8bee4369559ad23fb112b39726577f",
+  "customStudio": true,
+  "snapshots": [
+    {
+      "view": [
+        1024,
+        660
+      ],
+      "before": {
+        "top": 389.0538330078125,
+        "bottom": 669.0538330078125,
+        "area": 265628.14208984375,
+        "canvas": [
+          948.6719360351562,
+          280
+        ],
+        "viewport": [
+          1138,
+          733
+        ],
+        "scrollY": 2785,
+        "expanded": false,
+        "layout": "\"launch\" \"live\" \"room\" \"tools\""
+      },
+      "after": {
+        "top": 256.83160400390625,
+        "bottom": 733.498291015625,
+        "area": 451727.5941083692,
+        "canvas": [
+          948.6719360351562,
+          476.66668701171875
+        ],
+        "viewport": [
+          1138,
+          733
+        ],
+        "scrollY": 2917.222412109375,
+        "expanded": true,
+        "layout": "\"launch\" \"live\" \"room\" \"tools\""
+      },
+      "compacted": {
+        "top": 256.83160400390625,
+        "bottom": 536.8316040039062,
+        "area": 265628.14208984375,
+        "canvas": [
+          948.6719360351562,
+          280
+        ],
+        "viewport": [
+          1138,
+          733
+        ],
+        "scrollY": 2917.222412109375,
+        "expanded": false,
+        "layout": "\"launch\" \"live\" \"room\" \"tools\""
+      }
+    },
+    {
+      "view": [
+        1180,
+        730
+      ],
+      "before": {
+        "top": 471.2500305175781,
+        "bottom": 721.2500457763672,
+        "area": 102222.23524305597,
+        "canvas": [
+          408.888916015625,
+          250.00001525878906
+        ],
+        "viewport": [
+          1311,
+          811
+        ],
+        "scrollY": 0,
+        "expanded": false,
+        "layout": "\"launch live\" \"room live\" \"tools live\""
+      },
+      "after": {
+        "top": 284.09722900390625,
+        "bottom": 811.3194580078125,
+        "area": 591187.6747826114,
+        "canvas": [
+          1122.0052490234375,
+          527.2222290039062
+        ],
+        "viewport": [
+          1311,
+          811
+        ],
+        "scrollY": 2572.222412109375,
+        "expanded": true,
+        "layout": "\"launch live\" \"room room\" \"tools tools\""
+      },
+      "compacted": {
+        "top": 0.1388888955116272,
+        "bottom": 250.1389041543007,
+        "area": 102222.23524305597,
+        "canvas": [
+          408.888916015625,
+          250.00001525878906
+        ],
+        "viewport": [
+          1311,
+          811
+        ],
+        "scrollY": 471.1111145019531,
+        "expanded": false,
+        "layout": "\"launch live\" \"room live\" \"tools live\""
+      }
+    },
+    {
+      "view": [
+        1440,
+        900
+      ],
+      "before": {
+        "top": 474.24481201171875,
+        "bottom": 724.2448272705078,
+        "area": 117936.21020118427,
+        "canvas": [
+          471.74481201171875,
+          250.00001525878906
+        ],
+        "viewport": [
+          1600,
+          1000
+        ],
+        "scrollY": 0,
+        "expanded": false,
+        "layout": "\"launch live\" \"room live\" \"tools live\""
+      },
+      "after": {
+        "top": 350.2083435058594,
+        "bottom": 1000.2084045410156,
+        "area": 916787.2566386499,
+        "canvas": [
+          1410.8941650390625,
+          650.0000610351562
+        ],
+        "viewport": [
+          1600,
+          1000
+        ],
+        "scrollY": 2506.111083984375,
+        "expanded": true,
+        "layout": "\"launch live\" \"room room\" \"tools tools\""
+      },
+      "compacted": {
+        "top": -0.1996527910232544,
+        "bottom": 249.8003624677658,
+        "area": 117842.02503281538,
+        "canvas": [
+          471.74481201171875,
+          250.00001525878906
+        ],
+        "viewport": [
+          1600,
+          1000
+        ],
+        "scrollY": 474.4444580078125,
+        "expanded": false,
+        "layout": "\"launch live\" \"room live\" \"tools live\""
+      }
+    }
+  ]
+}
