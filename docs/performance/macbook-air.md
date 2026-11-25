@@ -33,6 +33,23 @@ The independent shader computed an RGB value and focus for each of 20,000 vertic
 
 For the eight-head show used in the room preview, a separate run started the production show scheduler and timestamped its in-memory output. With Ember and Slow sweep active it delivered 40.08 publications/s. Median render work was 1.57 ms, p95 was 2.89 ms and the slowest measured render took 5.92 ms. There were zero recorded errors and zero gaps of 50 ms or more. This run measured the eight-head rig under the local JVM wrapper. The 20,000-pixel rig above still needs an equivalent live delivery measurement.
 
+### JVM pauses with the moving mixed stage
+
+The mixed-stage show drove the 40 Hz scheduler and a local two-universe ArtDMX capture sink. A separate hidden Chrome target replayed the committed moving show in two interleaved phases at a 790 × 475 scene raster and 3271 × 1966 output. Each collector used JDK 27 with a 1 GiB heap, one reported JVM processor, and identical phase lengths. The table covers the central 9.5 seconds of each of five 12-second phases. The maximum JVM pause covers the full recording. [Mixed-stage reproduction](https://github.com/tolgraven/tolglow/issues/555)
+
+| Collector | Captured output cadence | Longest gap | Skipped slots between sends | Longest recorded GC pause |
+| --- | ---: | ---: | ---: | ---: |
+| G1, JVM default | 39.79–39.90 Hz | 56.21 ms | 6 | 45.18 ms |
+| ZGC | 39.998–40.001 Hz | 29.06 ms | 0 | 0.014 ms |
+
+All six G1 gaps longer than 37.5 ms overlapped a recorded garbage collection pause. ZGC eliminated those long gaps in this run, while one moving phase still used a source frame 25 ms old at the p95. The capture measures the JVM sender on Airie. Physical-network timing, the compiled Mac app, and visible Studio frame delivery have separate acceptance checks.
+
+The measured collector can be selected for a supported JDK on the normal JVM launch path.
+
+```sh
+JDK_JAVA_OPTIONS=-XX:+UseZGC lein trampoline run
+```
+
 ## Studio room on the Air
 
 The browser workload used eight visible, emitting moving heads with the Ember and Slow sweep cues. Each sample lasted 20 seconds after an eight-second warmup. The counter records frames accepted by the visible canvas. The window, camera and 2,806 × 1,260 backing buffer stayed the same. The hardware renderer was ANGLE Metal on Apple M4 and the browser supplied approximately 60 animation callbacks per second. Its GPU timer was unavailable, so the recorded wait for GPU completion also includes time waiting to resume the browser worker.
