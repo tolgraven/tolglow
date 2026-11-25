@@ -277,7 +277,7 @@ function densityTexture(field) {
 export class VolumetricFog {
   constructor(renderer, { quality = 'desktop' } = {}) {
     if (!FOG_QUALITY[quality]) throw new Error('Unknown fog quality');
-    this.renderer = renderer; this.quality = quality; this.budget = FOG_QUALITY[quality]; this.disposed = false;
+    this.renderer = renderer; this.quality = quality; this.budget = {...FOG_QUALITY[quality], ...(globalThis.ROOM_X?.fog || {})}; this.disposed = false;
     this.field = new FogField({ grid: this.budget.grid }); this.field.burst(); this.amount = 0.5;
     this.density = densityTexture(this.field);
     this.packed = this.density.image.data;
@@ -339,8 +339,9 @@ export class VolumetricFog {
     this.density.needsUpdate = true; this.uploads++;
   }
   setQuality(quality) {
-    const budget = FOG_QUALITY[quality];
+    let budget = FOG_QUALITY[quality];
     if (!budget) throw new Error('Unknown fog quality');
+    budget = {...budget, ...(globalThis.ROOM_X?.fog || {})};
     if (this.disposed || this.quality === quality) return;
     const field = new FogField({grid: budget.grid});
     field.copyFrom(this.field);

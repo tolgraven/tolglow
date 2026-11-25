@@ -39,6 +39,7 @@ function updateRigPose(root, spec) {
 }
 
 function invalidateShadows(spots, reflectedLights = []) {
+  if (globalThis.ROOM_X?.freezeShadows && spots.every(light => !light.castShadow || light.shadow.map)) return;
   for (const light of spots) if (light.castShadow) light.shadow.needsUpdate = true;
   for (const light of reflectedLights) if (light.castShadow) light.shadow.needsUpdate = true;
 }
@@ -135,7 +136,7 @@ export class SceneRenderer {
     this.glass = new GlassPass(this); this.composer.addPass(this.glass);
     this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), .28, .4, 1.1); this.composer.addPass(this.bloom);
     this.outputPass = displayTransform(); this.composer.addPass(this.outputPass);
-    this.edges = new EdgePass(); this.composer.addPass(this.edges);
+    this.edges = new EdgePass(); this.composer.addPass(this.edges); this.edges.enabled = !globalThis.ROOM_X?.noFxaa;
     this.film = new FilmPass(); this.composer.addPass(this.film); this.setFilm(this.filmSettings);
     this.rebuild({room: {width: 12, height: 5, depth: 10}, fixtures: [], trusses: []});
     this.resize();
@@ -283,7 +284,7 @@ export class SceneRenderer {
       const distance = Math.max(...this.room) * 2.5 + optics.apexDistance;
       const near = optics.apexDistance + .006;
       const target = axis.fromArray(direction).add(optics.virtual);
-      if (light.castShadow && (light.angle !== angle || light.distance !== distance || light.shadow.camera.near !== near ||
+      if (light.castShadow && !(globalThis.ROOM_X?.freezeShadows && light.shadow.map) && (light.angle !== angle || light.distance !== distance || light.shadow.camera.near !== near ||
           !light.position.equals(optics.virtual) || !light.target.position.equals(target))) light.shadow.needsUpdate = true;
       light.color.setRGB(...rgb); light.intensity = 145 * brightness; light.angle = angle;
       light.penumbra = clamp(.72 - (Number(resolved.focus) || 0) * .52, .2, .8);
@@ -359,7 +360,7 @@ export class SceneRenderer {
         light.position.copy(entry.root.position); light.shadow.mapSize.set(this.options.shadowSize, this.options.shadowSize);
         light.shadow.camera.near = .06; light.shadow.camera.far = light.distance;
         light.shadow.bias = -.00008; light.shadow.normalBias = .012;
-        light.castShadow = index < this.options.shadows;
+        light.castShadow = index < (globalThis.ROOM_X?.shadows ?? this.options.shadows);
         light.shadow.autoUpdate = false; light.shadow.needsUpdate = true;
         this.spots.push(light); this.lightIds.push(entry.id);
         this.content.add(light, light.target); entry.light = light;
@@ -519,7 +520,8 @@ export class SceneRenderer {
     this.fog.setAmbient?.({color: ambient, intensity: 1, groundColor: ambient.clone().multiplyScalar(.5)});
     this.fog.update(simulate ? dt : 0, this.lightEntries || []);
     this.reflections.illuminate(this.fog.field, this.fogAmount, this.fog.extinctionPerM);
-    this.renderer.setRenderTarget(this.sceneTarget); this.renderer.clear(); this.renderer.render(this.scene, this.camera);
+    this.renderer.setRenderTarget(this.sceneTarget); this.renderer.clear();
+    if (!globalThis.ROOM_X?.skipScene || this.draws < 3) this.renderer.render(this.scene, this.camera);
     this.renderedShadows = this.fixtures.filter(entry => entry.light?.castShadow && entry.light.shadow.map).length;
     // Glass reads an immutable HDR source while drawing into the composer.
     // When there is no glass, write fog directly into the composer input.

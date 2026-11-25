@@ -36,6 +36,7 @@ export function supportedSamples(gl) {
 }
 
 export function sceneSamples(quality, width, height, samples) {
+  if (globalThis.ROOM_X?.msaa != null) return Math.min(samples, globalThis.ROOM_X.msaa);
   // Bound multisample colour + depth memory at large resolutions. The image
   // AA pass still resolves silhouettes in the fully composited picture.
   return quality === 'low' || width * height * samples > 16000000 ? 0 : samples;
