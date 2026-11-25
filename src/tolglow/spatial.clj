@@ -12,6 +12,7 @@
             [tolglow.rig.surfaces :as surfaces]
             [tolglow.spatial.actions :as actions]
             [tolglow.spatial.cues :as cues]
+            [tolglow.spatial.sampling :as sampling]
             [tolglow.spatial.targets :as targets]))
 
 (def state-path [:extensions ::world])
@@ -192,7 +193,11 @@
         (assoc view :linked-overrides (reduce-kv retain (:overrides view {}) fields)))
       view)))
 
-(defn advance [model before now graph command]
+(defn advance
+  "Advance the show's volumes for one frame. The optional field sampler from
+  tolglow.spatial.sampling splits a large patch across its workers and returns
+  the fields of the serial path."
+  [model before now graph command & [sampler]]
   (let [original (get-in model [:settings :spatial])
         old-cache (:spatial-cache before)
         active (cues/volumes (assoc model :time-ms now) (linked-controls model before) (:settings old-cache))
@@ -230,10 +235,19 @@
             result (physics/advance prior scene clock rig contacts)
             observations (delay (optical-observations before model))
             optical-sample (delay (optical-sampler rig (:frame @observations) active))
+            split? (sampling/parallel? sampler (count fixtures))
+            kept (let [cached (:slices old-cache)]
+                   (when (and cached (identical? rig (:rig cached)) (= (:partitions sampler) (:parts cached)))
+                     cached))
+            slices (delay (or kept (sampling/partition-rig fixtures rig (:partitions sampler))))
+            split-optical (delay (mapv #(optical-sampler (:rig %) (:frame @observations) active)
+                                       (:optical @slices)))
             sample (fn [volume]
-                     (if (optical-volume? volume)
-                       (@optical-sample volume)
-                       (field/positions volume rig)))
+                     (cond
+                       (and split? (:sliced? @slices))
+                       (sampling/sample sampler @slices volume (when (optical-volume? volume) @split-optical))
+                       (optical-volume? volume) (@optical-sample volume)
+                       :else (field/positions volume rig)))
             fields (when (seq active) (cues/frame-fields (assoc model :time-ms now) active result sample))
             events (into (:events result) (volume-errors model fields now))
             view (cond-> (assoc (select-keys result [:members :signals :dropped-ms]) :events events)
@@ -244,7 +258,8 @@
         {:model (actions/apply-frame model result (:bindings s {}) now command)
          :fields fields
          :cache (cond-> {:fixtures fixtures :rig rig :settings s :dynamic? dynamic? :scene scene}
-                  (realized? observations) (assoc :optics (:cache @observations)))
+                  (realized? observations) (assoc :optics (:cache @observations))
+                  (or kept (realized? slices)) (assoc :slices @slices))
          :observe-hdr? (boolean (some #(= :hdr (:shape %)) (vals (:volumes s))))}))))
 
 (defn on-contact
