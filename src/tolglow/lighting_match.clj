@@ -17,22 +17,33 @@
                    :let [emitters (into {} (keep (fn [k] (when-let [[weight] (photometry/emitter-spectrum k)]
                                                           [k weight]))) (keys (:channels f)))]]
                [id {:maximum (/ maximum reference) :emitters emitters
-                    :response (reduce + 0.0 (vals emitters)) :extract-white? (= :extract-min (:rgbw-policy f))}]))))
+                    :response (reduce + 0.0 (vals emitters)) :extract-white? (= :extract-min (:rgbw-policy f))
+                    :color-correction (:color-correction f)}]))))
 
 (defn- blend-value [old value mode]
   (if (or (nil? old) (nil? mode) (= :replace mode)) value
     (let [f (if (= :max mode) max (fn [a b] (min 1.0 (+ a b))))]
       (if (vector? value) (mapv f old value) (f old value)))))
 
-(defn- chroma-maximum [{:keys [maximum emitters response extract-white?]} rows]
+(defn- chroma-maximum [{:keys [maximum emitters response extract-white? color-correction]} rows]
   (if (empty? emitters) maximum
     (let [values (reduce (fn [m {:keys [attribute value blend]}]
                            (assoc m attribute (blend-value (get m attribute) value blend))) {} rows)
           [r g b] (:color values [0.0 0.0 0.0])
           white (if extract-white? (min r g b) 0.0)
           levels (merge {:red (- r white) :green (- g white) :blue (- b white) :white white} values)
+          ;; Extracted white can reduce all individual emitter peaks even when
+          ;; the virtual RGB color is already at the edge of its allowed range.
           peak (reduce-kv (fn [a k w] (if (pos? w) (max a (get levels k 0.0)) a)) 0.0 emitters)
-          light (reduce-kv (fn [a k w] (+ a (* w (get levels k 0.0)))) 0.0 emitters)]
+          peak (if (and extract-white? (:color values)
+                        (some (fn [[k w]] (and (pos? w) (not (contains? values k)) (pos? (get levels k 0.0))))
+                              emitters))
+                 (max peak r g b) peak)
+          light (reduce-kv (fn [a k w]
+                             (let [level (get levels k 0.0)
+                                   level (if (and color-correction (not (contains? values k)))
+                                           (photometry/corrected-level color-correction k level) level)]
+                               (+ a (* w level)))) 0.0 emitters)]
       (if (pos? peak) (* maximum (/ light (* response peak))) 0.0))))
 
 (defn match-rows [fixture target rows]

@@ -20,7 +20,9 @@
 
 (deftest relative-photometry-uses-real-publisher-and-releases-the-rig
   (let [now (atom 0) capture (atom nil)
-        model (-> (demo/model) (assoc :rig rig)
+        calibrated-rig (-> rig (assoc-in [:fixtures 0 :color-correction] {:red 0.6 :white 0.7})
+                           (assoc-in [:fixtures 1 :color-correction] {:green 0.5}))
+        model (-> (demo/model) (assoc :rig calibrated-rig)
                   (assoc-in [:registry :fixtures :beam] {:id :beam :version 1 :name "Beam"}))
         rt (show/create-runtime {:model model :independent-output? true :physical-now-ms #(deref now)
                                  :sink {:send! (fn [out _] (reset! capture (get out 1)))}})
@@ -56,6 +58,8 @@
       (let [m (:model @(:state rt))]
         (is (nil? (photo/current m)))
         (is (= [1.0 2.0 2.0] (mapv :measured-relative-brightness (get-in m [:rig :fixtures]))))
+        (is (= (mapv :color-correction (:fixtures calibrated-rig))
+               (mapv :color-correction (get-in m [:rig :fixtures]))))
         (is (= 2 (get-in m [:registry :fixtures :beam :version])))
         (is (= 2.0 (get-in m [:registry :versions [:fixtures :beam 2] :measured-relative-brightness]))))
       (is (= :accepted (:status (issue start))))
