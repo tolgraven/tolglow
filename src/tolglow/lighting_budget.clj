@@ -9,6 +9,7 @@
             [tolglow.lighting-capacity :as capacity]))
 
 (def defaults allocation/defaults)
+
 (def settings allocation/settings)
 
 (defn enabled? [model] (true? (get-in model [:settings :lighting-budget :enabled?])))

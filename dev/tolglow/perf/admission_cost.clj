@@ -11,6 +11,7 @@
   (:import [java.lang.management ManagementFactory ThreadMXBean]))
 
 (def ^:private candidates [:wash :steer])
+
 (defn- op [kind & args] {:op kind :args (vec args)})
 
 (defn- scene [fixtures pixels aim]

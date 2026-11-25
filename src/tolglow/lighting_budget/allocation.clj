@@ -3,10 +3,13 @@
   (:require [tolglow.autopilot.signal :as signal]))
 
 (def scope-defaults {:limit 1.0 :standby-level 0.0 :standby-mode :shed :max-active nil :strategy :proportional :fixture-order []})
+
 (def defaults {:enabled? false :unrated-watts 1.0 :groups {} :global nil})
 
 (defn- finite? [x] (and (number? x) (Double/isFinite (double x))))
+
 (defn- unit? [x] (and (finite? x) (<= 0 x 1)))
+
 (defn- limit? [x]
   (or (unit? x)
       (and (map? x) (:cue-id x) (unit? (:default x)) (signal/valid? x))))

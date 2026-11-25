@@ -8,18 +8,23 @@
   (let [secrets (atom {})]
     {:put! (fn [secret] (let [id (str "credential-" (java.util.UUID/randomUUID))] (swap! secrets assoc id secret) id))
      :get! #(get @secrets %) :delete! #(swap! secrets dissoc %) :saved secrets}))
+
 (def config {:version 1 :timeout-ms 500 :channels [{:id :pitch :input :pitch}]
              :bindings [{:id :level :channel :pitch :command {:op :param/set :instance-id "0:1" :param :level}
                          :schema {:type :number :default 0 :bounds [0 1]}}]})
+
 (defn show [] (control/new-show))
+
 (defn fixture [& [options]]
   (let [clock (atom 0) store (vault) manager (service/create-manager (merge {:credential-store store :now-ms #(deref clock)} options))
         pair (service/pair! manager "phone" "Conducting phone")
         model (:model (service/configure (show) "phone" config (:pairing pair)))]
     {:clock clock :store store :manager manager :pair pair :model model}))
+
 (defn packet [pair sequence time pitch & [session]]
   {:version 1 :device-id "phone" :session-id (or session "session1") :sample-id sequence :time-ms time
    :pairing-token (:pairing-token pair) :values {:pitch pitch} :gestures []})
+
 (defn advance [manager model time beat]
   (service/advance! manager model {:time-ms time :beat beat :meter {:beats-per-bar 4 :bars-per-phrase 4}}))
 

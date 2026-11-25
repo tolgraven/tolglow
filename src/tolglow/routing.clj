@@ -9,17 +9,24 @@
             [tolglow.integrations.patch :as patch]))
 
 (def max-ports 128)
+
 (def max-pending 1024)
+
 (def max-diagnostics 64)
+
 (def audio-keys [:rms :peak :kick-rms :audio/energy :low-rms :mid-rms :high-rms :bass-pitch-hz :bass-pitch-confidence])
 
 (defn- fail! [message data] (throw (ex-info message (assoc data :routing/error :invalid-routing))))
+
 (defn- id? [x] (or (keyword? x) (and (string? x) (<= 1 (count x) 128))))
+
 (defn- state [model]
   (merge {:spec nil :state nil :enabled? false :generation 0 :ports {} :pending [] :last-audio-time nil :diagnostics []}
          (:routing model)))
+
 (defn- clock [model time-ms]
   (time/frame-clock {:time-ms time-ms :transport (:transport model)}))
+
 (defn- diagnostic [routing entry]
   (update routing :diagnostics #(vec (take-last max-diagnostics (conj (vec %) entry)))))
 

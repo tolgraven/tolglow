@@ -42,6 +42,7 @@
 (defn error-message [error]
   (or (when (map? error) (or (:message error) (:error error) (:reason error)))
       (.-message error) (str error)))
+
 (defn- dispatch-result [event result] (when event (rf/dispatch (conj event result))))
 
 (def guarded-paths
@@ -56,6 +57,7 @@
     "/api/repl/eval" "/api/repl/interrupt" "/api/repl/scratch" "/api/repl/session"
     "/api/patch/save" "/api/patch/enabled"
     "/api/modulation/start" "/api/modulation/stop" "/api/modulation/hold" "/api/modulation/resume" "/api/modulation/cue"})
+
 (defn guard-request [db request]
   (if (and (:body request) (guarded-paths (:path request)))
     (update request :body #(merge {:expected-epoch (get-in db [:show :epoch])}
@@ -129,29 +131,40 @@
           (.catch #(rf/dispatch [:studio/failure (error-message %)]))))))
 
 (defn cue [db id] (some #(when (= id (:id %)) %) (get-in db [:show :cues])))
+
 (defn effect [db id] (some #(when (= id (:id %)) %) (get-in db [:show :effects])))
+
 (defn recent-page? [db id]
   (and (some? id) (= id (get-in db [:show :recent-page :id]))))
+
 (defn selected-recent-page [db]
   (when (get-in db [:ui :recent-page?]) (get-in db [:show :recent-page])))
+
 (defn wire-id [value] (if (keyword? value) (subs (str value) 1) (str value)))
+
 (defn active [db cue-id]
   (filterv #(and (= cue-id (:cue-id %)) (not= "releasing" (:phase %)))
            (get-in db [:show :instances])))
+
 (defn owns-cue-launch? [db {:keys [source]}]
   (and (#{"web" :web} (:adapter source)) (= (:session db) (:session-id source))))
+
 (defn- current-show? [show owner]
   (and (= (:epoch owner) (:epoch show)) (= (:runtime-id owner) (:runtime-id show))))
+
 (defn command [db op fields & [on-success epoch beacon? runtime-id]]
   [:studio/send-command {:op op :fields fields :epoch (or epoch (get-in db [:show :epoch]))
                         :session (:session db) :runtime-id (or runtime-id (get-in db [:show :runtime-id]))
                         :on-success on-success :beacon? beacon?}])
+
 (defn notice [message] [:dispatch [:studio/toast message]])
+
 (defn slug [value]
   (let [s (-> value str/lower-case str/trim (str/replace #"[^a-z0-9._/-]+" "-") (str/replace #"^-+|-+$" ""))]
     (if (seq s) s "untitled")))
 
 (defn snapshot-order [show] (mapv #(get show % 0) [:epoch :revision :frame-number]))
+
 (defn outstanding-drafts [drafts show]
   (into {} (filter (fn [[_ draft]]
                     (and (= (:epoch draft) (:epoch show))
@@ -159,6 +172,7 @@
                          (or (nil? (:revision draft)) (< (:revision show) (:revision draft)))
                          (or (= "master/set" (:op draft))
                              (some #(= (:id %) (get-in draft [:fields :instance-id])) (:instances show)))))) drafts))
+
 (defn apply-drafts [show drafts]
   (reduce (fn [show [_ {:keys [op fields]}]]
             (case op
@@ -167,6 +181,7 @@
                                   (fn [instances] (mapv #(if (= (:id %) (:instance-id fields))
                                                           (assoc-in % [:params (keyword (:param fields))] (:value fields)) %) instances)))
               show)) show drafts))
+
 (defn draft [db key op fields]
   (assoc-in db [:drafts key] {:op op :fields fields :epoch (get-in db [:show :epoch]) :runtime-id (get-in db [:show :runtime-id])}))
 
@@ -232,7 +247,7 @@
                     (assoc-in [:ui :page-id] (if (some #(= page-id (:id %)) (:pages show)) page-id (:id (first (:pages show))))))
         updated (settle-connection-drafts updated (:server-presentation db) (get-in db [:server-projection :view]))
         updated (cond-> updated
-                  epoch-changed? (dissoc :ending-holds)
+                  epoch-changed? (dissoc :ending-holds :section-pattern-request)
                   epoch-changed? (update-in [:ui :definition] dissoc :publishing? :publication)
                   epoch-changed? (update-in [:ui :auto-form] dissoc :target-activity? :activity-target))
         updated (if (some #(= selected (:id %)) (:instances show)) updated
@@ -382,6 +397,38 @@
   (fn [{:keys [db]} _] {:dispatch [:studio/command "transport/set" {:transport {:playing? (not (get-in db [:show :transport :playing?] true))}}]}))
 
 (rf/reg-cofx :studio/unique (fn [cofx _] (assoc cofx :unique (str (random-uuid)))))
+
+(defn section-pattern-control [db]
+  (let [view (get-in db [:server-projection :view])
+        {:keys [id accepted-revision]} (:section-pattern-request db)]
+    (when (:section-patterns-enabled? view)
+      {:override? (true? (get-in view [:settings :section-patterns :override?]))
+       :pending? (and (some? id) (or (nil? accepted-revision) (< (:revision view) accepted-revision)))
+       :connected? (true? (get-in db [:connection :connected?]))})))
+
+(rf/reg-event-fx :studio/section-pattern-override [(rf/inject-cofx :studio/unique)]
+  (fn [{:keys [db unique]} [_ override?]]
+    (let [control (section-pattern-control db)]
+      (when (and (:connected? control) (not (:pending? control)) (boolean? override?)
+                 (not= override? (:override? control)))
+        {:db (assoc db :section-pattern-request {:id unique})
+         :studio/http {:path "/api/settings" :typed? true
+                       :body {:scope :section-patterns :values {:override? override?}}
+                       :on-success [:studio/section-pattern-saved unique]
+                       :on-failure [:studio/section-pattern-failed unique]}}))))
+
+(rf/reg-event-fx :studio/section-pattern-saved
+  (fn [{:keys [db]} [_ id {:keys [status revision message]}]]
+    (when (= id (get-in db [:section-pattern-request :id]))
+      (if (and (= "accepted" status) (integer? revision))
+        {:db (assoc-in db [:section-pattern-request :accepted-revision] revision)}
+        {:dispatch [:studio/section-pattern-failed id (or message "The show did not acknowledge the change.")]}))))
+
+(rf/reg-event-fx :studio/section-pattern-failed
+  (fn [{:keys [db]} [_ id message]]
+    (when (= id (get-in db [:section-pattern-request :id]))
+      {:db (dissoc db :section-pattern-request)
+       :dispatch [:studio/failure (str "Section pattern override: " message)]})))
 
 (defn launch-fx [db cue-id mode on-success & [{:keys [grid command-id gesture-id]}]]
   (let [cue (cue db cue-id)]
@@ -843,6 +890,7 @@
   (when-not (and (number? value) (js/Number.isFinite value) (<= 0 value) (contains? #{"beats" "bars" "phrases" "ms"} unit))
     (throw (js/Error. "Choose a finite musical duration and a supported unit.")))
   {(keyword unit) value})
+
 (defn builder-definition [{:keys [id name color level duration-value duration-unit release-value release-unit keyframes blocks]} version]
   (when-not (re-matches #"[a-zA-Z][a-zA-Z0-9._/-]*" id) (throw (js/Error. "Use an identifier beginning with a letter.")))
   (when-not (and (number? level) (<= 0 level 1) (pos? duration-value) (<= 0 release-value))

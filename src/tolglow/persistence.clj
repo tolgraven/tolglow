@@ -45,20 +45,25 @@
             [tolglow.output.pause-look :as pause-look]
             [tolglow.routing :as routing]
             [tolglow.integrations.audio-return :as audio-return]
+            [tolglow.integrations.section-patterns :as section-patterns]
             [tolglow.integrations.ableton :as ableton])
   (:import [java.io PushbackReader StringReader]
            [com.fasterxml.jackson.core JsonFactory]))
 
 (def schema-version 2)
+
 (def max-document-characters (* 16 1024 1024))
+
 (def ^:private recent-cue-capacity
   (let [{:keys [columns rows]} (cue-pages/page {} cue-pages/recent-page-id)]
     (* columns rows)))
+
 (def ^:private model-keys
   #{:show-id :epoch :revision :time-ms :registry :instances :pages :variables
     :master :blackout? :event-subscribers :transport :control :rig :compositions :composition-runs
     :composition-tokens :auto :responses :integrations :extensions :frame-number
     :last-frame-time-ms :last-frame-beat :macros :sequences :reactive :settings :modulation :waveforms :routing :sensors})
+
 (def ^:private secret-keys
   #{"api-key" "api_key" "apikey" "authorization" "password" "secret"
     "access-token" "refresh-token" "provider-key" "credentials" "pairing-token"})
@@ -66,10 +71,15 @@
 (defn- fail! [path message]
   (throw (ex-info message {:persistence/error :invalid-show
                           :errors [{:path path :message message}]})))
+
 (defn- check! [condition path message] (when-not condition (fail! path message)))
+
 (defn- identifier? [x] (or (keyword? x) (and (string? x) (not (str/blank? x)))))
+
 (defn- natural? [x] (and (integer? x) (not (neg? x))))
+
 (defn- nonnegative? [x] (and (registry/finite-number? x) (not (neg? x))))
+
 (defn- check-errors! [errors path]
   (when (seq errors)
     (throw (ex-info "Invalid saved show data"
@@ -277,6 +287,8 @@
   (when-let [s (get-in model [:settings :fog-control])] (fog-control/settings s))
   (lighting-scenes/validate-state! model)
   (lighting/validate! (:settings model))
+  (when (contains? (:settings model) :section-patterns)
+    (section-patterns/override-settings (get-in model [:settings :section-patterns])))
   (prefabs/validate! (get-in model [:settings :prefabs]))
   (variable-blocks/compile-model model)
   (registry/validate-public-query-ids! (get-in model [:settings :studio :public-queries]))

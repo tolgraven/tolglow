@@ -41,22 +41,34 @@
             [tolglow.studio.workspace :as workspace]))
 
 (defn- send! [event] (rf/dispatch event))
+
 ;; Controlled values must reach app-db before React restores the input after
 ;; its DOM event. Commands remain queued; their acknowledgements arrive later.
 (defn- input! [event] (rf/dispatch-sync event))
+
 (defn- set-ui! [path value] (input! [:studio/ui-set path value]))
+
 (defn- input-value [event] (.. event -target -value))
+
 (defn- checked? [event] (.. event -target -checked))
+
 (defn- number-value [event]
   (let [value (js/parseFloat (input-value event))]
     (when (js/Number.isFinite value) value)))
+
 (defn- label [value] (str/replace (if (keyword? value) (name value) (str value)) #"[-_]" " "))
+
 (defn- find-id [items id] (some #(when (= (:id %) id) %) items))
+
 (defn- display-name [item] (or (:name item) (label (:id item))))
+
 (defn- swatch [item] (widgets/swatch-css (or (:swatch item) "#a8b99a")))
+
 (defn- color-style [item] {"--cue-color" (swatch item)})
+
 (defn- hex-color [components]
   (str "#" (apply str (map (fn [n] (.padStart (.toString (js/Math.round (* 255 (max 0 (min 1 (or n 0)))) ) 16) 2 "0")) (take 3 components)))))
+
 (defn- color-components [hex]
   (mapv #( / (js/parseInt (subs hex % (+ % 2)) 16) 255) [1 3 5]))
 
@@ -454,6 +466,17 @@
           [button nil "Remove" [:studio/response-action :delete (:id response)] "text-button"]]])
       [:p.small.muted "Attack and release share one unit. Release fades to zero and holds there; remove the envelope to restore the unaffected parameters."]]]))
 
+(defn- section-pattern-panel [db]
+  (when-let [{:keys [override? pending? connected?]} (events/section-pattern-control db)]
+    [:section.panel {:aria-label "Section patterns"}
+     [:div.panel-top
+      [:div [:span.section-label "SECTION PATTERNS"]
+       [:span.small.muted {:role "status"} (if override? "Override active" "Override off")]]
+      [:button.button {:type "button" :disabled (or pending? (not connected?))
+                       :aria-label (if override? "Resume automatic patterns" "Suspend automatic patterns")
+                       :on-click #(send! [:studio/section-pattern-override (not override?)])}
+       (cond pending? "Applying…" override? "Resume" :else "Suspend")]]]))
+
 (defn- perform-view [db]
   (let [section (get-in db [:ui :performance-section] "cues")
         count-active (count (get-in db [:show :instances]))]
@@ -467,7 +490,8 @@
                               :on-click #(set-ui! [:performance-section] id)} title])]]
      [:div.performance-layout {:class (when (get-in db [:ui :preview-expanded?]) "preview-expanded")}
       [:div.performance-launch [cue-grid db]]
-      [:div.performance-live [performance/board db parameter-control] [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
+      [:div.performance-live [section-pattern-panel db] [performance/board db parameter-control]
+       [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
       [:div.performance-room [preview-panel db]]
       [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]]]))
 

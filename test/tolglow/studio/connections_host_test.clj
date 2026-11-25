@@ -19,6 +19,7 @@
   (let [reply (show/submit! runtime payload)] (show/tick! runtime time-ms) (deref reply 2000 ::timeout)))
 
 (defn launch-on-beat [_ _ _] {:op :cue/launch :cue-id :ember})
+
 (def launch-descriptor
   {:id ::launch :kind :fx :implementation {:type :var :symbol "tolglow.studio.connections-host-test/launch-on-beat"}})
 

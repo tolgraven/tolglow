@@ -10,13 +10,19 @@
             [tolglow.studio.visibility :refer [watch-visibility]]))
 
 (defn- view [db] (get-in db [:server-projection :view]))
+
 (defn- owner [db] (select-keys (view db) [:runtime-id :show-id :epoch]))
+
 (defn- settings [db] (get-in (view db) [:settings :variable-blocks]))
+
 (defn- form [db]
   (let [ui (::ui db) identity (owner db)]
     (if (= identity (:owner ui)) ui {:owner identity})))
+
 (defn- update-form [db f & args] (assoc db ::ui (apply f (form db) args)))
+
 (defn- text-of [e] (.. e -target -value))
+
 (defn- label [path] (trace/path-label (rest path)))
 
 (defn parse-path [s]

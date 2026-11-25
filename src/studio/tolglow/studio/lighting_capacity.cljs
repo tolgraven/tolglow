@@ -2,6 +2,7 @@
   (:require [re-frame.core :as rf]))
 
 (defn- percent [x] (str (js/Math.round (* 100 x)) "%"))
+
 (defn- change! [key value] (rf/dispatch [:connections/set-capacity {key value}]))
 
 (defn- toggle [title key value pending?]

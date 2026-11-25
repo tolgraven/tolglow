@@ -6,6 +6,7 @@
             [tolglow.transit :as wire]))
 
 (defn row [id] {:id id :type :audio/kick :category :audio :emitter {:id :audio/in} :subscribers [:fx/hit]})
+
 (defn event-batch [runtime n rows] {:runtime-id runtime :protocol "tolglow-debug/1" :kind :events :cursor n :skipped 0 :events rows})
 
 (deftest bounded-feed-retains-real-rows-and-recovers-cursor
@@ -72,6 +73,38 @@
     (is (= [a] (editor/move-step [a b] 1 :remove)))
     (is (thrown? js/Error (editor/clean-form (assoc form :actions []))))
     (is (thrown? js/Error (editor/clean-form (assoc-in form [:actions 1 :delay] {:beats "-1"}))))))
+
+(deftest a-track-pattern-selector-keeps-its-type-and-clears-for-unrelated-events
+  (let [form {:id "music/slow" :match {:type :music/section-pattern :pattern ":slow"}
+              :actions [(editor/new-action :cue/launch)]}]
+    (is (= {:type :music/section-pattern :pattern :slow} (:match (editor/clean-form form))))
+    (is (= "slow" (get-in (editor/clean-form (assoc-in form [:match :pattern] "slow")) [:match :pattern])))
+    (is (= "slow groove" (get-in (editor/clean-form (assoc-in form [:match :pattern] " slow groove ")) [:match :pattern])))
+    (is (= {:type :music/section-pattern} (:match (editor/clean-form (assoc-in form [:match :pattern] "  ")))))
+    (is (= {:type :audio/kick} (:match (editor/clean-form (assoc-in form [:match :type] :audio/kick)))))))
+
+(deftest an-operator-can-enter-numeric-and-uuid-patterns-without-changing-text-ids
+  (let [form {:id :music/pattern :match {:type :music/section-pattern}
+              :actions [(editor/new-action :cue/launch)]}
+        path [:match :pattern]
+        pattern (fn [source] (-> form (assoc-in path source) editor/clean-form (get-in path)))
+        id "516049b9-ff71-4bf4-bf00-123456789abc"
+        long "9223372036854775807"
+        long-id (wire/decode (str "[\"~#'\",\"~i" long "\"]"))
+        wide "9223372036854775808"
+        wide-id (wire/decode (str "[\"~#'\",\"~n" wide "\"]"))]
+    (is (= 514 (pattern "514")))
+    (is (= -514 (pattern "-514")))
+    (is (= long-id (wire/decode (wire/encode (pattern long)))))
+    (is (= wide-id (wire/decode (wire/encode (pattern wide)))))
+    (is (= (uuid id) (wire/decode (wire/encode (pattern (str "#uuid \"" id "\""))))))
+    (is (= (uuid id) (pattern (str " #uuid \"" id "\" "))))
+    (is (thrown? js/Error (pattern "#uuid \"invalid\"")))
+    (doseq [stored [514 long-id wide-id (uuid id) "514" ":slow" "#uuid \"text\"" " trailing "]]
+      (let [db (:db (transition {:debug {:handle "tab"}}
+                                [:subscribers/edit (assoc-in form path stored)]))
+            reopened (get-in db [:debug :form])]
+        (is (= stored (get-in (editor/clean-form reopened) path)))))))
 
 (deftest late-subscriber-edit-cannot-target-replaced-show
   (let [db {:show {:runtime-id "new" :epoch 1}

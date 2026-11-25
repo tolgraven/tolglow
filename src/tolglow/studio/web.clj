@@ -203,7 +203,9 @@
    "/api/patch/save" :patch-save "/api/patch/enabled" :patch-enabled})
 
 (defn- not-found [_] (data-response 404 {:message "Route not found"}))
+
 (defn- ok [value] (data-response 200 value))
+
 (defn- acknowledgement [result]
   (data-response (if (= :rejected (:status result)) 422 200) result))
 

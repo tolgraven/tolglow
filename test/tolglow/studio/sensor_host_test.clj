@@ -10,11 +10,13 @@
 (defn- apply! [runtime type payload time-ms]
   (let [receipt (show/submit! runtime type payload)]
     (show/tick! runtime time-ms) (deref receipt 1000 {:status :missing})))
+
 (defn- http [runtime path payload]
   (let [response ((studio/handler runtime)
                   {:request-method :post :uri (str "/api/sensors/" path) :headers {"host" "localhost"}
                    :body (ByteArrayInputStream. (.getBytes (json/write-str payload) "UTF-8"))})]
     {:status (:status response) :data (json/read-str (:body response) :key-fn keyword)}))
+
 (defn- queued-http [runtime path payload time-ms]
   (let [result (future (http runtime path payload)) deadline (+ (System/nanoTime) 3000000000)]
     (loop []
@@ -22,6 +24,7 @@
         (Thread/sleep 1) (recur)))
     (show/tick! runtime time-ms)
     (deref result 4000 {:status :timeout})))
+
 (defn- observation [pair sequence values & [gestures]]
   {:version 1 :device-id "phone" :session-id "motion-one" :sample-id sequence
    :time-ms (* sequence 20) :values values :gestures (or gestures []) :pairing-token (:pairing-token pair)})

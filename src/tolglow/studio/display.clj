@@ -16,6 +16,7 @@
            [javax.imageio ImageIO]))
 
 (def width 960)
+
 (def height 160)
 
 (defn- thread-factory ^ThreadFactory [^String name thread-ref]

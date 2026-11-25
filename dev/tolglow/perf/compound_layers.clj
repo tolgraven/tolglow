@@ -9,6 +9,7 @@
   (:import [java.util Arrays]))
 
 (def ^:private lanes [:individual :opaque-compound :transformed-compound])
+
 (def ^:private transforms
   [{:attribute :aim :value {:op :add :args [{:op :field :attribute :aim} [0.35 0.15 -0.75]]}}
    {:attribute :color :value {:op :rotate-hue :args [{:op :field :attribute :color} 1/6]}}])

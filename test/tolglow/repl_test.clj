@@ -6,7 +6,9 @@
   (:import [java.util.concurrent CountDownLatch TimeUnit]))
 
 (defn result [receipt] (deref (:completion receipt) 3000 ::timeout))
+
 (defn run! [session source] (result (repl/submit! session source)))
+
 (defn entered? [^CountDownLatch latch] (.await latch 2 TimeUnit/SECONDS))
 
 (deftest real-evaluation-is-serial-and-namespaces-and-values-are-owned

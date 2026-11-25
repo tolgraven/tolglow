@@ -11,12 +11,17 @@
            [java.nio.file Path]))
 
 (def reference "credential-00000000-0000-0000-0000-000000000001")
+
 (def secret "fixture-key-not-a-real-credential")
+
 (defn options [manager execute!]
   {:workspaces manager :execute! execute! :providers {:codex {:credential-ref reference}}
    :credential-store {:get! (fn [ref] (when (= ref reference) secret))}})
+
 (defn finish [manager id] (deref (agents/result manager id) 15000 {:status :test-timeout}))
+
 (defn code [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (:app-agent/error (ex-data e)))))
+
 (defn completed! [request]
   ((:on-line! request) :stdout (json/write-str {:type "turn.completed" :usage {:input_tokens 7 :output_tokens 3}}))
   {:exit-code 0})

@@ -60,8 +60,10 @@
                 (if (queue! manager run event)
                   (do (reset! (:callback-ids run) (vec (take-last 256 (conj seen id)))) true)
                   false))))))))
+
 (defn record! [manager command acknowledgement]
   (ingest! manager {:type :record/command :command command :ack acknowledgement}))
+
 (defn handoff! [manager mode envelope]
   (ingest! manager {:type :live/handoff :mode (if (string? mode) (keyword mode) mode) :envelope envelope}))
 (declare receive-ack!)

@@ -11,12 +11,14 @@
            [com.sun.management OperatingSystemMXBean]))
 
 (def period-ms 25.0)
+
 (def policies
   [[:full {:wash 1 :steer 1 :pulse 1}]
    [:uniform-4 {:wash 4 :steer 4 :pulse 4}]
    [:selective {:wash 4 :steer 2 :pulse 1}]])
 
 (defn- op [name & args] {:op name :args (vec args)})
+
 (def beat {:op :beat})
 
 (defn- oscillation [rate phase]

@@ -12,13 +12,18 @@
             FutureTask ScheduledExecutorService RejectedExecutionException]))
 
 (def state-key :tolglow.rdm/state)
+
 (defn saved [model] (get-in model [:extensions state-key] {}))
+
 (defn session-current? [manager id]
   (let [session (:session @(:state manager))]
     (and session (= id (:id session)) (= (:identity session) ((:identity! manager))))))
+
 (defn wire-id [value] (if (keyword? value) (subs (str value) 1) (str value)))
+
 (defn device-key [{:keys [universe uid sub-device] :or {sub-device 0}}]
   (str universe "/" (codec/uid uid) "/" sub-device))
+
 (defn configuration [config]
   (let [{:keys [transport timeout-ms job-timeout-ms] :as c}
         (merge {:transport :ola :timeout-ms 2000 :job-timeout-ms 30000} config)

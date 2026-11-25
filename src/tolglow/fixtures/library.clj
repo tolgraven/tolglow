@@ -11,18 +11,26 @@
   (:import [java.nio.charset StandardCharsets] [java.security MessageDigest] [java.util Base64]))
 
 (def ^:private state-keys #{:version :limits :manufacturers :manufacturer-provenance :entries :documents :revision})
+
 (def ^:private limit-ceilings {:max-catalog-entries 20000 :max-documents 256
                               :max-cache-bytes (* 64 1024 1024) :max-response-bytes (* 16 1024 1024)})
+
 (defn- fail! [message data] (throw (ex-info message (assoc data :fixtures/error :invalid-state))))
+
 (defn- text-bytes [text] (.getBytes ^String text StandardCharsets/UTF_8))
+
 (defn- checksum [text]
   (apply str (map #(format "%02x" (bit-and % 255))
                   (.digest (MessageDigest/getInstance "SHA-256") (text-bytes text)))))
+
 (defn- bounded-text? [value limit] (and (string? value) (<= (count value) limit)))
+
 (defn- catalog-key? [value]
   (and (bounded-text? value 256) (boolean (re-matches #"[a-z0-9-]+/[a-z0-9-]+" value))))
+
 (defn- manufacturer-key? [value]
   (and (bounded-text? value 128) (boolean (re-matches #"[a-z0-9-]+" value))))
+
 (defn- portable? [value depth]
   (and (< depth 32)
        (or (nil? value) (string? value) (keyword? value) (boolean? value)

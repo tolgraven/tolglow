@@ -60,15 +60,25 @@
  :movement :grid-controllers :metronome :dimensions
  :variables :cue-grid :active-effects :fixtures])
 (defn cue-dim [] @(-> *show* :cue-grid :dimensions))
+
 (defn cues [] @(-> *show* :cue-grid :cues))
+
 (defn fx [] @(-> *show* :active-effects))
+
 (defn dim [] (keys @(-> *show* :dimensions)))
+
 (defn vars [] @(*show* :variables))
+
 (defn move [] @(*show* :movement))
+
 (defn vizi [] (:visualizer-visible  @(*show* :dimensions)))
+
 (defn unis [] (*show* :universes))
+
 (defn fixtures [] (keys @(*show* :fixtures)))
+
 (defn ks [] (keys *show*))
+
 (defn ks [] (keys @(:active-effects *show*)))
 ;; (require '[puget.printer :as puget])
 ;; (filter #(= (:color %) :red) chans)
@@ -101,10 +111,15 @@
                      5 1)
 
 (def pur (clr/hsla 0.8 0.5 0.5))
+
 (def c (clr/hsla 0.2 0.6 0.6))
+
 (def z (clr/hsva 0.2 0.6 0.0))
+
 (def crgb (clr/as-rgba c))
+
 (def chsv (clr/as-hsva c))
+
 (def e (clr/hsla 1.3 0.6 0.5))
 
 (def grey (clr/rgba 0.4 0.5 0.6))
@@ -123,6 +138,7 @@
 
 
 (defn -main [& args] (activate-show))
+
 (defn shortcuts [] (keys (:cue-grid *show*)))
 ;XXX add to effect interface
 ; :inlets (how can we control it? NEEDED for proper cue-var automapping / dynparam anything)

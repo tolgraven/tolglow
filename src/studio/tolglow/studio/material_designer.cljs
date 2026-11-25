@@ -5,7 +5,9 @@
             [tolglow.studio.signal-picker :as signal]))
 
 (def ^:private path [:ui ::designer])
+
 (def ^:private initial-preset :optics/through-water)
+
 (def ^:private custom-material
   {:name "Travelling ripple" :mode :multiply :inputs {:depth 0.35 :phase {:op :bar}}
    :glsl "1.0 - depth * (0.5 + 0.5 * cos(6.2831853 * (position.x + position.y - phase)))"})
@@ -16,7 +18,9 @@
     (keyword s)))
 
 (defn- slug [id] (subs (str id) 1))
+
 (defn- owner [db] (select-keys (:show db) [:runtime-id :show-id :epoch]))
+
 (defn- current? [db token field]
   (let [form (get-in db path)]
     (and (= (:owner form) (owner db)) (= token (get form field)))))
@@ -129,7 +133,9 @@
           {:db (update-in db path assoc :write-token nil :error "The show has not confirmed this change. Reload the library to check.")})))))
 
 (defn- field-value [event] (.. event -target -value))
+
 (defn- set-field! [path v] (rf/dispatch-sync [::set path v]))
+
 (defn- title [k] (str/capitalize (str/replace (name k) #"-" " ")))
 
 (defn- number-field [label value change!]

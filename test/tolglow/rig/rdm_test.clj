@@ -8,12 +8,16 @@
            [java.nio ByteBuffer ByteOrder]))
 
 (def device {:universe 1 :uid "1234:01020304" :sub-device 0})
+
 (defn ack [request data]
   {:response-code 0 :response-type 0 :pid (:pid request) :sub-device (:sub-device request 0)
    :command-class (if (= :set (:command request)) 1 0) :data data})
+
 (defn text-data [s] (mapv #(bit-and 255 %) (.getBytes s "UTF-8")))
+
 (defn info-bytes [address personality]
   (vec (concat [1 0 0 1 1 1 0 0 0 3 0 12 personality 2] (codec/uint16-bytes address) [0 0 1])))
+
 (defn fixture-peer [state request]
   (if (:discovery? request) {:uids [(:uid device)] :universe (:universe request)}
     (let [{:keys [pid data command]} request]

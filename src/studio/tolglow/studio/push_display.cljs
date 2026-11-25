@@ -24,6 +24,7 @@
         (assoc :parameters (vec (take 8 (:parameters view)))
                :active-effects (vec (take 8 (:active-effects view)))
                :cells (vec (take 8 (:cells view))) :labels (vec (take 8 (:labels view)))))))
+
 (defn observe-view [previous view]
   (let [next (visualization/update-push previous (normalize-view view) view)
         {:keys [binding-path target-id sample]} (:block-trace view)

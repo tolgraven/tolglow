@@ -18,9 +18,12 @@
 
 (def fixture (assoc (first (demo/fixtures)) :position [0 0 0] :rotation-deg [180 25 -10]
                     :calibration {:pan [127.5 -127.5] :tilt [127.5 255]}))
+
 (defn close? [a b epsilon] (< (g/norm (g/sub a b)) epsilon))
+
 (def options {:session-id "scan-1" :fixture-ids [:head-1] :world-id "world-1"
               :world-to-rig g/identity-transform :clock {:offset-ms 1000 :uncertainty-ms 2} :armed? true})
+
 (defn session [] (scan/create (demo/model) options 0))
 
 (deftest camera-coordinate-convention-and-rigid-validation
@@ -63,10 +66,12 @@
 (defn receipt [t step]
   {:epoch 0 :generation 1 :frame-id (long t) :published-at-ms t :eligible? true :dropped-before 0
    :calibration {:session-id "scan-1" :step-index step}})
+
 (defn observation [id time rgb & [kind]]
   {:observation-id id :capture-ms (- time 1000) :world-id "world-1" :track-id "lens-track"
    :kind (or kind :lens) :pixel [500 500] :intrinsics [500 500 500 500] :depth-m 2
    :camera-to-world g/identity-transform :confidence 2 :rgb rgb})
+
 (defn captured-session []
   (reduce (fn [s i]
             (let [start (+ 1000 (* i 2000))

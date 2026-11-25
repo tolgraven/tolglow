@@ -6,6 +6,7 @@
             [tolglow.transit :as transit]))
 
 (def ^:private prefix "/api/preview/airplay/")
+
 (def ^:private media-type "application/transit+json")
 
 (defn- read-control! [response]

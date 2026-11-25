@@ -10,6 +10,7 @@
             [tolglow.studio.parameter-widgets :as widgets]))
 
 (defn- wire [id] (events/wire-id id))
+
 (defn- same? [a b] (and (some? a) (some? b) (= (wire a) (wire b))))
 
 (defn attributed? [fault instance]
@@ -67,6 +68,7 @@
     :else (str value)))
 
 (defn- typed-instance [db id] (some #(when (= (:id %) id) %) (get-in db [:server-projection :view :instances])))
+
 (defn- token [db] (select-keys (:show db) [:runtime-id :epoch]))
 
 (rf/reg-sub :inspect/definition

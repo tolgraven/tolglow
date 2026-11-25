@@ -118,6 +118,7 @@
       (if (= token (:pending ui)) (assoc db :lighting-policy-ui (-> ui (dissoc :pending :submitted) (assoc :error (str error)))) db))))
 
 (defn- percent [n] (if (number? n) (str (js/Math.round (* n 100)) "%") "—"))
+
 (defn- watt-label [n]
   (if (number? n) (str (/ (js/Math.round (* n 10)) 10) " W") "—"))
 

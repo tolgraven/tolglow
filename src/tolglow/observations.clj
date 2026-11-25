@@ -6,6 +6,7 @@
 (def demand-query :studio/observation-demand)
 
 (defn- finite? [x] (and (number? x) (Double/isFinite (double x))))
+
 (defn- rgb? [x]
   (and (vector? x) (= 3 (count x)) (every? #(and (integer? %) (<= 0 % 255)) x)))
 

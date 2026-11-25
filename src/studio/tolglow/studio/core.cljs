@@ -11,6 +11,7 @@
             [tolglow.studio.repl :as repl]))
 
 (defonce root (atom nil))
+
 (defonce listeners (atom []))
 
 (defn mount! []

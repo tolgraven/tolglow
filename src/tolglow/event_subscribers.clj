@@ -12,12 +12,14 @@
             [tolglow.lighting-levels :as lighting-levels]))
 
 (def actions [:lighting/scene :cue/launch :effect/launch :instance/end :instance/kill :instance/opacity :callback])
+
 (def event-types
   {:spatial [:spatial/enter :spatial/exit :spatial/bounce :spatial/invalid-volume]
    :reactive [:reactive/fault :event/handler-failed]
    :atmosphere [:fog/below-target :fog/in-band :fog/above-target :fog/target-changed :fog/demand-started :fog/demand-ended]
    :lighting (into [:lighting/activity] (concat lighting-levels/group-event-types lighting-levels/rig-event-types))
-   :audio [:audio/kick :audio/beat :audio/energy :audio/breakdown-start :audio/breakdown-end]
+   :audio [:audio/kick :audio/beat :audio/energy :audio/breakdown-start :audio/breakdown-end :audio/section-change]
+   :music [:music/section-pattern]
    :show [:show/restored]
    :clock [:clock/beat :clock/bar :clock/phrase]
    :control [:instance/launched :instance/removed :instance/released :instance/system-changed
@@ -32,12 +34,18 @@
    :effect [:effect/intent :instance/finished :effect/failed :effect/recovered :effect/reload-failed :effect/reloaded]})
 
 (def ^:private empty-state {:subscribers [] :runs [] :next-run 0 :seed 1 :dropped 0})
+
 (defn- state [model] (:event-subscribers model empty-state))
+
 (defn- check [condition message data]
   (when-not condition (throw (ex-info message data))))
+
 (defn- identifier? [id] (or (keyword? id) (and (string? id) (not (str/blank? id)))))
+
 (defn- only-keys? [m allowed] (and (map? m) (every? allowed (keys m))))
+
 (defn- nonnegative-int? [v] (and (integer? v) (not (neg? v))))
+
 (defn- musical [duration]
   (check (and (map? duration) (every? #{:beats :bars :phrases} (keys duration))
               (empty? (time/validate-duration duration))) "Expected a musical duration" {:duration duration})
@@ -94,9 +102,13 @@
 (defn validate-definition [{:keys [id enabled? match actions] :as registration}]
   (check (and (only-keys? registration #{:id :enabled? :match :actions})
               (keyword? id) (instance? Boolean (get registration :enabled? true))
-              (only-keys? (or match {}) #{:type :category :emitter-id :volume-id :fixture-id})
+              (only-keys? (or match {}) #{:type :category :emitter-id :volume-id :fixture-id :pattern})
               (every? keyword? (vals (select-keys match [:type :category])))
               (every? identifier? (vals (select-keys match [:emitter-id :volume-id :fixture-id])))
+              (or (not (contains? match :pattern))
+                  (and (= :music/section-pattern (:type match))
+                       (let [pattern (:pattern match)]
+                         (or (identifier? pattern) (integer? pattern) (uuid? pattern)))))
               (vector? actions) (<= 1 (count actions) 32))
          "Invalid event subscriber definition" {:id id})
   (run! validate-action actions)
@@ -158,6 +170,7 @@
        (or (nil? (:category match)) (= category (:category match)))
        (or (nil? (:volume-id match)) (= (:volume-id data) (:volume-id match)))
        (or (nil? (:fixture-id match)) (= (:fixture-id data) (:fixture-id match)))
+       (or (not (contains? match :pattern)) (= (:pattern data) (:pattern match)))
        (or (nil? (:emitter-id match)) (= (:id emitter) (:emitter-id match)))))
 
 (defn- triggered? [{:keys [emitter data]}]
@@ -193,6 +206,7 @@
        {:model model :deliveries {}} events))))
 
 (def ^:private excluded-roles #{:show-control :code :code-cue})
+
 (defn- musical-definition? [entry]
   (and entry (not (or (excluded-roles (:role entry)) (excluded-roles (:kind entry))
                       (:scene-owner entry) (:code-cue? entry) (:show-control? entry) (some excluded-roles (:tags entry))))))
@@ -304,6 +318,7 @@
           (update :due-beat + (delay-beats step meter))))))
 
 (defn callback-token [model run] [(:epoch model) (:id run) (:index run)])
+
 (defn- callback-result [model run result]
   (let [edits (:edits result)
         current (:variables model)

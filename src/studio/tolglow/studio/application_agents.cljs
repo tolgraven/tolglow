@@ -9,12 +9,19 @@
 (def defaults {:open? false :generation 0 :serial 0 :pending {} :errors {} :tasks []
                :selected nil :events [] :items {} :order [] :cursor 0
                :form {:provider "codex" :repo "tolglow" :policy "manual" :prompt ""}})
+
 (defn state [db] (merge defaults (:application-agents db)))
+
 (defn token [db] [(get-in db [:show :runtime-id]) (:generation (state db))])
+
 (defn current? [db t] (= t (token db)))
+
 (defn finished? [status] (contains? #{"completed" "failed" "cancelled"} status))
+
 (defn task [s] (some #(when (= (:selected s) (:id %)) %) (:tasks s)))
+
 (defn- store [db s] (assoc db :application-agents s))
+
 (def ^:private command-keys #{:start :cancel :configure})
 
 (defn- request [db key operation params body]
@@ -44,6 +51,7 @@
                 (mapv #(if (= (:id data) (:id %)) (merge % data) %) (:tasks s))
                 (conj (:tasks s) data))]
     (assoc s :tasks (vec (take-last 32 tasks)))))
+
 (defn consume-events [s data]
   (reduce (fn [s event]
             (case (:type event)
