@@ -24,9 +24,10 @@ codesign --force --sign - "$app/Contents/Helpers/TolglowAudienceBridge"
 resources="$app/Contents/Resources"
 mkdir -p "$resources/runtime"
 # Keep the JIT compiler, supported charsets, MIDI and the standard modules
-# available to live-coded shows. Exclude development-time Native Image tooling.
+# available to live-coded shows. Exclude Native Image tools and their links into lib/svm.
 rsync -a --exclude=/jmods --exclude=/include --exclude=/man --exclude=/demo \
   --exclude=/lib/src.zip --exclude=/lib/svm --exclude=/lib/static \
+  --exclude='/bin/native-image*' --exclude=/LICENSE_NATIVEIMAGE.txt \
   "$JAVA_HOME/" "$resources/runtime/"
 cp "$jar" "$resources/studio.jar"
 if [[ -n "${4:-}" ]]; then
@@ -39,3 +40,4 @@ cp "$sources/source-version.txt" "$sources/application-sources.zip" "$resources/
 "$resources/runtime/bin/java" -version
 # Sign the assembled shell ad hoc for development on this Mac architecture.
 codesign --force --sign - "$app"
+codesign --verify --deep --strict "$app"
