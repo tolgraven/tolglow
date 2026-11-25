@@ -268,15 +268,19 @@ const emptyShadow = () => {
   texture.needsUpdate = true; return texture;
 };
 
+function densityTexture(field) {
+  const texture = new THREE.Data3DTexture(new Uint16Array(field.data.length), ...field.grid);
+  return Object.assign(texture, {format: THREE.RedFormat, type: THREE.HalfFloatType, internalFormat: 'R16F',
+    minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, unpackAlignment: 1});
+}
+
 export class VolumetricFog {
   constructor(renderer, { quality = 'desktop' } = {}) {
     if (!FOG_QUALITY[quality]) throw new Error('Unknown fog quality');
     this.renderer = renderer; this.quality = quality; this.budget = FOG_QUALITY[quality]; this.disposed = false;
     this.field = new FogField({ grid: this.budget.grid }); this.field.burst(); this.amount = 0.5;
-    this.packed = new Uint16Array(this.field.data.length);
-    this.density = new THREE.Data3DTexture(this.packed, ...this.budget.grid);
-    Object.assign(this.density, { format: THREE.RedFormat, type: THREE.HalfFloatType, internalFormat: 'R16F',
-      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, unpackAlignment: 1 });
+    this.density = densityTexture(this.field);
+    this.packed = this.density.image.data;
     this.dummyShadow = emptyShadow();
     this.target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, format: THREE.RGBAFormat,
       depthBuffer: false, stencilBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
@@ -333,6 +337,21 @@ export class VolumetricFog {
         (Math.min(nz, z1 + 2) / nz - .5) * rz);
     }
     this.density.needsUpdate = true; this.uploads++;
+  }
+  setQuality(quality) {
+    const budget = FOG_QUALITY[quality];
+    if (!budget) throw new Error('Unknown fog quality');
+    if (this.disposed || this.quality === quality) return;
+    const field = new FogField({grid: budget.grid});
+    field.copyFrom(this.field);
+    const density = densityTexture(field);
+    this.density.dispose();
+    this.field = field; this.density = density; this.packed = density.image.data;
+    this.quality = quality; this.budget = budget;
+    // The linked programs use uniform step counts and texture bindings.
+    this.uniforms.densityTexture.value = density;
+    this.uniforms.raySteps.value = budget.steps;
+    this.upload();
   }
   setRoom(room) {
     if (!this.field.setRoom(room)) return;

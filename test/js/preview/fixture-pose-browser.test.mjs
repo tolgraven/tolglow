@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {existsSync, readFileSync} from 'node:fs';
 import {chromium} from 'playwright-core';
+import {measureShadowCache} from './shadow-cache-fixture.mjs';
 
 test('fixture lens, shadow light, yoke and fog share the calibrated end-stop pose', {timeout: 90000}, async t => {
   const executablePath = process.env.CHROMIUM_PATH || '/usr/bin/chromium';
@@ -38,5 +39,15 @@ test('fixture lens, shadow light, yoke and fog share the calibrated end-stop pos
       observation[key].forEach((actual, axis) => assert.ok(Math.abs(actual-sample.expected[axis]) < 1e-8, key));
     }
     assert.ok(Math.abs(observation.yoke - 30) < 1e-8);
+    const shadows = await page.evaluate(measureShadowCache);
+    for (const key of ['fixed', 'camera', 'fog', 'color', 'zoom', 'aim', 'unlit', 'truss', 'mount', 'restore']) {
+      assert.equal(shadows[key].identical, true, key);
+      assert.deepEqual(shadows[key].forced, ['fill', 'key'], key);
+    }
+    for (const key of ['fixed', 'camera', 'fog', 'color']) assert.deepEqual(shadows[key].cached, [], key);
+    assert.deepEqual(shadows.zoom.cached, ['key']);
+    for (const key of ['aim', 'unlit', 'truss', 'mount', 'restore']) assert.deepEqual(shadows[key].cached, ['fill', 'key'], key);
+    assert.equal(shadows.mapsStayedResident, true);
+    assert.equal(shadows.glError, 0);
   } finally {await browser.close();}
 });

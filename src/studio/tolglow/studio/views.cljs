@@ -35,7 +35,7 @@
             [tolglow.studio.parameter-widgets :as widgets]
             [tolglow.studio.numeric-display :as numeric]
             [tolglow.studio.parameter-source :as sources]
-            [tolglow.studio.parameter-visualization :as visualization]
+            [tolglow.studio.param-visualization :as visualization]
             [tolglow.studio.waveform :as waveform]
             [tolglow.studio.repl :as repl]
             [tolglow.studio.performance :as performance]

@@ -7,7 +7,7 @@
             [tolglow.studio.effect-selection :as selection]
             [tolglow.studio.effect-inspector :as inspect]
             [tolglow.studio.events :as events]
-            [tolglow.studio.parameter-visualization :as visual]
+            [tolglow.studio.param-visualization :as visual]
             [tolglow.studio.performance :as performance]))
 
 (def base

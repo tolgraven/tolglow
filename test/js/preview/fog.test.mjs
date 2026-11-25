@@ -2,10 +2,37 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 import { FogField, FOG_QUALITY, intersectRoom, intersectCone, integrateHomogeneous } from '../../../js/preview/fog-field.js';
-
 import {VolumetricFog} from '../../../js/preview/fog.js';
 
 const near = (a, b, tolerance = 1e-6) => assert.ok(Math.abs(a - b) < tolerance, `${a} != ${b}`);
+
+test('quality changes keep linked material owners and carry the live fog field forward', () => {
+  const fog = new VolumetricFog({}, {quality: 'mobile'});
+  fog.setRoom([10, 4, 8]);
+  fog.setAmount(.62);
+  fog.burst({position: [0, .3, -2], duration: 1, strength: 1});
+  fog.update(.1);
+  const {volumeMaterial, compositeMaterial, density, target} = fog;
+  const field = fog.field, time = field.time, sources = field.sources;
+  let freed = 0;
+  density.addEventListener('dispose', () => {freed++;});
+  fog.setQuality('desktop');
+  assert.deepEqual(fog.field.grid, FOG_QUALITY.desktop.grid);
+  assert.deepEqual(fog.field.room, [10, 4, 8]);
+  assert.equal(fog.field.time, time);
+  assert.deepEqual(fog.field.sources, sources);
+  assert.equal(fog.amount, .62);
+  assert.equal(fog.volumeMaterial, volumeMaterial);
+  assert.equal(fog.compositeMaterial, compositeMaterial);
+  assert.equal(fog.target, target);
+  assert.equal(fog.compositeUniforms.densityTexture.value, fog.density);
+  assert.equal(fog.uniforms.raySteps.value, FOG_QUALITY.desktop.steps);
+  const desktopDensity = fog.density;
+  fog.setQuality('desktop');
+  assert.equal(fog.density, desktopDensity);
+  assert.equal(freed, 1);
+  fog.dispose();
+});
 
 test('fog upload keeps uniform haze coarse and pads dense cells through interpolation support', () => {
   const fog = new VolumetricFog({}, {quality: 'mobile'});

@@ -27,3 +27,14 @@
     (is (thrown? clojure.lang.ExceptionInfo (replay/match-sink-entries outputs (conj wire (peek wire)))))
     (is (thrown? clojure.lang.ExceptionInfo
                  (replay/match-sink-entries outputs (assoc-in wire [1 :id] 99))))))
+
+(deftest slot-coverage-is-separate-from-timing-of-delivered-callbacks
+  (let [sent (fn [slot] (assoc (attempt slot (* slot 25) (* slot 25) (inc (* slot 25)))
+                         :sink-at-ms (inc (* slot 25))))
+        report (replay/summary [] [(sent 1) (attempt 2 nil nil nil) (sent 4)] 1 4)]
+    (is (= 1 (:publisher-skipped-slots report)))
+    (is (= 1 (:publisher-attempts-without-send report)))
+    (is (false? (:delivered-every-slot? report)))
+    (is (true? (:meets-sink-timing? report)))
+    (is (= 75 (:sink-interval-p95-ms report) (:sink-interval-max-ms report)))
+    (is (true? (:delivered-every-slot? (replay/summary [] [(sent 1) (sent 2)] 1 2))))))

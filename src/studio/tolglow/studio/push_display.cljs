@@ -8,7 +8,7 @@
             [tolglow.studio.push-scene :as scene]
             [tolglow.studio.page-overview :as pages]
             [tolglow.studio.parameter-widgets :as widgets]
-            [tolglow.studio.parameter-visualization :as visualization]))
+            [tolglow.studio.param-visualization :as visualization]))
 
 (defn- saved-show-catalog [catalog]
   (when (map? catalog)
