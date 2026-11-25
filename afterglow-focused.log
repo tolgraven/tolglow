@@ -1,0 +1,17 @@
+Picked up JAVA_TOOL_OPTIONS: -Duser.home=/workspace/.tools/violet-stage-java -XX:ActiveProcessorCount=2
+Picked up JAVA_TOOL_OPTIONS: -Duser.home=/workspace/.tools/violet-stage-java -XX:ActiveProcessorCount=2
+
+lein test afterglow.output.scheduler-test
+
+lein test afterglow.render.presentation-test
+
+lein test afterglow.render.frame-test
+
+lein test afterglow.render.emission-test
+
+lein test afterglow.render.atmosphere-test
+
+lein test afterglow.render.ir-test
+
+Ran 120 tests containing 4364 assertions.
+0 failures, 0 errors.

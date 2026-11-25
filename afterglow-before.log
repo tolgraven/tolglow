@@ -1,0 +1,29 @@
+
+FAIL in (idle-blackout-and-reopen-use-physical-emission-darkness) (scheduler_test.clj:125)
+expected: (= dark (select-bytes bytes emission-slots))
+  actual: (not (= [255 255 0 255 255 0 0 255 0 255 255 0] [0 0 0 0 0 0 0 0 0 0 0 0]))
+
+FAIL in (idle-blackout-and-reopen-use-physical-emission-darkness) (scheduler_test.clj:136)
+expected: (= dark (sent-bytes emission-slots))
+  actual: (not (= [255 255 0 255 255 0 0 255 0 255 255 0] [0 0 0 0 0 0 0 0 0 0 0 0]))
+
+FAIL in (idle-blackout-and-reopen-use-physical-emission-darkness) (scheduler_test.clj:143)
+expected: (= dark (sent-bytes emission-slots))
+  actual: (not (= [255 255 0 255 255 0 0 255 0 255 255 0] [0 0 0 0 0 0 0 0 0 0 0 0]))
+
+FAIL in (idle-blackout-and-reopen-use-physical-emission-darkness) (scheduler_test.clj:149)
+expected: (= dark (sent-bytes emission-slots))
+  actual: (not (= [255 255 0 255 255 0 0 255 0 255 255 0] [0 0 0 0 0 0 0 0 0 0 0 0]))
+
+FAIL in (retired-inverted-light-stays-off-until-addresses-are-reused) (scheduler_test.clj:191)
+expected: (= [64 255 255] (lanes (delivery)))
+  actual: (not (= [64 255 255] [64 0 0]))
+
+FAIL in (retired-inverted-light-stays-off-until-addresses-are-reused) (scheduler_test.clj:196)
+expected: (= [64 255 255] (lanes (delivery)))
+  actual: (not (= [64 255 255] [64 23 0]))
+
+FAIL in (retired-inverted-light-stays-off-until-addresses-are-reused) (scheduler_test.clj:204)
+expected: (= [0 128 255] (lanes (retirement/include-retired retired active)))
+  actual: (not (= [0 128 255] [0 128 0]))
+{:test 2, :pass 18, :fail 7, :error 0}

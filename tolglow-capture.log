@@ -1,0 +1,2 @@
+[[:first-wait [255 255 196]] [:live [0 0 196]] [:blackout [255 255 196]] [:reopen-wait [255 255 196]] [:reopened [0 0 196]] [:withdrawn [255 255 196]] [:reused-wait [0 0 196]] [:reused [255 255 196]] [:inverted-again-wait [255 255 196]] [:inverted-again [0 0 196]] [:shutdown [255 255 196]]]
+:expired-stale-safety [0 0 196]
