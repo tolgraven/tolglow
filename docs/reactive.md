@@ -144,6 +144,56 @@ Action payloads require `:op`. They cannot contain `:epoch`, `:command-id`,
 Typed fields such as `:instance-id` remain available for the persistence layer
 to rebind when restoring an entire show.
 
+## Sample a slow source on an oscillator's cycles
+
+A background coeffect can follow a named oscillator instead of a beat, bar or
+phrase. Register the oscillator as data on the show's graph, then name it with
+an `:interval` in cycles. Fractional intervals are allowed: `1/4` samples on
+each quarter cycle.
+
+```clojure
+(require '[tolglow.show :as show]
+         '[afterglow.reactive :as rx])
+
+(def reactive (show/reactions runtime))
+
+(rx/reg-oscillator! reactive :groove {:period {:beats 2} :phase 1/4})
+(rx/reg-cofx! reactive ::weather
+  {:mode :background :interval {:cycles 1/4} :oscillator :groove
+   :initial nil :sample (fn [db] (read-weather db))})
+(rx/reg-sub! reactive ::weather (fn [{:keys [cofx]} _] (cofx ::weather)))
+
+(rx/oscillator-position reactive :groove) ; 1/4 + beat/2 at the last frame
+(def weather (rx/acquire! reactive [::weather] println))
+((:close! weather))
+```
+
+The oscillator's position is `phase + beat / period`, with the period measured
+in beats, bars or phrases of the committed transport and meter. A one-bar
+period in 7/8 is 7/2 beats. The source samples once when that position enters a
+new interval. If a frame crosses several boundaries, it samples once, just as
+frame cadences skip missed frames. Tempo changes do not add samples. A seek
+inside the current interval adds none; a seek or loop into another interval
+adds one. A stopped transport holds the current interval.
+
+Every reader of `::weather` shares one sampler. When the last lease closes,
+any read in progress is cancelled. Replaying the same committed frames gives
+the same samples. `reg-cofx!` rejects an unregistered oscillator name. If you
+later remove or rename the oscillator, the graph reports a fault naming the
+missing and registered oscillators, and readers keep the last value until
+the name is registered again. Oscillator and coeffect registrations are setup
+code for the show session; they are not part of the saved reactive registry.
+[Afterglow reactive coeffects](https://github.com/tolgraven/afterglow/blob/master/src/afterglow/reactive/AGENTS.md#subscription-ownership-and-coeffects)
+
+**Studio parity.** Both clients use the same query. Add `::weather`, or a
+subscription derived from it, to `[:settings :studio :public-queries]`. A
+Studio component then acquires it through the
+[subscription stream](studio-subscriptions.md) and receives each changed
+sample. Closing the last browser or REPL lease releases the sampler. Studio
+cannot yet create or rename an oscillator, and its browser-side `:period`
+offers beats, bars, phrases, frames, fps and ms but not oscillator cycles.
+Define the oscillator from the REPL until those controls exist.
+
 ## Durable REPL definitions
 
 `reg-sub` and `reg-fx` are macros for trusted user-side REPL work. Each retains a
