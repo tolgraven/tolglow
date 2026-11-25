@@ -1,0 +1,5 @@
+Waiting for one of two shared agent build slots…
+Build slot wait: 0.000s
+Picked up JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=1 -XX:CICompilerCount=2 -XX:ParallelGCThreads=1 -XX:ConcGCThreads=1 -Xmx1024m
+Picked up JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=1 -XX:CICompilerCount=2 -XX:ParallelGCThreads=1 -XX:ConcGCThreads=1 -Xmx1024m
+{:sent 839, :completed-renders 309, :source-counts {:held 579, :current 260}, :completed-render-ms {:p50 50.766749999998865, :p95 59.26945800000067, :p99 63.711332999999286, :min 43.23662499999773, :max 142.82004199999938, :mean 51.85343849514571}, :worker-calls {:movement 309, :wash-6 0, :wash-1 18, :wash-2 0, :projected-white 309, "venue-field-1" 309, :wash-7 0, "venue-field-2" 309, :spatial 210, "venue-field-3" 309, :wash-4 33, :gain 309, "venue-field-0" 309, :wash-5 0, :wash-0 0, :accent 309, :wash-3 9}}
