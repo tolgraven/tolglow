@@ -488,11 +488,15 @@
 
 ;; Ramps -----------------------------------------------------------------
 
-(def ^:private human-adapters #{:web "web" :studio :push-2 :push-3 :x-touch :xtouch :midi :osc :sensor :repl})
+(def ^:private human-adapters
+  "Source adapters of operator surfaces. Device sessions use their profile ID
+  (afterglow.control.devices): the X-Touch Extender is :x-touch-xt, a Seaboard
+  :seaboard-m and an MPE controller :mpe."
+  #{:web "web" :studio :push-2 :push-3 :x-touch :x-touch-xt :xtouch :seaboard-m :mpe :midi :osc :sensor :repl})
 
 (defn human-source?
-  "Studio, web, Push, X-Touch, MIDI, OSC, sensor and REPL sources are human
-  operator surfaces; agents, reactive actions and subscribers are not."
+  "Studio, web, Push, X-Touch, Seaboard, MPE, MIDI, OSC, sensor and REPL sources
+  are human operator surfaces; agents, reactive actions and subscribers are not."
   [source]
   (boolean (and (map? source) (human-adapters (:adapter source)))))
 
@@ -1091,7 +1095,13 @@
        (or (nil? label) (= label run-label))
        (or (nil? destination) (and dest (destination-match? destination dest ids)))))
 
-(defn- requester-owner [source] (select-keys source [:adapter :session-id]))
+(defn- owner?
+  "Did this requester post it? Same adapter and session. A requester without
+  an adapter has no identity, so it owns nothing."
+  [requester posted]
+  (and (map? requester) (map? posted) (some? (:adapter requester))
+       (= (id-text (:adapter requester)) (id-text (:adapter posted)))
+       (= (id-text (:session-id requester)) (id-text (:session-id posted)))))
 
 (defn cancel
   "Cancel scheduled events and running ramps selected by every supplied
@@ -1105,20 +1115,23 @@
   (check (or (nil? event-ids) (and (vector? event-ids) (every? identifier? event-ids))) "Event IDs must be a vector" {})
   (let [criteria (select-keys request [:event-ids :posted-by :label :destination])
         criteria (cond-> criteria
-                   (:destination criteria) (update :destination #(update % :target textual-keyword))
-                   (not (human-source? source)) (assoc :posted-by (requester-owner source)))
+                   (:destination criteria) (update :destination #(update % :target textual-keyword)))
+        ;; A non-human requester reaches only its own work, whatever criteria it supplies.
+        may-cancel? (if (human-source? source) (constantly true) #(owner? source %))
         reason (or reason :operator-cancel)
         s (state model)
         run-hit? (fn [run]
-                   (when-let [{:keys [event-id label source]} (:scheduled run)]
+                   (when-let [{:keys [event-id label] posted :source} (:scheduled run)]
                      (let [action (first (:steps run))]
-                       (selection-match? criteria event-id source label
-                                         (when (destination-target action) (action-destination action))
-                                         (get-in action [:select :ids])))))
+                       (and (may-cancel? posted)
+                            (selection-match? criteria event-id posted label
+                                              (when (destination-target action) (action-destination action))
+                                              (get-in action [:select :ids]))))))
         {gone true kept false} (group-by (comp boolean run-hit?) (:runs s))
         model (reduce #(remember %1 (run-entry %1 %2 :cancelled {:reason reason}))
                       (assoc-in model [:event-subscribers :runs] (vec kept)) gone)
-        ramp-hit? #(selection-match? criteria (:event-id %) (:source %) (:label %) (:destination %) nil)
+        ramp-hit? #(and (may-cancel? (:source %))
+                        (selection-match? criteria (:event-id %) (:source %) (:label %) (:destination %) nil))
         stopped (filterv ramp-hit? (get-in model [:event-subscribers :ramps]))]
     {:model (-> (remove-ramps model ramp-hit? :cancelled {:reason reason})
                 (hold-ramps stopped (:time-ms request (:time-ms model 0))))
@@ -1134,7 +1147,7 @@
         runs (get-in model [:event-subscribers :runs] [])
         index (first (keep-indexed #(when (= (id-text event-id) (get-in %2 [:scheduled :event-id])) %1) runs))]
     (check index "No pending event has that ID" {:event-id event-id})
-    (check (or (human-source? source) (same-source? (requester-owner source) (get-in runs [index :scheduled :source])))
+    (check (or (human-source? source) (owner? source (get-in runs [index :scheduled :source])))
            "Only the event's poster or a human operator can move it" {:event-id event-id})
     (check (= 1 (count timing)) "Move needs one of :at, :in or :grid" {})
     (let [action (validate-action (merge (apply dissoc (first (:steps (nth runs index))) timing-keys) timing))

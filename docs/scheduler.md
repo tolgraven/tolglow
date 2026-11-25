@@ -135,8 +135,8 @@ place of a top-level timing key.
   the value the ramp started from, each frame after macros, automation and
   routing have run, so a writer that bypasses the hook is caught too. The
   destination keeps the written value. A gesture, trusted operator authority, or
-  a Studio, web, Push, X-Touch, MIDI, OSC, sensor or REPL source records
-  `:reason :human-override`. Other sources, such as agents, reactive actions and
+  a Studio, web, Push, X-Touch (including the Extender), Seaboard, MPE, MIDI,
+  OSC, sensor or REPL source records `:reason :human-override`. Other sources, such as agents, reactive actions and
   macro or automation commands, record `:reason :superseded`. `:by` holds the
   writer's op, command ID and source from the shared receipt history.
 - **Cancel.** `:schedule/cancel` stops a running ramp and commits its current
@@ -154,12 +154,13 @@ These are operator defaults:
 - Human master and blackout stay authoritative. An agent (`:adapter :agent`)
   cannot schedule `:master/set`, `:blackout/set` or a master ramp. The batch is
   rejected with a reason.
-- Studio, web, Push, X-Touch, MIDI, OSC, sensor and REPL requests may cancel or
-  move any event. Any other requester, such as an agent or a reactive action,
-  matches only events and ramps it posted itself (same adapter and session),
-  whatever criteria it supplies. An agent therefore cannot cancel a
-  subscriber's ramp or another agent's plan. `cancel_scheduled` with `mine?`
-  makes this explicit.
+- Studio, web, Push, X-Touch, Seaboard, MPE, MIDI, OSC, sensor and REPL
+  requests may cancel or move any event. Any other requester, such as an agent
+  or a reactive action, matches only events and ramps it posted itself (same
+  adapter and session), whatever criteria it supplies. A requester whose source
+  has no adapter owns nothing. An agent therefore cannot cancel a subscriber's
+  ramp or another agent's plan. `cancel_scheduled` with `mine?` makes this
+  explicit.
 - A scheduled `:macro/run` or `:macro/stop` runs as a domain command carrying the
   poster's source, so the receipt records who started the macro.
 

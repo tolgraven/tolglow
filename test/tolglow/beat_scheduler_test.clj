@@ -426,7 +426,12 @@
         (is (= 0.3 (get-in m [:instances id :params :level])) "the writer's value stays")))
     (testing "a write from a human surface records a human override"
       (is (= :human-override (:reason (last (get-in (cancelled {:adapter :push-3 :session-id "p"})
-                                                    [:event-subscribers :recent]))))))))
+                                                    [:event-subscribers :recent]))))))
+    (testing "device sessions are named by their profile ID: an X-Touch Extender, Seaboard or MPE write is human too"
+      (doseq [adapter [:x-touch :x-touch-xt :seaboard-m :mpe :midi :osc]]
+        (is (= :human-override (:reason (last (get-in (cancelled {:adapter adapter :session-id "device"})
+                                                      [:event-subscribers :recent]))))
+            (str adapter))))))
 
 (deftest a-restored-schedule-follows-a-transport-that-starts-elsewhere
   (let [file (java.io.File/createTempFile "schedule-restore" ".tolglow")
@@ -669,4 +674,29 @@
       (is (= ["first" "second"] (mapv :event-id (take-last 2 (recent rt))))
           "events fire in the order the projection lists them")
       (is (= "second" (get-in @(:state rt) [:model :variables :section])))
+      (finally (show/stop! rt)))))
+
+(deftest a-requester-without-an-identity-owns-no-scheduled-work
+  (let [{:keys [rt]} (harness)
+        pending #(mapv :event-id (:upcoming (show/schedule rt)))
+        now #(inc (get-in @(:state rt) [:model :time-ms]))]
+    (try
+      (show/tick! rt 0)
+      (at! rt 100 {:op :schedule/post :source {:adapter :repl :session-id "fod"}
+                   :events [{:id "human" :op :cue/launch :cue-id :wash :in {:bars 8}}]})
+      (at! rt 200 {:op :schedule/post :source agent
+                   :events [{:id "planned" :op :cue/launch :cue-id :wash :in {:bars 8}}]})
+      (doseq [requester [{:type :patch} {:session-id "agent-run"} {:adapter :agent} {:adapter :agent :session-id "other-run"}]]
+        (let [moved (at! rt (now) {:op :schedule/move :event-id "planned" :in {:bars 1} :source requester})
+              cancelled (at! rt (now) {:op :schedule/cancel :event-ids ["human" "planned"] :source requester})]
+          (is (= :rejected (:status moved)) (pr-str requester))
+          (is (= [] (:event-ids cancelled)) (pr-str requester))))
+      (is (= ["human" "planned"] (pending)))
+      (testing "a non-human requester naming another poster matches nothing, not its own events"
+        (is (= [] (:event-ids (at! rt (now) {:op :schedule/cancel :posted-by {:adapter :repl} :source agent}))))
+        (is (= ["human" "planned"] (pending))))
+      (testing "the poster still reaches its own event, and an operator surface any event"
+        (is (= ["planned"] (:event-ids (at! rt (now) {:op :schedule/cancel :event-ids ["human" "planned"] :source agent}))))
+        (is (= ["human"] (:event-ids (at! rt (now) {:op :schedule/cancel :event-ids ["human"]
+                                                    :source {:adapter :x-touch-xt :session-id "extender"}})))))
       (finally (show/stop! rt)))))
