@@ -248,9 +248,12 @@
   (when-let [hold (get-in holds [id param])]
     (or (nil? (:until-beat hold)) (< beat (:until-beat hold)))))
 
-(defn owner-definition [model instance]
+(defn owner-definition
+  "Select the definition for the next frame. Paused instances defer hot reload."
+  [model instance]
   (let [current (get-in model [:registry :effects (:effect-id instance)])]
-    (if (and (not= :pinned (:reload-policy instance :pinned)) current
+    (if (and (not (get-in instance [:system :paused?]))
+             (not= :pinned (:reload-policy instance :pinned)) current
              (not= (:version current) (get-in instance [:reload-fault :effect-version]))
              (> (:version current) (:effect-version instance))) current (:definition instance))))
 
