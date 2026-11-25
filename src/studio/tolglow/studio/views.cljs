@@ -440,6 +440,13 @@
       [:div.button-row [button "auto-start" "Start auto" [:studio/auto-start] "button primary"] [button "auto-stop" "Stop auto" [:studio/auto-stop]]]
       [:p.small.muted "Persistent cues remain active until released. You can keep playing the grid while auto mode runs."]]]))
 
+(defn- response-duration-label [envelope stage]
+  (if-let [[unit value] (or (first (get envelope stage))
+                           (when-let [value (get envelope (keyword (str (name stage) "-ms")))]
+                             [:ms value]))]
+    (str (numeric/number-label value) " " (name unit))
+    "0"))
+
 (defn- response-panel [db]
   (let [form (get-in db [:ui :response-form]) responses (get-in db [:show :responses])]
     [:details.panel.auto-panel.response-panel
@@ -460,19 +467,32 @@
       [duration-control "response-attack" "Attack" (:attack-value form) (:unit form)
        (fn [value unit] (when (some? value) (set-ui! [:response-form :attack-value] value))
          (when unit (set-ui! [:response-form :unit] unit))) true]
+      [duration-control "response-decay" "Decay" (:decay-value form 0) (:unit form)
+       (fn [value unit] (when (some? value) (set-ui! [:response-form :decay-value] value))
+         (when unit (set-ui! [:response-form :unit] unit))) true]
+      [:label "Sustain level (0–1)"
+       [numeric/number-input {:id "response-sustain" :type "number" :min 0 :max 1 :step "any"
+                             :value (:sustain form 1)
+                             :on-change #(when-let [n (number-value %)] (set-ui! [:response-form :sustain] n))}]]
       [duration-control "response-release" "Release" (:release-value form) (:unit form)
        (fn [value unit] (when (some? value) (set-ui! [:response-form :release-value] value))
          (when unit (set-ui! [:response-form :unit] unit))) true]
       [:div.button-row [button "response-start" "Start / retrigger" [:studio/response-start] "button primary"]]
-      (for [response responses]
-        ^{:key (:id response)}
-        [:div.list-card {:data-response-id (:id response)}
-         [:div [:strong (label (:id response))]
-          [:p.small.muted (if (or (get-in response [:state :released-at-beat]) (get-in response [:state :released-at-ms]))
-                           "Releasing / held at zero" "Attack / sustain")]]
-         [:div.button-row [button nil "Release" [:studio/response-action :release (:id response)]]
-          [button nil "Remove" [:studio/response-action :delete (:id response)] "text-button"]]])
-      [:p.small.muted "Attack and release share one unit. Release fades to zero and holds there; remove the envelope to restore the unaffected parameters."]]]))
+      (for [{:keys [id envelope state enabled?]} responses]
+        ^{:key id}
+        [:div.list-card {:data-response-id id}
+         [:div [:strong (label id)]
+          [:p.small.muted (cond
+                           (false? enabled?) "Inactive"
+                           (or (:released-at-beat state) (:released-at-ms state)) "Releasing / held at zero"
+                           :else "Gate held")]
+          [:p.small.muted (str "Attack " (response-duration-label envelope :attack)
+                              " · Decay " (response-duration-label envelope :decay)
+                              " · Sustain " (numeric/number-label (:sustain envelope 1))
+                              " · Release " (response-duration-label envelope :release))]]
+         [:div.button-row [button nil "Release" [:studio/response-action :release id]]
+          [button nil "Remove" [:studio/response-action :delete id] "text-button"]]])
+      [:p.small.muted "Attack, decay and release share one unit. Release fades to zero and holds there. Remove the envelope to restore the original parameters."]]]))
 
 (defn- section-pattern-panel [db]
   (when-let [{:keys [override? pending? connected?]} (events/section-pattern-control db)]
