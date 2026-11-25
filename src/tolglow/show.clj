@@ -471,7 +471,8 @@
     {:model updated :ack {:status :accepted :revision (:revision updated)}}))
 
 (defn- cue-clock-identity [runtime {:keys [show-id epoch transport]}]
-  [show-id epoch (:source transport) (:source-epoch transport) @(:presentation-clock runtime)])
+  [show-id epoch (:source transport) (:source-epoch transport)
+   (:source-selection-epoch transport) @(:presentation-clock runtime)])
 
 (defn- dispatch-owner-command [runtime model payload time-ms]
   (cond
@@ -967,7 +968,9 @@
             block))))))
 
 (defn- source-clock-model [runtime model time-ms]
-  (let [{:keys [selected-source clock follow-transport?]} (session/clock-at (connections/sync (:connections runtime)) time-ms)]
+  (let [{:keys [selected-source selection-epoch clock follow-transport?]}
+        (session/clock-at (connections/sync (:connections runtime)) time-ms)
+        model (assoc-in model [:transport :source-selection-epoch] selection-epoch)]
     (if-let [captured (cond
                         (= :manual selected-source)
                         (assoc (:transport (advance-transport model time-ms))
@@ -1017,16 +1020,20 @@
           (assoc-in [:variables :sync :events] (:events captured))
           (routing/admit-sync (:events captured))) model)))
 
-(defn- observe-sync-commands! [runtime before after receipts events]
+(defn- observe-sync-commands! [runtime before after receipts events fired-outcomes]
   (let [manager (connections/sync (:connections runtime))
         old-ids (if (= (:epoch before) (:epoch after))
                   (set (get-in before [:control :history-order])) #{})
-        epoch (:epoch after)]
+        epoch (:epoch after)
+        fired (filter #(= epoch (get-in % [:ack :epoch])) fired-outcomes)
+        skip-ids (into old-ids (map #(get-in % [:ack :command-id])) fired)
+        history (get-in after [:control :history])
+        from-history (keep #(when-not (skip-ids %) (get history %)) (get-in after [:control :history-order]))
+        outcomes (if (seq fired) (sort-by #(get-in % [:ack :revision]) (concat fired from-history)) from-history)]
     (doseq [[_ ack command] receipts :when (#{:rejected :pending :cancelled} (:status ack))]
       (acknowledge-sync! runtime manager command ack epoch))
     ;; Include automation, composition and controller commands, not only HTTP.
-    (doseq [id (get-in after [:control :history-order]) :when (not (old-ids id))
-            :let [{:keys [command ack]} (get-in after [:control :history id])]]
+    (doseq [{:keys [command ack]} outcomes]
       (let [instance (get-in after [:instances (:instance-id ack)])
             timing (or (:duration instance) (when-let [ms (:duration-ms instance)] {:ms ms}))]
         (live-sync/record! manager (cond-> command
@@ -1339,6 +1346,8 @@
                  ;; Confidence belongs to this live clock sample and its resource generation.
                  next-state (assoc next-state :audio-clock-confidence
                                    (when-not (or restored? @restarted-generation) audio-clock-confidence))
+                 fired-outcomes (cue-timing/fired-outcomes (:model next-state))
+                 next-state (if (seq fired-outcomes) (update next-state :model cue-timing/clear-fired-outcomes) next-state)
                  committed (show-events/commit (:event-admit runtime) (:model before) next-state operations)
                  next-state (venue-fog/commit! runtime (:state committed)
                               (patch! runtime (get-in next-state [:model :rig :fixtures])) restored?)]
@@ -1355,7 +1364,8 @@
                                 (assoc (:data event) :type :event/handler-failed)))) (:events committed)))
              (doseq [[reply ack] receipts] (deliver reply ack))
              (when-not restored?
-               (try (observe-sync-commands! runtime (:model before) (:model next-state) receipts (:events committed))
+               (try (observe-sync-commands! runtime (:model before) (:model next-state) receipts
+                                           (:events committed) fired-outcomes)
                     (catch Exception error
                       (swap! (:state runtime) assoc-in [:status :sync-error] (error-data error)))))
              (try (if (:independent-output? runtime)
@@ -1451,7 +1461,9 @@
            (when-not accepted? (throw (ex-info "Show changed or command queue is full" {})))))
        (catch Exception error
          (when @candidate (connections/abort-prepared! @candidate))
-         (deliver reply (merge {:status :rejected} (error-data error)))))
+         (let [command-id (or (:command-id payload) (get-in payload [:command :command-id]))]
+           (deliver reply (cond-> (merge {:status :rejected} (error-data error))
+                            command-id (assoc :command-id command-id))))))
      reply)))
 
 (defn quantized-cue-status
@@ -1642,8 +1654,12 @@
                                           :now-ms! #(now-ms runtime)
                                           :dispatch! (fn [command]
                                                        (heartbeat! runtime id)
-                                                       (deref (submit! runtime (assoc command :expected-epoch epoch)) 5000
-                                                              {:status :pending}))}))]
+                                                       (let [reply (submit! runtime (assoc command :expected-epoch epoch))
+                                                             quantized? (or (= :cue/cancel-launch (:op command))
+                                                                            (and (= :cue/launch (:op command))
+                                                                                 (contains? command :grid)))]
+                                                         (deref reply (if quantized? 0 5000)
+                                                                {:status :pending :command-id (:command-id command)})))}))]
         (if (locking (:lock runtime)
               (when (and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch])))
                 (swap! (:devices runtime) assoc id device)

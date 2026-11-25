@@ -1,6 +1,10 @@
 (ns tolglow.cue-timing-host-test
-  (:require [clojure.data.json :as json]
+  (:require [afterglow.sync :as sync]
+            [clojure.data.json :as json]
             [clojure.test :refer [deftest is]]
+            [tolglow.connections :as connections]
+            [tolglow.demo :as demo]
+            [tolglow.integrations.live-sync :as live-sync]
             [tolglow.show :as show]
             [tolglow.studio.web :as web]
             [tolglow.transit :as transit])
@@ -152,4 +156,41 @@
              (select-keys (show/quantized-cue-status runtime "gone") [:status :reason])))
       (show/tick! runtime 33000)
       (is (empty? (:instances (model runtime))))
+      (finally (show/stop! runtime)))))
+
+(deftest clock-selection-round-trip-invalidates-the-old-queue
+  (let [runtime (show/create-runtime {:workspace-options nil})
+        manager (connections/sync (:connections runtime))
+        intent (assoc-in (launch "old" :ember {:beats 1}) [:command :source] :repl)]
+    (try
+      (is (= :pending (:status (apply-at! runtime :cue-schedule intent 100))))
+      (is (= :repl (get-in (show/snapshot runtime) [:pending-cue-launches 0 :source])))
+      (sync/select-source! manager :unseen)
+      (sync/select-source! manager :manual)
+      (show/tick! runtime 500)
+      (is (= :missed (:status (show/quantized-cue-status runtime "old"))))
+      (is (empty? (:instances (model runtime))))
+      (finally (show/stop! runtime)))))
+
+(deftest live-recording-observes-each-fire-even-when-retry-history-evicts-it
+  (let [runtime (show/create-runtime {:workspace-options nil
+                                     :model (assoc-in (demo/model) [:control :history-limit] 1)})
+        recorded (atom [])
+        acks (atom [])
+        note (fn [intent note]
+               (assoc-in intent [:command :source] {:type :ableton :note note :sync-run-id "injected"}))]
+    (try
+      (with-redefs [live-sync/record! (fn [_ command ack] (swap! recorded conj [command ack]))
+                    live-sync/acknowledge! (fn [_ note ack _] (swap! acks conj [note ack]))]
+        (doseq [[id cue value] [["a" :ember 36] ["b" :ice 37]]]
+          (let [intent (note (launch id cue {:beats 1}) value)]
+            (is (= :pending (:status (apply-at! runtime :command
+                                                (assoc (:command intent) :grid (:grid intent)) 125))))))
+        (show/tick! runtime 500)
+        (is (= ["b"] (get-in (model runtime) [:control :history-order])))
+        (is (= ["a" "b"] (mapv (comp :command-id first) @recorded)))
+        (is (= [[36 :pending] [37 :pending] [36 :accepted] [37 :accepted]]
+               (mapv (fn [[note ack]] [note (:status ack)]) @acks)))
+        (is (= [1 1] (mapv #(get-in % [0 :cue-timing :due-beat]) @recorded)))
+        (is (= [500 500] (mapv #(get-in % [0 :cue-timing :admitted-at :time-ms]) @recorded))))
       (finally (show/stop! runtime)))))

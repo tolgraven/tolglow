@@ -11,7 +11,11 @@
 (defn active? [model] (some? (get-in model path)))
 
 (defn without-queue [model]
-  (update model :control dissoc ::queue))
+  (update (dissoc model ::fired-outcomes) :control dissoc ::queue))
+
+(defn fired-outcomes [model] (::fired-outcomes model))
+
+(defn clear-fired-outcomes [model] (dissoc model ::fired-outcomes))
 
 (defn receipt [model id]
   (quantization/receipt (get-in model state-path) id))
@@ -22,8 +26,12 @@
 (defn source [model id] (quantization/source (get-in model state-path) id))
 
 (defn- source-owner [source]
-  (cond-> (select-keys source [:adapter :session-id :type :bridge-id :sync-run-id :source-id :note])
-    (= "web" (:adapter source)) (assoc :adapter :web)))
+  (if (map? source)
+    (let [fields (select-keys source [:adapter :session-id :type :bridge-id :sync-run-id :source-id :note])]
+      (cond
+        (= "web" (:adapter source)) (assoc fields :adapter :web)
+        (seq fields) fields))
+    source))
 
 (defn- web-source? [{:keys [adapter session-id]}]
   (and (#{:web "web"} adapter) (string? session-id) (seq session-id)))
@@ -66,9 +74,12 @@
            ack (:ack result)
            accepted? (= :accepted (:status ack))
            state (get-in model state-path)
-           settled (quantization/settle state command-id clock accepted? ack)]
+           settled (quantization/settle state command-id clock accepted? ack)
+           committed (:model result)
+           outcome (when accepted? (get-in committed [:control :history command-id]))]
        (-> (:model result)
            (assoc-in state-path (:state settled))
+           (cond-> outcome (update ::fired-outcomes (fnil conj []) outcome))
            (emit (if accepted? :cue/launch-fired :cue/launch-missed) (:receipt settled)))))
    (assoc-in model state-path state) decisions))
 
@@ -131,7 +142,7 @@
       (apply-command model (-> request (select-keys [:source :command-id :epoch :show-id])
                                (assoc :op :instance/end :instance-id (:id instance))) time-ms)
 
-      (and (seq owner) current (= owner (source-owner (quantization/source state launch-command-id))))
+      (and (some? owner) current (= owner (source-owner (quantization/source state launch-command-id))))
       (cancel model identity {:command-id launch-command-id :reason reason})
 
       (and (nil? current) held-release? (held-source? owner)
