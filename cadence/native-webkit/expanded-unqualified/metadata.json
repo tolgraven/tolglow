@@ -1,0 +1,610 @@
+{
+  "expanded": true,
+  "checks": [
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:30.858Z",
+      "readMs": 14.254000000000001
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:30.874Z",
+      "readMs": 12.165292
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:31.889Z",
+      "readMs": 12.813290999999936
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:32.904Z",
+      "readMs": 12.681540999999925
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:33.919Z",
+      "readMs": 12.884291999999732
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:35.212Z",
+      "readMs": 28.27270800000042
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:36.243Z",
+      "readMs": 14.878249999999753
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:37.260Z",
+      "readMs": 13.187041000000136
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:38.276Z",
+      "readMs": 14.490166999999929
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:39.291Z",
+      "readMs": 15.455459000000701
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:40.309Z",
+      "readMs": 15.155957999999373
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:41.325Z",
+      "readMs": 12.752875000000131
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:42.340Z",
+      "readMs": 13.38012499999968
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:43.353Z",
+      "readMs": 12.67658400000073
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:44.368Z",
+      "readMs": 12.84045900000092
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:45.382Z",
+      "readMs": 14.674917000000278
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:46.399Z",
+      "readMs": 13.987875000000713
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:47.416Z",
+      "readMs": 14.938249999999243
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:48.432Z",
+      "readMs": 15.96508299999914
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:49.450Z",
+      "readMs": 14.309583999998722
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:50.466Z",
+      "readMs": 14.819749999998749
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:51.484Z",
+      "readMs": 14.135207999999693
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:52.500Z",
+      "readMs": 15.072875000001659
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:53.517Z",
+      "readMs": 12.684042000000773
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:54.531Z",
+      "readMs": 13.947541000001365
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:55.547Z",
+      "readMs": 14.081958999999188
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:56.562Z",
+      "readMs": 15.687250000002678
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:57.579Z",
+      "readMs": 15.477209000000585
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:58.596Z",
+      "readMs": 14.058208999998897
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:30:59.612Z",
+      "readMs": 14.121416999998473
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:00.627Z",
+      "readMs": 16.072292000000743
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:01.644Z",
+      "readMs": 13.2287499999984
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:02.659Z",
+      "readMs": 12.105790999998135
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:03.672Z",
+      "readMs": 21.41570800000045
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:04.696Z",
+      "readMs": 17.482208000001265
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:05.714Z",
+      "readMs": 12.442957999999635
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:06.728Z",
+      "readMs": 22.845666000001074
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:07.752Z",
+      "readMs": 15.354999999995925
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:08.768Z",
+      "readMs": 15.751791999995476
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:09.785Z",
+      "readMs": 17.77245799999946
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:10.805Z",
+      "readMs": 22.672124999997322
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:11.830Z",
+      "readMs": 22.114666000001307
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:12.853Z",
+      "readMs": 12.724583000002895
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:13.867Z",
+      "readMs": 25.44258300000365
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:14.895Z",
+      "readMs": 12.928458000002138
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:15.910Z",
+      "readMs": 22.664042000003974
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:16.934Z",
+      "readMs": 21.583041999998386
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:17.957Z",
+      "readMs": 15.940166000000318
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:18.976Z",
+      "readMs": 17.111958000001323
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:19.994Z",
+      "readMs": 13.49579100000119
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:21.009Z",
+      "readMs": 16.60804199999984
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:22.027Z",
+      "readMs": 23.067042000002402
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:23.052Z",
+      "readMs": 20.781708000002254
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:24.074Z",
+      "readMs": 13.655124999997497
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:25.090Z",
+      "readMs": 17.19499999999971
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:26.108Z",
+      "readMs": 14.44012500000099
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:27.124Z",
+      "readMs": 17.285291000000143
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:28.143Z",
+      "readMs": 12.74737499999901
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:29.157Z",
+      "readMs": 12.457792000001064
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:30.171Z",
+      "readMs": 13.650832999999693
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:31.186Z",
+      "readMs": 14.907708999999159
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:32.202Z",
+      "readMs": 16.51462499999616
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:33.219Z",
+      "readMs": 22.234166000002006
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:34.244Z",
+      "readMs": 23.71308400000271
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:35.269Z",
+      "readMs": 21.9690000000046
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:36.293Z",
+      "readMs": 17.690833000000566
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:37.312Z",
+      "readMs": 23.77599999999802
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:38.337Z",
+      "readMs": 20.17920800000138
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:39.359Z",
+      "readMs": 14.542958999998518
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:40.375Z",
+      "readMs": 23.801334000003408
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:41.401Z",
+      "readMs": 16.367708000005223
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:42.418Z",
+      "readMs": 12.91191599999729
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:43.433Z",
+      "readMs": 14.202625000005355
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:44.448Z",
+      "readMs": 23.459875000000466
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:45.474Z",
+      "readMs": 17.58750000000873
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:46.493Z",
+      "readMs": 22.810666000004858
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:47.517Z",
+      "readMs": 17.91387499999837
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:48.537Z",
+      "readMs": 22.665750000000116
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:49.562Z",
+      "readMs": 20.506584000002476
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:50.584Z",
+      "readMs": 17.335917000003974
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:51.602Z",
+      "readMs": 16.151041999997688
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:52.620Z",
+      "readMs": 21.176416000002064
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:53.643Z",
+      "readMs": 19.708417000001646
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:54.664Z",
+      "readMs": 14.519000000000233
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:55.680Z",
+      "readMs": 23.254790999999386
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:56.705Z",
+      "readMs": 23.44495800000732
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:57.730Z",
+      "readMs": 25.08474999999453
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:58.757Z",
+      "readMs": 19.541791000010562
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:31:59.778Z",
+      "readMs": 17.571750000002794
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:32:00.797Z",
+      "readMs": 16.33087499999965
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:32:01.815Z",
+      "readMs": 13.064124999989872
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:32:02.829Z",
+      "readMs": 18.23124999999709
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:32:03.849Z",
+      "readMs": 14.226458999997703
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:32:04.864Z",
+      "readMs": 13.572333999996772
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:32:05.878Z",
+      "readMs": 13.598417000001064
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:32:06.893Z",
+      "readMs": 20.891540999989957
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:32:07.916Z",
+      "readMs": 17.64020900000469
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:32:08.935Z",
+      "readMs": 21.283416999998735
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:32:09.958Z",
+      "readMs": 20.464082999998936
+    },
+    {
+      "status": "unlocked",
+      "reason": "root-unlocked-single-console",
+      "checkedAt": "2026-11-25T01:32:10.980Z",
+      "readMs": 23.68491599999834
+    }
+  ],
+  "activatedAt": "2026-11-25T01:30:34.011Z",
+  "workerSHA256": "2af5a972e065ac97b739b07c84d5ad8688534d37bbd2f8a948b5d2cc96369332",
+  "packagedRevisions": "8831ea01e93971af1fd3b5b650d17f0a153758ee-bcf63ec2fe920543fd72e61e8a961cbf765be433",
+  "error": "AssertionError [ERR_ASSERTION]: Error: Timed out waiting for lit Room with requested fog and preview settings",
+  "stopped": true
+}

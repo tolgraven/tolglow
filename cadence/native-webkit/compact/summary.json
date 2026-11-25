@@ -1,0 +1,174 @@
+{
+  "mode": "compact",
+  "bundle": "se.tolgraven.tolglow.studio",
+  "gpu": "Apple GPU",
+  "physicalDevice": "Apple M4 MacBook Air",
+  "packagedRevisions": "8831ea01e93971af1fd3b5b650d17f0a153758ee-bcf63ec2fe920543fd72e61e8a961cbf765be433",
+  "workerSHA256": "2af5a972e065ac97b739b07c84d5ad8688534d37bbd2f8a948b5d2cc96369332",
+  "osChecks": 110,
+  "recorderQualification": "Revalidated the raw compact receipt against WebKit’s Apple GPU identifier on the inventoried host",
+  "rows": [
+    {
+      "name": "fixed-haze",
+      "presented": {
+        "frames": 1199,
+        "hz": 59.94850128746781,
+        "maxMs": 42.02000000000044,
+        "over25ms": 47,
+        "p50Ms": 16.42000000000189,
+        "p95Ms": 23.340000000003783
+      },
+      "display": {
+        "frames": 1200,
+        "hz": 59.99850003749906,
+        "maxMs": 18.299999999999272,
+        "over25ms": 0,
+        "p50Ms": 16.659999999999854,
+        "p95Ms": 17.659999999999854
+      },
+      "workerTimingsMilliseconds": {
+        "workerFrame": {
+          "p50": 7.399999999997817,
+          "p95": 14.020000000004075
+        },
+        "fence": {
+          "p50": 5.6599999999998545,
+          "p95": 13.139999999999418
+        },
+        "bitmap": null,
+        "previousReady": null,
+        "rafDelivery": null,
+        "cpuSubmit": {
+          "p50": 0.7999999999992724,
+          "p95": 1.8799999999973807
+        }
+      },
+      "raster": {
+        "canvas": [
+          816,
+          500
+        ],
+        "scene": [
+          [
+            501,
+            307
+          ],
+          [
+            426,
+            261
+          ]
+        ]
+      },
+      "quality": [
+        "mobile"
+      ]
+    },
+    {
+      "name": "moving-haze",
+      "presented": {
+        "frames": 1044,
+        "hz": 52.199164813363005,
+        "maxMs": 2561.4000000000015,
+        "over25ms": 44,
+        "p50Ms": 16.540000000000873,
+        "p95Ms": 23.860000000000582
+      },
+      "display": {
+        "frames": 1200,
+        "hz": 59.999040015359775,
+        "maxMs": 18.980000000010477,
+        "over25ms": 0,
+        "p50Ms": 16.660000000003492,
+        "p95Ms": 17.660000000003492
+      },
+      "workerTimingsMilliseconds": {
+        "workerFrame": {
+          "p50": 8.980000000003201,
+          "p95": 16.42000000000553
+        },
+        "fence": {
+          "p50": 7.900000000001455,
+          "p95": 15.519999999996799
+        },
+        "bitmap": null,
+        "previousReady": null,
+        "rafDelivery": null,
+        "cpuSubmit": {
+          "p50": 0.8600000000005821,
+          "p95": 2.4800000000032014
+        }
+      },
+      "raster": {
+        "canvas": [
+          816,
+          500
+        ],
+        "scene": [
+          [
+            408,
+            250
+          ]
+        ]
+      },
+      "quality": [
+        "mobile",
+        "low"
+      ]
+    },
+    {
+      "name": "moving-plumes",
+      "presented": {
+        "frames": 1176,
+        "hz": 58.79841244286402,
+        "maxMs": 38.36000000000058,
+        "over25ms": 45,
+        "p50Ms": 16.439999999987776,
+        "p95Ms": 23.820000000006985
+      },
+      "display": {
+        "frames": 1200,
+        "hz": 59.99838004373879,
+        "maxMs": 22.19999999999709,
+        "over25ms": 0,
+        "p50Ms": 16.660000000003492,
+        "p95Ms": 17.639999999999418
+      },
+      "workerTimingsMilliseconds": {
+        "workerFrame": {
+          "p50": 12.380000000004657,
+          "p95": 18.119999999995343
+        },
+        "fence": {
+          "p50": 10.620000000009895,
+          "p95": 16.55999999999767
+        },
+        "bitmap": null,
+        "previousReady": null,
+        "rafDelivery": null,
+        "cpuSubmit": {
+          "p50": 1.3999999999941792,
+          "p95": 1.8800000000046566
+        }
+      },
+      "raster": {
+        "canvas": [
+          816,
+          500
+        ],
+        "scene": [
+          [
+            408,
+            250
+          ]
+        ]
+      },
+      "quality": [
+        "low"
+      ],
+      "plumes": {
+        "accepted": 5,
+        "rejected": 0
+      }
+    }
+  ]
+}
