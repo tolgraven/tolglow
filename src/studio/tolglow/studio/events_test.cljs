@@ -14,6 +14,7 @@
             [tolglow.studio.spatial-drafts :as spatial-drafts]
             [tolglow.studio.fixture-library :as fixtures]
             [tolglow.studio.connections :as connections]
+            [tolglow.studio.views :as views]
             [tolglow.studio.chat]))
 
 ;; Execute actual registered event handlers/interceptors while leaving their
@@ -123,6 +124,76 @@
     (is (= "7:12" (get-in (first-command exit) [:fields :instance-id])))
     (is (true? (:beacon? (first-command exit))))
     (is (empty? (get-in exit [:db :pointers])))))
+
+(deftest launch-grid-captures-the-press-selection-and-allows-a-single-override
+  (let [pad [:studio/gesture-down {:pointer-id 1 :cue-id "ember"}]
+        one-shot (assoc-in base [:ui :launch-mode] "one-shot")
+        selected (assoc-in one-shot [:ui :launch-grid] "quarter-beat")
+        down (:db (transition selected pad))
+        changed (assoc-in down [:ui :launch-grid] "bar")
+        released (transition changed [:studio/gesture-up 1])
+        launched (first-command (transition (:db released) (:dispatch released)))
+        legacy (first-command (transition one-shot [:studio/launch "ember" "one-shot"]))
+        override (:dispatch (transition (assoc-in selected [:ui :action-cell :cue-id] "ember")
+                                        [:studio/cue-action :launch-now]))
+        immediate (first-command (transition selected override))
+        active-toggle (first-command (transition selected [:studio/launch "ember" "toggle"]))]
+    (is (= "cue/launch" (:op launched)))
+    (is (string? (get-in launched [:fields :command-id])))
+    (is (= {:beats 0.25} (get-in launched [:fields :grid])))
+    (is (= {:mode "one-shot" :duration {:beats 4}} (get-in launched [:fields :launch])))
+    (is (not (contains? (:fields legacy) :grid)))
+    (is (= "off" (get-in immediate [:fields :grid])))
+    (is (= "instance/end" (:op active-toggle)))
+    (is (not (contains? (:fields active-toggle) :grid)))
+    (is (empty? (transition (assoc-in (:db released) [:show :epoch] 8) (:dispatch released))))
+    (is (empty? (transition selected (conj (:on-success launched) {:status "pending"}))))))
+
+(deftest gridded-held-release-before-ack-uses-the-owning-launch-id
+  (let [db (-> base (assoc-in [:ui :launch-mode] "held") (assoc-in [:ui :launch-grid] "bar")
+               (assoc-in [:show :runtime-id] "host"))
+        gesture [:studio/gesture-down {:pointer-id 4 :cue-id "ember"}]
+        down (transition db gesture)
+        press (first-command down)
+        launch-id (get-in press [:fields :command-id])
+        release (transition (:db down) [:studio/release-pointers true])
+        cancel (first-command release)
+        next-press (transition (:db release) gesture)
+        old-reply (transition (:db next-press) (conj (:on-success press) {:status "fired" :instance-id "7:10"}))]
+    (is (= {:bars 1} (get-in press [:fields :grid])))
+    (is (= launch-id (get-in press [:fields :gesture-id])))
+    (is (empty? (transition (:db down) (conj (:on-success press) {:status "pending"}))))
+    (is (= "cue/cancel-launch" (:op cancel)))
+    (is (= {:launch-command-id launch-id :reason "held-release" :command-id (str launch-id "-held-release")} (:fields cancel)))
+    (is (= [7 "host" (:session db) true] ((juxt :epoch :runtime-id :session :beacon?) cancel)))
+    (is (nil? (get-in release [:db :pointers 4])))
+    (is (empty? old-reply))
+    (is (not= launch-id (get-in (first-command next-press) [:fields :command-id])))
+    (is (empty? (:fx (transition (:db release) [:studio/gesture-cancel 4]))))))
+
+(deftest queued-projection-drives-feedback-and-session-owned-cancellation
+  (let [mine {:command-id "own" :cue-id "ember" :due-beat 4.5 :mode :held
+              :source {:adapter :web :session-id (:session base)}}
+        other (assoc-in (assoc mine :command-id "other") [:source :session-id] "other-browser")
+        view (assoc (:show base) :show-id :main :runtime-id "host" :pending-cue-launches [mine other])
+        installed (:db (full-frame base view))
+        html (renderToStaticMarkup (r/as-element [views/queued-cues installed]))
+        cancel (first-command (transition installed [:studio/cancel-queued-cue "own"]))
+        recovered (first-command (transition installed [:studio/reconcile-held]))
+        unqueued (assoc-in installed [:show :pending-cue-launches] [])]
+    (is (str/includes? html "Queued launches"))
+    (is (str/includes? html "ember · beat 4.5"))
+    (is (= 1 (count (re-seq #"Cancel queued ember" html))))
+    (is (= "cue/cancel-launch" (:op cancel)))
+    (is (= {:launch-command-id "own" :reason "operator-cancel" :command-id "own-operator-cancel"} (:fields cancel)))
+    (is (= [:studio/toast "Queued cue cancelled."]
+           (:dispatch (transition installed (conj (:on-success cancel) {:status "cancelled"})))))
+    (is (= [:studio/toast "The cue already launched."]
+           (:dispatch (transition installed (conj (:on-success cancel) {:status :fired})))))
+    (is (= {:launch-command-id "own" :reason "held-release" :command-id "own-held-release"} (:fields recovered)))
+    (is (empty? (transition installed [:studio/cancel-queued-cue "other"])))
+    (is (empty? (transition unqueued [:studio/cancel-queued-cue "own"])))
+    (is (nil? (views/queued-cues unqueued)))))
 
 (deftest only-the-current-press-can-open-its-cue-actions
   (let [pad {:pointer-id 1 :cue-id "ember" :x 0 :y 0 :client-x 5 :client-y 5}

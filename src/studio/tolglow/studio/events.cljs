@@ -13,10 +13,17 @@
 (def initial-source
   "{:id :after-hours\n :version 1\n :name \"After hours\"\n :swatch \"#b981a3\"\n :duration {:beats 4}\n :envelope {:attack {:beats 0.125} :release {:beats 1}}\n :params {:level {:type :number :default 0.7 :bounds [0.0 1.0]}}\n :outputs {:color {:op :const :value [0.725 0.506 0.639]}\n           :dimmer {:op :param :key :level}}}")
 
+(def launch-grids
+  [["off" "Off" nil] ["quarter-beat" "¼ beat" {:beats 0.25}] ["half-beat" "½ beat" {:beats 0.5}]
+   ["beat" "Beat" {:beats 1}] ["bar" "Bar" {:bars 1}] ["phrase" "Phrase" {:phrases 1}]])
+
+(defn- selected-grid [db]
+  (some (fn [[choice _ grid]] (when (= choice (get-in db [:ui :launch-grid])) grid)) launch-grids))
+
 (defn initial-db [session]
   {:session session :show nil :pointers {} :pending-params {} :drafts {} :stream-id nil
    :connection {:connected? false :error "Connecting to the studio…"}
-   :ui {:view :perform :page-id nil :selected-instance nil :launch-mode "toggle" :edit? false
+   :ui {:view :perform :page-id nil :selected-instance nil :launch-mode "toggle" :launch-grid "off" :edit? false
         :preview-settings {:worklight 0.12 :quality "auto" :camera "audience"} :preview-expanded? false :preview-controls? false
         :definition-search "" :assign-cue "" :toast nil :action-cell nil :clipboard nil :prompt nil
         :composition {:id "evening-drift" :name "Evening drift" :mode "sequence" :loop "once" :slots []}
@@ -128,6 +135,10 @@
 (defn active [db cue-id]
   (filterv #(and (= cue-id (:cue-id %)) (not= "releasing" (:phase %)))
            (get-in db [:show :instances])))
+(defn owns-cue-launch? [db {:keys [source]}]
+  (and (#{"web" :web} (:adapter source)) (= (:session db) (:session-id source))))
+(defn- current-show? [show owner]
+  (and (= (:epoch owner) (:epoch show)) (= (:runtime-id owner) (:runtime-id show))))
 (defn command [db op fields & [on-success epoch beacon? runtime-id]]
   [:studio/send-command {:op op :fields fields :epoch (or epoch (get-in db [:show :epoch]))
                         :session (:session db) :runtime-id (or runtime-id (get-in db [:show :runtime-id]))
@@ -204,7 +215,8 @@
     {:db updated
      :fx (cond-> []
            (and (or (:recover-held? updated) (and epoch-changed? (seq (:pointers db))))
-                (or (:awaiting-full? db) epoch-changed? (not= (:revision show) (get-in db [:show :revision]))))
+                (or (:awaiting-full? db) epoch-changed? (not= (:revision show) (get-in db [:show :revision]))
+                    (not= (:pending-cue-launches show) (get-in db [:show :pending-cue-launches]))))
            (conj [:dispatch [:studio/reconcile-held]])
            epoch-changed? (conj [:dispatch [:studio/release-pointers]] [:dispatch [:chat/runtime-change]]
                                         [:dispatch [:fixtures/runtime-change]] [:dispatch [:connections/runtime-change]] [:dispatch [:sensors/runtime-change]] [:dispatch [:modulation/runtime-change]] [:dispatch [:patchbay/runtime-change]] [:dispatch [:waveform/runtime-change]] [:dispatch [:repl/runtime-change]] [:dispatch [:performance/runtime-change]] [:dispatch [:workspace/runtime-change]] [:dispatch [:subscribers/runtime-change]]
@@ -334,32 +346,43 @@
 (rf/reg-event-fx :studio/transport-toggle
   (fn [{:keys [db]} _] {:dispatch [:studio/command "transport/set" {:transport {:playing? (not (get-in db [:show :transport :playing?] true))}}]}))
 
-(defn launch-fx [db cue-id mode on-success]
+(rf/reg-cofx :studio/unique (fn [cofx _] (assoc cofx :unique (str (random-uuid)))))
+
+(defn launch-fx [db cue-id mode on-success & [{:keys [grid command-id gesture-id]}]]
   (let [cue (cue db cue-id)]
-    (command db "cue/launch" {:cue-id cue-id
-                             :launch (cond-> {:mode (if (= mode "toggle") "persistent" mode)}
-                                       (and (= mode "one-shot") (:duration cue)) (assoc :duration (:duration cue))
-                                       (and (= mode "one-shot") (not (:duration cue))) (assoc :duration-ms (or (:duration-ms cue) 1000)))} on-success)))
-(rf/reg-event-fx :studio/launch
-  (fn [{:keys [db]} [_ cue-id mode]]
-    (let [mode (or mode (get-in db [:ui :launch-mode])) instances (active db cue-id)]
+    (command db "cue/launch"
+             (cond-> {:cue-id cue-id
+                      :launch (cond-> {:mode (if (= mode "toggle") "persistent" mode)}
+                                (and (= mode "one-shot") (:duration cue)) (assoc :duration (:duration cue))
+                                (and (= mode "one-shot") (not (:duration cue))) (assoc :duration-ms (or (:duration-ms cue) 1000)))}
+               grid (assoc :grid grid :command-id command-id)
+               gesture-id (assoc :gesture-id gesture-id))
+             on-success)))
+(rf/reg-event-fx :studio/launch [(rf/inject-cofx :studio/unique)]
+  (fn [{:keys [db unique]} [_ cue-id mode options]]
+    (let [mode (or mode (get-in db [:ui :launch-mode])) instances (active db cue-id)
+          grid (get options :grid (selected-grid db))
+          owner (select-keys (:show db) [:epoch :runtime-id])]
       (cond
+        (and (:owner options) (not (current-show? (:show db) (:owner options)))) {}
         (not (get-in db [:connection :connected?])) {:dispatch [:studio/failure "Wait for the show to reconnect before launching."]}
         (and (= mode "toggle") (seq instances)) {:fx (mapv #(command db "instance/end" {:instance-id (:id %)}) instances)}
-        :else {:fx [(launch-fx db cue-id mode [:studio/launched])]}))))
-(rf/reg-event-db :studio/launched
-  (fn [db [_ ack]] (assoc-in db [:ui :selected-instance] (:instance-id ack))))
+        :else {:fx [(launch-fx db cue-id mode [:studio/launched owner] {:grid grid :command-id unique})]}))))
+(rf/reg-event-fx :studio/launched
+  (fn [{:keys [db]} [_ owner {:keys [instance-id status]}]]
+    (when (current-show? (:show db) owner)
+      (cond
+        instance-id {:db (assoc-in db [:ui :selected-instance] instance-id)}
+        (#{"missed" :missed} status) {:dispatch [:studio/failure "The scheduled cue could not launch."]}))))
 (rf/reg-event-fx :studio/end-all
   (fn [{:keys [db]} _] {:fx (mapv #(command db "instance/end" {:instance-id (:id %)}) (get-in db [:show :instances]))}))
 
-(rf/reg-cofx :studio/unique (fn [cofx _] (assoc cofx :unique (str (random-uuid)))))
-
-(defn- launch-held [db {:keys [cue-id press-id] :as pointer}]
+(defn- launch-held [db {:keys [cue-id press-id grid] :as pointer}]
   ;; The command's origin survives pointer release, reuse and show replacement.
-  (let [owner (select-keys pointer [:pointer-id :press-id :epoch :runtime-id])]
-    (-> (launch-fx db cue-id "held" [:studio/held-launched owner])
-        (assoc-in [1 :fields :gesture-id] press-id)
-        (assoc-in [1 :on-failure] [:studio/held-failed]))))
+  (let [owner (select-keys pointer [:pointer-id :press-id :epoch :runtime-id :grid])]
+    (assoc-in (launch-fx db cue-id "held" [:studio/held-launched owner]
+                        {:grid grid :command-id press-id :gesture-id press-id})
+              [1 :on-failure] (if grid [:studio/failure] [:studio/held-failed]))))
 
 (rf/reg-event-fx :studio/gesture-down [(rf/inject-cofx :studio/unique)]
   (fn [{:keys [db unique]} [_ {:keys [pointer-id cue-id page-id] :as input}]]
@@ -368,7 +391,8 @@
         (let [mode (get-in db [:ui :launch-mode])
               held? (and cue-id (= mode "held") (or recent? (not (get-in db [:ui :edit?]))))
               pointer (merge input (select-keys (:show db) [:epoch :runtime-id])
-                             {:press-id unique :mode mode :held? held? :recent-page? recent?})]
+                             {:press-id unique :mode mode :held? held? :recent-page? recent?
+                              :grid (selected-grid db)})]
           (cond-> {:db (assoc-in db [:pointers pointer-id] pointer)}
             held? (assoc :fx [(launch-held db pointer)])
             (and (not recent?) (not held?) (not= pointer-id "keyboard"))
@@ -396,12 +420,30 @@
     (assoc-in (command db "instance/end" fields nil epoch beacon? runtime-id)
               [1 :on-failure] [:studio/held-end-failed owner])))
 
+(defn- cancel-cue-launch [db {:keys [press-id epoch runtime-id] :as owner} reason beacon?]
+  (let [held? (= "held-release" reason)
+        fields {:launch-command-id press-id :reason reason :command-id (str press-id "-" reason)}]
+    (assoc-in (command db "cue/cancel-launch" fields (when-not held? [:studio/cue-cancelled owner]) epoch beacon? runtime-id)
+              [1 :on-failure] (if held? [:studio/held-end-failed owner] [:studio/failure]))))
+
+(rf/reg-event-fx :studio/cancel-queued-cue
+  (fn [{:keys [db]} [_ launch-id]]
+    (when (and (get-in db [:connection :connected?])
+               (some #(and (= launch-id (:command-id %)) (owns-cue-launch? db %)) (get-in db [:show :pending-cue-launches])))
+      (let [owner (assoc (select-keys (:show db) [:epoch :runtime-id]) :press-id launch-id)]
+        {:fx [(cancel-cue-launch db owner "operator-cancel" false)]}))))
+
+(rf/reg-event-fx :studio/cue-cancelled
+  (fn [{:keys [db]} [_ owner {:keys [status]}]]
+    (when (current-show? (:show db) owner)
+      (case status
+        ("cancelled" :cancelled) {:dispatch [:studio/toast "Queued cue cancelled."]}
+        ("fired" :fired) {:dispatch [:studio/toast "The cue already launched."]}
+        nil))))
+
 (defn- live-web-hold? [session {:keys [gesture-id source launch-mode phase]}]
   (and gesture-id (= "held" launch-mode) (= "running" phase)
        (= "web" (:adapter source)) (= session (:session-id source))))
-
-(defn- current-show? [show owner]
-  (and (= (:epoch owner) (:epoch show)) (= (:runtime-id owner) (:runtime-id show))))
 
 (rf/reg-event-fx :studio/reconcile-held
   (fn [{:keys [db]} _]
@@ -411,7 +453,9 @@
                                    (when (and (:held? pointer) (current-show? show pointer))
                                      [(:press-id pointer) id]))) (:pointers db))
           orphaned (remove #(contains? pressed (:gesture-id %)) holds)
-          pending (set (map :gesture-id orphaned))
+          orphaned-queued (filter #(and (= "held" (:mode %)) (owns-cue-launch? db %)
+                                        (not (contains? pressed (:command-id %)))) (:pending-cue-launches show))
+          pending (into (set (map :gesture-id orphaned)) (map :command-id) orphaned-queued)
           ending (or (:ending-holds db) #{})
           attach (fn [state {:keys [id gesture-id]}]
                    (if-let [pointer (get pressed gesture-id)]
@@ -421,7 +465,10 @@
                     (end-held db (assoc (select-keys show [:epoch :runtime-id]) :press-id gesture-id) id false))]
       (when (get-in db [:connection :connected?])
         {:db (assoc (reduce attach db holds) :ending-holds pending)
-         :fx (mapv release (remove #(ending (:gesture-id %)) orphaned))}))))
+         :fx (into (mapv release (remove #(ending (:gesture-id %)) orphaned))
+                   (comp (remove #(ending (:command-id %)))
+                         (map #(cancel-cue-launch db (assoc (select-keys show [:epoch :runtime-id]) :press-id (:command-id %))
+                                                  "held-release" false))) orphaned-queued)}))))
 
 (rf/reg-event-fx :studio/held-end-failed
   (fn [{:keys [db]} [_ owner _error]]
@@ -436,28 +483,37 @@
        :dispatch [:studio/reconcile-held]})))
 
 (rf/reg-event-fx :studio/held-launched
-  (fn [{:keys [db]} [_ {:keys [pointer-id press-id] :as owner} {:keys [instance-id]}]]
-    (cond
-      (nil? instance-id) {:db (assoc db :recover-held? true) :dispatch [:studio/reconcile-held]}
-      (and (current-show? (:show db) owner) (= press-id (get-in db [:pointers pointer-id :press-id])))
-      {:db (-> db (assoc-in [:pointers pointer-id :instance-id] instance-id)
-               (assoc-in [:ui :selected-instance] instance-id))}
-      :else {:fx [(end-held db owner instance-id false)]})))
+  (fn [{:keys [db]} [_ {:keys [pointer-id press-id grid] :as owner} {:keys [instance-id status]}]]
+    (let [pressed? (and (current-show? (:show db) owner) (= press-id (get-in db [:pointers pointer-id :press-id])))]
+      (cond
+        (and pressed? instance-id) {:db (-> db (assoc-in [:pointers pointer-id :instance-id] instance-id)
+                                            (assoc-in [:ui :selected-instance] instance-id))}
+        (and grid pressed? (#{"missed" :missed} status)) {:dispatch [:studio/failure "The scheduled cue could not launch."]}
+        ;; Grid holds release by command ID, even if the launch reply arrives late.
+        grid nil
+        (nil? instance-id) {:db (assoc db :recover-held? true) :dispatch [:studio/reconcile-held]}
+        :else {:fx [(end-held db owner instance-id false)]}))))
 
 (defn release-pointer [db id beacon?]
   (if-let [pointer (get-in db [:pointers id])]
-    (cond-> {:db (update db :pointers dissoc id)}
-      (:instance-id pointer) (assoc :fx [(end-held db pointer (:instance-id pointer) beacon?)]))
+    (let [released (update db :pointers dissoc id)]
+      (cond
+        (and (:held? pointer) (:grid pointer) (current-show? (:show db) pointer))
+        {:db released :fx [(cancel-cue-launch db pointer "held-release" beacon?)]}
+
+        (:instance-id pointer) {:db released :fx [(end-held db pointer (:instance-id pointer) beacon?)]}
+        :else {:db released}))
     {}))
 (rf/reg-event-fx :studio/gesture-up
   (fn [{:keys [db]} [_ id]]
     (let [pointer (get-in db [:pointers id]) result (release-pointer db id false)]
       (cond-> result
-        (and pointer (not-any? pointer [:held? :moved? :long?]))
+        (and pointer (current-show? (:show db) pointer) (not-any? pointer [:held? :moved? :long?]))
         (assoc :dispatch (if (and (not (:recent-page? pointer))
                                   (or (get-in db [:ui :edit?]) (nil? (:cue-id pointer))))
                            [:studio/open-actions (select-keys pointer [:cue-id :x :y])]
-                           [:studio/launch (:cue-id pointer) (:mode pointer)]))))))
+                           [:studio/launch (:cue-id pointer) (:mode pointer)
+                            {:grid (:grid pointer) :owner (select-keys pointer [:epoch :runtime-id])}]))))))
 (rf/reg-event-fx :studio/gesture-cancel
   (fn [{:keys [db]} [_ id beacon?]] (release-pointer db id beacon?)))
 (rf/reg-event-fx :studio/release-pointers
@@ -536,6 +592,7 @@
           closed (assoc-in db [:ui :action-cell] nil)]
       (case action
         :launch {:db closed :dispatch [:studio/launch (:id cue) "one-shot"]}
+        :launch-now {:db closed :dispatch [:studio/launch (:id cue) "one-shot" {:grid "off"}]}
         :inspect (if-let [instance (first (active db (:id cue)))]
                    {:db (-> closed (assoc-in [:ui :selected-instance] (:id instance))
                             (assoc-in [:ui :performance-section] "live")
