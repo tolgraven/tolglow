@@ -31,6 +31,11 @@
         (is (true? (:duplicate? (apply-at! runtime :cue-schedule ember 125))))
         (is (= :command-id-conflict
                (:reason (apply-at! runtime :cue-schedule (assoc ember :grid {:beats 1/2}) 125))))
+        (is (= :command-id-conflict
+               (:reason (apply-at! runtime :command (:command ember) 125))))
+        (is (= :command-id-conflict
+               (:reason (apply-at! runtime :command {:op :master/set :value 0.5 :command-id "ember"} 125))))
+        (is (empty? (:instances (model runtime))))
         (is (= :accepted (:status (apply-at! runtime :command {:op :transport/set :transport {:bpm 60}} 250))))
         (is (= :cancelled
                (:status (apply-at! runtime :cue-cancel {:command-id "held" :reason :held-release} 750))))
@@ -72,6 +77,8 @@
   (let [runtime (show/create-runtime {:workspace-options nil})]
     (try
       (is (= :fired (:status (apply-at! runtime :cue-schedule (launch "now" :ember :off) 100))))
+      (is (= :command-id-conflict
+             (:reason (apply-at! runtime :command (:command (launch "now" :ember :off)) 100))))
       (is (= :pending (:status (apply-at! runtime :cue-schedule (launch "bad" :missing {:beats 1}) 110))))
       (show/tick! runtime 500)
       (is (= {:status :missed :reason :launch-rejected :attempted-at {:time-ms 500 :beat 1.0}}

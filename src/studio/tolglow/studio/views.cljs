@@ -164,6 +164,7 @@
     [:button.cue-cell
      {:class (str (when-not cue "empty ") (when (seq active) "active ")
                   (when (some #(= "releasing" (:phase %)) active) "releasing ")
+                  (when queued? "queued ")
                   (when (and (:edit? ui) (not recent?)) "editing"))
       :style (when cue (if preview {"--cue-color" (widgets/color-css preview)} (color-style cue)))
       :data-preview (when preview "live") :data-x x :data-y y :data-cue-id (or cue-id "")

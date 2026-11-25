@@ -483,6 +483,9 @@
     (= :cue/cancel-launch (:op payload))
     (cue-timing/cancel-owned model (cue-clock-identity runtime model) time-ms payload command)
 
+    (and (cue-timing/active? model) (cue-timing/receipt model (:command-id payload)))
+    {:model model :ack {:status :rejected :reason :command-id-conflict :command-id (:command-id payload)}}
+
     :else (command model payload time-ms)))
 
 (defn- apply-message [model {:keys [type payload expected-epoch]} time-ms & [runtime]]
