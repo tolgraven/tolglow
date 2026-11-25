@@ -75,32 +75,79 @@
   (fn [db [_ id]]
     (some #(when (= id (:id %)) %) (get-in db [:server-projection :view :instances]))))
 
-(defn- context [db] ((juxt :runtime-id :epoch) (:show db)))
+(defn- identity-of [show] ((juxt :runtime-id :epoch) show))
+(defn- context [db] (identity-of (:show db)))
+(def ^:private requests-path [:ui :source-requests])
 
-(defn- request-key [db id param] [(context db) id param])
-(rf/reg-sub ::request (fn [db [_ id param]] (get-in db [:ui :source-requests (request-key db id param)])))
+(defn- request-status [db [owner :as key] {:keys [id accepted-revision] :as request}]
+  (when (and request (= owner (context db)))
+    (let [view (get-in db [:server-projection :view])
+          current? (= owner (identity-of view))
+          receipt (when current?
+                    (some #(when (and (= id (:request-id %)) (= (second owner) (:epoch %))) %)
+                          (rseq (:parameter-source-outcomes view []))))]
+      (cond
+        (= :rejected (:status receipt)) {:error (or (:message receipt) "The show rejected the source edit.")}
+        (= :accepted (:status receipt)) nil
+        (and current? (integer? accepted-revision) (>= (:revision view -1) accepted-revision)) nil
+        :else (select-keys request [:pending? :waiting? :error])))))
 
-(defn request
-  ([db path id param binding] (request db path id param binding nil))
-  ([db path id param binding from-param]
-   (let [[runtime epoch] (context db)
-         key (request-key db id (or from-param param))]
-     (if (get-in db [:ui :source-requests key :pending?]) {}
-       {:db (assoc-in db [:ui :source-requests key] {:pending? true})
-        :studio/http {:path (str "/api/modulation/" path) :typed? true
-                      :body (cond-> {:expected-epoch epoch :runtime-id runtime :instance-id id :param param}
-                              binding (assoc :binding binding)
-                              from-param (assoc :from-param from-param))
-                      :on-success [::complete key] :on-failure [::failed key]}}))))
-(rf/reg-event-fx ::bind (fn [{:keys [db]} [_ id param binding]] (request db "bind" id param binding)))
-(rf/reg-event-fx ::unbind (fn [{:keys [db]} [_ id param]] (request db "unbind" id param nil)))
-(rf/reg-event-fx ::move (fn [{:keys [db]} [_ id from-param param endpoints]]
-                         (request db "bind" id param endpoints from-param)))
-(rf/reg-event-db ::complete (fn [db [_ key]] (update-in db [:ui :source-requests] dissoc key)))
+(defn request-state [db id param]
+  (let [owner (context db)
+        key [owner id param]
+        requests (get-in db requests-path)
+        direct (request-status db key (get requests key))]
+    (or (when (:pending? direct) direct)
+        (some (fn [[[session instance from :as other-key] request]]
+                (when (and (= owner session) (= id instance) (not= from param) (= param (:target request)))
+                  (let [status (request-status db other-key request)]
+                    (when (:pending? status) status)))) requests)
+        direct)))
+
+(rf/reg-sub ::context (fn [db _] (context db)))
+(rf/reg-sub ::request (fn [db [_ id param]] (request-state db id param)))
+
+(defn request [db path id param binding request-id & [{:keys [from-param expected-source owner]}]]
+  (let [[runtime epoch :as current] (context db)
+        source (or from-param param)
+        key [current id source]
+        reply [::reply key request-id]]
+    (if (or (and from-param (not= owner current))
+            (:pending? (request-state db id source)) (:pending? (request-state db id param))) {}
+      {:db (assoc-in db (conj requests-path key) {:id request-id :pending? true :target param})
+       :dispatch-later [{:ms 20000 :dispatch (conj reply {:status :expired})}]
+       :studio/http {:path (str "/api/modulation/" path) :typed? true :raw-response? true
+                     :body (cond-> {:expected-epoch epoch :runtime-id runtime :instance-id id :param param :request-id request-id}
+                             binding (assoc :binding binding)
+                             from-param (assoc :from-param from-param :expected-source expected-source))
+                     :on-success reply :on-failure [::failed key request-id]
+                     :on-uncertain (conj reply {:status :pending})}})))
+
+(defn record-reply [db [owner :as key] request-id {:keys [status revision message]}]
+  (let [path (conj requests-path key)
+        request (get-in db path)]
+    (if (and (= owner (context db)) (= request-id (:id request)))
+      (case status
+        :accepted (if (integer? revision) (assoc-in db (conj path :accepted-revision) revision) db)
+        :pending (assoc-in db (conj path :waiting?) true)
+        :rejected (update-in db path merge {:pending? false :error (events/error-message message)})
+        :expired (if-let [visible (request-status db key request)]
+                   (if (:pending? visible)
+                     (update-in db path merge {:pending? false :error "The show has not confirmed this edit. Check the current source before retrying."})
+                     (assoc-in db path (merge request visible {:pending? false})))
+                   (update-in db requests-path dissoc key))
+        db)
+      db)))
+
+(rf/reg-event-fx ::bind [(rf/inject-cofx :studio/unique)]
+  (fn [{:keys [db unique]} [_ id param binding]] (request db "bind" id param binding unique)))
+(rf/reg-event-fx ::unbind [(rf/inject-cofx :studio/unique)]
+  (fn [{:keys [db unique]} [_ id param]] (request db "unbind" id param nil unique)))
+(rf/reg-event-fx ::move [(rf/inject-cofx :studio/unique)]
+  (fn [{:keys [db unique]} [_ id param endpoints move]] (request db "bind" id param endpoints unique move)))
+(rf/reg-event-db ::reply (fn [db [_ key request-id receipt]] (record-reply db key request-id receipt)))
 (rf/reg-event-db ::failed
-  (fn [db [_ [owner :as key] error]]
-    (if (= owner (context db))
-      (assoc-in db [:ui :source-requests key] {:error (events/error-message error)}) db)))
+  (fn [db [_ key request-id message]] (record-reply db key request-id {:status :rejected :message message})))
 
 (rf/reg-sub ::fixture-limits
   (fn [[_ id] _] (rf/subscribe [::raw-instance id]))
@@ -194,8 +241,14 @@
 (defn- options [schema]
   (or (when (seq (:choices schema)) (mapv :value (:choices schema))) (:values schema) (:options schema)))
 
+(defn- numeric-bounds [schema [lo hi]]
+  (case (keyword (:type schema))
+    :integer [(when (some? lo) (js/Math.ceil lo)) (when (some? hi) (js/Math.floor hi))]
+    :color [(max 0 (or lo 0)) (min 1 (or hi 1))]
+    [lo hi]))
+
 (defn- bounds [schema base]
-  (let [[lo hi] (or (:bounds schema) (:recommended schema) [0 1])]
+  (let [[lo hi] (numeric-bounds schema (or (:bounds schema) (:recommended schema) [0 1]))]
     (cond
       (seq (options schema)) [(first (options schema)) (last (options schema))]
       (= :boolean (keyword (:type schema))) [false true]
@@ -219,7 +272,7 @@
      :inputs (:inputs form)}))
 
 (defn- number-field [label value change! schema]
-  (let [[low high] (:bounds schema)]
+  (let [[low high] (numeric-bounds schema (:bounds schema))]
     [:label.source-field [:span label]
      [:input {:type "number" :aria-label label :value value :min low :max high
               :step (if (= :integer (keyword (:type schema))) 1 "any")
@@ -260,6 +313,7 @@
                  move (r/atom nil) error (r/atom nil)]
       (let [{:keys [waveform period unit phase-reference phase inputs]} @form
             in-flight @(rf/subscribe [::request id param])
+            owner @(rf/subscribe [::context])
             destinations (when lfo (destination-options instance param))
             destination (:param @move)
             target-schema (get-in instance [:definition :params destination])
@@ -273,7 +327,7 @@
                      (.preventDefault e)
                      (reset! error nil)
                      (try (if destination
-                            (rf/dispatch [::move id param destination {:from from :to to}])
+                            (rf/dispatch [::move id destination {:from from :to to} (:source @move)])
                             (rf/dispatch [::bind id param (binding-config (assoc @form :waveform (:id wave)))]))
                           (catch :default problem (reset! error (events/error-message problem)))))]
         [:form.live-source-form {:on-submit apply!}
@@ -300,11 +354,13 @@
              [number-field "Phase (cycles)" phase #(update! :phase %) {}]])
           (when (or destination (seq destinations))
             [:label.source-field [:span "Destination"]
-             [:select {:value (pr-str (or destination param)) :disabled (:pending? in-flight)
+             [:select {:aria-label "Destination" :value (pr-str (or destination param)) :disabled (:pending? in-flight)
                        :on-change #(let [value (.. % -target -value)
                                          [target spec] (some (fn [[key :as entry]] (when (= value (pr-str key)) entry)) destinations)
                                          [lo hi] (bounds spec (get-in instance [:params target] (:default spec)))]
-                                     (reset! move (when target {:param target :from lo :to hi})))}
+                                     (reset! move (when target {:param target :from lo :to hi
+                                                                :source {:owner owner :from-param param
+                                                                         :expected-source (:identity lfo)}})))}
               [:option {:value (pr-str param)} (or (:name schema) (widgets/label param))]
               (when (and destination (not-any? #(= destination (first %)) destinations))
                 [:option {:value (pr-str destination) :disabled true} (or (:name target-schema) (widgets/label destination))])
@@ -318,12 +374,15 @@
               [number-field (or (:name input) (widgets/label key)) (get inputs key (:default input))
                #(swap! form assoc-in [:inputs key] %) input])])
          (when-let [message (or @error (:error in-flight))] [:p.performance-error {:role "alert"} message])
+         (when (and (:pending? in-flight) (:waiting? in-flight))
+           [:p {:role "status"} "Waiting for the show to confirm the source change."])
          [:div.source-actions
           [:button.button.primary {:type "submit" :disabled (or (:pending? in-flight) (not wave))}
            (cond destination "Move LFO" lfo "Update LFO" :else "Attach LFO")]
           (when (and lfo (not destination))
             [:<>
-             [:button.button {:type "button" :on-click #(rf/dispatch [(if (:held? lfo) :modulation/resume :modulation/hold) id param])}
+             [:button.button {:type "button" :disabled (:pending? in-flight)
+                              :on-click #(rf/dispatch [(if (:held? lfo) :modulation/resume :modulation/hold) id param])}
               (if (:held? lfo) "Resume LFO" "Use base value")]
              [:button.button {:type "button" :disabled (:pending? in-flight) :on-click #(rf/dispatch [::unbind id param])} "Detach LFO"]])]]))))
 

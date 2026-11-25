@@ -42,26 +42,35 @@
               "Both waveform endpoints must satisfy the destination parameter schema")
     binding))
 
-(defn bind [model {:keys [instance-id param binding from-param] :as payload}]
+(defn- source-identity [entry definition waveform]
+  [(:bound-at entry) (:id definition) (:version definition) (:version waveform)])
+
+(defn bind [model {:keys [instance-id param binding from-param expected-source] :as payload}]
   (let [instance (get-in model [:instances instance-id])
         bindings (:parameter-bindings instance)
-        schema (get-in instance [:definition :params param])
         moving? (contains? payload :from-param)
+        definition (if moving? (modulation/owner-definition model instance) (:definition instance))
+        schema (get-in definition [:params param])
+        registry (waveforms model)
         binding (if moving?
-                  (let [source (get-in bindings [from-param :binding])]
+                  (let [source (get bindings from-param)
+                        waveform (get-in registry [:waveforms (get-in source [:binding :waveform])])]
                     (require! source "No waveform is bound to the source parameter")
+                    (require! (= expected-source (source-identity source definition waveform))
+                              "The source or its effect revision changed. Reopen the source and try again.")
                     (require! (not= from-param param) "Choose another parameter for the waveform")
                     (require! (not (contains? bindings param)) "A waveform is already bound to the destination parameter")
                     (require! (and (map? binding) (= #{:from :to} (set (keys binding))))
                               "Moving a waveform requires both destination endpoints")
-                    (merge source binding))
+                    (merge (:binding source) binding))
                   binding)
-        waveform (get-in (waveforms model) [:waveforms (:waveform binding)])]
+        waveform (get-in registry [:waveforms (:waveform binding)])]
     (require! schema "Unknown running instance or parameter")
     (assoc-in model [:instances instance-id :parameter-bindings]
               (assoc (cond-> bindings moving? (dissoc from-param)) param
                      {:binding (checked-binding schema waveform binding)
-                      :schema schema :waveform-version (:version waveform)}))))
+                      :schema schema :waveform-version (:version waveform)
+                      :bound-at [(:epoch model 0) (inc (:revision model 0))]}))))
 
 (defn unbind [model {:keys [instance-id param]}]
   (require! (get-in model [:instances instance-id :parameter-bindings param]) "No waveform is bound here")
@@ -75,11 +84,23 @@
   (when (contains? instance :parameter-bindings)
     (let [bindings (:parameter-bindings instance)]
       (require! (map? bindings) "Saved parameter bindings must be a map")
-      (doseq [[param {:keys [schema binding waveform-version]}] bindings]
+      (doseq [[param {:keys [schema binding waveform-version bound-at]}] bindings]
         (require! (and (keyword? param) (params/valid-schema? schema)
+                       (or (nil? bound-at) (and (vector? bound-at) (= 2 (count bound-at)) (every? nat-int? bound-at)))
                        (integer? waveform-version) (pos? waveform-version))
-                  "Invalid captured target schema or waveform version")
+                  "Invalid captured target schema or waveform revision")
         (checked-binding schema (get-in (waveforms model) [:versions [(:waveform binding) waveform-version]]) binding)))))
+
+(defn committed-outcomes [previous epoch message-receipts]
+  (let [completed (keep (fn [[{:keys [type expected-epoch payload]} [_ ack]]]
+                          (let [id (:request-id payload) message (:message ack)]
+                            (when (and (#{:modulation-bind :modulation-unbind} type)
+                                       (= epoch expected-epoch) (#{:accepted :rejected} (:status ack))
+                                       (string? id) (<= 1 (count id) 128))
+                              (cond-> (assoc (select-keys ack [:status :revision]) :request-id id :epoch epoch)
+                                (string? message) (assoc :message (subs message 0 (min (count message) 256)))))))
+                        message-receipts)]
+    (if (seq completed) (vec (take-last 256 (into previous completed))) previous)))
 
 (def ^:private pulse-expression
   (let [phase {:op :param :key signals/phase-input}
@@ -158,7 +179,7 @@
         :else {:evaluate evaluate}))
     (catch Exception error {:error (.getMessage error)})))
 
-(defn- sample-one [model instance transport-clock private-clock previous result param {:keys [binding]}]
+(defn- sample-one [model instance transport-clock private-clock previous result param {:keys [binding] :as entry}]
   (let [id (:id instance)
         definition (modulation/owner-definition model instance)
         schema (get-in definition [:params param])
@@ -172,7 +193,7 @@
         held? (boolean (and hold (or (nil? (:until-beat hold))
                                       (< (get-in model [:transport :beat] (:beat private-clock)) (:until-beat hold)))))
         result (assoc-in result [:plans cache-key] plan)
-        source {:type :lfo :binding binding :held? held?}
+        source {:type :lfo :binding binding :held? held? :identity (source-identity entry definition waveform)}
         diagnostic (fn [result message]
                      (assoc-in result [:sources id param] (assoc source :error message)))]
     (if-let [error (:error plan)]
