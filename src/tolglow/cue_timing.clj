@@ -7,6 +7,8 @@
 (def ^:private state-path (conj path :state))
 (def ^:private early-path (conj path :early-releases))
 (def ^:private held-lease-ms 10000)
+(def ^:private feedback-path (conj path :feedback))
+(def ^:private feedback-limit 64)
 
 (defn active? [model] (some? (get-in model path)))
 
@@ -22,6 +24,8 @@
 
 (defn pending [model]
   (mapv #(update % :due-beat double) (quantization/pending (get-in model state-path))))
+
+(defn outcomes [model] (get-in model feedback-path []))
 
 (defn source [model id] (quantization/source (get-in model state-path) id))
 
@@ -42,8 +46,19 @@
       (and (= :ableton type) sync-run-id (some? note))))
 
 (defn- emit [model event receipt]
-  (staging/collect model :control {:kind :runtime :id :cue-timing}
-                   [(assoc receipt :type event)]))
+  (let [status (:status receipt)
+        owner (when (#{:missed :fired :cancelled} status)
+                (source-owner (source model (:command-id receipt))))
+        model (if (web-source? owner)
+                (let [outcome (assoc (select-keys receipt [:command-id :cue-id :status :reason :code :instance-id])
+                                     :source (select-keys owner [:adapter :session-id]))]
+                  (update-in model feedback-path
+                             (fn [previous] (->> (conj (or previous []) outcome)
+                                                 (take-last feedback-limit)
+                                                 vec))))
+                model)]
+    (staging/collect model :control {:kind :runtime :id :cue-timing}
+                     [(assoc receipt :type event)])))
 
 (defn- clock [model state time-ms]
   (assoc (select-keys (:transport model) [:beat :meter :playing?])
@@ -53,11 +68,13 @@
   (if-let [{:keys [owner state]} (get-in model path)]
     (if (= identity owner)
       model
-      (let [{:keys [state missed]} (quantization/invalidate state (:clock-epoch state) :clock-changed)
+      (let [old-state state
+            {:keys [state missed]} (quantization/invalidate state (:clock-epoch state) :clock-changed)
+            cues (when (seq missed) (into {} (map (juxt :command-id :cue-id)) (quantization/pending old-state)))
             same-show? (= (subvec identity 0 2) (subvec owner 0 2))
             model (cond-> (-> model (assoc-in (conj path :owner) identity) (assoc-in state-path state))
-                    (not same-show?) (update-in path dissoc :early-releases))]
-        (reduce #(emit %1 :cue/launch-missed %2)
+                    (not same-show?) (update-in path dissoc :early-releases :feedback))]
+        (reduce #(emit %1 :cue/launch-missed (assoc %2 :cue-id (get cues (:command-id %2))))
                 model missed)))
     model))
 
@@ -85,7 +102,8 @@
        (-> (:model result)
            (assoc-in state-path (:state settled))
            (cond-> outcome (update ::fired-outcomes (fnil conj []) outcome))
-           (emit (if accepted? :cue/launch-fired :cue/launch-missed) (:receipt settled)))))
+           (emit (if accepted? :cue/launch-fired :cue/launch-missed)
+                 (assoc (:receipt settled) :cue-id (:cue-id command))))))
    (assoc-in model state-path state) decisions))
 
 (defn schedule [model identity time-ms request apply-command]
@@ -110,7 +128,7 @@
                         early? (update-in early-path #(into [] (remove #{early-key}) %)))
                 model (cond
                         duplicate? model
-                        early? (emit model :cue/launch-cancelled initial)
+                        early? (emit model :cue/launch-cancelled (assoc initial :cue-id (get-in request [:command :cue-id])))
                         (seq due) (fire model state clock due apply-command)
                         :else (emit model :cue/launch-scheduled initial))]
             {:model model :ack (cond-> (receipt model id)

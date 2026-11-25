@@ -172,6 +172,7 @@
                                                                (select-keys s [:opacity :gain :paused? :attack :release])))))
                              (sort-by :order (vals (:instances model))))
             :pending-cue-launches (cue-timing/pending model)
+            :cue-launch-outcomes (cue-timing/outcomes model)
             :pages (mapv (fn [page] (update page :cells
                                            #(mapv (fn [[[x y] cue]] {:x x :y y :cue-id cue})
                                                   (sort-by key %)))) (sort-by (comp str :id) (vals (:pages model))))

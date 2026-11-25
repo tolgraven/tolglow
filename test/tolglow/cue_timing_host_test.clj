@@ -79,15 +79,20 @@
       (finally (show/stop! runtime)))))
 
 (deftest immediate-and-missed-receipts-use-the-usual-launch-owner
-  (let [runtime (show/create-runtime {:workspace-options nil})]
+  (let [runtime (show/create-runtime {:workspace-options nil})
+        bad (assoc-in (launch "bad" :missing {:beats 1}) [:command :source]
+                      {:adapter "web" :session-id "studio" :internal "unprojected"})]
     (try
       (is (= :fired (:status (apply-at! runtime :cue-schedule (launch "now" :ember :off) 100))))
       (is (= :command-id-conflict
              (:reason (apply-at! runtime :command (:command (launch "now" :ember :off)) 100))))
-      (is (= :pending (:status (apply-at! runtime :cue-schedule (launch "bad" :missing {:beats 1}) 110))))
+      (is (= :pending (:status (apply-at! runtime :cue-schedule bad 110))))
       (show/tick! runtime 500)
       (is (= {:status :missed :reason :launch-rejected :attempted-at {:time-ms 500 :beat 1.0}}
              (select-keys (show/quantized-cue-status runtime "bad") [:status :reason :attempted-at])))
+      (is (= [{:command-id "bad" :cue-id :missing :status :missed :reason :launch-rejected
+               :source {:adapter :web :session-id "studio"}}]
+             (mapv #(dissoc % :code) (:cue-launch-outcomes (show/snapshot runtime)))))
       (is (= 1 (count (:instances (model runtime)))))
       (finally (show/stop! runtime)))))
 
@@ -213,6 +218,8 @@
 (deftest an-explicit-forward-transport-jump-misses-the-old-boundary
   (let [runtime (show/create-runtime {:workspace-options nil})
         manager (connections/sync (:connections runtime))
+        cue (assoc-in (launch "seek" :ember {:beats 1}) [:command :source]
+                      {:adapter :web :session-id "touch"})
         clock! (fn [position at discontinuity?]
                  (session/apply-clock! manager nil {:type :clock :source-id :midi-clock :time-ms at
                                                     :beat position :bpm 120 :playing? true :confidence 1
@@ -220,10 +227,13 @@
     (try
       (sync/select-source! manager :midi-clock)
       (clock! 0.25 125 false)
-      (is (= :pending (:status (apply-at! runtime :cue-schedule (launch "seek" :ember {:beats 1}) 125))))
+      (is (= :pending (:status (apply-at! runtime :cue-schedule cue 125))))
       (clock! 32 150 true)
       (show/tick! runtime 150)
       (is (= :missed (:status (show/quantized-cue-status runtime "seek"))))
+      (is (= [{:command-id "seek" :cue-id :ember :status :missed :reason :clock-changed
+               :source {:adapter :web :session-id "touch"}}]
+             (:cue-launch-outcomes (show/snapshot runtime))))
       (is (empty? (:instances (model runtime))))
       (finally (show/stop! runtime)))))
 
