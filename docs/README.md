@@ -44,6 +44,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Studio control layouts](studio-control-layouts.md) | Mix running instances with compact controls, live scopes and declarative parameter layouts |
 | [Studio Debug](studio-debug.md) | Live event and DMX inspection, subscriber editing and musical action sequences |
 | [Event subscribers and musical actions](event-subscribers.md) | Filter registered cues, launch effects on audio or transport events, sequence musical delays and save custom callbacks |
+| [Beat-clock scheduling and ramps](scheduler.md) | Post events ahead on the beat clock, ramp parameters to a target over musical time, cancel, and read the shared schedule projection |
 | [Event and DMX inspection](studio-event-stream.md) | Committed typed events, actual handler delivery and raw channel data for a selected universe |
 | [Studio state stream](state-stream.md) | Typed show snapshots, acknowledged deltas, backpressure and reconnect |
 | [Codebase survey](codebase-survey.md) | Historical entry points, behavior and coupling |
