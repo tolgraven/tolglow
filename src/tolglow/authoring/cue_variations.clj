@@ -5,6 +5,7 @@
             [tolglow.registry :as registry]))
 
 (def preferred-components [1 2 3 4 6 8])
+
 (def bank-capacity 8)
 
 (defn- exact-components [value]
@@ -20,7 +21,9 @@
   (and (vector? bounds) (= 2 (count bounds))
        (every? #(and (integer? %) (pos? %)) bounds) (apply <= bounds)))
 
-(defn- ratio-limits? [{:keys [bounds ratio-components] :as schema}]
+(defn ratio-schema?
+  "Whether a numeric parameter has bounded beat-ratio editing metadata."
+  [{:keys [bounds ratio-components] :as schema}]
   (and (beat-ratio? schema) (some? bounds)
        (or (not (contains? schema :ratio-components))
            (and (map? ratio-components)
@@ -35,21 +38,28 @@
 (defn- exact-decimal [value]
   (if (decimal? value) (rationalize value) value))
 
-(defn valid-beat-ratio?
-  "Check an exact, positive ratio against the numeric schema bounds and optional
-  :ratio-components {:numerator [min max] :denominator [min max]}.
-  :preferred additionally restricts the reduced components to preferred-components."
-  [schema value mode]
+(defn valid-beat-ratio-components?
+  "Check input components before reducing the fraction, including hard bounds
+  and the optional :ratio-components numerator/denominator limits."
+  [schema numerator denominator mode]
   (when-not (#{:preferred :free} mode)
     (throw (ex-info "Select :preferred or :free beat ratios" {:ratio-mode mode})))
-  (boolean
-   (when-let [components (exact-components value)]
-     (and (ratio-limits? schema) (pos? value) (valid-value? schema value)
-          (every? (fn [[component limit]]
-                    (let [[low high] (get-in schema [:ratio-components limit])]
-                      (and (or (nil? low) (<= low component high))
-                           (or (= :free mode) (some #{component} preferred-components)))))
-                  (map vector components [:numerator :denominator]))))))
+  (let [legal? (fn [components]
+                 (every? (fn [[component limit]]
+                           (let [[low high] (get-in schema [:ratio-components limit])]
+                             (and (integer? component) (pos? component)
+                                  (or (nil? low) (<= low component high))
+                                  (or (= :free mode) (some #{component} preferred-components)))))
+                         (map vector components [:numerator :denominator])))]
+    (and (ratio-schema? schema) (legal? [numerator denominator])
+         (let [value (/ numerator denominator)]
+           (and (legal? (exact-components value)) (valid-value? schema value))))))
+
+(defn valid-beat-ratio?
+  "Check an exact positive ratio and its reduced components against the schema."
+  [schema value mode]
+  (boolean (when-let [[n d] (exact-components value)]
+             (valid-beat-ratio-components? schema n d mode))))
 
 (defn- validate-ratio-params! [schemas values]
   (doseq [[param schema] schemas
@@ -114,6 +124,13 @@
           numerator (map bigint (samples low high 16))]
       (/ numerator denominator))))
 
+(defn- ratio-choices [schema current mode bounds]
+  (when (and bounds (ratio-schema? schema))
+    (filter #(valid-beat-ratio? schema % mode)
+            (case mode
+              :preferred (for [n preferred-components d preferred-components] (/ n d))
+              :free (free-ratios schema current bounds)))))
+
 (defn- color-choices [current bounds]
   (let [[low high] bounds
         middle (mapv #(max low (min high (exact-decimal %))) current)
@@ -146,11 +163,7 @@
         scalar-bounds (when (and bounds (number? current)) (local-bounds bounds current max-change))
         choices (cond
                   (beat-ratio? schema)
-                  (when (and scalar-bounds (ratio-limits? schema))
-                    (filter #(valid-beat-ratio? schema % mode)
-                            (case mode
-                              :preferred (for [n preferred-components d preferred-components] (/ n d))
-                              :free (free-ratios schema current scalar-bounds))))
+                  (ratio-choices schema current mode scalar-bounds)
 
                   (= :enum type) values
                   (= :boolean type) [false true]
@@ -172,6 +185,22 @@
                                                        (<= low candidate high))) before after))))))
                 (distinct))
           choices)))
+
+(defn edit-beat-ratio
+  "Project knob detents or a normalized absolute position onto ordered exact
+  ratios. The ratio mode determines the candidate set independently of fine
+  tuning. Return nil for parameters outside the bounded beat-ratio contract."
+  [schema current input mode ratio-mode]
+  (when (and (ratio-schema? schema) (registry/finite-number? current))
+    (let [choices (ratio-choices schema current ratio-mode (:bounds schema))
+          choices (vec (sort (distinct (cond-> choices (valid-beat-ratio? schema current ratio-mode) (conj current)))))
+          anchor (exact-decimal current)
+          index (count (take-while #(< % anchor) choices))
+          exact? (and (< index (count choices)) (== anchor (nth choices index)))
+          target (if (= :absolute mode)
+                   (Math/round (* (double input) (dec (count choices))))
+                   (+ index (long input) (if (and (not exact?) (pos? input)) -1 0)))]
+      {:value (if (seq choices) (nth choices (max 0 (min (dec (count choices)) target))) current)})))
 
 (defn- shuffled-choices [seed param schema current mode]
   (if (false? (get-in schema [:random :enabled?])) [seed []]
@@ -206,7 +235,7 @@
                     (let [schema (get schemas param)
                           current (get params param)
                           [seed values] (shuffled-choices seed param schema current mode)
-                          base-valid? (or (not (ratio-limits? schema)) (valid-beat-ratio? schema current mode))]
+                          base-valid? (or (not (ratio-schema? schema)) (valid-beat-ratio? schema current mode))]
                       [seed (cond-> rows (seq values) (conj [param values base-valid?]))]))
                   [seed []] (sort (distinct selected)))
           diagonal (for [slot (range limit)]
