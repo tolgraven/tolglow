@@ -1,6 +1,8 @@
 (ns tolglow.show.scene-draft-test
   (:require [afterglow.runtime.events :as events]
+            [afterglow.sync.session :as session]
             [clojure.test :refer [deftest is testing]]
+            [tolglow.connections :as connections]
             [tolglow.demo :as demo]
             [tolglow.output-response :as response]
             [tolglow.events :as show-events]
@@ -101,12 +103,14 @@
 
 (defn- runtime
   ([model] (runtime model {:max-live-share ##Inf}))
-  ([model audition]
+  ([model audition] (runtime model audition nil))
+  ([model audition options]
    (let [sent (atom [])]
      {:sent sent
-      :runtime (show/create-runtime (cond-> {:workspace-options nil :audition audition
-                                             :sink {:send! (fn [packets frame]
-                                                             (swap! sent conj [frame (update-vals packets vec)]))}}
+      :runtime (show/create-runtime (cond-> (merge {:workspace-options nil :audition audition
+                                                    :sink {:send! (fn [packets frame]
+                                                                    (swap! sent conj [frame (update-vals packets vec)]))}}
+                                                   options)
                                       model (assoc :model model)))})))
 
 (defn- submit [{:keys [runtime]} command]
@@ -188,6 +192,65 @@
         (testing "the response smoothing is still moving, so frames were not frozen"
           (let [levels (map #(get-in (first %) [:draft-output :values :head-1 :emitted-color 2]) frames)]
             (is (apply < (take 6 levels))))))
+      (finally (show/stop! (:runtime audition)) (show/stop! (:runtime applied))))))
+
+(defn- midi-clocked
+  "A runtime whose MIDI clock input the test feeds by hand."
+  [model]
+  (let [opened (promise)]
+    (assoc (runtime model {:max-live-share ##Inf}
+                    {:sync-options {:midi-factory (fn [_ _]
+                                                    {:open! (fn [receive!] (deliver opened receive!) :captured)
+                                                     :close! (fn [_])})}})
+           :opened opened)))
+
+(defn- follow-midi-clock!
+  "Select the MIDI clock and start it from beat zero at time-ms, at 120 BPM."
+  [{:keys [runtime opened]} time-ms]
+  (show/sync-action! runtime :configure {:selected-source :midi-clock :midi {:enabled? true :input-index 0}})
+  (show/sync-action! runtime :start {})
+  (let [receive! (deref opened 2000 nil)
+        message! (fn [at bytes]
+                   (receive! {:type :midi/message :source-id :midi-clock :time-ms at :bytes bytes}))]
+    (message! time-ms [0xfa])
+    (doseq [i (range 25)] (message! (+ time-ms (* i (/ 500.0 24))) [0xf8]))
+    (is (session/flush! (connections/sync (:connections runtime))))))
+
+(deftest an-audition-follows-a-transport-jump-with-the-live-show
+  ;; Selecting an external clock moves the beat backwards. The live show
+  ;; rebases its musical anchors, so a timed cue keeps its elapsed beats; the
+  ;; private timeline must follow with the same offset.
+  (let [audition (midi-clocked (smoothed-show)) applied (midi-clocked (smoothed-show))
+        both (fn [time-ms] (tick audition time-ms) (tick applied time-ms))
+        timed {:op :cue/launch :cue-id :indigo :launch {:mode :timed :duration {:beats 2}}}
+        indigo (fn [model] (some #(when (= :indigo (:cue-id %)) (:phase %)) (vals (:instances model))))]
+    (try
+      (let [live-id (launch-live! audition)
+            _ (launch-live! applied)
+            _ (run! both (range 50 1001 frame-ms))
+            scene {:op :scene-draft/stage :draft-id "scene" :operations (conj (operations live-id) timed)}
+            staged (submit audition scene)
+            _ (submit applied scene)
+            taken (submit applied {:op :scene-draft/apply :draft-id "scene" :expected-draft-revision 0
+                                   :command-id "take"})
+            _ (run! both (range 1025 1101 frame-ms))
+            manual-beat (get-in (model-of audition) [:transport :beat])
+            _ (run! #(follow-midi-clock! % 1100) [audition applied])
+            frames (doall (for [time-ms (range 1600 2701 frame-ms)]
+                            (do (both time-ms)
+                                {:auditioned (view audition) :committed (view applied)
+                                 :private (indigo (get-in @(:scene-draft (:runtime audition)) [:frame :model]))
+                                 :applied (indigo (model-of applied))})))]
+        (is (= [:accepted :accepted] (mapv (comp :status receipt) [staged taken])))
+        (is (= [:midi-clock :midi-clock] (mapv #(get-in (model-of %) [:transport :source]) [audition applied])))
+        (is (< (get-in (first frames) [:committed :transport :beat]) manual-beat) "the live beat moved backwards")
+        (is (= {:status :auditioning :frames {:rendered 49 :skipped 0}}
+               (select-keys (show/scene-draft (:runtime audition)) [:status :frames :error])))
+        (doseq [{:keys [auditioned committed]} frames]
+          (is (= (get-in committed [:output :values]) (get-in auditioned [:draft-output :values]))))
+        (testing "the timed cue ends after its two beats on both timelines"
+          (is (= (map :applied frames) (map :private frames)))
+          (is (= [:running :releasing] (dedupe (map :applied frames))))))
       (finally (show/stop! (:runtime audition)) (show/stop! (:runtime applied))))))
 
 (def ^:private counter

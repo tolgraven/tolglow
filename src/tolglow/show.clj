@@ -2025,20 +2025,29 @@
   (let [started (System/nanoTime)]
     (render-frame runtime frame model time-ms {:audition? true :started started :frame-start-ns started})))
 
+(defn- taken-rebases
+  "Drop the first n pending clock rebases; the owner may have queued more."
+  [state n]
+  (let [pending (subvec (:rebases state []) n)]
+    (if (seq pending) (assoc state :rebases pending) (dissoc state :rebases))))
+
 (defn- render-audition!
   "Worker task: render one audition frame from the staged timeline. The
-  result installs only while the same draft is staged."
+  result installs only while the same draft is staged. Pending clock rebases
+  are applied first, in the order the live show took them."
   [runtime draft inputs time-ms]
   (let [state (:scene-draft runtime)
         same? #(identical? draft (:draft %))]
     (try
-      (when-let [{:keys [frame caches next-model]} (let [current @state] (when (same? current) current))]
-        (let [model (-> (or next-model (:model frame))
+      (when-let [{:keys [frame caches next-model rebases]} (let [current @state] (when (same? current) current))]
+        (let [;; Shift the private musical anchors by each offset the live model took.
+              model (-> (reduce show-clock/rebase (or next-model (:model frame)) rebases)
                         (merge inputs)
                         (composition/advance time-ms))
               rendered (render-audition-frame (merge runtime caches) frame model time-ms)]
           (swap! state #(if (same? %)
                         (-> % (dissoc :next-model)
+                            (taken-rebases (count rebases))
                             (update :rendered (fnil inc 0))
                             (assoc :frame (assoc (select-keys rendered audition-state-keys)
                                                  :model (staging/finish (:model rendered))
@@ -2054,9 +2063,15 @@
   audition frame on the audition worker. It runs outside the owner lock, so
   it cannot delay a live slot. A frame is skipped, and counted, while the
   previous one is still rendering or when the live frame used more than
-  :max-live-share (default 0.5) of its period."
-  [runtime live time-ms elapsed-ms]
+  :max-live-share (default 0.5) of its period. `rebase` is the clock step the
+  live model took this cycle, if any: {:draft :from-beat :beat}. A timeline
+  staged before the cycle queues it, also when this frame is skipped."
+  [runtime live time-ms elapsed-ms rebase]
   (let [state (:scene-draft runtime)
+        _ (when (and rebase (:draft rebase))
+            (swap! state #(if (identical? (:draft rebase) (:draft %))
+                            (update % :rebases (fnil conj []) (dissoc rebase :draft))
+                            %)))
         {:keys [draft error stale in-flight]} @state
         share (get-in runtime [:audition-options :max-live-share] 0.5)
         period (/ 1000.0 (:frame-rate runtime))]
@@ -2143,6 +2158,7 @@
                                                      :source {:adapter :reactive :session-id (:id runtime)})}))
                  physical-receipts (output-scheduler/drain-receipts! (:publisher runtime))
                  physical-now ((:now-ms (:publisher runtime)))
+                 clock-generation @(:presentation-clock runtime)
                  [clock-model audio-clock-confidence] (source-clock-model runtime (:model before) time-ms)
                  ;; Draft commands edit this cycle's view; it is published only after the frame commits.
                  draft-initial @(:scene-draft runtime)
@@ -2323,7 +2339,12 @@
                  (swap! (:state runtime) assoc :cadence
                         (cadence/finish (assoc sampling :defer-live-slowdown? defer?) (:model next-state) elapsed)))
                ;; Queued after the live frame's owner time is measured and published.
-               (schedule-audition! runtime (:model next-state) (get-in next-state [:model :time-ms]) elapsed)))))
+               (schedule-audition! runtime (:model next-state) (get-in next-state [:model :time-ms]) elapsed
+                                   ;; A transport discontinuity rebased the live model by this beat step.
+                                   (when (not= clock-generation @(:presentation-clock runtime))
+                                     {:draft (:draft draft-initial)
+                                      :from-beat (get-in before [:model :transport :beat])
+                                      :beat (get-in next-state [:model :transport :beat])}))))))
        (finally
          (when @committed-bound? (pop-thread-bindings))
          (when-let [request @author-request]
