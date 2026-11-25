@@ -1,0 +1,84 @@
+{
+  "lifecycle": {
+    "pause": {
+      "drawn": null,
+      "frames": 552,
+      "active": true,
+      "paused": true,
+      "backing": [
+        3634,
+        2184
+      ]
+    },
+    "resized": {
+      "drawn": null,
+      "frames": 552,
+      "active": true,
+      "paused": true,
+      "backing": [
+        3634,
+        2184
+      ]
+    },
+    "drawn": {
+      "drawn": true,
+      "frames": 553,
+      "active": true,
+      "paused": true,
+      "backing": [
+        2240,
+        1340
+      ]
+    },
+    "idle": {
+      "drawn": true,
+      "frames": 553,
+      "active": true,
+      "paused": true,
+      "backing": [
+        2240,
+        1340
+      ]
+    },
+    "live": {
+      "drawn": true,
+      "frames": 597,
+      "active": true,
+      "paused": false,
+      "backing": [
+        2240,
+        1340
+      ]
+    },
+    "hide": {
+      "drawn": true,
+      "frames": 597,
+      "active": false,
+      "paused": false,
+      "backing": [
+        2240,
+        1340
+      ]
+    },
+    "hidden": {
+      "drawn": true,
+      "frames": 597,
+      "active": false,
+      "paused": false,
+      "backing": [
+        2240,
+        1340
+      ]
+    },
+    "resumed": {
+      "drawn": true,
+      "frames": 643,
+      "active": true,
+      "paused": false,
+      "backing": [
+        2240,
+        1340
+      ]
+    }
+  }
+}

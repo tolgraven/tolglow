@@ -1,0 +1,138 @@
+{
+  "scope": "Real committed samples and Advanced Studio bundle in an owned background tab. Test visibility and render callbacks are supplied to exercise the widget lifecycle. No on-screen FPS claim.",
+  "errors": [],
+  "mainSHA256": "81dea57455728aaf67f73897be081180309b11f3d643cb0632699770c0fea182",
+  "flow": {
+    "start": 0,
+    "middle": 0.5,
+    "end": 0.9900000000000001,
+    "transform": [
+      "translateX(1.25002px)",
+      "translateX(0px)"
+    ],
+    "connected": true,
+    "rows": [
+      {
+        "at": 581.3850000016391,
+        "keyframes": [
+          {
+            "transform": "translateX(4.999916650000014px)"
+          },
+          {
+            "transform": "translateX(0px)"
+          }
+        ],
+        "options": {
+          "duration": 99.99833300000023,
+          "easing": "linear"
+        }
+      },
+      {
+        "at": 589.6500000022352,
+        "keyframes": [
+          {
+            "transform": "translateX(1.2499000000000038px)"
+          },
+          {
+            "transform": "translateX(0px)"
+          }
+        ],
+        "options": {
+          "duration": 24.998000000000047,
+          "easing": "linear"
+        }
+      },
+      {
+        "at": 612.640000000596,
+        "keyframes": [
+          {
+            "transform": "translateX(2.4999395999999896px)"
+          },
+          {
+            "transform": "translateX(0px)"
+          }
+        ],
+        "options": {
+          "duration": 49.99879199999987,
+          "easing": "linear"
+        }
+      },
+      {
+        "at": 650.890000000596,
+        "keyframes": [
+          {
+            "transform": "translateX(1.2499937500000002px)"
+          },
+          {
+            "transform": "translateX(0px)"
+          }
+        ],
+        "options": {
+          "duration": 24.999874999999975,
+          "easing": "linear"
+        }
+      },
+      {
+        "at": 683.515000000596,
+        "keyframes": [
+          {
+            "transform": "translateX(1.2500250500000032px)"
+          },
+          {
+            "transform": "translateX(0px)"
+          }
+        ],
+        "options": {
+          "duration": 25.000500999999986,
+          "easing": "linear"
+        }
+      }
+    ],
+    "nativeHidden": true,
+    "focus": false
+  },
+  "cap": {
+    "before": {
+      "capacity-watts": 1190,
+      "limit-watts": 547.4,
+      "requested-watts": 317.653575547866,
+      "used-watts": 317.653575547866,
+      "active-count": 52,
+      "source-count": 54,
+      "shed-count": 0,
+      "unrated-count": 40
+    },
+    "after": {
+      "capacity-watts": 1190,
+      "limit-watts": 249.89999999999998,
+      "requested-watts": 341.2352941176474,
+      "used-watts": 249.2807381776239,
+      "active-count": 54,
+      "source-count": 54,
+      "shed-count": 0,
+      "unrated-count": 40
+    }
+  },
+  "source": {
+    "base-value": 0.84,
+    "effective-value": 0.5424824429233036,
+    "sources": [
+      {
+        "type": "lfo",
+        "binding": {
+          "period": {
+            "beats": 4
+          },
+          "phase": 0,
+          "inputs": {},
+          "type": "lfo",
+          "waveform": "sine",
+          "phase-reference": "transport",
+          "from": 0.53,
+          "to": 0.87
+        },
+        "held?": false
+      }
+    ]
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "source": "c7d700195406600d36227bb8f7614a892fdb1802",
+  "afterglow": "d0ee56528aafb6d73cbe86b53d618a23b64c081e",
+  "runtime": {
+    "processors": 9,
+    "heapMaxBytes": 4294967296,
+    "gc": [
+      "ZGC Minor Cycles",
+      "ZGC Minor Pauses",
+      "ZGC Major Cycles",
+      "ZGC Major Pauses"
+    ]
+  },
+  "preview": {
+    "fps": 59.80321734628515,
+    "p95GapMs": 22,
+    "clockHz": 60,
+    "sha256": {
+      "proxy": "ba8aaf0afecce88f75a4db92eff81456982443ede6e4c33a0ec10342d4bb70e8",
+      "oldWorker": "eca6f24515b4c52196262b45a2ccd47654acc465cce3469c45b54e0c4fef0804",
+      "oldProxy": "df39cf24121fb982422230e2abc0620b8a9a2a85f0eea2570ed9017de4b72e87",
+      "newWorker": "ae63239f3e5466af0e06dc088b037e6bc0bf1e9b54c694fcd84dba424fdb1ead",
+      "draftWorker": "749eb824b2622d18743881c1680c7c455315e8954fd8ddc0bdae4d2a87372554",
+      "draftProxy": "2fb525eac747dc24eaf28dedb65efc378e9c07b0dbf0c29047a796b92308c3cd",
+      "replay": "e288b430bab9a5b3b32e96a0a3bcee156fd41d5cd27991ba091ed7fcdf44b41e"
+    },
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)"
+  },
+  "phases": [
+    {
+      "phase": "show-only",
+      "durationMs": 6000,
+      "sends": 240,
+      "deliveredHz": 40.00096432764094,
+      "p95GapMs": 28.13720703125,
+      "maximumGapMs": 30.885009765625,
+      "missingSlotsBetweenSends": 0,
+      "uniqueLoggedSlots": 240,
+      "twoUniverses": true
+    },
+    {
+      "phase": "show-and-graphics-replay",
+      "durationMs": 5986.300048828125,
+      "sends": 240,
+      "deliveredHz": 40.01374851314261,
+      "p95GapMs": 29.4384765625,
+      "maximumGapMs": 32.83740234375,
+      "missingSlotsBetweenSends": 0,
+      "uniqueLoggedSlots": 240,
+      "twoUniverses": true
+    },
+    {
+      "phase": "show-only-after",
+      "durationMs": 6000,
+      "sends": 239,
+      "deliveredHz": 40.00283141101727,
+      "p95GapMs": 29.392822265625,
+      "maximumGapMs": 30.979248046875,
+      "missingSlotsBetweenSends": 0,
+      "uniqueLoggedSlots": 239,
+      "twoUniverses": true
+    }
+  ],
+  "scope": "In-memory ArtDMX output with separate synthetic 60 Hz mixed-stage graphics replay"
+}
