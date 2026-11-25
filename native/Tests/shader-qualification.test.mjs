@@ -34,7 +34,7 @@ function fixture({debug = true, worker = false} = {}) {
   const canvas = {width: 320, height: 200,
     tolglowPreview: {ready: true, draws: 42, getTelemetry: () => ({drawCalls: 42})}};
   const globals = {location: {href: 'http://127.0.0.1:1234/', origin: 'http://127.0.0.1:1234'},
-    document: {querySelectorAll: () => [canvas]}, WebGL2RenderingContext: GL,
+    document: {hasFocus: () => true, querySelectorAll: () => [canvas]}, WebGL2RenderingContext: GL,
     webkit: {messageHandlers: {shaderQualification: {postMessage: event => events.push(event)}}},
     setTimeout: (fn, delay) => timers.push({fn, delay})};
   globals.window = globals;
@@ -58,8 +58,9 @@ const program = {linked: true, shaders: [{source: '#version 300 es\nvoid main() 
 
 test('packaged qualification waits for the Room canvas and scrolls it into a visible window', () => {
   const {globals, canvas} = fixture();
-  const scrolls = [];
-  canvas.scrollIntoView = ({block, inline}) => scrolls.push([block, inline]);
+  const scrolls = [], focuses = [];
+  canvas.scrollIntoView = ({behavior, block, inline}) => scrolls.push([behavior, block, inline]);
+  canvas.focus = ({preventScroll}) => focuses.push(preventScroll);
   globals.document.getElementById = () => null;
   const reveal = globals.__tolglowShaderQualificationRevealRoom;
   assert.equal(reveal(), false);
@@ -67,9 +68,15 @@ test('packaged qualification waits for the Room canvas and scrolls it into a vis
   globals.document.hidden = true;
   assert.equal(reveal(), false);
   assert.deepEqual(scrolls, []);
+  assert.deepEqual(focuses, []);
   globals.document.hidden = false;
   assert.equal(reveal(), true);
-  assert.deepEqual(scrolls, [['center', 'nearest']]);
+  assert.deepEqual(scrolls, [['instant', 'center', 'nearest']]);
+  assert.deepEqual(focuses, [true]);
+  canvas.tolglowPreview.getTelemetry = () => ({visible: true});
+  assert.equal(reveal(), true);
+  assert.equal(scrolls.length, 1);
+  assert.equal(focuses.length, 1);
 });
 
 test('observes real preview calls without replacing shader source, return values or telemetry', () => {

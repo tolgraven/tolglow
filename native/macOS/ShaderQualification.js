@@ -101,11 +101,16 @@
   window.__tolglowShaderQualificationRevealRoom = () => {
     const canvas = document.getElementById('preview');
     if (document.hidden || !canvas) return false;
-    canvas.scrollIntoView({block: 'center', inline: 'nearest'});
+    if (!canvas.tolglowPreview?.getTelemetry?.()?.visible) {
+      canvas.scrollIntoView({behavior: 'instant', block: 'center', inline: 'nearest'});
+      canvas.focus({preventScroll: true});
+    }
     return true;
   };
   window.__tolglowShaderQualificationSnapshot = () => JSON.parse(JSON.stringify({
     url: location.href,
+    documentHidden: document.hidden,
+    documentFocused: document.hasFocus(),
     previews: [...document.querySelectorAll('canvas')].filter(canvas => canvas.tolglowPreview).map(canvas => {
       const preview = canvas.tolglowPreview;
       const engine = preview.fallback ?? preview;

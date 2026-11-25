@@ -54,19 +54,20 @@ final class ShaderQualification: NSObject, WKScriptMessageHandler {
     }
 
     func start(_ view: WKWebView, revealRoom: Bool = false) {
+        let snapshotScript = (revealRoom ? "window.__tolglowShaderQualificationRevealRoom?.(); " : "")
+            + "window.__tolglowShaderQualificationSnapshot?.()"
         task = Task { [weak self, weak view] in
             var snapshot: [String: Any] = [:]
             var readySamples = 0
-            var roomRevealed = !revealRoom
             let deadline = ContinuousClock.now.advanced(by: .seconds(60))
             while ContinuousClock.now < deadline {
                 do { try await Task.sleep(nanoseconds: 500_000_000) } catch { return }
                 guard let self, let view else { return }
-                if !roomRevealed {
-                    roomRevealed = await Self.evaluate(view, "window.__tolglowShaderQualificationRevealRoom?.()") as? Bool == true
+                if revealRoom, (snapshot["documentFocused"] as? Bool) != true,
+                   let window = view.window, window.isKeyWindow {
+                    window.makeFirstResponder(view)
                 }
-                guard !Task.isCancelled else { return }
-                if let value = await Self.evaluate(view, "window.__tolglowShaderQualificationSnapshot?.()") as? [String: Any] {
+                if let value = await Self.evaluate(view, snapshotScript) as? [String: Any] {
                     snapshot = value
                 }
                 guard !Task.isCancelled else { return }
