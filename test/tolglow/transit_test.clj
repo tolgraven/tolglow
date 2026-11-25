@@ -66,14 +66,44 @@
            :else v))
    value))
 
+(defn- jvm-type
+  "Class, except that a decoded buffer is read-only and so a different subclass."
+  [v]
+  (if (instance? ByteBuffer v) ByteBuffer (class v)))
+
 (deftest native-values-round-trip-with-their-jvm-types
   (let [source (native-sample)
         result (wire/decode (wire/encode source))]
     (is (= (comparable source) (comparable result)))
     (doseq [k (keys source)]
-      (is (= (class (get source k)) (class (get result k))) (str k)))
+      (is (= (jvm-type (get source k)) (jvm-type (get result k))) (str k)))
     (is (= (:at source) (:at result)))
-    (is (= (Instant/ofEpochSecond -1 999999999) (get-in result [:events 0 :at])))))
+    (is (= (Instant/ofEpochSecond -1 999999999) (get-in result [:events 0 :at])))
+    (is (.isReadOnly ^ByteBuffer (:packet result)))
+    (is (thrown? java.nio.ReadOnlyBufferException (.put ^ByteBuffer (:packet result) (byte 0))))))
+
+(deftest inbound-commands-receive-immutable-numbers
+  (let [browser {:op :param/set :levels [0.25 -0.0] :steps [-1 7]}
+        decoded (wire/decode-command
+                 (str "[\"^ \",\"~:op\",\"~:param/set\","
+                      "\"~:levels\",[\"~#tolglow/float64-array.v1\",\"~bAAAAAAAA0D8AAAAAAAAAgA==\"],"
+                      "\"~:steps\",[\"~#tolglow/int32-array.v1\",\"~b/////wcAAAA=\"],"
+                      "\"~:u32\",[\"~#tolglow/uint32-array.v1\",\"~b/////w==\"],"
+                      "\"~:u16\",[\"~#tolglow/uint16-array.v1\",\"~b//8=\"],"
+                      "\"~:u8c\",[\"~#tolglow/uint8-clamped-array.v1\",\"~b/w==\"],"
+                      "\"~:u64\",[\"~#tolglow/uint64-array.v1\",\"~b//////////8=\"],"
+                      "\"~:dmx\",\"~bAP8=\",\"~:at\",[\"~#tolglow/instant.v1\",[\"1\",2]]]"))]
+    (is (= browser (select-keys decoded (keys browser))))
+    (is (= [0.25 -0.0] (:levels decoded)))
+    (is (= [4294967295] (:u32 decoded)))
+    (is (= [65535] (:u16 decoded)))
+    (is (= [255] (:u8c decoded)))
+    (is (= [18446744073709551615N] (:u64 decoded)))
+    (is (every? vector? (map decoded [:levels :steps :u32 :u16 :u8c :u64])))
+    (is (= [0 -1] (vec (:dmx decoded))) "standard binary stays byte[]")
+    (is (= (Instant/ofEpochSecond 1 2) (:at decoded))))
+  (is (thrown-with-msg? Exception #"Byte buffers are not accepted"
+                        (wire/decode-command (wire/encode {:packet (ByteBuffer/wrap (byte-array [1]))})))))
 
 (deftest browser-reencoded-native-values-return-to-jvm-types
   ;; The ClojureScript reader decoded native-sample and its writer produced this
@@ -84,7 +114,7 @@
         result (wire/decode sent)]
     (is (= (comparable source) (comparable result)))
     (doseq [k (keys source)]
-      (is (= (class (get source k)) (class (get result k))) (str k)))
+      (is (= (jvm-type (get source k)) (jvm-type (get result k))) (str k)))
     (is (= -1 (aget ^bytes (:dmx result) 4)) "browser 255 is JVM byte -1")))
 
 (deftest unsigned-browser-arrays-keep-their-bits-on-the-jvm
@@ -97,7 +127,7 @@
         ^ByteBuffer result (wire/decode (wire/encode source))]
     (is (= [2 5] [(.position source) (.limit source)]))
     (is (= ByteOrder/BIG_ENDIAN (.order result)))
-    (is (= [0 3 false] [(.position result) (.limit result) (.isDirect result)]))
+    (is (= [0 3 false true] [(.position result) (.limit result) (.isDirect result) (.isReadOnly result)]))
     (is (= source result))
     (is (= 1 (.get ^ByteBuffer (wire/decode (wire/encode (.asReadOnlyBuffer (ByteBuffer/wrap (byte-array [1]))))))))))
 

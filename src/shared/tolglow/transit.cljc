@@ -103,9 +103,20 @@
 #?(:cljs
    (extend-type Instant
      Inst
-     (inst-ms* [i] (+ (* 1000 (:epoch-second i)) (js/Math.floor (/ (:nano i) 1000000))))))
+     (inst-ms* [i] (+ (* 1000 (:epoch-second i)) (js/Math.floor (/ (:nano i) 1000000))))
+     IComparable
+     (-compare [a b]
+       (when-not (instance? Instant b)
+         (throw (js/Error. "Cannot compare an Instant with another type")))
+       (compare [(:epoch-second a) (:nano a)] [(:epoch-second b) (:nano b)]))))
 
 (def ^:private instant-tag "tolglow/instant.v1")
+
+;; js/Date represents ±8.64e15 ms. Keeping seconds inside that range makes
+;; `(js/Date. (inst-ms t))` valid for every decoded browser Instant.
+#?(:cljs (def ^:private min-browser-second -8640000000000))
+
+#?(:cljs (def ^:private max-browser-second 8639999999999))
 
 (defn- read-instant [rep]
   (let [[s n :as pair] (as-vector rep)]
@@ -115,8 +126,10 @@
       (throw (ex-info "Invalid instant" {:tag instant-tag})))
     #?(:clj (Instant/ofEpochSecond (Long/parseLong s) (long n))
        :cljs (let [seconds (js/parseInt s 10)]
-               (when-not (js/Number.isSafeInteger seconds)
-                 (throw (ex-info "Instant is outside the browser's exact range" {:tag instant-tag})))
+               (when-not (<= min-browser-second seconds max-browser-second)
+                 (throw (ex-info "Instant is outside the js/Date range" {:tag instant-tag
+                                                                       :min-epoch-second min-browser-second
+                                                                       :max-epoch-second max-browser-second})))
                (->Instant seconds n)))))
 
 (defn- write-instant [v]
@@ -124,8 +137,29 @@
      :cljs [(str (:epoch-second v)) (:nano v)]))
 
 ;; A ByteBuffer travels as its remaining bytes and byte order. The browser view
-;; holds an unsigned Uint8Array; the JVM receives a heap buffer at position 0.
-#?(:cljs (defrecord ByteView [order bytes]))
+;; holds an unsigned Uint8Array and compares by contents; treat it as read-only.
+;; The JVM receives a read-only heap buffer at position 0.
+#?(:cljs
+   (defn- same-bytes? [a b]
+     (and (= (.-length a) (.-length b))
+          (loop [i 0]
+            (cond (= i (.-length a)) true
+                  (= (aget a i) (aget b i)) (recur (inc i))
+                  :else false)))))
+
+#?(:cljs
+   (deftype ByteView [order bytes]
+     ILookup
+     (-lookup [v k] (-lookup v k nil))
+     (-lookup [_ k not-found] (case k :order order :bytes bytes not-found))
+     IEquiv
+     (-equiv [_ other]
+       (and (instance? ByteView other) (= order (.-order other)) (same-bytes? bytes (.-bytes other))))
+     IHash
+     (-hash [_] (hash-combine (hash order) (hash-ordered-coll (array-seq (js/Array.from bytes)))))
+     IPrintWithWriter
+     (-pr-writer [_ writer _]
+       (-write writer (str "#tolglow/byte-view [" order " " (.-length bytes) " bytes]")))))
 
 (def ^:private byte-view-tag "tolglow/byte-buffer.v1")
 
@@ -135,7 +169,8 @@
   (let [[order data :as pair] (as-vector rep)]
     (when-not (and (vector? pair) (= 2 (count pair)) (#{"big" "little"} order) (byte-rep? data))
       (throw (ex-info "Invalid byte buffer" {:tag byte-view-tag})))
-    #?(:clj (.order (ByteBuffer/wrap ^bytes data) (if (= "little" order) ByteOrder/LITTLE_ENDIAN ByteOrder/BIG_ENDIAN))
+    #?(:clj (.order (.asReadOnlyBuffer (ByteBuffer/wrap ^bytes data))
+                    (if (= "little" order) ByteOrder/LITTLE_ENDIAN ByteOrder/BIG_ENDIAN))
        :cljs (->ByteView (if (= "little" order) :little-endian :big-endian) data))))
 
 (defn- write-byte-view [v]
@@ -187,7 +222,8 @@
                      (fn [~b ~n] (let [~a (~array-fn ~n)] (. (. ~b ~view) (get ~a)) ~a))))))
 
 ;; JVM has no unsigned arrays. Unsigned browser arrays arrive as the same-width
-;; signed JVM array with identical bits, which returns as the signed type.
+;; signed JVM array with identical bits, which returns as the signed type. The
+;; 8-bit arrays become byte[], which returns on `b` as an unsigned Uint8Array.
 (def ^:private array-types
   #?(:clj
      (let [bytes-codec {:width 1 :read identity}
@@ -280,9 +316,47 @@
             (.toString out StandardCharsets/UTF_8))
      :cljs (transit/write (transit/writer :json {:handlers write-handlers}) value)))
 
-(defn decode [text]
+#?(:clj
+   (def ^:private inbound-values
+     "Numeric vectors holding the values the browser array held."
+     (let [longs #(mapv long %)
+           doubles #(mapv double %)]
+       {"tolglow/int8-array.v1" longs
+        "tolglow/uint8-clamped-array.v1" #(mapv (fn [b] (bit-and 0xff (long b))) %)
+        "tolglow/int16-array.v1" longs
+        "tolglow/uint16-array.v1" #(mapv (fn [c] (long (int (char c)))) %)
+        "tolglow/int32-array.v1" longs
+        "tolglow/uint32-array.v1" #(mapv (fn [i] (Integer/toUnsignedLong (int i))) %)
+        "tolglow/int64-array.v1" longs
+        "tolglow/uint64-array.v1" #(mapv (fn [l] (if (neg? (long l)) (+' 18446744073709551616N l) l)) %)
+        "tolglow/float32-array.v1" doubles
+        "tolglow/float64-array.v1" doubles})))
+
+;; Commands and stream messages from a browser or agent must not place mutable
+;; objects in model state. Their numeric arrays become vectors and byte buffers
+;; are refused. Standard `b` binary values remain byte[] as before.
+#?(:clj
+   (def ^:private command-reader-handlers
+     (transit/read-handler-map
+      (merge read-handlers
+             (into {} (map (fn [[tag codec]]
+                             [tag (transit/read-handler (comp (inbound-values tag) (read-array tag codec)))]))
+                   array-types)
+             {byte-view-tag (transit/read-handler
+                             (fn [_] (throw (ex-info "Byte buffers are not accepted in commands" {:tag byte-view-tag}))))}))))
+
+(defn- read-text [text handlers]
   (when-not (string? text)
     (throw (ex-info "Expected a Transit JSON string" {})))
   #?(:clj (let [input (ByteArrayInputStream. (.getBytes ^String text StandardCharsets/UTF_8))]
-            (transit/read (transit/reader input :json {:handlers reader-handlers})))
-     :cljs (transit/read (transit/reader :json {:handlers read-handlers}) text)))
+            (transit/read (transit/reader input :json {:handlers handlers})))
+     :cljs (transit/read (transit/reader :json {:handlers handlers}) text)))
+
+(defn decode [text]
+  (read-text text #?(:clj reader-handlers :cljs read-handlers)))
+
+#?(:clj
+   (defn decode-command
+     "Decode untrusted inbound Studio or agent input into immutable values."
+     [text]
+     (read-text text command-reader-handlers)))

@@ -84,8 +84,32 @@
   (let [view (wire/->ByteView :big-endian (js/Uint8Array. #js [255 0]))
         result (wire/decode (wire/encode view))]
     (is (= :big-endian (:order result)))
-    (is (= [255 0] (elements (:bytes result)))))
-  (doseq [text ["[\"~#tolglow/instant.v1\",[\"9007199254740992\",0]]"
+    (is (= [255 0] (elements (:bytes result))))
+    (is (= view result))
+    (is (= (hash view) (hash result))))
+  (doseq [text ["[\"~#tolglow/instant.v1\",[\"8640000000000\",0]]"
+                "[\"~#tolglow/instant.v1\",[\"-8640000000001\",0]]"
                 "[\"~#tolglow/int32-array.v1\",\"~bAQI=\"]"
                 "[\"~#org.jogamp.vecmath/point3d.v1\",[1,2]]"]]
     (is (thrown? js/Error (wire/decode text)) text)))
+
+(deftest byte-views-are-values-in-app-db
+  (let [text "[\"~#tolglow/byte-buffer.v1\",[\"little\",\"~bAQID/w==\"]]"
+        a (wire/decode text) b (wire/decode text)]
+    (is (not (identical? (:bytes a) (:bytes b))))
+    (is (= a b))
+    (is (= (hash a) (hash b)))
+    (is (= #{a} #{b}))
+    (is (not= a (wire/->ByteView :big-endian (:bytes b))))
+    (is (not= a (wire/->ByteView :little-endian (js/Uint8Array. #js [1 2 3]))))))
+
+(deftest instants-compare-and-stay-inside-the-date-range
+  (let [later (wire/->Instant 10 5) earlier (wire/->Instant 10 4) before-epoch (wire/->Instant -1 999999999)]
+    (is (= [before-epoch earlier later] (sort [later before-epoch earlier])))
+    (is (neg? (compare earlier later)))
+    (is (zero? (compare later (wire/->Instant 10 5)))))
+  (doseq [[text ms] [["[\"~#tolglow/instant.v1\",[\"8639999999999\",999999999]]" 8639999999999999]
+                     ["[\"~#tolglow/instant.v1\",[\"-8640000000000\",0]]" -8640000000000000]]]
+    (let [t (wire/decode text)]
+      (is (= ms (inst-ms t)))
+      (is (= ms (.getTime (js/Date. (inst-ms t))))))))
