@@ -1,0 +1,30 @@
+{
+  "mainSHA256": "723c9c9d7a6ad95475479f6b8c933c06436784c95c0891db542147b90e6de439",
+  "browser": "158.0.8127.88",
+  "initial": {
+    "lightingMode": "interpolate",
+    "deviceRenderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+    "thread": "worker",
+    "activeLights": 8,
+    "frameNumber": 118
+  },
+  "hold": {
+    "lightingMode": "hold",
+    "deviceRenderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+    "thread": "worker",
+    "activeLights": 8,
+    "frameNumber": 128
+  },
+  "restored": {
+    "lightingMode": "interpolate",
+    "deviceRenderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+    "thread": "worker",
+    "activeLights": 8,
+    "frameNumber": 130
+  },
+  "pans": [
+    0.6715362753728874,
+    0.6361924000425616,
+    0.6255967801250831
+  ]
+}
