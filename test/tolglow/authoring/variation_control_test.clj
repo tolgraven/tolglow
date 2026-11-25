@@ -73,8 +73,7 @@
       (let [handler (studio/handler runtime)
             device (show/connect-device! runtime :push-2
                      (merge {:session-id "variations-capture" :schedule! nil :timeout-ms 60000
-                             :active-cue-grid? true :cue-variations? true :operator-gestures? true
-                             :temporary-encoder-modifier :shift}
+                             :active-cue-grid? true :cue-variations? true}
                             (select-keys sink [:midi :display])))
             raw! #(while-ticking runtime (fn [] (receive! %)))
             current #(get-in (model runtime) [:instances (:selected-instance (:local (session/snapshot device)))])
@@ -186,9 +185,9 @@
                                                            :instance-id instance-id :mode :free}))))
                 (is (= :accepted (:status (submit! runtime {:op :cue-variation/ratio-set :instance-id instance-id
                                                            :param :period :numerator 5 :denominator 11}))))
-                (receive! [0xb0 49 127])
+                (receive! [0xb0 57 127])
                 (raw! [0x90 0 127])
-                (receive! [0xb0 49 0])
+                (receive! [0xb0 57 0])
                 (raw! [0xb0 71 1])
                 (let [audition (get-in (current) [:params :period])]
                   (is (or (ratio? audition) (integer? audition)))
