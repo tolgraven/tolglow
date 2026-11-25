@@ -2,9 +2,14 @@
   (:require [afterglow.control.codecs.push-2 :as push-codec]
             [afterglow.control.devices.session :as device-session]
             [afterglow.control.model :as control]
-            [clojure.test :refer [deftest is]]
+            [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [tolglow.operator-history :as operator-history]
-            [tolglow.show :as show]))
+            [tolglow.show :as show]
+            [tolglow.studio :as studio]
+            [tolglow.studio.access :as access]
+            [tolglow.transit :as transit])
+  (:import [java.io StringReader]))
 
 (defn- apply-at!
   ([runtime type payload time] (apply-at! runtime type payload time nil))
@@ -19,6 +24,92 @@
     (is (= :accepted (:status (apply-at! runtime :command (assoc gesture :op :gesture/sample :sequence 1 :value value)
                                         (inc time) authority))))
     (apply-at! runtime :command (assoc gesture :op :gesture/end :last-sequence 1) (+ time 2) authority)))
+
+(defn- history-request [app method payload headers]
+  (let [media "application/transit+json"
+        response (app {:request-method method :uri (if (= :get method) "/api/state" "/api/command")
+                       :headers (merge {"host" "localhost" "accept" media "content-type" media
+                                        "x-tolglow-form" "studio-v1"} headers)
+                       :body (when payload (StringReader. (transit/encode payload)))})]
+    (cond-> response
+      (str/starts-with? (get-in response [:headers "Content-Type"] "") media)
+      (update :body transit/decode))))
+
+(defn- post-history! [runtime app payload headers time]
+  (let [reply (future (history-request app :post payload headers))
+        deadline (+ (System/nanoTime) 3000000000)]
+    (try
+      (loop []
+        (cond
+          (realized? reply) @reply
+          (< (System/nanoTime) deadline) (do (show/tick! runtime time) (Thread/sleep 5) (recur))
+          :else (throw (ex-info "Studio history request timed out" {:op (:op payload)}))))
+      (finally (future-cancel reply)))))
+
+(deftest studio-history-commands-share-committed-travel-and-listener-authority
+  (let [runtime (show/create-runtime {:workers 1 :workspace-options nil})
+        app (studio/handler runtime)
+        token "test-only-studio-history-credential"
+        signed (access/authenticated app token)
+        local (access/listener-handler app {})
+        login {"authorization" (str "Bearer " token)}
+        push {:operator-id "push-2/history-fixture"}
+        scope {:runtime-id (:id runtime) :expected-epoch 0}]
+    (try
+      (let [id (:instance-id (apply-at! runtime :command
+                                       {:op :cue/launch :cue-id :ember :launch {:params {:level 0.2}}} 0))
+            level #(get-in @(:state runtime) [:model :instances id :params :level])
+            cursor #(:current-id (show/operator-history runtime))
+            undo (merge scope {:op :history/undo :expected-cursor 2 :command-id "studio-undo"})
+            forged (assoc undo :operator-id "forged" :authority {:operator-id "forged"}
+                          ::access/operator-authority {:operator-id "forged"}
+                          :source {:adapter :forged :session-id "forged"} :epoch 99 :show-id :forged)]
+        (is (= 1 (:history-cursor (turn! runtime id "first" 0.4 5 push))))
+        (is (= 2 (:history-cursor (turn! runtime id "second" 0.7 10 push))))
+        (testing "Preview reads committed history and supplies no authority to command payloads"
+          (let [before @(:state runtime)
+                view (:body (history-request app :get nil {}))]
+            (is (= (show/operator-history runtime) (:operator-history view)))
+            (is (= [2 0.7] [(cursor) (level)]))
+            (is (= 401 (:status (history-request signed :post forged {}))))
+            (is (= :operator-required (get-in (history-request app :post forged {}) [:body :code])))
+            (is (= 403 (:status (history-request local :post undo {"origin" "https://elsewhere.test"}))))
+            (is (identical? before @(:state runtime)))))
+        (testing "Signed browser sessions retain server-assigned authority across retries"
+          (let [session (history-request signed :get nil login)
+                cookie (first (str/split (get-in session [:headers "Set-Cookie"]) #";"))
+                result (post-history! runtime signed forged {"cookie" cookie} 20)
+                entry #(get-in @(:state runtime) [:model :control :history "studio-undo"])]
+            (is (= 200 (:status result)))
+            (is (= [:accepted 1] ((juxt :status :history-cursor) (:body result))))
+            (is (= [1 0.4] [(cursor) (level)]))
+            (is (re-find #"^studio/" (:operator-id (entry))))
+            (is (= {:adapter :studio :session-id "studio"} (get-in (entry) [:command :source])))
+            (is (not (re-find #"forged" (pr-str (entry)))))
+            (is (not-any? #(contains? (:command (entry)) %) [:operator-id :authority ::access/operator-authority]))
+            (is (= (:body result) (:body (post-history! runtime signed undo login 25))))
+            (is (= [1 0.4] [(cursor) (level)]))))
+        (testing "The default listener supports undo, explicit redo and alternate branch selection"
+          (is (= 3 (:history-cursor (turn! runtime id "alternate" 0.5 30 push))))
+          (let [select (merge scope {:op :history/select :expected-cursor 3 :node-id 2 :command-id "studio-select"})
+                submit #(get (post-history! runtime local % {} 40) :body)]
+            (doseq [field [:runtime-id :expected-epoch :expected-cursor :node-id]]
+              (is (= :invalid-history-command (get-in (history-request local :post (dissoc select field) {}) [:body :code]))))
+            (doseq [stale [(assoc select :runtime-id "retired-runtime") (assoc select :expected-epoch 1)]]
+              (is (= :rejected (:status (submit stale)))))
+            (is (= :stale-history-cursor (:code (submit (assoc select :expected-cursor 1)))))
+            (is (= [3 0.5] [(cursor) (level)]))
+            (is (= 2 (:history-cursor (submit select))))
+            (is (= [2 0.7] [(cursor) (level)]))
+            (is (= 1 (:history-cursor (submit (merge scope {:op :history/undo :expected-cursor 2})))))
+            (is (= 3 (:history-cursor (submit (merge scope {:op :history/redo :expected-cursor 1 :node-id 3})))))
+            (is (= [3 0.5] [(cursor) (level)]))
+            (is (= [nil 0 1 1] (mapv :parent-id (:nodes (show/operator-history runtime)))))
+            (apply-at! runtime :command {:op :param/set :instance-id id :param :level :value 0.8} 45)
+            (is (= :history-conflict (:code (:body (post-history! runtime local
+                                                    (merge scope {:op :history/undo :expected-cursor 3}) {} 50)))))
+            (is (= [3 0.8] [(cursor) (level)])))))
+      (finally (show/stop! runtime)))))
 
 (deftest snapshots-and-repl-share-committed-operator-history
   (let [runtime (show/create-runtime {:workers 1 :workspace-options nil})
@@ -158,6 +249,12 @@
             (is (= [initial (level)] [before after]))
             (is (= 2 (count (:nodes (history)))))
             (is (empty? (:open (history)))))
+          (let [app (access/listener-handler (studio/handler runtime) {})
+                scope {:runtime-id (:id runtime) :expected-epoch (:epoch (model))}
+                submit #(get-in (history-request app :post (merge scope %) {}) [:body :history-cursor])
+                edited (level)]
+            (is (= [0 initial] [(submit {:op :history/undo :expected-cursor 1}) (level)]))
+            (is (= [1 edited] [(submit {:op :history/redo :expected-cursor 0 :node-id 1}) (level)])))
           (is (empty? (:errors (device-session/snapshot device))))))
       (finally (show/stop! runtime)))))
 
