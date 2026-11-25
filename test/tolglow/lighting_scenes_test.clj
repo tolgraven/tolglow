@@ -1,5 +1,7 @@
 (ns tolglow.lighting-scenes-test
-  (:require [afterglow.render.frame :as frame]
+  (:require [afterglow.output.scheduler :as scheduler]
+            [afterglow.render.frame :as frame]
+            [clojure.data.json :as json]
             [clojure.test :refer [deftest is]]
             [tolglow.demo :as demo]
             [tolglow.compiler.batch :as batch]
@@ -9,7 +11,8 @@
             [afterglow.runtime.events :as staging]
             [tolglow.persistence :as persistence]
             [tolglow.integrations.analysis :as analysis]
-            [tolglow.show :as show]))
+            [tolglow.show :as show]
+            [tolglow.studio :as studio]))
 
 (def fixtures
   [{:id :left :groups [:wash] :universe 1 :address 1 :max-watts 200 :channels {:red 1 :green 2 :blue 3}}
@@ -302,6 +305,47 @@
         (ticks! rt time 20)
         (is (= :local (:brightness-reference (current))))
         (is (= :rejected (:status (edit {:brightness-reference :wrong}))))
+        (finally (show/stop! rt))))))
+
+(deftest global-scene-matches-fixtures-with-different-color-corrections
+  (doseq [batch? [false true]]
+    (let [rig {:fixtures [{:id :strong :groups [:pair] :universe 1 :address 1
+                           :channels {:red 1 :green 2 :blue 3} :measured-relative-brightness 2.0}
+                          {:id :weak :groups [:pair] :universe 1 :address 4
+                           :channels {:red 1 :green 2 :blue 3 :white 4} :rgbw-policy :extract-min
+                           :measured-relative-brightness 1.0}]}
+          model (assoc-in (assoc (demo/model) :rig rig) [:registry :effects :lit-pair]
+                          {:id :lit-pair :version 1 :params {} :outputs {:color (demo/constant [1.0 0.5 0.25])}})
+          clock (atom 0)
+          captured (atom nil)
+          rt (show/create-runtime {:model model :batch? batch? :independent-output? true
+                                   :physical-now-ms #(deref clock)
+                                   :sink {:send! (fn [universes _] (reset! captured (vec (get universes 1))))}})
+          corrected (-> rig
+                        (assoc-in [:fixtures 0 :color-correction] {:red 0.5})
+                        (assoc-in [:fixtures 1 :color-correction] {:green 0.75 :white 0.5}))]
+      (try
+        (doseq [trims [{:red 1.2} {:green -0.1} {:white 0.5} {:dimmer 0.5}]
+                :let [fixture (if (= {:white 0.5} trims) 0 1)]]
+          (is (= :rejected (:status (issue! rt clock :rig (assoc-in rig [:fixtures fixture :color-correction] trims))))
+              (str "invalid trim " trims)))
+        (is (= :accepted (:status (issue! rt clock :rig corrected))))
+        (is (= :accepted (:status (issue! rt clock :lighting-scene
+                                    {:op :apply :group-id :pair :effect-ids [:lit-pair]
+                                     :brightness-reference :global :target 0.12}))))
+        (ticks! rt clock 5)
+        (scheduler/publish! (:publisher rt))
+        (is (= [32 32 16 168 42 0 28] (mapv #(bit-and 255 %) (take 7 @captured))))
+        (let [group (group! rt :pair)
+              sources (mapv :global-brightness (:sources group))
+              response ((studio/handler rt) {:request-method :get :uri "/api/state"})
+              state (json/read-str (:body response) :key-fn keyword)]
+          (is (= :at-target (:status group)))
+          (is (every? #(< (abs (- 0.12 %)) 0.003) sources))
+          (is (= 200 (:status response)))
+          (is (= sources (mapv :global-brightness (get-in state [:lighting-scenes :groups 0 :sources]))))
+          (is (= corrected (get-in (persistence/read-string (persistence/write-string (:model @(:state rt))))
+                                   [:model :rig]))))
         (finally (show/stop! rt))))))
 
 (deftest scene-variation-picks-a-source-that-fits-the-concurrent-budget
