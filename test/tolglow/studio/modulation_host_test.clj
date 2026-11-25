@@ -281,16 +281,18 @@
           (is (= :pending (get-in (device-session/snapshot device) [:last-ack :status])))
           (is (empty? (:open (history))))
           (dotimes [_ 255] (show/submit! runtime {:op :master/set :value 1}))
-          (is (= :rejected (:status @(show/submit! runtime {:op :master/set :value 1}))))
+          (is (= :rejected (:status (deref (show/submit! runtime {:op :master/set :value 1}) 0 nil))))
           (receive! [0x80 0 0])
           (receive! [0x80 0 0])
           (let [{:keys [payload authority reply]} (first (ends))]
             (is (= 1 (count (ends))))
             (is (not (realized? reply)))
             (is (= :gesture-end-queued
-                   (:code @(show/submit! runtime :command (assoc payload :command-id "duplicated-end") authority))))
+                   (:code (deref (show/submit! runtime :command
+                                              (assoc payload :command-id "duplicated-end") authority) 0 nil))))
             (is (= :unknown-gesture
-                   (:code @(show/submit! runtime :command (assoc payload :gesture-id "unrelated-touch") authority))))
+                   (:code (deref (show/submit! runtime :command
+                                              (assoc payload :gesture-id "unrelated-touch") authority) 0 nil))))
             (is (= 1 (count (ends))))
             (show/tick! runtime 25)
             (is (= :accepted (:status (deref reply 0 nil))))
