@@ -355,15 +355,22 @@
                   (map (fn [[head point]] {:target-id head :attribute :aim :value point :blend :replace}))
                   aims))))))
 
-(defn- scoped-block [groups block]
-  (if-let [group (get groups (get-in block [:source :instance-id]))]
+(defn- scoped-block [groups opacity-factors {{:keys [instance-id effect-version]} :source :as block}]
+  (if-let [group (get groups instance-id)]
     (let [native (:native-layer block)
+          factor (engine/opacity-factor opacity-factors instance-id effect-version)
           layer (cond-> (merge native group)
                   (and (seq (:transforms native)) (seq (:transforms group)))
-                  (assoc :transforms (into (:transforms group) (:transforms native))))]
+                  (assoc :transforms (into (:transforms group) (:transforms native)))
+                  (not (== 1 factor)) (update :member-opacity (fnil * 1.0) factor))]
       (assoc block :native-layer layer))
     block))
 
-(defn mask-contributions [result groups]
-  (if (empty? groups) result
-    (update result :contributions #(mapv (partial scoped-block groups) %))))
+(defn mask-contributions
+  "Apply spatial layer descriptors and any group factors deferred by the host.
+  Member opacity mixes assignments and slot transforms together. A muted
+  member keeps its ordered block so the spatial layer retains its anchor."
+  ([result groups] (mask-contributions result groups nil))
+  ([result groups opacity-factors]
+   (if (empty? groups) result
+     (update result :contributions #(mapv (partial scoped-block groups opacity-factors) %)))))

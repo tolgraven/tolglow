@@ -33,6 +33,7 @@
             [tolglow.effects.prefabs :as prefabs]
             [tolglow.effects.material-design :as material-design]
             [tolglow.effects.variable-edit :as variable-edit]
+            [tolglow.effects.group-channels :as group-channels]
             [tolglow.agents.venue :as venue-tools]
             [clojure.java.io :as io]
             [tolglow.compiler :as compiler]
@@ -300,6 +301,7 @@
                           (mpv-session/create (:mpv reference) (:profile reference) initial-position))
          _ (lighting-scenes/validate-state! model)
          _ (lighting/validate! (:settings model))
+         _ (group-channels/validate-state! model)
          _ (when (contains? (:settings model) :section-patterns)
              (section-patterns/override-settings (get-in model [:settings :section-patterns])))
          _ (variable-blocks/compile-model model)
@@ -451,6 +453,11 @@
                                                  [id (-> source (assoc :armed-intent? false)
                                                          (update :state (fn [state] (:state (sensor-core/set-armed state false)))))])) %)))))
 
+(defn effect-group-channels
+  "Read the effect mixer projection from one committed show model."
+  [runtime]
+  (group-channels/projection (:model @(:state runtime))))
+
 (defn- hold-manual-params [model result {:keys [op source instance-id param control-id gesture-id]} authority]
   (let [owner (when (#{:gesture/sample :gesture/end :gesture/cancel} op)
                 [(:operator-id authority) control-id gesture-id])]
@@ -479,8 +486,11 @@
 (defn- command
   ([model payload time-ms] (command model payload time-ms nil))
   ([model payload time-ms authority]
-   (let [time-ms (or (get-in model [:control :history (:command-id payload) :command :time-ms]) time-ms)
-         payload (prefabs/prepare-command model payload)
+   (let [previous (get-in model [:control :history (:command-id payload) :command])
+         time-ms (or (:time-ms previous) time-ms)
+         payload (cond-> (prefabs/prepare-command model payload)
+                   (::group-channels/text-addresses? (meta payload))
+                   (group-channels/resolve-text-address model previous))
          ;; Declarative code may use string identities (generated pages do).
          ;; JSON keyword normalization must still address those existing objects.
          payload (reduce (fn [p [field entries]]
@@ -493,9 +503,13 @@
                           :show-id (:show-id model) :epoch (:epoch model)
                           :source {:adapter :studio :session-id "studio"}}
                          payload {:time-ms time-ms})
-         variation? (variations/operations (:op payload))
-         result (if variation? (variations/apply-command model envelope)
-                    (spatial/apply-command model envelope authority))
+         operation (:op envelope)
+         variation? (variations/operations operation)
+         result (cond
+                  variation? (variations/apply-command model envelope)
+                  (group-channels/operation? operation)
+                  (control/apply-domain-command model envelope group-channels/apply-operation)
+                  :else (spatial/apply-command model envelope authority))
          accepted? (= :accepted (get-in result [:ack :status]))]
      (cond
        (and accepted? (= (:revision model) (get-in result [:model :revision])))
@@ -807,25 +821,30 @@
         (throw (ex-info "Settings require a named scope and portable values" {})))
       (when (and (= scope :output) (contains? values :presentation))
         (output-scheduler/validate-options (:presentation values)))
-      (let [values (cond-> values (and (= scope :output) (contains? values :pause-look))
-                     (update :pause-look pause-look/normalize))
-            settings (edit-scoped-settings model scope values (:device-id payload))
-            _ (when (= scope :prefabs)
-                (prefabs/validate! settings)
-                (variable-blocks/compile-settings (get-in model [:settings :variable-blocks]) (:definitions settings)))
-            _ (when (= scope :variable-blocks)
-                (variable-blocks/compile-settings settings (prefabs/catalog model)))
-            _ (when (= scope :adaptive-keyframes) (cadence/settings settings))
-            _ (when (= scope :section-patterns) (section-patterns/override-settings settings))
-            _ (when (= scope :studio) (registry/validate-public-query-ids! (:public-queries settings)))
-            _ (when (= scope :lighting-capacity) (capacity/settings settings))
-            _ (when (= scope :audio-returns) (audio-return/validate-config model settings))
-            settings (if (= scope :expressive) (expressive-mapping/normalize-config settings) settings)
-            updated (-> (if (= scope :fog-control)
-                          (fog-control/configure model values)
-                          (assoc-in model [:settings scope] settings))
-                        (update :revision inc))]
-        {:model updated :ack {:status :accepted :revision (:revision updated)}}))
+      (if (= scope :effect-group-channels)
+        (dispatch-owner-command runtime model
+                                (assoc (select-keys payload [:command-id :show-id :epoch :expected-revision :source])
+                                       :op :effect-groups/configure :config-patch values)
+                                time-ms authority)
+        (let [values (cond-> values (and (= scope :output) (contains? values :pause-look))
+                       (update :pause-look pause-look/normalize))
+              settings (edit-scoped-settings model scope values (:device-id payload))
+              _ (when (= scope :prefabs)
+                  (prefabs/validate! settings)
+                  (variable-blocks/compile-settings (get-in model [:settings :variable-blocks]) (:definitions settings)))
+              _ (when (= scope :variable-blocks)
+                  (variable-blocks/compile-settings settings (prefabs/catalog model)))
+              _ (when (= scope :adaptive-keyframes) (cadence/settings settings))
+              _ (when (= scope :section-patterns) (section-patterns/override-settings settings))
+              _ (when (= scope :studio) (registry/validate-public-query-ids! (:public-queries settings)))
+              _ (when (= scope :lighting-capacity) (capacity/settings settings))
+              _ (when (= scope :audio-returns) (audio-return/validate-config model settings))
+              settings (if (= scope :expressive) (expressive-mapping/normalize-config settings) settings)
+              updated (-> (if (= scope :fog-control)
+                            (fog-control/configure model values)
+                            (assoc-in model [:settings scope] settings))
+                          (update :revision inc))]
+          {:model updated :ack {:status :accepted :revision (:revision updated)}})))
     :auto
     (let [old-state (get-in model [:auto :state])
           model (if old-state
@@ -1604,7 +1623,18 @@
                                                :keyframe-generation (:responses model) :spatial-aims (get-in space [:fields :aims])
                                                :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
                                               (:inputs sampling))
-                           frame-input (cond-> frame-input variables (assoc :resolved-variables variable-inputs))
+                           group-levels (group-channels/frame-levels model)
+                           ;; Spatial membership is attached after the engine runs. Keep
+                           ;; those contributions intact until their native member mix.
+                           spatial-groups (get-in space [:fields :groups])
+                           spatial-levels (when (and group-levels spatial-groups)
+                                            (not-empty (select-keys group-levels (keys spatial-groups))))
+                           engine-levels (if spatial-levels
+                                           (not-empty (apply dissoc group-levels (keys spatial-levels)))
+                                           group-levels)
+                           frame-input (cond-> frame-input
+                                         variables (assoc :resolved-variables variable-inputs)
+                                         engine-levels (assoc ::engine/opacity-factors engine-levels))
                            response (response-middleware! runtime (:responses model []))
                            inputs (comp response modulation-middleware)
                            compile-step (fn [definition]
@@ -1636,9 +1666,15 @@
                            fog (when (and plan (or (:fog? meter-opts) (:fog previous)))
                                  (capacity/fog-policy meter-opts plan (:fog previous) time-ms limit fog-bypass?
                                                       (:reference-rms meter-opts (:reference-rms capacity/defaults))))
+                           ;; Fog arbitration checks whether a manual source is visible.
+                           ;; Spatial member levels apply later, so omit muted sources here.
+                           fog-blocks (cond->> (:contributions result)
+                                        (some #(if (map? %) (some zero? (vals %)) (zero? %)) (vals spatial-levels))
+                                        (filterv (fn [{{:keys [instance-id effect-version]} :source}]
+                                                   (pos? (engine/opacity-factor spatial-levels instance-id effect-version)))))
                            setpoint (fog-control/frame model patch observation previous-control
                                       (if (get-in runtime [:sink :send!]) ((get-in runtime [:publisher :now-ms])) time-ms)
-                                      fog-bypass? (:contributions result) (:block fog))
+                                      fog-bypass? fog-blocks (:block fog))
                            extra-blocks (cond-> (fog-control/with-demands [] (:feedback setpoint))
                                           manual-aim (conj manual-aim)
                                           (:music setpoint) (conj (:music setpoint))
@@ -1655,8 +1691,8 @@
                                             (:observe-hdr? space) (assoc :observe-hdr? true))
                            resolved (effect-faults/resolve-output result
                                       #(resolve-frame patch (lighting/contributions standby % extra-blocks) render-options)
-                                      (if-let [groups (get-in space [:fields :groups])]
-                                        #(spatial-cues/mask-contributions % groups) identity))
+                                      (if spatial-groups
+                                        #(spatial-cues/mask-contributions % spatial-groups spatial-levels) identity))
                            result (:result resolved)
                            finished (when (or (get-in model [:settings :output-response :enabled?])
                                               (get-in model [:settings :lighting-budget :enabled?])
