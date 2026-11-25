@@ -19,10 +19,12 @@
 (def control-fields [:strength :falloff :selection :group])
 
 (defn combine [node operation kind]
-  (merge (select-keys node control-fields)
-         {:shape operation
-          :parts [(apply dissoc node control-fields)
-                  (assoc (primitive kind) :position (mapv + (:position node [0 0 0]) [0.6 0 0]))]}))
+  (let [first-part (apply dissoc node control-fields)
+        center (or (shape/center (:bounds (shape/prepare first-part)))
+                   (mapv + (:position node [0 0 0]) (:translation node [0 0 0])))]
+    (merge (select-keys node control-fields)
+           {:shape operation
+            :parts [first-part (assoc (primitive kind) :position (mapv + center [0.6 0 0]))]})))
 
 (defn- midpoint [a b] (mapv #(* 0.5 (+ %1 %2)) a b))
 
