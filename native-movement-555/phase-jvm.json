@@ -1,0 +1,1 @@
+{"processors":9,"heap-max-bytes":4294967296,"collectors":["ZGC Minor Cycles","ZGC Minor Pauses","ZGC Major Cycles","ZGC Major Pauses"]}

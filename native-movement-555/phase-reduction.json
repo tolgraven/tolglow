@@ -1,0 +1,221 @@
+[
+  {
+    "matched": 160,
+    "movement-frames": {
+      "cpu": 160
+    },
+    "compute": {
+      "active": "cpu",
+      "requested": "cpu"
+    },
+    "lane": "cpu-first",
+    "capture-ms": null,
+    "rewritten-groups": 0,
+    "native-phase-bindings": 0,
+    "first-time": 8025,
+    "different": [],
+    "fence-ms": null,
+    "delta": {
+      "native-dispatches": 0,
+      "cpu-fallbacks": 0,
+      "deadline-fallbacks": 0
+    },
+    "cpu-heads": 0,
+    "tick-ms": {
+      "count": 160,
+      "p50": 2.095417,
+      "p95": 5.129125,
+      "max": 19.12025
+    },
+    "gpu-heads": 0,
+    "final-time": 12000
+  },
+  {
+    "matched": 160,
+    "movement-frames": {
+      "cpu": 160
+    },
+    "compute": {
+      "active": "native-gpu",
+      "requested": "native-gpu",
+      "session": {
+        "draws": 1564,
+        "evictions": 0,
+        "hits": 2102,
+        "renderer": "Apple M4",
+        "queued": 0,
+        "resident": 5,
+        "closed?": false,
+        "terminated?": false,
+        "version": "4.1 Metal - 91.7",
+        "misses": 5
+      },
+      "last-fallback": {
+        "stage": "deadline",
+        "type": "budget-exhausted",
+        "message": "GPU result exceeded this frame's deadline"
+      }
+    },
+    "lane": "expressions",
+    "capture-ms": {
+      "count": 549,
+      "p50": 0.486625,
+      "p95": 0.780958,
+      "max": 1.21975
+    },
+    "rewritten-groups": 1,
+    "native-phase-bindings": 514,
+    "first-time": 8025,
+    "different": [],
+    "fence-ms": {
+      "count": 549,
+      "p50": 0.458708,
+      "p95": 0.735625,
+      "max": 1.001125
+    },
+    "delta": {
+      "native-dispatches": 728,
+      "cpu-fallbacks": 0,
+      "deadline-fallbacks": 0
+    },
+    "cpu-heads": 0,
+    "tick-ms": {
+      "count": 160,
+      "p50": 3.797625,
+      "p95": 6.9025,
+      "max": 13.632125
+    },
+    "gpu-heads": 0,
+    "final-time": 12000
+  },
+  {
+    "matched": 160,
+    "movement-frames": {
+      "native-gpu": 160
+    },
+    "compute": {
+      "active": "cpu",
+      "requested": "cpu"
+    },
+    "lane": "movement",
+    "capture-ms": {
+      "count": 168,
+      "p50": 0.660959,
+      "p95": 1.0665,
+      "max": 1.158875
+    },
+    "rewritten-groups": 1,
+    "native-phase-bindings": 514,
+    "first-time": 8025,
+    "different": [],
+    "fence-ms": {
+      "count": 168,
+      "p50": 0.551875,
+      "p95": 0.814667,
+      "max": 0.926833
+    },
+    "delta": {
+      "native-dispatches": 0,
+      "cpu-fallbacks": 0,
+      "deadline-fallbacks": 0
+    },
+    "cpu-heads": 630,
+    "tick-ms": {
+      "count": 160,
+      "p50": 3.091792,
+      "p95": 6.729209,
+      "max": 10.891833
+    },
+    "gpu-heads": 1610,
+    "final-time": 12000
+  },
+  {
+    "matched": 160,
+    "movement-frames": {
+      "native-gpu": 160
+    },
+    "compute": {
+      "active": "native-gpu",
+      "requested": "native-gpu",
+      "session": {
+        "draws": 1567,
+        "evictions": 0,
+        "hits": 2106,
+        "renderer": "Apple M4",
+        "queued": 0,
+        "resident": 5,
+        "closed?": false,
+        "terminated?": false,
+        "version": "4.1 Metal - 91.7",
+        "misses": 5
+      },
+      "last-fallback": {
+        "stage": "deadline",
+        "type": "budget-exhausted",
+        "message": "GPU result exceeded this frame's deadline"
+      }
+    },
+    "lane": "both",
+    "capture-ms": {
+      "count": 717,
+      "p50": 0.5365,
+      "p95": 0.802334,
+      "max": 1.314459
+    },
+    "rewritten-groups": 2,
+    "native-phase-bindings": 1028,
+    "first-time": 8025,
+    "different": [],
+    "fence-ms": {
+      "count": 717,
+      "p50": 0.493458,
+      "p95": 0.755167,
+      "max": 1.081625
+    },
+    "delta": {
+      "native-dispatches": 728,
+      "cpu-fallbacks": 0,
+      "deadline-fallbacks": 0
+    },
+    "cpu-heads": 628,
+    "tick-ms": {
+      "count": 160,
+      "p50": 5.213792,
+      "p95": 7.829334,
+      "max": 11.975167
+    },
+    "gpu-heads": 1612,
+    "final-time": 12000
+  },
+  {
+    "matched": 160,
+    "movement-frames": {
+      "cpu": 160
+    },
+    "compute": {
+      "active": "cpu",
+      "requested": "cpu"
+    },
+    "lane": "cpu-last",
+    "capture-ms": null,
+    "rewritten-groups": 2,
+    "native-phase-bindings": 1028,
+    "first-time": 8025,
+    "different": [],
+    "fence-ms": null,
+    "delta": {
+      "native-dispatches": 0,
+      "cpu-fallbacks": 0,
+      "deadline-fallbacks": 0
+    },
+    "cpu-heads": 0,
+    "tick-ms": {
+      "count": 160,
+      "p50": 3.467542,
+      "p95": 6.894917,
+      "max": 13.759292
+    },
+    "gpu-heads": 0,
+    "final-time": 12000
+  }
+]
