@@ -1,0 +1,1 @@
+{"target":0.12,"before":[{"fixture":"rgb","global-brightness":0.12029444774542813,"bytes":[49,25,12]},{"fixture":"rgbw","global-brightness":0.1194212905478116,"bytes":[136,45,0,45]}],"corrected":[{"fixture":"rgb","global-brightness":0.12158183138575294,"bytes":[32,32,16]},{"fixture":"rgbw","global-brightness":0.11993454172538942,"bytes":[168,42,0,28]}]}
