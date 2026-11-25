@@ -73,7 +73,7 @@
       (let [handler (studio/handler runtime)
             device (show/connect-device! runtime :push-2
                      (merge {:session-id "variations-capture" :schedule! nil :timeout-ms 60000
-                             :active-cue-grid? true :cue-variations? true}
+                             :active-cue-grid? true :cue-variations? true :operator-gestures? true}
                             (select-keys sink [:midi :display])))
             raw! #(while-ticking runtime (fn [] (receive! %)))
             current #(get-in (model runtime) [:instances (:selected-instance (:local (session/snapshot device)))])
@@ -116,6 +116,7 @@
                 "The MIDI cell commits the same full prospective state returned to Studio")
             (is (= 0.31 (get-in (current) [:system :opacity])))
             (is (= bindings-before (:parameter-bindings (current))))
+            (is (nil? (get-in (model runtime) [:modulation :holds instance-id :level])))
             (is (= 0.7 (get-in (model runtime) [:instances other :params :level])))
             (is (= 422 (first (post runtime handler "/api/command"
                                (merge (envelope) (choice full :cue-variation/apply position))))))
@@ -160,7 +161,17 @@
                 (receive! [0xb0 49 127])
                 (raw! [0xb0 71 1])
                 (receive! [0xb0 49 0])
-                (is (= ratio (get-in (current) [:params :period])))))
+                (is (= ratio (get-in (current) [:params :period])))
+                (is (= :accepted (:status (submit! runtime base))))
+                (raw! [0x90 0 127])
+                (raw! [0xb0 71 1])
+                (raw! [0x80 0 0])
+                (let [{:keys [cursor nodes open]} (get-in (model runtime) [:control :edit-history])
+                      {:keys [target before after actor]} (get nodes cursor)]
+                  (is (= [:instance-param instance-id :period] target))
+                  (is (= [1 ratio] [before after]))
+                  (is (re-find #"^push-2/variations-capture/" actor))
+                  (is (empty? open)))))
             (is (empty? (:errors (session/snapshot device)))))))
       (finally (show/stop! runtime)))))
 
