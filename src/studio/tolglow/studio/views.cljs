@@ -5,6 +5,7 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.chat :as chat]
+            [tolglow.studio.checkpoints :as checkpoints]
             [tolglow.studio.cue-pad-preview :as pad-preview]
             [tolglow.studio.composition-layers :as layers]
             [tolglow.studio.variable-blocks :as variable-blocks]
@@ -17,7 +18,9 @@
             [tolglow.studio.connections :as connections]
             [tolglow.studio.events :as events]
             [tolglow.studio.keyframe-editor :as keyframes]
+            [tolglow.studio.reactive-editor :as reactive-editor]
             [tolglow.studio.expressive-mapping :as expressive]
+            [tolglow.studio.effect-group-mixer :as effect-group-mixer]
             [tolglow.studio.fixture-library :as fixture-library]
             [tolglow.studio.fog-fields :as fog-fields]
             [tolglow.studio.rdm :as rdm]
@@ -27,6 +30,7 @@
             [tolglow.studio.spatial-preview :as spatial-preview]
             [tolglow.studio.modulation :as modulation]
             [tolglow.studio.navigation :as nav]
+            [tolglow.studio.operator-history :as history]
             [tolglow.studio.page-routes :as pages]
             [tolglow.studio.parameter-widgets :as widgets]
             [tolglow.studio.numeric-display :as numeric]
@@ -83,6 +87,7 @@
 (defn- file-actions [mobile?]
   [:<>
    [button (if mobile? "mobile-export" "export-show") "Export show" [:studio/export] "text-button"]
+   [button (if mobile? "mobile-restore-show" "restore-show") "Restore show" [:checkpoints/open] "text-button"]
    [:label.text-button.file-label {:id (when mobile? "mobile-import")} "Import show"
     [:input.studio-file-input {:id (if mobile? "mobile-import-show" "import-show") :type "file"
                                :accept ".transit,.edn,application/transit+json" :on-change import-selection!}]]])
@@ -133,6 +138,9 @@
       [:input#master {:type "range" :min 0 :max 1 :step 0.01 :value master
                       :aria-label "Master intensity" :on-change #(when-let [value (number-value %)] (input! [:studio/master value]))}]
       [:output#master-value (str (js/Math.round (* 100 master)) "%")]]
+     [:button#open-operator-history.button.operator-history-open
+      {:type "button" :aria-label "Open operator history" :aria-haspopup "dialog"
+       :on-click #(send! [:operator-history/open])} "History"]
      [:button#open-repl.icon-button.repl-open {:aria-label "Open Clojure REPL" :title "Clojure REPL · Ctrl+`"
                                               :on-click #(send! [:repl/toggle])} ">_"]
      [:button#blackout.blackout {:aria-pressed (boolean (:blackout? show))
@@ -491,6 +499,7 @@
      [:div.performance-layout {:class (when (get-in db [:ui :preview-expanded?]) "preview-expanded")}
       [:div.performance-launch [cue-grid db]]
       [:div.performance-live [section-pattern-panel db] [performance/board db parameter-control]
+       [effect-group-mixer/panel]
        [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
       [:div.performance-room [preview-panel db]]
       [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]]]))
@@ -722,29 +731,41 @@
      [rdm/panel]]))
 
 (defn- visual-builder [db]
-  (let [builder (get-in db [:ui :builder])]
+  (let [builder (get-in db [:ui :builder])
+        reactive (:reactive builder)
+        loaded? (some? (:base reactive))
+        reactive? (true? (:enabled? reactive))]
     [:div#visual-editor {:hidden (not= :form (get-in db [:ui :definition :mode]))}
      [:div.form-row
       [:label "Identifier" [:input#builder-id {:value (:id builder "") :pattern "[a-zA-Z][a-zA-Z0-9._/-]*"
+                                              :disabled loaded?
                                               :on-change #(set-ui! [:builder :id] (input-value %))}]]
       [:label "Name" [:input#builder-name {:value (:name builder "") :on-change #(set-ui! [:builder :name] (input-value %))}]]]
-     [:div.form-row
-      [:label "Color" [:input#builder-color {:type "color" :value (:color builder "#b981a3") :on-change #(set-ui! [:builder :color] (input-value %))}]]
-      [:label "Intensity" [numeric/number-input {:id "builder-level" :type "number" :min 0 :max 1 :step 0.01 :value (:level builder 0.7)
-                                               :on-change #(when-let [n (number-value %)] (set-ui! [:builder :level] n))}]]
-      [duration-control "builder-duration" "Duration" (:duration-value builder 4) (:duration-unit builder "beats")
-       (fn [value unit] (when (some? value) (set-ui! [:builder :duration-value] value))
-         (when unit (set-ui! [:builder :duration-unit] unit)))]]
-     [duration-control "builder-release" "Release" (:release-value builder 1) (:release-unit builder "beats")
-      (fn [value unit] (when (some? value) (set-ui! [:builder :release-value] value))
-        (when unit (set-ui! [:builder :release-unit] unit))) true]
-     [keyframes/editor (:keyframes builder) [:level] #(set-ui! [:builder :keyframes] %)]
      (when (and (= :library (get-in db [:ui :view])) (= :form (get-in db [:ui :definition :mode])))
-       [block-builder/field {:id (some-> builder :id not-empty keyword) :params {:level {}}
-                             :outputs {:color nil :dimmer nil}}
-        (or (:blocks builder) {}) #(set-ui! [:builder :blocks] %)])
-     [:label.checkbox-label [:input#builder-cue {:type "checkbox" :checked (boolean (:cue? builder)) :on-change #(set-ui! [:builder :cue?] (checked? %))}]
-      "Create matching cue"]
+       [reactive-editor/editor reactive (boolean (get-in db [:ui :definition :publishing?]))
+        #(input! [:studio/builder-reactive %])])
+     (when-not loaded?
+       [:<>
+        [:div.form-row
+         [:label "Color" [:input#builder-color {:type "color" :value (:color builder "#b981a3") :on-change #(set-ui! [:builder :color] (input-value %))}]]
+         (when-not reactive?
+           [:label "Intensity" [numeric/number-input {:id "builder-level" :type "number" :min 0 :max 1 :step 0.01 :value (:level builder 0.7)
+                                                    :on-change #(when-let [n (number-value %)] (set-ui! [:builder :level] n))}]])
+         [duration-control "builder-duration" "Duration" (:duration-value builder 4) (:duration-unit builder "beats")
+          (fn [value unit] (when (some? value) (set-ui! [:builder :duration-value] value))
+            (when unit (set-ui! [:builder :duration-unit] unit)))]]
+        (when-not reactive?
+          [:<>
+           [duration-control "builder-release" "Release" (:release-value builder 1) (:release-unit builder "beats")
+            (fn [value unit] (when (some? value) (set-ui! [:builder :release-value] value))
+              (when unit (set-ui! [:builder :release-unit] unit))) true]
+           [keyframes/editor (:keyframes builder) [:level] #(set-ui! [:builder :keyframes] %)]
+           (when (and (= :library (get-in db [:ui :view])) (= :form (get-in db [:ui :definition :mode])))
+             [block-builder/field {:id (some-> builder :id not-empty keyword) :params {:level {}}
+                                   :outputs {:color nil :dimmer nil}}
+              (or (:blocks builder) {}) #(set-ui! [:builder :blocks] %)])])
+        [:label.checkbox-label [:input#builder-cue {:type "checkbox" :checked (boolean (:cue? builder)) :on-change #(set-ui! [:builder :cue?] (checked? %))}]
+         "Create matching cue"]])
      [button "builder-preview" "Generate EDN ↗" [:studio/builder-generate]]]))
 
 (defn- registry-results [show search]
@@ -875,6 +896,17 @@
    [:span.mobile-file-actions [file-actions true]]
    [:span#shortcut-hint "B blackout · Space transport · 1–8 views"]])
 
+(defn- operator-history []
+  (let [{:keys [open?] :as inspector} @(rf/subscribe [:operator-history/inspector])]
+    (when open?
+      [history/panel
+       (assoc inspector
+              :dispatch-local! #(input! [:operator-history/inspect %])
+              :command! #(send! [:operator-history/navigate %1 %2])
+              :on-close (fn [_]
+                          (send! [:operator-history/close])
+                          (some-> (.getElementById js/document "open-operator-history") .focus)))])))
+
 (defn studio []
   (let [db @(rf/subscribe [:studio/db])
         error (or (get-in db [:show :status :error :message]) (get-in db [:connection :error]))
@@ -897,6 +929,6 @@
        (when (= :develop (get-in db [:ui :view])) [workspace/panel db])
        (when (= :debug (get-in db [:ui :view])) [debug/panel])
        [footer db]]]
-     [cue-actions db] [prompt-dialog db] [repl/console-view]
+     [cue-actions db] [prompt-dialog db] [checkpoints/panel (checkpoints/view-props db)] [operator-history] [repl/console-view]
      (when-let [toast (get-in db [:ui :toast])]
        [:div#toast.toast {:class (when (:error? toast) "error") :role "status" :aria-live "polite"} (:message toast)])]))

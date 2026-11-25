@@ -22,8 +22,26 @@
     (is (= [(row 1)] (:rows replacement)))
     (is (nil? (:frozen replacement)))
     (is (nil? (:selected replacement)))
-    (is (debug/matches? {:category "audio" :type "audio/kick" :emitter "audio/in" :subscribers "fx/hit"} (row 1)))
+    (is (debug/matches? {:category "audio" :type "audio/kick" :emitter ":audio/in" :subscribers "fx/hit"} (row 1)))
     (is (false? (debug/matches? {:subscribers "fx/other"} (row 1))))))
+
+(deftest emitter-filters-preserve-typed-ids
+  (let [with-emitter #(assoc-in (row 1) [:emitter :id] %)
+        keyword-row (with-emitter :rig/spot)
+        string-row (with-emitter "rig/spot")
+        empty-string-row (with-emitter "")
+        missing-emitter-row (with-emitter nil)
+        combined {:type "audio/kick" :category "audio" :emitter ":rig/spot" :subscribers "fx/hit"}]
+    (is (debug/matches? combined keyword-row))
+    (is (false? (debug/matches? combined string-row)))
+    (is (debug/matches? (assoc combined :emitter "\"rig/spot\"") string-row))
+    (is (false? (debug/matches? (assoc combined :emitter "\"rig/spot\"") keyword-row)))
+    (is (false? (debug/matches? (assoc combined :category "clock") keyword-row)))
+    (is (false? (debug/matches? (assoc combined :subscribers "fx/other") keyword-row)))
+    (is (debug/matches? {:emitter ""} missing-emitter-row))
+    (is (false? (debug/matches? combined missing-emitter-row)))
+    (is (debug/matches? {:emitter "\"\""} empty-string-row))
+    (is (false? (debug/matches? {:emitter "\"\""} missing-emitter-row)))))
 
 (deftest hiding-filter-controls-keeps-the-frozen-selection
   (let [initial {:debug {:rows [(row 1)] :frozen [(row 1)] :filters {:category "audio"} :limit 100}}

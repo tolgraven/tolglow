@@ -8,17 +8,24 @@
             [tolglow.rig.rdm-gateway :as gateway]
             [tolglow.rig.rdm-test :as rdm-peer]
             [tolglow.studio.rdm-host-test :as rdm-host]
+            [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [ring.adapter.jetty :as jetty]
             [ring.middleware.params :refer [wrap-params]]
             [tolglow.show :as show]
+            [tolglow.show.recovery :as recovery]
             [tolglow.studio :as studio]
+            [tolglow.studio.access :as access]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.query-stream :as query-stream]
             [tolglow.studio.state-stream :as stream]
+            [tolglow.studio.web :as web]
             [tolglow.transit :as transit])
-  (:import [java.net URI]
+  (:import [java.io StringReader]
+           [java.net URI]
            [java.net.http HttpClient WebSocket WebSocket$Listener]
+           [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]
            [java.util.concurrent CountDownLatch LinkedBlockingQueue TimeUnit]))
 
 (defrecord TestColour [red green blue])
@@ -65,6 +72,120 @@
                   :set (assoc-in data path value)
                   :remove (update-in data (vec (butlast path)) dissoc (peek path))))
               base changes)))
+
+(deftest queued-checkpoint-results-follow-the-actual-owner-commit
+  (let [directory (.toFile (Files/createTempDirectory "tolglow-checkpoint-stream-" (make-array FileAttribute 0)))
+        runtime (assoc (show/create-runtime {:workspace-options nil :workers 1})
+                       :recovery (atom (recovery/start! (recovery/options {:enabled? false :directory directory})
+                                                        false (constantly nil) (constantly nil))))]
+    (try
+      (show/tick! runtime 0)
+      (show/save-show! runtime (io/file directory "named.transit"))
+      (let [master (show/submit! runtime {:op :master/set :value 0.3})]
+        (show/tick! runtime 1)
+        (is (= :accepted (:status @master))))
+      (let [handler (studio/handler runtime)
+            server (jetty/run-jetty handler {:host "127.0.0.1" :port 0 :join? false})]
+        (try
+          (let [socket (connect server "checkpoint-stream")]
+            (try
+              (let [initial (receive socket)
+                    owner (:identity initial)
+                    restore #(let [response (handler {:request-method :post :uri "/api/show/checkpoints/restore"
+                                                     :headers {"accept" "application/transit+json" "content-type" "application/transit+json"}
+                                                     :body (java.io.StringReader. (transit/encode (assoc owner :kind :named)))})]
+                               (is (= 200 (:status response)))
+                               (transit/decode (:body response)))
+                    [accepted rejected] (with-redefs [studio/checkpoint-wait-ms 0] [(restore) (restore)])
+                    accepted-id (:receipt-id accepted)
+                    rejected-id (:receipt-id rejected)]
+                (acknowledge socket initial)
+                (is (= [:pending :pending] (mapv :status [accepted rejected])))
+                (is (every? string? [accepted-id rejected-id]))
+                (is (not= accepted-id rejected-id))
+                (is (= 0.3 (:master (show/snapshot runtime))))
+                (is (nil? (get-in initial [:view :checkpoint-results])))
+                (show/tick! runtime 2)
+                (let [restored (receive socket)
+                      epoch (inc (:epoch owner))
+                      expected [{:id accepted-id :identity owner :status :accepted :epoch epoch}
+                                {:id rejected-id :identity owner :status :rejected :reason :stale-show-session}]]
+                  (is (= :full (:kind restored)))
+                  (is (= epoch (get-in restored [:identity :epoch])))
+                  (is (= 1.0 (get-in restored [:view :master])))
+                  (is (= expected (get-in restored [:view :checkpoint-results])))
+                  (acknowledge socket restored)
+                  (show/tick! runtime 3)
+                  (let [reconnected (connect server "checkpoint-reconnect")]
+                    (try
+                      (is (= expected (get-in (receive reconnected) [:view :checkpoint-results])))
+                      (finally (.abort ^WebSocket (:socket reconnected)))))))
+              (finally (.abort ^WebSocket (:socket socket)))))
+          (finally (.stop server))))
+      (finally
+        (show/stop! runtime)
+        (doseq [file (reverse (file-seq directory))] (io/delete-file file))))))
+
+(deftest timed-out-history-requests-push-exact-terminal-results-through-the-show-stream
+  (let [runtime (show/create-runtime {:workers 1 :workspace-options nil})
+        app (access/listener-handler (studio/handler runtime) {})
+        server (jetty/run-jetty app {:host "127.0.0.1" :port 0 :join? false})
+        submit (fn [payload time & [authority]]
+                 (let [reply (show/submit! runtime :command payload authority)]
+                   (show/tick! runtime time)
+                   (deref reply 1000 ::missing)))
+        post (fn [command]
+               (with-redefs-fn {#'web/history-ack-timeout-ms 0}
+                 #(let [response (app {:request-method :post :uri "/api/command"
+                                       :headers {"host" "localhost" "accept" "application/transit+json"
+                                                 "content-type" "application/transit+json" "x-tolglow-form" "studio-v1"}
+                                       :body (StringReader. (transit/encode command))})]
+                    [(:status response) (transit/decode (:body response))])))]
+    (try
+      (let [id (:instance-id (submit {:op :cue/launch :cue-id :ember :launch {:params {:level 0.2}}} 0))
+            gesture {:instance-id id :param :level :control-id :test :gesture-id :change}
+            operator {:operator-id :test-operator}
+            scope {:runtime-id (:id runtime) :expected-epoch 0}
+            undo (merge scope {:op :history/undo :command-id "delayed-undo"
+                               :expected-cursor 1 :expected-history-position 1})
+            reject (merge scope {:op :history/redo :command-id "delayed-rejection" :node-id 99
+                                 :expected-cursor 0 :expected-history-position 2})]
+        (is (= :accepted (:status (submit (assoc gesture :op :gesture/begin) 1 operator))))
+        (is (= :accepted (:status (submit (assoc gesture :op :gesture/sample :sequence 1 :value 0.7) 2 operator))))
+        (is (= :accepted (:status (submit (assoc gesture :op :gesture/end :last-sequence 1) 3 operator))))
+        (let [client (connect server "delayed-history")]
+          (try
+            (let [baseline (receive client)]
+              (doseq [command [undo reject]]
+                (let [[status receipt] (post command)]
+                  (is (= 202 status))
+                  (is (= {:status :pending :command-id (:command-id command) :epoch 0}
+                         (select-keys receipt [:status :command-id :epoch])))
+                  (is (nil? (:revision receipt)))))
+              (is (= 1 (get-in baseline [:view :operator-history :current-id])))
+              (is (empty? (get-in baseline [:view :history-command-outcomes])))
+              ;; Hold the baseline ACK through a subsequent commit to exercise
+              ;; coalescing, including the rejection that made no model edit.
+              (show/tick! runtime 4)
+              (show/tick! runtime 5)
+              (acknowledge client baseline)
+              (let [message (receive client)
+                    view (apply-patch (:view baseline) message)
+                    [accepted rejected] (:history-command-outcomes view)]
+                (is (= ["delayed-undo" 0 :accepted 0 2]
+                       (mapv accepted [:command-id :epoch :status :history-cursor :history-position])))
+                (is (= ["delayed-rejection" 0 :rejected :unknown-history-node]
+                       (mapv rejected [:command-id :epoch :status :code])))
+                (is (every? #(not-any? % [:authority :operator-id :source :details]) [accepted rejected]))
+                (is (= [0 2] ((juxt :current-id :position) (:operator-history view))))
+                (is (= 0.2 (get-in @(:state runtime) [:model :instances id :params :level])))
+                (is (= :accepted (:status (submit {:op :show/restart} 6))))
+                (acknowledge client message)
+                (let [restart (receive client)]
+                  (is (= 1 (get-in restart [:identity :epoch])))
+                  (is (= [] (get-in restart [:view :history-command-outcomes]))))))
+            (finally (.abort ^WebSocket (:socket client))))))
+      (finally (show/stop! runtime) (.stop server)))))
 
 (deftest clients-get-the-latest-committed-show-at-their-own-pace
   (let [runtime (show/create-runtime {:workspace-options nil})

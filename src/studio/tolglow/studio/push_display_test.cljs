@@ -29,6 +29,32 @@
   (is (= 1 (widgets/proportion {:bounds [0 1]} 2)))
   (is (nil? (widgets/proportion {:bounds [1 1]} 1))))
 
+(deftest saved-show-catalog-is-a-bounded-passive-display-view
+  (let [view {:display-mode "saved-shows"
+              :saved-show-catalog {:page 0 :page-count 2 :total 10 :confirmation "private"
+                                   :rows (repeat 10 {:name "Tour" :source {:path "private"}})
+                                   :preview {:name "Tour" :path "private"
+                                             :sources [{:label "Latest named" :path "private"}]}}}
+        normalized (display/normalize-view view)]
+    (is (= (repeat 8 {:name "Tour"}) (get-in normalized [:saved-show-catalog :rows])))
+    (is (= {:name "Tour" :sources [{:label "Latest named"}]}
+           (get-in normalized [:saved-show-catalog :preview])))
+    (is (= "saved-shows" (:display-mode normalized)))
+    (is (not (contains? (:saved-show-catalog normalized) :confirmation)))))
+
+(deftest registered-preview-retains-only-display-metadata
+  (let [catalog {:kind "cue" :next-kind? true
+                 :rows [{:name "Amber" :version 5 :selected? true :selection {:key [:cue :amber]}}]
+                 :preview {:name "Amber" :version 5 :effect-version 3 :effect-id :amber
+                           :categories (concat [{:internal :discard}] (repeat 8 "emission"))
+                           :usage {:page-count 1 :running-count 0 :internal :discard}}}
+        normalized (:saved-show-catalog (display/normalize-view {:saved-show-catalog catalog}))]
+    (is (= {:kind "cue" :next-kind? true
+            :rows [{:name "Amber" :version 5 :selected? true}]
+            :preview {:name "Amber" :version 5 :effect-version 3 :sources []
+                      :categories (vec (repeat 6 "emission")) :usage {:page-count 1 :running-count 0}}}
+           normalized))))
+
 (deftest web-and-push-widgets-render-the-shared-color-record
   (let [v (color/rgba 1 0 0 0.5)]
     (is (= [1 0 0 0.5] (widgets/color-components v)))

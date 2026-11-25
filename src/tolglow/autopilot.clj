@@ -110,8 +110,8 @@
             due? (and (not suspended?) (controller/due? previous-state clock (:epoch model) knobs))
             previous-report (or (:statistics prior)
                                 (when (metered-frame? meter last-frame)
-                                  (let [baseline (get-in (activity/advance-meter nil patch (:scoped-meter plan)
-                                                           last-frame [] time-ms) [:report :scene])]
+                                  (let [baseline (get-in (activity/advance-scene-meter nil patch (:scoped-meter plan)
+                                                                 last-frame [] time-ms) [:report :scene])]
                                     {:window (:window opts)
                                      :brightness {:mean (:brightness baseline) :instant (:brightness baseline)}
                                      :activity {:mean (:score baseline) :instant (:score baseline)}})))
@@ -173,8 +173,8 @@
           clock (:clock prepared)
           global-report (when (= :global (:scope plan)) (:lighting-activity frame))
           measured (when-not global-report
-                     (activity/advance-meter (:activity previous-cache) (:patch plan) (:scoped-meter plan)
-                                             frame blocks (:time-ms clock)))
+                     (activity/advance-scene-meter (:activity previous-cache) (:patch plan) (:scoped-meter plan)
+                                                   frame blocks (:time-ms clock)))
           scene (:scene (or global-report (:report measured)))
           levels {:brightness (:brightness scene 0.0) :activity (:score scene 0.0)}
           history (statistics/advance (:history prior) (cond-> clock calibrating? (assoc :playing? false))

@@ -39,6 +39,7 @@ function fixture() {
   const song = object(1, { current_song_time: 10, tempo: 120, is_playing: 1, signature_numerator: 4, signature_denominator: 4, session_automation_record: 1 }, "live_set");
   const track = object(2, { arm: 1, name: "Lights", arrangement_clips: [] }, "live_set tracks 0");
   const clip = object(3, { is_midi_clip: 1, length: 4, is_playing: 1, is_recording: 1, playing_position: 2, loop_start: 0, loop_end: 4, looping: 1, name: "Light sequence", color: 0 }, "live_set tracks 0 clip_slots 0 clip");
+  object(5, { ...clip.props, name: "Other performance" }, "live_set tracks 0 clip_slots 1 clip");
   object(4, { has_drum_pads: 1, drum_pads: ["id", 10, "id", 11] }, "live_set tracks 0 devices 1");
   object(10, { note: 36, name: "Old pad", chains: ["id", 20] }); object(11, { note: 37, name: "Empty", chains: [] });
   const chain = object(20, { name: "Old chain", color: 0, is_auto_colored: 1 });
@@ -97,7 +98,8 @@ if (require.main === module) {
     for await (const line of require("node:readline").createInterface({input: process.stdin})) {
       const op = JSON.parse(line);
       if (op.stop) break;
-      const clip = op.arrangement ? host.paths["live_set tracks 0 arrangement_clips 0"] : host.clip;
+      const clip = op.arrangement ? host.paths["live_set tracks 0 arrangement_clips 0"] :
+        host.paths[`live_set tracks 0 clip_slots ${op.slot ?? 0} clip`];
       if (op.setParameter !== undefined) {
         host.cutoff.set("value", op.setParameter);
         write({listeners: host.cutoff.listeners.size});
@@ -110,14 +112,16 @@ if (require.main === module) {
         await callback;
         write({finished: true});
       }
+      const findNote = () => [...clip.notes.values()].find(n => n.pitch === op.pitch &&
+        (op.atBeat === undefined || n.start_time === op.atBeat));
       if (op.edit) {
-        const note = [...clip.notes.values()].find(n => n.pitch === op.pitch);
+        const note = findNote();
         note.velocity = op.velocity;
         note.start_time = op.beat;
         write({edited: true});
       }
       if (op.play) {
-        const note = [...clip.notes.values()].find(n => n.pitch === op.pitch);
+        const note = findNote();
         max.note(note.pitch, op.release ? 0 : note.velocity, 1);
         write(await callback);
       }

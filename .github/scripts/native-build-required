@@ -9,6 +9,9 @@ from pathlib import PurePosixPath
 
 PROJECT = "native/project.yml"
 STUDIO = "TolglowStudio"
+TESTS_WORKFLOW = ".github/workflows/tests.yml"
+# These paired checkouts serve JVM jobs. The native jobs use the Tolglow tree.
+PAIRED_AFTERGLOW_JOBS = {"test", "studio", "development-container"}
 YAML_TAG = "tag:yaml.org,2002:"
 DESKTOP_TESTS = {
     "native/Tests/capture-compiled-mac",
@@ -20,7 +23,6 @@ DESKTOP_TESTS = {
     "native/Tests/verify-metal.swift",
 }
 SHARED_CI = {
-    ".github/workflows/tests.yml",
     ".github/scripts/native-build-required",
     ".github/scripts/test-native-build-required",
 }
@@ -41,15 +43,15 @@ def event_range(event, base, head):
     return base, head
 
 
-def yaml_data(node, yaml, seen):
+def yaml_data(node, yaml, seen, keep_scalar_nodes=False):
     """Keep scalar spelling/types and array order. Reject ambiguous YAML."""
     if id(node) in seen:
-        raise ValueError("YAML aliases are outside the supported project shape")
+        raise ValueError("YAML aliases are outside the supported shape")
     seen.add(id(node))
     if isinstance(node, yaml.ScalarNode):
-        return (node.value, node.style, node.tag)
+        return node if keep_scalar_nodes else (node.value, node.style, node.tag)
     if isinstance(node, yaml.SequenceNode) and node.tag == YAML_TAG + "seq":
-        return [yaml_data(value, yaml, seen) for value in node.value]
+        return [yaml_data(value, yaml, seen, keep_scalar_nodes) for value in node.value]
     if not isinstance(node, yaml.MappingNode) or node.tag != YAML_TAG + "map":
         raise ValueError("Expected a YAML mapping")
     values = {}
@@ -58,8 +60,53 @@ def yaml_data(node, yaml, seen):
                 or id(key) in seen or key.value in values):
             raise ValueError("Expected unique literal YAML keys")
         seen.add(id(key))
-        values[key.value] = yaml_data(value, yaml, seen)
+        values[key.value] = yaml_data(value, yaml, seen, keep_scalar_nodes)
     return values
+
+
+def tests_workflow_without_paired_refs(revision):
+    import yaml
+
+    if not git("ls-tree", revision, "--", TESTS_WORKFLOW).startswith(b"100644 blob "):
+        raise ValueError("Expected a regular tests workflow file")
+    source = git("show", f"{revision}:{TESTS_WORKFLOW}").decode()
+    try:
+        workflow = yaml_data(yaml.compose(source, Loader=yaml.BaseLoader), yaml, set(), keep_scalar_nodes=True)
+    except yaml.YAMLError as error:
+        raise ValueError("Could not parse the tests workflow") from error
+
+    jobs = workflow["jobs"]
+    if not isinstance(jobs, dict):
+        raise ValueError("Expected tests workflow jobs")
+    refs = []
+    for job in PAIRED_AFTERGLOW_JOBS & jobs.keys():
+        for step in jobs[job]["steps"]:
+            if not isinstance(step, dict):
+                raise ValueError("Expected a tests workflow step")
+            action = step.get("uses")
+            if (not isinstance(action, yaml.ScalarNode) or action.tag != YAML_TAG + "str"
+                    or not action.value.startswith("actions/checkout@")):
+                continue
+            inputs = step.get("with", {})
+            if not isinstance(inputs, dict):
+                raise ValueError("Expected checkout inputs")
+            repo, path, ref = (inputs.get(key) for key in ("repository", "path", "ref"))
+            if not all(isinstance(node, yaml.ScalarNode) and node.tag == YAML_TAG + "str"
+                       for node in (repo, path, ref)):
+                continue
+            start, end = ref.start_mark.index, ref.end_mark.index
+            if (repo.value == "tolgraven/afterglow" and path.value == "afterglow"
+                    and re.fullmatch(r"[0-9a-fA-F]{40}", source[start:end])):
+                refs.append((start, end))
+
+    # Compare the untouched text on either side of each bare SHA token.
+    segments = []
+    offset = 0
+    for start, end in sorted(refs):
+        segments.append(source[offset:start])
+        offset = end
+    segments.append(source[offset:])
+    return segments
 
 
 def source_root(value):
@@ -126,13 +173,16 @@ def classify(base, head):
     desktop = {path for path in files if path.startswith("native/macOS/") or path in DESKTOP_TESTS}
     native = {path for path in files if path == "native" or path.startswith("native/")}
     shared_ci = bool(files & SHARED_CI)
+    tests_workflow_changed = TESTS_WORKFLOW in files
     audience = shared_ci or bool(native - desktop - {PROJECT})
+    if not audience and tests_workflow_changed:
+        audience = tests_workflow_without_paired_refs(base) != tests_workflow_without_paired_refs(head)
     if not audience and (PROJECT in files or any(path.startswith("native/macOS/") for path in desktop)):
         # Comparison at the merge base also catches simultaneous shared manifest edits.
         audience = non_studio_project(base) != non_studio_project(head)
 
-    # The paired Linux receiver loads its Clojure dependencies from the JVM tree.
-    linux = audience or bool(files & {".github/scripts/install-lein", "project.clj"}) or any(
+    # The paired Linux receiver uses the checkout pin and the JVM tree.
+    linux = audience or tests_workflow_changed or bool(files & {".github/scripts/install-lein", "project.clj"}) or any(
         path == "linux/audience" or path.startswith("linux/audience/")
         or (path.startswith("src/") and not path.startswith("src/studio/"))
         for path in files

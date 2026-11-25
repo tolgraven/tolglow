@@ -11,6 +11,7 @@
                 "audience-zones" "dev/studio/audience-zones-qa.mjs"
                 "event-feed-layout" "dev/studio/event-feed-layout-qa.mjs"
                 "keyframe-ceilings" "dev/studio/keyframe-browser-qa.mjs"
+                "reactive-effect-authoring" "dev/studio/reactive-effect-authoring-qa.mjs"
                 "registry-editor-layout" "dev/studio/registry-editor-layout-qa.mjs"
                 "room-readouts" "dev/studio/room-readout-qa.mjs"})
 

@@ -7,6 +7,8 @@
             [tolglow.audio.pcm :as pcm]
             [tolglow.composition.response :as response]
             [tolglow.controllers.parameter-display :as parameter-display]
+            [tolglow.effects :as fx]
+            [tolglow.oscillator :as oscillator]
             [tolglow.registry :as registry]
             [tolglow.signals :as signals]))
 
@@ -54,6 +56,124 @@
                                          (resolve-key (:waveforms waveforms) choice))) %))
     (resolve-key (:waveforms waveforms) selection)))
 
+(defn- expression-nodes [expression]
+  (tree-seq #(seq (:args %)) :args expression))
+
+(defn- phase-path [node placeholder]
+  (if (= node placeholder) []
+      (some (fn [[index child]]
+              (when-let [path (phase-path child placeholder)]
+                (into [:args index] path)))
+            (map-indexed vector (:args node)))))
+
+(defn- selector-phase [waveforms instance parameter choices options]
+  (let [{:keys [outputs blocks]} (:definition instance)
+        placeholder (fx/param ::phase)
+        signal #(signals/select-waveform waveforms (fx/param parameter) choices (assoc options :phase %))
+        pattern (signal placeholder)
+        values (if (map? outputs) (vals outputs) (map :value outputs))]
+    (when-let [path (and (empty? blocks) (phase-path pattern placeholder))]
+      (let [matches (into #{} (comp (filter #(= (:op pattern) (:op %)))
+                                     (keep (fn [node]
+                                             (when-let [phase (get-in node path)]
+                                               (when (and (map? phase) (= node (signal phase))) phase)))))
+                          (mapcat expression-nodes values))]
+        (when (= 1 (count matches)) (first matches))))))
+
+(defn- musical-coordinate [node]
+  (when-let [unit ({:beat :beats :bar :bars :phrase :phrases} (:op node))]
+    (when (#{:elapsed :absolute} (:clock node :elapsed)) unit)))
+
+(defn- phase-timing [expression environment transport paused?]
+  (let [[division offset] (:args expression)
+        [coordinate duration] (:args division)]
+    (cond
+      (= :oscillator-phase (:op expression))
+      (let [reference (:phase-reference expression :launch)
+            meter (if (= :transport reference) (:meter transport) (:meter environment))]
+        (when (and (oscillator/musical-period? (:period expression))
+                   (not (and paused? (= :transport reference))))
+          {:phase (oscillator/phase expression transport (:elapsed-beats environment) (:meter environment))
+           :period (time/duration->beats (:period expression) meter)}))
+
+      (musical-coordinate expression)
+      {:phase ((ir/compile-expression expression) environment)
+       :period (time/duration->beats {(musical-coordinate expression) 1} (:meter environment))}
+
+      (and (= :add (:op expression)) (= :divide (:op division))
+           (= :const (:op offset)) (= :const (:op duration))
+           (musical-coordinate coordinate) (time/finite-number? (:value duration)) (pos? (:value duration))
+           (= expression (fx/cycles {(musical-coordinate coordinate) (:value duration)}
+                                    {:clock (:clock coordinate :elapsed) :phase (:value offset)})))
+      {:phase ((ir/compile-expression expression) environment)
+       :period (time/duration->beats {(musical-coordinate coordinate) (:value duration)} (:meter environment))})))
+
+(defn- musical-ticks [transport beat span]
+  (let [{:keys [beats-per-bar bars-per-phrase]} (time/normalize-meter (:meter transport))
+        bar-origin (:bar-origin-beat transport 0.0)
+        phrase-origin (:phrase-origin-beat transport bar-origin)
+        boundaries (fn [origin spacing kind]
+                     (let [start (- origin beat)
+                           first-offset (- (mod (+ start span) spacing) span)]
+                       (for [index (range 65)
+                             :let [offset (+ first-offset (* index spacing))]
+                             :while (<= offset span)]
+                         [(double (/ offset span)) kind])))]
+    (mapv (fn [[position kind]] {:position position :kind kind})
+          (sort-by first (into {} (concat (boundaries 0 1 :beat)
+                                          (boundaries bar-origin beats-per-bar :bar)
+                                          (boundaries phrase-origin (* beats-per-bar bars-per-phrase) :phrase)))))))
+
+(defn- jump-phases [waveforms {:keys [selector choices]} environment]
+  (let [index (long (min (dec (count choices)) (max 0 (Math/floor (+ selector 0.5)))))
+        {:keys [id version params]} (nth choices index)
+        {:keys [discontinuities] :as definition} (get-in waveforms [:versions [id version]])]
+    (keep (fn [{:keys [channel phase phase-param]}]
+            (when (= :value channel)
+              (let [value (if phase-param
+                            ((ir/compile-expression
+                              (fx/expression (get params phase-param (get-in definition [:params phase-param :default]))))
+                             environment)
+                            phase)]
+                (when (and (time/finite-number? value) (<= 0 value 1)) (mod (double value) 1.0)))))
+          (take 16 discontinuities))))
+
+(defn- timeline [waveforms {:keys [model transport-generation]} instance parameter selection params environment]
+  (let [{:keys [transport]} model
+        beat (:beat transport)
+        phase-expression (selector-phase waveforms instance parameter (:choices selection) {})
+        paused? (get-in instance [:system :paused?])]
+    (when (and phase-expression (time/finite-number? beat) (<= -1.0e12 beat 1.0e12))
+      (when-let [{:keys [phase period]} (phase-timing phase-expression environment transport paused?)]
+        (let [span (:beats-per-bar (time/normalize-meter (:meter transport)))
+              radius (/ span period)
+              low (- phase radius) high (+ phase radius)]
+          (when (and (every? time/finite-number? [low high radius]) (<= -1.0e12 low phase high 1.0e12)
+                     (< low phase high) (<= radius 32))
+            (let [environment (assoc environment :params params)
+                  evaluate (ir/compile-expression
+                            (signals/select-waveform waveforms (:selector selection) (:choices selection)
+                                                     {:phase (fx/param :preview/phase)}))
+                  sample #(evaluate (assoc-in environment [:params :preview/phase] %))
+                  grid (map (fn [index] (+ phase (* radius (/ index 128.0)))) (range -128 129))
+                  edges (for [jump (jump-phases waveforms selection environment)
+                              cycle (range (long (Math/ceil (- low jump))) (inc (long (Math/floor (- high jump)))))
+                              :let [phase (+ cycle jump)]] phase)
+                  edges (sort (distinct (concat [low high] edges)))
+                  sides (mapcat (fn [[left right]]
+                                  (let [epsilon (min 1.0e-7 (* 0.25 (- right left)))]
+                                    [(+ left epsilon) (- right epsilon)])) (partition 2 1 edges))
+                  samples (into (sorted-map)
+                                (map (fn [coordinate]
+                                       [(/ (- coordinate phase) radius) (sample coordinate)]))
+                                (concat grid edges sides))]
+              ;; A long pulse can stay flat for the whole window.
+              (when (<= 2 (count samples) 2048)
+                {:beat beat :now-value (sample phase) :transport-generation (or transport-generation 0)
+                 :transport (select-keys transport [:source :source-epoch :source-selection-epoch :playing? :meter])
+                 :ticks (musical-ticks transport beat span)
+                 :samples (mapv (fn [[position value]] {:phase position :value value}) samples)}))))))))
+
 (defn- sample-signal [waveforms selection params options environment]
   (let [n (:samples options 129) cycles (:cycles options 1.0) start (:start-phase options 0.0)]
     (when-not (and (integer? n) (<= 2 n 2048)
@@ -96,11 +216,15 @@
                                          (if instance {:selector (get params parameter) :choices (:choices schema)}
                                              (or selection id)))
         environment (signal-environment model instance)
-        result (sample-signal waveforms selection params options environment)]
-    (assoc result :identity {:epoch (:epoch model) :instance-id instance-id :parameter parameter
+        result (sample-signal waveforms selection params options environment)
+        timing (when (and instance (true? (:live-timing? options)))
+                 (try (timeline waveforms snapshot instance parameter selection params environment)
+                      (catch clojure.lang.ExceptionInfo _ nil)))]
+    (cond-> (assoc result :identity {:epoch (:epoch model) :instance-id instance-id :parameter parameter
                              :definition-id (:effect-id instance) :definition-version (:effect-version instance)
                              :waveform-revision (:revision waveforms) :params-digest (str (hash params))
-                             :selection-digest (str (hash selection)) :context-digest (str (hash environment)) :options options})))
+                             :selection-digest (str (hash selection)) :context-digest (str (hash environment)) :options options})
+      timing (assoc :timeline timing))))
 
 (defn create-cache [] (atom {:entries {} :order []}))
 
@@ -111,10 +235,12 @@
   (let [model (:model snapshot) instance (get-in model [:instances (:instance-id request)])
         clock-bound? (some #(and (map? %) (#{:time :beat :bar :phrase} (:op %)))
                           (tree-seq coll? seq [(get-in instance [:definition :params]) request]))
+        live-timing? (and instance (true? (get-in request [:options :live-timing?])))
         key [(select-keys model [:epoch :waveforms])
              (select-keys instance [:id :effect-id :effect-version :definition])
              (when instance (effective-params snapshot instance))
-             (when clock-bound? (signal-environment model instance)) (dissoc request :input-key)]]
+             (when (or clock-bound? live-timing?) (signal-environment model instance))
+             (when live-timing? [(:transport model) (:transport-generation snapshot)]) (dissoc request :input-key)]]
     (or (get-in @cache [:entries key])
         (let [result (preview snapshot request)]
           (swap! cache (fn [{:keys [entries order] :as state}]
@@ -245,7 +371,7 @@
                partial (:partial state) bins (:bins state)]
           (if (= index n)
             (assoc state :filters [low upper] :partial partial :bins bins)
-            (let [partial (or partial {:n 0 :min 0.0 :max 0.0 :squares 0.0
+            (let [partial (or partial {:n 0 :min 1.0 :max -1.0 :squares 0.0
                                       :bands {:low 0.0 :mid 0.0 :high 0.0}
                                       :start (+ started-at-ms (* 1000.0 (/ index sample-rate)))})
                   limit (min n (+ index (- size (:n partial))))

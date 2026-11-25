@@ -1,9 +1,12 @@
 (ns tolglow.studio.web
   "Portable Ring application. Services are explicit callbacks; the HTTP adapter
   does not own the show clock, registry, provider credentials, or effect state."
-  (:require [tolglow.studio.origin :as origin]
+  (:require [tolglow.studio.access :as access]
+            [tolglow.studio.origin :as origin]
             [clojure.data.json :as json]
             [tolglow.data :as data]
+            [tolglow.effects.group-channels :as group-channels]
+            [tolglow.operator-history :as operator-history]
             [tolglow.effects.material-design :as materials]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -95,11 +98,40 @@
                         (contains? data :values))
                    (update :values normalize-expressive-keys)))]
       (cond-> data
+        (and (#{"/api/command" "/api/cue-variations/preview"} uri) (string? (:layout data)))
+        (update :layout keyword)
+        (and (= uri "/api/command") (= :cue-variation/ratio-mode (:op data)) (string? (:mode data)))
+        (update :mode keyword)
         (and (= uri "/api/command") (= :cue/launch (:op data)) (= "off" (:grid data)))
         (assoc :grid :off)
         (and (= uri "/api/command") (= :cue/cancel-launch (:op data))
              (#{"held-release" "operator-cancel"} (:reason data)))
         (update :reason keyword)))))
+
+(defn- normalize-active-overlay [config]
+  (cond-> config (string? (:active-overlay config)) (update :active-overlay keyword)))
+
+(defn- normalize-group-json [uri data]
+  (case uri
+    "/api/command"
+    (case (:op data)
+      :effect-groups/configure (cond-> (vary-meta data assoc ::group-channels/text-addresses? true)
+                                 (contains? data :config) (update :config normalize-active-overlay)
+                                 (contains? data :config-patch) (update :config-patch normalize-active-overlay))
+      :effect-groups/overlay-set (cond-> data (string? (:overlay data)) (update :overlay keyword))
+      :effect-groups/level-set (cond-> (vary-meta data assoc ::group-channels/text-addresses? true)
+                                 (string? (get-in data [:channel-id 0])) (update-in [:channel-id 0] keyword))
+      :effect-groups/assign-instance (vary-meta data assoc ::group-channels/text-addresses? true)
+      data)
+
+    "/api/settings"
+    (if (= :effect-group-channels (:scope data))
+      (-> data
+          (vary-meta assoc ::group-channels/text-addresses? true)
+          (update :values normalize-active-overlay))
+      data)
+
+    data))
 
 (defn- wrap-api-body [handler]
   (fn [request]
@@ -114,8 +146,14 @@
                  {:source text}
                  decoded)
           form? (and (or (not transit?) (= "studio-v1" (get-in request [:headers "x-tolglow-form"])))
-                     (not (str/starts-with? (:uri request) "/api/fixtures/")))]
-      (handler (assoc request :json-params (if form? (normalize-form (:uri request) data) data))))))
+                     (not (str/starts-with? (:uri request) "/api/fixtures/")))
+          params (cond
+                   (str/starts-with? (:uri request) "/api/show/checkpoints/")
+                   (assoc data ::text-checkpoint-id? (not transit?))
+                   form? (cond->> (normalize-form (:uri request) data)
+                           (not transit?) (normalize-group-json (:uri request)))
+                   :else data)]
+      (handler (assoc request :json-params params)))))
 
 (defn wrap-errors [handler]
   (fn [request]
@@ -217,6 +255,9 @@
         unavailable-message (constantly (data-response 503 {:message unavailable-message}))
         :else not-found))
 
+(defn- await-acknowledgement [reply]
+  (acknowledgement (deref reply 5000 {:status :pending :message "Command remains queued"})))
+
 (defn- submit-handler [submit! heartbeat! operation]
   (fn [{:keys [json-params]}]
     (heartbeat! (get-in json-params [:source :session-id]))
@@ -225,9 +266,46 @@
                          (vector? (get-in json-params [:page :cells])))
                     (update-in [:page :cells] #(into {} (map (fn [{:keys [x y cue-id]}] [[x y] cue-id])) %))
                     (and (= operation :definition) (contains? json-params :source))
-                    (assoc :definition (data/read-edn (:source json-params))))
-          receipt (deref (submit! operation payload) 5000 {:status :pending :message "Command remains queued"})]
-      (acknowledgement receipt))))
+                    (assoc :definition (data/read-edn (:source json-params))))]
+      (await-acknowledgement (submit! operation payload)))))
+
+(def ^:private history-operations #{:history/undo :history/redo :history/select})
+
+(def ^:private history-ack-timeout-ms 5000)
+
+(defn- history-handler [submit-history!]
+  (fn [{:keys [json-params] :as request}]
+    (let [authority (access/operator-authority request)
+          {:keys [op command-id runtime-id expected-epoch expected-cursor expected-history-position node-id]} json-params
+          undo? (= :history/undo op)
+          reject (fn [code message]
+                   (acknowledgement (cond-> {:status :rejected :code code :message message}
+                                      command-id (assoc :command-id command-id))))]
+      (cond
+        (nil? authority)
+        (reject :operator-required "Edit history requires a trusted operator")
+
+        (not (and (string? runtime-id) (nat-int? expected-epoch) (nat-int? expected-cursor)
+                  (nat-int? expected-history-position)
+                  (or undo? (nat-int? node-id))))
+        (reject :invalid-history-command "Edit history requires a runtime, epoch, cursor, position and a node for redo or select")
+
+        :else
+        (let [command-id (if (contains? json-params :command-id) command-id (str (random-uuid)))
+              payload (cond-> (assoc (select-keys json-params [:op :runtime-id :expected-epoch
+                                                             :expected-cursor :expected-history-position])
+                                     :command-id command-id)
+                        (not undo?) (assoc :node-id node-id))
+              reply (submit-history! payload (assoc authority ::operator-history/stream-outcome? true))
+              result (merge {:command-id command-id :epoch expected-epoch}
+                            (deref reply history-ack-timeout-ms {:status :pending :message "Command remains queued"}))]
+          (if (= :pending (:status result)) (data-response 202 result) (acknowledgement result)))))))
+
+(defn- command-handler [submit! heartbeat! submit-history!]
+  (let [submit (submit-handler submit! heartbeat! :command)
+        history (available submit-history! "Operator history unavailable" (history-handler submit-history!))]
+    (fn [request]
+      (if (history-operations (get-in request [:json-params :op])) (history request) (submit request)))))
 
 (defn- query-fields [request defaults]
   (reduce-kv (fn [result k v] (assoc result k (get (:query-params request) (name k) v)))
@@ -242,8 +320,8 @@
    (available service message (fn [request] (ok (service operation (params request)))))))
 
 (defn- get-routes
-  [{:keys [snapshot! materials! definition! export! heartbeat! provider-get! chat-history! patch!
-           app-agent! fixture! rdm! audio! sync! waveform! workspace! terminal! sensor! repl! calibration! photometry! fog-calibration! event-subscribers!]}]
+  [{:keys [snapshot! materials! definition! export! heartbeat! provider-get! chat-history! patch! checkpoint!
+           app-agent! fixture! rdm! audio! sync! section-reference! waveform! workspace! terminal! sensor! repl! calibration! photometry! fog-calibration! event-subscribers!]}]
   (merge
    {"/api/event-subscribers" (available event-subscribers! "Event subscribers unavailable" (fn [_] (ok (event-subscribers!))))
     "/api/fog-calibration" (available fog-calibration! "Venue calibration unavailable" (fn [_] (ok (fog-calibration!))))
@@ -254,10 +332,12 @@
                    (ok (snapshot! query-params)))
     "/api/materials" (available materials! "Material library unavailable" (fn [_] (ok (materials!))))
     "/api/settings" (fn [_] (ok (:settings (snapshot! {}))))
+    "/api/show/checkpoints" (read-action checkpoint! :status "Show checkpoints unavailable")
     "/api/definition" (fn [{:keys [query-params]}]
                         (if-let [definition (definition! (keyword (get query-params "kind" "effects"))
                                                          (keyword (get query-params "id" "")))]
-                          (ok {:source (pr-str definition)})
+                          (ok (cond-> {:source (pr-str definition)}
+                                (= "true" (get query-params "data")) (assoc :definition definition)))
                           (data-response 404 {:message "Definition not found"})))
     "/api/export" (fn [_] {:status 200 :headers {"Content-Type" transit-type
                                                  "Content-Disposition" "attachment; filename=tolglow-show.transit"}
@@ -277,6 +357,7 @@
     "/api/audio/returns/mixers" (read-action audio! :return-mixers "Audio service unavailable")
     "/api/audio/returns" (read-action audio! :return-status "Audio service unavailable")
     "/api/sync" (read-action sync! :status "Synchronization unavailable")
+    "/api/section-reference" (read-action section-reference! :status "Section reference unavailable")
     "/api/sync/ports" (read-action sync! :ports "Synchronization unavailable")
     "/api/waveforms" (read-action waveform! :registry "Waveform registry unavailable")
     "/api/sensors/stage/qr" (available sensor! "Stage invitation unavailable"
@@ -305,13 +386,18 @@
              [(str prefix suffix)
               (available service unavailable-message #(respond (service operation (:json-params %))))])))
 
-(defn- post-routes [{:keys [material-preview! variable-sources! spatial-search! submit! heartbeat! provider-put! chat! chat-select! app-agent!
-                             sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync!]
+(defn- post-routes [{:keys [material-preview! variable-sources! spatial-search! submit! submit-history! heartbeat! provider-put! chat! chat-select!
+                             app-agent! checkpoint! cue-variation-preview!
+                             sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync! section-reference!]
                      :or {material-preview! materials/preview}}]
   (merge
-   (into {} (for [[path op] operations] [path (submit-handler submit! heartbeat! op)]))
+   (into {} (for [[path op] operations]
+              [path (if (= :command op) (command-handler submit! heartbeat! submit-history!)
+                                      (submit-handler submit! heartbeat! op))]))
    (post-actions "/api/application-agents/" app-agent! ok
                  {"configure" :configure "start" :start "cancel" :cancel} "Application agents unavailable")
+   (post-actions "/api/show/checkpoints/" checkpoint! acknowledgement
+                 {"restore" :restore "discard-prior" :discard-prior} "Show checkpoints unavailable")
    (post-actions "/api/sensors/" sensor! acknowledgement
                  {"pair" :pair "configure" :configure "sample" :sample "arm" :arm "calibrate" :calibrate
                   "osc/start" :osc-start "osc/stop" :osc-stop
@@ -329,8 +415,11 @@
    (post-actions "/api/audio/returns/" audio! ok {"start" :return-start "stop" :return-stop})
    (post-actions "/api/sync/" sync! ok {"configure" :configure "start" :start "stop" :stop "source" :source "handoff" :handoff "arrange" :arrange
                                       "learn-parameter" :learn-parameter "forget-parameter" :forget-parameter})
+   (post-actions "/api/section-reference/" section-reference! acknowledgement {"reconnect" :reconnect})
    (post-actions "/api/" sync! ok {"live" :live})
-   {"/api/materials/preview" #(ok (material-preview! (:json-params %)))
+   {"/api/cue-variations/preview"
+    (available cue-variation-preview! "Cue variations unavailable" #(ok (cue-variation-preview! (:json-params %))))
+    "/api/materials/preview" #(ok (material-preview! (:json-params %)))
     "/api/variable-block/sources" (available variable-sources! "Show variables unavailable" #(ok (variable-sources! (:json-params %))))
     "/api/spatial/search" (available spatial-search! "Spatial search unavailable"
                                       #(ok {:results (spatial-search! (:json-params %))}))

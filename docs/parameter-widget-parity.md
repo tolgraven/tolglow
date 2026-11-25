@@ -21,10 +21,28 @@ advances an oscillator, opens a device, or creates synthetic readings.
 | Push navigation | Parameter-bank range, active-effect position/dots, fine mode, touched encoder and selected component | Bounded projection and optimized passive rendering verified; no device commands originate in the view |
 | Multiple effects | Independent cards/parameters/system actions, compact/full grid with all coordinates | Six real instances exercised; desktop, iPad-width and phone-width checks pass |
 
-The historical pre-migration waveform widget mentioned by the user has not been
-identified in the available historical web sources. These checks audit the
-preceding implementation in this workspace. Historical interaction parity still
-requires its source or a reliable capture before that broader requirement closes.
+## Historical waveform comparison
+
+- The [Afterglow cue visualizer](https://github.com/tolgraven/afterglow/blob/2b89cfa1/src/afterglow/controllers/ableton_push_2.clj#L1533)
+  sampled the cue around a fixed center marker with distinct beat, bar and phrase
+  marks. [Tolglow effects](https://github.com/tolgraven/tolglow/blob/01146ece7731ec06aa1ee6409342373096c8e0dc/tolglow/cue.clj#L169)
+  supplied the visualizer with current cue variables. Its `multi-lfo` helper and
+  active visualizer were separate source behaviors.
+- The pinned [tolglow-web widgets](https://github.com/tolgraven/tolglow-web/blob/2b588435a37812628fa48617f3d57d60acb15bce/src/cljs/tolglow_web/views/ui_component.cljs#L269)
+  cover color and text editing. The pinned frontend has no generated waveform
+  renderer. Its Three.js visualizer displays fixture state.
+- The Studio compact graph follows a registered selector when the captured
+  effect output has a single identifiable musical phase expression. The host
+  samples the selected registry shape one bar either side of the committed
+  beat, including supplied discontinuities. A flat part of that window keeps
+  following the beat so the next change can move back into view. When the
+  effect has no identifiable musical phase, the picker shows the cycle plot. The full
+  derivative view remains cycle-based. The timing marks have separate styles
+  and a fixed center marker, and samples from another clock source or source
+  epoch are hidden.
+- The native and passive Push graphs still show supplied static cycle samples.
+  A moving Push graph and the behavior of any other historical widget outside
+  the pinned sources remain open for #438.
 
 ## Data and lifecycle
 
@@ -114,5 +132,9 @@ Studio inspectors and the passive Push 2 display resolve a control's physical ch
 The controls carry `:dmx-bits` in their projected schemas. A declared unit range such as degrees determines how many decimal places distinguish a physical step. Free-running rates and other continuous parameters keep their native precision and use a compact readout, including scientific notation for very small values. Number fields expose their complete value while editing. Sending a command, evaluating effects, saving a show and packing DMX all use the original value.
 
 The Push **Shift + encoder** gesture takes one physical code step for a parameter connected to an eight- or sixteen-bit channel. Ordinary turns retain the usual coarser editing speed. To reproduce the readout comparison on an isolated preview show, use the paired Afterglow revision pinned in CI, build Studio with `npm run studio:build`, then run `lein run -m tolglow.qa.parameter-precision target/precision`. It checks a real coarse/fine byte carry, captures the 960 × 160 display and edits a number in a live Studio inspector.
+
+Hold **Accent** as you touch a cue encoder on Push 2 or Push 3 to make a momentary edit. Turn the encoder to change the live value. Lifting your finger restores the prior value and resumes any previous modulation, even if you release Accent first. Temporary turns add no undo entry. **Shift + encoder** makes a fine adjustment and retains the edited value.
+
+Both gestures are available on a standard `tolglow.show/connect-device!` connection. To use another dedicated button, add `:temporary-encoder-modifier` to the connection map with a Push 2 button CC or a Push 3 captured button ID. Push 2 supports numeric and compound cue parameters. Push 3 supports numeric cue parameters through captured User Mode touch and turn addresses for the same encoder ID, including MPE with fixed control channels.
 
 For the native Push 2 parameter display, pass `:native-display? true` to `tolglow.show/connect-device!` with the selected MIDI ports. The display uses the same live parameter projection, rounds by destination resolution and draws waveforms from the host's supplied samples. A caller-supplied `:display` still selects its own transport. The native display renders directly into Wayang's image on the display worker and runs without a Chromium process.

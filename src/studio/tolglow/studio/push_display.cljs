@@ -1,7 +1,8 @@
 (ns tolglow.studio.push-display
   "Passive device display: the transport supplies snapshots; this route performs
   no show requests or device acquisition. The selected scene renders capture frames."
-  (:require [re-frame.core :as rf]
+  (:require [clojure.string :as str]
+            [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.block-trace :as trace]
             [tolglow.studio.push-scene :as scene]
@@ -9,12 +10,35 @@
             [tolglow.studio.parameter-widgets :as widgets]
             [tolglow.studio.param-visualization :as visualization]))
 
+(defn- saved-show-catalog [catalog]
+  (when (map? catalog)
+    (cond-> (assoc (select-keys catalog [:kind :page :page-count :total :next-kind?])
+                   :rows (mapv #(select-keys % [:name :selected? :sources :version]) (take 8 (:rows catalog))))
+      (map? (:checkpoint catalog))
+      (assoc :checkpoint (select-keys (:checkpoint catalog) [:name :label :modified-at-ms :status]))
+      (map? (:preview catalog))
+      (assoc :preview (let [preview (:preview catalog)]
+                        (cond-> (assoc (select-keys preview [:name :unavailable? :version :effect-version])
+                                       :sources (mapv #(select-keys % [:label :modified-at-ms])
+                                                      (take 2 (:sources preview))))
+                          (sequential? (:categories preview))
+                          (assoc :categories (into [] (comp (filter #(or (keyword? %) (string? %))) (take 6))
+                                                   (:categories preview)))
+                          (map? (:usage preview))
+                          (assoc :usage (select-keys (:usage preview) [:cue-count :page-count :running-count]))
+                          (seq (:load-options preview)) (assoc :load-options (vec (take 2 (:load-options preview))))))))))
+
 (defn normalize-view [view]
   (let [view (if (map? view) view {})]
     (-> (select-keys view [:title :page :origin :status :master :blackout? :bpm :selected
                           :cue :effect :swatch :category-colors :page-overview :display-mode :scene :audio-waveform :instance-id
                           :parameter-bank :active-effect-navigation :touched-parameter :fine?])
-        (assoc :target-picker (when-let [picker (:target-picker view)]
+        (assoc :saved-show-catalog (saved-show-catalog (:saved-show-catalog view))
+               :pad-overlay (when-let [overlay (:pad-overlay view)]
+                              (assoc (select-keys overlay [:layout :ratio-mode])
+                                     :rows (vec (take 7 (:rows overlay)))
+                                     :cells (vec (take 64 (:cells overlay)))))
+               :target-picker (when-let [picker (:target-picker view)]
                                  (assoc (select-keys picker [:open? :page :pages :armed])
                                         :rows (mapv #(select-keys % [:kind :label]) (take 8 (:rows picker)))))
                :preset (when (map? (:preset view))
@@ -153,7 +177,23 @@
       ^{:key i} [:article {:class (if row "available" "empty")}
                  (when row [:<> [:small (widgets/label (:kind row))] [:strong (:label row)]])])]])
 
-(defn display [view]
+(defn- variation-overlay [{:keys [layout ratio-mode rows cells]}]
+  (let [layout (name layout)
+        row-labels (if (= "rows" layout) (map :param rows) ["Full states"])
+        slots (into #{} (keep (fn [{:keys [position kind stale?]}]
+                               (when (and (contains? #{:saved "saved"} kind) (not stale?)) (first position)))) cells)]
+    [:section.push-targets {:aria-label "Cue variations"}
+     [:div.push-targets-heading
+      [:strong (if (= "rows" layout) "Parameter variations" "Full cue variations")]
+      [:span (if (contains? #{:free "free"} ratio-mode) "Free ratios" "Preferred ratios")]
+      [:small "Amber · Generated / Blue · Saved"]]
+     [:div.push-target-columns
+      (for [i (range 8)]
+        ^{:key i} [:article {:class (if (contains? slots i) "available" "empty")}
+                   [:small (str "Saved " (inc i))]
+                   (when-let [row (nth row-labels i nil)] [:strong (widgets/label row)])])]]))
+
+(defn- live-display [view]
   (let [cue (:cue view) effect (:effect view) accent (widgets/color-css (or (:swatch view) (:color cue)))
         active? (:active? cue) audio? (contains? #{:audio "audio"} (:display-mode view))
         global (global-control-model view)]
@@ -176,6 +216,7 @@
       [:span.push-status {:class (cond (:blackout? view) "blackout" (:releasing? cue) "releasing" active? "active")}
        (cond (:blackout? view) "BLACKOUT" (:releasing? cue) "RELEASE" active? "PLAYING" :else (widgets/label (:status view)))]]
      (cond
+       (:pad-overlay view) [variation-overlay (:pad-overlay view)]
        (get-in view [:target-picker :open?]) [target-choices (:target-picker view)]
        (contains? #{:simulator :rig "simulator" "rig"} (:display-mode view)) [scene/view view]
        (contains? #{:pages "pages"} (:display-mode view)) [pages/view view]
@@ -189,6 +230,100 @@
                                     text (or (:name cell) (get (:labels view) index) "—")]]
            ^{:key index} [:div.push-cell {:style {"--cell-color" color} :class (when (:active? cell) "active")}
                          [:i] [:span text]])]])]))
+
+(defn- checkpoint-time [milliseconds]
+  (when (and (widgets/finite? milliseconds) (<= 0 milliseconds 8640000000000000))
+    (let [utc (.toISOString (js/Date. milliseconds))]
+      (str (subs utc 0 10) " " (subs utc 11 16) " UTC"))))
+
+(defn- checkpoint-heading [status]
+  (case status
+    (:ready "ready") "Confirm checkpoint restore"
+    (:pending "pending") "Restoring checkpoint"
+    (:restored "restored") "Checkpoint restored"
+    (:changed "changed") "Checkpoint changed"
+    (:unavailable "unavailable") "Checkpoint unavailable"
+    (:session-changed "session-changed") "Show session changed"
+    "Checkpoint restore refused"))
+
+(defn- registered-preview [type {:keys [version effect-version categories usage] label :name}]
+  [:section.push-catalog-detail {:aria-label (str type " metadata")}
+   [:h2 label]
+   [:div.push-catalog-sources
+    [:article
+     [:strong (str type " version " version)]
+     (when effect-version [:span (str "Effect version " effect-version)])
+     (when (seq categories) [:span (str/join " · " (map name categories))])]
+    [:article
+     [:strong "Usage"]
+     (if (= type "Effect")
+       [:span "Registered cues · " (:cue-count usage)]
+       [:span "Cue pages · " (:page-count usage)])
+     [:span (str (:running-count usage) " running")]]]])
+
+(defn- catalog-display [{:keys [kind page page-count rows preview total checkpoint next-kind?]}]
+  (let [[library type unavailable empty-label]
+        (case kind
+          (:effect "effect") ["Registered effects" "Effect" "This effect version is no longer available." "No registered effects."]
+          (:cue "cue") ["Registered cues" "Cue" "This cue version is no longer available." "No registered cues."]
+          ["Saved shows" nil "This show is no longer available." "No saved shows available."])]
+    [:main#push-display.push-catalog {:aria-label library}
+     [:header.push-catalog-header
+      [:span.push-brand "Tolglow"]
+      [:h1 (cond checkpoint (checkpoint-heading (:status checkpoint))
+                 preview (if type (str type " preview") "Saved show preview")
+                 :else library)]
+      (when (pos? (or page-count 0))
+        [:span.push-catalog-page (str (inc page) " / " page-count " pages")])]
+     (cond
+       checkpoint
+       [:section.push-catalog-detail {:aria-label "Checkpoint restore"}
+        [:h2 (:name checkpoint)]
+        [:div.push-catalog-sources
+         [:article [:strong (:label checkpoint)]
+          (when-let [time (checkpoint-time (:modified-at-ms checkpoint))] [:span time])]]]
+
+       (:unavailable? preview)
+       [:p.push-catalog-empty unavailable]
+
+       (and preview type)
+       [registered-preview type preview]
+
+       preview
+       [:section.push-catalog-detail {:aria-label "Saved show checkpoints"}
+        [:h2 (:name preview)]
+        [:div.push-catalog-sources
+         (for [{:keys [label modified-at-ms]} (:sources preview)]
+           ^{:key label} [:article
+                          [:strong (if (some #{label} (:load-options preview)) (str "Choose " label) label)]
+                          (when-let [time (checkpoint-time modified-at-ms)] [:span time])])]]
+
+       (empty? rows)
+       [:p.push-catalog-empty empty-label]
+
+       :else
+       [:section.push-catalog-rows {:aria-label (if type library "Shows on this page")}
+        (for [[index {:keys [name selected? sources version]}] (map-indexed vector rows)]
+          ^{:key index} [:article {:class (when selected? "selected")}
+                         [:strong {:title name} name]
+                         (when version [:span (str "Version " version)])
+                         (for [source sources] ^{:key source} [:span source])])])
+     [:footer.push-catalog-footer
+      (if checkpoint
+        (case (:status checkpoint)
+          (:pending "pending") [:span "Waiting for the show owner"]
+          (:restored "restored") [:span "Back · Live display"]
+          (:ready "ready") [:<> [:span "Back · Choose checkpoint"] [:span "Confirm · Replace running show"]]
+          [:span "Back · Choose checkpoint"])
+        [:<> [:span (if preview (str "Back · " library) "Back · Live display")]
+         (when (and next-kind? (not preview)) [:span "Next library"])
+         (when (and (not preview) (pos? (or total 0)))
+           [:span (if (> page-count 1) "Page buttons · Browse   ·   Row buttons · Preview" "Row buttons · Preview")])])]]))
+
+(defn display [view]
+  (if-let [catalog (:saved-show-catalog view)]
+    [catalog-display catalog]
+    [live-display view]))
 
 (def component
   (r/create-class

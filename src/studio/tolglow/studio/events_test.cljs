@@ -9,12 +9,16 @@
             [reagent.core :as r]
             ["react-dom/server" :refer [renderToStaticMarkup]]
             [tolglow.studio.events :as events]
+            [tolglow.studio.checkpoints :as checkpoints]
+            [tolglow.studio.operator-history :as history]
             [tolglow.studio.projection :as projection]
+            [tolglow.studio.reactive-editor :as reactive-editor]
             [tolglow.studio.spatial :as spatial]
             [tolglow.studio.spatial-drafts :as spatial-drafts]
             [tolglow.studio.fixture-library :as fixtures]
             [tolglow.studio.connections :as connections]
             [tolglow.studio.views :as views]
+            [tolglow.transit :as transit]
             [tolglow.studio.chat]))
 
 ;; Execute actual registered event handlers/interceptors while leaving their
@@ -44,7 +48,330 @@
                 {:protocol projection/protocol :kind :full :token "full"
                  :identity (projection/identity-of view) :view view}))
 
+(def checkpoint-owner {:runtime-id "host" :show-id :venue :epoch 7})
+
+(defn- checkpoint-db []
+  (let [db (:db (full-frame base (merge (:show base) checkpoint-owner)))
+        opened (transition db [:checkpoints/open])
+        loading (transition (:db opened) (:dispatch opened))
+        loaded (conj (get-in loading [:studio/http :on-success])
+                     (assoc checkpoint-owner :enabled? false
+                            :checkpoints {:recovery {:modified-at-ms 1700000000000}
+                                          :named {:modified-at-ms 1700001000000}
+                                          :prior {:modified-at-ms 1600000000000}}))]
+    {:loading loading :db (:db (transition (:db loading) loaded))}))
+
+(deftest checkpoints-show-typed-catalog-and-confirm-each-file-action
+  (let [{:keys [db loading]} (checkpoint-db)
+        markup (renderToStaticMarkup (r/as-element [checkpoints/panel (checkpoints/view-props db)]))
+        restore (:db (transition db [:checkpoints/confirm :restore :named]))
+        request (transition restore [:checkpoints/submit])
+        discard (:db (transition db [:checkpoints/confirm :discard :prior]))
+        dismissal (transition discard [:checkpoints/submit])
+        accepted (transition (:db dismissal) (conj (get-in dismissal [:studio/http :on-success]) {:status :accepted}))]
+    (is (= "/api/show/checkpoints" (get-in loading [:studio/http :path])))
+    (is (not (contains? (:studio/http loading) :body)))
+    (is (str/includes? markup "aria-labelledby=\"show-checkpoint-title\""))
+    (is (every? #(str/includes? markup %) ["Working autosave" "Named save" "Previous session"
+                                         "2023-11-14T22:13:20.000Z" "Automatic recovery is off."]))
+    (is (nil? (:studio/http (transition db [:checkpoints/submit]))))
+    (is (nil? (get-in (transition db [:checkpoints/confirm :discard :named]) [:db :show-checkpoints :confirmation])))
+    (is (= "/api/show/checkpoints/restore" (get-in request [:studio/http :path])))
+    (is (= (assoc checkpoint-owner :kind :named) (get-in request [:studio/http :body])))
+    (is (true? (get-in request [:studio/http :typed?])))
+    (is (nil? (:studio/http (transition (:db request) [:checkpoints/submit]))))
+    (is (= "/api/show/checkpoints/discard-prior" (get-in dismissal [:studio/http :path])))
+    (is (= checkpoint-owner (get-in dismissal [:studio/http :body])))
+    (is (= {:message "Previous session checkpoint discarded." :error? false}
+           (get-in accepted [:db :show-checkpoints :feedback])))
+    (is (= [:checkpoints/refresh] (:dispatch accepted)))))
+
+(deftest restore-acknowledgement-follows-the-owner-across-the-matching-new-epoch
+  (let [{:keys [db]} (checkpoint-db)
+        db (update db :ui assoc :rig-dirty? true :rig-draft {:name "Old unsaved rig"})
+        chosen (:db (transition db [:checkpoints/confirm :restore :recovery]))
+        posted (transition chosen [:checkpoints/submit])
+        ack (conj (get-in posted [:studio/http :on-success]) {:status :accepted :epoch 8})
+        waiting (:db (transition (:db posted) ack))
+        rig {:name "Restored venue" :room {:measured-fog {:extinction-per-m 0.2}}}
+        new-view (merge (:show base) checkpoint-owner {:epoch 8 :rig rig})
+        newer #(:db (full-frame % (assoc new-view :revision 4)))
+        early-ack (transition (newer waiting) [:checkpoints/show-changed])
+        stream-first (:db (transition (newer (:db posted)) [:checkpoints/show-changed]))
+        late-ack (transition stream-first ack)]
+    (is (= :awaiting-view (get-in waiting [:show-checkpoints :operation :phase])))
+    (is (true? (get-in waiting [:ui :rig-dirty?])))
+    (doseq [effect [early-ack late-ack]]
+      (is (= "Restored Working autosave." (get-in effect [:db :show-checkpoints :feedback :message])))
+      (is (nil? (get-in effect [:db :show-checkpoints :operation])))
+      (is (false? (get-in effect [:db :ui :rig-dirty?])))
+      (is (= rig (get-in effect [:db :ui :rig-draft])))
+      (is (= [:checkpoints/refresh] (:dispatch effect))))))
+
+(deftest a-late-checkpoint-ack-keeps-edits-to-the-new-show
+  (let [{:keys [db]} (checkpoint-db)
+        db (update db :ui assoc :rig-dirty? true :rig-draft {:name "Old unsaved rig"})
+        chosen (:db (transition db [:checkpoints/confirm :restore :named]))
+        submitted (transition chosen [:checkpoints/submit])
+        closed (:db (transition (:db submitted) [:checkpoints/close]))
+        view (merge (:show base) checkpoint-owner {:epoch 8 :revision 4 :rig {:name "Restored rig"}})
+        installed (:db (full-frame closed view))
+        changed (:db (transition installed [:checkpoints/show-changed]))
+        edited (:db (transition changed [:studio/rig-set [:name] "Fresh edit"]))
+        ack (conj (get-in submitted [:studio/http :on-success]) {:status :accepted :epoch 8})
+        completed (transition edited ack)]
+    (is (= {:name "Old unsaved rig"} (get-in installed [:ui :rig-draft])))
+    (is (true? (get-in installed [:ui :rig-dirty?])))
+    (is (= [:studio/toast "Restored Named save." false] (:dispatch completed)))
+    (is (= {:name "Fresh edit"} (get-in completed [:db :ui :rig-draft])))
+    (is (true? (get-in completed [:db :ui :rig-dirty?])))))
+
+(deftest an-early-checkpoint-ack-keeps-edits-made-while-waiting-for-the-view
+  (let [{:keys [db]} (checkpoint-db)
+        db (update db :ui assoc :rig-dirty? true :rig-draft {:name "Old unsaved rig"})
+        chosen (:db (transition db [:checkpoints/confirm :restore :named]))
+        submitted (transition chosen [:checkpoints/submit])
+        ack (conj (get-in submitted [:studio/http :on-success]) {:status :accepted :epoch 8})
+        waiting (:db (transition (:db submitted) ack))
+        edited (:db (transition waiting [:studio/rig-set [:name] "Fresh edit"]))
+        view (merge (:show base) checkpoint-owner {:epoch 8 :revision 4 :rig {:name "Restored rig"}})
+        installed (:db (full-frame edited view))
+        completed (:db (transition installed [:checkpoints/show-changed]))]
+    (is (= "Restored Named save." (get-in completed [:show-checkpoints :feedback :message])))
+    (is (= (:rig view) (get-in completed [:show :rig])))
+    (is (= {:name "Fresh edit"} (get-in completed [:ui :rig-draft])))
+    (is (true? (get-in completed [:ui :rig-dirty?])))))
+
+(deftest a-peer-show-change-keeps-the-draft-when-our-restore-is-rejected
+  (let [{:keys [db]} (checkpoint-db)
+        draft {:name "Unconfirmed draft"}
+        db (update db :ui assoc :rig-dirty? true :rig-draft draft)
+        chosen (:db (transition db [:checkpoints/confirm :restore :named]))
+        submitted (transition chosen [:checkpoints/submit])
+        peer-view (merge (:show base) checkpoint-owner {:epoch 8 :revision 4 :rig {:name "Peer restored rig"}})
+        installed (:db (full-frame (:db submitted) peer-view))
+        changed (:db (transition installed [:checkpoints/show-changed]))
+        failed (conj (get-in submitted [:studio/http :on-failure])
+                     "Checkpoint operation belongs to a previous show session")
+        rejected (:db (transition changed failed))]
+    (is (= 8 (get-in installed [:show :epoch])))
+    (is (= draft (get-in installed [:ui :rig-draft])))
+    (is (= draft (get-in rejected [:ui :rig-draft])))
+    (is (true? (get-in rejected [:ui :rig-dirty?])))
+    (is (true? (get-in rejected [:show-checkpoints :feedback :error?])))))
+
+(deftest queued-checkpoint-success-follows-the-receipt-and-its-installed-epoch
+  (let [{:keys [db]} (checkpoint-db)
+        db (update db :ui assoc :rig-dirty? true :rig-draft {:name "Old draft"})
+        chosen (:db (transition db [:checkpoints/confirm :restore :named]))
+        posted (transition chosen [:checkpoints/submit])
+        pending (conj (get-in posted [:studio/http :on-success]) {:status :pending :receipt-id "own"})
+        queued (:db (transition (:db posted) pending))
+        rig {:name "Restored rig"}
+        receipt {:id "own" :identity checkpoint-owner :status :accepted :epoch 8}
+        view (merge (:show base) checkpoint-owner {:epoch 8 :rig rig :checkpoint-results [receipt]})
+        installed (full-frame queued view)
+        early-pending (transition (:db installed) [:checkpoints/show-changed])
+        projected-first (:db (full-frame (:db posted) view))
+        late-pending (transition (:db (transition projected-first [:checkpoints/show-changed])) pending)]
+    (is (= :queued (get-in queued [:show-checkpoints :operation :phase])))
+    (is (some #{[:dispatch [:checkpoints/show-changed]]} (:fx installed)))
+    (doseq [result [early-pending late-pending]]
+      (is (= "Restored Named save." (get-in result [:db :show-checkpoints :feedback :message])))
+      (is (nil? (get-in result [:db :show-checkpoints :operation])))
+      (is (= rig (get-in result [:db :ui :rig-draft])))
+      (is (false? (get-in result [:db :ui :rig-dirty?]))))))
+
+(deftest queued-checkpoint-rejection-follows-the-correlation-after-a-peer-restore
+  (let [{:keys [db]} (checkpoint-db)
+        draft {:name "Keep this draft"}
+        db (update db :ui assoc :rig-dirty? true :rig-draft draft)
+        chosen (:db (transition db [:checkpoints/confirm :restore :named]))
+        posted (transition chosen [:checkpoints/submit])
+        pending (conj (get-in posted [:studio/http :on-success]) {:status :pending :receipt-id "own"})
+        queued (:db (transition (:db posted) pending))
+        panel-closed (:db (transition queued [:checkpoints/close]))
+        another {:id "peer" :identity checkpoint-owner :status :accepted :epoch 8}
+        wrong-origin {:id "own" :identity (assoc checkpoint-owner :epoch 6) :status :accepted :epoch 8}
+        peer-view (merge (:show base) checkpoint-owner {:epoch 8 :checkpoint-results [another wrong-origin]})
+        peer-installed (:db (full-frame panel-closed peer-view))
+        waiting (:db (transition peer-installed [:checkpoints/show-changed]))
+        reopened (:db (transition waiting [:checkpoints/open]))
+        rejected {:id "own" :identity checkpoint-owner :status :rejected :reason :stale-show-session}
+        pushed (stream-event reopened {:protocol projection/protocol :kind :patch :base-token "full" :token "rejected"
+                                       :identity (projection/identity-of peer-view)
+                                       :changes [[:set [:checkpoint-results] [another rejected]]]})
+        completed (:db (transition (:db pushed) [:checkpoints/receipt-pushed]))]
+    (is (= :queued (get-in waiting [:show-checkpoints :operation :phase])))
+    (is (nil? (checkpoints/queued-result waiting)))
+    (is (some #{[:dispatch [:checkpoints/receipt-pushed]]} (:fx pushed)))
+    (is (nil? (get-in completed [:show-checkpoints :operation])))
+    (is (= {:message "The show changed before the queued restore could run." :error? true}
+           (get-in completed [:show-checkpoints :feedback])))
+    (is (= draft (get-in completed [:ui :rig-draft])))
+    (is (true? (get-in completed [:ui :rig-dirty?])))))
+
+(deftest awaiting-a-queued-checkpoint-is-bounded-by-the-request-and-runtime
+  (let [{:keys [db]} (checkpoint-db)
+        draft {:name "New edit"}
+        db (update db :ui assoc :rig-dirty? true :rig-draft draft)
+        chosen (:db (transition db [:checkpoints/confirm :restore :named]))
+        posted (transition chosen [:checkpoints/submit])
+        pending (conj (get-in posted [:studio/http :on-success]) {:status :pending :receipt-id "own"})
+        queued (:db (transition (:db posted) pending))
+        disconnected (:db (transition queued [:studio/stream-closed (:session queued) "connected" "lost"]))
+        expired (transition disconnected (get-in posted [:dispatch-later 0 :dispatch]))
+        receipt {:id "own" :identity checkpoint-owner :status :accepted :epoch 8}
+        view (merge (:show base) checkpoint-owner {:epoch 8 :checkpoint-results [receipt]})
+        reconnected (:db (full-frame disconnected view))
+        accepted (transition reconnected [:checkpoints/show-changed])
+        replaced (:db (full-frame disconnected (assoc view :runtime-id "replacement")))
+        retired (transition replaced [:checkpoints/show-changed])]
+    (is (= :queued (get-in disconnected [:show-checkpoints :operation :phase])))
+    (is (= "Restored Named save." (get-in accepted [:db :show-checkpoints :feedback :message])))
+    (doseq [effect [expired retired]]
+      (is (nil? (get-in effect [:db :show-checkpoints :operation])))
+      (is (true? (get-in effect [:db :show-checkpoints :feedback :error?])))
+      (is (= draft (get-in effect [:db :ui :rig-draft])))
+      (is (empty? (transition (:db effect) pending))))))
+
+(deftest checkpoint-catalog-confirmations-and-results-fence-stale-shows
+  (let [{:keys [db loading]} (checkpoint-db)
+        changed #(assoc-in % [:server-projection :view :epoch] 8)
+        stale-response (conj (get-in loading [:studio/http :on-success])
+                             (assoc checkpoint-owner :checkpoints {:prior {:modified-at-ms 10}}))
+        changed-during-load (:db (transition (changed (:db loading)) stale-response))
+        chosen (:db (transition db [:checkpoints/confirm :restore :prior]))
+        posted (transition chosen [:checkpoints/submit])
+        stale-ack (conj (get-in posted [:studio/http :on-success]) {:status :accepted :epoch 9})
+        wrong-epoch (transition (changed (:db posted)) stale-ack)
+        failure (conj (get-in posted [:studio/http :on-failure]) "Checkpoint is unavailable.")
+        failed (transition (:db posted) failure)]
+    (is (nil? (get-in changed-during-load [:show-checkpoints :catalog])))
+    (is (nil? (:studio/http (transition (changed chosen) [:checkpoints/submit]))))
+    (is (= true (get-in wrong-epoch [:db :show-checkpoints :feedback :error?])))
+    (is (= "Checkpoint is unavailable." (get-in failed [:db :show-checkpoints :feedback :message])))))
+
 (defn first-command [effects] (second (first (:fx effects))))
+
+(defn- history-frame [db runtime epoch revision cursor position & [outcomes]]
+  (let [view {:runtime-id runtime :show-id "history-show" :epoch epoch :revision revision :frame-number revision
+              :history-command-outcomes (or outcomes [])
+              :operator-history {:identity [runtime "history-show" epoch] :current-id cursor :position position
+                                 :nodes [{:id 0 :parent-id nil}
+                                         {:id 1 :parent-id 0 :parameter :gain :before 0.25 :after 0.8}
+                                         {:id 2 :parent-id 0 :parameter :gain :before 0.25 :after 0.4}]}}]
+    (:db (stream-event db {:protocol projection/protocol :kind :full :token (str runtime "-" revision)
+                           :identity (projection/identity-of view) :view view}))))
+
+(defn- history-command [db op]
+  (let [{:keys [projection view-state apply-status]} (events/history-inspector db)]
+    [:operator-history/navigate op (get (history/commands projection view-state apply-status) op)]))
+
+(deftest history-preview-is-local-and-apply-waits-for-a-committed-frame
+  (let [live (history-frame (with-stream base) "runtime" 7 3 1 8)
+        open (:db (transition live [:operator-history/open]))
+        inspected (transition open [:operator-history/inspect [:preview 2]])
+        apply-step (history-command (:db inspected) :history/select)
+        submitted (transition (:db inspected) apply-step)
+        pending (:db submitted)
+        command (first-command submitted)
+        receipt (conj (:on-success command) {:status "accepted" :command-id (get-in command [:fields :command-id])
+                                            :epoch 7 :revision 4 :history-cursor 2 :history-position 9})
+        confirmed (:db (transition pending receipt))
+        state-first (history-frame pending "runtime" 7 4 2 9)
+        both-ways [(history-frame confirmed "runtime" 7 4 2 9)
+                   (:db (transition state-first receipt))]]
+    (is (empty? (:fx inspected)))
+    (is (= :history/select (:op command)))
+    (is (= {:node-id 2 :expected-cursor 1 :expected-history-position 8 :expected-epoch 7}
+           (dissoc (:fields command) :command-id)))
+    (is (= "runtime" (:runtime-id command)))
+    (is (string? (get-in command [:fields :command-id])))
+    (is (empty? (:fx (transition pending apply-step))))
+    (is (= 1 (get-in (events/history-inspector confirmed) [:projection :current-id])))
+    (is (get-in (events/history-inspector confirmed) [:apply-status :pending?]))
+    (doseq [db both-ways]
+      (let [{:keys [projection view-state apply-status]} (events/history-inspector db)]
+        (is (= 2 (:current-id projection)))
+        (is (nil? (:preview view-state)))
+        (is (false? (:pending? apply-status)))
+        (is (= "History step applied." (:message apply-status)))))))
+
+(deftest pending-history-http-and-transport-timeouts-wait-for-matching-pushed-results
+  (let [live (history-frame (with-stream base) "runtime" 7 3 1 8)
+        open (:db (transition live [:operator-history/open]))
+        preview (:db (transition open [:operator-history/inspect [:preview 2]]))
+        submitted (transition preview (history-command preview :history/select))
+        pending (:db submitted)
+        command (first-command submitted)
+        id (get-in command [:fields :command-id])
+        identity {:command-id id :epoch 7}
+        pending-http (conj (:on-success command) (assoc identity :status "pending"))
+        pending-reply (:db (transition pending pending-http))
+        uncertain (:db (transition pending (:on-uncertain command)))
+        deadline (:dispatch (first (:dispatch-later submitted)))
+        accepted (merge identity {:status :accepted :revision 4 :history-cursor 2 :history-position 9})
+        rejected (merge identity {:status :rejected :revision 3 :code :history-conflict
+                                  :message "The parameter changed after this edit."})
+        unrelated (history-frame pending-reply "runtime" 7 4 2 9
+                                 [(assoc accepted :command-id "different") (assoc accepted :epoch 6)])]
+    (is (= 7000 (:timeout-ms command)))
+    (doseq [db [pending-reply uncertain unrelated]]
+      (let [{:keys [apply-status view-state]} (events/history-inspector db)]
+        (is (:pending? apply-status))
+        (is (= "Waiting for the live show to confirm the history command." (:message apply-status)))
+        (is (= 2 (get-in view-state [:preview :target-id])))))
+    (doseq [[result current position] [[accepted 2 9] [rejected 1 8]]]
+      (let [deliver #(history-frame % "runtime" 7 4 current position [result])
+            stream-first (deliver pending)]
+        (is (= stream-first (:db (transition stream-first pending-http))))
+        (is (= stream-first (:db (transition stream-first (:on-uncertain command)))))
+        (doseq [db [(deliver pending-reply) (deliver uncertain) stream-first]]
+          (let [{:keys [apply-status view-state]} (events/history-inspector db)]
+            (is (false? (:pending? apply-status)))
+            (if (= :accepted (:status result))
+              (do (is (= "History step applied." (:message apply-status)))
+                  (is (nil? (:preview view-state))))
+              (do (is (= (:message rejected) (:message apply-status) (:conflict apply-status)))
+                  (is (:error? apply-status))
+                  (is (= 2 (get-in view-state [:preview :target-id])))))))))
+    (let [expired (:db (transition uncertain deadline))
+          restored (history-frame uncertain "runtime" 8 5 1 0 [accepted])]
+      (is (false? (get-in (events/history-inspector expired) [:apply-status :pending?])))
+      (is (str/includes? (get-in (events/history-inspector expired) [:apply-status :message]) "could not be confirmed"))
+      (is (false? (get-in (events/history-inspector restored) [:apply-status :pending?])))
+      (is (= restored (:db (transition restored pending-http))))
+      (is (= restored (:db (transition restored (:on-uncertain command)))))
+      (is (= restored (:db (transition restored deadline)))))))
+
+(deftest stale-or-rejected-history-commands-preserve-the-stream-projection
+  (let [live (history-frame (with-stream base) "runtime" 7 3 1 8)
+        open (:db (transition live [:operator-history/open]))
+        preview (:db (transition open [:operator-history/inspect [:preview 2]]))
+        apply-step (history-command preview :history/select)
+        submitted (transition preview apply-step)
+        pending (:db submitted)
+        failure (conj (:on-failure (first-command submitted)) "The parameter changed after this edit.")
+        declined (:db (transition pending failure))
+        unrelated (history-frame preview "runtime" 7 4 1 8)
+        moved (history-frame unrelated "runtime" 7 5 0 9)
+        returned (history-frame moved "runtime" 7 6 1 10)
+        stale (transition moved apply-step)
+        replaced (history-frame pending "new-runtime" 8 5 1 1)
+        late (:db (transition replaced failure))]
+    (is (empty? (:fx stale)))
+    (is (seq (:fx (transition unrelated apply-step))))
+    (is (empty? (:fx (transition returned apply-step))))
+    (is (= 0 (get-in (events/history-inspector (:db stale)) [:projection :current-id])))
+    (is (= 1 (get-in (events/history-inspector declined) [:projection :current-id])))
+    (is (= "The parameter changed after this edit." (get-in (events/history-inspector declined) [:apply-status :message])))
+    (is (nil? (last (history-command declined :history/select))))
+    (is (some? (last (history-command (:db (transition declined [:operator-history/inspect [:preview 2]])) :history/select))))
+    (is (get-in (events/history-inspector late) [:open?]))
+    (is (nil? (get-in (events/history-inspector late) [:view-state :preview])))
+    (is (false? (get-in (events/history-inspector late) [:apply-status :pending?])))
+    (is (nil? (get-in (events/history-inspector late) [:apply-status :message])))))
 
 (deftest section-pattern-override-follows-committed-show-settings
   (let [view (assoc (:show base) :runtime-id "pattern-owner" :show-id :main
@@ -378,6 +705,66 @@
     (is (nil? (get-in changed [:db :ui :composition :slots 0 :duration-ms])))
     (is (thrown? js/Error (events/musical-duration js/NaN "beats")))))
 
+(deftest building-a-reactive-effect-uses-owner-schema-and-exact-beats
+  (let [draft (-> (reactive-editor/new-draft)
+                  (assoc-in [:targets 0 :fixture-id] "head/one")
+                  (assoc-in [:bindings 0 :address] ":wash/level")
+                  (assoc :transition "1/3"))
+        form (assoc events/default-builder :reactive draft :keyframes {:interval {:beats 1}} :blocks {:ignored true})
+        compiled (events/builder-definition form 1)]
+    (is (= ["head/one"] (:targets compiled)))
+    (is (= {:inputs {:level [:source :wash/level]} :transition {:beats (transit/->BeatFraction "1" "3")}}
+           (:reactive compiled)))
+    (is (= {:op :reactive :key :level} (get-in compiled [:outputs :dimmer])))
+    (is (every? #(not (contains? compiled %)) [:envelope :params :keyframes :blocks]))
+    (is (nil? (:reactive (events/builder-definition (assoc-in form [:reactive :enabled?] false) 1))))
+    (doseq [invalid [(assoc draft :transition "0/3")
+                     (assoc-in draft [:targets 0 :fixture-id] nil)
+                     (update draft :bindings conj {:id "duplicate" :alias "level" :kind :subscription :address "[:wash/level]"})
+                     (assoc-in draft [:bindings 0 :address] ":one :two")
+                     (assoc-in (assoc-in draft [:bindings 0 :kind] :subscription) [:bindings 0 :address] "[:valid] [:extra]")]]
+      (is (thrown? js/Error (events/builder-definition (assoc form :reactive invalid) 1))))))
+
+(deftest reactive-binding-edits-preserve-expressions-and-use-the-loaded-owner-version
+  (let [typed {:id :ember :version 2 :name "Ember" :targets [:head-1]
+               :reactive {:inputs {:level [:subscription [:wash/level (transit/->BeatFraction "1" "3")]]}}
+               :outputs {:dimmer {:op :multiply :args [0.5 {:op :reactive :key :level}]}}}
+        db (assoc base :server-projection {:view {:rig {:fixtures [{:id :head-1}]}}})
+        request (transition db [:studio/definition-load "effects" "ember"])
+        completion (conj (get-in request [:studio/http :on-success]) {:source (pr-str typed) :definition typed})
+        loaded (:db (transition (:db request) completion))
+        draft (get-in loaded [:ui :builder :reactive])
+        form (assoc-in loaded [:ui :definition :mode] :form)
+        unchanged (events/builder-definition (get-in form [:ui :builder]) 2)
+        edited (:db (transition form [:studio/builder-reactive #(assoc % :transition "1/2")]))
+        newer-owner (assoc-in edited [:show :effects 0 :version] 3)
+        sent (transition newer-owner [:studio/definition-publish])
+        publication (transition (:db sent) (:dispatch sent))
+        accepted {:id "ember" :version 3}
+        published (:db (transition (:db publication) (conj (get-in publication [:studio/http :on-success]) accepted)))
+        republish (transition published [:studio/definition-publish])
+        replaced (assoc-in edited [:show :epoch] 8)
+        source-edited (assoc-in edited [:ui :definition :mode] :source)
+        source-send (transition source-edited [:studio/definition-publish])
+        source-publish (transition (:db source-send) (:dispatch source-send))
+        source-published (:db (transition (:db source-publish)
+                                         (conj (get-in source-publish [:studio/http :on-success]) accepted)))
+        stale-form (assoc-in source-published [:ui :definition :mode] :form)]
+    (is (= true (get-in request [:studio/http :raw-response?])))
+    (is (empty? (transition (:db (transition (:db request) [:studio/definition-new])) completion)))
+    (is (= typed unchanged))
+    (is (= "Unpublished changes" (get-in edited [:ui :definition :status])))
+    (is (= 2 (get-in publication [:studio/http :body :expected-version])))
+    (is (str/includes? (get-in publication [:studio/http :body :source]) ":transition {:beats 1/2}"))
+    (is (str/includes? (get-in publication [:studio/http :body :source]) (pr-str (:outputs typed))))
+    (is (= 3 (get-in (transition (:db republish) (:dispatch republish)) [:studio/http :body :expected-version])))
+    (is (= [:studio/editor-error "The show changed. Reload the definition from the registry."]
+           (:dispatch (transition replaced [:studio/definition-publish]))))
+    (is (= [:studio/editor-error "The definition changed. Reload it from the registry."]
+           (:dispatch (transition stale-form [:studio/definition-publish]))
+           (:dispatch (transition stale-form [:studio/builder-generate]))))
+    (is (nil? (get-in (:db (transition edited [:studio/definition-new])) [:ui :builder :reactive])))))
+
 (deftest existing-definition-publication-is-optimistic
   (let [db (update-in base [:ui :definition] merge {:loaded-id "ember" :kind "effects" :version 2})
         opened (transition db [:studio/definition-publish false])
@@ -703,6 +1090,29 @@
     (is (= #{"/api/sync/ports" "/api/audio/inputs"} (set (map :path requests))))
     (is (every? #(nil? (:body %)) requests))
     (is (= #{:db} (set (keys (transition (:db pushed) [:connections/pushed])))))))
+
+(deftest reconnecting-the-track-reference-sends-only-show-session-identity
+  (let [reference {:configured? true :status "stale" :reason "show-changed" :override? true}
+        db (-> base (assoc-in [:show :runtime-id] "reference-host")
+                    (assoc-in [:show :epoch] 5)
+                    (assoc-in [:show :connection-status :section-reference] reference))
+        open (:db (transition db [:connections/open]))
+        pushed (:db (transition open [:connections/pushed]))
+        chosen (transition pushed [:connections/action :reference-reconnect])
+        request (get-in chosen [:fx 0 1])
+        waiting (:db chosen)
+        receipt (conj (:on-failure request) "Reconnect belongs to a previous show session")
+        refused (:db (transition waiting receipt))]
+    (is (= reference (get-in pushed [:connections :section-reference])))
+    (is (= "/api/section-reference/reconnect" (:path request)))
+    (is (= {:runtime-id "reference-host" :expected-epoch 5} (:body request)))
+    (is (contains? (get-in waiting [:connections :pending]) :reference-reconnect))
+    (is (not (contains? (get-in refused [:connections :pending]) :reference-reconnect)))
+    (is (nil? (:db (transition (assoc-in waiting [:show :epoch] 6) receipt))))
+    (is (= "Reconnect belongs to a previous show session"
+           (get-in refused [:connections :errors :reference-reconnect])))
+    (is (true? (get-in refused [:connections :section-reference :override?])))
+    (is (nil? (get-in (transition pushed [:connections/close]) [:db :connections :section-reference])))))
 
 (deftest device-refresh-failure-leaves-a-running-stage-operable
   (let [running (-> base

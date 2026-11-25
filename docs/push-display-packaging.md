@@ -162,3 +162,53 @@ Choose the MIDI input and output of the device’s User port from the port list.
 The offscreen page renders the same CSS parameter widgets, waveform and history views, page grid, simulator and rig controls as Push 2. Bind captured buttons to `:display/parameters`, `:display/pages`, `:display/simulator`, `:display/rig` and `:display/camera` as needed. The bindable actions use the capture’s actual IDs. The display view follows the instance selected by a User Mode or MPE pad. Choosing a different lens or display does not launch a cue. A frame repeatedly sent to USB uses the last packed raster. Only the scheduled display worker asks the browser for new visuals.
 
 The replay uses the production screen encoder and 24 actual Studio simulator captures. Hardware qualification covers colour and edge orientation, Live handoff, continuous audio/MIDI and disconnect. See [Afterglow’s driver, receipts and on-device instructions](https://github.com/tolgraven/afterglow/blob/master/doc/architecture/push-3-display.md).
+
+## Browse saved shows
+
+`tolglow.controllers.content-browser-display/connect-device!` adds a saved-show browser to the shared browser display on Push 2 or tethered Push 3. Supply explicit button captures that fit your layout. The cue pads and encoder gestures keep their live functions. Exit any active variation overlay to see the browser.
+
+```clojure
+(require '[tolglow.controllers.content-browser-display :as saved-shows])
+
+(saved-shows/connect-device! runtime :push-2
+  {:session-id "desk-push"
+   :input-index verified-input-index
+   :output-index verified-output-index
+   :display-options {:browser-executable "/usr/bin/chromium"
+                     :url "http://127.0.0.1:8500/push-display"}
+   :catalog-controls (into {:toggle                 {:channel 0 :controller 56}
+                           :back                   {:channel 0 :controller 55}
+                           :previous               {:channel 0 :controller 62}
+                           :next                   {:channel 0 :controller 63}
+                           [:checkpoint :recovery] {:channel 0 :controller 103}
+                           [:checkpoint :named]    {:channel 0 :controller 102}
+                           :confirm                {:channel 0 :controller 104}}
+                           (map (fn [row] [[:select row] {:channel 0 :controller (+ 20 row)}]))
+                           (range 8))})
+```
+
+This example uses Repeat to open or close the browser, Octave Up to go back, Page Left and Right to page, and the buttons below the screen to preview the aligned show. The three restore addresses are examples for captured input replay. Map them to verified unused buttons on the selected controller and port. Omit the checkpoint and Confirm assignments for a browsing-only connection. For Push 3, pass the usual `:user-mode?`, `:expression-mode` and captured `:layout` options, and put the selected `:usb` address in `:display-options`.
+
+The active show’s Working recovery and Latest named checkpoints appear when available. Additional files come from the optional trusted `:catalog-saves` vector. Open a row, choose a checkpoint, then press Confirm when the display asks to replace the running show. If the checkpoint changes after selection, go back and choose it again. After the owner commits, the initiating Push opens a fresh session and shows **Checkpoint restored**. Use Back to return to the live display. Restore retires the old controller holds and sessions. The initiating connection reopens automatically while it still owns its reconnect request.
+
+From the REPL use `tolglow.controllers.content-browser-host/project` to get the row and exact source, then `preview` with the page's runtime ID, row's selection and chosen source. Pass the returned `:confirmation` to `confirm-load!` and dereference its `:receipt` for the same committed import outcome used by Push. Studio's checkpoint restore uses the same show import owner. [Host functions](../src/tolglow/controllers/content_browser_host.clj) · [#552](https://github.com/tolgraven/tolglow/issues/552)
+
+### Browse registered effects and cues
+
+Bind the optional `:next-kind` action in `:catalog-controls` to a captured,
+unused button. In the catalog list it cycles through Saved shows, Registered
+effects and Registered cues. Page through the list and use its row buttons
+to preview the displayed version. Effect previews show categories and
+registered cue usage. Cue previews show the referenced effect version,
+categories and page usage. Both show the running instance count. Back returns
+to the same page with the row highlighted. These previews are read-only.
+
+The same catalog is available in the REPL. Use `:kind :cue` for the cue list.
+
+```clojure
+(require '[tolglow.controllers.content-browser-host :as catalog])
+
+(let [{:keys [runtime-id items]} (catalog/project runtime [] {:kind :effect :page 0})]
+  (when-let [{:keys [selection]} (first items)]
+    (catalog/preview runtime [] {:runtime-id runtime-id :selection selection})))
+```

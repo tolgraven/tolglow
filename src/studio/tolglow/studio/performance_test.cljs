@@ -4,6 +4,7 @@
             [tolglow.authoring.parameter-layout :as layout]
             [re-frame.interceptor :as interceptor]
             [re-frame.registrar :as registrar]
+            [tolglow.studio.effect-selection :as selection]
             [tolglow.studio.effect-inspector :as inspect]
             [tolglow.studio.events :as events]
             [tolglow.studio.param-visualization :as visual]
@@ -15,9 +16,9 @@
                 :groups [{:id "color" :color "#bb66dd" :instance-ids ["4:1"] :paused? false}
                          {:id "intensity" :color "#ddbb66" :instance-ids ["4:1" "4:2"] :paused? false}
                          {:id "movement" :color "#66bbdd" :instance-ids ["4:2" "4:3"] :paused? false}]
-                :instances [{:id "4:1" :cue-id "user/wash" :system {:opacity 0.8 :paused? false}}
-                            {:id "4:2" :cue-id "user/sweep" :system {:opacity 0.6 :paused? true :release {:beats 2}}}
-                            {:id "4:3" :cue-id "user/aim" :system {:opacity 1 :paused? false}}]}))
+                :instances [{:id "4:1" :cue-id "user/wash" :phase "running" :system {:opacity 0.8 :paused? false}}
+                            {:id "4:2" :cue-id "user/sweep" :phase "running" :system {:opacity 0.6 :paused? true :release {:beats 2}}}
+                            {:id "4:3" :cue-id "user/aim" :phase "running" :system {:opacity 1 :paused? false}}]}))
 
 (def instance-target {:instance-id "4:1"})
 
@@ -29,6 +30,45 @@
                                                (registrar/get-handler :event (first event))))))
 
 (defn command [result] (second (first (:fx result))))
+
+(deftest solo-and-mute-send-shared-selectors-and-consume-the-touch-modifier
+  (let [identity {:runtime-id "runtime-a" :show-id :test :epoch 4}
+        view (assoc identity :revision 7 :effect-selection {:modes {:solo :exclusive :mute :exclusive}})
+        db (assoc base :server-projection {:view view})
+        armed (transition db [:effect-selection/add-once identity])
+        selector {:instance-ids ["4:1"]}
+        sent (transition (:db armed) [:effect-selection/toggle identity :solo selector false])
+        payload (command sent)
+        accepted (transition (:db sent) (conj (:on-success payload) {:status "accepted" :revision 8}))
+        ready (assoc-in (:db accepted) [:server-projection :view :revision] 8)
+        normal (command (transition ready [:effect-selection/toggle identity :mute {:layer-id :layer/test} false]))
+        shifted (command (transition ready [:effect-selection/toggle identity :mute (:selector group-target) true]))
+        configured (command (transition ready [:effect-selection/configure identity :mute :additive]))
+        newer (assoc-in (:db sent) [:server-projection :view :epoch] 5)]
+    (is (= :effect-selection/toggle (:op payload)))
+    (is (= {:control :solo :selector selector :additive? true} (dissoc (:fields payload) :command-id)))
+    (is (= [4 "runtime-a" "performance-session"] ((juxt :epoch :runtime-id :session) payload)))
+    (is (= (:server-projection db) (get-in sent [:db :server-projection])))
+    (is (nil? (:fx (transition (:db accepted) [:effect-selection/toggle identity :solo selector false]))))
+    (is (= {:control :mute :selector {:layer-id :layer/test} :additive? false}
+           (dissoc (:fields normal) :command-id)))
+    (is (= {:control :mute :selector (:selector group-target) :additive? true}
+           (dissoc (:fields shifted) :command-id)))
+    (is (= :effect-selection/configure (:op configured)))
+    (is (= {:mute :additive} (get-in configured [:fields :modes])))
+    (is (= newer (:db (transition newer (conj (:on-failure payload) "Instance no longer exists")))))
+    (is (= "Instance no longer exists"
+           (get-in (transition (:db sent) (conj (:on-failure payload) "Instance no longer exists"))
+                   [:db :ui :effect-selection :error])))))
+
+(deftest solo-and-mute-button-flags-reflect-the-committed-selection
+  (let [a {:id "4:1" :soloed? true :muted? true :suppressed-by :mute}
+        b {:id "4:2" :soloed? false :muted? true :suppressed-by :mute}
+        rows (selection/by-instance {:instances [a b]})]
+    (is (= a (get rows "4:1")))
+    (is (= {:solo :all :mute :all} (selection/instance-flags a)))
+    (is (= {:solo :none :mute :all} (selection/instance-flags b)))
+    (is (= {:solo :partial :mute :all} (selection/group-flags (vals rows))))))
 
 (deftest visible-membership-comes-from-server-groups-and-never-infers-output-tags
   (let [show (:show base)
@@ -152,11 +192,41 @@
 (deftest group-clear-and-card-expansion-stay-local
   (let [selected (transition base [:performance/group-set :scope "all"])
         cleared (transition (:db selected) [:performance/group-clear])
-        expanded (transition base [:performance/card-toggle "4:1"])]
+        expanded (transition base [:performance/card-toggle "4:1" {:runtime-id "runtime-a" :epoch 4}])]
     (is (empty? (performance/selected-instances (:show base) (get-in cleared [:db :ui :performance :group]))))
     (is (= true (get-in expanded [:db :ui :performance :expanded "4:1"])))
+    (is (= "4:1" (get-in expanded [:db :ui :selected-instance])))
     (is (= (:show base) (get-in expanded [:db :show])))
     (is (nil? (:fx expanded)))))
+
+(deftest duplicate-launches-use-captured-instance-ids-and-committed-order
+  (let [show (-> (:show base)
+                 (assoc :active-instance-order ["4:2" "4:1" "4:3"])
+                 (assoc-in [:instances 1 :cue-id] "user/wash"))
+        db (assoc base :show show)
+        selected (transition db [:performance/card-toggle "4:2" {:runtime-id "runtime-a" :epoch 4}])
+        stale-card (transition (:db selected) [:performance/card-toggle "4:1" {:runtime-id "runtime-b" :epoch 4}])
+        opened (:db (transition (:db selected) [:performance/reorder-toggle]))
+        capture {:identity ["runtime-a" 4 ["4:2" "4:1" "4:3"]] :revision 7}
+        source (:db (transition opened [:performance/reorder-pick capture "4:2"]))
+        sent (transition source [:performance/reorder-pick capture "4:1"])
+        payload (command sent)
+        ack (transition (:db sent) (conj (:on-success payload) {:status "accepted" :revision 8}))
+        rejected (transition (:db sent) (conj (:on-failure payload) "Show revision changed"))
+        changed (-> source (assoc-in [:show :active-instance-order] ["4:1" "4:2" "4:3"]))
+        stale (transition changed [:performance/reorder-pick capture "4:1"])]
+    (is (= "4:2" (get-in selected [:db :ui :selected-instance])))
+    (is (= (:db selected) (:db stale-card)))
+    (is (empty? (:fx selected)))
+    (is (= "instance/move-after" (:op payload)))
+    (is (= {:instance-id "4:2" :after-instance-id "4:1" :expected-revision 7} (:fields payload)))
+    (is (= ["runtime-a" 4] ((juxt :runtime-id :epoch) payload)))
+    (is (= ["4:2" "4:1" "4:3"] (mapv :id (performance/ordered-instances (get-in ack [:db :show])))))
+    (is (= ["4:1" "4:2" "4:3"] (mapv :id (performance/ordered-instances (:show changed)))))
+    (is (empty? (:fx stale)))
+    (is (= "Cue order changed. Choose a cue again." (get-in stale [:db :ui :performance :reorder :error])))
+    (is (= "Show revision changed" (get-in rejected [:db :ui :performance :reorder :error])))
+    (is (= 8 (get-in ack [:db :ui :performance :reorder :request :revision])))))
 
 (deftest grouped-xyz-keeps-editable-base-and-plots-effective-components
   (let [components [[:x {:default 1}] [:y {:default 2}] [:z {:default 3}]]

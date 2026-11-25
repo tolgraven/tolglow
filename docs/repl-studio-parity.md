@@ -48,6 +48,53 @@ compare the tab with the committed page in the snapshot.
 (:recent-page (show/snapshot runtime))
 ```
 
+## Select and reorder running cues
+
+In **Perform → In the mix**, open **Detail** on a running card to select that
+launch for editing. If the same cue is running more than once, the cards
+show their distinct launch IDs. **Reorder** opens a separate mode. Choose
+**Move** on one running card and **Place after** on another. The cards show
+the committed compositing order.
+
+From the REPL, read the first two running launches in the current order and
+submit the same operation. Watch **In the mix** update in Studio.
+
+```clojure
+(let [{:keys [active-instance-order instances revision epoch runtime-id]} (show/snapshot runtime)
+      running-ids (into #{} (map :id) (filter #(= :running (:phase %)) instances))
+      [first-launch second-launch] (filter running-ids active-instance-order)]
+  (when second-launch
+    @(show/submit! runtime {:op :instance/move-after :instance-id first-launch
+                            :after-instance-id second-launch :expected-revision revision
+                            :epoch epoch :runtime-id runtime-id})))
+```
+
+## Solo or mute running effects
+
+In **Perform → In the mix**, use **Solo** or **Mute** on a running card.
+**Muted** and **Excluded by Solo** show why the owner has gated a card's
+contribution. The action buttons show which controls are selected. A mixed
+button means some of the selected category or layer members have that flag.
+
+Use **Add once** before an action or hold Shift while clicking to use additive mode. The
+**Defaults** control sets the normal mode for Solo and Mute independently.
+Choose a category or **All running** to act on that group. Expand **Layers**
+when a native composition is playing to act on a particular layer.
+
+Read the committed selection in the REPL, then submit a change and watch the
+open cards update. The same selector supports categories and native layer IDs.
+
+```clojure
+(let [{:keys [effect-selection]} (show/snapshot runtime)]
+  (when-let [instance-id (first (:included-instance-ids effect-selection))]
+    @(show/submit! runtime {:op :effect-selection/toggle :control :mute
+                            :selector {:instance-ids [instance-id]}
+                            :additive? true})))
+```
+
+See [Effect Solo and Mute](effect-selection.md) for the shared policy and
+examples for configuring the default modes.
+
 ## Suspend automatic section patterns
 
 When the show starts with an enabled section pattern policy, open **Perform**
@@ -72,11 +119,35 @@ Use `true` in the same command to suspend patterns from the REPL.
 
 ## Reconnect a local track reference
 
-The REPL audio integration owns reattachment after a player reconnect, show
-restart or restore. The Studio Connections control and alignment status are
-tracked in [#549](https://github.com/tolgraven/tolglow/issues/549). Verify the
-old session's queued forecast is fenced, then reattach from Studio and confirm
-that fresh aligned evidence resumes the same configured pattern.
+Supply the local mpv socket and track catalog in the host's `:section-reference`
+configuration. The catalog uses canonical absolute track paths and the
+configured profile's identity and duration.
+
+```clojure
+;; Add this to the show options alongside the enabled :section-patterns policy.
+{:section-reference {:profile profile
+                     :provenance {:source-id :mpv :session-id (random-uuid) :clock-id :show-monotonic}
+                     :mpv {:socket-path "/home/operator/.local/run/mpv.sock"
+                           :catalog {track (select-keys profile [:reference :duration-ms])}}}}
+```
+
+After player reconnect, show restart or restore, open **Connections → Track
+reference** and choose **Reconnect mpv**. The status distinguishes unavailable,
+acquiring, aligned, ambiguous and stale. A fresh session waits for matching
+observations from the configured player. **Patterns suspended** reports the current manual
+override, which reconnect preserves.
+
+```clojure
+(require '[tolglow.show :as show])
+
+(show/section-reference-status runtime)
+(let [{:keys [runtime-id epoch]} (show/section-reference-status runtime)]
+  (show/reconnect-section-reference! runtime {:runtime-id runtime-id :expected-epoch epoch}))
+```
+
+The REPL and Studio receive the fresh reference session ID or a refusal from
+the same show operation. For manually owned mpv connections, use the existing
+[REPL adapter flow](../src/tolglow/integrations/README.md#observe-a-known-local-recording-in-mpv).
 
 ## Reviewing a show feature
 
@@ -88,7 +159,9 @@ that fresh aligned evidence resumes the same configured pattern.
 
 ## A tracked gap
 
-The running REPL can discover and restore the current show's working, named, and prior-session checkpoints through `show/recovery-status` and `show/load-latest-show!`. `show/discard-prior-recovery!` dismisses the prior-session checkpoint. Studio and Push still need controls that distinguish the checkpoints by source and modification time and show the owner's restore or discard result. [Operator examples](show-files.md#working-recovery-and-manual-checkpoints) · [Issue #551](https://github.com/tolgraven/tolglow/issues/551)
+The running REPL can discover and restore the current show's working, named, and prior-session checkpoints through `show/recovery-status` and `show/load-latest-show!`. `show/discard-prior-recovery!` dismisses the prior-session checkpoint. Studio's checkpoint controls show the source and modification time and report the owner's restore or discard result. [Operator examples](show-files.md#working-recovery-and-manual-checkpoints) · [Studio checkpoint controls](https://github.com/tolgraven/tolglow/pull/563)
+
+The tethered Push saved-show browser previews the latest named and working recovery checkpoints. With explicit checkpoint and Confirm buttons, the device confirms the file shown on the display through the shared import owner, shows progress or refusal, and reopens in a fresh session after a committed restore. Verification uses virtual MIDI and captured Push 2 and Push 3 displays. Browsing registered effects, cues, and waveforms and applying their actions remain tracked in the catalog issue. [Push controls](push-display-packaging.md#browse-saved-shows) · [Saved-show browser](https://github.com/tolgraven/tolglow/pull/581) · [Issue #552](https://github.com/tolgraven/tolglow/issues/552)
 
 At revision `0681a694`, Studio's effect keyframe editor offers **Sample at a fixed interval** and **Limit automatic slowdown** for an individual effect. The runtime also accepts a show-wide scheduler setting and exposes timing diagnostics. In a preview show, this REPL command disables automatic keyframes for the show. The public status function reads the current diagnostic state when one exists.
 

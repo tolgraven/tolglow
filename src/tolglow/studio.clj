@@ -36,7 +36,9 @@
   "Common Studio fields for a committed show state. A client leases spatial
   signals or membership separately through the state stream's query controls."
   [runtime state]
-  (dissoc (show/project-snapshot runtime state) :spatial))
+  (let [view (dissoc (show/project-snapshot runtime state) :spatial)
+        results (filterv #(= (:show-id view) (get-in % [:identity :show-id])) (:checkpoint-results state))]
+    (cond-> view (seq results) (assoc :checkpoint-results results))))
 
 (defn- bind! [runtime id]
   (show/attach-observer! runtime id
@@ -65,7 +67,11 @@
                                       :close! #(cue-pads/release! service lease)}))}
                       :client-fault! #(faults/offer! (:effect-logs runtime) [%])
                       :observe-status! #(connections/observe-status! (:connections runtime) %)
-                      :capture-status #(connections/status-at-commit (:connections runtime))})
+                      :capture-status (fn []
+                                        (let [status (connections/status-at-commit (:connections runtime))]
+                                          (fn [committed]
+                                            (when-let [view (status committed)]
+                                              (assoc view :section-reference (show/section-reference-status runtime committed))))))})
             compute (workers/create (get-in runtime [:compute :pool]) (System/getenv "TOLGLOW_COMPUTE_TOKEN")
                                     {:guest-bridge (System/getenv "TOLGLOW_AUDIENCE_COMPUTE_TOKEN")
                                      :verification (keyword (or (System/getenv "TOLGLOW_AUDIENCE_VERIFICATION") "full"))})
@@ -93,7 +99,8 @@
       (projection/project! (:browser-projections (bindings!)) view (get query "base"))
       partial?
       (assoc (select-keys view [:runtime-id :show-id :epoch :revision :time-ms :frame-number :transport
-                                :instances :groups :output :status :auto :compositions :modulation :patch]) :partial? true)
+                                :instances :groups :effect-group-channels :effect-selection
+                                :output :status :auto :compositions :modulation :patch]) :partial? true)
       :else view))))
 
 (defn client-faults
@@ -102,6 +109,33 @@
   (->> (vals @(:observers runtime))
        (keep #(get-in % [:state-stream :client-faults])) (mapcat deref)
        (sort-by :at) (take-last 64) vec))
+
+(def ^:private checkpoint-wait-ms 5000)
+
+(defn- checkpoint-action! [runtime action payload]
+  (try
+    (let [current-id (get-in @(:state runtime) [:model :show-id])
+          identity (cond-> (select-keys payload [:runtime-id :show-id :epoch])
+                     (and (::web/text-checkpoint-id? payload) (= (:show-id payload) (web/json-data current-id)))
+                     (assoc :show-id current-id))]
+      (case action
+        :status (select-keys (show/recovery-status runtime)
+                            [:runtime-id :show-id :epoch :checkpoints :enabled?])
+        :restore
+        (let [kind (case (:kind payload)
+                     (:recovery "recovery") :recovery
+                     (:named "named") :named
+                     (:prior "prior") :prior
+                     (throw (ex-info "Unknown show checkpoint kind" {})))
+              receipt-id (str (random-uuid))]
+          (deref (show/load-latest-show! runtime kind identity receipt-id) checkpoint-wait-ms
+                 {:status :pending :receipt-id receipt-id :message "Restore remains queued"}))
+        :discard-prior
+        (if (show/discard-prior-recovery! runtime identity)
+          {:status :accepted}
+          {:status :rejected :message "Previous session checkpoint is unavailable"})))
+    (catch java.io.IOException error
+      (throw (ex-info "Could not access the show checkpoint" {:code :checkpoint-io} error)))))
 
 (defn handler
   "Create the portable Ring application for this explicitly owned runtime."
@@ -130,6 +164,7 @@
                              (or (get definitions id)
                                  (when (keyword? id) (get definitions (subs (str id) 1))))))
             :export! #(show/export-show-source runtime)
+            :checkpoint! (partial checkpoint-action! runtime)
             :fog-calibration! #(let [model (:model @(:state runtime))]
                                  {:runtime-id (:id runtime) :epoch (:epoch model)
                                   :fixtures (fog-scan/fixtures model)
@@ -150,6 +185,7 @@
                                              (assoc :observation-count (count (:observations scan))
                                                     :receipt-count (count (:receipts scan)))))})
             :submit! #(show/submit! runtime %1 %2)
+            :submit-history! #(show/submit! runtime :command %1 %2)
             :heartbeat! #(show/heartbeat! runtime %)
             :provider-get! #(agents/public-config (show/agent-manager runtime))
             :provider-put! #(agents/configure! (show/agent-manager runtime) %)
@@ -158,8 +194,13 @@
             :fixture! #(show/fixture-action! runtime %1 %2)
             :rdm! #(show/rdm-action! runtime %1 %2)
             :sync! #(show/sync-action! runtime %1 %2)
+            :section-reference! (fn [op payload]
+                                  (case op
+                                    :status (show/section-reference-status runtime)
+                                    :reconnect (show/reconnect-section-reference! runtime payload)))
             :waveform! #(show/waveform-action! runtime %1 %2)
             :expressive! (partial show/expressive-preview runtime)
+            :cue-variation-preview! (partial show/cue-variation-preview runtime)
             :patch! #(:patch (show/snapshot runtime))
             :repl! #(show/repl-action! runtime %1 %2)
             :repl-eval! #(show/repl-eval! runtime %1 %2 %3)

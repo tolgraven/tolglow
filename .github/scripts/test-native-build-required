@@ -32,7 +32,49 @@ change() {
 
 mkdir -p native/{macOS,iOS} .github/{workflows,scripts}
 touch README native/{macOS/Studio.swift,iOS/Mobile.swift,Fixture.swift} \
-  .github/workflows/tests.yml .github/scripts/{native-build-required,test-native-build-required}
+  .github/scripts/{native-build-required,test-native-build-required}
+workflow=.github/workflows/tests.yml
+old_pin=1111111111111111111111111111111111111111
+new_pin=2222222222222222222222222222222222222222
+cat > "$workflow" <<'YAML'
+name: Architecture regression tests
+on:
+  push:
+    branches: [master, effects]
+  pull_request:
+jobs:
+YAML
+for job in test studio development-container; do
+  cat >> "$workflow" <<YAML
+  $job:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: tolgraven/afterglow
+          ref: $old_pin
+          path: afterglow
+YAML
+done
+cat >> "$workflow" <<'YAML'
+  native:
+    runs-on: macos-15
+    steps:
+      - run: command -v xcodegen >/dev/null || brew install xcodegen
+      - run: native/Tests/capture_watch_audience.sh
+YAML
+cat > .github/workflows/performance.yml <<YAML
+on: [workflow_dispatch]
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: tolgraven/afterglow
+          ref: \${{ inputs.afterglow_ref || matrix.companion == 'upstream' && 'master' || '$old_pin' }}
+          path: afterglow
+YAML
 cat > native/project.yml <<'YAML'
 name: Tolglow
 settings:
@@ -85,6 +127,63 @@ expect 'Topic branch started before the event base' false false pull_request "$a
 expect 'Direct push to unknown native source' true true push "$base" "$advanced"
 expect 'Documentation push' false false push "$base" "$topic"
 expect 'Force push removes a native change' true true push "$advanced" "$topic"
+
+git switch --quiet -c paired-afterglow "$base"
+sed -i "s/$old_pin/$new_pin/g" .github/workflows/{tests,performance}.yml
+git commit --quiet -am 'Update paired Afterglow checkout pins'
+pin_only=$(git rev-parse HEAD)
+change src/tolglow/persistence.clj
+if python3 -c 'import yaml' >/dev/null 2>&1; then
+  expect 'Paired Afterglow pins request only the paired Linux receiver on pushes' false true push "$base" "$pin_only"
+  expect 'Paired Afterglow pins and Clojure changes keep the simulators off' false true pull_request "$advanced" HEAD
+else
+  expect 'Unavailable parser retains both lanes on checkout pin changes' true true pull_request "$base" HEAD
+fi
+[[ $(python3 -IS "$selector" pull_request "$base" "$pin_only" 2>.git/selection.log) == $'audience=true\nlinux_audience=true' ]]
+printf 'PASS both lanes for checkout pins with Python site packages disabled\n'
+
+workflow_edit() {
+  local description=$1 substitution=$2
+  git switch --quiet --detach "$pin_only"
+  sed -i "$substitution" "$workflow"
+  git commit --quiet -am "$description"
+  expect "$description" true true pull_request "$base" HEAD
+}
+
+workflow_edit 'Pin update and workflow trigger edit' 's/branches: \[master, effects\]/branches: [master]/'
+workflow_edit 'Pin update and checkout tool edit' 's/checkout@v7\.0\.1/checkout@v7.1.0/'
+workflow_edit 'Pin update and native tool edit' 's/brew install xcodegen/brew install xcodegen --quiet/'
+workflow_edit 'Pin update and simulator step edit' 's/capture_watch_audience\.sh/capture_audience.sh/'
+workflow_edit 'Pin update and checkout repository edit' 's|repository: tolgraven/afterglow|repository: another-org/afterglow|'
+workflow_edit 'Replacing a pinned SHA with a branch ref' "s/$new_pin/master/"
+
+git switch --quiet --detach "$pin_only"
+chmod +x "$workflow"
+git update-index --chmod=+x "$workflow"
+git commit --quiet -m 'Change the workflow file mode'
+expect 'Pin update and tests workflow mode change' true true pull_request "$base" HEAD
+git switch --quiet --detach "$pin_only"
+git rm --quiet "$workflow"
+git commit --quiet -m 'Delete the tests workflow'
+expect 'Tests workflow deletion' true true pull_request "$base" HEAD
+git switch --quiet --detach "$pin_only"
+sed -i "s/'5.0'/'6.0'/" native/project.yml
+git commit --quiet -am 'Change shared Xcode build settings alongside checkout pins'
+expect 'Pin update and shared XcodeGen manifest edit' true true pull_request "$base" HEAD
+
+git switch --quiet --detach "$base"
+cat >> "$workflow" <<YAML
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: tolgraven/afterglow
+          ref: $old_pin
+          path: afterglow
+YAML
+git commit --quiet -am 'Give the native build its own Afterglow checkout'
+native_checkout=$(git rev-parse HEAD)
+sed -i "s/$old_pin/$new_pin/g" "$workflow"
+git commit --quiet -am 'Update JVM and native Afterglow pins'
+expect 'Changing a checkout ref in the native job requests both lanes' true true pull_request "$native_checkout" HEAD
 
 git switch --quiet -c desktop "$base"
 for path in \

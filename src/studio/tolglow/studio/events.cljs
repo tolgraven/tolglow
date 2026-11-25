@@ -2,9 +2,12 @@
   "The studio application is data + re-frame transitions. I/O lives in effects."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
+            [tolglow.studio.checkpoints :as checkpoints]
             [tolglow.studio.fog-fields :as fog]
+            [tolglow.studio.operator-history :as history]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.page-routes :as pages]
+            [tolglow.studio.reactive-editor :as reactive-editor]
             [tolglow.studio.state-socket]
             [tolglow.studio.spatial-drafts :as spatial-drafts]
             [tolglow.transit :as transit]
@@ -23,6 +26,10 @@
 (def default-preview-settings
   {:worklight 0.12 :quality "auto" :camera "audience" :lighting-mode "interpolate"})
 
+(def default-builder
+  {:id "after-hours" :name "After hours" :color "#b981a3" :level 0.7
+   :duration-value 4 :duration-unit "beats" :release-value 1 :release-unit "beats" :cue? true})
+
 (defn initial-db [session]
   {:session session :show nil :pointers {} :pending-params {} :drafts {} :stream-id nil
    :connection {:connected? false :error "Connecting to the studio…"}
@@ -32,8 +39,7 @@
         :composition {:id "evening-drift" :name "Evening drift" :mode "sequence" :loop "once" :slots []}
         :definition {:kind "effects" :source initial-source :version 1 :engine :textarea :mode :source
                      :auto? false :status "Ready to create" :result "" :error? false}
-        :builder {:id "after-hours" :name "After hours" :color "#b981a3" :level 0.7
-                  :duration-value 4 :duration-unit "beats" :release-value 1 :release-unit "beats" :cue? true}
+        :builder default-builder
         :response-form {:id "performance-envelope" :params "level" :scope "all"
                         :attack-value 0.5 :release-value 1 :unit "beats" :curve "smoothstep"}
         :auto-form {:interval-value 8 :interval-unit "beats" :count 1 :scope "page" :mode "timed" :duration-value 4 :duration-unit "beats"}
@@ -76,7 +82,7 @@
                      (:fx effects) (update :fx #(mapv (fn [[kind value]]
                                                         [kind (if (= kind :studio/http) (guard-request db value) value)]) %)))))))))
 
-(defn http! [{:keys [path body typed? raw-response? on-success on-failure timeout-ms]}]
+(defn http! [{:keys [path body typed? raw-response? on-success on-failure on-uncertain timeout-ms]}]
   (let [controller (js/AbortController.)
         timeout (js/setTimeout #(.abort controller) (or timeout-ms 5000))]
     (-> (js/fetch path
@@ -90,29 +96,37 @@
                  (-> (.text response)
                      (.then (fn [text]
                               (let [type (or (.get (.-headers response) "content-type") "")
+                                    status (.-status response)
                                     data (cond
                                            (str/includes? type "application/transit+json")
                                            (let [v (transit/decode text)] (if raw-response? v (projection/presentation v)))
                                            (str/includes? type "application/json")
                                            (js->clj (js/JSON.parse text) :keywordize-keys true)
-                                           :else {:message text})]
-                                (if (or (not (.-ok response)) (contains? #{:rejected "rejected"} (:status data)) (:error data))
-                                  (throw (js/Error. (str (error-message data))))
+                                           :else {:message text})
+                                    rejected? (contains? #{:rejected "rejected"} (:status data))]
+                                (if (or (not (.-ok response)) rejected? (:error data))
+                                  (throw (if (and on-uncertain (or rejected? (and (<= 400 status 499) (not= 408 status))))
+                                           (ex-info (str (error-message data)) {::definite-http-failure true})
+                                           (js/Error. (str (error-message data)))))
                                   data)))))))
         (.then #(dispatch-result on-success %))
-        (.catch #(dispatch-result (or on-failure [:studio/failure]) (error-message %)))
+        (.catch (fn [error]
+                  (if (and on-uncertain (not (::definite-http-failure (ex-data error))))
+                    (rf/dispatch on-uncertain)
+                    (dispatch-result (or on-failure [:studio/failure]) (error-message error)))))
         (.finally #(js/clearTimeout timeout)))))
 (rf/reg-fx :studio/http http!)
 (rf/reg-fx :studio/scroll-top (fn [_] (.scrollTo js/window #js {:top 0 :behavior "auto"})))
 (rf/reg-fx :studio/send-command
-  (fn [{:keys [op fields epoch session runtime-id on-success on-failure beacon?]}]
+  (fn [{:keys [op fields epoch session runtime-id on-success on-failure on-uncertain timeout-ms beacon?]}]
     (let [payload (merge {:op op :epoch epoch :command-id (str (random-uuid))
                           :source {:adapter "web" :session-id session}} fields
                          (when runtime-id {:runtime-id runtime-id}))]
       (if (and beacon? (.-sendBeacon js/navigator))
         (.sendBeacon js/navigator "/api/command"
                      (js/Blob. #js [(js/JSON.stringify (clj->js payload))] #js {:type "application/json"}))
-        (http! {:path "/api/command" :body payload :on-success on-success :on-failure on-failure})))))
+        (http! {:path "/api/command" :body payload :on-success on-success :on-failure on-failure
+                :on-uncertain on-uncertain :timeout-ms timeout-ms})))))
 (rf/reg-fx :studio/download
   (fn [_]
     (-> (js/fetch "/api/export")
@@ -185,6 +199,117 @@
 (defn draft [db key op fields]
   (assoc-in db [:drafts key] {:op op :fields fields :epoch (get-in db [:show :epoch]) :runtime-id (get-in db [:show :runtime-id])}))
 
+(def ^:private history-path [:ui :operator-history])
+
+(def ^:private history-http-timeout-ms 7000)
+
+(def ^:private history-confirmation-ms 30000)
+
+(def ^:private history-waiting-message "Waiting for the live show to confirm the history command.")
+
+(defn history-inspector [db]
+  (let [projection (get-in db [:server-projection :view :operator-history])
+        state (get-in db history-path)]
+    {:open? (:open? state)
+     :projection projection
+     :view-state state
+     :apply-status (cond-> {:pending? (boolean (:pending state))
+                           :message (:message state) :error? (:error? state) :conflict (:conflict state)}
+                     (or (:awaiting-full? db) (not (get-in db [:connection :connected?])))
+                     (assoc :connection-message "Waiting for the live show to reconnect."))}))
+
+(defn- fail-history [{:keys [pending preview] :as state} message]
+  (cond-> (-> state (dissoc :pending) (assoc :message message :error? true))
+    (and (= :history/select (:op pending)) (= (:preview pending) preview))
+    (assoc :conflict message)))
+
+(defn- settle-history [db]
+  (let [{:keys [operator-history revision epoch history-command-outcomes]} (get-in db [:server-projection :view])
+        {:keys [identity open? pending preview] :as state} (get-in db history-path)]
+    (cond
+      (nil? state) db
+      (not= identity (:identity operator-history))
+      (assoc-in db history-path {:identity (:identity operator-history) :open? open?})
+      (nil? pending) db
+      :else
+      (let [receipt (or (some #(when (and (= (:id pending) (:command-id %)) (= epoch (:epoch %))) %)
+                              (rseq (or history-command-outcomes [])))
+                        (:receipt pending))]
+        (case (:status receipt)
+          (:rejected "rejected")
+          (update-in db history-path fail-history (or (:message receipt) "The live show rejected the history command."))
+
+          (:accepted "accepted")
+          (if (and (integer? (:revision receipt)) (>= revision (:revision receipt)))
+            (let [current (:current-id operator-history)]
+              (update-in db history-path
+                         #(cond-> (-> %
+                                      (dissoc :pending :conflict :error?)
+                                      (assoc :message (if (and (= current (:history-cursor receipt))
+                                                              (= (:position operator-history) (:history-position receipt)))
+                                                        "History step applied."
+                                                        "History applied. The current step has since changed.")))
+                            (= (:preview pending) preview) (-> (dissoc :preview) (assoc :focus-id current)))))
+            db)
+
+          db)))))
+
+(rf/reg-event-db :operator-history/open
+  (fn [db _] (-> db (assoc-in (conj history-path :open?) true) settle-history)))
+(rf/reg-event-db :operator-history/close
+  (fn [db _]
+    (update-in db history-path #(-> % (assoc :open? false) (dissoc :preview :focus-id :message :conflict :error?)))))
+(rf/reg-event-db :operator-history/inspect
+  (fn [db [_ interaction]]
+    (let [{:keys [open? projection view-state]} (history-inspector db)]
+      (if (and open? projection)
+        (assoc-in db history-path (history/update-interaction view-state projection interaction))
+        db))))
+
+(rf/reg-event-fx :operator-history/navigate
+  (fn [{:keys [db]} [_ op request]]
+    (let [{:keys [open? projection view-state apply-status]} (history-inspector db)]
+      (when (and open? request (not (:pending? apply-status)))
+        (if (= request (get (history/commands projection view-state apply-status) op))
+          (let [{[runtime-id _ epoch] :identity :keys [expected-cursor expected-history-position target-id]} request
+                command-id (str (random-uuid))
+                fields (cond-> {:expected-epoch epoch :expected-cursor expected-cursor :command-id command-id
+                                :expected-history-position expected-history-position}
+                         (#{:history/redo :history/select} op) (assoc :node-id target-id))
+                [effect payload] (command db op fields [:operator-history/received command-id] epoch false runtime-id)]
+            {:db (update-in db history-path #(-> % (dissoc :message :conflict :error?)
+                                                 (assoc :pending {:id command-id :op op :preview (:preview view-state)})))
+             :dispatch-later [{:ms history-confirmation-ms :dispatch [:operator-history/unconfirmed command-id]}]
+             :fx [[effect (assoc payload :on-failure [:operator-history/rejected command-id]
+                                        :on-uncertain [:operator-history/uncertain command-id]
+                                        :timeout-ms history-http-timeout-ms)]]})
+          {:db (assoc-in db (conj history-path :message) "The live history changed. Review the current step.")})))))
+
+(rf/reg-event-db :operator-history/received
+  (fn [db [_ command-id receipt]]
+    (if (and (= command-id (:command-id receipt) (get-in db (into history-path [:pending :id])))
+             (= (:epoch receipt) (get-in db [:server-projection :view :epoch])))
+      (case (:status receipt)
+        (:pending "pending") (assoc-in db (conj history-path :message) history-waiting-message)
+        (:accepted "accepted") (-> db (assoc-in (into history-path [:pending :receipt]) receipt) settle-history)
+        db)
+      db)))
+(rf/reg-event-db :operator-history/uncertain
+  (fn [db [_ command-id]]
+    (if (= command-id (get-in db (into history-path [:pending :id])))
+      (assoc-in db (conj history-path :message) history-waiting-message)
+      db)))
+(rf/reg-event-db :operator-history/rejected
+  (fn [db [_ command-id message]]
+    (if (= command-id (get-in db (into history-path [:pending :id])))
+      (update-in db history-path fail-history message)
+      db)))
+(rf/reg-event-db :operator-history/unconfirmed
+  (fn [db [_ command-id]]
+    (if (= command-id (get-in db (into history-path [:pending :id])))
+      (update-in db history-path fail-history "The result could not be confirmed. Review the current step before trying again.")
+      db)))
+
 (rf/reg-event-fx :studio/initialize
   (fn [_ [_ session]] {:db (initial-db session) :studio/open-stream session}))
 
@@ -241,12 +366,18 @@
         page-id (get-in db [:ui :page-id])
         selected (get-in db [:ui :selected-instance])
         epoch-changed? (or runtime-changed? (and (:show db) (not= (get-in db [:show :epoch]) (:epoch show))))
+        checkpoint-view-changed? (and (:show-checkpoints db)
+                                      (or (not (get-in db [:connection :connected?]))
+                                          (not= (projection/identity-of (:view server))
+                                                (projection/identity-of (get-in db [:server-projection :view])))))
         updated (-> db (assoc :show show :snapshot-order order :drafts drafts :connection {:connected? true}
                              :server-projection server :server-presentation presentation)
+                    settle-history
                     spatial-drafts/settle
                     (assoc-in [:ui :page-id] (if (some #(= page-id (:id %)) (:pages show)) page-id (:id (first (:pages show))))))
         updated (settle-connection-drafts updated (:server-presentation db) (get-in db [:server-projection :view]))
         updated (cond-> updated
+                  (checkpoints/replaces-rig-draft? db (:view server)) (assoc-in [:ui :rig-dirty?] false)
                   epoch-changed? (dissoc :ending-holds :section-pattern-request)
                   epoch-changed? (update-in [:ui :definition] dissoc :publishing? :publication)
                   epoch-changed? (update-in [:ui :auto-form] dissoc :target-activity? :activity-target))
@@ -261,7 +392,7 @@
                                          #(assoc (or % (get-in show [:rig :room])) :measured-fog current))
                       :else (update-in updated [:ui :rig-draft :room] dissoc :measured-fog)))
                   (assoc-in updated [:ui :rig-draft] (:rig show)))]
-    {:db updated
+    {:db (checkpoints/carry-restore-draft db updated)
      :fx (cond-> []
            (and (or (:recover-held? updated) (and epoch-changed? (seq (:pointers db))))
                 (or (:awaiting-full? db) epoch-changed? (not= (:revision show) (get-in db [:show :revision]))
@@ -270,6 +401,9 @@
            epoch-changed? (conj [:dispatch [:studio/release-pointers]] [:dispatch [:chat/runtime-change]]
                                         [:dispatch [:fixtures/runtime-change]] [:dispatch [:connections/runtime-change]] [:dispatch [:sensors/runtime-change]] [:dispatch [:modulation/runtime-change]] [:dispatch [:patchbay/runtime-change]] [:dispatch [:waveform/runtime-change]] [:dispatch [:repl/runtime-change]] [:dispatch [:performance/runtime-change]] [:dispatch [:workspace/runtime-change]] [:dispatch [:subscribers/runtime-change]]
                                         (notice "Show restarted; controls follow the new epoch."))
+           checkpoint-view-changed? (conj [:dispatch [:checkpoints/show-changed]])
+           (and (not checkpoint-view-changed?) (checkpoints/queued-result updated))
+           (conj [:dispatch [:checkpoints/receipt-pushed]])
            (and (get-in db [:connections :visible?])
                 (or epoch-changed?
                     (not (identical? (:connection-status presentation)
@@ -307,7 +441,9 @@
           :duplicate (cond-> {:db (-> db (dissoc :awaiting-full?) (assoc :connection {:connected? true}))
                               :studio/stream-reply [id {:op :ack :token (:token envelope)}]}
                        (and (:awaiting-full? db) (:recover-held? db))
-                       (assoc :fx [[:dispatch [:studio/reconcile-held]]])
+                       (update :fx (fnil conj []) [:dispatch [:studio/reconcile-held]])
+                       (and (:awaiting-full? db) (:show-checkpoints db))
+                       (update :fx (fnil conj []) [:dispatch [:checkpoints/show-changed]])
                        (and (:awaiting-full? db) (get-in db [:connections :visible?]))
                        (assoc :dispatch [:connections/pushed]))
           {:db (assoc db :awaiting-full? true)
@@ -843,19 +979,40 @@
          :dispatch [:studio/toast (if unchanged? "Rig saved. Preview and output use this layout."
                                     "Rig saved. Your newer edits remain unsaved.")]}))))
 
+(defn- definition-owner [db]
+  (select-keys (:show db) [:runtime-id :epoch]))
+
 (rf/reg-event-fx :studio/definition-load
-  (fn [_ [_ kind id]] {:studio/http {:path (str "/api/definition?kind=" kind "&id=" (js/encodeURIComponent id))
-                                    :on-success [:studio/definition-loaded kind id]}}))
+  (fn [{:keys [db]} [_ kind id]]
+    (let [token (assoc (definition-owner db) :id (str (random-uuid)))
+          typed? (= "effects" kind)]
+      {:db (assoc-in db [:ui :definition :load-token] token)
+       :studio/http {:path (str "/api/definition?kind=" kind "&id=" (js/encodeURIComponent id) (when typed? "&data=true"))
+                     :typed? typed? :raw-response? typed?
+                     :on-success [:studio/definition-loaded kind id token]}})))
 (rf/reg-event-fx :studio/definition-loaded
-  (fn [{:keys [db]} [_ kind id {:keys [source]}]]
-    (let [version (js/parseInt (or (second (re-find #":version\s+(\d+)" source)) "1") 10)]
-      {:db (update-in db [:ui :definition] merge {:kind kind :source source :loaded-id id :version version
-                                                :mode :source :auto? false :status (str id " · v" version)
-                                                :result "Loaded from the running show." :error? false})
-       :studio/nvim-source source})))
+  (fn [{:keys [db]} [_ kind id token {:keys [source definition]}]]
+    (when (and (= token (get-in db [:ui :definition :load-token]))
+               (= (dissoc token :id) (definition-owner db)))
+      (let [version (or (:version definition) (js/parseInt (or (second (re-find #":version\s+(\d+)" source)) "1") 10))
+            typed (when (and (= "effects" kind) (:reactive definition)) definition)]
+        {:db (cond-> (update-in db [:ui :definition] merge {:kind kind :source source :loaded-id id :version version
+                                                          :loaded-owner (dissoc token :id)
+                                                          :mode :source :auto? false :status (str id " · v" version)
+                                                          :result "Loaded from the running show." :error? false
+                                                          :publication nil :publishing? false :load-token nil})
+               (or typed (get-in db [:ui :builder :reactive :base])) (assoc-in [:ui :builder] default-builder)
+               typed (update-in [:ui :builder] merge {:id id :name (or (:name typed) id) :cue? false
+                                                    :reactive (reactive-editor/loaded-draft typed)}))
+         :studio/nvim-source source}))))
 (rf/reg-event-fx :studio/definition-new
-  (fn [{:keys [db]} _] {:db (update-in db [:ui :definition] merge {:kind "effects" :source initial-source :loaded-id nil :version 1 :auto? false :status "New definition" :result ""})
-                        :studio/nvim-source initial-source}))
+  (fn [{:keys [db]} _]
+    {:db (cond-> (update-in db [:ui :definition] merge {:kind "effects" :source initial-source :loaded-id nil :version 1
+                                                       :loaded-owner nil
+                                                       :auto? false :status "New definition" :result "" :error? false
+                                                       :publication nil :publishing? false :load-token nil})
+           (get-in db [:ui :builder :reactive]) (assoc-in [:ui :builder] default-builder))
+     :studio/nvim-source initial-source}))
 (defn- edit-definition-source [db source]
   (let [revision (inc (get-in db [:ui :definition :edit-revision] 0))]
     {:db (update-in db [:ui :definition] merge {:source source :status "Unpublished changes" :edit-revision revision
@@ -891,17 +1048,51 @@
     (throw (js/Error. "Choose a finite musical duration and a supported unit.")))
   {(keyword unit) value})
 
-(defn builder-definition [{:keys [id name color level duration-value duration-unit release-value release-unit keyframes blocks]} version]
-  (when-not (re-matches #"[a-zA-Z][a-zA-Z0-9._/-]*" id) (throw (js/Error. "Use an identifier beginning with a letter.")))
-  (when-not (and (number? level) (<= 0 level 1) (pos? duration-value) (<= 0 release-value))
-    (throw (js/Error. "Intensity must be 0–1, duration positive, and release zero or positive.")))
-  (cond-> {:id (keyword id) :version version :name name :swatch color :duration (musical-duration duration-value duration-unit)
-   :envelope {:attack (if (= release-unit "ms") {:ms 100} {:beats 0.125}) :release (musical-duration release-value release-unit)}
-   :params {:level {:type :number :default level :bounds [0.0 1.0]}}
-   :outputs {:color {:op :const :value (mapv #(/ (js/parseInt (subs color % (+ % 2)) 16) 255) [1 3 5])}
-             :dimmer {:op :param :key :level}}}
-    keyframes (assoc :keyframes keyframes)
-    (seq blocks) (assoc :blocks blocks)))
+(defn builder-definition
+  [{:keys [id name color level duration-value duration-unit release-value release-unit keyframes blocks reactive]} version]
+  (when-not (or (:base reactive) (re-matches #"[a-zA-Z][a-zA-Z0-9._/-]*" id))
+    (throw (js/Error. "Use an identifier beginning with a letter.")))
+  (when (and (:base reactive) (not (:enabled? reactive)))
+    (throw (js/Error. "Replace reactive output expressions in EDN to change the evaluation mode of this definition.")))
+  (let [color-output {:op :const :value (mapv #(/ (js/parseInt (subs color % (+ % 2)) 16) 255) [1 3 5])}
+        draft {:id (keyword id) :version version :name name :swatch color
+               :duration (musical-duration duration-value duration-unit)}]
+    (if (:enabled? reactive)
+      (let [{:keys [targets dimmer] config :reactive} (reactive-editor/definition-fields reactive)]
+        (if-let [base (:base reactive)]
+          (cond-> (assoc base :version version :targets targets :reactive config)
+            (not= name (or (:name base) id)) (assoc :name name))
+          (do
+            (when-not (pos? duration-value) (throw (js/Error. "Duration must be positive.")))
+            (assoc draft :targets targets :reactive config :outputs {:color color-output :dimmer dimmer}))))
+      (do
+        (when-not (and (number? level) (<= 0 level 1) (pos? duration-value) (<= 0 release-value))
+          (throw (js/Error. "Intensity must be 0–1, duration positive, and release zero or positive.")))
+        (cond-> (assoc draft
+                       :envelope {:attack (if (= release-unit "ms") {:ms 100} {:beats 0.125})
+                                  :release (musical-duration release-value release-unit)}
+                       :params {:level {:type :number :default level :bounds [0.0 1.0]}}
+                       :outputs {:color color-output :dimmer {:op :param :key :level}})
+          keyframes (assoc :keyframes keyframes)
+          (seq blocks) (assoc :blocks blocks))))))
+
+(defn- builder-source [db]
+  (let [builder (get-in db [:ui :builder])
+        version (get-in db [:ui :definition :version] 1)
+        baseline (get-in builder [:reactive :base :version])]
+    (when (and baseline (not= baseline version))
+      (throw (js/Error. "The definition changed. Reload it from the registry.")))
+    (let [definition (builder-definition builder version)
+          fixtures (into #{} (map :id) (get-in db [:server-projection :view :rig :fixtures]))]
+      (when (and (:reactive definition) (not (every? fixtures (:targets definition))))
+        (throw (js/Error. "Choose targets from the current rig.")))
+      (pr-str definition))))
+
+(rf/reg-event-db :studio/builder-reactive
+  (fn [db [_ edit]]
+    (if (get-in db [:ui :definition :publishing?]) db
+      (-> db (update-in [:ui :builder :reactive] edit)
+          (update-in [:ui :definition] merge {:status "Unpublished changes" :result "" :error? false})))))
 
 (rf/reg-event-fx :studio/apply-block-source
   (fn [{:keys [db]} [_ baseline updated]]
@@ -912,7 +1103,7 @@
 (rf/reg-event-fx :studio/builder-generate
   (fn [{:keys [db]} _]
     (try
-      (let [source (pr-str (builder-definition (get-in db [:ui :builder]) (get-in db [:ui :definition :version] 1)))]
+      (let [source (builder-source db)]
         {:db (update-in db [:ui :definition] merge {:source source :kind "effects" :mode :source :status "Generated EDN"})
          :studio/nvim-source source})
       (catch :default error {:dispatch [:studio/editor-error (error-message error)]}))))
@@ -931,25 +1122,37 @@
     (when-not (get-in db [:ui :definition :publishing?])
       (try
         (let [definition (get-in db [:ui :definition]) built? (= :form (:mode definition))
-              token (assoc (select-keys (:show db) [:runtime-id :epoch]) :id (str (random-uuid)))
+              owner (definition-owner db)
+              _ (when (and (:loaded-owner definition) (not= owner (:loaded-owner definition)))
+                  (throw (js/Error. "The show changed. Reload the definition from the registry.")))
+              token (assoc owner :id (str (random-uuid)))
               pending (update-in db [:ui :definition] merge {:publication token :publishing? true})
-              source (if built? (pr-str (builder-definition (get-in db [:ui :builder]) (:version definition))) (:source definition))]
+              source (if built? (builder-source db) (:source definition))]
           (if (and (= :neovim (:engine definition)) (not built?))
             {:db pending :studio/nvim-read {:on-success [:studio/publish-source token automatic? nil]
                                            :on-failure [:studio/publication-error token]}}
             {:db pending :dispatch [:studio/publish-source token automatic? (when built? (get-in db [:ui :builder])) source]}))
         (catch :default error {:dispatch [:studio/editor-error (error-message error)]})))))
+
 (rf/reg-event-fx :studio/publish-source
   (fn [{:keys [db]} [_ token automatic? built source]]
     (when (publication-current? db token)
       (let [{:keys [kind loaded-id version]} (get-in db [:ui :definition])
-          kind (if built "effects" kind)
-          existing (when built (effect db (:id built)))
-          expected (if built (:version existing) (when loaded-id version))]
-      {:db (update-in db [:ui :definition] merge {:publishing? true :source source :kind kind})
-       :studio/http {:path "/api/definition" :body (cond-> {:kind kind :source source :expected-epoch (:epoch token) :runtime-id (:runtime-id token)} expected (assoc :expected-version expected))
-                     :on-success [:studio/published token automatic? built kind expected]
-                     :on-failure [:studio/publication-error token]}}))))
+            kind (if built "effects" kind)
+            existing (when built (effect db (:id built)))
+            baseline (get-in built [:reactive :base :version])
+            expected (cond
+                       baseline baseline
+                       (and (get-in built [:reactive :enabled?]) (= loaded-id (:id built))) version
+                       built (:version existing)
+                       loaded-id version)]
+        {:db (update-in db [:ui :definition] merge {:publishing? true :source source :kind kind})
+         :studio/http {:path "/api/definition"
+                       :body (cond-> {:kind kind :source source :expected-epoch (:epoch token) :runtime-id (:runtime-id token)}
+                               expected (assoc :expected-version expected))
+                       :on-success [:studio/published token automatic? built kind expected]
+                       :on-failure [:studio/publication-error token]}}))))
+
 (rf/reg-event-fx :studio/published
   (fn [{:keys [db]} [_ token automatic? built kind expected ack]]
     (when (publication-current? db token)
@@ -959,8 +1162,10 @@
           cue-source (when built (pr-str {:id (keyword (:id built)) :version 1 :name (:name built)
                                          :effect-id (keyword (:id built)) :swatch (:color built)
                                          :params {} :duration (musical-duration (:duration-value built) (:duration-unit built)) :reload-policy :preserve-state}))]
-      {:db (update-in db [:ui :definition] merge {:publishing? false :loaded-id id :version version :status "Published" :error? false
-                                                :result "Validated and published. The running show now has this definition."})
+      {:db (cond-> (update-in db [:ui :definition] merge {:publishing? false :loaded-id id :version version
+                                                        :loaded-owner (dissoc token :id) :status "Published" :error? false
+                                                        :result "Validated and published. The running show now has this definition."})
+             (get-in built [:reactive :base]) (assoc-in [:ui :builder :reactive :base :version] version))
        :fx (cond-> [] (not automatic?) (conj (notice "Definition validated and published."))
              (and built (:cue? built)) (conj [:studio/http {:path "/api/definition"
                                                           :body (cond-> {:kind "cues" :source cue-source :runtime-id (:runtime-id token) :expected-epoch (:epoch token)}

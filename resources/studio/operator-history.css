@@ -1,0 +1,305 @@
+.operator-history {
+  --history-gutter-width: 5.25rem;
+  --history-lane-step: .67rem;
+  --history-gutter-offset: .6rem;
+  inline-size: min(56rem, calc(100% - 2rem));
+  max-inline-size: none;
+  max-block-size: 90vh;
+  max-block-size: 90dvh;
+  min-inline-size: 0;
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+}
+
+.operator-history::backdrop {
+  background: #070907ba;
+}
+
+.topbar .operator-history-open,
+.operator-history-close,
+.operator-history-navigation .button {
+  min-block-size: 44px;
+  min-inline-size: 44px;
+}
+
+.operator-history-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: .65rem 1rem;
+  padding: .8rem 1rem;
+  border-block-end: 1px solid var(--line);
+}
+
+.operator-history-retention {
+  margin: .15rem 0 0;
+  color: var(--muted);
+  font-size: .875rem;
+}
+
+.operator-history-toolbar,
+.operator-history-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .5rem;
+}
+
+.operator-history-toolbar {
+  justify-content: space-between;
+  padding: .45rem 1rem;
+}
+
+.operator-history-filter {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  min-inline-size: 0;
+  color: var(--muted);
+  font-size: .875rem;
+}
+
+.operator-history-filter select {
+  min-inline-size: 0;
+  min-block-size: 44px;
+  max-inline-size: min(16rem, 100%);
+}
+
+.operator-history-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(15rem, 32%);
+  border-block-start: 1px solid var(--line);
+}
+
+.operator-history-scroll {
+  max-block-size: 36rem;
+  overflow: auto;
+  overscroll-behavior-y: contain;
+  scroll-padding-block: .25rem;
+  scrollbar-width: thin;
+}
+
+.operator-history-outline {
+  list-style: none;
+  margin: 0;
+  padding: .45rem .6rem;
+}
+
+.operator-history-row {
+  display: grid;
+  grid-template-columns: var(--history-gutter-width) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .55rem;
+  inline-size: 100%;
+  min-block-size: 48px;
+  padding: 0 .65rem 0 0;
+  border: 1px solid transparent;
+  border-radius: .55rem;
+  background: transparent;
+  text-align: start;
+}
+
+.operator-history-row:hover,
+.operator-history-row[aria-current="true"] {
+  background: var(--raised);
+}
+
+.operator-history-row:focus-visible {
+  outline-offset: -2px;
+}
+
+.operator-history-row[aria-pressed="true"] {
+  border-color: var(--accent);
+}
+
+.operator-history-gutter {
+  position: relative;
+  align-self: stretch;
+  margin-block: -1px;
+  color: var(--line);
+}
+
+.operator-history-gutter > span {
+  position: absolute;
+  inset-inline-start: calc(var(--history-gutter-offset) + var(--history-lane) * var(--history-lane-step));
+  background: currentColor;
+}
+
+.operator-history-rail {
+  inset-block: 0;
+  inline-size: 1px;
+}
+
+.operator-history-rail[data-extent="start"] {
+  inset-block-start: 50%;
+}
+
+.operator-history-rail[data-extent="end"] {
+  inset-block-end: 50%;
+}
+
+.operator-history-fork {
+  inset-block-start: 50%;
+  inline-size: calc(1px + var(--history-fork-width) * var(--history-lane-step));
+  block-size: 1px;
+}
+
+.operator-history-dot {
+  inset-block-start: 50%;
+  inline-size: .45rem;
+  block-size: .45rem;
+  border-radius: 50%;
+  color: var(--muted);
+  transform: translate(-42%, -50%);
+}
+
+.operator-history-row[aria-current="true"] .operator-history-dot,
+.operator-history-row[aria-pressed="true"] .operator-history-dot {
+  color: var(--accent);
+}
+
+.operator-history-entry-copy {
+  display: grid;
+  min-inline-size: 0;
+  padding-block: .35rem;
+  overflow-wrap: anywhere;
+}
+
+.operator-history-meta,
+.operator-history-states {
+  color: var(--muted);
+  font-size: .875rem;
+}
+
+.operator-history-states {
+  display: grid;
+  justify-items: end;
+  padding-block: .35rem;
+}
+
+.operator-history-states strong,
+.operator-history-row[aria-current="true"] .operator-history-states {
+  color: var(--accent);
+}
+
+.operator-history-row[data-state="Unavailable"] .operator-history-states > span:first-child,
+.operator-history-feedback[data-error="true"],
+.operator-history-warning {
+  color: var(--danger);
+}
+
+.operator-history-details {
+  min-inline-size: 0;
+  align-self: start;
+  padding: .9rem 1rem;
+  border-inline-start: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+.operator-history-details p {
+  margin-block: .4rem 0;
+}
+
+.operator-history-values {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .5rem;
+  margin: .65rem 0;
+}
+
+.operator-history-values > div {
+  min-inline-size: 0;
+  padding: .5rem .6rem;
+  border-radius: .45rem;
+  background: var(--raised);
+}
+
+.operator-history-values dt {
+  color: var(--muted);
+  font-size: .875rem;
+}
+
+.operator-history-values dd {
+  max-block-size: 5rem;
+  margin: .15rem 0 0;
+  overflow: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.operator-history-feedback {
+  padding: 0 1rem .6rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.operator-history-feedback:empty,
+.operator-history-warning:empty {
+  display: none;
+}
+
+.operator-history-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  margin-block-start: .65rem;
+}
+
+.operator-history-actions button {
+  min-block-size: 44px;
+  font-size: .875rem;
+}
+
+.operator-history-empty {
+  padding-inline: 1rem;
+}
+
+@media (max-width: 760px) {
+  .operator-history {
+    --history-gutter-width: 3.5rem;
+    --history-lane-step: .43rem;
+    --history-gutter-offset: .4rem;
+  }
+
+  .operator-history-filter select {
+    font-size: 16px;
+  }
+
+  .operator-history-body {
+    display: block;
+  }
+
+  .operator-history-scroll {
+    max-block-size: 36vh;
+    max-block-size: 36dvh;
+  }
+
+  .operator-history-row {
+    gap: .35rem;
+    padding-inline-end: .35rem;
+  }
+
+  .operator-history-details {
+    padding-block-end: max(.85rem, env(safe-area-inset-bottom));
+    border-inline-start: 0;
+    border-block-start: 1px solid var(--line);
+  }
+}
+
+@media (max-width: 600px) {
+  .topbar .master-control {
+    flex: 1 0 calc(100% - 7rem);
+  }
+
+  .topbar .operator-history-open {
+    order: 2;
+  }
+
+  #view-perform .perform-heading {
+    top: 96px;
+  }
+}

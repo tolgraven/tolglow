@@ -113,57 +113,66 @@
         (is (= 0.65 (get-in @(:state runtime) [:model :instances id :params :level]))))
       (finally (show/stop! runtime)))))
 
-(deftest four-channel-pcm-drives-the-show-only-from-the-selected-channel
-  (let [config {:default? true :channels 4 :input-channel 3}
-        neighbors (pcm/pcm (mapcat identity (repeat 480 [24576 -16384 0 32767])) false)
-        selected (pcm/pcm (mapcat identity (repeat 480 [0 0 16384 0])) false)
-        blocks [neighbors selected neighbors]
-        reads (atom -1)
+(defn- gated-pcm-source [blocks]
+  (let [reads (atom -1)
         opened (atom [])
         closed (atom 0)
+        waiting (vec (repeatedly (inc (count blocks)) #(CountDownLatch. 1)))
+        available (vec (repeatedly (inc (count blocks)) #(CountDownLatch. 1)))]
+    {:open! (fn [settings]
+              (swap! opened conj settings)
+              {:started-at-ms 0.0
+               :read! (fn [out offset length]
+                        (let [n (swap! reads inc)]
+                          (.countDown (nth waiting n))
+                          (if (and (.await (nth available n) 10 TimeUnit/SECONDS)
+                                   (< n (count blocks)))
+                            (do (System/arraycopy (nth blocks n) 0 out offset length) length)
+                            -1)))
+               :close! #(do (swap! closed inc)
+                            (doseq [gate available] (.countDown gate)))})
+     :advance! (fn [n]
+                 (.countDown (nth available n))
+                 (.await (nth waiting (inc n)) 10 TimeUnit/SECONDS))
+     :opened opened :closed closed}))
+
+(deftest four-channel-pcm-drives-the-show-only-from-the-selected-channel
+  (let [config {:default? true :channels 4 :input-channel 3 :block-frames 960}
+        phases [[0 0.0 0] [16384 0.5 128] [-8192 -0.25 64] [0 0.0 0]]
+        blocks (mapv (fn [[sample]]
+                       (pcm/pcm (mapcat identity (repeat 960 [24576 -16384 sample 32767])) false))
+                     phases)
+        {:keys [open! advance! opened closed]} (gated-pcm-source blocks)
         dimmer (atom nil)
-        waiting (vec (repeatedly 4 #(CountDownLatch. 1)))
-        available (vec (repeatedly 4 #(CountDownLatch. 1)))
         runtime (show/create-runtime
                  {:model (-> (model)
                              (assoc :time-ms 100.0)
                              (assoc-in [:registry :effects :wash :params :level :default] 0.0))
                   :sink {:send! (fn [universes _]
                                   (reset! dimmer (bit-and 255 (aget ^bytes (get universes 1) 0))))}
-                  :audio-options {:open-source!
-                                  (fn [settings]
-                                    (swap! opened conj (select-keys settings [:default? :channels :input-channel]))
-                                    {:started-at-ms 0.0
-                                     :read! (fn [out offset length]
-                                              (let [n (swap! reads inc)]
-                                                (.countDown (nth waiting n))
-                                                (if (and (.await (nth available n) 3 TimeUnit/SECONDS)
-                                                         (< n (count blocks)))
-                                                  (do (System/arraycopy (nth blocks n) 0 out offset length) length)
-                                                  -1)))
-                                     :close! #(do (swap! closed inc)
-                                                  (doseq [gate available] (.countDown gate)))})}})]
+                  :audio-options {:open-source! open!}})]
     (try
       (let [id (prepare! runtime (spec "audio/rms" :audio [0.0 1.0]))]
         ;; Prime the host before admitting capture. The test source's 0 ms
-        ;; origin precedes the initialized 100 ms clock for all three reads.
+        ;; origin precedes the initialized 100 ms clock for every read.
         (show/tick! runtime 100.0)
         (is (= config (select-keys (:config (show/audio-action! runtime :start config)) (keys config))))
-        (doseq [[n rms] [[0 0.0] [1 0.5] [2 0.0]]]
-          (.countDown (nth available n))
-          (is (.await (nth waiting (inc n)) 2 TimeUnit/SECONDS))
+        (doseq [[n [_ sample output]] (map-indexed vector phases)]
+          (is (advance! n))
           (show/tick! runtime (+ 120.0 (* n 20.0)))
-          (let [model (:model @(:state runtime))
-                waveform (:waveform (show/audio-action! runtime :status {}))]
+          (let [model (:model @(:state runtime)) rms (abs sample)
+                {:keys [waveform sample-counter]} (show/audio-action! runtime :status {})
+                sample-end (* 960 (inc n))]
             (is (= rms (get-in model [:variables :audio :features :rms])))
             (is (= rms (get-in model [:routing :ports "audio/rms" :value])))
             (is (= rms (get-in model [:instances id :params :level])))
             (is (= rms (first (get-in (show/snapshot runtime) [:output :values :head :emitted-color]))))
-            (is (= (if (= 1 n) 128 0) @dimmer))
-            (is (= {:channels 4 :input-channel 3 :mix :selected-channel :sample-end (* 480 (inc n))}
+            (is (= output @dimmer))
+            (is (= sample-end sample-counter (get-in model [:variables :audio :features :capture :sample-counter])))
+            (is (= {:channels 4 :input-channel 3 :mix :selected-channel :sample-end sample-end}
                    (select-keys waveform [:channels :input-channel :mix :sample-end])))
-            (is (pcm/close? (if (zero? n) 0.0 (/ 0.5 (Math/sqrt 2.0)))
-                            (:rms (first (:bins waveform)))))
+            (is (= {:min sample :max sample :rms rms}
+                   (select-keys (last (:bins waveform)) [:min :max :rms])))
             (when (= 1 n)
               (is (pos? (:audio/energy (show/variables runtime)))))))
         (is (:stopped? (show/audio-action! runtime :stop {})))
@@ -171,11 +180,65 @@
         (let [saved (show/export-show runtime)]
           (is (= {:version 1 :config (:config (show/audio-action! runtime :status {})) :capture-wanted? false}
                  (get-in saved [:model :integrations :audio-capture])))
-          (is (= :accepted (:status (apply-at! runtime :import {:source (pr-str saved)} 180.0))))
+          (is (= :accepted (:status (apply-at! runtime :import {:source (pr-str saved)} 200.0))))
           (let [status (show/audio-action! runtime :status {})]
             (is (= :idle (:state status)))
             (is (= config (select-keys (:config status) (keys config)))))
-          (is (= [config] @opened))))
+          (is (= [config] (mapv #(select-keys % (keys config)) @opened)))))
+      (finally (show/stop! runtime)))))
+
+(deftest selected-pcm-bands-and-pitch-drive-and-release-the-shared-output
+  (let [sample-rate 48000
+        frames 9600
+        source "audio/bass-pitch-hz"
+        block (fn [selected-amplitude]
+                (pcm/pcm (for [i (range frames)
+                               [hz amplitude] [[110 0.8] [1000 0.85] [65 selected-amplitude] [8000 0.9]]]
+                           (Math/round (* 32767 amplitude (Math/sin (/ (* 2 Math/PI hz i) sample-rate)))))
+                         false))
+        silent (block 0.0)
+        {:keys [open! advance!]} (gated-pcm-source [silent (block 0.5) silent])
+        dimmer (atom nil)
+        runtime (show/create-runtime
+                  {:model (-> (model)
+                              ;; The injected stream's 0–600 ms lies before the live capture clock.
+                              (assoc :time-ms 700.0)
+                              (assoc-in [:registry :effects :wash :params :level :default] 0.0))
+                   :sink {:send! (fn [universes _]
+                                   (reset! dimmer (bit-and 255 (aget ^bytes (get universes 1) 0))))}
+                   :audio-options {:open-source! open!}})]
+    (try
+      (let [id (prepare! runtime (spec source :audio [20 180]))
+            advance-phase! (fn [n]
+                             (is (advance! n))
+                             (show/tick! runtime (+ 720.0 (* 20.0 n))))]
+        (show/audio-action! runtime :start
+                            {:default? true :sample-rate sample-rate :channels 4 :input-channel 3 :block-frames frames})
+        (advance-phase! 0)
+        (is (zero? @dimmer))
+        (is (nil? (get-in @(:state runtime) [:model :routing :ports source])))
+        (advance-phase! 1)
+        (let [model (:model @(:state runtime))
+              features (get-in model [:variables :audio :features])
+              port (get-in model [:routing :ports source])
+              bin (last (get-in (show/audio-action! runtime :status {}) [:waveform :bins]))
+              level (get-in model [:instances id :params :level])]
+          (is (< (:mid-rms features) (:low-rms features)))
+          (is (< (:high-rms features) (:low-rms features)))
+          (is (= :low (key (apply max-key val (:bands bin)))))
+          (is (< (:min bin) -0.49 0.49 (:max bin)))
+          (is (< 64.5 (:bass-pitch-hz features) 65.5))
+          (is (= (:bass-pitch-hz features) (:value port)))
+          (is (> (:confidence port) 0.95))
+          (is (true? (:gate? port)))
+          (is (< 0.27 level 0.29))
+          (is (<= 71 @dimmer 73)))
+        (advance-phase! 2)
+        (let [model (:model @(:state runtime))]
+          (is (nil? (get-in model [:variables :audio :features :bass-pitch-hz])))
+          (is (false? (get-in model [:routing :ports source :gate?])))
+          (is (zero? (get-in model [:instances id :params :level])))
+          (is (zero? @dimmer))))
       (finally (show/stop! runtime)))))
 
 (deftest transient-gate-release-and-show-restore-retain-captured-ownership

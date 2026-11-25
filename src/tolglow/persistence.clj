@@ -13,11 +13,14 @@
             [afterglow.render.frame :as render]
             [afterglow.time :as time]
             [tolglow.registry :as registry]
+            [tolglow.authoring.variation-control :as variations]
             [tolglow.cue-timing :as cue-timing]
             [tolglow.persistence.audio :as saved-audio]
             [tolglow.compiler :as compiler]
+            [tolglow.effects.keyframes :as effect-keyframes]
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
+            [tolglow.effects.group-channels :as group-channels]
             [tolglow.modulation :as modulation]
             [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.lighting-capacity :as capacity]
@@ -271,6 +274,74 @@
         (check! (identifier? id) (conj path index) "Recent cue history needs a stable cue ID"))
       (check! (= (count ids) (count (distinct ids))) path "Recent cue history must contain distinct cue IDs"))))
 
+(defn- edit-counter? [value]
+  (and (natural? value) (< value Long/MAX_VALUE)))
+
+(defn- edit-label? [value]
+  (or (keyword? value) (and (string? value) (not (empty? value)))))
+
+(defn- saved-edit-target? [target epoch]
+  (when (vector? target)
+    (let [[kind id param archived-epoch] target]
+      (and (string? id) (not (empty? id)) (keyword? param)
+           (case kind
+             :instance-param (= 3 (count target))
+             :unavailable-instance-param (and (= 4 (count target)) (natural? archived-epoch)
+                                              (<= archived-epoch epoch))
+             false)))))
+
+(defn- validate-edit-display! [display path]
+  (check! (and (map? display) (seq display)
+               (every? #{:cue-id :cue-label :effect-id :effect-label} (keys display)))
+          path "Invalid saved edit target display")
+  (doseq [[id label] [[:cue-id :cue-label] [:effect-id :effect-label]]
+          :when (or (contains? display id) (contains? display label))]
+    (check! (and (identifier? (get display id)) (string? (get display label)) (seq (get display label)))
+            path "Saved edit target display needs an ID and label")))
+
+(defn- validate-edit-history! [{:keys [epoch] :as model}]
+  (let [path [:control :edit-history]
+        history (get-in model path)
+        {:keys [limit nodes cursor next-id position generations open]} (when (map? history) history)]
+    (check! (and (map? history)
+                 (every? #{:limit :nodes :cursor :next-id :position :generations :open} (keys history))
+                 (or (not (contains? history :open)) (= {} open)))
+            path "Saved edit history must be a closed tree")
+    (when (contains? history :position)
+      (check! (edit-counter? position) (conj path :position) "Invalid saved edit history position"))
+    (check! (and (integer? limit) (<= 2 limit control/edit-history-limit)
+                 (map? nodes) (<= 1 (count nodes) limit)
+                 (map? generations) (< (count generations) (count nodes)))
+            path "Saved edit history exceeds its bounds or lacks a root")
+    (check! (and (edit-counter? cursor) (contains? nodes cursor) (edit-counter? next-id))
+            path "Invalid saved edit history cursor or next node ID")
+    (check! (= 1 (count (filter #(= {:parent nil} %) (vals nodes))))
+            (conj path :nodes) "Saved edit history must have one root")
+    (doseq [[target generation] generations]
+      (check! (and (saved-edit-target? target epoch) (edit-counter? generation))
+              (conj path :generations target) "Invalid saved edit target or generation"))
+    (doseq [[id node] nodes]
+      (let [node-path (conj path :nodes id)
+            {:keys [parent target actor control-id before after generation]} (when (map? node) node)]
+        (check! (and (edit-counter? id) (< id next-id)) node-path "Invalid saved edit node ID")
+        (when-not (= {:parent nil} node)
+          ;; Edits are appended and can only follow earlier nodes. With one
+          ;; root this also proves each path terminates at that root.
+          (check! (and (map? node) (= #{:parent :target :actor :control-id :before :after :generation}
+                                     (set (keys (dissoc node :target-display))))
+                       (edit-counter? parent) (< parent id) (contains? nodes parent))
+                  node-path "Saved edit must refer to an earlier parent")
+          (check! (and (contains? generations target) (edit-counter? generation)
+                       (<= generation (get generations target)))
+                  node-path "Saved edit must reference a tracked target generation")
+          (check! (and (edit-label? actor) (edit-label? control-id)
+                       (registry/finite-number? before) (registry/finite-number? after) (not= before after))
+                  node-path "Invalid saved edit labels or values")
+          (when (contains? node :target-display)
+            (validate-edit-display! (:target-display node) (conj node-path :target-display))))))
+    (check! (= (set (keys generations)) (into #{} (keep :target) (vals nodes)))
+            (conj path :generations) "Saved edit generations must match retained history targets")))
+
 (defn validate-model
   "Validate a complete portable model without sampling effects or publishing IO.
   Provider defaults are canonicalized. Unknown top-level keys must be explicit
@@ -282,8 +353,15 @@
   (doseq [key [:registry :instances :pages :variables :transport :control :rig]]
     (check! (map? (get model key)) [key] "Complete show needs this map"))
   (validate-recent-cues! (:control model))
+  (when (contains? (:control model) :edit-history) (validate-edit-history! model))
   (check! (map? (:extensions model {})) [:extensions] "Extensions must be an explicit map")
+  (when (contains? (:extensions model) variations/state-key)
+    (check! (variations/valid-saved-state? (get-in model [:extensions variations/state-key]))
+            [:extensions variations/state-key] "Invalid cue variation banks"))
   (check! (map? (:settings model {})) [:settings] "Settings must be an explicit portable map")
+  (try (group-channels/validate-state! model)
+       (catch clojure.lang.ExceptionInfo error
+         (fail! (:path (ex-data error) [:settings :effect-group-channels]) (ex-message error))))
   (when-let [s (get-in model [:settings :fog-control])] (fog-control/settings s))
   (lighting-scenes/validate-state! model)
   (lighting/validate! (:settings model))
@@ -415,9 +493,31 @@
     (cond-> document (get-in document [:frame-output :universes])
       (update-in [:frame-output :universes] unpack-universes))))
 
+(defn- prepare-edit-history [model]
+  (if-let [history (control/edit-history-snapshot model)]
+    (let [receipts (get-in model [:control :history])
+          gesture-ids (into #{} (keep (fn [[id receipt]]
+                                        (when (#{:gesture/begin :gesture/sample :gesture/end :gesture/cancel}
+                                                (get-in receipt [:command :op])) id))) receipts)]
+      (cond-> (assoc-in model [:control :edit-history] history)
+        (:modulation model) (update-in [:modulation :holds] modulation/portable-holds)
+        (seq gesture-ids) (update-in [:control :history] #(apply dissoc % gesture-ids))
+        (seq gesture-ids) (update-in [:control :history-order] #(filterv (complement gesture-ids) %))))
+    model))
+
 (defn- make-document [model frame-output]
-  (cond-> {:schema-version schema-version :model (validate-model (cue-timing/without-queue model))}
-    (some? frame-output) (assoc :frame-output (validate-frame-output model frame-output))))
+  (let [{:keys [model settled]} (control/settle-temporary-gestures-for-save model)
+        model (if (:modulation model)
+                (reduce-kv (fn [model [_ id param] {:keys [actor control-id gesture-id]}]
+                             (update model :modulation modulation/settle-gesture-hold id param
+                                     [actor control-id gesture-id] false)) model settled)
+                model)
+        sampled? (some (comp pos? :last-sequence val) settled)
+        model (cond-> model sampled? effect-keyframes/without-checkpoints)]
+    ;; A sampled temporary value may already be in the captured frame or
+    ;; predictive windows. The restore path can regenerate them safely.
+    (cond-> {:schema-version schema-version :model (validate-model (prepare-edit-history (cue-timing/without-queue model)))}
+      (and (some? frame-output) (not sampled?)) (assoc :frame-output (validate-frame-output model frame-output)))))
 
 (defn freeze
   "Return a detached, size-checked snapshot including any timestamp or binary values."
@@ -443,6 +543,20 @@
               (list? value) (apply list (map walk value))
               :else value))]
     (walk value)))
+
+(defn- restore-edit-history [history instance-ids epoch]
+  (let [rekey (fn [[kind id param :as target]]
+                (if (= :instance-param kind)
+                  (if-let [new-id (get instance-ids id)]
+                    [kind new-id param]
+                    ;; This tag is never addressable, even when the old ID
+                    ;; matches an instance assigned by this or a later restore.
+                    [:unavailable-instance-param id param epoch])
+                  target))]
+    (-> history
+        (dissoc :open)
+        (update :nodes update-vals #(if (:target %) (update % :target rekey) %))
+        (update :generations #(into {} (map (fn [[target generation]] [(rekey target) generation])) %)))))
 
 (defn thaw
   "Validate schema 2 and return a complete replacement model. Preserve saved
@@ -516,7 +630,10 @@
                      (assoc (:control saved) :next-instance (count ids)
                             :next-order (max (get-in saved [:control :next-order])
                                              (if (seq ordered) (inc (apply max (map :order ordered))) 0))
-                            :history {} :history-order []))]
+                            :history {} :history-order []))
+        model (cond-> model
+                (get-in saved [:control :edit-history])
+                (update-in [:control :edit-history] restore-edit-history ids epoch))]
     (validate-model (sensors/prepare-restored-model model))))
 
 (defn write-string "Freeze and serialize one schema-2 show as Transit JSON."

@@ -2,13 +2,15 @@
   (:require [clojure.test :as test]))
 
 (def pure-tests
-  '[tolglow.visualization.cue-pads-test tolglow.effects.sampling-quality-test tolglow.compute-test tolglow.fixtures.patch-test tolglow.application-test tolglow.build-manifest-test tolglow.utils.iters-test tolglow.registry-test tolglow.effects-test tolglow.signals-test tolglow.modulation-test tolglow.parameter-sources-test
+  '[tolglow.visualization.cue-pads-test tolglow.effects.sampling-quality-test tolglow.effects.selection-test tolglow.compute-test tolglow.fixtures.patch-test tolglow.application-test tolglow.build-manifest-test tolglow.utils.iters-test tolglow.registry-test tolglow.effects-test tolglow.signals-test tolglow.modulation-test tolglow.parameter-sources-test
     tolglow.clock-test tolglow.observations-test tolglow.system-controls-test tolglow.aim-paths-test tolglow.studio.aim-paths-host-test
     tolglow.studio.http-transit-test tolglow.transit-test tolglow.studio.state-stream-test tolglow.studio.debug-stream-test
     tolglow.compiler-test tolglow.block-bindings-test tolglow.material-library-test tolglow.material-inputs-test
-    tolglow.effects.material-design-test tolglow.effects.variable-edit-test tolglow.compiler.batch-test tolglow.predictive-keyframes-test
+    tolglow.effects.material-design-test tolglow.effects.variable-edit-test tolglow.effects.group-channels-test
+    tolglow.effects.group-channels-host-test tolglow.compiler.batch-test tolglow.predictive-keyframes-test
     tolglow.perf.effect-samples-test
     tolglow.spatial.actions-test tolglow.spatial-cues-test tolglow.spatial-host-test tolglow.authoring.output-patch-test
+    tolglow.authoring.cue-variations-test tolglow.authoring.variation-control-test
     tolglow.composition.tween-test tolglow.composition.envelope-test
     tolglow.composition.sequence-test tolglow.composition.macro-test
     tolglow.composition.response-test tolglow.native-composition-test
@@ -22,7 +24,7 @@
     tolglow.autopilot.controller-test tolglow.autopilot.target-response-test tolglow.autopilot-host-test tolglow.performance-controls-test
     tolglow.integrations.analysis-test tolglow.integrations.sections-test
     tolglow.integrations.reference-position-test tolglow.integrations.track-profile-test tolglow.integrations.section-patterns-test
-    tolglow.integrations.mpv-observations-test tolglow.integrations.mpv-player-test
+    tolglow.integrations.mpv-observations-test tolglow.integrations.mpv-player-test tolglow.studio.section-reference-host-test
     tolglow.integrations.gdtf-test
     tolglow.venue-fog-test tolglow.fog-optics-test tolglow.fog-calibration-test tolglow.venue-performance-test tolglow.perf.beam-admission-test tolglow.perf.independent-effects-test tolglow.perf.weighted-live-test tolglow.stride-break-even-test
     tolglow.calibration-test tolglow.studio-test tolglow.effects.faults-test tolglow.studio.web-test tolglow.guest-admission-test tolglow.composition-test tolglow.agents-test tolglow.agents.forms-test
@@ -42,6 +44,8 @@
     tolglow.waveforms-test tolglow.development.agents-test tolglow.studio.application-agent-host-test
     tolglow.render.workers-test tolglow.request-archive-test
     tolglow.event-subscribers-test tolglow.studio.projection-test tolglow.studio.active-preview-test tolglow.push-scene-test
+    tolglow.controllers.content-browser-test tolglow.controllers.content-browser-host-test
+    tolglow.controllers.content-browser-display-test
     tolglow.preview.airplay-test])
 
 (def suites

@@ -35,7 +35,7 @@ For the eight-head show used in the room preview, a separate run started the pro
 
 ### JVM pauses with the moving mixed stage
 
-The mixed-stage show drove the 40 Hz scheduler and a local two-universe ArtDMX capture sink. A separate hidden Chrome target replayed the committed moving show in two interleaved phases at a 790 × 475 scene raster and 3271 × 1966 output. These runs used JDK 27, two show render workers and one GC worker. The table covers the central 9.5 seconds of each of five 12-second phases. The maximum JVM pause covers the full recording. [Mixed-stage reproduction](https://github.com/tolgraven/tolglow/issues/555)
+The mixed-stage show drove the 40 Hz scheduler and a local two-universe ArtDMX capture sink. A separate hidden Chrome target replayed the committed moving show in two interleaved phases at a 790 × 475 scene raster and 3271 × 1966 output. The captures used JDK 27, two show render workers and one GC worker. The one-processor captures used Tolglow `212957b5` and its paired Afterglow pin. The nine-processor capture used Tolglow `301c3114` with the same replay and paired fork. The table covers the central 9.5 seconds of each of five 12-second phases. The maximum JVM pause covers the full recording. [Mixed-stage reproduction](https://github.com/tolgraven/tolglow/issues/555)
 
 | Collector | Maximum heap | JVM processors | Captured output cadence | Longest gap | Skipped slots between sends | Longest recorded GC pause |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |

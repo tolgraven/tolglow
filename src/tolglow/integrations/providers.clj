@@ -7,7 +7,7 @@
             [clojure.walk :as walk])
   (:import [java.io InputStream InputStreamReader]
            [java.net URI]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers HttpResponse$BodyHandlers]
+           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers HttpResponse$BodyHandlers HttpTimeoutException]
            [java.nio.charset StandardCharsets]
            [java.time Duration]
            [java.util.concurrent Executors ThreadFactory TimeUnit]))
@@ -331,12 +331,19 @@
                          (if (:stream? req) (on-chunk! chunk) (.append result chunk))
                          (recur received)))))))))
          (catch Exception exception
-           (throw (ex-info (cond @timed-out? "Provider request timed out"
-                                 @cancelled? "Provider request cancelled"
-                                 :else "Provider transport failed")
-                           {:provider/error (cond @timed-out? :timeout @cancelled? :cancelled
-                                                  :else (or (:provider/error (ex-data exception)) :transport))}
-                           exception)))
+           (let [code (cond
+                        @timed-out? :timeout
+                        @cancelled? :cancelled
+                        ;; HttpClient can wrap its own deadline exception in the stream's IOException.
+                        (some #(instance? HttpTimeoutException %)
+                              (take-while some? (iterate ex-cause exception))) :timeout
+                        :else (or (:provider/error (ex-data exception)) :transport))]
+             (throw (ex-info (case code
+                               :timeout "Provider request timed out"
+                               :cancelled "Provider request cancelled"
+                               "Provider transport failed")
+                             {:provider/error code}
+                             exception))))
          (finally
            (remove-watch cancelled? watch-key)
            (.cancel timeout-task false)

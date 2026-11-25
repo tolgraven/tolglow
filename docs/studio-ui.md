@@ -81,6 +81,16 @@ the resulting cue.
 “Build registry page” reconciles an 8×8 page with registered effects, preserves
 existing occupied cells, and reports new placements, conflicts and overflow.
 
+In the visual builder, **Evaluate when inputs change** is the opt-in for a
+reactive effect. Choose target fixtures, bind aliases to ratom IDs or
+subscription queries, and pick the alias that drives the dimmer. Leave the beat
+transition blank for an immediate update. For an existing reactive effect,
+loading its definition opens the same inputs and targets in the visual builder.
+Its output expressions stay in EDN. The owner validates the published
+definition and rejects edits based on an older revision. Reload the definition
+after a show replacement or after saving changes to its EDN before publishing
+again from the visual builder.
+
 Existing edits send `expected-version` for optimistic publication. The shell
 owns actual version advancement. “Publish valid edits” debounces publication;
 validation errors remain visible and do not replace the last valid definition.
