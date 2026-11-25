@@ -839,7 +839,8 @@
              :studio/http {:path "/api/composition/append" :typed? true :raw-response? true :timeout-ms 7000
                            :body body
                            :on-success [:studio/macro-picker-reply owner unique body]
-                           :on-failure [:studio/macro-picker-failed owner unique]}})
+                           :on-failure [:studio/macro-picker-failed owner unique body]
+                           :on-uncertain [:studio/macro-picker-uncertain owner unique]}})
           {:db (assoc-in db [:ui :macro-picker :error] changed-cue-cell)})))))
 
 (rf/reg-event-fx :studio/macro-picker-reply
@@ -853,10 +854,25 @@
                         :error (if (= :pending (:status receipt)) "Macro update is still processing."
                                    "The show did not confirm the macro update."))}))))
 
+(defn- current-macro-request? [db owner request]
+  (and (current-show? (:show db) owner) (= request (get-in db [:ui :macro-picker :request]))))
+
+;; A definite rejection did not change the show. Forget its command so the next
+;; attempt validates the current cell instead of replaying a refused intent.
 (rf/reg-event-db :studio/macro-picker-failed
-  (fn [db [_ owner request error]]
-    (if (and (current-show? (:show db) owner) (= request (get-in db [:ui :macro-picker :request])))
-      (update-in db [:ui :macro-picker] assoc :request nil :error error)
+  (fn [db [_ owner request {:keys [cue-id macro-id] :as body} error]]
+    (if (current-macro-request? db owner request)
+      (cond-> (update-in db [:ui :macro-picker] assoc :request nil :error error)
+        (= body (get-in db [:ui :macro-append-intents [cue-id macro-id]]))
+        (update-in [:ui :macro-append-intents] dissoc [cue-id macro-id]))
+      db)))
+
+;; No reply leaves the outcome unknown. Keep the command for an exact retry.
+(rf/reg-event-db :studio/macro-picker-uncertain
+  (fn [db [_ owner request]]
+    (if (current-macro-request? db owner request)
+      (update-in db [:ui :macro-picker] assoc :request nil
+                 :error "The show did not reply. Retry append to confirm the same change.")
       db)))
 
 (defn put-cell [db {:keys [page-id x y]} cue-id]
