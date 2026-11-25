@@ -6,7 +6,7 @@
     tolglow.clock-test tolglow.observations-test tolglow.system-controls-test tolglow.aim-paths-test tolglow.studio.aim-paths-host-test
     tolglow.studio.http-transit-test tolglow.transit-test tolglow.studio.state-stream-test tolglow.studio.debug-stream-test
     tolglow.compiler-test tolglow.block-bindings-test tolglow.material-library-test tolglow.material-inputs-test
-    tolglow.legacy-frame-oracle-test
+    tolglow.legacy-frame-oracle-test tolglow.worker-publication-oracle-test
     tolglow.effects.material-design-test tolglow.effects.variable-edit-test tolglow.effects.group-channels-test
     tolglow.effects.group-channels-host-test tolglow.compiler.batch-test tolglow.predictive-keyframes-test
     tolglow.perf.effect-samples-test
@@ -29,7 +29,7 @@
     tolglow.integrations.mpv-observations-test tolglow.integrations.mpv-player-test tolglow.studio.section-reference-host-test
     tolglow.integrations.gdtf-test
     tolglow.venue-fog-test tolglow.fog-optics-test tolglow.fog-calibration-test tolglow.venue-performance-test tolglow.perf.beam-admission-test tolglow.perf.independent-effects-test tolglow.perf.weighted-live-test tolglow.stride-break-even-test
-    tolglow.calibration-test tolglow.studio-test tolglow.effects.faults-test tolglow.studio.web-test tolglow.guest-admission-test tolglow.composition-test tolglow.agents-test tolglow.agents.forms-test
+    tolglow.calibration-test tolglow.studio-test tolglow.effects.faults-test tolglow.effects.state-migration-test tolglow.studio.web-test tolglow.guest-admission-test tolglow.composition-test tolglow.agents-test tolglow.agents.forms-test
     tolglow.persistence-test tolglow.show.recovery-test tolglow.expressive-test tolglow.audio.capture-test tolglow.agents.credentials-test
     tolglow.fixtures.definitions-test tolglow.fixtures.library-test
     tolglow.connections-test tolglow.studio.connections-host-test

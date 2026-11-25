@@ -5,7 +5,8 @@
             [afterglow.render.frame :as render]
             [afterglow.runtime.engine :as engine]
             [afterglow.time :as time]
-            [tolglow.compiler :as compiler]))
+            [tolglow.compiler :as compiler]
+            [tolglow.effects.state-migration :as state-migration]))
 
 (defn frame
   "Sample the existing show and proposed launches once using the actual compiler
@@ -41,7 +42,8 @@
         result (engine/advance (assoc prediction-model :transport (dissoc sample-clock :time-ms))
                                {:time-ms sample-time :fixtures (:fixtures patch)
                                 :transport (dissoc sample-clock :time-ms)}
-                               compiler/compile-effect)
+                               ;; Match live :migrate reloads of the copied instances.
+                               #(state-migration/attach nil % (compiler/compile-effect %)))
         background (when (and (empty? (:instances model)) (seq (:assignments model)))
                      {:kind :assignments :assignments (:assignments model)})
         blocks (into (cond-> [] standby-block (conj standby-block) background (conj background)) (:contributions result))

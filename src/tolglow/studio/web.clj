@@ -138,7 +138,7 @@
     (let [text (read-body-text request)
           mime (some-> (get-in request [:headers "content-type"]) (str/split #";" 2) first str/trim str/lower-case)
           transit? (= mime transit-type)
-          decoded (cond transit? (transit/decode text)
+          decoded (cond transit? (transit/decode-command text)
                      (str/blank? text) {}
                      :else (json/read-str text :key-fn keyword))
           data (if (and transit? (= "/api/import" (:uri request))
