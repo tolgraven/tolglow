@@ -8,7 +8,7 @@ const finite = (v, name) => { if (!Number.isFinite(v)) throw new Error(`Invalid 
 export const FOG_QUALITY = Object.freeze({
   high: Object.freeze({ grid: [48, 24, 48], scale: 0.67, steps: 72, shadows: 4 }),
   desktop: Object.freeze({ grid: [32, 18, 32], scale: 0.5, steps: 48, shadows: 4 }),
-  mobile: Object.freeze({ grid: [24, 14, 24], scale: 0.4, steps: 32, shadows: 2 }),
+  mobile: Object.freeze({ grid: [24, 14, 24], scale: 0.34, steps: 32, shadows: 2 }),
   phone: Object.freeze({ grid: [20, 12, 20], scale: 0.33, steps: 24, shadows: 1 })
 });
 
