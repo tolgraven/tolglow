@@ -25,6 +25,7 @@
   (if (#{:aim :direction :color} attribute) 3 1))
 
 (defn- fail! [message] (throw (ex-info message {})))
+
 (defn- finite? [v] (and (number? v) #?(:clj (Double/isFinite (double v)) :cljs (js/Number.isFinite v))))
 
 (defn apply-patch

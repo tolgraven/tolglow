@@ -1,0 +1,218 @@
+(ns tolglow.show.recovery
+  "An independently scheduled working file and one prior-session slot per show."
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
+            [clojure.string :as str])
+  (:import [java.io FileOutputStream OutputStream]
+           [java.nio.channels FileChannel]
+           [java.nio.charset StandardCharsets]
+           [java.nio.file CopyOption Files OpenOption StandardCopyOption StandardOpenOption]
+           [java.nio.file.attribute FileAttribute]
+           [java.security DigestInputStream MessageDigest]
+           [java.util HexFormat]
+           [java.util.concurrent ScheduledThreadPoolExecutor ThreadFactory TimeUnit]))
+
+(defn- default-directory []
+  (let [home (System/getProperty "user.home")]
+    (if (str/includes? (str/lower-case (System/getProperty "os.name")) "mac")
+      (io/file home "Library" "Application Support" "Tolglow" "Recovery")
+      (io/file (or (not-empty (System/getenv "XDG_STATE_HOME")) (io/file home ".local" "state"))
+               "tolglow" "recovery"))))
+
+(defn options [value]
+  (when-not (or (nil? value) (boolean? value) (map? value))
+    (throw (ex-info "Invalid show recovery options" {})))
+  (let [{:keys [enabled? interval-ms directory] :as options}
+        (merge {:enabled? true :interval-ms 10000}
+               (cond (false? value) {:enabled? false} (map? value) value))]
+    (when-not (and (every? #{:enabled? :interval-ms :directory} (keys options))
+                   (boolean? enabled?) (pos-int? interval-ms))
+      (throw (ex-info "Invalid show recovery options" {})))
+    (assoc options :directory (.getAbsoluteFile (io/file (or directory (default-directory)))))))
+
+(defn- checkpoint-file [directory show-id name]
+  (let [identity (.getBytes (pr-str show-id) StandardCharsets/UTF_8)
+        key (.formatHex (HexFormat/of) (.digest (MessageDigest/getInstance "SHA-256") identity))]
+    (io/file directory key name)))
+
+(defn- prepare-file! [path write! publish!]
+  (let [file (.getAbsoluteFile (io/file path))]
+    (io/make-parents file)
+    (let [temp (Files/createTempFile (.toPath (.getParentFile file)) ".tolglow-show-" ".tmp"
+                                    (make-array FileAttribute 0))]
+      (try
+        (write! temp)
+        (publish! (fn []
+                    (Files/move temp (.toPath file) (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE
+                                                                           StandardCopyOption/REPLACE_EXISTING]))
+                    (.getAbsolutePath file)))
+        (finally (Files/deleteIfExists temp))))))
+
+(defn write-source!
+  "Force a complete temporary file and publish it with one local atomic move.
+  The optional publication callback owns whether and when to execute the move."
+  ([path source] (write-source! path source (fn [replace!] (replace!))))
+  ([path ^String source publish!]
+   (prepare-file! path
+     (fn [temp]
+       (with-open [stream (FileOutputStream. (.toFile temp))]
+         (.write stream (.getBytes source StandardCharsets/UTF_8))
+         (.force (.getChannel stream) true)))
+     publish!)))
+
+(def ^:private prior-name "prior.checkpoint")
+
+(def ^:private discard-prefix "tolglow-discarded-sha256 ")
+
+(defn- checkpoint-hash [file]
+  (let [digest (MessageDigest/getInstance "SHA-256")]
+    (with-open [input (DigestInputStream. (io/input-stream file) digest)]
+      (.transferTo input (OutputStream/nullOutputStream)))
+    (.formatHex (HexFormat/of) (.digest digest))))
+
+(defn- discarded-hash [prior]
+  (let [length (+ (count discard-prefix) 64)]
+    (when (= length (.length prior))
+      (with-open [input (io/input-stream prior)]
+        (second (re-matches #"tolglow-discarded-sha256 ([0-9a-f]{64})"
+                            (String. (.readNBytes input (inc length)) StandardCharsets/UTF_8)))))))
+
+(defn- prior-file [{:keys [directory settled-shows]} show-id]
+  (let [prior (checkpoint-file directory show-id prior-name)
+        dismissed (discarded-hash prior)]
+    (cond
+      (and (.isFile prior) (nil? dismissed)) prior
+      (contains? @settled-shows show-id)
+      ;; The first publication may have pinned the prior after the initial read.
+      (when (and (.isFile prior) (nil? (discarded-hash prior))) prior)
+      :else (let [working (checkpoint-file directory show-id "recovery.transit")]
+              (when (and (.isFile working)
+                         (or (nil? dismissed) (not= dismissed (checkpoint-hash working))))
+                working)))))
+
+(defn read-prior
+  "Read the prior candidate. If the first autosave moves it from the working
+  path to the prior slot during the read, read again from that slot."
+  [owner show-id read!]
+  (when-let [before (prior-file owner show-id)]
+    (let [value (read! before)
+          after (prior-file owner show-id)]
+      (cond
+        (= before after) value
+        after (let [pinned (read! after)]
+                (when (= after (prior-file owner show-id)) pinned))))))
+
+(defn- replace-settled! [settled-shows show-id replace!]
+  (let [settled? (contains? @settled-shows show-id)]
+    ;; Hide the fallback before swapping its bytes or publishing a dismissal.
+    ;; A pinned prior remains visible until its own file changes.
+    (swap! settled-shows conj show-id)
+    (try (replace!)
+         (catch Exception error
+           (when-not settled? (swap! settled-shows disj show-id))
+           (throw error)))))
+
+(defn discard-prior!
+  "Replace just the prior slot with a durable dismissal for its exact bytes."
+  [{:keys [directory open? settled-shows] :as owner} show-id publish!]
+  (boolean
+    (when-let [hash (read-prior owner show-id checkpoint-hash)]
+      (write-source! (checkpoint-file directory show-id prior-name) (str discard-prefix hash)
+        (fn [replace!]
+          (publish!
+            (fn []
+              (when @open?
+                (replace-settled! settled-shows show-id replace!)))))))))
+
+(defn- preserve-prior! [working prior publish!]
+  (prepare-file! prior
+    (fn [temp]
+      (Files/copy (.toPath working) temp (into-array CopyOption [StandardCopyOption/REPLACE_EXISTING
+                                                               StandardCopyOption/COPY_ATTRIBUTES]))
+      (with-open [channel (FileChannel/open temp (into-array OpenOption [StandardOpenOption/WRITE]))]
+        (.force channel true)))
+    publish!))
+
+(defn- autosave! [{:keys [directory status open? active? settled-shows] :as owner} capture! publish!]
+  (try
+    (when-let [{:keys [show-id source] :as captured} (when (and @open? @active?) (capture!))]
+      (let [working (checkpoint-file directory show-id "recovery.transit")
+            save! (fn [preserve!]
+                    (write-source! working source
+                      (fn [replace!]
+                        (publish! captured
+                          (fn []
+                            (when @open?
+                              (when (and preserve! (not (contains? @settled-shows show-id))) (preserve!))
+                              (replace-settled! settled-shows show-id replace!)))))))
+            path (if (and (not (contains? @settled-shows show-id)) (= working (prior-file owner show-id)))
+                   (preserve-prior! working (checkpoint-file directory show-id prior-name) save!)
+                   (save! nil))]
+        (when path
+          (swap! status assoc :last-saved (assoc (dissoc captured :source) :path path) :last-error nil))))
+    (catch Exception error
+      (when @open? (swap! status assoc :last-error (ex-message error))))))
+
+(defn start! [{:keys [enabled? interval-ms] :as config} active? capture! publish!]
+  (let [owner (assoc config :open? (atom true) :active? (atom active?)
+                            :settled-shows (atom #{}) :status (atom {}))]
+    (if enabled?
+      (let [factory (reify ThreadFactory
+                      (newThread [_ task] (doto (Thread. task "tolglow-show-recovery") (.setDaemon true))))
+            executor (ScheduledThreadPoolExecutor. 1 factory)]
+        (.scheduleWithFixedDelay executor ^Runnable #(autosave! owner capture! publish!)
+                                 interval-ms interval-ms TimeUnit/MILLISECONDS)
+        (assoc owner :executor executor))
+      owner)))
+
+(defn activate! [owner]
+  (reset! (:active? owner) true))
+
+(defn close! [{:keys [open? ^ScheduledThreadPoolExecutor executor]}]
+  (when (and open? (compare-and-set! open? true false) executor)
+    (.shutdownNow executor))
+  nil)
+
+(defn status [owner]
+  (merge (select-keys owner [:enabled? :interval-ms]) (some-> owner :status deref)))
+
+(defn- fixed-checkpoint-path? [directory file]
+  (when-let [parent (some-> file .getParentFile)]
+    (and (contains? #{"recovery.transit" "manual.edn" prior-name} (.getName file))
+         (re-matches #"[0-9a-f]{64}" (.getName parent))
+         (= directory (.getParentFile parent)))))
+
+(defn manual-path! [{:keys [directory]} path]
+  (let [file (.getAbsoluteFile (io/file path))
+        directory (.getCanonicalFile directory)
+        ;; An atomic move replaces the final directory entry, even if it is a symlink.
+        destination (when-let [parent (.getParentFile file)]
+                      (io/file (.getCanonicalFile parent) (.getName file)))]
+    (when (or (fixed-checkpoint-path? directory destination)
+              (fixed-checkpoint-path? directory (.getCanonicalFile file)))
+      (throw (ex-info "This path is reserved for show recovery" {:code :reserved-recovery-path}))))
+  path)
+
+(defn remember-manual! [{:keys [directory status]} show-id path]
+  (try
+    (write-source! (checkpoint-file directory show-id "manual.edn") (pr-str {:show-id show-id :path path}))
+    (swap! status dissoc :manual-error)
+    (catch Exception error (swap! status assoc :manual-error (ex-message error))))
+  path)
+
+(defn- named-file [directory show-id]
+  (let [bookmarked (checkpoint-file directory show-id "manual.edn")]
+    (when (and (.isFile bookmarked) (<= (.length bookmarked) 16384))
+      (try
+        (let [{:keys [path] :as entry} (edn/read-string (slurp bookmarked :encoding "UTF-8"))]
+          (when (and (= show-id (:show-id entry)) (string? path) (.isAbsolute (io/file path)))
+            (io/file path)))
+        (catch Exception _ nil)))))
+
+(defn latest-file [{:keys [directory] :as owner} show-id kind]
+  (let [file (case kind
+               :recovery (checkpoint-file directory show-id "recovery.transit")
+               :named (named-file directory show-id)
+               :prior (prior-file owner show-id)
+               (throw (ex-info "Unknown show checkpoint kind" {:kind kind})))]
+    (when (and file (.isFile file)) file)))

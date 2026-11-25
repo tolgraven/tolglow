@@ -7,8 +7,10 @@
             [tolglow.studio.terminal :as terminal]))
 
 (def key "workspace/tolglow")
+
 (def base {:show {:runtime-id "server-one" :epoch 0}
            :terminals {key (merge terminal/defaults {:mounted? true :session-id "owned-pty" :workspace-id "workspace" :repo :tolglow :status "running"})}})
+
 (defn transition [db event]
   (reset! rf-db/app-db db)
   (:effects (interceptor/execute event (remove #(= :do-fx (:id %))

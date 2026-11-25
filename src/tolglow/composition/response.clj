@@ -7,6 +7,7 @@
             [tolglow.composition.tween :as tween]))
 
 (def ^:private numeric-types #{:number :integer :color :vector :range})
+
 (def ^:private selectors {:effect-ids :effect-id :cue-ids :cue-id :instance-ids :id})
 
 (defn- fail! [path message]

@@ -5,7 +5,9 @@
   (:import [java.util.concurrent CountDownLatch TimeUnit]))
 
 (def config {:default? true :sample-rate 48000.0 :channels 1 :block-frames 480})
+
 (defn close? [a b] (< (Math/abs (double (- a b))) 1.0e-9))
+
 (defn pcm [values big-endian?]
   (byte-array (mapcat (fn [value]
                        (let [u (bit-and value 65535) low (unchecked-byte (bit-and u 255)) high (unchecked-byte (bit-shift-right u 8))]
@@ -246,6 +248,43 @@
     (is (every? #(true? (get-in % [:timing :capture-clock-valid?])) beats))
     (is (= 1 @closed))
     (audio/close! manager)))
+
+(defn section-pcm-values []
+  (map (fn [index]
+         (let [beat (quot index 4000)
+               notes (if (< beat 4) [48.0 84.0] [84.0 48.0])
+               seconds (/ (rem index 4000) 8000.0)]
+           (long (* 12000 (Math/sin (* 2.0 Math/PI (nth notes (mod beat 2)) seconds))))))
+       (range 40000)))
+
+(deftest opt-in-section-evidence-reaches-owned-capture-callbacks
+  (let [values (section-pcm-values)
+        closed (atom 0) ticks (atom 0) events (atom []) feels (atom [])
+        manager (audio/create-manager {:open-source! (fn [_] (memory-source values 719 closed))
+                                       :now-ms #(+ 2.0 (* 80.0 (swap! ticks inc)))})
+        config (assoc config :sample-rate 8000.0 :block-frames 640
+                             :analyzer-options {:sections {:beats-per-window 2}})
+        callbacks {:events! #(swap! events into %)
+                   :features! #(when-let [feel (:audio/section %)] (swap! feels conj feel))
+                   :clock! (constantly {:time-ms 0.0 :beat 0 :bpm 120
+                                        :playing? true :source :test-clock :epoch 2 :confidence 0.8})}]
+    (try
+      (let [handle (audio/start! manager config callbacks)
+            result (deref (:result handle) 5000 ::timeout)
+            section-events (filterv #(= :audio/section-change (:type %)) @events)
+            [event] section-events]
+        (is (= :completed (:status result)))
+        (is (= 1 @closed (count section-events)))
+        (is (= 4.0 (:boundary-beat event) (:confirmation-delay-beats event)))
+        (is (= 8.0 (:confirmed-at-beat event)))
+        (is (= 4000.0 (:confirmed-at-ms event) (:time-ms event)))
+        (is (= 2.0 (:latency-ms event)))
+        (is (= 2 (:clock-epoch event)))
+        (is (true? (get-in event [:timing :capture-clock-valid?])))
+        (is (= :sample-counter-start-estimate (get-in event [:timing :timestamp-method])))
+        (is (= [:bass-pattern] (get-in (first @feels) [:evidence :drivers])))
+        (is (every? #(= (:evidence event) (:evidence %)) @feels)))
+      (finally (audio/close! manager)))))
 
 (deftest a-gap-mid-block-discards-the-old-prefix-and-keeps-frame-accounting
   (let [reads (atom 0) manager (audio/create-manager

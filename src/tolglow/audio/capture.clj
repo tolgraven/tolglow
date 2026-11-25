@@ -9,7 +9,9 @@
            [java.util UUID]))
 
 (defn- failure [code message] (ex-info message {:audio/error code}))
+
 (defn- finite? [x] (and (number? x) (Double/isFinite (double x))))
+
 (defn- monotonic-ms [] (/ (double (System/nanoTime)) 1000000.0))
 
 (defn list-inputs
@@ -283,8 +285,12 @@
                             features (when-let [features (:features analyzed)]
                                        (assoc features :capture {:run-id (:run-id run) :timing-valid? timing-valid?
                                                                  :sample-counter (+ cursor n) :received-at-ms arrived}))
-                            events (mapv #(update % :timing assoc :capture-clock-valid? timing-valid?
-                                                 :timestamp-method :sample-counter-start-estimate) (:events analyzed))]
+                            events (mapv (fn [event]
+                                           (cond-> (update event :timing assoc :capture-clock-valid? timing-valid?
+                                                           :timestamp-method :sample-counter-start-estimate)
+                                             (= :audio/section-change (:type event))
+                                             (assoc :capture-run-id (:run-id run))))
+                                         (:events analyzed))]
                         (vreset! last-analyzer state)
                         (vreset! capture-state captured)
                         (update-public! manager run

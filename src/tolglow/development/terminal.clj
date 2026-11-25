@@ -15,14 +15,19 @@
            [com.sun.security.auth.module UnixSystem]))
 
 (defn- fail! [code message] (throw (ex-info message {:terminal/error code})))
+
 (defn- clean-string? [s] (and (string? s) (<= 1 (count s) 8192) (not (re-find #"[\x00-\x1f]" s))))
+
 (defn- bounded-int? [x lo hi] (and (integer? x) (<= lo x hi)))
+
 (defn- encode [bytes] (.encodeToString (Base64/getEncoder) ^bytes bytes))
+
 (defn- decode [value]
   (when-not (and (string? value) (<= (count value) 87384)) (fail! :invalid-input "Input must be bounded base64 bytes"))
   (try (let [bytes (.decode (Base64/getDecoder) ^String value)]
          (when (> (alength bytes) 65536) (fail! :input-limit "Terminal input exceeds 64 KiB")) bytes)
        (catch IllegalArgumentException _ (fail! :invalid-input "Invalid base64 terminal bytes"))))
+
 (defn- checked-path [s]
   (when-not (and (clean-string? s) (not (str/includes? s ","))) (fail! :invalid-directory "Mount paths must be absolute, without controls or commas"))
   (let [p (Paths/get s (make-array String 0))]
@@ -87,11 +92,13 @@
 
 (defn- run-host! [manager args timeout]
   (workspace/run-trusted-process! {:argv (into [(:docker manager)] args) :cwd "/tmp" :timeout-ms timeout :max-output-bytes 65536}))
+
 (defn- ensure-image! [manager]
   (let [result (run-host! manager ["image" "inspect" "--format" "{{.Id}}" (:image manager)] 10000)]
     (when-not (= 0 (:exit-code result))
       (throw (ex-info "Development image is unavailable; build tolglow-dev:local explicitly. No host-shell fallback is used."
                       {:terminal/error :image-unavailable :output (:output result)})))))
+
 (defn availability!
   "Explicit bounded Docker/image probe. Does not pull/build an image or start a
   container. Hosts call off their model owner; status remains entirely inert."
@@ -101,7 +108,9 @@
          {:available? false :image (:image manager) :code (or (:terminal/error (ex-data error)) :docker-unavailable)
           :message "Docker and the configured development image must be available. Build the image explicitly; no host-shell fallback is used."
           :build-command "docker build -t tolglow-dev:local -f dev/container/Dockerfile dev/container"})))
+
 (defn- container-name [manager] (str "tolglow-dev-" (subs (:id manager) 0 8) "-" (subs (str (UUID/randomUUID)) 0 12)))
+
 (defn- cleanup-container! [manager name]
   ;; A cancelled `docker create` can finish on the daemon long after its caller
   ;; gives up. Never remove before creation settles, and never abandon ownership.
@@ -130,12 +139,14 @@
                      :error "Docker cleanup failed; ownership is retained")
               false)
             (finally (when interrupted? (.interrupt (Thread/currentThread))))))))))
+
 (defn- mount-arguments [data]
   (vec (concat ["--mount" (str "type=bind,src=" (:workspace-root data) ",dst=" (:workspace-root data))]
                (mapcat (fn [p] ["--mount" (str "type=bind,src=" p ",dst=" p ",readonly")])
                        (distinct (map :common-dir (vals (:repositories data)))))
                (mapcat (fn [repo] ["--mount" (str "type=bind,src=" (:git-dir repo) ",dst=" (:git-dir repo))])
                        (vals (:repositories data))))))
+
 (defn- docker-argv [manager data name cwd interactive? command & [environment-names]]
   (vec (concat [(:docker manager) "create" "--init" "--name" name "--label" (str "tolglow.owner=" (:id manager))
                 "--network" (clojure.core/name (:network manager)) "--read-only" "--cap-drop" "ALL"
@@ -321,12 +332,14 @@
 
 (defn- public-session [session]
   (select-keys session [:session-id :workspace-id :repo :cwd :state :rows :cols :exit-code :error :started-at-ms :closed-at-ms :cursor :first-cursor]))
+
 (defn status [manager]
   {:closed? (:closed? @(:state manager)) :image (:image manager) :network (:network manager)
    :sessions (mapv public-session (sort-by :started-at-ms (vals (:sessions @(:state manager)))))
    :running-checks (count (:jobs @(:state manager)))
    :pending-containers (mapv (fn [[name entry]] (assoc (select-keys @entry [:phase :cancelled? :error]) :name name))
                              (:containers @(:state manager)))})
+
 (defn- session [manager id]
   (or (get-in @(:state manager) [:sessions id]) (fail! :unknown-session "Unknown owned terminal session")))
 

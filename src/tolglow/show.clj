@@ -70,8 +70,11 @@
             [tolglow.effects.faults :as effect-faults]
             [tolglow.show.preview :as preview]
             [tolglow.show.push-scene :as push-scene]
+            [tolglow.show.recovery :as recovery]
             [tolglow.show.lighting :as lighting]
             [tolglow.integrations.analysis :as analysis]
+            [tolglow.integrations.reference-position :as reference-position]
+            [tolglow.integrations.section-patterns :as section-patterns]
             [tolglow.persistence :as persistence]
             [tolglow.connections :as connections]
             [tolglow.repl.sessions :as repl-manager]
@@ -112,10 +115,15 @@
 (defn- clock-time [clock]
   (let [{:keys [origin-nanos time-ms]} @clock]
     (+ time-ms (/ (- (System/nanoTime) origin-nanos) 1.0e6))))
+
 (defn- now-ms [runtime] (clock-time (:clock runtime)))
+
 (defn agent-manager [runtime] (connections/agents (:connections runtime)))
+
 (defn reactions [runtime] (connections/reactive (:connections runtime)))
+
 (defn repls [runtime] (connections/repls (:connections runtime)))
+
 (defn- error-data [error] {:message (.getMessage ^Throwable error) :details (ex-data error)})
 
 (defn- scene-eligible-ids [runtime fixtures]
@@ -148,6 +156,7 @@
                 (preview/brightness-gains fixtures))]
     (merge (select-keys model [:show-id :epoch :revision :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
+            :section-patterns-enabled? (some? (:section-patterns runtime))
             :frame-number (get model :frame-number 0)
             :visualization-clock {:sample-period-ms (cue-pads/sample-period-ms (:cue-pad-previews runtime))}
             :spatial (get-in model [:variables :spatial])
@@ -259,9 +268,19 @@
                    calibration/disarm-restored photometry/disarm fog-scan/disarm)
          _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
              (throw (ex-info "Effect log sink must be callable" {})))
+         reference (:section-reference options)
+         music (when-let [policy (:section-patterns options)]
+                 (let [planner (section-patterns/new-planner (:profile reference) policy)]
+                   (when (get-in planner [:policy :enabled?]) planner)))
+         initial-position (when reference
+                            (when-not (and music (:profile reference))
+                              (throw (ex-info "A section reference requires an enabled pattern policy and track profile" {})))
+                            (reference-position/new-state (:provenance reference) (:position-options reference)))
          _ (lighting-scenes/validate-state! model)
          _ (lighting/validate! (:settings model))
          _ (group-channels/validate-state! model)
+         _ (when (contains? (:settings model) :section-patterns)
+             (section-patterns/override-settings (get-in model [:settings :section-patterns])))
          _ (variable-blocks/compile-model model)
          _ (registry/validate-public-query-ids! (get-in model [:settings :studio :public-queries]))
          _ (when-let [config (get-in model [:settings :adaptive-keyframes] (:adaptive-keyframes options))]
@@ -331,7 +350,7 @@
       :capture-effect-samples? (:capture-effect-samples? options)
       :browser-observations browser-inputs
       :observers (atom {}) :frame-rate (get options :frame-rate 40)
-      :publisher publisher :presentation-clock (volatile! 0)
+      :publisher publisher :presentation-clock (volatile! 0) :wire-retirement (atom nil)
       :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
       :leases (atom {})
@@ -339,6 +358,11 @@
       :variable-plan (volatile! nil) :scene-eligible (atom {}) :scene-plans (volatile! {})
       :capacity-plan (volatile! nil) :capacity-audio (volatile! nil)
       :audio-input (atom {:epoch (:epoch model) :events [] :features nil})
+      :section-patterns music
+      :section-reference (when initial-position
+                           {:initial initial-position
+                            :input (atom {:epoch (:epoch model) :position initial-position
+                                          :used-sessions #{(get-in initial-position [:provenance :session-id])}})})
       :sync-input (atom {:epoch (:epoch model) :events []})
       :connections owned :devices (atom {}) :development development
       :rdm (rdm/create (merge (:rdm-options options)
@@ -364,7 +388,11 @@
 (defn create-runtime
   "Create an unscheduled show. The CPU backend is the default. Explicit
   :compute-backend :native-gpu acquires one session owned by this show.
-  :worker-timeout-ms sets the per-frame effect worker deadline (default 500)."
+  :worker-timeout-ms sets the per-frame effect worker deadline (default 500).
+  An enabled :section-patterns policy publishes pattern intents from opted-in
+  capture at owner boundaries. :section-reference can supply a versioned
+  :profile, initial source :provenance and :position-options. Reconnect a
+  player with attach-section-reference!. Actions require an event subscriber."
   ([] (create-runtime {}))
   ([options]
    (let [owner (open-compute! options)]
@@ -733,6 +761,7 @@
               _ (when (= scope :variable-blocks)
                   (variable-blocks/compile-settings settings (prefabs/catalog model)))
               _ (when (= scope :adaptive-keyframes) (cadence/settings settings))
+              _ (when (= scope :section-patterns) (section-patterns/override-settings settings))
               _ (when (= scope :studio) (registry/validate-public-query-ids! (:public-queries settings)))
               _ (when (= scope :lighting-capacity) (capacity/settings settings))
               _ (when (= scope :audio-returns) (audio-return/validate-config model settings))
@@ -839,36 +868,97 @@
                                 [model state] commands)]
       (-> model (assoc-in [:auto :state] state) (assoc-in [:auto :reasons] reasons))) model))
 
-(defn- prepare-output [runtime {:keys [compiled retirement]} universes {:keys [safety-state stale-source?]}]
+(defn- output-retirement [runtime {:keys [compiled retirement] :as context}]
+  (let [{wire-context :context wire-plan :plan :keys [possible] :as wire} @(:wire-retirement runtime)]
+    (if (and (identical? context wire-context) (nil? possible))
+      wire
+      (let [previous (:compiled wire-context)
+            ;; A partial handoff can already drive a pump. Keep its off byte ahead
+            ;; of light off bytes for unclaimed slots. Within fog, prefer the last
+            ;; complete handoff, then the most recent possible fog encoding.
+            fog-off (merge (:fog-off-bytes possible) (:fog-off-bytes wire))
+            plan (if (or wire-context possible)
+                   (retirement/plan {:known (into (:known retirement) (concat (:known wire-plan) (:known possible)))
+                                     :held (merge (:held retirement) (:held possible) (:held wire-plan)
+                                                  (render/physical-off-bytes previous) fog-off)}
+                                    nil compiled)
+                   retirement)]
+        {:context context :plan plan
+         ;; The current patch claims slots on a complete handoff, clearing any
+         ;; old fog byte there. A retired, still unclaimed fog slot keeps its byte.
+         :fog-off-bytes (merge (select-keys fog-off (keys (:held plan))) (:fog-off-bytes compiled))}))))
+
+(defn- guard-output [runtime compiled retirement universes {:keys [safety-state stale-source?]}]
   (let [packet (retirement/include-retired retirement universes)]
     (if (seq safety-state)
       (fog-deadline/guard-source @(:fog-deadlines runtime) compiled packet safety-state
                                  ((get-in runtime [:publisher :now-ms])) stale-source?)
       packet)))
 
-(defn- prepare-safety-output [runtime universes {:keys [output-context stale-source? uncertain?] :as source}]
-  (let [{:keys [compiled retirement]} output-context
+(defn- prepare-output [runtime context universes source]
+  (let [{:keys [plan] :as wire} (output-retirement runtime context)]
+    (vary-meta (guard-output runtime (:compiled context) plan universes source)
+               assoc ::wire-retirement wire)))
+
+(defn- hold-unchanged-fixtures
+  "Start with current idle output. Preserve complete wire values for compatible
+  channels and use current off values for fog."
+  [compiled wire-patch universes]
+  (let [output (render/idle-universes compiled)
+        mapping [:universe :address :footprint :channels]]
+    (doseq [{:keys [id compiled-channels] :as fixture} (:fixtures compiled)
+            :let [previous (get-in wire-patch [:by-id id])]
+            :when (and previous (= (select-keys fixture mapping) (select-keys previous mapping)))
+            [attribute channel] compiled-channels
+            :when (not= :fog attribute)
+            :let [slots (keep channel [:coarse :fine])]
+            :when (every? (fn [[universe _]] (contains? universes universe)) slots)
+            [universe index] slots]
+      (aset-byte ^bytes (get output universe) (int index)
+                 (aget ^bytes (get universes universe) (int index))))
+    output))
+
+(defn- prepare-safety-output
+  [runtime universes {:keys [output-context wire-patch stale-source? uncertain?] :as source}]
+  (let [compiled (:compiled output-context)
+        {retirement :plan :as wire} (output-retirement runtime output-context)
+        layout-changed? (and (contains? source :wire-patch) (not= wire-patch compiled))
         off-bytes (:fog-off-bytes compiled)
-        corrected (prepare-output runtime output-context universes source)
-        corrected (if (and (or stale-source? uncertain?) (seq off-bytes))
-                    ;; Old light bytes may now address a pump. Recover it using
-                    ;; the current patch, even if its universe was absent before.
+        corrected (if layout-changed?
+                    (retirement/include-retired retirement (hold-unchanged-fixtures compiled wire-patch universes))
+                    (guard-output runtime compiled retirement universes source))
+        corrected (if (and (not layout-changed?) (or stale-source? uncertain?) (seq off-bytes))
                     (let [missing (into #{} (comp (map (comp first key)) (remove #(contains? corrected %))) off-bytes)
                           packet (if (seq missing) (merge corrected (select-keys (render/idle-universes compiled) missing)) corrected)]
                       (fog-deadline/apply-off-bytes packet off-bytes))
                     corrected)]
     ;; A transport can fail after writing only part of the attempted packet.
-    (when (or (and uncertain? (or (seq off-bytes) (seq (:held retirement))))
+    (when (or (and uncertain? (or layout-changed? (seq off-bytes) (seq (:held retirement))))
               (and (not (identical? universes corrected))
                    (some (fn [[universe ^bytes bytes]]
                            (not (Arrays/equals ^bytes (get universes universe) bytes)))
                          corrected)))
-      corrected)))
+      (vary-meta corrected assoc ::wire-retirement wire))))
 
 (defn- present-output! [runtime packet frame-number]
-  ((get-in runtime [:sink :send!]) packet frame-number)
-  (when (:plan @(:venue-fog runtime))
-    (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet)))
+  (let [metadata (meta packet)
+        {:keys [context plan] :as wire} (::wire-retirement metadata)]
+    (try
+      ((get-in runtime [:sink :send!]) (with-meta packet (dissoc metadata ::wire-retirement)) frame-number)
+      (when (:plan @(:venue-fog runtime))
+        (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet))
+      (catch Exception error
+        ;; A failed handoff may already have driven some universes. Remember one
+        ;; possible off byte per slot and one possible fog off byte per fog slot.
+        (let [compiled (:compiled context)
+              off-bytes (render/physical-off-bytes compiled)]
+          (swap! (:wire-retirement runtime) update :possible
+                 (fn [{:keys [known held fog-off-bytes]}]
+                   {:known (into (or known #{}) (:known plan))
+                    :held (merge held (:held plan) off-bytes)
+                    :fog-off-bytes (merge fog-off-bytes (:fog-off-bytes compiled))})))
+        (throw error)))
+    (reset! (:wire-retirement runtime) wire)))
 
 (defn- send-output! [runtime universes frame-number fog-demands]
   (when (get-in runtime [:sink :send!])
@@ -881,12 +971,13 @@
   (let [epoch (get-in @(:state runtime) [:model :epoch])
         current? #(and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch])))]
     {:clock! (fn []
-               (let [{:keys [model audio-clock-confidence]} @(:state runtime)
+               (let [{:keys [model audio-clock-confidence section-clock-session]} @(:state runtime)
                      {:keys [source time-ms] :as transport} (:transport model)
                      confidence (if (= :manual source) 1.0 audio-clock-confidence)]
                  (when (and @(:running runtime) (= epoch (:epoch model))
                             (some? time-ms) (some? source) (some? confidence))
-                   (assoc transport :confidence confidence))))
+                   (cond-> (assoc transport :confidence confidence)
+                     section-clock-session (assoc :session-id section-clock-session)))))
      :events! (fn [events]
                 (if-not (current?) false
                   (let [accepted? (volatile! false)]
@@ -926,6 +1017,154 @@
             m (:events captured)))
         (seq (:events captured)) (assoc-in [:variables :audio :events] (:events captured))
         (seq (:events captured)) (update-in [:variables :audio :event-count] (fnil + 0) (count (:events captured)))) model)))
+
+(defn section-reference-callbacks
+  "Get callbacks for the attached reference session in the current show epoch.
+  Capture timestamps with :now-ms! and submit reference-position state with
+  :publish!. Construct the adapter with the returned :provenance and
+  :alignment-options. :state! projects the reference lock. After reattach,
+  restart or restore, old callbacks reject publication and return no state."
+  [runtime]
+  (when-let [input (get-in runtime [:section-reference :input])]
+    (let [{:keys [epoch position] :as attached} @input
+          {:keys [provenance options]} position
+          now-ms! (get-in runtime [:publisher :now-ms])
+          current? (fn [stored]
+                     (and @(:running runtime)
+                          (= epoch (:epoch stored) (get-in @(:state runtime) [:model :epoch]))
+                          (= provenance (get-in stored [:position :provenance]))))]
+      (when (current? attached)
+        {:provenance provenance
+         :alignment-options options
+         :now-ms! now-ms!
+         :state! (fn []
+                   (let [stored @input]
+                     (when (current? stored)
+                       (reference-position/snapshot (:position stored) (now-ms!)))))
+         :publish! (fn [{candidate-time :now-ms :keys [occurrence generation] :as candidate}]
+                     (when (current? @input)
+                       (let [now (now-ms!)]
+                         (locking input
+                           (let [{previous :position :as stored} @input]
+                             (when (and (current? stored)
+                                        (= provenance (:provenance candidate))
+                                        (= options (:options candidate))
+                                        (number? candidate-time) (Double/isFinite (double candidate-time))
+                                        (<= (:now-ms previous candidate-time) candidate-time now)
+                                        (integer? occurrence) (<= (:occurrence previous) occurrence)
+                                        (integer? generation) (<= (:generation previous) generation))
+                               ;; Verify the candidate without storing a projection for future frames.
+                               (reference-position/snapshot candidate now)
+                               (reset! input (assoc stored :position candidate))
+                               true))))))}))))
+
+(defn attach-section-reference!
+  "Replace the attached reference session with a fresh caller-chosen ID and
+  return its callbacks. Source, clock, profile and alignment options stay bound
+  to the running show. Call after a player reconnect, show restart or restore.
+  Session IDs are unique for the lifetime of this show runtime."
+  [runtime session-id]
+  (when-let [{:keys [initial input]} (:section-reference runtime)]
+    (let [position (reference-position/new-state (assoc (:provenance initial) :session-id session-id)
+                                                 (:options initial))]
+      ;; Serialize with frame commits and restore. Old publishers also check
+      ;; the exact session again under input before storing a candidate.
+      (locking (:lock runtime)
+        (when @(:running runtime)
+          (locking input
+            (let [{:keys [used-sessions]} @input]
+              (when (contains? used-sessions session-id)
+                (throw (ex-info "Section reference session was already used" {:session-id session-id})))
+              (reset! input {:epoch (get-in @(:state runtime) [:model :epoch])
+                             :position position :used-sessions (conj used-sessions session-id)})
+              (section-reference-callbacks runtime))))))))
+
+(defn- reference-evidence [runtime show-epoch]
+  (when-let [input (get-in runtime [:section-reference :input])]
+    (let [{:keys [epoch position]} @input]
+      (when (= show-epoch epoch)
+        {:reference-state position
+         :reference-now-ms ((get-in runtime [:publisher :now-ms]))}))))
+
+(defn- section-clock-session [runtime model]
+  (str (:epoch model) "/" (get-in model [:transport :source-selection-epoch]) "/" @(:presentation-clock runtime)))
+
+(defn- section-capture-stream
+  [connection {capture-state :state :keys [run-id timing-valid? closed? config]}]
+  (let [source-id (get-in config [:analyzer-options :source-id] :audio-input)]
+    (when (and run-id timing-valid? (not closed?) (#{:running :completed} capture-state)
+               (not= "" source-id) (connections/restart-requested? connection :audio))
+      {:source-id source-id :session-id run-id})))
+
+(defn- advance-section-patterns [runtime before next-state reset?]
+  (if-let [initial (:section-patterns runtime)]
+    (if reset?
+      (dissoc next-state :section-pattern-state :section-clock-session)
+      (let [{:keys [model audio-clock-confidence]} next-state
+            previous (:model before)
+            {:keys [source source-epoch playing? beat]} (:transport model)
+            clock-session (section-clock-session runtime model)
+            connection (:connections runtime)
+            capture-status (audio/status (connections/audio connection))
+            analyzer-options (get-in capture-status [:config :analyzer-options])
+            active-clock? (and (true? playing?) (integer? source-epoch) (number? audio-clock-confidence)
+                               (>= audio-clock-confidence (get analyzer-options :beat-clock-confidence-min 0.5)))
+            stream (section-capture-stream connection capture-status)
+            causal-events (into [] (comp (filter #(= :audio (:category %))) (map :event)
+                                         (filter #(and (= :audio/section-change (:type %))
+                                                       (= (:run-id capture-status) (:capture-run-id %))
+                                                       (true? (get-in % [:timing :capture-clock-valid?])))))
+                                (staging/pending model))
+            boundaries (when (and active-clock? (= clock-session (:section-clock-session before))
+                                  (true? (get-in previous [:transport :playing?])))
+                         (into #{} (map (comp keyword name :type))
+                               (show-events/emitted {:before previous :after model})))
+            metrics {:now-ms (:time-ms model) :causal-stream stream :causal-events causal-events
+                     :override? (get-in model [:settings :section-patterns :override?] false)
+                     :transport {:show-epoch (:epoch model) :source (or source :manual)
+                                 :source-epoch (or source-epoch 0) :session-id clock-session
+                                 :playing? (boolean active-clock?) :beat beat :boundaries boundaries}}
+            result (section-patterns/advance (or (:section-pattern-state before) initial)
+                                             (merge metrics (reference-evidence runtime (:epoch model))))]
+        (-> next-state
+            (assoc :section-pattern-state (:state result) :section-clock-session clock-session)
+            (update :model staging/collect :music {:kind :music :id :section-patterns} (:events result)))))
+    next-state))
+
+(defn- section-pattern-run? [{:keys [event]}]
+  (and (= :music (:category event)) (= :music/section-pattern (:type event))))
+
+(defn- fence-section-pattern-runs [model runtime clock-confidence]
+  ;; Subscriber actions can be due well after the pattern was admitted.
+  (let [path [:event-subscribers :runs]
+        runs (get-in model path)]
+    (if-not (some section-pattern-run? runs)
+      model
+      (let [{:keys [playing? source source-epoch]} (:transport model)
+            scope {:show-epoch (:epoch model) :clock [(or source :manual) source-epoch (section-clock-session runtime model)]}
+            connection (:connections runtime)
+            capture-status (audio/status (connections/audio connection))
+            min-confidence (get-in capture-status [:config :analyzer-options :beat-clock-confidence-min] 0.5)
+            active? (and (:section-patterns runtime) (true? playing?) (integer? source-epoch)
+                         (number? clock-confidence) (>= clock-confidence min-confidence)
+                         (not (get-in model [:settings :section-patterns :override?])))
+            projection (when active?
+                         (when-let [{:keys [reference-state reference-now-ms]} (reference-evidence runtime (:epoch model))]
+                           (reference-position/snapshot reference-state reference-now-ms)))
+            fence (select-keys projection [:provenance :occurrence :generation])
+            capture-stream (section-capture-stream connection capture-status)]
+        (assoc-in model path
+                  (filterv (fn [{:keys [event] :as run}]
+                             (or (not (section-pattern-run? run))
+                                 (let [{:keys [mode reference] :as receipt} (:data event)]
+                                   (and active? (= scope (:scope receipt))
+                                        (case mode
+                                          :causal (and (some? capture-stream) (= capture-stream (:stream receipt)))
+                                          :reference (and (= :locked (:status projection))
+                                                          (= fence (:fence receipt))
+                                                          (= reference (:reference projection)))
+                                          false)))))
+                           runs))))))
 
 (declare submit!)
 
@@ -1218,6 +1457,7 @@
                       :status {:restored? true :frame-ms 0}})
                    (try
                      (let [model (-> (advance-sensors! runtime model time-ms)
+                                     (fence-section-pattern-runs runtime audio-clock-confidence)
                                      (subscribers/advance time-ms (event-callbacks/results (:event-callbacks runtime)))
                                      (composition/advance time-ms) (advance-auto time-ms runtime)
                                      (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms routing/admit-sync)
@@ -1390,6 +1630,7 @@
                                    (when-not (or restored? @restarted-generation) audio-clock-confidence))
                  fired-outcomes (cue-timing/fired-outcomes (:model next-state))
                  next-state (if (seq fired-outcomes) (update next-state :model cue-timing/clear-fired-outcomes) next-state)
+                 next-state (advance-section-patterns runtime before next-state (or restored? @restarted-generation))
                  committed (show-events/commit (:event-admit runtime) (:model before) next-state operations)
                  next-state (venue-fog/commit! runtime (:state committed)
                               (patch! runtime (get-in next-state [:model :rig :fixtures])) restored?)]
@@ -1482,6 +1723,9 @@
                          payload)
                payload (if (= :import type)
                          (let [document (persistence/read-string (:source payload))
+                               expected-show-id (:expected-source-show-id payload)
+                               _ (when (and expected-show-id (not= expected-show-id (get-in document [:model :show-id])))
+                                   (throw (ex-info "Checkpoint belongs to a different show" {:code :wrong-show})))
                                calibration-armed? (or (photometry/current (:model document))
                                                       (get-in document (into [:model] (conj calibration-session/artifact-path :armed?))))
                                ;; Strip scoped ownership before thaw rekeys instance sources.
@@ -1572,7 +1816,8 @@
     (when stop?
       (doseq [cleanup (concat (map :close! (vals (first (swap-vals! (:observers runtime) (constantly {})))))
                              (map #(fn [] (connections/abort-prepared! %)) @candidates)
-                             [#(event-callbacks/close! (:event-callbacks runtime))
+                             [#(some-> (:recovery runtime) deref recovery/close!)
+                              #(event-callbacks/close! (:event-callbacks runtime))
                               #(rdm/close! (:rdm runtime))
                               #(output-scheduler/close! (:publisher runtime))
                               #(send-output! runtime (render/idle-universes (:compiled @(:patch runtime))) 0 nil)
@@ -1795,29 +2040,44 @@
 
 (defn export-show-source [runtime] (capture-show runtime persistence/write-string))
 
+(defn- capture-checkpoint [runtime]
+  (capture-show runtime (fn [model output]
+                          (assoc (select-keys model [:show-id :epoch :revision :frame-number])
+                                 :source (persistence/write-string model output)))))
+
+(defn- publish-checkpoint! [runtime captured replace!]
+  ;; Prepared files are closed and forced. Only the final same-directory moves
+  ;; must be ordered with a change of show ownership or shutdown.
+  (locking (:lock runtime)
+    (when (and @(:running runtime)
+               (= (show-identity captured) (show-identity (:model @(:state runtime)))))
+      (replace!))))
+
+(defn recovery-status
+  "Report available checkpoints for the current show, including after restart."
+  [runtime]
+  (when-let [owner (some-> (:recovery runtime) deref)]
+    (let [show-id (get-in @(:state runtime) [:model :show-id])
+          status (recovery/status owner)
+          checkpoints (into {} (keep (fn [kind]
+                                       (when-let [file (recovery/latest-file owner show-id kind)]
+                                         [kind {:modified-at-ms (.lastModified file)}])))
+                            [:recovery :named :prior])]
+      (cond-> (assoc status :show-id show-id :checkpoints checkpoints :available (set (keys checkpoints)))
+        (not= show-id (get-in status [:last-saved :show-id])) (dissoc :last-saved)))))
+
 (defn save-show!
   "Save a complete snapshot using a forced temporary file and atomic replacement."
   [runtime path]
-  (let [file (.getAbsoluteFile (io/file path))
-        text (export-show-source runtime)]
-    (io/make-parents file)
-    (let [temporary (java.nio.file.Files/createTempFile
-                     (.toPath (.getParentFile file)) ".tolglow-show-" ".transit"
-                     (make-array java.nio.file.attribute.FileAttribute 0))]
-      (try
-        (with-open [stream (java.io.FileOutputStream. (.toFile temporary))]
-          (.write stream (.getBytes text java.nio.charset.StandardCharsets/UTF_8))
-          (.force (.getChannel stream) true))
-        (java.nio.file.Files/move temporary (.toPath file)
-                                  (into-array java.nio.file.CopyOption
-                                              [java.nio.file.StandardCopyOption/ATOMIC_MOVE
-                                               java.nio.file.StandardCopyOption/REPLACE_EXISTING]))
-        (.getAbsolutePath file)
-        (finally (java.nio.file.Files/deleteIfExists temporary))))))
+  (let [owner (some-> (:recovery runtime) deref)
+        path (if owner (recovery/manual-path! owner path) path)
+        {:keys [show-id source]} (capture-checkpoint runtime)
+        saved (recovery/write-source! path source)]
+    (when owner
+      (recovery/remember-manual! owner show-id saved))
+    saved))
 
-(defn load-show!
-  "Read a bounded full show file and enqueue its atomic restore; returns a receipt."
-  [runtime path]
+(defn- read-checkpoint-source [path]
   (with-open [reader (io/reader (io/file path) :encoding "UTF-8")]
     (let [buffer (char-array 8192) source (StringBuilder.)]
       (loop []
@@ -1827,7 +2087,39 @@
               (throw (ex-info "Show file exceeds the document character limit" {})))
             (.append source buffer 0 n)
             (recur))))
-      (submit! runtime :import {:source (str source)}))))
+      (str source))))
+
+(defn load-show!
+  "Read a bounded full show file and enqueue its atomic restore; returns a receipt."
+  [runtime path]
+  (submit! runtime :import {:source (read-checkpoint-source path)}))
+
+(defn load-latest-show!
+  "Load the active show's latest :recovery, :named, or prior-session checkpoint."
+  [runtime kind]
+  (let [{:keys [show-id epoch]} (:model @(:state runtime))
+        owner (some-> (:recovery runtime) deref)
+        source (when owner
+                 (if (= :prior kind)
+                   (recovery/read-prior owner show-id read-checkpoint-source)
+                   (some-> (recovery/latest-file owner show-id kind) read-checkpoint-source)))]
+    (when-not source (throw (ex-info "Show checkpoint is unavailable" {:kind kind :show-id show-id})))
+    (submit! runtime :import {:runtime-id (:id runtime) :expected-epoch epoch
+                              :expected-source-show-id show-id :source source})))
+
+(defn discard-prior-recovery!
+  "Dismiss the active show's prior-session checkpoint. Working and named saves
+  keep their files. Returns true when the dismissal was published."
+  [runtime]
+  (let [captured (show-identity (:model @(:state runtime)))]
+    (boolean
+      (when-let [owner (some-> (:recovery runtime) deref)]
+        (recovery/discard-prior! owner (:show-id captured) (partial publish-checkpoint! runtime captured))))))
+
+(defn activate-recovery!
+  "Admit background checkpoints once the configured startup has settled."
+  [runtime]
+  (some-> (:recovery runtime) deref recovery/activate!))
 
 (defn rdm-action!
   "Explicit, independently owned RDM service. Status never touches a device."
@@ -1904,9 +2196,9 @@
                                (fn [config]
                                  (connections/start-audio! (:connections runtime) config (audio-callbacks runtime))
                                  (audio/status (connections/audio (:connections runtime)))))
-    :stop (let [generation (session-operation! runtime payload
-                                             (fn [_] (:generation (connections/status (:connections runtime)))))]
-            (connections/stop-audio! (:connections runtime) generation))
+    :stop (let [shutdown! (session-operation! runtime payload
+                             (fn [_] (connections/admit-audio-stop! (:connections runtime))))]
+            (shutdown!))
     (throw (ex-info "Unknown audio operation" {:operation operation}))))
 
 (defn sync-action!
@@ -2063,19 +2355,26 @@
 
 (defn start!
   "Start the scheduled show in preview or with :ola or :artnet. An embedded
-  host may supply its own sink opener. The show takes ownership of that sink."
+  host may supply its own sink opener. Set :recovery false to disable the
+  automatic working checkpoint, or supply :interval-ms and :directory."
   ([] (start! {}))
   ([options] (start! options output/open-sink!))
-  ([{:keys [frame-rate] :or {frame-rate 40} :as options} open-sink!]
+  ([{:keys [frame-rate defer-recovery?] :or {frame-rate 40} :as options} open-sink!]
    (when-not (and (number? frame-rate) (<= 1 frame-rate 120)) (throw (ex-info "Frame rate must be 1..120" {})))
-   (let [sink (open-sink! options)
-         runtime (try (create-runtime (merge {:adaptive-keyframes {:enabled? true}} options
-                                              {:sink sink :independent-output? true}))
+   (let [recovery-options (recovery/options (:recovery options))
+         sink (open-sink! options)
+         runtime (try (assoc (create-runtime (merge {:adaptive-keyframes {:enabled? true}} options
+                                                     {:sink sink :independent-output? true}))
+                             :recovery (atom nil))
                       (catch Throwable error
                         (when sink
                           (try ((:close! sink)) (catch Throwable cleanup (.addSuppressed error cleanup))))
                         (throw error)))]
      (try
        (output-scheduler/start! (:publisher runtime) (/ 1000.0 frame-rate) #(render-slot! runtime %))
+       (reset! (:recovery runtime)
+               (recovery/start! recovery-options (not defer-recovery?)
+                                #(when @(:running runtime) (capture-checkpoint runtime))
+                                (partial publish-checkpoint! runtime)))
        runtime
        (catch Throwable error (stop! runtime) (throw error))))))

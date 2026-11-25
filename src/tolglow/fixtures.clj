@@ -29,7 +29,9 @@
 
 
 (def color-layouts pixel-layout/color-layouts)
+
 (def named-colors [:red :green :blue :white :amber :uv :cyan :magenta :yellow])
+
 (def color-hues {:amber 45 :uv 270 :cyan 180 :magenta 300 :yellow 55})
 
 (defn color

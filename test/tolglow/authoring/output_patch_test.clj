@@ -5,6 +5,7 @@
             [tolglow.show :as show]))
 
 (def scalar {:type :number :bounds [0 1] :default 0.6})
+
 (def effect {:id :patched :version 1 :params {:x scalar :y scalar :z scalar :skew/xyz {:type :vector :size 3 :default [0 0 0]}}
              :duration {:beats 7/11} :outputs [{:attribute :color :value [1 0 0] :blend :max :targets [:head-1]}
                                                {:attribute :dimmer :value 0.0 :targets [:head-1]}]})

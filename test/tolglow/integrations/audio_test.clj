@@ -3,7 +3,9 @@
             [tolglow.integrations.audio :as audio]))
 
 (def opts {:sample-rate 48000.0 :frequency-range [80.0 2000.0] :bounds [-10.0 10.0] :amplitude 0.4})
+
 (defn close? [a b tolerance] (< (Math/abs (- a b)) tolerance))
+
 (defn sine [frequency amplitude n]
   (double-array (map #(* amplitude (Math/sin (/ (* 2 Math/PI frequency %) 48000.0))) (range n))))
 
@@ -58,8 +60,11 @@
   (is (thrown? clojure.lang.ExceptionInfo (audio/analyze-block (repeat 64 Double/NaN) opts))))
 
 (def target {:show-id :main :epoch 1 :instance-id "1:old" :param :level})
+
 (def envelope {:show-id :main :epoch 1 :command-id "audio/1"})
+
 (def loud {:rms 0.2 :pitch-confidence 0.99 :value 0.5})
+
 (def silent {:rms 0.0 :pitch-confidence 0.0 :value nil})
 
 (deftest tails-retain-delayed-pulses-with-exact-instance-ownership

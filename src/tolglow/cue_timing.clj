@@ -4,10 +4,15 @@
             [afterglow.runtime.events :as staging]))
 
 (def ^:private path [:control ::queue])
+
 (def ^:private state-path (conj path :state))
+
 (def ^:private early-path (conj path :early-releases))
+
 (def ^:private held-lease-ms 10000)
+
 (def ^:private feedback-path (conj path :feedback))
+
 ;; Keep a full tick's clock-fenced pending launches plus ordinary intake.
 (def ^:private feedback-limit 384)
 

@@ -12,13 +12,17 @@
   (:import [java.util.concurrent CountDownLatch TimeUnit]))
 
 (def head {:id :head :position [0 0 0] :universe 1 :address 1 :channels {:dimmer 1 :red 2 :green 3 :blue 4}})
+
 (def effect {:id :wash :version 1 :params {:level {:type :number :default 0.8 :bounds [0.0 1.0]}}
              :duration {:beats 4} :release-duration {:beats 2}
              :outputs {:dimmer {:op :param :key :level} :color {:op :const :value [1.0 0.0 0.0]}}})
+
 (defn model []
   (control/new-show {:rig {:fixtures [head]}
                      :registry {:effects {:wash effect} :cues {:wash {:id :wash :version 1 :effect-id :wash}}}}))
+
 (def source-id "midi/midi-clock/ch/1/note/60")
+
 (defn spec
   ([] (spec source-id :midi [0 127]))
   ([source kind source-range]
@@ -26,19 +30,23 @@
     :sources {source {:kind kind :range source-range :timeout {:beats 16}}}
     :destinations {:level {:cue-id :wash :param :level :range [0.0 1.0] :base 0.0 :combine :max}}
     :routes [{:id :input :source source :destination :level}]}))
+
 (defn apply-at! [runtime type payload time]
   (let [receipt (show/submit! runtime type payload)]
     (show/tick! runtime time)
     (deref receipt 1000 ::missing)))
+
 (defn prepare! [runtime specification]
   (is (= :accepted (:status (apply-at! runtime :patch-save {:source (pr-str specification)} 0))))
   (is (false? (get-in (show/snapshot runtime) [:patch :enabled?])))
   (is (= :accepted (:status (apply-at! runtime :patch-enabled {:enabled? true} 0))))
   (:instance-id (apply-at! runtime :command {:op :cue/launch :cue-id :wash} 0)))
+
 (defn observation [id value time]
   {:type :sync/observation
    :observation {:source-id source-id :event-id id :value value :gate? (pos? value)
                  :confidence 1.0 :observed-at-ms time :kind :midi :origin :midi-input}})
+
 (defn capture-fixture
   ([] (capture-fixture {}))
   ([options]

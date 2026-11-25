@@ -7,10 +7,12 @@
             [tolglow.studio.workspace :as workspace]))
 
 (def base {:show {:runtime-id "server-a" :epoch 4}})
+
 (defn transition [state event]
   (reset! db/app-db state)
   (:effects (interceptor/execute event (remove #(= :do-fx (:id %))
                                                (registrar/get-handler :event (first event))))))
+
 (defn respond [sent value]
   (transition (:db sent) (conj (get-in sent [:studio/http :on-success]) value)))
 

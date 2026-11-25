@@ -12,6 +12,7 @@
   (:import [java.util.concurrent CountDownLatch LinkedBlockingQueue TimeUnit]))
 
 (defn await! [^CountDownLatch latch] (.await latch 2 TimeUnit/SECONDS))
+
 (defn result [receipt] (deref (:completion receipt) 3000 ::timeout))
 
 (deftest restart-clears-performance-ownership-and-retains-definitions-and-repl-locals

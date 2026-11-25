@@ -7,7 +7,9 @@
             [tolglow.registry :as registry]))
 
 (defn- fail! [message data] (throw (ex-info message data)))
+
 (defn- midi-number? [x] (and (integer? x) (<= 0 x 127)))
+
 (defn- clamp [x low high] (max low (min high x)))
 
 (defn pad-page
@@ -171,6 +173,7 @@
 (defn- command [state envelope op data]
   (merge envelope {:op op :source (merge {:type :ableton :bridge-id (:id state) :origin :live-playback}
                                          (:source envelope))} data))
+
 (defn- child-envelope [envelope suffix]
   (assoc envelope :command-id (str (:command-id envelope) "/" suffix)))
 

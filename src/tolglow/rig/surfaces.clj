@@ -3,10 +3,15 @@
   (:require [clojure.string :as str]))
 
 (defn wire-id [id] (if (keyword? id) (subs (str id) 1) (str id)))
+
 (defn- finite? [n] (and (number? n) (Double/isFinite (double n))))
+
 (defn xyz? [v] (and (vector? v) (= 3 (count v)) (every? finite? v)))
+
 (defn- dot [a b] (reduce + (map * a b)))
+
 (defn- cross [[a b c] [x y z]] [(- (* b z) (* c y)) (- (* c x) (* a z)) (- (* a y) (* b x))])
+
 (defn- unit [v]
   (when (xyz? v)
     (let [m (Math/hypot (Math/hypot (double (v 0)) (double (v 1))) (double (v 2)))]

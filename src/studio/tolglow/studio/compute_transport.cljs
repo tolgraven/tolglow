@@ -3,6 +3,7 @@
   (:require [tolglow.transit :as transit]))
 
 (defonce ^:private session (atom nil))
+
 (def ^:private little-endian?
   (= 1 (aget (js/Uint8Array. (.-buffer (js/Uint16Array. #js [1]))) 0)))
 

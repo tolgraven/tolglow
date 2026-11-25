@@ -4,8 +4,11 @@
             [tolglow.observations :as obs]))
 
 (def ^:private scene {:show-id "night" :epoch 1})
+
 (def ^:private source :simulation/position)
+
 (def ^:private query [:browser/observation source])
+
 (def ^:private demand [obs/demand-query :rig])
 
 (deftest latest-completed-input-has-a-consumer-and-one-visible-producer

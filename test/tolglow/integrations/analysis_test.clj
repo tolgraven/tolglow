@@ -3,10 +3,14 @@
             [tolglow.integrations.analysis :as analysis]))
 
 (def sample-rate 48000.0)
+
 (def clock {:time-ms 0.0 :beat 0.0 :bpm 120.0 :source :midi-clock :epoch 1 :confidence 0.9})
+
 (defn close? [a b tolerance] (< (Math/abs (double (- a b))) tolerance))
+
 (defn sine [frequency amplitude time-ms]
   (* amplitude (Math/sin (/ (* 2.0 Math/PI frequency time-ms) 1000.0))))
+
 (defn kick-train [time-ms]
   (let [local (mod (- time-ms 1000.0) 500.0)]
     (if (and (>= time-ms 1000) (< local 160))
@@ -27,7 +31,114 @@
                                                :received-at-ms (+ start (* 1000.0 (/ n sample-rate)) 2.0)
                                                :clock transport})]
            (recur (+ position n) (:state result) (into events (:events result)))))))))
+
 (defn events-of [result type] (filterv #(= type (:type %)) (:events result)))
+
+(def ^:private section-rate 8000)
+
+(def ^:private section-beat-samples 4000)
+
+(def ^:private section-origin-ms 2000.0)
+
+(def ^:private section-clock
+  {:time-ms 2500.0 :beat 1.0 :bpm 120.0 :source :midi-clock :source-epoch 3
+   :session-id "transport-a" :confidence 0.9 :playing? true})
+
+(defn- section-pcm [index]
+  (let [beat (quot index section-beat-samples)
+        frequencies (if (< beat 8) [48.0 64.0 84.0 104.0] [84.0 104.0 48.0 64.0])
+        local-ms (* 1000.0 (/ (rem index section-beat-samples) section-rate))]
+    (+ (sine (nth frequencies (mod beat 4)) 0.3 local-ms)
+       (sine 76.0 (* 0.08 (Math/exp (/ (- local-ms) 18.0))) local-ms)
+       (sine 700.0 0.025 local-ms))))
+
+(defn- run-section-pcm [state start end block-sizes transport]
+  (let [capture-ms #(+ section-origin-ms (* 1000.0 (/ % section-rate)))]
+    (loop [index start block-sizes (cycle block-sizes) state state events []]
+      (if (= index end)
+        {:state state :events events :features (:features state)}
+        (let [next-index (min end (+ index (first block-sizes)))
+              received-at-ms (+ 2.0 (capture-ms next-index))
+              result (analysis/analyze state {:samples (double-array (map section-pcm (range index next-index)))
+                                              :sample-rate section-rate :started-at-ms (capture-ms index)
+                                              :received-at-ms received-at-ms
+                                              :clock (if (fn? transport) (transport received-at-ms) transport)})]
+          (recur next-index (rest block-sizes) (:state result) (into events (:events result))))))))
+
+(deftest opt-in-sections-consume-every-hop-inside-arbitrary-pcm-blocks
+  (let [size (* 24 section-beat-samples)
+        options {:sections {}}
+        run #(run-section-pcm (analysis/new-analyzer %) 0 size %2 section-clock)
+        large (run options [65536])
+        irregular (run options [193 1199 71 4100])
+        reanchored (run-section-pcm (analysis/new-analyzer options) 0 size [64001]
+                                    (fn [arrived-at-ms]
+                                      (assoc section-clock :time-ms arrived-at-ms
+                                             :beat (/ (- arrived-at-ms section-origin-ms) 500.0))))
+        disabled (run {} [65536])
+        without-arrival #(dissoc % :observed-at-ms :latency-ms :available-at-beat)
+        changes (events-of large :audio/section-change)
+        [event] changes
+        feel (get-in large [:features :audio/section])]
+    (is (= 1 (count changes)))
+    (is (= 1 (:version event)))
+    (is (= [:bass-pattern] (get-in event [:evidence :drivers])))
+    (is (= 8.0 (:boundary-beat event) (:confirmation-delay-beats event)))
+    (is (= 16.0 (:confirmed-at-beat event)))
+    (is (= 10000.0 (:time-ms event) (:confirmed-at-ms event)))
+    (is (= 194.0 (:latency-ms event)))
+    (is (= :confirmation-hop-end (get-in event [:timing :basis])))
+    (is (= :midi-clock (:clock-source event)))
+    (is (= 3 (:clock-epoch event)))
+    (is (= "transport-a" (:clock-session-id event)))
+    (is (<= 0.45 (:confidence event) 0.9))
+    (is (= (:current-rms (:level event)) (:previous-rms (:level event))))
+    (is (= feel (get-in irregular [:features :audio/section])))
+    (is (= (select-keys event (keys feel)) feel))
+    (is (= (range 1 (inc (count (:events large)))) (map :sequence (:events large))))
+    (is (= (mapv without-arrival (:events large)) (mapv without-arrival (:events irregular))))
+    (is (= (mapv without-arrival changes)
+           (mapv without-arrival (events-of reanchored :audio/section-change))))
+    (is (empty? (events-of disabled :audio/section-change)))
+    (is (not (contains? (:features disabled) :audio/section)))
+    (is (= (mapv #(dissoc % :sequence) (:events disabled))
+           (mapv #(dissoc % :sequence) (remove (comp #{:audio/section-change} :type) (:events large)))))))
+
+(deftest section-clock-loss-or-provenance-change-fences-a-pending-candidate
+  (let [transition (* 13 section-beat-samples)
+        end (* 18 section-beat-samples)
+        prefix (run-section-pcm (analysis/new-analyzer {:sections {}}) 0 transition [1359] section-clock)
+        clocks [nil (assoc section-clock :playing? false) (assoc section-clock :stale? true)
+                (assoc section-clock :confidence 0.1) (dissoc section-clock :confidence)
+                (dissoc section-clock :source-epoch) (assoc section-clock :source-epoch 4)
+                (assoc section-clock :source :link) (assoc section-clock :session-id "transport-b")
+                (assoc section-clock :session-id {:invalid :identity})]]
+    (is (empty? (events-of prefix :audio/section-change)))
+    (is (= 1 (count (events-of (run-section-pcm (:state prefix) transition end [1359] section-clock)
+                               :audio/section-change))))
+    (doseq [transport clocks]
+      (let [short (run-section-pcm (:state prefix) transition (inc transition) [1] transport)
+            resumed (run-section-pcm (:state short) (inc transition) end [1359] section-clock)]
+        (is (empty? (:events short)))
+        (is (empty? (events-of resumed :audio/section-change)))))))
+
+(deftest same-source-phase-jumps-and-loss-clear-confirmed-section-evidence
+  (let [position (* 17 section-beat-samples)
+        confirmed (run-section-pcm (analysis/new-analyzer {:sections {}}) 0 position [4000] section-clock)]
+    (is (= 8.0 (get-in confirmed [:features :audio/section :boundary-beat])))
+    (doseq [[transport length] [[nil 1]
+                                [(update section-clock :beat inc) 80]
+                                [(update section-clock :beat dec) 80]]]
+      (let [reset (run-section-pcm (:state confirmed) position (+ position length) [80] transport)]
+        (is (empty? (events-of reset :audio/section-change)))
+        (is (not (contains? (:features reset) :audio/section)))))))
+
+(deftest section-options-are-explicit-and-validated
+  (doseq [bad [true nil {:unknown true} {:beats-per-window 0} {:anchor-beat Double/NaN}]]
+    (is (thrown? clojure.lang.ExceptionInfo (analysis/new-analyzer {:sections bad}))))
+  (is (= {:anchor-beat 1 :beats-per-window 2}
+         (get-in (analysis/new-analyzer {:sections {:anchor-beat 1 :beats-per-window 2}})
+                 [:options :sections]))))
 
 (deftest above-full-scale-pcm-publishes-a-bounded-control-signal
   (let [result (analysis/analyze (analysis/new-analyzer)

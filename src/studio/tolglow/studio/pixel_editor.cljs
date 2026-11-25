@@ -135,6 +135,7 @@
     [:anchor (:anchor-index state) point]))
 
 (defn- emit! [& command] (rf/dispatch-sync [:rig-editor/pixels command]))
+
 (defn- input-value [e] (.. e -target -value))
 
 (defn- numeric [label value path & [options]]

@@ -16,6 +16,7 @@
            [java.util.concurrent CountDownLatch TimeUnit]))
 
 (defn image [] (BufferedImage. 960 160 BufferedImage/TYPE_INT_RGB))
+
 (defn await-latch [^CountDownLatch latch] (.await latch 2 TimeUnit/SECONDS))
 
 (defn- with-packaged-worker [source f]

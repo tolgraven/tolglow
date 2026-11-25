@@ -10,6 +10,7 @@
             [tolglow.studio.waveform :as waveform]))
 
 (def units [[:beats "Beats"] [:bars "Bars"] [:phrases "Phrases"] [:ms "Milliseconds"]])
+
 (defn percent [n] (if (number? n) (str (js/Math.round (* n 100)) "%") "—"))
 
 (defn choice [label value choices change! & [opts]]

@@ -10,12 +10,19 @@
    :distribution "uniform" :seed "1" :max-change ""
    :cue-id "parameter-motion" :cue-name "Parameter motion"
    :pending {} :errors {} :notice nil :widgets {} :generation 0 :expanded? false})
+
 (defn- wire [value] (events/wire-id value))
+
 (defn- state [db] (merge defaults (get-in db [:ui :modulation])))
+
 (defn- store [db s] (assoc-in db [:ui :modulation] s))
+
 (defn- value-of [event] (.. event -target -value))
+
 (defn- set-form! [key value] (rf/dispatch-sync [:modulation/set key value]))
+
 (defn- lookup [data key] (get data key (get data (keyword (wire key)) (get data (wire key)))))
+
 (defn- display [value] (cond (vector? value) (str/join ", " (map display value))
                             (number? value) (str (/ (js/Math.round (* value 1000)) 1000))
                             :else (wire value)))
@@ -67,13 +74,17 @@
 (defn schema-range [schema]
   (or (get-in schema [:random :range]) (:recommended schema) (:bounds schema)
       (when (= "color" (wire (:type schema))) [0 1])))
+
 (defn- schema-numeric? [schema] (contains? #{"number" "integer" "color" "vector" "range"} (wire (:type schema))))
+
 (defn- widget-key [instance-id parameter] [(wire instance-id) (wire parameter)])
+
 (defn widget-form [s instance-id parameter schema]
   (let [key (widget-key instance-id parameter) [low high] (schema-range schema)]
     (merge {:every "1" :unit "beats" :mode "glide" :curve "smoothstep" :seed "1" :hold-beats ""
             :low (if (some? low) (str low) "") :high (if (some? high) (str high) "") :expanded? false}
            (get-in s [:widgets key]))))
+
 (defn widget-config [form instance-id parameter schema id]
   (build-config (merge defaults form {:id id :scope "instances" :targets [(wire instance-id)]
                                       :param-mode "selected" :selected-params [(wire parameter)]
@@ -84,15 +95,19 @@
   (let [hold (lookup (lookup (get-in show [:modulation :holds]) instance-id) parameter)
         beat (get-in show [:transport :beat] 0)]
     (and (map? hold) (or (nil? (:until-beat hold)) (< beat (:until-beat hold))))))
+
 (defn- controller-for [show instance-id parameter]
   (first (filter #(and (vector? (get-in % [:config :params])) (= [(wire instance-id)] (mapv wire (get-in % [:config :select :instance-ids])))
                        (= [(wire parameter)] (mapv wire (get-in % [:config :params]))))
                  (get-in show [:modulation :controllers]))))
+
 (defn request-token [db] [(get-in db [:show :runtime-id]) (get-in db [:show :epoch]) (:generation (state db))])
+
 (defn- send-request [db key path body notice]
   {:db (store db (-> (state db) (assoc-in [:pending key] true) (update :errors dissoc key) (assoc :notice nil)))
    :studio/http {:path path :body body :on-success [:modulation/accepted (request-token db) key notice]
                  :on-failure [:modulation/failed (request-token db) key]}})
+
 (defn- failure [db key error]
   {:db (store db (-> (state db) (assoc-in [:errors key] (events/error-message error)) (update :pending dissoc key)))})
 
@@ -186,6 +201,7 @@
     "categories" (mapv #(hash-map :id % :label (str/capitalize (str/replace % "-" " ")))
                        (sort (set (map wire (mapcat #(concat (:categories %) (when (:category %) [(:category %)])) (:effects show))))))
     []))
+
 (defn parameter-options [show form]
   (let [selected (set (:targets form))
         effects (:effects show)
@@ -216,6 +232,7 @@
    [:label "Musical unit"
     [:select {:value unit :disabled disabled? :aria-label "Modulation interval unit" :on-change #(change! :unit (value-of %))}
      [:option {:value "beats"} "Beats"] [:option {:value "bars"} "Bars"] [:option {:value "phrases"} "Phrases"]]]])
+
 (defn- mode-fields [form change! disabled?]
   [:div.modulation-pair
    [:label "Motion"
@@ -227,8 +244,10 @@
      (for [[id label] [["linear" "Linear"] ["smoothstep" "Smooth"] ["sine" "Sine"]
                       ["ease-in" "Ease in"] ["ease-out" "Ease out"] ["step" "Hold until boundary"]]]
        ^{:key id} [:option {:value id} label])]]])
+
 (defn- status-message [s key]
   (when-let [error (get-in s [:errors key])] [:p.modulation-error {:role "alert"} error]))
+
 (defn- scope-form [s show busy?]
   [:div.modulation-scope
    [:label {:for "modulation-scope"} "Control"
@@ -246,6 +265,7 @@
                                            :on-change #(rf/dispatch [:modulation/toggle :targets (:id choice)])}]
                                  [:span (:label choice)]])
           [:p.small.muted "No targets of this kind are available in this show."])]))])
+
 (defn- parameters-form [s show busy?]
   (let [parameters (parameter-options show s)]
     [:div.modulation-parameters

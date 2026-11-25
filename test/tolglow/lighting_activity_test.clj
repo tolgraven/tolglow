@@ -11,6 +11,7 @@
           {:id (keyword (str "head-" i)) :universe 1 :address (inc (* 8 i)) :groups [(if (zero? i) :solo :rest)]
            :channels {:dimmer 1 :red 2 :green 3 :blue 4 :pan 5 :tilt 6 :strobe {:offset 7 :hz [0.5 20.0]}}})
         (range 8)))
+
 (def full [1.0 1.0 1.0])
 
 (defn- block [effect targets output]

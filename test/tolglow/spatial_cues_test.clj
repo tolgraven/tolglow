@@ -18,7 +18,9 @@
               :paint {:red 1.0 :blue 0.0}})
 
 (defn- state [rt] (:model @(:state rt)))
+
 (defn- launch! [rt now cue] (host/submit rt now :command {:op :cue/launch :cue-id cue}))
+
 (defn- change! [rt now id param value]
   (host/submit rt now :command {:op :param/set :instance-id id :param param :value value}))
 

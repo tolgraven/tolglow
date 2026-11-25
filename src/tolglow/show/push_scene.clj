@@ -10,6 +10,7 @@
            [java.util HexFormat]))
 
 (def ^:private fixture-limit 32)
+
 (defn create-cache [] (volatile! nil))
 
 (defn- spread [items n]

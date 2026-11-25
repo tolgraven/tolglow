@@ -14,8 +14,11 @@
            [java.nio.charset StandardCharsets]))
 
 (defn- fail! [code message] (throw (ex-info message {:sensors/error code})))
+
 (defn- identifier? [x] (and (string? x) (<= 1 (count x) 128)))
+
 (defn- finite? [x] (and (number? x) (Double/isFinite (double x))))
+
 (def empty-state {:version 1 :sources {}})
 
 (defn validate-state [state]
@@ -342,6 +345,7 @@
       (stage/start! (:stage manager) options udp (:token device)))))
 
 (defn export-state [model] (validate-state (or (:sensors model) empty-state)))
+
 (defn close! [manager]
   (let [receiver (locking (:lock manager)
                    (let [state @(:state manager)]

@@ -3,10 +3,13 @@
   Kick/energy/breakdown heuristics are calibrated signal descriptors, not a
   general music, downbeat or emotion classifier. No IO or mutable state is held
   by the analyzer; subscriptions are an independently invoked host boundary."
-  (:require [tolglow.integrations.bands :as bands]))
+  (:require [tolglow.integrations.bands :as bands]
+            [tolglow.integrations.sections :as sections]))
 
 (defn- finite? [x] (and (number? x) (Double/isFinite (double x))))
+
 (defn- clamp [x lo hi] (max lo (min hi x)))
+
 (defn- approach [old value elapsed-ms time-constant-ms]
   (+ old (* (- 1.0 (Math/exp (/ (- elapsed-ms) time-constant-ms))) (- value old))))
 
@@ -23,10 +26,15 @@
    :beat-tolerance-ms 75.0 :beat-clock-confidence-min 0.5})
 
 (defn- options [input]
-  (when-not (and (map? input) (every? (set (keys defaults)) (keys input)))
+  (when-not (and (map? input) (every? (conj (set (keys defaults)) :sections) (keys input)))
     (throw (ex-info "Unknown audio analysis option" {})))
+  (when (contains? input :sections)
+    (let [grid (:sections input)]
+      (when-not (and (map? grid) (every? #{:anchor-beat :beats-per-window} (keys grid)))
+        (throw (ex-info "Section analysis requires a grid options map" {})))
+      (sections/new-detector grid)))
   (let [opts (merge defaults input) [low high] (:kick-band-hz opts)
-        positive (vals (dissoc opts :source-id :kick-band-hz :beat-clock-confidence-min))]
+        positive (vals (dissoc opts :source-id :kick-band-hz :beat-clock-confidence-min :sections))]
     (when-not (and (or (keyword? (:source-id opts)) (string? (:source-id opts)))
                    (every? #(and (finite? %) (pos? %)) positive)
                    (every? finite? [low high]) (< 0 low high)
@@ -51,7 +59,9 @@
 (defn new-analyzer
   "Create immutable analysis state. Configure thresholds per actual input gain;
   defaults are normalized PCM heuristics. :calibration-ms gates onsets and
-  breakdowns while baselines initialize. No input samples or callbacks retained."
+  breakdowns while baselines initialize. Supply :sections {} to enable feel
+  analysis, with optional :anchor-beat and :beats-per-window. No input samples
+  or callbacks retained."
   ([] (new-analyzer {}))
   ([opts] {:version 1 :options (options opts) :sequence 0 :sample-index 0
            :sample-rate nil :origin-ms nil :last-end-ms nil :hop nil
@@ -89,10 +99,13 @@
     (throw (ex-info "Clock needs source, time-ms, beat, bpm and optional confidence" {})))
   clock)
 
+(defn- clock-beat-at [clock time-ms]
+  (+ (:beat clock) (/ (- time-ms (:time-ms clock)) (/ 60000.0 (:bpm clock)))))
+
 (defn- alignment [clock time-ms tolerance-ms]
   (when (and clock (not= false (if (contains? clock :playing?) (:playing? clock) (:running? clock))))
     (let [period (/ 60000.0 (:bpm clock))
-          position (+ (:beat clock) (/ (- time-ms (:time-ms clock)) period))
+          position (clock-beat-at clock time-ms)
           beat (long (Math/round (double position)))
           error (* (- position beat) period)]
       {:beat beat :phase-error-beats (- position beat) :phase-error-ms error
@@ -111,6 +124,66 @@
                                :includes-processing-time? false}}
                      data)]
     [(assoc state :sequence sequence) (conj events event)]))
+
+(defn- section-clock-id [clock confidence-min]
+  (let [epoch (get clock :source-epoch (:epoch clock))
+        session (:session-id clock)
+        playing? (get clock :playing? (:running? clock))
+        confidence (:confidence clock)]
+    (when (and (true? playing?) (not (:stale? clock))
+               (finite? confidence) (>= confidence confidence-min)
+               (integer? epoch) (<= 0 epoch Long/MAX_VALUE)
+               (or (nil? session) (keyword? session) (uuid? session)
+                   (and (string? session) (<= 1 (count session) 128))))
+      (cond-> {:clock-source (:source clock) :clock-epoch epoch}
+        session (assoc :clock-session-id session)))))
+
+(defn- prepare-sections [state clock]
+  (if-let [grid (get-in state [:options :sections])]
+    (let [clock-id (section-clock-id clock (get-in state [:options :beat-clock-confidence-min]))]
+      (if (and clock-id (= clock-id (get-in state [:section-state :clock-id])))
+        state
+        (cond-> (dissoc state :section-state)
+          (:features state) (update :features dissoc :audio/section)
+          clock-id (assoc :section-state {:clock-id clock-id
+                                         :anchor-beat (double (:anchor-beat grid 0.0))
+                                         :detector (sections/new-detector (dissoc grid :anchor-beat))}))))
+    state))
+
+(defn- section-grid-beat [clock end-ms anchor-beat]
+  (let [relative (- (clock-beat-at clock end-ms) anchor-beat)
+        edge (* 0.5 (Math/rint (* 2.0 relative)))]
+    ;; Equivalent clock snapshots can differ by rounding at a half-beat edge.
+    (if (< (Math/abs (- relative edge)) 1.0e-9) edge relative)))
+
+(defn- section-step [state events end-ms received-at-ms clock]
+  (if-let [{:keys [clock-id anchor-beat detector last-beat feel] :as section-state} (:section-state state)]
+    (let [beat (section-grid-beat clock end-ms anchor-beat)
+          ;; Use the detector's documented continuity limit for the retained
+          ;; feature as well as the underlying comparison.
+          discontinuity? (and last-beat (or (<= beat last-beat) (> (- beat last-beat) 0.125)))
+          {:keys [event] next-detector :state}
+          (sections/observe-hop detector {:beat beat
+                                          :features (:features state) :discontinuity? discontinuity?})
+          feel (if event
+                 (-> (merge clock-id (dissoc event :type :available-at-beat)
+                            {:confirmed-at-ms end-ms :clock-confidence (:confidence clock)
+                             :confidence (min (:confidence event) (:confidence clock))})
+                     (update :boundary-beat + anchor-beat)
+                     (update :confirmed-at-beat + anchor-beat))
+                 (when-not discontinuity? feel))
+          section-state (assoc section-state :detector next-detector :last-beat beat :feel feel)
+          state (cond-> (assoc state :section-state section-state)
+                  feel (assoc-in [:features :audio/section] feel))]
+      (if event
+        (emit state events :audio/section-change end-ms received-at-ms :beat-synchronous-bass-and-accents
+              (:confidence feel)
+              (assoc feel :available-at-beat (max (:confirmed-at-beat feel) (clock-beat-at clock received-at-ms))
+                          :latency-ms (max 0.0 (- received-at-ms end-ms))
+                          :timing {:basis :confirmation-hop-end :filter-delay-compensated? false
+                                   :includes-processing-time? false}))
+        [state events]))
+    [state events]))
 
 (defn- feature-step [state events hop received-at-ms clock]
   (let [opts (:options state) n (:n hop) rate (:sample-rate state)
@@ -185,13 +258,14 @@
                                candidate-since received-at-ms :relative-energy-hysteresis confidence
                                {:relative-energy relative :energy-baseline reference
                                 :confirmed-at-ms time-ms :confirmation-ms (- time-ms candidate-since)})
+                         [state events])
+        [state events] (if (or (nil? (:last-energy-event-ms state))
+                               (>= (- time-ms (:last-energy-event-ms state)) (:energy-event-ms opts)))
+                         (emit (assoc state :last-energy-event-ms time-ms) events :audio/energy time-ms received-at-ms
+                               :smoothed-rms confidence (select-keys features [:rms :peak :audio/energy :energy-dbfs
+                                                                              :relative-energy :energy-class :breakdown?]))
                          [state events])]
-    (if (or (nil? (:last-energy-event-ms state))
-            (>= (- time-ms (:last-energy-event-ms state)) (:energy-event-ms opts)))
-      (emit (assoc state :last-energy-event-ms time-ms) events :audio/energy time-ms received-at-ms
-            :smoothed-rms confidence (select-keys features [:rms :peak :audio/energy :energy-dbfs
-                                                           :relative-energy :energy-class :breakdown?]))
-      [state events])))
+    (section-step state events end-ms received-at-ms clock)))
 
 (defn- segment
   [^doubles samples offset end coefficients ^doubles delay hop]
@@ -230,7 +304,7 @@
 
   Input: {:samples normalized mono PCM :sample-rate Hz :started-at-ms capture
   timestamp of first sample :received-at-ms timestamp at boundary :clock optional
-  {:time-ms :beat :bpm :source :source-epoch :confidence :playing?}}. The clock
+  {:time-ms :beat :bpm :source :source-epoch :confidence :playing? :session-id}}. The clock
   also accepts :epoch as a fallback for :source-epoch. Both timestamps use the
   same monotonic domain. received-at must follow the complete capture block.
   Blocks may have arbitrary lengths; a fixed hop is carried across calls.
@@ -239,7 +313,15 @@
   rather than inventing onsets/breakdowns. Regressing/overlapping timestamps are
   rejected. :audio/beat is a detected kick close to a supplied running clock beat;
   it is never a tempo estimate or clock mutation. Arrival age excludes actual
-  execution/device latency, and timestamps are not filter-delay compensated."
+  execution/device latency, and timestamps are not filter-delay compensated.
+
+  Opt-in section analysis requires explicit running state, confidence at or
+  above :beat-clock-confidence-min, and a source epoch. Clock loss, source or
+  session changes and phase discontinuities clear its comparison and feature.
+  The comparison needs completed hops no more than 1/8 beat apart, and the
+  latest confirmation is available under :audio/section in the features.
+  The section event's :time-ms is the confirming hop end. :boundary-beat and
+  :confirmation-delay-beats describe the earlier change on the supplied grid."
   [state {:keys [samples sample-rate started-at-ms received-at-ms clock]}]
   (when-not (and (= 1 (:version state)) (map? (:options state))
                  (finite? sample-rate) (<= 8000 sample-rate 192000)
@@ -259,6 +341,7 @@
                                 (> (Math/abs (- started-at-ms (:last-end-ms state))) tolerance)))
         state (if (or (nil? (:sample-rate state)) discontinuity?)
                 (initialize state (double sample-rate) started-at-ms) state)
+        state (prepare-sections state clock)
         delay (double-array (:filter-delay state))
         [state events]
         (loop [offset 0 state state events []]

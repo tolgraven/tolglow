@@ -60,11 +60,17 @@
     state))
 
 (defn agents [connections] (get-in (live-state connections) [:bundle :agents]))
+
 (defn audio [connections] (get-in (live-state connections) [:bundle :audio]))
+
 (defn fixtures [connections] (get-in (live-state connections) [:bundle :fixtures]))
+
 (defn reactive [connections] (get-in (live-state connections) [:bundle :reactive]))
+
 (defn sync [connections] (get-in (live-state connections) [:bundle :sync]))
+
 (defn repls [connections] (get-in (live-state connections) [:bundle :repls]))
+
 (defn sensors [connections] (get-in (live-state connections) [:bundle :sensors]))
 
 (defn observe-status!
@@ -300,19 +306,27 @@
           (swap! (:state connections) assoc :audio-state {:version 1 :config config :capture-wanted? true})
           handle)))))
 
+(defn admit-audio-stop!
+  "Clear capture intent and return shutdown work for the current run. The show
+  owner admits Stop under its model lock, then runs the shutdown outside it."
+  ([connections] (admit-audio-stop! connections nil))
+  ([connections expected-generation]
+   (locking (:lock connections)
+     (let [{:keys [bundle generation]} (live-state connections)
+           _ (when (and expected-generation (not= expected-generation generation))
+               (fail! :stale-generation "Audio operation belongs to retired resources"))
+           manager (:audio bundle)
+           run-id (capture/active-run-id manager)
+           timeout-ms (get-in connections [:options :audio-stop-timeout-ms])]
+       (swap! (:state connections) assoc-in [:audio-state :capture-wanted?] false)
+       #(capture/stop! manager timeout-ms run-id)))))
+
 (defn stop-audio!
   "Stop capture and clear the persisted desire to capture. Closing a source
   must return promptly; the worker join uses the configured bounded timeout."
   ([connections] (stop-audio! connections nil))
   ([connections expected-generation]
-  (let [[manager run-id] (locking (:lock connections)
-                  (let [state (live-state connections)
-                        _ (when (and expected-generation (not= expected-generation (:generation state)))
-                            (fail! :stale-generation "Audio operation belongs to retired resources"))
-                        manager (audio connections)]
-                    (swap! (:state connections) assoc-in [:audio-state :capture-wanted?] false)
-                    [manager (capture/active-run-id manager)]))]
-    (capture/stop! manager (get-in connections [:options :audio-stop-timeout-ms]) run-id))))
+   ((admit-audio-stop! connections expected-generation))))
 
 (defn resume-audio!
   "Explicit post-clock-rebase hook. A restored capture request stays stopped

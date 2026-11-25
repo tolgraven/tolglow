@@ -14,15 +14,20 @@
            [org.xml.sax ErrorHandler InputSource]))
 
 (def specification "https://gdtf-development.com/help/developers/gdtf_1_2/file-format-definition/index.html")
+
 (def default-limits {:max-archive-bytes (* 16 1024 1024) :max-uncompressed-bytes (* 32 1024 1024)
                      :max-description-bytes (* 4 1024 1024) :max-entries 256
                      :max-xml-nodes 50000 :max-xml-depth 64})
 
 (defn- fail! [message data] (throw (ex-info message data)))
+
 (defn- diagnostic [severity code path message] {:severity severity :code code :path path :message message})
+
 (defn- byte-array? [x] (= (class x) (Class/forName "[B")))
+
 (defn- sha256 [data]
   (apply str (map #(format "%02x" (bit-and % 255)) (.digest (MessageDigest/getInstance "SHA-256") ^bytes data))))
+
 (defn- limits [opts]
   (let [result (merge default-limits (:limits opts))]
     (doseq [[key value] result]
@@ -61,18 +66,25 @@
   (if-not node [] (let [nodes (.getChildNodes node)]
     (filterv #(= Node/ELEMENT_NODE (.getNodeType ^Node %))
              (mapv #(.item nodes %) (range (.getLength nodes)))))))
+
 (defn- tag [^Node node] (or (.getLocalName node) (.getNodeName node)))
+
 (defn- elements [node name] (filterv #(= name (tag %)) (children node)))
+
 (defn- at [node & names] (reduce #(first (elements %1 %2)) node names))
+
 (defn- attr
   ([node key] (attr node key nil))
   ([^Element node key default] (if (and node (.hasAttribute node key)) (.getAttribute node key) default)))
+
 (defn- attributes [^Element node]
   (let [attributes (.getAttributes node)]
     (into {} (map (fn [i] (let [item (.item attributes i)] [(.getNodeName item) (.getNodeValue item)])))
           (range (.getLength attributes)))))
+
 (defn- node-data [node]
   {:tag (tag node) :attributes (attributes node) :children (mapv node-data (children node))})
+
 (defn- descendants [node] (tree-seq #(seq (children %)) children node))
 
 (defn- parse-xml [text limits]

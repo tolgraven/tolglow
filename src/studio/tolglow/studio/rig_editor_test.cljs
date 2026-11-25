@@ -8,9 +8,13 @@
             [tolglow.studio.rig-editor :as editor]))
 (def rig {:fixtures [{:id "head" :position [0 3 0] :rotation-deg [0 0 0] :address 17 :channels {:pan [1 2] :tilt [3 4]} :calibration {:pan [128 255]}}]
           :trusses [{:id "bar" :position [0 4 0] :length 4}]})
+
 (def base {:show {:show-id "show" :runtime-id "runtime" :epoch 2 :rig rig} :ui {:rig-draft rig}})
+
 (defn input [db type more] (editor/interaction db (merge {:type type :identity (editor/identity-key db) :token 1} more)))
+
 (defn tool [db name] (editor/put-editor db (assoc (editor/editor db) :tool name)))
+
 (deftest placement-is-draft-only-and-gesture-cancel-restores
   (let [start (tool base "move")
         begun (input start "begin" {:selection {:kind "fixtures" :id "head"} :point [0 3 0]})
@@ -23,6 +27,7 @@
     (is (empty? (:undo (editor/editor cancelled))))
     (is (= moved (input moved "move" {:token 42 :point [9 9 9]})))
     (is (= moved (editor/interaction moved {:type "move" :identity "old-show" :token 1 :point [9 9 9]})))))
+
 (deftest rotation-is-relative-to-gesture-start-and-chosen-plane
   (let [db (-> (tool base "rotate") (assoc-in [:ui :rig-editor :plane] "xy"))
         begun (input db "begin" {:selection {:kind "trusses" :id "bar"} :point [0 4 0]})
@@ -30,6 +35,7 @@
         second-move (input first-move "move" {:angle 20 :point [0 4 0]})]
     (is (= [0 0 20] (get-in second-move [:ui :rig-draft :trusses 0 :rotation-deg])))
     (is (= 4 (get-in second-move [:ui :rig-draft :trusses 0 :length])))))
+
 (deftest paths-are-editable-musical-data-and-request-is-fenced
   (let [db (tool base "draw")
         first-point (-> db (input "begin" {:point [0 0 0]}) (input "end" {}))
@@ -45,6 +51,7 @@
     (is (= ["head"] (get-in request [:body :targets])))
     (is (= [:rig-editor/published (editor/identity-key db) "request" nil] (:on-success request)))
     (is (empty? (:points (editor/editor (assoc-in db [:show :epoch] 3)))))))
+
 (deftest undo-discard-and-stale-publication
   (let [restore (rf/make-restore-fn)]
     (try
@@ -71,6 +78,7 @@
 (defn transition [db event]
   (reset! rf-db/app-db db)
   (:effects (interceptor/execute event (remove #(= :do-fx (:id %)) (registrar/get-handler :event (first event))))))
+
 (deftest publication-is-an-explicit-versioned-choice
   (let [restore (rf/make-restore-fn)]
     (try
@@ -88,6 +96,7 @@
         (is (nil? (:studio/send-command (transition db [:rig-editor/published identity "other-request" "one-shot" ack]))))
         (is (nil? (:studio/send-command (transition (assoc-in db [:show :epoch] 3) [:rig-editor/published identity "request" "one-shot" ack])))))
       (finally (restore)))))
+
 (deftest reopen-saved-path-preserves-its-version-and-cue-identity
   (let [restore (rf/make-restore-fn)]
     (try

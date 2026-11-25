@@ -325,3 +325,44 @@ The PCM regression suite measures tones at 41.2, 700 and 3300 Hz in differently
 partitioned buffers. The host test feeds a measured 65 Hz signal into an active
 cue through the patchbay and checks its parameter and subsequent silence gate.
 [Analyzer tests](../test/tolglow/integrations/analysis_test.clj) · [Host routing test](../test/tolglow/studio/routing_host_test.clj)
+
+## Drive cue patterns from changes in track feel
+
+Set `:analyzer-options {:sections {}}` when starting capture to enable section
+detection. The detector compares repeated bass-note distributions and
+normalized accent patterns
+over musical windows. It publishes `:audio/section-change` after confirming a
+change. The event carries the earlier boundary beat, confirmation beat,
+confidence and capture run.
+
+To turn those observations into show actions, create the show with an explicit
+pattern policy, for example `:section-patterns {:enabled? true :on :bar
+:show-seed 514 :patterns [:warm :pulse :slow]}`. Register a subscriber for
+`:music/section-pattern` and enter a **Pattern ID** such as `:slow` to route that
+choice to a specific cue. In the REPL use `:match {:type :music/section-pattern
+:pattern :slow}` on the same subscriber. Pattern IDs can also be plain text,
+an integer such as `514`, or a UUID such as
+`#uuid "516049b9-ff71-4bf4-bf00-123456789abc"`. Use quotes for text that looks
+like a typed ID, for example `"514"`. Pattern decisions use
+the show's selected clock and wait for the configured beat, bar or phrase.
+To pause the pattern source from the REPL, submit
+`(show/submit! runtime :settings {:scope :section-patterns :values {:override? true}})`.
+Set the same override to `false` to resume future decisions.
+
+For earlier detection with a known recording, use
+`tolglow.integrations.track-profile/analyze-file` with a local WAV and its beat
+grid. Supply the result as `:profile` in the show's `:section-reference`
+configuration. `:provenance` identifies the trusted player's source, session
+and monotonic clock. Open `tolglow.integrations.mpv-player/open!` against an
+existing local mpv socket and pass `tolglow.show/section-reference-callbacks`
+from the running show. The player worker reads and publishes position in the
+same monotonic clock domain and revokes the lock on close. Use the recording's
+absolute path in mpv and in the catalog. Each show accepts one configured
+reference. [REPL example](../src/tolglow/integrations/README.md#observe-a-known-local-recording-in-mpv)
+
+Reference forecasts expire on uncertainty or a playback discontinuity. The
+live capture can then supply a newly confirmed section. The show still owns
+when a decision can fire. For the same profile, policy and starting show, the
+seeded reference chooses the same pattern when revisiting a section.
+The trusted player clock estimates when a boundary arrives. Its lookahead
+cap cannot guarantee the exact seek time on a buffered playback device.

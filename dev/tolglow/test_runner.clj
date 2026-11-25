@@ -21,11 +21,13 @@
     tolglow.lighting-budget-test tolglow.lighting-activity-test tolglow.output-response-test
     tolglow.autopilot.signal-test tolglow.autopilot.statistics-test tolglow.autopilot.actions-test
     tolglow.autopilot.controller-test tolglow.autopilot.target-response-test tolglow.autopilot-host-test tolglow.performance-controls-test
-    tolglow.integrations.analysis-test
+    tolglow.integrations.analysis-test tolglow.integrations.sections-test
+    tolglow.integrations.reference-position-test tolglow.integrations.track-profile-test tolglow.integrations.section-patterns-test
+    tolglow.integrations.mpv-observations-test tolglow.integrations.mpv-player-test
     tolglow.integrations.gdtf-test
     tolglow.venue-fog-test tolglow.fog-optics-test tolglow.fog-calibration-test tolglow.venue-performance-test tolglow.perf.beam-admission-test tolglow.perf.independent-effects-test tolglow.perf.weighted-live-test tolglow.stride-break-even-test
     tolglow.calibration-test tolglow.studio-test tolglow.effects.faults-test tolglow.studio.web-test tolglow.guest-admission-test tolglow.composition-test tolglow.agents-test tolglow.agents.forms-test
-    tolglow.persistence-test tolglow.expressive-test tolglow.audio.capture-test tolglow.agents.credentials-test
+    tolglow.persistence-test tolglow.show.recovery-test tolglow.expressive-test tolglow.audio.capture-test tolglow.agents.credentials-test
     tolglow.fixtures.definitions-test tolglow.fixtures.library-test
     tolglow.connections-test tolglow.studio.connections-host-test
     tolglow.studio.output-options-test

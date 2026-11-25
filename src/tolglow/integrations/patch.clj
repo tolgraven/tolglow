@@ -7,11 +7,17 @@
             [tolglow.composition.tween :as tween]))
 
 (defn- fail! [code message] (throw (ex-info message {:patch/error code})))
+
 (defn- id? [x] (or (keyword? x) (and (string? x) (<= 1 (count x) 128))))
+
 (defn- finite? [x] (time/finite-number? x))
+
 (defn- bounds? [x] (and (vector? x) (= 2 (count x)) (every? finite? x) (< (first x) (second x))))
+
 (defn- clamp [x low high] (max low (min high x)))
+
 (defn- only-keys? [m allowed] (and (map? m) (every? allowed (keys m))))
+
 (defn- duration! [duration]
   (when (seq (time/validate-duration duration)) (fail! :invalid-spec "Invalid musical/explicit millisecond duration"))
   duration)
@@ -91,6 +97,7 @@
   (and (map? clock) (every? finite? ((juxt :time-ms :beat) clock))
        (<= (:time-ms clock) (:time-ms current)) (<= (:beat clock) (:beat current))
        (try (time/normalize-meter (:meter clock)) true (catch Exception _ false))))
+
 (defn- portable? [value depth]
   (and (< depth 24)
        (cond

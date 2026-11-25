@@ -38,6 +38,7 @@
    ["thi.ng.color/css.v1" (type (color/css "")) css]])
 
 (def ^:private color-classes (into #{} (map second) color-types))
+
 (defn color-value? [value] (contains? color-classes (type value)))
 
 #?(:cljs (defrecord BeatFraction [numerator denominator]))
@@ -99,6 +100,7 @@
 ;; Each message owns its Transit cache, including when a handler rejects the
 ;; message halfway through. Only the immutable handler tables are shared.
 #?(:clj (def ^:private writer-handlers (transit/write-handler-map write-handlers)))
+
 #?(:clj (def ^:private reader-handlers (transit/read-handler-map read-handlers)))
 
 (defn encode [value]

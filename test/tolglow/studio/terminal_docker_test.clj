@@ -11,7 +11,9 @@
            [java.util.concurrent CountDownLatch TimeUnit]))
 
 (defn encode [s] (.encodeToString (Base64/getEncoder) (.getBytes ^String s StandardCharsets/UTF_8)))
+
 (defn output-bytes ^bytes [response] (.decode (Base64/getDecoder) ^String (:data response)))
+
 (defn decoded [response] (String. (output-bytes response) StandardCharsets/UTF_8))
 (declare poll)
 (defn with-container [options f]
@@ -25,9 +27,11 @@
                       (is (empty? (:pending-containers
                                    (poll #(terminal/status term) #(empty? (:pending-containers %)) 30000)))
                           "Pending create/cleanup must settle before fixture roots disappear")))))))
+
 (defn request [paths argv]
   {:workspace-id "container" :workspace-root (:workspace-root paths) :cwd (get-in paths [:repositories :tolglow :path])
    :argv argv :timeout-ms 20000 :max-output-bytes 65536})
+
 (defn poll [f pred timeout]
   (let [deadline (+ (System/nanoTime) (* timeout 1000000))]
     (loop [] (let [value (f)] (if (or (pred value) (> (System/nanoTime) deadline)) value

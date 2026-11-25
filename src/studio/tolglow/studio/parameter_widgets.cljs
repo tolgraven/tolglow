@@ -7,14 +7,18 @@
 
 (defn label [value]
   (str/replace (cond (keyword? value) (name value) (nil? value) "—" :else (str value)) #"[-_]" " "))
+
 (def finite? numeric/finite?)
+
 (def number-label numeric/number-label)
+
 (defn value-label [schema value]
   (or (some #(when (= value (:value %)) (or (:label %) (label (:id %)))) (:choices schema))
       (cond (boolean? value) (if value "On" "Off")
             (number? value) (number-label schema value)
             (sequential? value) (str/join " · " (map #(if (number? %) (number-label schema %) (label %)) value))
             :else (label value))))
+
 (defn color-components [value]
   (if (satisfies? color/IRGBConvert value)
     (let [{:keys [r g b a]} (color/as-rgba value)] [r g b a])
@@ -27,6 +31,7 @@
     (and (sequential? value) (<= 3 (count value)) (every? finite? (take 3 value)))
     (str "rgb(" (str/join "," (map #(js/Math.round (* 255 (max 0 (min 1 %)))) (take 3 value))) ")")
     :else "#b6c9a9"))
+
 (defn swatch-css [value]
   (if (string? value) value (color-css value)))
 
@@ -34,6 +39,7 @@
   (let [[low high] (:bounds schema)]
     (when (and (finite? value) (finite? low) (finite? high) (< low high))
       (max 0 (min 1 (/ (- value low) (- high low)))))))
+
 (defn sample-points
   "Bound and normalize real supplied samples. Missing/nonfinite samples produce
   no trace, and a constant signal remains centered. No synthetic samples."
@@ -44,14 +50,17 @@
         (str/join " " (map-indexed (fn [i value]
                                     (str (* 100 (/ i (dec (count values)))) ","
                                          (if (pos? span) (- 28 (* 24 (/ (- value low) span))) 16))) values))))))
+
 (defn sparkline [samples]
   (when-let [points (sample-points samples)]
     [:svg.parameter-sparkline {:view-box "0 0 100 32" :preserve-aspect-ratio "none"
                                :role "img" :aria-label "Signal preview from supplied samples"}
      [:polyline {:points points :fill "none" :stroke "currentColor" :stroke-width 1.6 :vector-effect "non-scaling-stroke"}]]))
+
 (defn duration-label [duration]
   (if-let [[unit amount] (when (map? duration) (first duration))]
     (str (number-label amount) " " (label unit)) "—"))
+
 (defn category-tags [categories colors]
   [:span.category-tags
    (for [category (take 8 categories)]
@@ -63,15 +72,19 @@
 (defn parameter-kind [schema]
   (cond (seq (:choices schema)) :choice
         :else (keyword (or (:type schema) :number))))
+
 (defn unit-label [schema]
   (when-let [unit (or (:unit schema) (:units schema))] (label unit)))
+
 (defn numeric-range [schema]
   (let [[low high] (:bounds schema)]
     (when (and (finite? low) (finite? high) (< low high)) [low high])))
+
 (defn normalized-value [schema amount]
   (when-let [[low high] (numeric-range schema)]
     (let [value (+ low (* (max 0 (min 1 amount)) (- high low)))]
       (if (= :integer (parameter-kind schema)) (max low (min high (js/Math.round value))) value))))
+
 (defn keyboard-value [schema value key]
   (when-let [[low high] (numeric-range schema)]
     (let [step (if (= :integer (parameter-kind schema)) 1 (/ (- high low) 100))
@@ -80,19 +93,23 @@
                      "PageUp" (+ value (* 10 step)) "PageDown" (- value (* 10 step))
                      "Home" low "End" high nil)]
       (when (some? next) (max low (min high next))))))
+
 (defn pointer-proportion
   "A 270-degree dial with its inactive gap at the bottom. No clock or state."
   [x y]
   (let [degrees (mod (+ 360 (* (/ 180 js/Math.PI) (js/Math.atan2 y x))) 360)
         angle (if (< degrees 90) (+ degrees 360) degrees)]
     (max 0 (min 1 (/ (- angle 135) 270)))))
+
 (defn dial-point [amount radius]
   (let [angle (* (/ js/Math.PI 180) (+ 135 (* 270 amount)))]
     [(+ 50 (* radius (js/Math.cos angle))) (+ 44 (* radius (js/Math.sin angle)))]))
+
 (defn arc-path [start end radius]
   (let [[x y] (dial-point start radius) [a b] (dial-point end radius)]
     (str "M" x "," y " A" radius "," radius " 0 " (if (> (* 270 (js/Math.abs (- end start))) 180) 1 0)
          " " (if (< start end) 1 0) " " a "," b)))
+
 (defn dial-model [schema value]
   (when-let [[low high] (numeric-range schema)]
     (when-let [amount (proportion schema value)]
@@ -198,6 +215,7 @@
    [:div.typed-track
     [:i {:style {:width (str (* 100 (or (proportion schema value) 0)) "%")}}]]
    [:output (number-label schema value)]])
+
 (defn- choice-view [schema value]
   (let [choices (vec (or (:choices schema) (map #(hash-map :value % :label (label %)) (or (:values schema) (:options schema)))))
         selected (first (keep-indexed #(when (= value (:value %2)) %1) choices))
@@ -210,6 +228,7 @@
         ^{:key index} [:span {:class (when (= value (:value choice)) "selected")}
                       (or (:label choice) (label (:id choice)) (label (:value choice)))])]
      [:span.typed-choice-position (str (if (some? selected) (inc selected) "—") " / " count-choices)]]))
+
 (defn typed-display [{:keys [schema value preview-samples base-value effective-value]}]
   (let [kind (parameter-kind schema) shown (if (some? effective-value) effective-value value)]
     [:div.typed-parameter {:data-type (name kind)}
@@ -241,18 +260,21 @@
      (when (seq preview-samples) [sparkline preview-samples])]))
 
 (def audio-band-colors {:low [68 145 235] :mid [245 163 70] :high [235 242 239]})
+
 (defn audio-bin-color [bands]
   (let [weights (mapv #(let [v (get bands %)] (if (and (finite? v) (pos? v)) v 0)) [:low :mid :high])
         total (reduce + weights)]
     (if (zero? total) "rgb(100,115,108)"
       (str "rgb(" (str/join "," (for [channel (range 3)]
                                    (js/Math.round (/ (reduce + (map * weights (map #(get (get audio-band-colors %) channel) [:low :mid :high]))) total)))) ")"))))
+
 (defn audio-bins [waveform]
   (let [bins (:bins waveform)]
     (when (and (vector? bins) (<= 1 (count bins) 512)
                (every? (fn [{:keys [min max rms]}]
                          (and (finite? min) (finite? max) (<= -1 min max 1)
                               (finite? rms) (<= 0 rms 1))) bins)) bins)))
+
 (defn audio-waveform [waveform]
   (if-let [bins (audio-bins waveform)]
     [:div.audio-waveform {:data-source (:source-id waveform) :data-sample-end (:sample-end waveform)

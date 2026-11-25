@@ -11,7 +11,9 @@
    :launch-grid :off :mappings {} :parameters {} :pairing nil :automap? true :observed-parameters {}})
 
 (defn- bounded-int? [value low high] (and (integer? value) (<= low value high)))
+
 (defn- text? [value limit] (and (string? value) (<= 1 (count value) limit)))
+
 (defn- identifier? [value] (or (keyword? value) (text? value 128)))
 
 (defn- check! [condition message]
@@ -29,6 +31,7 @@
   (let [key (if (keyword? key) (name key) key)
         key (if (and (string? key) (re-matches #"\d{1,3}" key)) (Long/parseLong key) key)]
     (when-not (and (integer? key) (<= 0 key 127)) (fail! :invalid-config "MIDI mapping keys must be 0..127")) key))
+
 (defn- live-pairing? [pairing]
   (or (nil? pairing)
       (and (map? pairing)
@@ -39,6 +42,7 @@
            (or (nil? (:rack-device-index pairing)) (and (integer? (:rack-device-index pairing)) (<= 0 (:rack-device-index pairing) 16383)))
            (every? #(or (nil? %) (and (string? %) (<= 1 (count %) 512)))
                    ((juxt :expected-track-name :expected-clip-name) pairing)))))
+
 (defn- mappings [values kind]
   (when-not (and (map? values) (<= (count values) 128)) (fail! :invalid-config "Mappings must be bounded maps"))
   (into {} (map (fn [[key value]]

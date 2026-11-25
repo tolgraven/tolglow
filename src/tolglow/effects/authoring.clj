@@ -6,6 +6,7 @@
             [tolglow.registry :as registry]))
 
 (def light-attributes (into registry/emitter-attributes [:color :dimmer]))
+
 (def performance-attributes (into light-attributes [:pan :tilt :aim :direction :strobe :shutter :focus :zoom]))
 
 (defn prepare

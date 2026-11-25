@@ -8,7 +8,9 @@
             [tolglow.studio.visibility :refer [watch-visibility]]))
 
 (def zooms [0.5 1 2 4 8 16])
+
 (def colors ["#e8a083" "#aed39a" "#89b9e0" "#cfb2dd"])
+
 (defn- tag [id] (when (or (keyword? id) (string? id)) (keyword id)))
 
 (defn components [schema value]
@@ -44,6 +46,7 @@
         [(- scale) scale])))
 
 (defn- unit-value [[low high] v] (max 0 (min 1 (/ (- v low) (- high low)))))
+
 (defn- screen
   "Oblique camera, fixed portrait-free aspect for the 960 × 160 hardware row."
   [[x y z]]

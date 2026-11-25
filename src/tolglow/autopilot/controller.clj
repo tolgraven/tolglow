@@ -11,9 +11,12 @@
    :rotate? true :seed 1 :duration {:bars 1}})
 
 (def scope-ids scope/fixture-ids)
+
 (defn- unit? [v] (and (time/finite-number? v) (<= 0 v 1)))
+
 (defn- positive-duration? [d]
   (and (empty? (time/validate-duration d)) (pos? (val (first d)))))
+
 (defn settings [opts]
   (let [s (merge defaults opts)]
     (when-not (and (or (nil? opts) (map? opts)) (every? (set (keys defaults)) (keys opts))
@@ -52,6 +55,7 @@
 (defn- clamp [lo hi x] (max lo (min hi x)))
 
 (defn- level [source gain] (min 1.0 (* (:level source) gain)))
+
 (defn- weighted [sources gains total]
   (if (zero? total) 0.0
       (/ (reduce (fn [sum {:keys [id capacity] :as s}]

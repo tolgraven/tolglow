@@ -1,22 +1,32 @@
 (ns tolglow.studio.subscriber-editor
   (:require [clojure.string :as str]
+            [cognitect.transit :as transit]
             [re-frame.core :as rf]
             [tolglow.transit :as wire]))
 
 (def endpoint "/api/event-subscribers")
+
 (defn- title [v] (if (keyword? v) (subs (str v) 1) (str v)))
+
 (defn- raw [event] (.. event -target -value))
+
 (defn- dispatch [event] (rf/dispatch event))
+
 (defn- input! [path v] (rf/dispatch-sync [:subscribers/field path v]))
+
 (defn- show-identity [db] (select-keys (:show db) [:runtime-id :epoch]))
+
 (defn- guard [db] [(get-in db [:debug :handle]) (show-identity db)])
+
 (defn- same-view? [db [handle identity]]
   (and handle (= handle (get-in db [:debug :handle]))
        (or (empty? identity) (= identity (show-identity db)))))
+
 (defn- subscriber-map [value]
   (cond (vector? value) (into {} (map (juxt :id identity)) value)
         (map? value) value
         :else {}))
+
 (defn- registered [db]
   (let [state (get-in db [:server-projection :view :event-subscribers])]
     (subscriber-map (or (:subscribers state) state (get-in db [:debug :catalog :subscribers])))))
@@ -61,21 +71,41 @@
 
 (def action-titles {:cue/launch "Launch cue" :effect/launch "Launch effect" :instance/end "Release effect"
                     :instance/kill "Kill effect" :instance/opacity "Set opacity" :callback "Custom callback"})
+
 (defn new-action [op]
   (case op
     :callback {:op op :implementation {:type :var :symbol ""}}
     (:cue/launch :effect/launch) {:op op :select {:pick :random} :launch {:mode :persistent}}
     :instance/opacity {:op op :select {:pick :all} :value 1}
     {:op op :select {:pick :all}}))
+
 (defn- seed-form [catalog]
   {:id "" :enabled? true :match (if-let [t (get-in catalog [:events 0 :type])] {:type t} {})
    :actions [(new-action :cue/launch)]})
+
+(def ^:private decimal-id #"[+-]?\d+")
+
+(def ^:private uuid-id
+  #"#uuid\s+\"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\"")
+
+(defn- pattern-text [id]
+  (cond
+    (transit/uuid? id) (pr-str id)
+    (transit/bigint? id) (aget id "rep")
+    (and (string? id)
+         (or (not= id (str/trim id)) (re-matches decimal-id id)
+             (some #(str/starts-with? id %) [":" "\"" "#uuid"])))
+    (js/JSON.stringify id)
+    :else (str id)))
+
 (rf/reg-event-db :subscribers/edit
   (fn [db [_ subscriber]]
     (if-not (get-in db [:debug :handle]) db
-      (-> db (assoc-in [:debug :form] (or subscriber (seed-form (get-in db [:debug :catalog]))))
-          (assoc-in [:debug :original] subscriber) (assoc-in [:debug :editing-show] (show-identity db))
-          (update :debug dissoc :catalog-error :saved)))))
+      (let [form (or subscriber (seed-form (get-in db [:debug :catalog])))
+            form (cond-> form (contains? (:match form) :pattern) (update-in [:match :pattern] pattern-text))]
+        (-> db (assoc-in [:debug :form] form)
+            (assoc-in [:debug :original] subscriber) (assoc-in [:debug :editing-show] (show-identity db))
+            (update :debug dissoc :catalog-error :saved))))))
 (rf/reg-event-db :subscribers/cancel
   (fn [db _] (update db :debug dissoc :form :original :editing-show :catalog-error)))
 (rf/reg-event-db :subscribers/field
@@ -93,6 +123,7 @@
 
 (defn- interval-text [n]
   (if (wire/fraction? n) (str (:numerator n) "/" (:denominator n)) (str n)))
+
 (defn- interval-value [source]
   (if-let [[_ n d] (re-matches #"([1-9][0-9]*)/([1-9][0-9]*)" source)]
     (wire/->BeatFraction n d)
@@ -100,9 +131,11 @@
       (when-not (and (re-matches #"[0-9]*\.?[0-9]+" source) (pos? v) (js/Number.isFinite v))
         (throw (js/Error. "Enter a positive musical interval such as 2 or 1/4.")))
       v)))
+
 (defn- interval-map [m]
   (when-let [[k v] (first m)]
     {k (if (string? v) (interval-value v) v)}))
+
 (defn- normalize-step [{:keys [delay select] :as action}]
   (cond-> (dissoc action :delay)
     (and select (empty? (:ids select))) (update :select dissoc :ids)
@@ -110,14 +143,45 @@
     (and select (nil? (:page-id select))) (update :select dissoc :page-id)
     (seq delay) (assoc :delay (interval-map delay))
     (get-in action [:launch :duration]) (update-in [:launch :duration] interval-map)))
+
+(defn- named-id [id]
+  (if (and (string? id) (str/starts-with? id ":")) (keyword (subs id 1)) id))
+
+(defn- integer-pattern-id [text]
+  (let [n (js/Number text)]
+    (if (js/Number.isSafeInteger n)
+      n
+      (let [exact (js/BigInt text)]
+        (if (< (js/BigInt "-9223372036854775809") exact (js/BigInt "9223372036854775808"))
+          (transit/integer (str exact))
+          (transit/bigint (str exact)))))))
+
+(defn- pattern-id [text]
+  (cond
+    (not (string? text)) text
+    (re-matches decimal-id text) (integer-pattern-id text)
+    (str/starts-with? text "#uuid")
+    (if-let [[_ id] (re-matches uuid-id text)]
+      (uuid (str/lower-case id))
+      (throw (js/Error. "Enter a UUID as #uuid followed by its quoted value.")))
+    (str/starts-with? text "\"") (js/JSON.parse text)
+    :else (named-id text)))
+
+(defn- clean-match [match]
+  (let [match (cond-> match (string? (:pattern match)) (update :pattern #(not-empty (str/trim %))))
+        match (into {} (remove (comp nil? val)) match)]
+    (cond-> match
+      (contains? match :emitter-id) (update :emitter-id named-id)
+      (not= :music/section-pattern (:type match)) (dissoc :pattern)
+      (and (= :music/section-pattern (:type match)) (contains? match :pattern))
+      (update :pattern pattern-id))))
+
 (defn clean-form [form]
   (let [id (str/trim (title (:id form)))]
     (when (or (str/blank? id) (str/includes? id " ")) (throw (js/Error. "Enter a subscriber ID without spaces.")))
     (when (empty? (:actions form)) (throw (js/Error. "Add at least one action.")))
     (-> form (assoc :id (keyword id))
-        (update :match #(into {} (remove (comp nil? val)) %))
-        (cond-> (string? (get-in form [:match :emitter-id]))
-          (update-in [:match :emitter-id] #(if (str/starts-with? % ":") (keyword (subs % 1)) %)))
+        (update :match clean-match)
         (update :actions #(mapv normalize-step %)))))
 (rf/reg-event-fx :subscribers/submit
   (fn [{:keys [db]} [_ op]]
@@ -155,7 +219,9 @@
   [:label caption [:select {:aria-label caption :value (title choice)
                             :on-change #(change (some (fn [[k _]] (when (= (title k) (raw %)) k)) pairs))}
                    (for [[k text] pairs] ^{:key (title k)} [:option {:value (title k)} text])]])
+
 (defn- choices [values] (mapv (fn [v] [v (title v)]) values))
+
 (defn- tags [caption selected available change]
   [:div.debug-values
    [select-box caption nil (into [[nil "Add a filter…"]] (remove (comp (set selected) first) available))
@@ -164,6 +230,7 @@
      ^{:key (title item)} [:button.debug-chip {:type "button" :aria-label (str "Remove " (title item))
                                               :on-click #(change (filterv (partial not= item) selected))}
                            (str (title item) " ×")])])
+
 (defn- candidate-options [registry catalog op]
   (let [kinds (case op :cue/launch [:cues] :effect/launch [:effects] [:instances :cues :effects])]
     (->> (for [kind kinds
@@ -229,6 +296,7 @@
          #(set-at [:delay] (when % {% (or amount 1)}))]
         (when unit [:label "Interval" [:input {:value (interval-text amount)
                                                :on-change #(set-at [:delay] {unit (raw %)})}]])])]))
+
 (defn panel []
   (let [{:keys [form original saving? saved catalog-error catalog]} @(rf/subscribe [:subscribers/editor])
         registry @(rf/subscribe [:subscribers/registry]) registered @(rf/subscribe [:subscribers/list])
@@ -258,6 +326,9 @@
            #(input! [:match :category] %)]
           [:label "Emitter ID" [:input {:value (str (:emitter-id match)) :placeholder ":audio/input or device ID"
                                         :on-change #(let [v (raw %)] (input! [:match :emitter-id] (not-empty v)))}]]
+          (when (= :music/section-pattern (:type match))
+            [:label "Pattern ID" [:input {:value (str (:pattern match)) :placeholder ":slow, slow, 42, or #uuid \"…\""
+                                          :on-change #(input! [:match :pattern] (raw %))}]])
           [:label.debug-check [:input {:type "checkbox" :checked (get form :enabled? true)
                                        :on-change #(input! [:enabled?] (.. % -target -checked))}] "Enabled"]]
          (for [[i action] (map-indexed vector (:actions form))]

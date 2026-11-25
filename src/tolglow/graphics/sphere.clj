@@ -40,6 +40,7 @@
     (+ mid (* x half))))
 
 (defn t [] (* 0.001 (q/millis)))
+
 (def speed 0.5)
 
 (defn stem [base-x]

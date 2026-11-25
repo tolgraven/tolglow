@@ -5,7 +5,9 @@
   gates the parameter update instead of producing an arbitrary value jump.")
 
 (defn- finite? [x] (and (number? x) (Double/isFinite (double x))))
+
 (defn- clamp [x low high] (max low (min high x)))
+
 (defn- settings [options]
   (let [{:keys [sample-rate frequency-range bounds amplitude] :as opts}
         (merge {:sample-rate 48000.0 :frequency-range [80.0 2000.0]
