@@ -161,7 +161,8 @@
        (or (nil? (:emitter-id match)) (= (:id emitter) (:emitter-id match)))))
 
 (defn- triggered? [{:keys [emitter data]}]
-  (or (= :event-subscriber (:id emitter)) (= :event-subscriber (:cause-adapter data))
+  (or (and (#{:adapter :command} (:kind emitter)) (= :event-subscriber (:id emitter)))
+      (= :event-subscriber (:cause-adapter data))
       (= :event-subscriber (get-in data [:source :adapter]))))
 
 (defn- delay-beats [action meter]

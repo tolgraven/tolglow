@@ -126,8 +126,19 @@
   (let [position (:position (first (demo/fixtures)))
         effect {:id :aim-code :version 1 :params {} :targets [:head-1]
                 :outputs {:aim {:op :const :value [0.0 0.0 0.0]}}}
-        runtime (show/create-runtime {:model (with-effect (demo/model) effect)
-                                        :workspace-options nil :effect-log! (fn [_])})]
+        captured (atom [])
+        runtime (update (show/create-runtime {:model (with-effect (demo/model) effect)
+                                              :workspace-options nil :effect-log! (fn [_])
+                                              :event-admit (fn [model events]
+                                                             (swap! captured into events)
+                                                             {:model model})})
+                        :compile
+                        (fn [compile-effect]
+                          (fn [{:keys [id version] :as definition}]
+                            (let [step (compile-effect definition)]
+                              (if (and (= :aim-code id) (= 2 version))
+                                (fn [context] (assoc (step context) :intents [:aim/attempted]))
+                                step)))))]
     (try
       (apply! runtime {:op :cue/launch :cue-id :breathe} 0)
       (let [id (:instance-id (apply! runtime {:op :cue/launch :cue-id :aim-code} 0))
@@ -135,6 +146,7 @@
         (is (= :accepted (:status (submit-operation! runtime :definition {:kind :effects :definition bad} 100))))
         (is (= 1 (get-in @(:state runtime) [:model :instances id :effect-version])))
         (is (= :output (get-in @(:state runtime) [:model :instances id :reload-fault :stage])))
+        (is (some #(= :effect/reload-failed (:type %)) @captured))
         (is (nil? (get-in (show/snapshot runtime) [:status :error])))
         (is (pos? (get-in (show/snapshot runtime) [:output :values :head-1 :intensity])))
         (show/tick! runtime 200)
@@ -144,7 +156,8 @@
                                                      {:kind :effects :definition (assoc effect :version 3)} 300))))
         (is (= 3 (get-in @(:state runtime) [:model :instances id :effect-version])))
         (is (nil? (get-in @(:state runtime) [:model :instances id :reload-fault])))
-        (is (= :effect/recovered (-> (show/snapshot runtime) :effect-events :events last :type))))
+        (is (= :effect/recovered (-> (show/snapshot runtime) :effect-events :events last :type)))
+        (is (not-any? #(= :aim/attempted (:type %)) @captured)))
       (finally (show/stop! runtime)))))
 
 (deftest actual-typed-output-failures-do-not-hide-the-healthy-lighting
