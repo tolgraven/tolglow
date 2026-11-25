@@ -104,6 +104,16 @@ function inspect(engine) {
     if (frozenPolicy) engine.measuredFrameMs = elapsed;
     else measureLoad(elapsed, now);
   };
+  // The worker reads telemetry once after each submitted draw. Attach that
+  // draw's sample there: with two frames in flight a later draw can replace
+  // `sample` before this frame's fence completes and its bitmap is published.
+  const telemetry = engine.getTelemetry.bind(engine);
+  engine.getTelemetry = () => {
+    const value = telemetry();
+    if (sample) value.passProbe = {...sample, policy: policy(), detailActive: detailActive(),
+      maximumDensity: value.fog.maximumDensity};
+    return value;
+  };
   function observe(phase, run) {
     const timed = sample.timerQueriesEnabled && frame % 8 === 0 && !pending.has(phase);
     if (timed) sample.timerApiCalls++;
@@ -192,7 +202,6 @@ function inspect(engine) {
       renderer.shadowMap.autoUpdate = originalShadowUpdate;
     },
     requestReset() {resetPending = true;},
-    sample: () => ({...sample, policy: policy(), detailActive: detailActive()}),
     freezeQuality() {
       if (engine.qualityChoice !== 'auto' || engine.resizePending) throw new Error('Room Auto policy is not ready to freeze.');
       frozenPolicy ||= policy();
@@ -280,10 +289,8 @@ SceneRenderer.prototype.draw = function(dt) {
 
 const send = self.postMessage.bind(self);
 self.postMessage = function(message, ...options) {
-  if (message?.type === 'frame' && probe) {
-    message.telemetry.passProbe = {...probe.sample(), maximumDensity: message.telemetry.fog.maximumDensity,
-      sentAt: performance.timeOrigin + performance.now()};
-  }
+  const sampled = message?.type === 'frame' && message.telemetry?.passProbe;
+  if (sampled) sampled.sentAt = performance.timeOrigin + performance.now();
   return send(message, ...options);
 };
 self.setRoomPassMode = choice => {
