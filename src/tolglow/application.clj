@@ -28,7 +28,7 @@
       (throw (ex-info "Place :show before modules that operate on it" {}))))
 
 (defn- start-show [{:keys [config]} opts]
-  (let [runtime (show/start! (merge {:frame-rate (:hz config 40)} opts))]
+  (let [runtime (show/start! (assoc (merge {:frame-rate (:hz config 40)} opts) :defer-recovery? true))]
     {:value runtime :stop! #(show/stop! runtime)}))
 
 (defn- start-web [context options]
@@ -41,12 +41,16 @@
       (throw (ex-info "Configured show operation failed" {:ack ack})))
     ack))
 
-(defn- show-state [context {:keys [load-file save-file actions]}]
+(defn- show-state [context {:keys [load-file save-file restore actions]}]
   (let [runtime (need-show context)]
+    (when-not (contains? #{nil :recovery :named} restore)
+      (throw (ex-info "Show startup checkpoint must be :recovery or :named" {:restore restore})))
     (when load-file (accepted! (show/load-show! runtime load-file)))
+    (when (and restore (contains? (:available (show/recovery-status runtime)) restore))
+      (accepted! (show/load-latest-show! runtime restore)))
     (doseq [action actions]
       (if (fn? action) (action) (accepted! (show/submit! runtime action))))
-    {:value {:load-file load-file :save-file save-file}
+    {:value (cond-> {:load-file load-file :save-file save-file} restore (assoc :restore restore))
      :before-stop! (when save-file #(show/save-show! runtime save-file))}))
 
 (defn- start-audio [context options]
@@ -165,8 +169,10 @@
   ([config registry]
    (when-not (some #{:show} (get-in config [:init :components]))
      (throw (ex-info "Application init needs a required :show component" {})))
-   (let [app (modules/start! registry config)]
-     (assoc (need-show app) :application app))))
+   (let [app (modules/start! registry config)
+         runtime (need-show app)]
+     (show/activate-recovery! runtime)
+     (assoc runtime :application app))))
 
 (defn stop! [runtime]
   (if-let [close! (get-in runtime [:application :stop!])] (close!) (show/stop! runtime)))

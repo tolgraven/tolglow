@@ -249,3 +249,22 @@ Studio downloads `tolglow-show.transit` from `GET /api/export` with media type
 schema-2 EDN saves. The REPL's `save-show!` writes the same payload with atomic
 replacement. A client can also POST the downloaded bytes directly to `/api/import` with the same media type. Application structure, registry versions, ownership and restoration
 rules remain part of schema 2. Transit supplies the representation of its values.
+
+## Working recovery and manual checkpoints
+
+A scheduled show captures the last committed model and output every ten seconds. It serializes and replaces one local recovery file per show ID on a background worker. When a write runs long, the worker waits until it finishes before starting the next interval. Shutdown cancels the worker and keeps the last completed checkpoint. Named saves keep their own files and are bookmarked after a successful `save-show!`.
+
+For a preview show, the same runtime can restore either file through the show owner's normal import operation.
+
+```clojure
+(require '[tolglow.show :as show])
+
+(show/recovery-status runtime)
+(show/save-show! runtime "night-studies.transit")
+@(show/load-latest-show! runtime :recovery)
+@(show/load-latest-show! runtime :named)
+```
+
+Configure the interval or storage directory under `:show`, for example `{:recovery {:interval-ms 10000 :directory "/path/to/recovery"}}`. The default is `~/Library/Application Support/Tolglow/Recovery` on macOS and `${XDG_STATE_HOME:-~/.local/state}/tolglow/recovery` elsewhere. Give independent installations that use the same show IDs different directories. `:recovery false` disables background writes. Named bookmarks remain accessible.
+
+To resume a checkpoint at configured startup, enable `:show-state` and set `:restore` to `:recovery` or `:named`. An existing `:load-file` is loaded first, so it can establish the show ID. If that show has no checkpoint of the requested kind, startup proceeds with the configured state. A corrupt checkpoint produces a restore error. [Recovery issue](https://github.com/tolgraven/tolglow/issues/551)

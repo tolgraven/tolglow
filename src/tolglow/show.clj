@@ -69,6 +69,7 @@
             [tolglow.effects.faults :as effect-faults]
             [tolglow.show.preview :as preview]
             [tolglow.show.push-scene :as push-scene]
+            [tolglow.show.recovery :as recovery]
             [tolglow.show.lighting :as lighting]
             [tolglow.integrations.analysis :as analysis]
             [tolglow.persistence :as persistence]
@@ -1452,6 +1453,9 @@
                          payload)
                payload (if (= :import type)
                          (let [document (persistence/read-string (:source payload))
+                               expected-show-id (:expected-source-show-id payload)
+                               _ (when (and expected-show-id (not= expected-show-id (get-in document [:model :show-id])))
+                                   (throw (ex-info "Checkpoint belongs to a different show" {:code :wrong-show})))
                                calibration-armed? (or (photometry/current (:model document))
                                                       (get-in document (into [:model] (conj calibration-session/artifact-path :armed?))))
                                ;; Strip scoped ownership before thaw rekeys instance sources.
@@ -1542,7 +1546,8 @@
     (when stop?
       (doseq [cleanup (concat (map :close! (vals (first (swap-vals! (:observers runtime) (constantly {})))))
                              (map #(fn [] (connections/abort-prepared! %)) @candidates)
-                             [#(event-callbacks/close! (:event-callbacks runtime))
+                             [#(some-> (:recovery runtime) deref recovery/close!)
+                              #(event-callbacks/close! (:event-callbacks runtime))
                               #(rdm/close! (:rdm runtime))
                               #(output-scheduler/close! (:publisher runtime))
                               #(send-output! runtime (render/idle-universes (:compiled @(:patch runtime))) 0 nil)
@@ -1765,29 +1770,34 @@
 
 (defn export-show-source [runtime] (capture-show runtime persistence/write-string))
 
+(defn- capture-checkpoint [runtime]
+  (capture-show runtime (fn [model output]
+                          (assoc (select-keys model [:show-id :epoch :revision :frame-number])
+                                 :source (persistence/write-string model output)))))
+
+(defn recovery-status
+  "Report available checkpoints for the current show, including after restart."
+  [runtime]
+  (when-let [owner (some-> (:recovery runtime) deref)]
+    (let [show-id (get-in @(:state runtime) [:model :show-id])
+          status (recovery/status owner)
+          checkpoints (into {} (keep (fn [kind]
+                                       (when-let [file (recovery/latest-file owner show-id kind)]
+                                         [kind {:modified-at-ms (.lastModified file)}])))
+                            [:recovery :named])]
+      (cond-> (assoc status :show-id show-id :checkpoints checkpoints :available (set (keys checkpoints)))
+        (not= show-id (get-in status [:last-saved :show-id])) (dissoc :last-saved)))))
+
 (defn save-show!
   "Save a complete snapshot using a forced temporary file and atomic replacement."
   [runtime path]
-  (let [file (.getAbsoluteFile (io/file path))
-        text (export-show-source runtime)]
-    (io/make-parents file)
-    (let [temporary (java.nio.file.Files/createTempFile
-                     (.toPath (.getParentFile file)) ".tolglow-show-" ".transit"
-                     (make-array java.nio.file.attribute.FileAttribute 0))]
-      (try
-        (with-open [stream (java.io.FileOutputStream. (.toFile temporary))]
-          (.write stream (.getBytes text java.nio.charset.StandardCharsets/UTF_8))
-          (.force (.getChannel stream) true))
-        (java.nio.file.Files/move temporary (.toPath file)
-                                  (into-array java.nio.file.CopyOption
-                                              [java.nio.file.StandardCopyOption/ATOMIC_MOVE
-                                               java.nio.file.StandardCopyOption/REPLACE_EXISTING]))
-        (.getAbsolutePath file)
-        (finally (java.nio.file.Files/deleteIfExists temporary))))))
+  (let [{:keys [show-id source]} (capture-checkpoint runtime)
+        saved (recovery/write-source! path source)]
+    (when-let [owner (some-> (:recovery runtime) deref)]
+      (recovery/remember-manual! owner show-id saved))
+    saved))
 
-(defn load-show!
-  "Read a bounded full show file and enqueue its atomic restore; returns a receipt."
-  [runtime path]
+(defn- load-checkpoint! [runtime path identity]
   (with-open [reader (io/reader (io/file path) :encoding "UTF-8")]
     (let [buffer (char-array 8192) source (StringBuilder.)]
       (loop []
@@ -1797,7 +1807,27 @@
               (throw (ex-info "Show file exceeds the document character limit" {})))
             (.append source buffer 0 n)
             (recur))))
-      (submit! runtime :import {:source (str source)}))))
+      (submit! runtime :import (assoc identity :source (str source))))))
+
+(defn load-show!
+  "Read a bounded full show file and enqueue its atomic restore; returns a receipt."
+  [runtime path]
+  (load-checkpoint! runtime path {}))
+
+(defn load-latest-show!
+  "Load the active show's latest :recovery or :named checkpoint."
+  [runtime kind]
+  (let [{:keys [show-id epoch]} (:model @(:state runtime))
+        owner (some-> (:recovery runtime) deref)
+        path (when owner (recovery/latest-file owner show-id kind))]
+    (when-not path (throw (ex-info "Show checkpoint is unavailable" {:kind kind :show-id show-id})))
+    (load-checkpoint! runtime path {:runtime-id (:id runtime) :expected-epoch epoch
+                                    :expected-source-show-id show-id})))
+
+(defn activate-recovery!
+  "Admit background checkpoints once the configured startup has settled."
+  [runtime]
+  (some-> (:recovery runtime) deref recovery/activate!))
 
 (defn rdm-action!
   "Explicit, independently owned RDM service. Status never touches a device."
@@ -2033,19 +2063,27 @@
 
 (defn start!
   "Start the scheduled show in preview or with :ola or :artnet. An embedded
-  host may supply its own sink opener. The show takes ownership of that sink."
+  host may supply its own sink opener. Set :recovery false to disable the
+  automatic working checkpoint, or supply :interval-ms and :directory."
   ([] (start! {}))
   ([options] (start! options output/open-sink!))
-  ([{:keys [frame-rate] :or {frame-rate 40} :as options} open-sink!]
+  ([{:keys [frame-rate defer-recovery?] :or {frame-rate 40} :as options} open-sink!]
    (when-not (and (number? frame-rate) (<= 1 frame-rate 120)) (throw (ex-info "Frame rate must be 1..120" {})))
-   (let [sink (open-sink! options)
-         runtime (try (create-runtime (merge {:adaptive-keyframes {:enabled? true}} options
-                                              {:sink sink :independent-output? true}))
+   (let [recovery-options (recovery/options (:recovery options))
+         sink (open-sink! options)
+         runtime (try (assoc (create-runtime (merge {:adaptive-keyframes {:enabled? true}} options
+                                                     {:sink sink :independent-output? true}))
+                             :recovery (atom nil))
                       (catch Throwable error
                         (when sink
                           (try ((:close! sink)) (catch Throwable cleanup (.addSuppressed error cleanup))))
                         (throw error)))]
      (try
        (output-scheduler/start! (:publisher runtime) (/ 1000.0 frame-rate) #(render-slot! runtime %))
+       (reset! (:recovery runtime)
+               (recovery/start! recovery-options (not defer-recovery?)
+                                #(when @(:running runtime) (capture-checkpoint runtime))
+                                #(and @(:running runtime)
+                                      (= (show-identity %) (show-identity (:model @(:state runtime)))))))
        runtime
        (catch Throwable error (stop! runtime) (throw error))))))

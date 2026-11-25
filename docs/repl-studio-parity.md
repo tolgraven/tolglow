@@ -58,6 +58,8 @@ compare the tab with the committed page in the snapshot.
 
 ## A tracked gap
 
+The running REPL can discover and restore the current show's working and named checkpoints through `show/recovery-status` and `show/load-latest-show!`. The show owner handles both imports. Studio and Push still need controls that distinguish the two checkpoints by source and modification time, then show the owner's restore receipt. [Operator examples](show-files.md#working-recovery-and-manual-checkpoints) · [Issue #551](https://github.com/tolgraven/tolglow/issues/551)
+
 At revision `0681a694`, Studio's effect keyframe editor offers **Sample at a fixed interval** and **Limit automatic slowdown** for an individual effect. The runtime also accepts a show-wide scheduler setting and exposes timing diagnostics. In a preview show, this REPL command disables automatic keyframes for the show. The public status function reads the current diagnostic state when one exists.
 
 ```clojure
