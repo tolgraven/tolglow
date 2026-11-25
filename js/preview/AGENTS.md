@@ -20,9 +20,14 @@ owns controls; committed JVM emitted output is authoritative.
   Otherwise the proxy presents one transferred bitmap at a time and acknowledges
   it. Never hand the canvas over before that first frame: startup failure must
   leave it usable by the shared main-thread capability fallback. Page-side
-  readers of a handed-over canvas run one animation frame after the report.
-- The worker samples the display rate itself and uses the higher of its own and
-  the proxy's sample. Starved animation callbacks only ever under-report.
+  readers of a handed-over canvas run on the second animation frame after the
+  report: the browser commits the worker's image at the display's next frame,
+  and the first animation frame still finds the previous one. On disposal the
+  worker blanks the canvas and stays for the frame that commits it.
+- In Blink the worker samples the display rate itself and uses the higher of its
+  own and the proxy's sample; starved page callbacks only ever under-report.
+  WebKit paces worker callbacks with a 15 ms timer, so elsewhere the proxy's
+  sample is used alone. Unsupported worker callbacks must leave timer pacing.
 - `render-quality.js` owns physical pixel budgets and asynchronous GPU measurements.
   `film.js` owns the display transform, image antialiasing and grain.
 - `geometry.js`, `room.js`, `materials.js` own procedural geometry/materials.

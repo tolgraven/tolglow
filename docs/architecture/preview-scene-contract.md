@@ -33,7 +33,10 @@ so page-thread work cannot delay the room. It refuses frames from a show the
 page has left and clears the canvas when told the identity changed. Browsers
 without a transferable canvas keep the acknowledged bitmap path, with one
 transferred bitmap awaiting acknowledgement. Both threads sample the display
-rate and the worker uses the higher value. When the show identity, scene and controls stay
+rate. In Blink, where worker animation callbacks follow the display, the worker
+uses the higher value. Elsewhere it uses the page's. Page-side readers of a
+handed-over canvas run two animation frames after its report, when the page's
+copy holds that image. When the show identity, scene and controls stay
 the same, new light and haze samples feed the next draw while the previous
 frame's fence is pending. Scene or control changes drain submitted work before
 applying the new state.

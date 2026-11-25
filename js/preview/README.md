@@ -34,10 +34,23 @@ blocked page thread no longer bounds presented frames. Without that support one
 bitmap can be outstanding and the worker waits for its presentation
 acknowledgement before scheduling another draw (`presentation: proxy`). Consumed,
 rejected and stale-show/epoch bitmaps are closed, and show changes clear the old
-image in both modes. Capture and observation readers of a handed-over canvas run
-on the next page animation frame, when its page-side copy holds the reported
-image. `getTelemetry()` reports the execution thread, coalescing and discarded
-frames. Pass `{surface: false}` to keep proxy presentation.
+image in both modes. The browser commits a handed-over canvas at the display's
+next frame, which is normally after the report has reached the page. Capture and
+observation readers therefore run on the second page animation frame after a
+report, when the page-side copy normally holds exactly that image. A page that
+is itself starved of animation frames can read an image one presented frame
+newer than the frame number reported with it. Two images submitted within one
+display refresh show only the later.
+Disposal blanks a handed-over canvas and the worker ends after the display frame
+that commits it. The browser never gives a handed-over canvas back: a later
+engine needs a new canvas element, as each Studio mount provides. `getTelemetry()` reports the execution thread, coalescing and
+discarded frames. Pass `{surface: false}` to keep proxy presentation.
+
+Both threads sample the display rate. In Blink the worker's animation callbacks
+come from the same display, so the worker uses the higher of the two samples and
+a starved page cannot lower the target. WebKit paces worker callbacks with a
+15 ms timer on every panel, so outside Blink the page's sample is used alone. A
+worker whose animation callbacks are unsupported paces itself on timers.
 
 The visible canvas is not handed over before a worker frame exists. A failed
 worker startup leaves its context untouched so the same SceneRenderer can
