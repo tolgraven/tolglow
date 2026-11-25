@@ -1,0 +1,206 @@
+{
+  "chromium": "156.0.8078.79",
+  "rounds": 3,
+  "historiesForHeap": 128,
+  "results": {
+    "current": {
+      "timings": [
+        {
+          "admission": {
+            "samples": 320,
+            "p50Us": 0,
+            "p95Us": 100.00000894069672
+          },
+          "admissionAndPath": {
+            "samples": 320,
+            "p50Us": 899.9999910593033,
+            "p95Us": 4699.999988079071
+          },
+          "fullHistoryAndPath": {
+            "samples": 65,
+            "p50Us": 1400.0000059604645,
+            "p95Us": 15799.999997019768
+          }
+        },
+        {
+          "admission": {
+            "samples": 320,
+            "p50Us": 0,
+            "p95Us": 100.00000894069672
+          },
+          "admissionAndPath": {
+            "samples": 320,
+            "p50Us": 1100.0000089406967,
+            "p95Us": 10500
+          },
+          "fullHistoryAndPath": {
+            "samples": 65,
+            "p50Us": 1599.9999940395355,
+            "p95Us": 14200.000002980232
+          }
+        },
+        {
+          "admission": {
+            "samples": 320,
+            "p50Us": 0,
+            "p95Us": 100.00000894069672
+          },
+          "admissionAndPath": {
+            "samples": 320,
+            "p50Us": 700.0000029802322,
+            "p95Us": 6599.9999940395355
+          },
+          "fullHistoryAndPath": {
+            "samples": 65,
+            "p50Us": 1000,
+            "p95Us": 4600.000008940697
+          }
+        }
+      ],
+      "heap": {
+        "retained": 32768,
+        "liveJsHeapDelta": 6177968,
+        "backingStorageDelta": 24
+      },
+      "medianP95": {
+        "admission": 100.00000894069672,
+        "admissionAndPath": 6599.9999940395355,
+        "fullHistoryAndPath": 14200.000002980232
+      }
+    },
+    "fullSnapshot": {
+      "timings": [
+        {
+          "admission": {
+            "samples": 320,
+            "p50Us": 0,
+            "p95Us": 0
+          },
+          "admissionAndPath": {
+            "samples": 320,
+            "p50Us": 1099.9999940395355,
+            "p95Us": 4200.000002980232
+          },
+          "fullHistoryAndPath": {
+            "samples": 65,
+            "p50Us": 2099.9999940395355,
+            "p95Us": 23500
+          }
+        },
+        {
+          "admission": {
+            "samples": 320,
+            "p50Us": 0,
+            "p95Us": 0
+          },
+          "admissionAndPath": {
+            "samples": 320,
+            "p50Us": 1799.9999970197678,
+            "p95Us": 9900.000005960464
+          },
+          "fullHistoryAndPath": {
+            "samples": 65,
+            "p50Us": 3000,
+            "p95Us": 15000
+          }
+        },
+        {
+          "admission": {
+            "samples": 320,
+            "p50Us": 0,
+            "p95Us": 0
+          },
+          "admissionAndPath": {
+            "samples": 320,
+            "p50Us": 1699.999988079071,
+            "p95Us": 18700.000002980232
+          },
+          "fullHistoryAndPath": {
+            "samples": 65,
+            "p50Us": 3000,
+            "p95Us": 25900.000005960464
+          }
+        }
+      ],
+      "heap": {
+        "retained": 32768,
+        "liveJsHeapDelta": 99616,
+        "backingStorageDelta": 786456
+      },
+      "medianP95": {
+        "admission": 0,
+        "admissionAndPath": 9900.000005960464,
+        "fullHistoryAndPath": 23500
+      }
+    },
+    "fullReadView": {
+      "timings": [
+        {
+          "admission": {
+            "samples": 320,
+            "p50Us": 0,
+            "p95Us": 0
+          },
+          "admissionAndPath": {
+            "samples": 320,
+            "p50Us": 1800.000011920929,
+            "p95Us": 22299.999997019768
+          },
+          "fullHistoryAndPath": {
+            "samples": 65,
+            "p50Us": 6299.999997019768,
+            "p95Us": 24700.000002980232
+          }
+        },
+        {
+          "admission": {
+            "samples": 320,
+            "p50Us": 0,
+            "p95Us": 0
+          },
+          "admissionAndPath": {
+            "samples": 320,
+            "p50Us": 2299.9999970197678,
+            "p95Us": 15800.000011920929
+          },
+          "fullHistoryAndPath": {
+            "samples": 65,
+            "p50Us": 6200.000002980232,
+            "p95Us": 15800.000011920929
+          }
+        },
+        {
+          "admission": {
+            "samples": 320,
+            "p50Us": 0,
+            "p95Us": 0
+          },
+          "admissionAndPath": {
+            "samples": 320,
+            "p50Us": 1299.9999970197678,
+            "p95Us": 17299.999997019768
+          },
+          "fullHistoryAndPath": {
+            "samples": 65,
+            "p50Us": 1900.0000059604645,
+            "p95Us": 10700.000002980232
+          }
+        }
+      ],
+      "heap": {
+        "retained": 32768,
+        "liveJsHeapDelta": 98956,
+        "backingStorageDelta": 786456
+      },
+      "medianP95": {
+        "admission": 0,
+        "admissionAndPath": 17299.999997019768,
+        "fullHistoryAndPath": 15800.000011920929
+      }
+    }
+  },
+  "verification": {
+    "paths": 2976,
+    "captions": 96
+  }
+}

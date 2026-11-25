@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Room shader startup measurement</title>
+<body style="margin:0;background:black">
+<canvas id="room" style="display:block;width:640px;height:360px"></canvas>
+<div id="status" style="color:white"></div>
+<script type="module">
+const started = performance.now();
+const query = new URLSearchParams(location.search);
+const mode = query.get('mode');
+const fixtureCount = query.get('shape') === 'changed' ? 3 : 8;
+const {RoomPreview} = await import('/studio/preview.js');
+const loaded = performance.now();
+const canvas = document.querySelector('#room'), status = document.querySelector('#status');
+const diagnostic = [];
+const engine = new RoomPreview(canvas, status, {workerFactory() {
+  const workerName = mode === 'release' ? 'release-worker' : 'preview-worker';
+  const worker = new Worker('/studio/' + workerName + '.js?mode=' + mode, {type: 'module'});
+  worker.addEventListener('message', ({data}) => {
+    if (data.type === 'room-startup-probe') diagnostic.push(data);
+  });
+  return worker;
+}});
+let frame;
+const identity = 'room-startup';
+engine.observedFrame = (canvas, show, epoch, number) => {
+  frame = {observedMs: performance.now() - started, show, epoch, number};
+};
+const fixtures = Array.from({length: fixtureCount}, (_, i) => ({
+  id: 'fixture-' + i, 'fixture-type': 'moving-head', position: [-4 + (i % 4) * 2.6, 4.2, i < 4 ? -3.2 : 1.5],
+  'beam-angle': 24, 'lens-radius-m': 0.11, 'relative-brightness': 1
+}));
+const colors = [[.9,.08,.03], [.03,.22,.8], [.03,.9,.2], [.67,.37,.36]];
+const snapshot = {
+  'runtime-id': identity, 'show-id': identity, epoch: 1, revision: 1, 'frame-number': 1,
+  rig: {room: {width: 12, height: 5, depth: 10}, fixtures, trusses: [{id:'truss', position:[0,4.4,-3.2],length:10}]},
+  output: {values: Object.fromEntries(fixtures.map((fixture, i) => [fixture.id, {
+    'emitted-color': colors[i % colors.length], direction: [.22 - (i % 4) * .16, -.92, .35], focus: .4
+  }]))}
+};
+engine.setFog(.35);
+engine.update(snapshot);
+window.roomStartup = {engine, diagnostic, status,
+  get frame() {return frame;},
+  get summary() {return {importMs: loaded - started, ...frame};},
+  pause() {engine.pause();},
+  async drawCurrentShow() {
+    if (!(await engine.draw())) throw new Error('Room did not present the requested warm-up frame');
+    return engine.getTelemetry().programCount;
+  },
+  async reloadWithinContext() {
+    const reloading = performance.now();
+    engine.update({...snapshot, 'show-id': identity + '-restored', epoch: 2, 'frame-number': 2});
+    if (!(await engine.draw())) throw new Error('The existing Room did not present the new show frame');
+    return {reloadMs: performance.now() - reloading, ...frame, programCount: engine.getTelemetry().programCount};
+  }
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+{:lein {:profile "+cljs"}
+ :builds
+ {:history-binding-bench
+  {:target :browser
+   :output-dir "build"
+   :modules {:main {:init-fn history-binding-bench/init!}}
+   :compiler-options {:infer-externs true :output-feature-set :es-next}}}}

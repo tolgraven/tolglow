@@ -1,0 +1,292 @@
+{
+  "viewport": [
+    960,
+    160
+  ],
+  "chromium": "156.0.8078.79",
+  "capturedFrames": 6,
+  "browserErrors": [],
+  "staticAssetRequests": 34,
+  "cases": [
+    {
+      "name": "overview",
+      "occupiedSlots": 8,
+      "selected": "Mica fan",
+      "expanded": null,
+      "labels": [
+        {
+          "label": "Open field",
+          "phase": "running",
+          "alpha": "82%"
+        },
+        {
+          "label": "Cobalt wash",
+          "phase": "running",
+          "alpha": "56%"
+        },
+        {
+          "label": "Mica fan",
+          "phase": "running",
+          "alpha": "68%"
+        },
+        {
+          "label": "Falling rays",
+          "phase": "releasing",
+          "alpha": "31%"
+        },
+        {
+          "label": "Night air",
+          "phase": "running",
+          "alpha": "44%"
+        },
+        {
+          "label": "Violet trace",
+          "phase": "paused",
+          "alpha": "100%"
+        },
+        {
+          "label": "Warm sparks",
+          "phase": "running",
+          "alpha": "23%"
+        },
+        {
+          "label": "Silver silk",
+          "phase": "running",
+          "alpha": "96%"
+        }
+      ],
+      "captureMs": 87
+    },
+    {
+      "name": "expanded",
+      "occupiedSlots": 8,
+      "selected": "Mica fan",
+      "expanded": "0:3",
+      "labels": [
+        {
+          "label": "Open field",
+          "phase": "running",
+          "alpha": "82%"
+        },
+        {
+          "label": "Cobalt wash",
+          "phase": "running",
+          "alpha": "56%"
+        },
+        {
+          "label": "Mica fan",
+          "phase": "running",
+          "alpha": "68%"
+        },
+        {
+          "label": "Falling rays",
+          "phase": "releasing",
+          "alpha": "31%"
+        },
+        {
+          "label": "Night air",
+          "phase": "running",
+          "alpha": "44%"
+        },
+        {
+          "label": "Violet trace",
+          "phase": "paused",
+          "alpha": "100%"
+        },
+        {
+          "label": "Warm sparks",
+          "phase": "running",
+          "alpha": "23%"
+        },
+        {
+          "label": "Silver silk",
+          "phase": "running",
+          "alpha": "96%"
+        }
+      ],
+      "captureMs": 105
+    },
+    {
+      "name": "second-touch",
+      "occupiedSlots": 8,
+      "selected": "Mica fan",
+      "expanded": "0:5",
+      "labels": [
+        {
+          "label": "Open field",
+          "phase": "running",
+          "alpha": "82%"
+        },
+        {
+          "label": "Cobalt wash",
+          "phase": "running",
+          "alpha": "56%"
+        },
+        {
+          "label": "Mica fan",
+          "phase": "running",
+          "alpha": "68%"
+        },
+        {
+          "label": "Falling rays",
+          "phase": "releasing",
+          "alpha": "31%"
+        },
+        {
+          "label": "Night air",
+          "phase": "running",
+          "alpha": "44%"
+        },
+        {
+          "label": "Violet trace",
+          "phase": "paused",
+          "alpha": "100%"
+        },
+        {
+          "label": "Warm sparks",
+          "phase": "running",
+          "alpha": "23%"
+        },
+        {
+          "label": "Silver silk",
+          "phase": "running",
+          "alpha": "96%"
+        }
+      ],
+      "captureMs": 100
+    },
+    {
+      "name": "released-newest",
+      "occupiedSlots": 8,
+      "selected": "Mica fan",
+      "expanded": "0:3",
+      "labels": [
+        {
+          "label": "Open field",
+          "phase": "running",
+          "alpha": "82%"
+        },
+        {
+          "label": "Cobalt wash",
+          "phase": "running",
+          "alpha": "56%"
+        },
+        {
+          "label": "Mica fan",
+          "phase": "running",
+          "alpha": "68%"
+        },
+        {
+          "label": "Falling rays",
+          "phase": "releasing",
+          "alpha": "31%"
+        },
+        {
+          "label": "Night air",
+          "phase": "running",
+          "alpha": "44%"
+        },
+        {
+          "label": "Violet trace",
+          "phase": "paused",
+          "alpha": "100%"
+        },
+        {
+          "label": "Warm sparks",
+          "phase": "running",
+          "alpha": "23%"
+        },
+        {
+          "label": "Silver silk",
+          "phase": "running",
+          "alpha": "96%"
+        }
+      ],
+      "captureMs": 88
+    },
+    {
+      "name": "restored",
+      "occupiedSlots": 8,
+      "selected": "Mica fan",
+      "expanded": null,
+      "labels": [
+        {
+          "label": "Open field",
+          "phase": "running",
+          "alpha": "82%"
+        },
+        {
+          "label": "Cobalt wash",
+          "phase": "running",
+          "alpha": "56%"
+        },
+        {
+          "label": "Mica fan",
+          "phase": "running",
+          "alpha": "68%"
+        },
+        {
+          "label": "Falling rays",
+          "phase": "releasing",
+          "alpha": "31%"
+        },
+        {
+          "label": "Night air",
+          "phase": "running",
+          "alpha": "44%"
+        },
+        {
+          "label": "Violet trace",
+          "phase": "paused",
+          "alpha": "100%"
+        },
+        {
+          "label": "Warm sparks",
+          "phase": "running",
+          "alpha": "23%"
+        },
+        {
+          "label": "Silver silk",
+          "phase": "running",
+          "alpha": "96%"
+        }
+      ],
+      "captureMs": 63
+    },
+    {
+      "name": "page-two",
+      "occupiedSlots": 3,
+      "selected": null,
+      "expanded": null,
+      "labels": [
+        {
+          "label": "Low haze",
+          "phase": "running",
+          "alpha": "77%"
+        },
+        {
+          "label": "Coral ripple",
+          "phase": "running",
+          "alpha": "63%"
+        },
+        {
+          "label": "Backlight lace",
+          "phase": "running",
+          "alpha": "33%"
+        }
+      ],
+      "captureMs": 47
+    }
+  ],
+  "revisions": {
+    "afterglow": "352b3f1b6dbb8829f06255276dbefa58f83432c5",
+    "tolglow": "db33c3f2274d6ccfb4a9e5cf5d43cd9bc2128b89"
+  },
+  "scope": "The production Studio route received committed Afterglow projections through the existing Chromium capture worker. Touch state was replayed as exact instance IDs. The capture used no physical controller or lighting output.",
+  "clip": {
+    "width": 960,
+    "height": 160,
+    "durationSeconds": 7.916667,
+    "codec": "h264"
+  }
+}

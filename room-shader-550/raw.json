@@ -1,0 +1,4757 @@
+{
+  "identity": {
+    "ref": "56a785c527034a5914f0f1833c10741c2f4c8282",
+    "mainSha256": "2fb525eac747dc24eaf28dedb65efc378e9c07b0dbf0c29047a796b92308c3cd",
+    "bundledWorkerSha256": "749eb824b2622d18743881c1680c7c455315e8954fd8ddc0bdae4d2a87372554",
+    "sourceSnapshotSha256": "f36bae9751ea594647a7c53d065797c6e92c904a31bd866a619b0b4314f0fbbc",
+    "three": "0.187.0",
+    "esbuild": "0.28.2",
+    "threeWebGlSha256": "104f56145899722094556490d787aae0617cc2fc3382f31df02d724ea1aee341",
+    "buildId": "3685a539c9d1e07b4c7c98c58b1800a946871e50e80ed2bdbe7c065de832d392",
+    "measuredWorkerSha256": "27fcb68a020608a06813cdb793956aea05f72853403d6826ac3a5a910d6a0c6a"
+  },
+  "flags": [
+    "--use-gl=angle",
+    "--use-angle=swiftshader",
+    "--enable-unsafe-swiftshader",
+    "--disable-gpu-shader-disk-cache"
+  ],
+  "samples": [
+    {
+      "startup": {
+        "importMs": 162.5,
+        "observedMs": 11180.300000011921,
+        "show": "room-startup",
+        "epoch": 1,
+        "number": 1
+      },
+      "thread": "worker",
+      "failed": null,
+      "fixtureCount": 8,
+      "activeLights": 8,
+      "quality": "low",
+      "shadowCount": 1,
+      "deviceRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "softwareRenderer": true,
+      "programCount": 22,
+      "pixels": [
+        480,
+        270
+      ],
+      "displayPixels": [
+        640,
+        360
+      ],
+      "fogAmount": 0.35,
+      "visibleStatus": "low \u00b7 software GPU \u00b7 1 shadows \u00b7 work light",
+      "probe": {
+        "type": "room-startup-probe",
+        "frameId": 1,
+        "timings": {
+          "initMs": 806.5,
+          "drawSubmitMs": 2737.300000011921,
+          "gpuFenceMs": 7046,
+          "bitmapMs": 0.19999998807907104,
+          "workerFrameMs": 9783.5,
+          "workerClockMs": 10943.09999999404
+        },
+        "report": {
+          "programs": {},
+          "stages": [
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 35.20000000298023,
+              "lookupMs": 0,
+              "submitMs": 0.7000000029802322,
+              "firstUseMs": 17
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 3.4000000059604645,
+              "lookupMs": 0,
+              "submitMs": 0.3999999910593033,
+              "firstUseMs": 33.099999994039536
+            },
+            {
+              "name": "MeshLambertMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 23.200000002980232,
+              "lookupMs": 0,
+              "submitMs": 0.29999999701976776,
+              "firstUseMs": 42.400000005960464
+            },
+            {
+              "name": "PMREMSphericalGaussianBlur",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 69.79999999701977
+            },
+            {
+              "name": "PMREMGGXConvolution",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 14.799999997019768
+            },
+            {
+              "name": "PMREMGGXIntegration",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 16.899999991059303
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.4000000059604645,
+              "lookupMs": 0,
+              "submitMs": 0.5,
+              "firstUseMs": 35.900000005960464
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.29999999701976776,
+              "lookupMs": 0,
+              "submitMs": 0.4000000059604645,
+              "firstUseMs": 55.900000005960464
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 3.7999999970197678,
+              "lookupMs": 0,
+              "submitMs": 1.2000000029802322,
+              "firstUseMs": 102.59999999403954
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 1.5999999940395355,
+              "lookupMs": 0,
+              "submitMs": 1.2999999970197678,
+              "firstUseMs": 481.6000000089407
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 9.699999988079071,
+              "lookupMs": 0,
+              "submitMs": 1.1000000089406967,
+              "firstUseMs": 278.40000000596046
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 6.299999997019768,
+              "lookupMs": 0,
+              "submitMs": 1.300000011920929,
+              "firstUseMs": 195.79999999701977
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 1.4000000059604645,
+              "lookupMs": 0,
+              "submitMs": 1.2000000029802322,
+              "firstUseMs": 289.29999999701977
+            },
+            {
+              "name": "MeshPhysicalMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 4.300000011920929,
+              "lookupMs": 0,
+              "submitMs": 4.0999999940395355,
+              "firstUseMs": 196.80000001192093
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 0.29999999701976776,
+              "firstUseMs": 223.70000000298023
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.30000001192092896,
+              "firstUseMs": 258.19999998807907
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.29999999701976776,
+              "firstUseMs": 228.6000000089407
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0,
+              "firstUseMs": 9.5
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 11.5
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.20000000298023224,
+              "lookupMs": 0,
+              "submitMs": 0.3999999910593033,
+              "firstUseMs": 6.4000000059604645
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 38.5
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 12
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 11.799999997019768
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 4.9000000059604645
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 21.599999994039536
+            },
+            {
+              "name": "OutputShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 9.899999991059303
+            },
+            {
+              "name": "FXAAShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 43.79999999701977
+            },
+            {
+              "name": "unspecified",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 85.80000001192093
+            }
+          ],
+          "hooks": {
+            "initialization": 0,
+            "draw-1": 0.4999999850988388
+          },
+          "planFetchMs": 0,
+          "planJsonMs": 0
+        },
+        "plan": null
+      },
+      "imageSha256": "4c436dcb2d63f8809ecd0e334a0edefe8ecb9cf39a5ac82674734512933f8411",
+      "mode": "baseline",
+      "shape": "original",
+      "pair": 0
+    },
+    {
+      "startup": {
+        "importMs": 243.3999999910593,
+        "observedMs": 16361.20000000298,
+        "show": "room-startup",
+        "epoch": 1,
+        "number": 1
+      },
+      "thread": "worker",
+      "failed": null,
+      "fixtureCount": 8,
+      "activeLights": 8,
+      "quality": "low",
+      "shadowCount": 1,
+      "deviceRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "softwareRenderer": true,
+      "programCount": 22,
+      "pixels": [
+        480,
+        270
+      ],
+      "displayPixels": [
+        640,
+        360
+      ],
+      "fogAmount": 0.35,
+      "visibleStatus": "low \u00b7 software GPU \u00b7 1 shadows \u00b7 work light",
+      "probe": {
+        "type": "room-startup-probe",
+        "frameId": 1,
+        "timings": {
+          "initMs": 844.6999999880791,
+          "drawSubmitMs": 3555.2000000029802,
+          "gpuFenceMs": 11225.60000000894,
+          "bitmapMs": 0.29999999701976776,
+          "workerFrameMs": 14781.20000000298,
+          "workerClockMs": 15988.20000000298
+        },
+        "report": {
+          "programs": {},
+          "stages": [
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 1,
+              "submitMs": 1.3999999910593033,
+              "firstUseMs": 33.5
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.4000000059604645,
+              "submitMs": 1,
+              "firstUseMs": 36.20000000298023
+            },
+            {
+              "name": "MeshLambertMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.7000000029802322,
+              "firstUseMs": 21.700000002980232
+            },
+            {
+              "name": "PMREMSphericalGaussianBlur",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 16.299999997019768
+            },
+            {
+              "name": "PMREMGGXConvolution",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 13
+            },
+            {
+              "name": "PMREMGGXIntegration",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.19999998807907104,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 9.899999991059303
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.19999998807907104,
+              "submitMs": 0.7000000029802322,
+              "firstUseMs": 7.9000000059604645
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.30000001192092896,
+              "submitMs": 0.29999999701976776,
+              "firstUseMs": 6.0999999940395355
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.699999988079071,
+              "firstUseMs": 17.299999997019768
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 1.2000000029802322,
+              "submitMs": 15.099999994039536,
+              "firstUseMs": 199.29999999701977
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 1.7999999970197678,
+              "firstUseMs": 211.90000000596046
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 3.800000011920929,
+              "firstUseMs": 350.90000000596046
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 14.099999994039536,
+              "firstUseMs": 622.5
+            },
+            {
+              "name": "MeshPhysicalMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.30000001192092896,
+              "submitMs": 8.599999994039536,
+              "firstUseMs": 412.29999999701977
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.10000000894069672,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 450.79999999701977
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.29999999701976776,
+              "firstUseMs": 306
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.5,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 443.29999999701977
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.4000000059604645,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 4.0999999940395355
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.4000000059604645,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 77.20000000298023
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.30000001192092896,
+              "firstUseMs": 13.099999994039536
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.29999999701976776,
+              "firstUseMs": 11.100000008940697
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 45.79999999701977
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.30000001192092896,
+              "submitMs": 0.19999998807907104,
+              "firstUseMs": 15.700000002980232
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 42.29999999701977
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.4000000059604645,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 7.300000011920929
+            },
+            {
+              "name": "OutputShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 5.799999997019768
+            },
+            {
+              "name": "FXAAShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.09999999403953552,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 13.299999997019768
+            },
+            {
+              "name": "unspecified",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0,
+              "firstUseMs": 35.5
+            }
+          ],
+          "hooks": {
+            "initialization": 0,
+            "draw-1": 0.20000001788139343
+          },
+          "planFetchMs": 106.90000000596046,
+          "planJsonMs": 17.399999991059303
+        },
+        "plan": null
+      },
+      "imageSha256": "4c436dcb2d63f8809ecd0e334a0edefe8ecb9cf39a5ac82674734512933f8411",
+      "mode": "restore",
+      "shape": "original",
+      "pair": 0
+    },
+    {
+      "startup": {
+        "importMs": 149.79999999701977,
+        "observedMs": 20743.09999999404,
+        "show": "room-startup",
+        "epoch": 1,
+        "number": 1
+      },
+      "thread": "worker",
+      "failed": null,
+      "fixtureCount": 8,
+      "activeLights": 8,
+      "quality": "low",
+      "shadowCount": 1,
+      "deviceRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "softwareRenderer": true,
+      "programCount": 22,
+      "pixels": [
+        480,
+        270
+      ],
+      "displayPixels": [
+        640,
+        360
+      ],
+      "fogAmount": 0.35,
+      "visibleStatus": "low \u00b7 software GPU \u00b7 1 shadows \u00b7 work light",
+      "probe": {
+        "type": "room-startup-probe",
+        "frameId": 1,
+        "timings": {
+          "initMs": 3096.5,
+          "drawSubmitMs": 5948.5999999940395,
+          "gpuFenceMs": 10900.90000000596,
+          "bitmapMs": 0.29999999701976776,
+          "workerFrameMs": 16849.79999999702,
+          "workerClockMs": 20514.29999999702
+        },
+        "report": {
+          "programs": {},
+          "stages": [
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 1.3999999910593033,
+              "submitMs": 51.80000001192093,
+              "firstUseMs": 98.90000000596046
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.4000000059604645,
+              "submitMs": 1.5999999940395355,
+              "firstUseMs": 109.20000000298023
+            },
+            {
+              "name": "MeshLambertMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 1,
+              "firstUseMs": 92.79999999701977
+            },
+            {
+              "name": "PMREMSphericalGaussianBlur",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.3999999910593033,
+              "firstUseMs": 197.90000000596046
+            },
+            {
+              "name": "PMREMGGXConvolution",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 4.5,
+              "submitMs": 0.5999999940395355,
+              "firstUseMs": 52.20000000298023
+            },
+            {
+              "name": "PMREMGGXIntegration",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 3,
+              "firstUseMs": 25.5
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 13.700000002980232,
+              "firstUseMs": 134.29999999701977
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.5,
+              "submitMs": 6,
+              "firstUseMs": 28.5
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 9.700000002980232,
+              "firstUseMs": 94.40000000596046
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 15.299999997019768,
+              "firstUseMs": 584.1000000089407
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.5,
+              "submitMs": 9,
+              "firstUseMs": 244
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 6.700000002980232,
+              "firstUseMs": 408
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 10,
+              "firstUseMs": 558.7999999970198
+            },
+            {
+              "name": "MeshPhysicalMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 1.5,
+              "firstUseMs": 598.4000000059605
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 663.8999999910593
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.30000001192092896,
+              "submitMs": 0.699999988079071,
+              "firstUseMs": 795.4000000059605
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 815.5
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 78.90000000596046
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.6000000089406967,
+              "submitMs": 1,
+              "firstUseMs": 23.19999998807907
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.4000000059604645,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 24.299999997019768
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.4000000059604645,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 74.09999999403954
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 2.5,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 66
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 24.5
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 14.5
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.30000001192092896,
+              "submitMs": 4.199999988079071,
+              "firstUseMs": 49.1000000089407
+            },
+            {
+              "name": "OutputShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 19
+            },
+            {
+              "name": "FXAAShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.5,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 34.29999999701977
+            },
+            {
+              "name": "unspecified",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.30000001192092896,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 182.20000000298023
+            }
+          ],
+          "hooks": {
+            "initialization": 0.10000000894069672,
+            "draw-1": 0.10000000894069672
+          },
+          "planFetchMs": 134.1000000089407,
+          "planJsonMs": 20.399999991059303
+        },
+        "plan": null
+      },
+      "imageSha256": "4c436dcb2d63f8809ecd0e334a0edefe8ecb9cf39a5ac82674734512933f8411",
+      "mode": "restore",
+      "shape": "original",
+      "pair": 1
+    },
+    {
+      "startup": {
+        "importMs": 195.6000000089407,
+        "observedMs": 17903.70000000298,
+        "show": "room-startup",
+        "epoch": 1,
+        "number": 1
+      },
+      "thread": "worker",
+      "failed": null,
+      "fixtureCount": 8,
+      "activeLights": 8,
+      "quality": "low",
+      "shadowCount": 1,
+      "deviceRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "softwareRenderer": true,
+      "programCount": 22,
+      "pixels": [
+        480,
+        270
+      ],
+      "displayPixels": [
+        640,
+        360
+      ],
+      "fogAmount": 0.35,
+      "visibleStatus": "low \u00b7 software GPU \u00b7 1 shadows \u00b7 work light",
+      "probe": {
+        "type": "room-startup-probe",
+        "frameId": 1,
+        "timings": {
+          "initMs": 2933.2000000029802,
+          "drawSubmitMs": 4411,
+          "gpuFenceMs": 9997.70000000298,
+          "bitmapMs": 0.19999998807907104,
+          "workerFrameMs": 14408.89999999106,
+          "workerClockMs": 17660.79999999702
+        },
+        "report": {
+          "programs": {},
+          "stages": [
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 10.599999994039536,
+              "lookupMs": 0,
+              "submitMs": 2.5,
+              "firstUseMs": 41.6000000089407
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 5.200000002980232,
+              "lookupMs": 0,
+              "submitMs": 0.7999999970197678,
+              "firstUseMs": 73.29999999701977
+            },
+            {
+              "name": "MeshLambertMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 5.9000000059604645,
+              "lookupMs": 0,
+              "submitMs": 0.8999999910593033,
+              "firstUseMs": 74.40000000596046
+            },
+            {
+              "name": "PMREMSphericalGaussianBlur",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 163
+            },
+            {
+              "name": "PMREMGGXConvolution",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.20000000298023224,
+              "lookupMs": 0,
+              "submitMs": 0,
+              "firstUseMs": 12.600000008940697
+            },
+            {
+              "name": "PMREMGGXIntegration",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 91.90000000596046
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.20000000298023224,
+              "lookupMs": 0,
+              "submitMs": 0.5999999940395355,
+              "firstUseMs": 131.70000000298023
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.29999999701976776,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 22.399999991059303
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 1.2000000029802322,
+              "lookupMs": 0,
+              "submitMs": 0.7000000029802322,
+              "firstUseMs": 105.29999999701977
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 2.5,
+              "lookupMs": 0,
+              "submitMs": 0.7000000029802322,
+              "firstUseMs": 495.79999999701977
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 19.30000001192093,
+              "lookupMs": 0,
+              "submitMs": 0.699999988079071,
+              "firstUseMs": 269.8999999910593
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 1,
+              "lookupMs": 0,
+              "submitMs": 32,
+              "firstUseMs": 414.19999998807907
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 18.799999997019768,
+              "lookupMs": 0,
+              "submitMs": 16.5,
+              "firstUseMs": 293
+            },
+            {
+              "name": "MeshPhysicalMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 9.5,
+              "lookupMs": 0,
+              "submitMs": 0.7999999970197678,
+              "firstUseMs": 445.70000000298023
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 626
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 4.200000002980232,
+              "firstUseMs": 465
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 14.100000008940697,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 488.40000000596046
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 4.9000000059604645
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 14
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 3.2000000029802322,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 17.799999997019768
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 29.400000005960464
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 25.099999994039536
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0,
+              "firstUseMs": 19.900000005960464
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 0,
+              "firstUseMs": 39.8999999910593
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 13.200000002980232
+            },
+            {
+              "name": "OutputShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 6.299999997019768
+            },
+            {
+              "name": "FXAAShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 33.8999999910593
+            },
+            {
+              "name": "unspecified",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 161.20000000298023
+            }
+          ],
+          "hooks": {
+            "initialization": 0,
+            "draw-1": 0.40000002086162567
+          },
+          "planFetchMs": 0,
+          "planJsonMs": 0
+        },
+        "plan": null
+      },
+      "imageSha256": "4c436dcb2d63f8809ecd0e334a0edefe8ecb9cf39a5ac82674734512933f8411",
+      "mode": "baseline",
+      "shape": "original",
+      "pair": 1
+    },
+    {
+      "startup": {
+        "importMs": 280.20000000298023,
+        "observedMs": 13304.70000000298,
+        "show": "room-startup",
+        "epoch": 1,
+        "number": 1
+      },
+      "thread": "worker",
+      "failed": null,
+      "fixtureCount": 8,
+      "activeLights": 8,
+      "quality": "low",
+      "shadowCount": 1,
+      "deviceRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "softwareRenderer": true,
+      "programCount": 22,
+      "pixels": [
+        480,
+        270
+      ],
+      "displayPixels": [
+        640,
+        360
+      ],
+      "fogAmount": 0.35,
+      "visibleStatus": "low \u00b7 software GPU \u00b7 1 shadows \u00b7 work light",
+      "probe": {
+        "type": "room-startup-probe",
+        "frameId": 1,
+        "timings": {
+          "initMs": 1837.7000000029802,
+          "drawSubmitMs": 4697.20000000298,
+          "gpuFenceMs": 5913.79999999702,
+          "bitmapMs": 0.20000000298023224,
+          "workerFrameMs": 10611.29999999702,
+          "workerClockMs": 12975.59999999404
+        },
+        "report": {
+          "programs": {},
+          "stages": [
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 5.5999999940395355,
+              "lookupMs": 0,
+              "submitMs": 1.8999999910593033,
+              "firstUseMs": 73.09999999403954
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 3.2999999970197678,
+              "lookupMs": 0,
+              "submitMs": 1.3999999910593033,
+              "firstUseMs": 22.30000001192093
+            },
+            {
+              "name": "MeshLambertMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 3.9000000059604645,
+              "lookupMs": 0,
+              "submitMs": 1.7000000029802322,
+              "firstUseMs": 50.79999999701977
+            },
+            {
+              "name": "PMREMSphericalGaussianBlur",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.20000000298023224,
+              "lookupMs": 0,
+              "submitMs": 0,
+              "firstUseMs": 21.399999991059303
+            },
+            {
+              "name": "PMREMGGXConvolution",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.29999999701976776,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 44.20000000298023
+            },
+            {
+              "name": "PMREMGGXIntegration",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.19999998807907104,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 34.5
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.7999999970197678,
+              "lookupMs": 0,
+              "submitMs": 4.800000011920929,
+              "firstUseMs": 55.79999999701977
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.9000000059604645,
+              "lookupMs": 0,
+              "submitMs": 26.599999994039536,
+              "firstUseMs": 4.299999997019768
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 3.2000000029802322,
+              "lookupMs": 0,
+              "submitMs": 4.5999999940395355,
+              "firstUseMs": 77.20000000298023
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 4.700000002980232,
+              "lookupMs": 0,
+              "submitMs": 2.5999999940395355,
+              "firstUseMs": 265.20000000298023
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 8.099999994039536,
+              "lookupMs": 0,
+              "submitMs": 4.799999997019768,
+              "firstUseMs": 202
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 10.399999991059303,
+              "lookupMs": 0,
+              "submitMs": 1.2000000029802322,
+              "firstUseMs": 313.70000000298023
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 1.2999999970197678,
+              "lookupMs": 0,
+              "submitMs": 7.600000008940697,
+              "firstUseMs": 318.19999998807907
+            },
+            {
+              "name": "MeshPhysicalMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 26.400000005960464,
+              "lookupMs": 0,
+              "submitMs": 1.199999988079071,
+              "firstUseMs": 395.70000000298023
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.29999999701976776,
+              "firstUseMs": 762.2000000029802
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 12.399999991059303,
+              "firstUseMs": 697.2000000029802
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.5,
+              "firstUseMs": 719.5
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 20.100000008940697
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 38.3999999910593
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.20000000298023224,
+              "lookupMs": 0,
+              "submitMs": 1,
+              "firstUseMs": 18.5
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.4000000059604645,
+              "firstUseMs": 25.599999994039536
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 20.5
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 23.099999994039536,
+              "firstUseMs": 35.6000000089407
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 67.79999999701977
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 10.5
+            },
+            {
+              "name": "OutputShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 0.19999998807907104,
+              "firstUseMs": 31.700000002980232
+            },
+            {
+              "name": "FXAAShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 55.900000005960464
+            },
+            {
+              "name": "unspecified",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 198.29999999701977
+            }
+          ],
+          "hooks": {
+            "initialization": 0.09999999403953552,
+            "draw-1": 0.29999999701976776
+          },
+          "planFetchMs": 0,
+          "planJsonMs": 0
+        },
+        "plan": null
+      },
+      "imageSha256": "4c436dcb2d63f8809ecd0e334a0edefe8ecb9cf39a5ac82674734512933f8411",
+      "mode": "baseline",
+      "shape": "original",
+      "pair": 2
+    },
+    {
+      "startup": {
+        "importMs": 183.8999999910593,
+        "observedMs": 8281.29999999702,
+        "show": "room-startup",
+        "epoch": 1,
+        "number": 1
+      },
+      "thread": "worker",
+      "failed": null,
+      "fixtureCount": 8,
+      "activeLights": 8,
+      "quality": "low",
+      "shadowCount": 1,
+      "deviceRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "softwareRenderer": true,
+      "programCount": 22,
+      "pixels": [
+        480,
+        270
+      ],
+      "displayPixels": [
+        640,
+        360
+      ],
+      "fogAmount": 0.35,
+      "visibleStatus": "low \u00b7 software GPU \u00b7 1 shadows \u00b7 work light",
+      "probe": {
+        "type": "room-startup-probe",
+        "frameId": 1,
+        "timings": {
+          "initMs": 952.8999999910593,
+          "drawSubmitMs": 2316.1000000089407,
+          "gpuFenceMs": 4542.5999999940395,
+          "bitmapMs": 0.09999999403953552,
+          "workerFrameMs": 6858.79999999702,
+          "workerClockMs": 8059.899999991059
+        },
+        "report": {
+          "programs": {},
+          "stages": [
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.5,
+              "submitMs": 3.2999999970197678,
+              "firstUseMs": 16
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 3.3999999910593033,
+              "firstUseMs": 18.299999997019768
+            },
+            {
+              "name": "MeshLambertMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.7000000029802322,
+              "firstUseMs": 29.400000005960464
+            },
+            {
+              "name": "PMREMSphericalGaussianBlur",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.09999999403953552,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 18.799999997019768
+            },
+            {
+              "name": "PMREMGGXConvolution",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.10000000894069672,
+              "submitMs": 0.19999998807907104,
+              "firstUseMs": 38.70000000298023
+            },
+            {
+              "name": "PMREMGGXIntegration",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.10000000894069672,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 6.399999991059303
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 1,
+              "firstUseMs": 39.20000000298023
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.5,
+              "firstUseMs": 14.800000011920929
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 2.2000000029802322,
+              "firstUseMs": 51.099999994039536
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 1.2000000029802322,
+              "firstUseMs": 346.69999998807907
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.30000001192092896,
+              "submitMs": 5.299999997019768,
+              "firstUseMs": 206.8999999910593
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.19999998807907104,
+              "submitMs": 11.300000011920929,
+              "firstUseMs": 159.09999999403954
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 1.4000000059604645,
+              "firstUseMs": 181.09999999403954
+            },
+            {
+              "name": "MeshPhysicalMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 1.2000000029802322,
+              "firstUseMs": 140.20000000298023
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.3999999910593033,
+              "firstUseMs": 244.29999999701977
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 208.20000000298023
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 303.59999999403954
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.5999999940395355,
+              "submitMs": 0.30000001192092896,
+              "firstUseMs": 25.700000002980232
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.4000000059604645,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 11.200000002980232
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.29999999701976776,
+              "firstUseMs": 16.80000001192093
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 4.300000011920929,
+              "submitMs": 0.29999999701976776,
+              "firstUseMs": 15.799999997019768
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 8.899999991059303
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.30000001192092896,
+              "submitMs": 0,
+              "firstUseMs": 10.099999994039536
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.3999999910593033,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 35.1000000089407
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.19999998807907104,
+              "firstUseMs": 23.400000005960464
+            },
+            {
+              "name": "OutputShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.19999998807907104,
+              "submitMs": 5,
+              "firstUseMs": 12.700000002980232
+            },
+            {
+              "name": "FXAAShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 54.599999994039536
+            },
+            {
+              "name": "unspecified",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.19999998807907104,
+              "firstUseMs": 58.6000000089407
+            }
+          ],
+          "hooks": {
+            "initialization": 0,
+            "draw-1": 0.29999999701976776
+          },
+          "planFetchMs": 72.5,
+          "planJsonMs": 6.9000000059604645
+        },
+        "plan": null
+      },
+      "imageSha256": "4c436dcb2d63f8809ecd0e334a0edefe8ecb9cf39a5ac82674734512933f8411",
+      "mode": "restore",
+      "shape": "original",
+      "pair": 2
+    },
+    {
+      "startup": {
+        "importMs": 183.20000000298023,
+        "observedMs": 7977.9000000059605,
+        "show": "room-startup",
+        "epoch": 1,
+        "number": 1
+      },
+      "thread": "worker",
+      "failed": null,
+      "fixtureCount": 8,
+      "activeLights": 8,
+      "quality": "low",
+      "shadowCount": 1,
+      "deviceRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "softwareRenderer": true,
+      "programCount": 22,
+      "pixels": [
+        480,
+        270
+      ],
+      "displayPixels": [
+        640,
+        360
+      ],
+      "fogAmount": 0.35,
+      "visibleStatus": "low \u00b7 software GPU \u00b7 1 shadows \u00b7 work light",
+      "probe": {
+        "type": "room-startup-probe",
+        "frameId": 1,
+        "timings": {
+          "initMs": 859.0999999940395,
+          "drawSubmitMs": 2069,
+          "gpuFenceMs": 4509.100000008941,
+          "bitmapMs": 0.09999999403953552,
+          "workerFrameMs": 6578.4000000059605,
+          "workerClockMs": 7726.20000000298
+        },
+        "report": {
+          "programs": {},
+          "stages": [
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.7999999970197678,
+              "submitMs": 0.800000011920929,
+              "firstUseMs": 17.200000002980232
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.7999999970197678,
+              "submitMs": 1.2000000029802322,
+              "firstUseMs": 37.5
+            },
+            {
+              "name": "MeshLambertMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.7000000029802322,
+              "firstUseMs": 27.799999997019768
+            },
+            {
+              "name": "PMREMSphericalGaussianBlur",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 47.69999998807907
+            },
+            {
+              "name": "PMREMGGXConvolution",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 9.700000002980232
+            },
+            {
+              "name": "PMREMGGXIntegration",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 8.799999997019768
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.09999999403953552,
+              "submitMs": 0.19999998807907104,
+              "firstUseMs": 27.200000002980232
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.29999999701976776,
+              "firstUseMs": 9.799999997019768
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.7999999970197678,
+              "firstUseMs": 28.100000008940697
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 1.2000000029802322,
+              "firstUseMs": 176.59999999403954
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.4000000059604645,
+              "submitMs": 1.3999999910593033,
+              "firstUseMs": 132.20000000298023
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 1.2000000029802322,
+              "firstUseMs": 293.8999999910593
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.09999999403953552,
+              "submitMs": 1.2000000029802322,
+              "firstUseMs": 210.6000000089407
+            },
+            {
+              "name": "MeshPhysicalMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.4000000059604645,
+              "submitMs": 10.200000002980232,
+              "firstUseMs": 148.29999999701977
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 141.59999999403954
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.5999999940395355,
+              "firstUseMs": 276.1000000089407
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 3.5,
+              "submitMs": 0,
+              "firstUseMs": 268.20000000298023
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 3.9000000059604645,
+              "submitMs": 0.19999998807907104,
+              "firstUseMs": 11.300000011920929
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.5,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 18.5
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 11.200000002980232
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0,
+              "firstUseMs": 4.4000000059604645
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.4000000059604645,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 37.6000000089407
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 19.299999997019768
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 2.7999999970197678
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 14.099999994039536
+            },
+            {
+              "name": "OutputShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.5,
+              "submitMs": 0,
+              "firstUseMs": 9.400000005960464
+            },
+            {
+              "name": "FXAAShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.5,
+              "firstUseMs": 41.20000000298023
+            },
+            {
+              "name": "unspecified",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 62.8999999910593
+            }
+          ],
+          "hooks": {
+            "initialization": 0,
+            "draw-1": 0.9999999701976776
+          },
+          "planFetchMs": 75,
+          "planJsonMs": 19.900000005960464
+        },
+        "plan": null
+      },
+      "imageSha256": "4c436dcb2d63f8809ecd0e334a0edefe8ecb9cf39a5ac82674734512933f8411",
+      "mode": "restore",
+      "shape": "original",
+      "pair": 3
+    },
+    {
+      "startup": {
+        "importMs": 103.59999999403954,
+        "observedMs": 12103.29999999702,
+        "show": "room-startup",
+        "epoch": 1,
+        "number": 1
+      },
+      "thread": "worker",
+      "failed": null,
+      "fixtureCount": 8,
+      "activeLights": 8,
+      "quality": "low",
+      "shadowCount": 1,
+      "deviceRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "softwareRenderer": true,
+      "programCount": 22,
+      "pixels": [
+        480,
+        270
+      ],
+      "displayPixels": [
+        640,
+        360
+      ],
+      "fogAmount": 0.35,
+      "visibleStatus": "low \u00b7 software GPU \u00b7 1 shadows \u00b7 work light",
+      "probe": {
+        "type": "room-startup-probe",
+        "frameId": 1,
+        "timings": {
+          "initMs": 776.4000000059605,
+          "drawSubmitMs": 1876.1000000089407,
+          "gpuFenceMs": 9144.09999999404,
+          "bitmapMs": 0.09999999403953552,
+          "workerFrameMs": 11020.29999999702,
+          "workerClockMs": 11936.09999999404
+        },
+        "report": {
+          "programs": {},
+          "stages": [
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 3.8999999910593033,
+              "lookupMs": 0,
+              "submitMs": 1.5,
+              "firstUseMs": 19.599999994039536
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 5.4000000059604645,
+              "lookupMs": 0,
+              "submitMs": 2.5,
+              "firstUseMs": 16.299999997019768
+            },
+            {
+              "name": "MeshLambertMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 1.3999999910593033,
+              "lookupMs": 0,
+              "submitMs": 0.4000000059604645,
+              "firstUseMs": 56.1000000089407
+            },
+            {
+              "name": "PMREMSphericalGaussianBlur",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.20000000298023224,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 18.700000002980232
+            },
+            {
+              "name": "PMREMGGXConvolution",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.20000000298023224,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 11.099999994039536
+            },
+            {
+              "name": "PMREMGGXIntegration",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.20000000298023224,
+              "lookupMs": 0,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 14.599999994039536
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.29999999701976776,
+              "lookupMs": 0,
+              "submitMs": 0.4000000059604645,
+              "firstUseMs": 10.5
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.19999998807907104,
+              "lookupMs": 0,
+              "submitMs": 0.6000000089406967,
+              "firstUseMs": 9.899999991059303
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 2.6000000089406967,
+              "lookupMs": 0,
+              "submitMs": 0.5999999940395355,
+              "firstUseMs": 30.5
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 1.4000000059604645,
+              "lookupMs": 0,
+              "submitMs": 1.2999999970197678,
+              "firstUseMs": 153.09999999403954
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 3.4000000059604645,
+              "lookupMs": 0,
+              "submitMs": 1.5,
+              "firstUseMs": 141.79999999701977
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 6.800000011920929,
+              "lookupMs": 0,
+              "submitMs": 1.199999988079071,
+              "firstUseMs": 187.79999999701977
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 1.7000000029802322,
+              "lookupMs": 0,
+              "submitMs": 5.700000002980232,
+              "firstUseMs": 258.79999999701977
+            },
+            {
+              "name": "MeshPhysicalMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 17.700000002980232,
+              "lookupMs": 0,
+              "submitMs": 1.7999999970197678,
+              "firstUseMs": 174.90000000596046
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.7999999970197678,
+              "lookupMs": 0,
+              "submitMs": 0.29999999701976776,
+              "firstUseMs": 194.59999999403954
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.800000011920929,
+              "firstUseMs": 189.09999999403954
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 0,
+              "firstUseMs": 218.40000000596046
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 7.299999997019768
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 11.700000002980232
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.19999998807907104,
+              "lookupMs": 0,
+              "submitMs": 0,
+              "firstUseMs": 3.0999999940395355
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 25
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0,
+              "firstUseMs": 3.9000000059604645
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0,
+              "firstUseMs": 19.400000005960464
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0,
+              "firstUseMs": 27.600000008940697
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0,
+              "firstUseMs": 15.700000002980232
+            },
+            {
+              "name": "OutputShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 14.799999997019768
+            },
+            {
+              "name": "FXAAShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 15.599999994039536
+            },
+            {
+              "name": "unspecified",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 43.29999999701977
+            }
+          ],
+          "hooks": {
+            "initialization": 0.19999998807907104,
+            "draw-1": 0.20000000298023224
+          },
+          "planFetchMs": 0,
+          "planJsonMs": 0
+        },
+        "plan": null
+      },
+      "imageSha256": "4c436dcb2d63f8809ecd0e334a0edefe8ecb9cf39a5ac82674734512933f8411",
+      "mode": "baseline",
+      "shape": "original",
+      "pair": 3
+    }
+  ],
+  "chromium": "156.0.8078.79",
+  "plan": {
+    "bytes": 1546087,
+    "gzipBytes": 223178,
+    "variants": 28
+  },
+  "capture": {
+    "startup": {
+      "importMs": 214.6000000089407,
+      "observedMs": 13322.60000000894,
+      "show": "room-startup",
+      "epoch": 1,
+      "number": 1
+    },
+    "thread": "worker",
+    "failed": null,
+    "fixtureCount": 8,
+    "activeLights": 8,
+    "quality": "low",
+    "shadowCount": 1,
+    "deviceRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    "softwareRenderer": true,
+    "programCount": 22,
+    "pixels": [
+      480,
+      270
+    ],
+    "displayPixels": [
+      640,
+      360
+    ],
+    "fogAmount": 0.35,
+    "visibleStatus": "low \u00b7 software GPU \u00b7 1 shadows \u00b7 work light",
+    "probe": {
+      "type": "room-startup-probe",
+      "frameId": 1,
+      "timings": {
+        "initMs": 1297.5999999940395,
+        "drawSubmitMs": 2435.2999999970198,
+        "gpuFenceMs": 9012.60000000894,
+        "bitmapMs": 0.09999999403953552,
+        "workerFrameMs": 11448,
+        "workerClockMs": 13051.70000000298
+      },
+      "report": {
+        "programs": {},
+        "stages": [
+          {
+            "name": "MeshStandardMaterial",
+            "phase": "initialization",
+            "spotLights": 0,
+            "hit": false,
+            "assemblyMs": 15.400000005960464,
+            "lookupMs": 6.100000008940697,
+            "submitMs": 1.4000000059604645,
+            "firstUseMs": 26.799999997019768
+          },
+          {
+            "name": "MeshStandardMaterial",
+            "phase": "initialization",
+            "spotLights": 0,
+            "hit": false,
+            "assemblyMs": 7.399999991059303,
+            "lookupMs": 0.29999999701976776,
+            "submitMs": 24.80000001192093,
+            "firstUseMs": 17.899999991059303
+          },
+          {
+            "name": "MeshLambertMaterial",
+            "phase": "initialization",
+            "spotLights": 0,
+            "hit": false,
+            "assemblyMs": 14.200000002980232,
+            "lookupMs": 0.4000000059604645,
+            "submitMs": 2.0999999940395355,
+            "firstUseMs": 17
+          },
+          {
+            "name": "PMREMSphericalGaussianBlur",
+            "phase": "initialization",
+            "spotLights": 0,
+            "hit": false,
+            "assemblyMs": 0.20000000298023224,
+            "lookupMs": 0.29999999701976776,
+            "submitMs": 0.10000000894069672,
+            "firstUseMs": 68.8999999910593
+          },
+          {
+            "name": "PMREMGGXConvolution",
+            "phase": "initialization",
+            "spotLights": 0,
+            "hit": false,
+            "assemblyMs": 0.20000000298023224,
+            "lookupMs": 0.4000000059604645,
+            "submitMs": 0.3999999910593033,
+            "firstUseMs": 9.400000005960464
+          },
+          {
+            "name": "PMREMGGXIntegration",
+            "phase": "initialization",
+            "spotLights": 0,
+            "hit": false,
+            "assemblyMs": 0.09999999403953552,
+            "lookupMs": 0.4000000059604645,
+            "submitMs": 0.30000001192092896,
+            "firstUseMs": 39.5
+          },
+          {
+            "name": "MeshDepthMaterial",
+            "phase": "draw-1",
+            "spotLights": 0,
+            "hit": false,
+            "assemblyMs": 0.30000001192092896,
+            "lookupMs": 0.19999998807907104,
+            "submitMs": 0.7000000029802322,
+            "firstUseMs": 41.099999994039536
+          },
+          {
+            "name": "MeshDepthMaterial",
+            "phase": "draw-1",
+            "spotLights": 0,
+            "hit": false,
+            "assemblyMs": 0.4000000059604645,
+            "lookupMs": 0.20000000298023224,
+            "submitMs": 0.3999999910593033,
+            "firstUseMs": 7.899999991059303
+          },
+          {
+            "name": "MeshStandardMaterial",
+            "phase": "draw-1",
+            "spotLights": 8,
+            "hit": false,
+            "assemblyMs": 4.0999999940395355,
+            "lookupMs": 0.20000000298023224,
+            "submitMs": 1.4000000059604645,
+            "firstUseMs": 54.599999994039536
+          },
+          {
+            "name": "MeshStandardMaterial",
+            "phase": "draw-1",
+            "spotLights": 8,
+            "hit": false,
+            "assemblyMs": 13.599999994039536,
+            "lookupMs": 0.20000000298023224,
+            "submitMs": 1.800000011920929,
+            "firstUseMs": 307.79999999701977
+          },
+          {
+            "name": "MeshStandardMaterial",
+            "phase": "draw-1",
+            "spotLights": 8,
+            "hit": false,
+            "assemblyMs": 15.5,
+            "lookupMs": 0.20000000298023224,
+            "submitMs": 0.7000000029802322,
+            "firstUseMs": 324.19999998807907
+          },
+          {
+            "name": "MeshStandardMaterial",
+            "phase": "draw-1",
+            "spotLights": 8,
+            "hit": false,
+            "assemblyMs": 13.200000002980232,
+            "lookupMs": 0.20000000298023224,
+            "submitMs": 9.799999997019768,
+            "firstUseMs": 182
+          },
+          {
+            "name": "MeshStandardMaterial",
+            "phase": "draw-1",
+            "spotLights": 8,
+            "hit": false,
+            "assemblyMs": 1.2000000029802322,
+            "lookupMs": 0.20000000298023224,
+            "submitMs": 1.4000000059604645,
+            "firstUseMs": 192
+          },
+          {
+            "name": "MeshPhysicalMaterial",
+            "phase": "draw-1",
+            "spotLights": 8,
+            "hit": false,
+            "assemblyMs": 2.0999999940395355,
+            "lookupMs": 0.20000000298023224,
+            "submitMs": 7.200000002980232,
+            "firstUseMs": 183.29999999701977
+          },
+          {
+            "name": "ShaderMaterial",
+            "phase": "draw-1",
+            "spotLights": 0,
+            "hit": false,
+            "assemblyMs": 0.20000000298023224,
+            "lookupMs": 0.29999999701976776,
+            "submitMs": 0.29999999701976776,
+            "firstUseMs": 215.29999999701977
+          },
+          {
+            "name": "ShaderMaterial",
+            "phase": "draw-1",
+            "spotLights": 0,
+            "hit": false,
+            "assemblyMs": 0,
+            "lookupMs": 0.20000000298023224,
+            "submitMs": 0.4000000059604645,
+            "firstUseMs": 282.59999999403954
+          },
+          {
+            "name": "ShaderMaterial",
+            "phase": "draw-1",
+            "spotLights": 0,
+            "hit": false,
+            "assemblyMs": 0,
+            "lookupMs": 0.29999999701976776,
+            "submitMs": 0.20000000298023224,
+            "firstUseMs": 229.79999999701977
+          },
+          {
+            "name": "ShaderMaterial",
+            "phase": "draw-1",
+            "spotLights": 0,
+            "hit": false,
+            "assemblyMs": 0.10000000894069672,
+            "lookupMs": 0.5,
+            "submitMs": 0.09999999403953552,
+            "firstUseMs": 10.700000002980232
+          },
+          {
+            "name": "ShaderMaterial",
+            "phase": "draw-1",
+            "spotLights": 0,
+            "hit": false,
+            "assemblyMs": 0,
+            "lookupMs": 0.20000000298023224,
+            "submitMs": 0,
+            "firstUseMs": 30.900000005960464
+          },
+          {
+            "name": "ShaderMaterial",
+            "phase": "draw-1",
+            "spotLights": 0,
+            "hit": false,
+            "assemblyMs": 0.10000000894069672,
+            "lookupMs": 0.19999998807907104,
+            "submitMs": 0.29999999701976776,
+            "firstUseMs": 6.0999999940395355
+          },
+          {
+            "name": "ShaderMaterial",
+            "phase": "draw-1",
+            "spotLights": 0,
+            "hit": false,
+            "assemblyMs": 0.10000000894069672,
+            "lookupMs": 0.29999999701976776,
+            "submitMs": 0.09999999403953552,
+            "firstUseMs": 8.400000005960464
+          },
+          {
+            "name": "ShaderMaterial",
+            "phase": "draw-1",
+            "spotLights": 0,
+            "hit": false,
+            "assemblyMs": 0,
+            "lookupMs": 0.19999998807907104,
+            "submitMs": 0.10000000894069672,
+            "firstUseMs": 15.200000002980232
+          },
+          {
+            "name": "ShaderMaterial",
+            "phase": "draw-1",
+            "spotLights": 0,
+            "hit": false,
+            "assemblyMs": 0.20000000298023224,
+            "lookupMs": 0.09999999403953552,
+            "submitMs": 4.0999999940395355,
+            "firstUseMs": 1.7999999970197678
+          },
+          {
+            "name": "ShaderMaterial",
+            "phase": "draw-1",
+            "spotLights": 0,
+            "hit": false,
+            "assemblyMs": 0,
+            "lookupMs": 0.20000000298023224,
+            "submitMs": 0.19999998807907104,
+            "firstUseMs": 14.5
+          },
+          {
+            "name": "ShaderMaterial",
+            "phase": "draw-1",
+            "spotLights": 0,
+            "hit": false,
+            "assemblyMs": 0,
+            "lookupMs": 0.20000000298023224,
+            "submitMs": 0.10000000894069672,
+            "firstUseMs": 7.199999988079071
+          },
+          {
+            "name": "OutputShader",
+            "phase": "draw-1",
+            "spotLights": 0,
+            "hit": false,
+            "assemblyMs": 0,
+            "lookupMs": 0.20000000298023224,
+            "submitMs": 0.10000000894069672,
+            "firstUseMs": 8
+          },
+          {
+            "name": "FXAAShader",
+            "phase": "draw-1",
+            "spotLights": 0,
+            "hit": false,
+            "assemblyMs": 0.10000000894069672,
+            "lookupMs": 0.3999999910593033,
+            "submitMs": 0.09999999403953552,
+            "firstUseMs": 34.5
+          },
+          {
+            "name": "unspecified",
+            "phase": "draw-1",
+            "spotLights": 0,
+            "hit": false,
+            "assemblyMs": 0.20000000298023224,
+            "lookupMs": 0.20000000298023224,
+            "submitMs": 0.19999998807907104,
+            "firstUseMs": 40.1000000089407
+          }
+        ],
+        "hooks": {
+          "initialization": 0.09999999403953552,
+          "draw-1": 0.29999999701976776
+        },
+        "planFetchMs": 0,
+        "planJsonMs": 0
+      }
+    },
+    "imageSha256": "4c436dcb2d63f8809ecd0e334a0edefe8ecb9cf39a5ac82674734512933f8411",
+    "mode": "capture",
+    "shape": "original"
+  },
+  "controls": [
+    {
+      "startup": {
+        "importMs": 176.20000000298023,
+        "observedMs": 17217.20000000298,
+        "show": "room-startup",
+        "epoch": 1,
+        "number": 1
+      },
+      "thread": "worker",
+      "failed": null,
+      "fixtureCount": 8,
+      "activeLights": 8,
+      "quality": "low",
+      "shadowCount": 1,
+      "deviceRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "softwareRenderer": true,
+      "programCount": 22,
+      "pixels": [
+        480,
+        270
+      ],
+      "displayPixels": [
+        640,
+        360
+      ],
+      "fogAmount": 0.35,
+      "visibleStatus": "low \u00b7 software GPU \u00b7 1 shadows \u00b7 work light",
+      "probe": null,
+      "imageSha256": "4c436dcb2d63f8809ecd0e334a0edefe8ecb9cf39a5ac82674734512933f8411",
+      "mode": "release",
+      "shape": "original"
+    },
+    {
+      "startup": {
+        "importMs": 150.09999999403954,
+        "observedMs": 14670.09999999404,
+        "show": "room-startup",
+        "epoch": 1,
+        "number": 1
+      },
+      "thread": "worker",
+      "failed": null,
+      "fixtureCount": 8,
+      "activeLights": 8,
+      "quality": "low",
+      "shadowCount": 1,
+      "deviceRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "softwareRenderer": true,
+      "programCount": 22,
+      "pixels": [
+        480,
+        270
+      ],
+      "displayPixels": [
+        640,
+        360
+      ],
+      "fogAmount": 0.35,
+      "visibleStatus": "low \u00b7 software GPU \u00b7 1 shadows \u00b7 work light",
+      "probe": {
+        "type": "room-startup-probe",
+        "frameId": 1,
+        "timings": {
+          "initMs": 1347.2999999970198,
+          "drawSubmitMs": 4067.5999999940395,
+          "gpuFenceMs": 8150.5,
+          "bitmapMs": 0.09999999403953552,
+          "workerFrameMs": 12218.29999999702,
+          "workerClockMs": 14450.09999999404
+        },
+        "report": {
+          "programs": {},
+          "stages": [
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 35.099999994039536,
+              "lookupMs": 0,
+              "submitMs": 3.5,
+              "firstUseMs": 62.5
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 6.100000008940697,
+              "lookupMs": 0,
+              "submitMs": 1.3999999910593033,
+              "firstUseMs": 138.6000000089407
+            },
+            {
+              "name": "MeshLambertMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 30.099999994039536,
+              "lookupMs": 0,
+              "submitMs": 4.4000000059604645,
+              "firstUseMs": 18.5
+            },
+            {
+              "name": "PMREMSphericalGaussianBlur",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.4000000059604645,
+              "lookupMs": 0,
+              "submitMs": 0.19999998807907104,
+              "firstUseMs": 98.5
+            },
+            {
+              "name": "PMREMGGXConvolution",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.5,
+              "lookupMs": 0,
+              "submitMs": 0.4000000059604645,
+              "firstUseMs": 8.299999997019768
+            },
+            {
+              "name": "PMREMGGXIntegration",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.20000000298023224,
+              "lookupMs": 0,
+              "submitMs": 0.19999998807907104,
+              "firstUseMs": 39
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.4000000059604645,
+              "lookupMs": 0,
+              "submitMs": 1.2000000029802322,
+              "firstUseMs": 79.40000000596046
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 1.300000011920929,
+              "lookupMs": 0,
+              "submitMs": 0.5,
+              "firstUseMs": 4.5
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 2.2999999970197678,
+              "lookupMs": 0,
+              "submitMs": 1.2000000029802322,
+              "firstUseMs": 52.70000000298023
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 4.600000008940697,
+              "lookupMs": 0,
+              "submitMs": 1.7000000029802322,
+              "firstUseMs": 498.59999999403954
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 8.599999994039536,
+              "lookupMs": 0,
+              "submitMs": 1.7999999970197678,
+              "firstUseMs": 271.20000000298023
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 1.5,
+              "lookupMs": 0,
+              "submitMs": 16.399999991059303,
+              "firstUseMs": 261.20000000298023
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 1.4000000059604645,
+              "lookupMs": 0,
+              "submitMs": 1.199999988079071,
+              "firstUseMs": 301.80000001192093
+            },
+            {
+              "name": "MeshPhysicalMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 7.200000002980232,
+              "lookupMs": 0,
+              "submitMs": 6,
+              "firstUseMs": 566.4000000059605
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.20000000298023224,
+              "lookupMs": 0,
+              "submitMs": 0.3999999910593033,
+              "firstUseMs": 333.70000000298023
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.20000000298023224,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 431
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.6000000089406967,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 686.9000000059605
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0,
+              "firstUseMs": 8.599999994039536
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 11.5
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 0,
+              "firstUseMs": 12.600000008940697
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 0.5999999940395355,
+              "firstUseMs": 24.80000001192093
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0,
+              "firstUseMs": 14.599999994039536
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 9.299999997019768
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 16.200000002980232
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 6.699999988079071
+            },
+            {
+              "name": "OutputShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 29
+            },
+            {
+              "name": "FXAAShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 13.400000005960464
+            },
+            {
+              "name": "unspecified",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 151.29999999701977
+            }
+          ],
+          "hooks": {
+            "initialization": 0,
+            "draw-1": 0.7000000029802322
+          },
+          "planFetchMs": 116.79999999701977,
+          "planJsonMs": 50.79999999701977
+        },
+        "plan": null
+      },
+      "imageSha256": "4c436dcb2d63f8809ecd0e334a0edefe8ecb9cf39a5ac82674734512933f8411",
+      "mode": "stale",
+      "shape": "original"
+    },
+    {
+      "startup": {
+        "importMs": 163.90000000596046,
+        "observedMs": 9653.59999999404,
+        "show": "room-startup",
+        "epoch": 1,
+        "number": 1
+      },
+      "thread": "worker",
+      "failed": null,
+      "fixtureCount": 3,
+      "activeLights": 3,
+      "quality": "low",
+      "shadowCount": 1,
+      "deviceRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "softwareRenderer": true,
+      "programCount": 22,
+      "pixels": [
+        480,
+        270
+      ],
+      "displayPixels": [
+        640,
+        360
+      ],
+      "fogAmount": 0.35,
+      "visibleStatus": "low \u00b7 software GPU \u00b7 1 shadows \u00b7 work light",
+      "probe": {
+        "type": "room-startup-probe",
+        "frameId": 1,
+        "timings": {
+          "initMs": 682.6999999880791,
+          "drawSubmitMs": 1885.2999999970198,
+          "gpuFenceMs": 6519.4000000059605,
+          "bitmapMs": 0.20000000298023224,
+          "workerFrameMs": 8404.90000000596,
+          "workerClockMs": 9436
+        },
+        "report": {
+          "programs": {},
+          "stages": [
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 4.100000008940697,
+              "lookupMs": 0,
+              "submitMs": 1.2999999970197678,
+              "firstUseMs": 11.100000008940697
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 2.3999999910593033,
+              "lookupMs": 0,
+              "submitMs": 1,
+              "firstUseMs": 25
+            },
+            {
+              "name": "MeshLambertMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 1.9000000059604645,
+              "lookupMs": 0,
+              "submitMs": 0.7000000029802322,
+              "firstUseMs": 19.099999994039536
+            },
+            {
+              "name": "PMREMSphericalGaussianBlur",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0,
+              "firstUseMs": 15.600000008940697
+            },
+            {
+              "name": "PMREMGGXConvolution",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.20000000298023224,
+              "lookupMs": 0,
+              "submitMs": 0.19999998807907104,
+              "firstUseMs": 19.599999994039536
+            },
+            {
+              "name": "PMREMGGXIntegration",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.20000000298023224,
+              "lookupMs": 0,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 5.399999991059303
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.29999999701976776,
+              "lookupMs": 0,
+              "submitMs": 1.2999999970197678,
+              "firstUseMs": 10.200000002980232
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.30000001192092896,
+              "lookupMs": 0,
+              "submitMs": 0.29999999701976776,
+              "firstUseMs": 8
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 3,
+              "hit": false,
+              "assemblyMs": 5.799999997019768,
+              "lookupMs": 0,
+              "submitMs": 0.9000000059604645,
+              "firstUseMs": 28
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 3,
+              "hit": false,
+              "assemblyMs": 2,
+              "lookupMs": 0,
+              "submitMs": 0.7000000029802322,
+              "firstUseMs": 86.69999998807907
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 3,
+              "hit": false,
+              "assemblyMs": 6.5,
+              "lookupMs": 0,
+              "submitMs": 0.5999999940395355,
+              "firstUseMs": 50
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 3,
+              "hit": false,
+              "assemblyMs": 10.5,
+              "lookupMs": 0,
+              "submitMs": 1.2999999970197678,
+              "firstUseMs": 58.400000005960464
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 3,
+              "hit": false,
+              "assemblyMs": 6.299999997019768,
+              "lookupMs": 0,
+              "submitMs": 1.0999999940395355,
+              "firstUseMs": 212.59999999403954
+            },
+            {
+              "name": "MeshPhysicalMaterial",
+              "phase": "draw-1",
+              "spotLights": 3,
+              "hit": false,
+              "assemblyMs": 1.3999999910593033,
+              "lookupMs": 0,
+              "submitMs": 6.5,
+              "firstUseMs": 177.20000000298023
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.19999998807907104,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 187.1000000089407
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 389.59999999403954
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.19999998807907104,
+              "lookupMs": 0,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 331.20000000298023
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.20000000298023224,
+              "lookupMs": 0,
+              "submitMs": 0,
+              "firstUseMs": 8.299999997019768
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 12.5
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 17.5
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.29999999701976776,
+              "lookupMs": 0,
+              "submitMs": 0,
+              "firstUseMs": 4.899999991059303
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 0.19999998807907104,
+              "firstUseMs": 14.700000002980232
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 3.5999999940395355,
+              "firstUseMs": 9.299999997019768
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.8999999910593033,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 8.200000002980232
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 8.5
+            },
+            {
+              "name": "OutputShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0,
+              "firstUseMs": 7.100000008940697
+            },
+            {
+              "name": "FXAAShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 21.299999997019768
+            },
+            {
+              "name": "unspecified",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.20000000298023224,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 87.70000000298023
+            }
+          ],
+          "hooks": {
+            "initialization": 0.20000001788139343,
+            "draw-1": 0.20000000298023224
+          },
+          "planFetchMs": 0,
+          "planJsonMs": 0
+        },
+        "plan": null
+      },
+      "imageSha256": "a6ac6084784cfd1e74a3630f64dc68d5618c7a35242ecb97b8cf8c523bb2f5fe",
+      "mode": "baseline",
+      "shape": "changed"
+    },
+    {
+      "startup": {
+        "importMs": 147,
+        "observedMs": 8636.300000011921,
+        "show": "room-startup",
+        "epoch": 1,
+        "number": 1
+      },
+      "thread": "worker",
+      "failed": null,
+      "fixtureCount": 3,
+      "activeLights": 3,
+      "quality": "low",
+      "shadowCount": 1,
+      "deviceRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "softwareRenderer": true,
+      "programCount": 22,
+      "pixels": [
+        480,
+        270
+      ],
+      "displayPixels": [
+        640,
+        360
+      ],
+      "fogAmount": 0.35,
+      "visibleStatus": "low \u00b7 software GPU \u00b7 1 shadows \u00b7 work light",
+      "probe": {
+        "type": "room-startup-probe",
+        "frameId": 1,
+        "timings": {
+          "initMs": 1098.7999999970198,
+          "drawSubmitMs": 2006.9000000059605,
+          "gpuFenceMs": 4944.70000000298,
+          "bitmapMs": 0.20000000298023224,
+          "workerFrameMs": 6951.800000011921,
+          "workerClockMs": 8429.5
+        },
+        "report": {
+          "programs": {},
+          "stages": [
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 1.5,
+              "submitMs": 3.3999999910593033,
+              "firstUseMs": 37.19999998807907
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 7,
+              "submitMs": 1.2000000029802322,
+              "firstUseMs": 48.3999999910593
+            },
+            {
+              "name": "MeshLambertMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.30000001192092896,
+              "submitMs": 0.8999999910593033,
+              "firstUseMs": 55.5
+            },
+            {
+              "name": "PMREMSphericalGaussianBlur",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 4.399999991059303,
+              "submitMs": 0.4000000059604645,
+              "firstUseMs": 23.5
+            },
+            {
+              "name": "PMREMGGXConvolution",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.29999999701976776,
+              "firstUseMs": 40.79999999701977
+            },
+            {
+              "name": "PMREMGGXIntegration",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 30
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.3999999910593033,
+              "submitMs": 1.4000000059604645,
+              "firstUseMs": 14.600000008940697
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.4000000059604645,
+              "firstUseMs": 15.099999994039536
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 3,
+              "hit": false,
+              "assemblyMs": 7.899999991059303,
+              "lookupMs": 0.4000000059604645,
+              "submitMs": 4.5,
+              "firstUseMs": 71.40000000596046
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 3,
+              "hit": false,
+              "assemblyMs": 10,
+              "lookupMs": 0.4000000059604645,
+              "submitMs": 10.099999994039536,
+              "firstUseMs": 288.30000001192093
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 3,
+              "hit": false,
+              "assemblyMs": 1.7999999970197678,
+              "lookupMs": 0.5,
+              "submitMs": 5.700000002980232,
+              "firstUseMs": 146.1000000089407
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 3,
+              "hit": false,
+              "assemblyMs": 7.899999991059303,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 1.2000000029802322,
+              "firstUseMs": 117.79999999701977
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 3,
+              "hit": false,
+              "assemblyMs": 4.100000008940697,
+              "lookupMs": 0.3999999910593033,
+              "submitMs": 1.5999999940395355,
+              "firstUseMs": 144.90000000596046
+            },
+            {
+              "name": "MeshPhysicalMaterial",
+              "phase": "draw-1",
+              "spotLights": 3,
+              "hit": false,
+              "assemblyMs": 7,
+              "lookupMs": 0.5,
+              "submitMs": 1.7999999970197678,
+              "firstUseMs": 127.20000000298023
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.29999999701976776,
+              "firstUseMs": 110.29999999701977
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.4000000059604645,
+              "firstUseMs": 279.59999999403954
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 208.5
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.3999999910593033,
+              "submitMs": 0,
+              "firstUseMs": 8.100000008940697
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.19999998807907104,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 43.3999999910593
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 27.69999998807907
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 14
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.4000000059604645,
+              "submitMs": 0.6000000089406967,
+              "firstUseMs": 49.5
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 20.299999997019768
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.29999999701976776,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 13.599999994039536
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0,
+              "firstUseMs": 11.899999991059303
+            },
+            {
+              "name": "OutputShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.10000000894069672,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 10.599999994039536
+            },
+            {
+              "name": "FXAAShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.20000000298023224,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 43.099999994039536
+            },
+            {
+              "name": "unspecified",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": true,
+              "assemblyMs": 0,
+              "lookupMs": 0.5999999940395355,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 35.8999999910593
+            }
+          ],
+          "hooks": {
+            "initialization": 0.19999998807907104,
+            "draw-1": 0.3999999910593033
+          },
+          "planFetchMs": 130.79999999701977,
+          "planJsonMs": 15.600000008940697
+        },
+        "plan": null
+      },
+      "imageSha256": "a6ac6084784cfd1e74a3630f64dc68d5618c7a35242ecb97b8cf8c523bb2f5fe",
+      "mode": "restore",
+      "shape": "changed"
+    },
+    {
+      "startup": {
+        "importMs": 326.40000000596046,
+        "observedMs": 21355.70000000298,
+        "show": "room-startup",
+        "epoch": 1,
+        "number": 1
+      },
+      "thread": "worker",
+      "failed": null,
+      "fixtureCount": 8,
+      "activeLights": 8,
+      "quality": "low",
+      "shadowCount": 1,
+      "deviceRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "softwareRenderer": true,
+      "programCount": 22,
+      "pixels": [
+        480,
+        270
+      ],
+      "displayPixels": [
+        640,
+        360
+      ],
+      "fogAmount": 0.35,
+      "visibleStatus": "low \u00b7 software GPU \u00b7 1 shadows \u00b7 work light",
+      "probe": {
+        "type": "room-startup-probe",
+        "frameId": 1,
+        "timings": {
+          "initMs": 1106.7000000029802,
+          "drawSubmitMs": 3634.7999999970198,
+          "gpuFenceMs": 14788.39999999106,
+          "bitmapMs": 0.29999999701976776,
+          "workerFrameMs": 18423.59999999404,
+          "workerClockMs": 20918.29999999702
+        },
+        "report": {
+          "programs": {},
+          "stages": [
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 7.800000011920929,
+              "lookupMs": 0,
+              "submitMs": 1.4000000059604645,
+              "firstUseMs": 52.3999999910593
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 1.7000000029802322,
+              "lookupMs": 0,
+              "submitMs": 0.699999988079071,
+              "firstUseMs": 46.1000000089407
+            },
+            {
+              "name": "MeshLambertMaterial",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 26.099999994039536,
+              "lookupMs": 0,
+              "submitMs": 0.4000000059604645,
+              "firstUseMs": 41.900000005960464
+            },
+            {
+              "name": "PMREMSphericalGaussianBlur",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 95.29999999701977
+            },
+            {
+              "name": "PMREMGGXConvolution",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 54.1000000089407
+            },
+            {
+              "name": "PMREMGGXIntegration",
+              "phase": "initialization",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.20000000298023224,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 26.5
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.29999999701976776,
+              "lookupMs": 0,
+              "submitMs": 0.7000000029802322,
+              "firstUseMs": 252.79999999701977
+            },
+            {
+              "name": "MeshDepthMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.29999999701976776,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 16.600000008940697
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 2.7000000029802322,
+              "lookupMs": 0,
+              "submitMs": 1.4000000059604645,
+              "firstUseMs": 74.20000000298023
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 9.5,
+              "lookupMs": 0,
+              "submitMs": 0.7000000029802322,
+              "firstUseMs": 261
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 3.2000000029802322,
+              "lookupMs": 0,
+              "submitMs": 0.7999999970197678,
+              "firstUseMs": 285.8999999910593
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 9.200000002980232,
+              "lookupMs": 0,
+              "submitMs": 0.7000000029802322,
+              "firstUseMs": 236.69999998807907
+            },
+            {
+              "name": "MeshStandardMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 1.1000000089406967,
+              "lookupMs": 0,
+              "submitMs": 4.799999997019768,
+              "firstUseMs": 355.3999999910593
+            },
+            {
+              "name": "MeshPhysicalMaterial",
+              "phase": "draw-1",
+              "spotLights": 8,
+              "hit": false,
+              "assemblyMs": 14.900000005960464,
+              "lookupMs": 0,
+              "submitMs": 1.2999999970197678,
+              "firstUseMs": 295.29999999701977
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.20000000298023224,
+              "lookupMs": 0,
+              "submitMs": 0.19999998807907104,
+              "firstUseMs": 365.5
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 2.4000000059604645,
+              "firstUseMs": 504.5
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 444
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 35.8999999910593
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.29999999701976776,
+              "firstUseMs": 18.399999991059303
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 25.799999997019768
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 24.399999991059303
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 32
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 34.20000000298023
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.09999999403953552,
+              "lookupMs": 0,
+              "submitMs": 0.10000000894069672,
+              "firstUseMs": 20.69999998807907
+            },
+            {
+              "name": "ShaderMaterial",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 41.400000005960464
+            },
+            {
+              "name": "OutputShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.10000000894069672,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 28.799999997019768
+            },
+            {
+              "name": "FXAAShader",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0,
+              "lookupMs": 0,
+              "submitMs": 0.20000000298023224,
+              "firstUseMs": 26.599999994039536
+            },
+            {
+              "name": "unspecified",
+              "phase": "draw-1",
+              "spotLights": 0,
+              "hit": false,
+              "assemblyMs": 0.20000000298023224,
+              "lookupMs": 0,
+              "submitMs": 0.09999999403953552,
+              "firstUseMs": 83.6000000089407
+            }
+          ],
+          "hooks": {
+            "initialization": 0.09999999403953552,
+            "draw-1": 0.20000000298023224
+          },
+          "planFetchMs": 0,
+          "planJsonMs": 0
+        },
+        "plan": null
+      },
+      "imageSha256": "4c436dcb2d63f8809ecd0e334a0edefe8ecb9cf39a5ac82674734512933f8411",
+      "reload": {
+        "reloadMs": 5170,
+        "observedMs": 27171.29999999702,
+        "show": "room-startup-restored",
+        "epoch": 2,
+        "number": 2,
+        "programCount": 24,
+        "probe": {
+          "type": "room-startup-probe",
+          "frameId": 2,
+          "timings": {
+            "initMs": 1106.7000000029802,
+            "drawSubmitMs": 290.79999999701977,
+            "gpuFenceMs": 4852.79999999702,
+            "bitmapMs": 0.20000000298023224,
+            "workerFrameMs": 5143.79999999702,
+            "workerClockMs": 26749.59999999404
+          },
+          "report": {
+            "programs": {},
+            "stages": [
+              {
+                "name": "MeshStandardMaterial",
+                "phase": "initialization",
+                "spotLights": 0,
+                "hit": false,
+                "assemblyMs": 7.800000011920929,
+                "lookupMs": 0,
+                "submitMs": 1.4000000059604645,
+                "firstUseMs": 52.3999999910593
+              },
+              {
+                "name": "MeshStandardMaterial",
+                "phase": "initialization",
+                "spotLights": 0,
+                "hit": false,
+                "assemblyMs": 1.7000000029802322,
+                "lookupMs": 0,
+                "submitMs": 0.699999988079071,
+                "firstUseMs": 46.1000000089407
+              },
+              {
+                "name": "MeshLambertMaterial",
+                "phase": "initialization",
+                "spotLights": 0,
+                "hit": false,
+                "assemblyMs": 26.099999994039536,
+                "lookupMs": 0,
+                "submitMs": 0.4000000059604645,
+                "firstUseMs": 41.900000005960464
+              },
+              {
+                "name": "PMREMSphericalGaussianBlur",
+                "phase": "initialization",
+                "spotLights": 0,
+                "hit": false,
+                "assemblyMs": 0,
+                "lookupMs": 0,
+                "submitMs": 0.20000000298023224,
+                "firstUseMs": 95.29999999701977
+              },
+              {
+                "name": "PMREMGGXConvolution",
+                "phase": "initialization",
+                "spotLights": 0,
+                "hit": false,
+                "assemblyMs": 0,
+                "lookupMs": 0,
+                "submitMs": 0.09999999403953552,
+                "firstUseMs": 54.1000000089407
+              },
+              {
+                "name": "PMREMGGXIntegration",
+                "phase": "initialization",
+                "spotLights": 0,
+                "hit": false,
+                "assemblyMs": 0.20000000298023224,
+                "lookupMs": 0,
+                "submitMs": 0.09999999403953552,
+                "firstUseMs": 26.5
+              },
+              {
+                "name": "MeshDepthMaterial",
+                "phase": "draw-1",
+                "spotLights": 0,
+                "hit": false,
+                "assemblyMs": 0.29999999701976776,
+                "lookupMs": 0,
+                "submitMs": 0.7000000029802322,
+                "firstUseMs": 252.79999999701977
+              },
+              {
+                "name": "MeshDepthMaterial",
+                "phase": "draw-1",
+                "spotLights": 0,
+                "hit": false,
+                "assemblyMs": 0.29999999701976776,
+                "lookupMs": 0,
+                "submitMs": 0.20000000298023224,
+                "firstUseMs": 16.600000008940697
+              },
+              {
+                "name": "MeshStandardMaterial",
+                "phase": "draw-1",
+                "spotLights": 8,
+                "hit": false,
+                "assemblyMs": 2.7000000029802322,
+                "lookupMs": 0,
+                "submitMs": 1.4000000059604645,
+                "firstUseMs": 74.20000000298023
+              },
+              {
+                "name": "MeshStandardMaterial",
+                "phase": "draw-1",
+                "spotLights": 8,
+                "hit": false,
+                "assemblyMs": 9.5,
+                "lookupMs": 0,
+                "submitMs": 0.7000000029802322,
+                "firstUseMs": 261
+              },
+              {
+                "name": "MeshStandardMaterial",
+                "phase": "draw-1",
+                "spotLights": 8,
+                "hit": false,
+                "assemblyMs": 3.2000000029802322,
+                "lookupMs": 0,
+                "submitMs": 0.7999999970197678,
+                "firstUseMs": 285.8999999910593
+              },
+              {
+                "name": "MeshStandardMaterial",
+                "phase": "draw-1",
+                "spotLights": 8,
+                "hit": false,
+                "assemblyMs": 9.200000002980232,
+                "lookupMs": 0,
+                "submitMs": 0.7000000029802322,
+                "firstUseMs": 236.69999998807907
+              },
+              {
+                "name": "MeshStandardMaterial",
+                "phase": "draw-1",
+                "spotLights": 8,
+                "hit": false,
+                "assemblyMs": 1.1000000089406967,
+                "lookupMs": 0,
+                "submitMs": 4.799999997019768,
+                "firstUseMs": 355.3999999910593
+              },
+              {
+                "name": "MeshPhysicalMaterial",
+                "phase": "draw-1",
+                "spotLights": 8,
+                "hit": false,
+                "assemblyMs": 14.900000005960464,
+                "lookupMs": 0,
+                "submitMs": 1.2999999970197678,
+                "firstUseMs": 295.29999999701977
+              },
+              {
+                "name": "ShaderMaterial",
+                "phase": "draw-1",
+                "spotLights": 0,
+                "hit": false,
+                "assemblyMs": 0.20000000298023224,
+                "lookupMs": 0,
+                "submitMs": 0.19999998807907104,
+                "firstUseMs": 365.5
+              },
+              {
+                "name": "ShaderMaterial",
+                "phase": "draw-1",
+                "spotLights": 0,
+                "hit": false,
+                "assemblyMs": 0.09999999403953552,
+                "lookupMs": 0,
+                "submitMs": 2.4000000059604645,
+                "firstUseMs": 504.5
+              },
+              {
+                "name": "ShaderMaterial",
+                "phase": "draw-1",
+                "spotLights": 0,
+                "hit": false,
+                "assemblyMs": 0.10000000894069672,
+                "lookupMs": 0,
+                "submitMs": 0.09999999403953552,
+                "firstUseMs": 444
+              },
+              {
+                "name": "ShaderMaterial",
+                "phase": "draw-1",
+                "spotLights": 0,
+                "hit": false,
+                "assemblyMs": 0.09999999403953552,
+                "lookupMs": 0,
+                "submitMs": 0.10000000894069672,
+                "firstUseMs": 35.8999999910593
+              },
+              {
+                "name": "ShaderMaterial",
+                "phase": "draw-1",
+                "spotLights": 0,
+                "hit": false,
+                "assemblyMs": 0,
+                "lookupMs": 0,
+                "submitMs": 0.29999999701976776,
+                "firstUseMs": 18.399999991059303
+              },
+              {
+                "name": "ShaderMaterial",
+                "phase": "draw-1",
+                "spotLights": 0,
+                "hit": false,
+                "assemblyMs": 0,
+                "lookupMs": 0,
+                "submitMs": 0.20000000298023224,
+                "firstUseMs": 25.799999997019768
+              },
+              {
+                "name": "ShaderMaterial",
+                "phase": "draw-1",
+                "spotLights": 0,
+                "hit": false,
+                "assemblyMs": 0.10000000894069672,
+                "lookupMs": 0,
+                "submitMs": 0.20000000298023224,
+                "firstUseMs": 24.399999991059303
+              },
+              {
+                "name": "ShaderMaterial",
+                "phase": "draw-1",
+                "spotLights": 0,
+                "hit": false,
+                "assemblyMs": 0.09999999403953552,
+                "lookupMs": 0,
+                "submitMs": 0.09999999403953552,
+                "firstUseMs": 32
+              },
+              {
+                "name": "ShaderMaterial",
+                "phase": "draw-1",
+                "spotLights": 0,
+                "hit": false,
+                "assemblyMs": 0,
+                "lookupMs": 0,
+                "submitMs": 0.10000000894069672,
+                "firstUseMs": 34.20000000298023
+              },
+              {
+                "name": "ShaderMaterial",
+                "phase": "draw-1",
+                "spotLights": 0,
+                "hit": false,
+                "assemblyMs": 0.09999999403953552,
+                "lookupMs": 0,
+                "submitMs": 0.10000000894069672,
+                "firstUseMs": 20.69999998807907
+              },
+              {
+                "name": "ShaderMaterial",
+                "phase": "draw-1",
+                "spotLights": 0,
+                "hit": false,
+                "assemblyMs": 0,
+                "lookupMs": 0,
+                "submitMs": 0.09999999403953552,
+                "firstUseMs": 41.400000005960464
+              },
+              {
+                "name": "OutputShader",
+                "phase": "draw-1",
+                "spotLights": 0,
+                "hit": false,
+                "assemblyMs": 0.10000000894069672,
+                "lookupMs": 0,
+                "submitMs": 0.09999999403953552,
+                "firstUseMs": 28.799999997019768
+              },
+              {
+                "name": "FXAAShader",
+                "phase": "draw-1",
+                "spotLights": 0,
+                "hit": false,
+                "assemblyMs": 0,
+                "lookupMs": 0,
+                "submitMs": 0.20000000298023224,
+                "firstUseMs": 26.599999994039536
+              },
+              {
+                "name": "unspecified",
+                "phase": "draw-1",
+                "spotLights": 0,
+                "hit": false,
+                "assemblyMs": 0.20000000298023224,
+                "lookupMs": 0,
+                "submitMs": 0.09999999403953552,
+                "firstUseMs": 83.6000000089407
+              },
+              {
+                "name": "MeshDepthMaterial",
+                "phase": "draw-2",
+                "spotLights": 8,
+                "hit": false,
+                "assemblyMs": 0.30000001192092896,
+                "lookupMs": 0,
+                "submitMs": 0.19999998807907104,
+                "firstUseMs": 235.40000000596046
+              },
+              {
+                "name": "MeshDepthMaterial",
+                "phase": "draw-2",
+                "spotLights": 8,
+                "hit": false,
+                "assemblyMs": 0.20000000298023224,
+                "lookupMs": 0,
+                "submitMs": 0.20000000298023224,
+                "firstUseMs": 7.799999997019768
+              }
+            ],
+            "hooks": {
+              "initialization": 0.09999999403953552,
+              "draw-1": 0.20000000298023224,
+              "draw-2": 0
+            },
+            "planFetchMs": 0,
+            "planJsonMs": 0
+          },
+          "plan": null
+        }
+      },
+      "mode": "baseline",
+      "shape": "original"
+    }
+  ],
+  "qualified": true
+}
