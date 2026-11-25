@@ -142,6 +142,10 @@
       (update :composition-tokens #(apply dissoc % (owned-tokens model execution)))
       (update :composition-runs dissoc id)))
 
+(def max-faults
+  "Recent refused composition launches kept in :composition-faults."
+  32)
+
 (defn- perform [model time-ms definition intent]
   (let [token (:token intent) id (get-in model [:composition-tokens token])
         launch? (= :composition/launch (:op intent))
@@ -158,9 +162,20 @@
     (if (and (not launch?) (not (get-in model [:instances id])))
       (update model :composition-tokens dissoc token)
       (let [{:keys [model ack]} (spatial/apply-command model command)]
-        (when (= :rejected (:status ack)) (throw (ex-info "Composition command rejected" {:ack ack})))
-        (if launch? (assoc-in model [:composition-tokens token] (:instance-id ack))
-            (update model :composition-tokens dissoc token))))))
+        (cond
+          ;; A refused slot launch is a recorded fault; the run keeps playing.
+          (and launch? (= :rejected (:status ack)))
+          (update model :composition-faults
+                  (fn [faults] (vec (take-last max-faults
+                                               (conj (vec faults)
+                                                     (merge (select-keys ack [:code :message])
+                                                            {:type :composition/launch-refused :owner-id (:owner-id intent)
+                                                             :member (:member intent) :cue-id (:cue-id intent)
+                                                             :epoch (:epoch model) :time-ms time-ms}))))))
+
+          (= :rejected (:status ack)) (throw (ex-info "Composition command rejected" {:ack ack}))
+          launch? (assoc-in model [:composition-tokens token] (:instance-id ack))
+          :else (update model :composition-tokens dissoc token))))))
 
 (defn stop
   "Release only this execution's captured instance IDs, then discard its tokens.
