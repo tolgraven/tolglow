@@ -175,6 +175,7 @@
             :pending-cue-launches (cue-timing/pending model)
             :cue-launch-outcomes (cue-timing/outcomes model)
             :operator-history (operator-history/project (:id runtime) model)
+            :history-command-outcomes (:history-command-outcomes snapshot [])
             :pages (mapv (fn [page] (update page :cells
                                            #(mapv (fn [[[x y] cue]] {:x x :y y :cue-id cue})
                                                   (sort-by key %)))) (sort-by (comp str :id) (vals (:pages model))))
@@ -1390,12 +1391,13 @@
                               :output (if (or (pause-look/blackout? model) (zero? (:master model)))
                                         (render/resolve-frame (patch! runtime (get-in model [:rig :fixtures])) [] {:blackout? true})
                                         (:output before))))))
+                 message-receipts (map vector messages receipts)
                  operations (keep (fn [[message [_ ack _ replayed?]]]
                                     (when-not replayed?
                                       {:operation (:type message) :command (get-in message [:payload :op])
                                        :ack ack :emitter-id (or (get-in message [:authority :operator-id])
                                                               (get-in message [:payload :source :adapter]))}))
-                                  (map vector messages receipts))
+                                  message-receipts)
                  ;; Confidence belongs to this live clock sample and its resource generation.
                  next-state (assoc next-state :audio-clock-confidence
                                    (when-not (or restored? @restarted-generation) audio-clock-confidence))
@@ -1403,7 +1405,12 @@
                  next-state (if (seq fired-outcomes) (update next-state :model cue-timing/clear-fired-outcomes) next-state)
                  committed (show-events/commit (:event-admit runtime) (:model before) next-state operations)
                  next-state (venue-fog/commit! runtime (:state committed)
-                              (patch! runtime (get-in next-state [:model :rig :fixtures])) restored?)]
+                              (patch! runtime (get-in next-state [:model :rig :fixtures])) restored?)
+                 epoch (get-in next-state [:model :epoch])
+                 previous-outcomes (if (= epoch (get-in before [:model :epoch]))
+                                     (:history-command-outcomes before []) [])
+                 next-state (assoc next-state :history-command-outcomes
+                                   (operator-history/committed-outcomes previous-outcomes epoch message-receipts))]
              (when (or (seq (get-in next-state [:output :fog-demands])) @(:fog-deadlines runtime))
                (swap! (:fog-deadlines runtime) fog-deadline/remember
                       (or (:frame-id presentation-token) (get-in next-state [:model :frame-number] 0))

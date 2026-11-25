@@ -292,7 +292,7 @@
           reveal-key [identity filter-key focus-id]
           message (cond
                     (:connection-message apply-status) (:connection-message apply-status)
-                    (:pending? apply-status) "Applying history…"
+                    (:pending? apply-status) (or (:message apply-status) "Applying history…")
                     (:error? apply-status) (:message apply-status)
                     choose-redo? "Preview a child of the current step to choose a redo branch."
                     :else (:message apply-status))]

@@ -5,6 +5,7 @@
             [tolglow.studio.origin :as origin]
             [clojure.data.json :as json]
             [tolglow.data :as data]
+            [tolglow.operator-history :as operator-history]
             [tolglow.effects.material-design :as materials]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -211,6 +212,7 @@
       (await-acknowledgement (submit! operation payload)))))
 
 (def ^:private history-operations #{:history/undo :history/redo :history/select})
+(def ^:private history-ack-timeout-ms 5000)
 
 (defn- history-handler [submit-history!]
   (fn [{:keys [json-params] :as request}]
@@ -230,10 +232,15 @@
         (reject :invalid-history-command "Edit history requires a runtime, epoch, cursor, position and a node for redo or select")
 
         :else
-        (let [payload (cond-> (select-keys json-params [:op :command-id :runtime-id :expected-epoch
-                                                      :expected-cursor :expected-history-position])
-                        (not undo?) (assoc :node-id node-id))]
-          (await-acknowledgement (submit-history! payload authority)))))))
+        (let [command-id (if (contains? json-params :command-id) command-id (str (random-uuid)))
+              payload (cond-> (assoc (select-keys json-params [:op :runtime-id :expected-epoch
+                                                             :expected-cursor :expected-history-position])
+                                     :command-id command-id)
+                        (not undo?) (assoc :node-id node-id))
+              reply (submit-history! payload (assoc authority ::operator-history/stream-outcome? true))
+              result (merge {:command-id command-id :epoch expected-epoch}
+                            (deref reply history-ack-timeout-ms {:status :pending :message "Command remains queued"}))]
+          (if (= :pending (:status result)) (data-response 202 result) (acknowledgement result)))))))
 
 (defn- command-handler [submit! heartbeat! submit-history!]
   (let [submit (submit-handler submit! heartbeat! :command)

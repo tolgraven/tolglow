@@ -5,6 +5,27 @@
             [afterglow.control.params :as params]
             [clojure.string :as str]))
 
+(def ^:private outcome-limit 256)
+
+(defn committed-outcomes
+  "Retain terminal Studio history results across coalesced frames. The owner
+  supplies the original queue entry and its exact acknowledgement."
+  [previous epoch message-receipts]
+  (let [completed (keep (fn [[{:keys [authority expected-epoch payload]} [_ ack]]]
+                          (let [{:keys [command-id]} payload
+                                {:keys [status message]} ack]
+                            (when (and (::stream-outcome? authority) (= epoch expected-epoch)
+                                       (#{:accepted :rejected} status)
+                                       (or (string? command-id) (keyword? command-id))
+                                       (<= 1 (count (str command-id)) 128))
+                              (cond-> (assoc (select-keys ack [:status :revision :code :reason :history-cursor :history-position])
+                                             :command-id command-id :epoch epoch)
+                                (string? message) (assoc :message (subs message 0 (min (count message) 256)))))))
+                        message-receipts)]
+    (if (seq completed)
+      (vec (take-last outcome-limit (into previous completed)))
+      previous)))
+
 (defn- actor-label [actor]
   (let [channel (cond
                   (keyword? actor) (or (namespace actor) (name actor))
