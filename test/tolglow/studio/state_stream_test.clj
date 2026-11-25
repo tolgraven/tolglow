@@ -1267,3 +1267,35 @@
       (is (zero? (watches)))
       (finally (.abort ^WebSocket (:socket operator)) (.abort ^WebSocket (:socket spectator))
                (.stop server) (show/stop! owner)))))
+
+(defn- primitive-array-paths
+  "Paths to non-byte primitive arrays. The codec gives those typed browser
+  arrays, while Studio consumers of projected numbers expect vectors."
+  [value path]
+  (cond (and (some? value) (.isArray (class value)) (not (bytes? value))
+             (.isPrimitive (.getComponentType (class value))))
+        [path]
+        (map? value) (mapcat (fn [[k v]] (primitive-array-paths v (conj path k))) value)
+        (coll? value) (mapcat (fn [[i v]] (primitive-array-paths v (conj path i))) (map-indexed vector value))
+        :else nil))
+
+(deftest studio-projections-carry-no-primitive-numeric-arrays
+  (let [probe (show/create-runtime {:workspace-options nil :workers 1})
+        model (try (:model @(:state probe)) (finally (show/stop! probe)))
+        runtime (show/create-runtime
+                 {:workspace-options nil :workers 1
+                  :model (update model :settings merge
+                                 {:lighting-capacity {:enabled? true} :lighting-budget {:enabled? true}
+                                  :lighting-activity {:enabled? true} :output-response {:enabled? true}})})]
+    (try
+      (dotimes [i 6] (show/tick! runtime (* 25.0 (inc i))))
+      (let [state @(:state runtime)
+            stream-view (studio/stream-view runtime state)
+            snapshot (show/snapshot runtime)]
+        (is (seq (get-in stream-view [:output :values])) "the projection includes rendered fixtures")
+        (is (map? (get-in stream-view [:output :lighting-capacity])) "capacity metering ran")
+        (is (empty? (primitive-array-paths stream-view [])))
+        (is (empty? (primitive-array-paths snapshot [])))
+        (is (empty? (primitive-array-paths (studio/browser-snapshot runtime {} (constantly nil)) [])))
+        (is (= stream-view (transit/decode (transit/encode stream-view)))))
+      (finally (show/stop! runtime)))))
