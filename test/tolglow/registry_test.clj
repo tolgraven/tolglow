@@ -33,7 +33,30 @@
     (is (= [blue] (:gradient (registry/resolve-params
                                (get-in published [:effects :red :params]) {:gradient [blue]}))))
     (doseq [invalid [[] [1] [blue red] [red red] [(assoc blue :color [0 -1 1])]]]
-      (is (seq (registry/validate-parameter (assoc schema :default invalid)))))))
+      (is (seq (registry/validate-parameter (assoc schema :default invalid)))))
+    (is (= [red] (:gradient (registry/resolve-params {:gradient (assoc schema :default [red])} {})))
+        "a single stop is a solid color")))
+
+(deftest gradient-diagnostics-name-the-authored-stop
+  (let [red {:position 0 :color [1 0 0]}
+        blue {:position 1 :color [0 0 1]}
+        schema {:type :gradient :default [red blue]}
+        paths (fn [default] (mapv :path (registry/validate-parameter (assoc schema :default default)
+                                                                     [:params :wash])))]
+    (is (= [[:params :wash :default]] (paths [])))
+    (is (= [[:params :wash :default]] (paths {:position 0 :color [1 0 0]})))
+    (is (= [[:params :wash :default 1 :position]] (paths [blue red])))
+    (is (= [[:params :wash :default 1 :position]] (paths [red red])))
+    (is (= [[:params :wash :default 1 :position]] (paths [red (assoc blue :position 1.5)])))
+    (is (= [[:params :wash :default 0 :color]] (paths [(assoc red :color [1 0]) blue])))
+    (is (= [[:params :wash :default 1 :color]] (paths [red (assoc blue :color [0 -1 1])])))
+    (is (= [[:params :wash :default 0]] (paths [(assoc red :alpha 1) blue])))
+    (is (re-find #"strictly increase"
+                 (:message (first (registry/validate-parameter (assoc schema :default [red red]))))))
+    (is (= [[:params :gradient 0 :position]]
+           (mapv :path (registry/validate-params {:gradient schema}
+                                                 {:gradient [(assoc red :position -0.1) blue]})))
+        "override values report the same stop path as authored defaults")))
 
 (deftest malformed-schemas-have-diagnostics
   (doseq [schema [nil [] {:type :enum :values 5 :default :a}
