@@ -1568,6 +1568,22 @@
              (let [now (now-ms runtime)]
                (assoc (into {} (filter (fn [[_ seen]] (< (- now seen) 60000))) leases) session now))))))
 
+(defn- show-identity [model]
+  (select-keys model [:epoch :show-id]))
+
+(defn- require-show-identity! [expected model]
+  (when-not (= expected (show-identity model))
+    (throw (ex-info "Agent run belongs to a previous show session" {}))))
+
+(defn- agent-inspection [runtime state inspect]
+  (let [identity (show-identity (:model state))
+        result (inspect)]
+    ;; Projection reads live diagnostics as well as the committed frame.
+    ;; Wait for an active restore to publish before comparing identities.
+    (locking (:lock runtime)
+      (require-show-identity! identity (:model @(:state runtime))))
+    result))
+
 (defn dispatch-tool!
   "Agent and REPL tool boundary; all mutation uses the same owner queue as UI."
   [runtime tool arguments metadata]
@@ -1599,8 +1615,9 @@
           "configure_auto" [:auto (merge (:configuration arguments) (select-keys envelope [:expected-epoch]))]
           (throw (ex-info "Unknown studio tool" {:tool tool})))]
     (case type
-      :inspect (project-snapshot runtime state)
-      :inspect-lighting (venue-tools/inspect state payload #(measure-sources runtime state %))
+      :inspect (agent-inspection runtime state #(project-snapshot runtime state))
+      :inspect-lighting (agent-inspection runtime state
+                          (fn [] (venue-tools/inspect state payload #(measure-sources runtime state %))))
       (deref (submit! runtime type payload) 5000 {:status :pending :message "Command remains queued"}))))
 
 (defn start-chat!
@@ -1608,16 +1625,14 @@
   the show session captured at admission. Supply :emit! and :done! callbacks.
   Returns the cancellable agent run handle, including its :result promise."
   [runtime payload {:keys [emit! done!]}]
-  (let [[manager show-identity] (locking (:lock runtime)
-                                  [(agent-manager runtime)
-                                   (select-keys (:model @(:state runtime)) [:epoch :show-id])])
-        admission (assoc show-identity :expected-epoch (:epoch show-identity))]
+  (let [[manager identity] (locking (:lock runtime)
+                            [(agent-manager runtime) (show-identity (:model @(:state runtime)))])
+        admission (assoc identity :expected-epoch (:epoch identity))]
     (agents/start-chat! manager payload
                         {:snapshot! (fn []
                                       (let [state @(:state runtime)]
-                                        (when-not (= show-identity (select-keys (:model state) [:epoch :show-id]))
-                                          (throw (ex-info "Agent run belongs to a previous show session" {})))
-                                        (project-snapshot runtime state)))
+                                        (require-show-identity! identity (:model state))
+                                        (agent-inspection runtime state #(project-snapshot runtime state))))
                          :dispatch! #(dispatch-tool! runtime %1 %2 (merge %3 admission))
                          :emit! emit! :done! done!})))
 

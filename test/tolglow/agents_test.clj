@@ -528,3 +528,34 @@
       (finally
         (deliver release-provider true)
         (show/stop! runtime)))))
+
+(deftest in-flight-show-inspection-discards-a-projection-after-restore
+  (let [runtime (show/create-runtime {:workspace-options nil})
+        entered (promise)
+        continue (promise)
+        project show/project-snapshot]
+    (try
+      (let [source (show/export-show-source runtime)
+            epoch (:epoch (show/snapshot runtime))]
+        (with-redefs [show/project-snapshot
+                      (fn [owner state]
+                        (deliver entered true)
+                        (when-not (deref continue 5000 false)
+                          (throw (ex-info "Timed out waiting for restore" {})))
+                        (project owner state))]
+          (let [lookup (future
+                         (try
+                           (show/dispatch-tool! runtime "inspect_show" {} {:expected-epoch epoch})
+                           (catch clojure.lang.ExceptionInfo error (ex-message error))))]
+            (is (true? (deref entered 5000 false)))
+            (let [receipt (show/submit! runtime :import {:source source})]
+              (show/tick! runtime 1)
+              (is (= :accepted (:status (deref receipt 5000 ::timeout)))))
+            (deliver continue true)
+            (is (= "Agent run belongs to a previous show session"
+                   (deref lookup 5000 ::timeout)))))
+        (is (= (inc epoch)
+               (:epoch (show/dispatch-tool! runtime "inspect_show" {} {:expected-epoch (inc epoch)})))))
+      (finally
+        (deliver continue true)
+        (show/stop! runtime)))))
