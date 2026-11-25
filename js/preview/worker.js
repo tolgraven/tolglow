@@ -1,4 +1,5 @@
 import {nextDisplayDeadline} from './display-clock.js';
+import {showIdentity} from './presentation.js';
 import {SceneRenderer} from './scene-renderer.js';
 
 let engine, canvas, stateId = 0, actionThrough = 0, frameId = 0;
@@ -159,13 +160,19 @@ function render(time) {
   } catch (error) {fail(error);}
 }
 
-function applyState(message) {
+function applyState(message, outputOnly = false) {
   if (message.id <= stateId || stopped) return;
   stateId = message.id;
   if (!active || message.state.generation !== generation) {
     send({type: 'state-ack', id: stateId, actionThrough}); return;
   }
   state = message.state;
+  if (outputOnly) {
+    engine.updateEmittedOutput({...engine.snapshot, ...state.snapshot}, state.receivedAt - performance.timeOrigin);
+    send({type: 'state-ack', id: stateId, actionThrough});
+    schedule();
+    return;
+  }
   if (!engine) {
     canvas = new OffscreenCanvas(1, 1);
     let lastStatus = '';
@@ -188,7 +195,7 @@ function applyState(message) {
   engine.setLightingMode(state.lightingMode);
   if (state.snapshot) {
     const snapshot = state.snapshot;
-    for (const key of ['sculpt-guide', 'volume-guides', 'glass-meshes', 'glass-volumes'])
+    for (const key of ['sculpt-guide', 'spatial-volumes', 'volume-guides', 'glass-meshes', 'glass-volumes'])
       if (!Object.hasOwn(snapshot, key)) snapshot[key] = engine.snapshot?.[key];
     if (!snapshot.rig && engine.snapshot) snapshot.rig = engine.snapshot.rig;
     if (!Object.hasOwn(snapshot, 'editor')) snapshot.editor = engine.snapshot?.editor;
@@ -226,9 +233,14 @@ self.onmessage = event => {
         advance();
       }
     } else if (message.type === 'state') {
-      // The proxy offers one complete projection at a time. Drain the current
-      // GPU work before accepting it, and suppress new draws during the drain.
-      if (active && message.state.generation === generation &&
+      // Emitted output can feed the next draw while a prior bitmap completes.
+      // Drain for scene/viewport changes, which can replace GPU resources.
+      const current = active && message.state.generation === generation;
+      if (current && message.outputOnly && !deferredState && engine?.snapshot &&
+          !engine.lost && !engine.softwareRenderer &&
+          showIdentity(message.state.snapshot) === showIdentity(engine.snapshot))
+        applyState(message, true);
+      else if (current &&
           (gpuPending() || (engine?.lost && !engine.restorePending))) deferredState = message;
       else applyState(message);
     } else if (message.type === 'frame-ack' && message.frameId === pendingFrame?.metadata.frameId) {

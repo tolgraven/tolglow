@@ -27,8 +27,10 @@ in a worker. The main thread owns OrbitControls, visibility and bitmap display.
 Only one state message and one transferred bitmap may await acknowledgement.
 Intermediate snapshots coalesce to the latest projection. The hardware worker
 can retain two frames total, with a fence per submitted draw. It publishes in
-order after GPU completion and drains submitted work before applying new scene
-state or resizing GPU resources.
+order after GPU completion. When the show identity, scene and controls stay
+the same, new light and haze samples feed the next draw while the previous
+frame's fence is pending. Scene or control changes drain submitted work before
+applying the new state.
 Pacing includes this GPU wait, since transfer/command submission alone can still
 build a compositor backlog and starve the UI. Bitmaps from an old show/epoch are
 closed without display. The DOM canvas is never transferred, allowing startup

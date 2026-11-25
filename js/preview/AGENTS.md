@@ -11,7 +11,8 @@ owns controls; committed JVM emitted output is authoritative.
   message and one transferred bitmap in flight; replace pending snapshots.
   The hardware worker can retain two frames total, including a transferred
   frame awaiting acknowledgement. Await each GPU fence before publishing its
-  bitmap, and drain submitted work before applying new scene state or resizing.
+  bitmap. Same-show emitted output can update inputs to the next draw while
+  that fence is pending. Drain before scene, control or viewport changes.
   Close rejected bitmaps, fence show/epoch changes and stop all worker resources
   on disposal. Never transfer the visible canvas: startup failure must leave it
   usable by the shared main-thread capability fallback.

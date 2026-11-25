@@ -8,7 +8,8 @@ import {build} from 'esbuild';
 // Replace only graphics allocation, raster work and resize at the GPU boundary.
 const bundle = await build({stdin: {
   resolveDir: fileURLToPath(new URL('../../../js/preview/', import.meta.url)),
-  contents: `import {SceneRenderer} from './scene-renderer.js';
+  contents: `import {HemisphereLight} from 'three';
+    import {SceneRenderer} from './scene-renderer.js';
     import {TIERS} from './render-quality.js';
     import './worker.js';
     SceneRenderer.prototype.initialize = function () {
@@ -16,7 +17,11 @@ const bundle = await build({stdin: {
       this.softwareRenderer = graphics.software;
       this.quality = this.autoQuality(); this.options = TIERS[this.quality];
       this.frameInterval = 1000 / this.targetHz;
+      this.diffuseBounce = new HemisphereLight();
       this.renderer = {getContext: () => graphics.gl, info: {memory: {}, programs: []}, dispose() {}};
+    };
+    SceneRenderer.prototype.rebuild = function () {
+      this.lightIds = []; this.spots = []; this.diffuserTubes = []; this.fixtureSamples = [];
     };
     SceneRenderer.prototype.draw = function (dt) {graphics.draw(dt); this.draws++;};
     SceneRenderer.prototype.resize = function () {graphics.resize();};
@@ -78,7 +83,7 @@ function worker({hz = 60, work = 0, software = false, quality = software ? 'auto
   const state = {generation: 1, displayHz: hz, viewport: {width: 640, height: 360, pixelRatio: 1},
     quality, lightingMode: 'hold', paused: false, actions: [],
     camera: {position: [0, 2, 8], target: [0, 2, 0], up: [0, 1, 0], fov: 49, name: 'audience'}};
-  const update = () => send({type: 'state', id: ++stateId, state: {...state}, receivedAt: now});
+  const update = (outputOnly = false) => send({type: 'state', id: ++stateId, outputOnly, state: {...state, receivedAt: now}});
   const frames = () => messages.filter(message => message.type === 'frame');
   const healthy = () => assert.deepEqual(messages.filter(message => message.type === 'error'), []);
   // Drain actual async worker continuations, without a wall-clock timer or GPU.
@@ -210,6 +215,28 @@ test('changed scene state drains both fences before acknowledging its resize and
   w.acknowledge(3);
   await w.refresh(7 * 1000 / 60);
   assert.equal(w.draws.length, 3, 'explicit paused draw must happen once');
+  assert.deepEqual([...new Set(w.resizes)], [0]);
+});
+
+test('emitted output advances the next draw while its predecessor is still on the GPU', async t => {
+  const w = worker(); t.after(() => w.dispose());
+  const snapshot = {'show-id': 'test', epoch: 1, revision: 1, 'time-ms': 0, 'frame-number': 10,
+    rig: {fixtures: []}, output: {values: {}}, 'spatial-volumes': []};
+  w.state.snapshot = snapshot;
+  w.update();
+  w.fenceReady = false;
+  await w.refresh(1000 / 60);
+  const {rig: _rig, 'spatial-volumes': _volumes, ...sample} = snapshot;
+  w.state.snapshot = {...sample, 'time-ms': 25, 'frame-number': 11};
+  w.update(true);
+  assert.equal(w.messages.at(-1).id, 3);
+  assert.equal(w.engine.snapshot.rig, snapshot.rig);
+  await w.refresh(2 * 1000 / 60);
+  w.fenceReady = true; await w.advance(45);
+  assert.deepEqual(w.frames().map(frame => [frame.stateId, frame.showFrame]), [[2, 10]]);
+  w.acknowledge(1);
+  assert.deepEqual(w.frames().map(frame => [frame.stateId, frame.showFrame]), [[2, 10], [3, 11]]);
+  w.acknowledge(2);
   assert.deepEqual([...new Set(w.resizes)], [0]);
 });
 

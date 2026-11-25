@@ -32,10 +32,11 @@ test('fixture and truss pose changes preserve actual geometry instances and cali
   const root = new THREE.Group(), truss = new THREE.Group();
   const fixture = {id: 'a', fixture: rig.fixtures[0], setAperture() {}, root,
     head: new THREE.Group(), yoke: new THREE.Group(), lensMaterial: {emissive: new THREE.Color()}};
-  const engine = {renderer: {}, visible: true, lighting: new LightingSamples(), applyLighting: SceneRenderer.prototype.applyLighting, platform: {worker: true}, key: structuralKey(rig), editorOverlay: {update(){}}, options: {fixtures: 16, shadows: 0},
+  const engine = Object.assign(Object.create(SceneRenderer.prototype), {
+    renderer: {}, visible: true, lighting: new LightingSamples(), platform: {worker: true}, key: structuralKey(rig), editorOverlay: {update(){}}, options: {fixtures: 16, shadows: 0},
     spots: [], lightIds: [], fixtures: [fixture], fixtureSamples: [fixture], diffuserTubes: [], diffuseBounce: new THREE.HemisphereLight(),
-    trusses: [{id: 't', root: truss}], apertureUniform: {value: new Float32Array(16)}, rebuild(){throw new Error('Pose edit rebuilt scene');}};
-  SceneRenderer.prototype.update.call(engine, {rig: changed});
+    trusses: [{id: 't', root: truss}], apertureUniform: {value: new Float32Array(16)}, rebuild(){throw new Error('Pose edit rebuilt scene');}});
+  engine.update({rig: changed});
   assert.equal(engine.fixtures[0].root, root); assert.deepEqual(root.position.toArray(), [1, 3, 2]);
   assert.deepEqual(truss.position.toArray(), [2, 5, 0]); assert.equal(truss.rotation.z, Math.PI / 2);
 });
