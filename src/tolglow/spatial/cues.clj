@@ -357,14 +357,14 @@
             layer (cond-> (merge native group)
                     (and (seq (:transforms native)) (seq (:transforms group)))
                     (assoc :transforms (into (:transforms group) (:transforms native)))
-                    ;; An explicit spatial member opacity replaces the engine's
-                    ;; native value. Carry the frame factor into that override.
-                    (and native factor (contains? group :member-opacity))
-                    (update :member-opacity * factor))]
+                    factor (update :member-opacity (fnil * 1.0) factor))]
         (assoc block :native-layer layer))
       block)))
 
 (defn mask-contributions
+  "Apply spatial layer descriptors and any group factors deferred by the host.
+  Member opacity mixes assignments and slot transforms together. A muted
+  member keeps its ordered block so the spatial layer retains its anchor."
   ([result groups] (mask-contributions result groups nil))
   ([result groups opacity-factors]
    (if (empty? groups) result

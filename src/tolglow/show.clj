@@ -1271,9 +1271,17 @@
                                                :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
                                               (:inputs sampling))
                            group-levels (group-channels/frame-levels model)
+                           ;; Spatial membership is attached after the engine runs. Keep
+                           ;; those contributions intact until their native member mix.
+                           spatial-groups (get-in space [:fields :groups])
+                           spatial-levels (when (and group-levels spatial-groups)
+                                            (not-empty (select-keys group-levels (keys spatial-groups))))
+                           engine-levels (if spatial-levels
+                                           (not-empty (apply dissoc group-levels (keys spatial-levels)))
+                                           group-levels)
                            frame-input (cond-> frame-input
                                          variables (assoc :resolved-variables variable-inputs)
-                                         group-levels (assoc ::engine/opacity-factors group-levels))
+                                         engine-levels (assoc ::engine/opacity-factors engine-levels))
                            response (response-middleware! runtime (:responses model []))
                            inputs (comp response modulation-middleware)
                            compile-step (fn [definition]
@@ -1305,9 +1313,14 @@
                            fog (when (and plan (or (:fog? meter-opts) (:fog previous)))
                                  (capacity/fog-policy meter-opts plan (:fog previous) time-ms limit fog-bypass?
                                                       (:reference-rms meter-opts (:reference-rms capacity/defaults))))
+                           ;; Fog arbitration checks whether a manual source is visible.
+                           ;; Spatial member levels apply later, so omit muted sources here.
+                           fog-blocks (cond->> (:contributions result)
+                                        (some zero? (vals spatial-levels))
+                                        (filterv #(pos? (get spatial-levels (get-in % [:source :instance-id]) 1))))
                            setpoint (fog-control/frame model patch observation previous-control
                                       (if (get-in runtime [:sink :send!]) ((get-in runtime [:publisher :now-ms])) time-ms)
-                                      fog-bypass? (:contributions result) (:block fog))
+                                      fog-bypass? fog-blocks (:block fog))
                            extra-blocks (cond-> (fog-control/with-demands [] (:feedback setpoint))
                                           manual-aim (conj manual-aim)
                                           (:music setpoint) (conj (:music setpoint))
@@ -1324,8 +1337,8 @@
                                             (:observe-hdr? space) (assoc :observe-hdr? true))
                            resolved (effect-faults/resolve-output result
                                       #(resolve-frame patch (lighting/contributions standby % extra-blocks) render-options)
-                                      (if-let [groups (get-in space [:fields :groups])]
-                                        #(spatial-cues/mask-contributions % groups group-levels) identity))
+                                      (if spatial-groups
+                                        #(spatial-cues/mask-contributions % spatial-groups spatial-levels) identity))
                            result (:result resolved)
                            finished (when (or (get-in model [:settings :output-response :enabled?])
                                               (get-in model [:settings :lighting-budget :enabled?])

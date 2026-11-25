@@ -2,6 +2,7 @@
   (:require [afterglow.control.model :as control]
             [afterglow.render.frame :as render]
             [clojure.test :refer [deftest is]]
+            [tolglow.atmosphere.control :as fog-control]
             [tolglow.persistence :as persistence]
             [tolglow.show :as show]
             [tolglow.spatial.cues :as spatial])
@@ -183,11 +184,84 @@
         mask {"0:1" {:id :spatial :member 0 :member-opacity 1.0 :opacity 0.5 :target-weights {:head 1.0}}}
         block {:kind :assignments :source {:instance-id "0:1"}
                :assignments [{:target-id :head :attribute :dimmer :value 1.0}]}
-        native (assoc block :native-layer {:id :native :member 0 :member-opacity 0.25})
-        plain (assoc-in block [:assignments 0 :opacity] 0.25)
-        run (fn [b factors]
-              (let [prepared (spatial/mask-contributions {:contributions [b]} mask factors)]
+        native (assoc block :native-layer {:id :native :member 0 :member-opacity 0.5})
+        run (fn [b masks factors]
+              (let [prepared (spatial/mask-contributions {:contributions [b]} masks factors)]
                 (get-in (render/resolve-contributions rig (:contributions prepared)) [:values :head :channels :dimmer])))]
-    (is (== 0.5 (run native nil)))
-    (is (== 0.125 (run native {"0:1" 0.25})))
-    (is (== 0.125 (run plain {"0:1" 0.25})))))
+    (is (== 0.5 (run native mask nil)))
+    (is (== 0.125 (run native mask {"0:1" 0.25})))
+    (is (== 0.125 (run block mask {"0:1" 0.25})))
+    (is (== 0.0625 (run native (update mask "0:1" dissoc :member-opacity) {"0:1" 0.25})))))
+
+(defn- spatial-runtime [batch? channels outputs]
+  (show/create-runtime {:batch? batch? :workspace-options nil
+                        :model (-> (model)
+                                   (assoc-in [:rig :fixtures 0 :position] [0 1 0])
+                                   (assoc-in [:rig :fixtures 0 :channels] channels)
+                                   (assoc-in [:registry :effects :transform :outputs] outputs))}))
+
+(defn- spawn-spatial! [runtime time paint member]
+  (let [receipt (show/submit! runtime :spatial-cue
+                             {:op :spawn :id :region :priority 0 :paint paint
+                              :volume {:shape :sphere :position [0 1 0] :radius 1 :selection #{:position}}
+                              :members [(assoc member :cue-id :transform)]})]
+    (show/tick! runtime time)
+    (let [ack (deref receipt 1000 ::missing)]
+      (is (= :accepted (:status ack)) (pr-str ack)))))
+
+(deftest spatial-child-group-level-fades-its-assignment-and-transform-once
+  (doseq [batch? [false true]]
+    (let [runtime (spatial-runtime batch? {:dimmer 1 :focus 2} {:dimmer 0.2 :focus 0.7})
+          focus-byte #(bit-and 255 (second (get-in @(:state runtime) [:output :universes 1])))]
+      (try
+        (spawn-spatial! runtime 0 {:dimmer 0.2 :focus 0.2}
+                        {:targets :previous :transforms [{:attribute :dimmer :value 0.8}]})
+        (let [child (some #(when (= :transform (:cue-id %)) %) (vals (:instances (committed-model runtime))))]
+          (is (= :spatial-cue (get-in child [:source :adapter])))
+          (is (nil? (get-in child [:source :native-layer])))
+          (is (nil? (get-in child [:definition :layer]))))
+        (is (= [204 179] [(dmx runtime) (focus-byte)]))
+        (accepted! runtime 10 (configure {:manual [{:id :child :cue-ids [:transform]}]}))
+        (is (= [204 179] [(dmx runtime) (focus-byte)]))
+        (accepted! runtime 20 (level [:manual :child] 0.5))
+        (is (= [128 115] [(dmx runtime) (focus-byte)]))
+        (finally (show/stop! runtime))))))
+
+(deftest zero-level-spatial-child-keeps-the-layer-after-an-interleaved-effect
+  (doseq [batch? [false true]]
+    (let [runtime (spatial-runtime batch? {:dimmer 1} {:dimmer 0.6})]
+      (try
+        (launch! runtime 0 :between)
+        (is (= 128 (dmx runtime)))
+        (spawn-spatial! runtime 10 {:dimmer 0.8} {})
+        (is (= 153 (dmx runtime)))
+        (accepted! runtime 20 (configure {:manual [{:id :child :cue-ids [:transform]}]}))
+        (is (= 153 (dmx runtime)))
+        (accepted! runtime 30 (level [:manual :child] 0.000001))
+        (is (= 204 (dmx runtime)))
+        (accepted! runtime 40 (level [:manual :child] 0))
+        (is (= 204 (dmx runtime)))
+        (accepted! runtime 50 (level [:manual :child] 1))
+        (is (= 153 (dmx runtime)))
+        (finally (show/stop! runtime))))))
+
+(deftest grouped-spatial-fog-yields-the-shared-pump-at-zero
+  (let [runtime (spatial-runtime false {:dimmer 1 :fog 2} {:fog 0.7})
+        frame fog-control/frame
+        fallback {:active? true :mode :automatic :demand 0.4}
+        pump (atom nil)]
+    (try
+      (with-redefs [fog-control/frame
+                    (fn [model patch observation previous now bypass? blocks music]
+                      (reset! pump (get-in (fog-control/arbitrate {:enabled? true :pumps {:head fallback}} blocks)
+                                           [:pumps :head]))
+                      (frame model patch observation previous now bypass? blocks music))]
+        (spawn-spatial! runtime 0 {:dimmer 0.2} {})
+        (is (= :manual (:mode @pump)))
+        (accepted! runtime 10 (configure {:manual [{:id :child :cue-ids [:transform]}]}))
+        (is (= :manual (:mode @pump)))
+        (accepted! runtime 20 (level [:manual :child] 0.5))
+        (is (= :manual (:mode @pump)))
+        (accepted! runtime 30 (level [:manual :child] 0))
+        (is (= fallback @pump)))
+      (finally (show/stop! runtime)))))

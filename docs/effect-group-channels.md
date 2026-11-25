@@ -42,11 +42,14 @@ result. The authored layer opacity still mixes the final layer with its
 backdrop at the layer's original priority position. Group levels are additional
 to the existing instance alpha and release envelope. [Afterglow native layers](https://github.com/tolgraven/afterglow/blob/99f61c5bed2850daaeb87bc5b84ddf0d3c60bf64/doc/architecture/native-layers.md)
 
-The live owner captures frame factors before evaluating effects. The factors
-reach the renderer through Afterglow's `:afterglow.runtime.engine/opacity-factors`
-input, leaving authored parameters and observable instance alpha independent.
-Spatial cue masks retain the factor when they replace a leader's native member
-opacity. Output shaping, budgeting and publication continue after composition.
+The live owner captures frame factors before evaluating effects. Ordinary and
+authored native effects receive them through Afterglow's
+`:afterglow.runtime.engine/opacity-factors` input. The host applies factors for
+spatial members when it attaches their layer descriptors. Their assignments and
+slot transforms blend together, and members at zero retain the layer's priority
+position. Fog arbitration skips those muted sources so automatic demand can
+resume. Authored parameters and observable instance alpha remain independent.
+Output shaping, budgeting and publication continue after composition.
 
 At unity, the mixer has no render factor to apply. Its membership and display
 order are independent of render order. The renderer test places an independent
