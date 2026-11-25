@@ -32,9 +32,10 @@ Positions are **zero-based** transport coordinates, matching
 one-based counting, as on Live's arrangement ruler, `{:bar 64}` is bar 65 and
 `{:bar 0}` is the first bar. Each post receipt lists the resolved `:due-beats` so
 you can check the conversion. Bars and
-phrases convert through the transport meter. Tempo is not used to decide when an
-event is due, so a tempo change stretches every remaining musical wait in
-wall-clock time.
+phrases convert through the transport meter when the event is posted, moved or
+re-quantized. A later meter change does not move a pending position or wait.
+Tempo is not used to decide when an event is due, so a tempo change stretches
+every remaining musical wait in wall-clock time.
 
 The owner fires due runs during each frame, after it applies queued commands and
 before rendering. Runs fire in due-beat order, then in admission order. The
@@ -264,7 +265,7 @@ a low-token view:
 
 ```clojure
 {:legend {:upcoming [:due-beat :event-id :op :label]
-          :ramps [:event-id :destination :progress :value :to :end-beat]
+          :ramps [:event-id :destination :progress :value :to :end]
           :recent [:event-id :status :reason]}
  :beat 130.25 :bar 32 :beats-per-bar 4 :bpm 124.0
  :upcoming [[256.0 "drop" :cue/launch "Drop"] [256.0 "swell" :param/ramp]]
@@ -360,10 +361,22 @@ real owner tick and captures ArtDmx packets from the output sink:
   keeps the remaining milliseconds of an `:ms` ramp.
 - Full backup round trip, millisecond and variable ramps, reserved variables,
   and subscriber `:at`, `:in` and `:grid` timing.
+- A cancelled ramp holds its current value in the output and the committed
+  parameter. A variable ramp from a vector to a number is refused when due and
+  later frames still render. A scheduled set rejected when due leaves the
+  running ramp alone.
+- Same-beat events fire in the projection's order after a reschedule. A
+  requester whose source has no adapter cannot move or cancel anything. A group
+  gain change leaves an opacity ramp running, and a group opacity change
+  cancels it.
 
 ## Remaining gaps
 
 - Modulation depth (waveform binding endpoints) is not yet a ramp destination.
+- A `:gesture/begin` on a ramped parameter cancels the ramp before the gesture
+  writes a value, so the parameter returns to the value the ramp started from
+  until the first sample arrives. An explicit cancel holds the current value; a
+  gesture does not yet.
 - Push 3 does not yet display the projection. Its pages read the same snapshot
   when one is added.
 - Hardware-timed output and physical device evidence are outside these tests.
