@@ -30,8 +30,11 @@ const bundle = await build({stdin: {
     };`
 }, bundle: true, format: 'iife', platform: 'browser', write: false});
 
+const BLINK = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36';
+const WEBKIT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15';
+
 function worker({hz = 60, work = 0, software = false, quality = software ? 'auto' : 'mobile',
-  yieldMs, readyAfterYields = Infinity, animationFrames = true} = {}) {
+  yieldMs, readyAfterYields = Infinity, userAgent = BLINK, animationFrames = true} = {}) {
   let now = 0, nextId = 0, stateId = 0, readyThrough = Infinity, serial = 0, closed = false, yields = 0;
   const fences = new Set(), bitmaps = [], listeners = new Map(), resizes = [];
   const rafs = new Map(), timers = new Map(), messages = [], draws = [];
@@ -51,6 +54,7 @@ function worker({hz = 60, work = 0, software = false, quality = software ? 'auto
     flush() {}
   }};
   const host = {graphics, AbortController, console, performance: {now: () => now, timeOrigin: 0},
+    navigator: {userAgent},
     requestAnimationFrame(callback) {
       // Chrome refuses animation frames in a worker without a parent frame sink.
       if (!animationFrames) throw Object.assign(new Error('unsupported'), {name: 'NotSupportedError'});
@@ -411,6 +415,28 @@ test('the worker samples the display itself when the page reports a starved call
   assert.equal(w.engine.targetHz, 60);
   // A later page sample cannot lower what this thread measured on the panel.
   w.update();
+  assert.equal(w.engine.targetHz, 60);
+});
+
+test('headless and embedded Blink builds sample the display from the worker as Chrome does', async t => {
+  for (const product of ['HeadlessChrome/155.0.0.0', 'Chromium/155.0.0.0 Chrome/155.0.0.0', 'Chrome/155.0.0.0 Mobile']) {
+    const w = worker({hz: 15, userAgent: BLINK.replace('Chrome/155.0.0.0', product)}); t.after(() => w.dispose());
+    for (let frame = 1; frame <= 45; frame++) {
+      await w.refresh(frame * 1000 / 60);
+      if (w.frames().at(-1)?.bitmap && !w.frames().at(-1).bitmap.closed) w.acknowledge();
+    }
+    assert.equal(w.engine.displayHz, 60, product);
+  }
+});
+
+test('timer-paced worker animation frames cannot raise the display rate the page measured', async t => {
+  // WebKit services worker animation frames from a 15 ms timer on every panel.
+  const w = worker({hz: 60, userAgent: WEBKIT}); t.after(() => w.dispose());
+  for (let frame = 1; frame <= 45; frame++) {
+    await w.refresh(frame * 15);
+    if (w.frames().at(-1)?.bitmap && !w.frames().at(-1).bitmap.closed) w.acknowledge();
+  }
+  assert.equal(w.engine.displayHz, 60);
   assert.equal(w.engine.targetHz, 60);
 });
 

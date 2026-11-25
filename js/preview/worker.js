@@ -17,8 +17,12 @@ const gpuPending = () => frames.some(frame => frame.fence);
 const frameIdentity = metadata => showIdentity({'runtime-id': metadata.runtimeId, 'show-id': metadata.showId, epoch: metadata.epoch});
 
 // Animation callbacks on a busy Studio thread arrive at a fraction of the panel
-// rate. This thread samples the same display; neither sample can exceed it.
-const refresh = new DisplayRefresh(hz => {workerHz = hz; applyDisplayHz();}, self);
+// rate. Blink delivers this thread's callbacks from the same display, so there
+// neither sample can exceed it. WebKit paces worker callbacks with a 15 ms
+// timer on every panel, which would read as about 66 Hz. Outside Blink the
+// page's sample stays the only measurement of the display.
+const displayDriven = /Chrom(?:e|ium)\//.test(self.navigator?.userAgent ?? '');
+const refresh = new DisplayRefresh(hz => {workerHz = hz; applyDisplayHz();}, displayDriven ? self : {});
 
 function applyDisplayHz() {
   const hz = Math.max(proxyHz ?? 0, workerHz ?? 0);
