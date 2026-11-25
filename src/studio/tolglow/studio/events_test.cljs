@@ -9,6 +9,7 @@
             [reagent.core :as r]
             ["react-dom/server" :refer [renderToStaticMarkup]]
             [tolglow.studio.events :as events]
+            [tolglow.studio.checkpoints :as checkpoints]
             [tolglow.studio.operator-history :as history]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.spatial :as spatial]
@@ -44,6 +45,210 @@
   (stream-event (with-stream db)
                 {:protocol projection/protocol :kind :full :token "full"
                  :identity (projection/identity-of view) :view view}))
+
+(def checkpoint-owner {:runtime-id "host" :show-id :venue :epoch 7})
+
+(defn- checkpoint-db []
+  (let [db (:db (full-frame base (merge (:show base) checkpoint-owner)))
+        opened (transition db [:checkpoints/open])
+        loading (transition (:db opened) (:dispatch opened))
+        loaded (conj (get-in loading [:studio/http :on-success])
+                     (assoc checkpoint-owner :enabled? false
+                            :checkpoints {:recovery {:modified-at-ms 1700000000000}
+                                          :named {:modified-at-ms 1700001000000}
+                                          :prior {:modified-at-ms 1600000000000}}))]
+    {:loading loading :db (:db (transition (:db loading) loaded))}))
+
+(deftest checkpoints-show-typed-catalog-and-confirm-each-file-action
+  (let [{:keys [db loading]} (checkpoint-db)
+        markup (renderToStaticMarkup (r/as-element [checkpoints/panel (checkpoints/view-props db)]))
+        restore (:db (transition db [:checkpoints/confirm :restore :named]))
+        request (transition restore [:checkpoints/submit])
+        discard (:db (transition db [:checkpoints/confirm :discard :prior]))
+        dismissal (transition discard [:checkpoints/submit])
+        accepted (transition (:db dismissal) (conj (get-in dismissal [:studio/http :on-success]) {:status :accepted}))]
+    (is (= "/api/show/checkpoints" (get-in loading [:studio/http :path])))
+    (is (not (contains? (:studio/http loading) :body)))
+    (is (str/includes? markup "aria-labelledby=\"show-checkpoint-title\""))
+    (is (every? #(str/includes? markup %) ["Working autosave" "Named save" "Previous session"
+                                         "2023-11-14T22:13:20.000Z" "Automatic recovery is off."]))
+    (is (nil? (:studio/http (transition db [:checkpoints/submit]))))
+    (is (nil? (get-in (transition db [:checkpoints/confirm :discard :named]) [:db :show-checkpoints :confirmation])))
+    (is (= "/api/show/checkpoints/restore" (get-in request [:studio/http :path])))
+    (is (= (assoc checkpoint-owner :kind :named) (get-in request [:studio/http :body])))
+    (is (true? (get-in request [:studio/http :typed?])))
+    (is (nil? (:studio/http (transition (:db request) [:checkpoints/submit]))))
+    (is (= "/api/show/checkpoints/discard-prior" (get-in dismissal [:studio/http :path])))
+    (is (= checkpoint-owner (get-in dismissal [:studio/http :body])))
+    (is (= {:message "Previous session checkpoint discarded." :error? false}
+           (get-in accepted [:db :show-checkpoints :feedback])))
+    (is (= [:checkpoints/refresh] (:dispatch accepted)))))
+
+(deftest restore-acknowledgement-follows-the-owner-across-the-matching-new-epoch
+  (let [{:keys [db]} (checkpoint-db)
+        db (update db :ui assoc :rig-dirty? true :rig-draft {:name "Old unsaved rig"})
+        chosen (:db (transition db [:checkpoints/confirm :restore :recovery]))
+        posted (transition chosen [:checkpoints/submit])
+        ack (conj (get-in posted [:studio/http :on-success]) {:status :accepted :epoch 8})
+        waiting (:db (transition (:db posted) ack))
+        rig {:name "Restored venue" :room {:measured-fog {:extinction-per-m 0.2}}}
+        new-view (merge (:show base) checkpoint-owner {:epoch 8 :rig rig})
+        newer #(:db (full-frame % (assoc new-view :revision 4)))
+        early-ack (transition (newer waiting) [:checkpoints/show-changed])
+        stream-first (:db (transition (newer (:db posted)) [:checkpoints/show-changed]))
+        late-ack (transition stream-first ack)]
+    (is (= :awaiting-view (get-in waiting [:show-checkpoints :operation :phase])))
+    (is (true? (get-in waiting [:ui :rig-dirty?])))
+    (doseq [effect [early-ack late-ack]]
+      (is (= "Restored Working autosave." (get-in effect [:db :show-checkpoints :feedback :message])))
+      (is (nil? (get-in effect [:db :show-checkpoints :operation])))
+      (is (false? (get-in effect [:db :ui :rig-dirty?])))
+      (is (= rig (get-in effect [:db :ui :rig-draft])))
+      (is (= [:checkpoints/refresh] (:dispatch effect))))))
+
+(deftest a-late-checkpoint-ack-keeps-edits-to-the-new-show
+  (let [{:keys [db]} (checkpoint-db)
+        db (update db :ui assoc :rig-dirty? true :rig-draft {:name "Old unsaved rig"})
+        chosen (:db (transition db [:checkpoints/confirm :restore :named]))
+        submitted (transition chosen [:checkpoints/submit])
+        closed (:db (transition (:db submitted) [:checkpoints/close]))
+        view (merge (:show base) checkpoint-owner {:epoch 8 :revision 4 :rig {:name "Restored rig"}})
+        installed (:db (full-frame closed view))
+        changed (:db (transition installed [:checkpoints/show-changed]))
+        edited (:db (transition changed [:studio/rig-set [:name] "Fresh edit"]))
+        ack (conj (get-in submitted [:studio/http :on-success]) {:status :accepted :epoch 8})
+        completed (transition edited ack)]
+    (is (= {:name "Old unsaved rig"} (get-in installed [:ui :rig-draft])))
+    (is (true? (get-in installed [:ui :rig-dirty?])))
+    (is (= [:studio/toast "Restored Named save." false] (:dispatch completed)))
+    (is (= {:name "Fresh edit"} (get-in completed [:db :ui :rig-draft])))
+    (is (true? (get-in completed [:db :ui :rig-dirty?])))))
+
+(deftest an-early-checkpoint-ack-keeps-edits-made-while-waiting-for-the-view
+  (let [{:keys [db]} (checkpoint-db)
+        db (update db :ui assoc :rig-dirty? true :rig-draft {:name "Old unsaved rig"})
+        chosen (:db (transition db [:checkpoints/confirm :restore :named]))
+        submitted (transition chosen [:checkpoints/submit])
+        ack (conj (get-in submitted [:studio/http :on-success]) {:status :accepted :epoch 8})
+        waiting (:db (transition (:db submitted) ack))
+        edited (:db (transition waiting [:studio/rig-set [:name] "Fresh edit"]))
+        view (merge (:show base) checkpoint-owner {:epoch 8 :revision 4 :rig {:name "Restored rig"}})
+        installed (:db (full-frame edited view))
+        completed (:db (transition installed [:checkpoints/show-changed]))]
+    (is (= "Restored Named save." (get-in completed [:show-checkpoints :feedback :message])))
+    (is (= (:rig view) (get-in completed [:show :rig])))
+    (is (= {:name "Fresh edit"} (get-in completed [:ui :rig-draft])))
+    (is (true? (get-in completed [:ui :rig-dirty?])))))
+
+(deftest a-peer-show-change-keeps-the-draft-when-our-restore-is-rejected
+  (let [{:keys [db]} (checkpoint-db)
+        draft {:name "Unconfirmed draft"}
+        db (update db :ui assoc :rig-dirty? true :rig-draft draft)
+        chosen (:db (transition db [:checkpoints/confirm :restore :named]))
+        submitted (transition chosen [:checkpoints/submit])
+        peer-view (merge (:show base) checkpoint-owner {:epoch 8 :revision 4 :rig {:name "Peer restored rig"}})
+        installed (:db (full-frame (:db submitted) peer-view))
+        changed (:db (transition installed [:checkpoints/show-changed]))
+        failed (conj (get-in submitted [:studio/http :on-failure])
+                     "Checkpoint operation belongs to a previous show session")
+        rejected (:db (transition changed failed))]
+    (is (= 8 (get-in installed [:show :epoch])))
+    (is (= draft (get-in installed [:ui :rig-draft])))
+    (is (= draft (get-in rejected [:ui :rig-draft])))
+    (is (true? (get-in rejected [:ui :rig-dirty?])))
+    (is (true? (get-in rejected [:show-checkpoints :feedback :error?])))))
+
+(deftest queued-checkpoint-success-follows-the-receipt-and-its-installed-epoch
+  (let [{:keys [db]} (checkpoint-db)
+        db (update db :ui assoc :rig-dirty? true :rig-draft {:name "Old draft"})
+        chosen (:db (transition db [:checkpoints/confirm :restore :named]))
+        posted (transition chosen [:checkpoints/submit])
+        pending (conj (get-in posted [:studio/http :on-success]) {:status :pending :receipt-id "own"})
+        queued (:db (transition (:db posted) pending))
+        rig {:name "Restored rig"}
+        receipt {:id "own" :identity checkpoint-owner :status :accepted :epoch 8}
+        view (merge (:show base) checkpoint-owner {:epoch 8 :rig rig :checkpoint-results [receipt]})
+        installed (full-frame queued view)
+        early-pending (transition (:db installed) [:checkpoints/show-changed])
+        projected-first (:db (full-frame (:db posted) view))
+        late-pending (transition (:db (transition projected-first [:checkpoints/show-changed])) pending)]
+    (is (= :queued (get-in queued [:show-checkpoints :operation :phase])))
+    (is (some #{[:dispatch [:checkpoints/show-changed]]} (:fx installed)))
+    (doseq [result [early-pending late-pending]]
+      (is (= "Restored Named save." (get-in result [:db :show-checkpoints :feedback :message])))
+      (is (nil? (get-in result [:db :show-checkpoints :operation])))
+      (is (= rig (get-in result [:db :ui :rig-draft])))
+      (is (false? (get-in result [:db :ui :rig-dirty?]))))))
+
+(deftest queued-checkpoint-rejection-follows-the-correlation-after-a-peer-restore
+  (let [{:keys [db]} (checkpoint-db)
+        draft {:name "Keep this draft"}
+        db (update db :ui assoc :rig-dirty? true :rig-draft draft)
+        chosen (:db (transition db [:checkpoints/confirm :restore :named]))
+        posted (transition chosen [:checkpoints/submit])
+        pending (conj (get-in posted [:studio/http :on-success]) {:status :pending :receipt-id "own"})
+        queued (:db (transition (:db posted) pending))
+        panel-closed (:db (transition queued [:checkpoints/close]))
+        another {:id "peer" :identity checkpoint-owner :status :accepted :epoch 8}
+        wrong-origin {:id "own" :identity (assoc checkpoint-owner :epoch 6) :status :accepted :epoch 8}
+        peer-view (merge (:show base) checkpoint-owner {:epoch 8 :checkpoint-results [another wrong-origin]})
+        peer-installed (:db (full-frame panel-closed peer-view))
+        waiting (:db (transition peer-installed [:checkpoints/show-changed]))
+        reopened (:db (transition waiting [:checkpoints/open]))
+        rejected {:id "own" :identity checkpoint-owner :status :rejected :reason :stale-show-session}
+        pushed (stream-event reopened {:protocol projection/protocol :kind :patch :base-token "full" :token "rejected"
+                                       :identity (projection/identity-of peer-view)
+                                       :changes [[:set [:checkpoint-results] [another rejected]]]})
+        completed (:db (transition (:db pushed) [:checkpoints/receipt-pushed]))]
+    (is (= :queued (get-in waiting [:show-checkpoints :operation :phase])))
+    (is (nil? (checkpoints/queued-result waiting)))
+    (is (some #{[:dispatch [:checkpoints/receipt-pushed]]} (:fx pushed)))
+    (is (nil? (get-in completed [:show-checkpoints :operation])))
+    (is (= {:message "The show changed before the queued restore could run." :error? true}
+           (get-in completed [:show-checkpoints :feedback])))
+    (is (= draft (get-in completed [:ui :rig-draft])))
+    (is (true? (get-in completed [:ui :rig-dirty?])))))
+
+(deftest awaiting-a-queued-checkpoint-is-bounded-by-the-request-and-runtime
+  (let [{:keys [db]} (checkpoint-db)
+        draft {:name "New edit"}
+        db (update db :ui assoc :rig-dirty? true :rig-draft draft)
+        chosen (:db (transition db [:checkpoints/confirm :restore :named]))
+        posted (transition chosen [:checkpoints/submit])
+        pending (conj (get-in posted [:studio/http :on-success]) {:status :pending :receipt-id "own"})
+        queued (:db (transition (:db posted) pending))
+        disconnected (:db (transition queued [:studio/stream-closed (:session queued) "connected" "lost"]))
+        expired (transition disconnected (get-in posted [:dispatch-later 0 :dispatch]))
+        receipt {:id "own" :identity checkpoint-owner :status :accepted :epoch 8}
+        view (merge (:show base) checkpoint-owner {:epoch 8 :checkpoint-results [receipt]})
+        reconnected (:db (full-frame disconnected view))
+        accepted (transition reconnected [:checkpoints/show-changed])
+        replaced (:db (full-frame disconnected (assoc view :runtime-id "replacement")))
+        retired (transition replaced [:checkpoints/show-changed])]
+    (is (= :queued (get-in disconnected [:show-checkpoints :operation :phase])))
+    (is (= "Restored Named save." (get-in accepted [:db :show-checkpoints :feedback :message])))
+    (doseq [effect [expired retired]]
+      (is (nil? (get-in effect [:db :show-checkpoints :operation])))
+      (is (true? (get-in effect [:db :show-checkpoints :feedback :error?])))
+      (is (= draft (get-in effect [:db :ui :rig-draft])))
+      (is (empty? (transition (:db effect) pending))))))
+
+(deftest checkpoint-catalog-confirmations-and-results-fence-stale-shows
+  (let [{:keys [db loading]} (checkpoint-db)
+        changed #(assoc-in % [:server-projection :view :epoch] 8)
+        stale-response (conj (get-in loading [:studio/http :on-success])
+                             (assoc checkpoint-owner :checkpoints {:prior {:modified-at-ms 10}}))
+        changed-during-load (:db (transition (changed (:db loading)) stale-response))
+        chosen (:db (transition db [:checkpoints/confirm :restore :prior]))
+        posted (transition chosen [:checkpoints/submit])
+        stale-ack (conj (get-in posted [:studio/http :on-success]) {:status :accepted :epoch 9})
+        wrong-epoch (transition (changed (:db posted)) stale-ack)
+        failure (conj (get-in posted [:studio/http :on-failure]) "Checkpoint is unavailable.")
+        failed (transition (:db posted) failure)]
+    (is (nil? (get-in changed-during-load [:show-checkpoints :catalog])))
+    (is (nil? (:studio/http (transition (changed chosen) [:checkpoints/submit]))))
+    (is (= true (get-in wrong-epoch [:db :show-checkpoints :feedback :error?])))
+    (is (= "Checkpoint is unavailable." (get-in failed [:db :show-checkpoints :feedback :message])))))
 
 (defn first-command [effects] (second (first (:fx effects))))
 

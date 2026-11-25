@@ -8,10 +8,12 @@
             [tolglow.rig.rdm-gateway :as gateway]
             [tolglow.rig.rdm-test :as rdm-peer]
             [tolglow.studio.rdm-host-test :as rdm-host]
+            [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [ring.adapter.jetty :as jetty]
             [ring.middleware.params :refer [wrap-params]]
             [tolglow.show :as show]
+            [tolglow.show.recovery :as recovery]
             [tolglow.studio :as studio]
             [tolglow.studio.access :as access]
             [tolglow.studio.projection :as projection]
@@ -22,6 +24,8 @@
   (:import [java.io StringReader]
            [java.net URI]
            [java.net.http HttpClient WebSocket WebSocket$Listener]
+           [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]
            [java.util.concurrent CountDownLatch LinkedBlockingQueue TimeUnit]))
 
 (defrecord TestColour [red green blue])
@@ -68,6 +72,59 @@
                   :set (assoc-in data path value)
                   :remove (update-in data (vec (butlast path)) dissoc (peek path))))
               base changes)))
+
+(deftest queued-checkpoint-results-follow-the-actual-owner-commit
+  (let [directory (.toFile (Files/createTempDirectory "tolglow-checkpoint-stream-" (make-array FileAttribute 0)))
+        runtime (assoc (show/create-runtime {:workspace-options nil :workers 1})
+                       :recovery (atom (recovery/start! (recovery/options {:enabled? false :directory directory})
+                                                        false (constantly nil) (constantly nil))))]
+    (try
+      (show/tick! runtime 0)
+      (show/save-show! runtime (io/file directory "named.transit"))
+      (let [master (show/submit! runtime {:op :master/set :value 0.3})]
+        (show/tick! runtime 1)
+        (is (= :accepted (:status @master))))
+      (let [handler (studio/handler runtime)
+            server (jetty/run-jetty handler {:host "127.0.0.1" :port 0 :join? false})]
+        (try
+          (let [socket (connect server "checkpoint-stream")]
+            (try
+              (let [initial (receive socket)
+                    owner (:identity initial)
+                    restore #(let [response (handler {:request-method :post :uri "/api/show/checkpoints/restore"
+                                                     :headers {"accept" "application/transit+json" "content-type" "application/transit+json"}
+                                                     :body (java.io.StringReader. (transit/encode (assoc owner :kind :named)))})]
+                               (is (= 200 (:status response)))
+                               (transit/decode (:body response)))
+                    [accepted rejected] (with-redefs [studio/checkpoint-wait-ms 0] [(restore) (restore)])
+                    accepted-id (:receipt-id accepted)
+                    rejected-id (:receipt-id rejected)]
+                (acknowledge socket initial)
+                (is (= [:pending :pending] (mapv :status [accepted rejected])))
+                (is (every? string? [accepted-id rejected-id]))
+                (is (not= accepted-id rejected-id))
+                (is (= 0.3 (:master (show/snapshot runtime))))
+                (is (nil? (get-in initial [:view :checkpoint-results])))
+                (show/tick! runtime 2)
+                (let [restored (receive socket)
+                      epoch (inc (:epoch owner))
+                      expected [{:id accepted-id :identity owner :status :accepted :epoch epoch}
+                                {:id rejected-id :identity owner :status :rejected :reason :stale-show-session}]]
+                  (is (= :full (:kind restored)))
+                  (is (= epoch (get-in restored [:identity :epoch])))
+                  (is (= 1.0 (get-in restored [:view :master])))
+                  (is (= expected (get-in restored [:view :checkpoint-results])))
+                  (acknowledge socket restored)
+                  (show/tick! runtime 3)
+                  (let [reconnected (connect server "checkpoint-reconnect")]
+                    (try
+                      (is (= expected (get-in (receive reconnected) [:view :checkpoint-results])))
+                      (finally (.abort ^WebSocket (:socket reconnected)))))))
+              (finally (.abort ^WebSocket (:socket socket)))))
+          (finally (.stop server))))
+      (finally
+        (show/stop! runtime)
+        (doseq [file (reverse (file-seq directory))] (io/delete-file file))))))
 
 (deftest timed-out-history-requests-push-exact-terminal-results-through-the-show-stream
   (let [runtime (show/create-runtime {:workers 1 :workspace-options nil})
