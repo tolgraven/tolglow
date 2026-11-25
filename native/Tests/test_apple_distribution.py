@@ -12,15 +12,15 @@ PACKAGING = Path(__file__).resolve().parents[1] / "Packaging"
 class DistributionTests(unittest.TestCase):
     def test_association_uses_signing_prefix_and_only_audience_paths(self):
         document = json.loads(subprocess.check_output([PACKAGING / "audience-association", "ABCDE12345"]))
-        self.assertEqual(["ABCDE12345.org.tolglow.ios.Clip"], document["appclips"]["apps"])
-        self.assertEqual([{"appIDs": ["ABCDE12345.org.tolglow.ios"], "components": [{"/": "/audience/*"}]}],
+        self.assertEqual(["ABCDE12345.se.tolgraven.tolglow.ios.Clip"], document["appclips"]["apps"])
+        self.assertEqual([{"appIDs": ["ABCDE12345.se.tolgraven.tolglow.ios"], "components": [{"/": "/audience/*"}]}],
                          document["applinks"]["details"])
 
     def test_count_the_signed_clip_in_each_variant(self):
         with tempfile.TemporaryDirectory() as directory:
             for variant, prefix in [("phone", "Payload/Phone.app/AppClips/Clip.app/"),
                                     ("tablet", "Payload/Clip.app/")]:
-                info = plistlib.dumps({"CFBundleIdentifier": "org.tolglow.ios.Clip",
+                info = plistlib.dumps({"CFBundleIdentifier": "se.tolgraven.tolglow.ios.Clip",
                                        "CFBundleSupportedPlatforms": ["iPhoneOS"]})
                 with ZipFile(Path(directory) / (variant + ".ipa"), "w") as archive:
                     archive.writestr(prefix + "Info.plist", info)

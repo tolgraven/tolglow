@@ -11,6 +11,7 @@
             [tolglow.qa.live-pickup :as pickup])
   (:import [java.net InetSocketAddress]
            [java.io ByteArrayOutputStream]
+           [java.util.concurrent LinkedBlockingQueue TimeUnit]
            [javax.sound.midi MidiSystem ShortMessage]
            [com.sun.net.httpserver HttpServer HttpHandler]))
 
@@ -35,13 +36,16 @@
     (try
       (let [state {:version 1 :wanted? true
                    :config {:selected-source "ableton-live"
-                            :live {:enabled? true :mappings {"36" {:cue-id :red :mode "timed" :duration {:bars 2}}}
+                            :live {:enabled? true :launch-grid {:phrases 1}
+                                   :mappings {"36" {:cue-id :red :mode "timed" :duration {:bars 2} :grid "off"}}
                                    :pairing {:track-index 0 :clip-slot-index 3 :expected-track-name "Lights"}}}}
             normalized (live-sync/validate-state state)]
         (sync/restore! manager normalized)
         (is (= 0 @opens))
         (is (= :stopped (:state (sync/status manager))))
         (is (= {:bars 2} (get-in (sync/export-state manager) [:config :live :mappings 36 :duration])))
+        (is (= :off (get-in (sync/export-state manager) [:config :live :mappings 36 :grid])))
+        (is (= {:phrases 1} (get-in (sync/export-state manager) [:config :live :launch-grid])))
         (is (= (assoc normalized :wanted? false) (sync/export-state manager)))
         (is (= :waiting (:status (session/clock-at manager 0))))
         (sync/select-source! manager :manual)
@@ -51,33 +55,46 @@
                       {:live {:pairing {:track-id 42}}}
                       {:live {:pairing {:track-index -1 :clip-slot-index 0}}}
                       {:live {:mappings {36 {:cue-id :red :duration {:beats 1 :ms 5}}}}}
+                      {:live {:launch-grid nil}}
+                      {:live {:launch-grid {:ms 50}}}
+                      {:live {:launch-grid {:bars 0}}}
+                      {:live {:mappings {36 {:cue-id :red :grid {:beats 1 :bars 1}}}}}
                       {:live {:parameters {1 {:cue-id :red :param :level :instance-id 7}}}}
                       {:beat-link {:source-id :midi-clock}}]]
         (is (thrown? clojure.lang.ExceptionInfo (live-sync/validate-config config))))
       (is (thrown? clojure.lang.ExceptionInfo (live-sync/validate-state {:version 1 :config {} :wanted? :yes})))
       (finally (sync/close! manager)))))
 
-(deftest held-off-before-ack-and-old-session-acks-target-exact-instances
+(deftest held-off-before-ack-and-stop-cancel-the-original-launch
   (let [manager (live-sync/create-manager {:config midi-config :now-ms (constantly 0)
                                       :midi-factory (fake-midi (atom 0) (atom 0) (atom nil) (atom []))})
         commands (atom []) cb (callbacks commands (atom []))]
     (try
       (let [run (sync/start! manager cb)]
         (is (session/flush! manager))
-        (send-midi! manager 0 [0x90 36 100]) (is (session/flush! manager))
+        (send-midi! manager 17 [0x90 36 100]) (is (session/flush! manager))
         (let [first-launch (last @commands)]
           (is (= :cue/launch (:op first-launch)))
+          (is (= :off (:grid first-launch)))
+          (is (= {:time-ms 17} (:raw first-launch)))
+          (is (= (:command-id first-launch) (:gesture-id first-launch)))
           (is (= 36 (get-in first-launch [:source :note])))
           (is (= (:run-id run) (get-in first-launch [:source :sync-run-id])))
-          (send-midi! manager 0 [0x80 36 0]) (is (session/flush! manager))
-          (is (= 1 (count @commands)))
-          (is (live-sync/acknowledge! manager 36 {:status :accepted :command-id (:command-id first-launch) :instance-id :original}
-                                 (envelope "end-original")))
-          (is (= [:cue/launch :instance/end] (mapv :op @commands)))
-          (is (= :original (:instance-id (last @commands))))))
+          (is (live-sync/acknowledge! manager 36 {:status :pending :command-id (:command-id first-launch)}
+                                     (envelope "pending")))
+          (send-midi! manager 23 [0x90 36 0]) (is (session/flush! manager))
+          (let [release (last @commands)]
+            (is (= [:cue/launch :cue/cancel-launch] (mapv :op @commands)))
+            (is (= (:source first-launch) (:source release)))
+            (is (= (:command-id first-launch) (:launch-command-id release)))
+            (is (= :held-release (:reason release))))
+          (is (false? (live-sync/acknowledge! manager 36 {:status :accepted :command-id (:command-id first-launch)
+                                                       :instance-id :late} (envelope "late"))))))
       (send-midi! manager 0 [0x90 36 100]) (is (session/flush! manager))
       (let [old-launch (last @commands)]
         (is (:stopped? (sync/stop! manager)))
+        (is (= (:command-id old-launch) (:launch-command-id (last @commands))))
+        (is (= (:source old-launch) (:source (last @commands))))
         (sync/start! manager cb) (is (session/flush! manager))
         (send-midi! manager 0 [0x90 36 100]) (is (session/flush! manager))
         (let [new-launch (last @commands) prior (count @commands)]
@@ -85,13 +102,15 @@
                                                     :sync-run-id (get-in old-launch [:source :sync-run-id]) :instance-id :wrong}
                                         (envelope "wrong"))))
           (is (= prior (count @commands)))
-          (is (live-sync/acknowledge! manager 36 {:status :accepted :command-id (:command-id old-launch) :instance-id :old}
-                                 (envelope "end-old")))
-          (is (= :old (:instance-id (last @commands))))
+          (is (false? (live-sync/acknowledge! manager 36 {:status :accepted :command-id (:command-id old-launch)
+                                                       :instance-id :old} (envelope "end-old"))))
+          (is (= prior (count @commands)))
           (is (live-sync/acknowledge! manager 36 {:status :accepted :command-id (:command-id new-launch) :instance-id :new}
                                  (envelope "ack-new")))
           (send-midi! manager 0 [0x80 36 0]) (is (session/flush! manager))
-          (is (= :new (:instance-id (last @commands))))
+          (is (= :cue/cancel-launch (:op (last @commands))))
+          (is (= (:gesture-id new-launch) (:launch-command-id (last @commands))))
+          (is (= (:source new-launch) (:source (last @commands))))
           (is (false? (live-sync/acknowledge! manager 36 {} (envelope "missing"))))))
       (finally (sync/close! manager)))))
 
@@ -106,10 +125,13 @@
       (is (= {:op :param/set :param :level :value 20.0 :instance-id :current}
              (select-keys (last @commands) [:op :param :value :instance-id])))
       (send-midi! manager 0 [0x90 36 100]) (is (session/flush! manager))
-      (live-sync/acknowledge! manager 36 {:status :accepted :command-id (:command-id (last @commands)) :instance-id :held}
-                         (envelope "ack"))
-      (is (live-sync/handoff! manager :live (envelope "handoff"))) (is (session/flush! manager))
-      (is (= :held (:instance-id (last @commands))))
+      (let [launch (last @commands)]
+        (is (live-sync/acknowledge! manager 36 {:status :accepted :command-id (:command-id launch) :instance-id :held}
+                                    (envelope "ack")))
+        (is (live-sync/handoff! manager :live (envelope "handoff"))) (is (session/flush! manager))
+        (is (= :cue/cancel-launch (:op (last @commands))))
+        (is (= (:gesture-id launch) (:launch-command-id (last @commands))))
+        (is (= (:source launch) (:source (last @commands)))))
       (is (= :live (get-in (sync/export-state manager) [:config :live :mode])))
       (let [n (count @commands)]
         (send-midi! manager 0 [0x90 36 100]) (is (session/flush! manager))
@@ -186,17 +208,27 @@
                                    :request! (fn [_ id op payload]
                                                (when (= :record-event op) (swap! written conj payload))
                                                {:id id :status :executed :result (when (= :inspect op) recording)})})})
-        cmd (merge (envelope "record-one") {:op :cue/launch :cue-id :red})
+        timing {:raw {:time-ms 100 :beat 98.2} :requested-at {:time-ms 150 :beat 98.3}
+                :grid {:beats 1} :due-beat 99
+                :dispatched-at {:time-ms 520 :beat 99.04} :admitted-at {:time-ms 520 :beat 99.04}}
+        cmd (merge (envelope "record-one") {:op :cue/launch :cue-id :red :time-ms 520 :cue-timing timing})
         ack {:status :accepted :command-id "record-one" :instance-id :red-1}]
     (try
       (sync/start! manager {:events! (fn [event]
                                       (case (:type event) :live/status (deliver inspected true)
                                             :live/execution (deliver executed event) nil))})
       (is (true? (deref inspected 2000 false)))
+      (is (live-sync/record! manager cmd (assoc ack :status :pending :instance-id nil)))
+      (is (session/flush! manager))
+      (is (empty? @written))
       (is (live-sync/record! manager cmd ack))
       (is (= :executed (:status (deref executed 2000 nil))))
       (is (= 1 (count @written)))
       (is (= :red-1 (:instance-id (first @written))))
+      (is (= timing (:cue-timing (first @written))))
+      (is (= 520 (:time-ms (first @written))))
+      (is (= 3.04 (:beat (first @written))))
+      (is (= 99.04 (:song-beat (first @written))))
       (is (live-sync/record! manager cmd ack)) (is (session/flush! manager))
       (is (= 1 (count @written)))
       (session/ingest! manager {:type :live/status :status (assoc recording :track-armed? false)})
@@ -279,15 +311,16 @@
 (deftest live-callbacks-require-current-bridge-and-session-and-deduplicate-events
   (let [requests (atom []) commands (atom [])
         manager (live-sync/create-manager
-                 {:now-ms (constantly 0)
-                  :config {:live {:enabled? true :mappings {36 {:cue-id :red :mode :persistent}}}}
+                 {:now-ms (constantly 35)
+                  :config {:live {:enabled? true :launch-grid {:bars 1}
+                                  :mappings {36 {:cue-id :red :mode :persistent :grid {:beats 1/2}}}}}
                   :live-factory (fn [_] {:open! (fn [_] :live) :close! (fn [_])
                                          :request! (fn [_ id op payload]
                                                      (swap! requests conj [op payload])
                                                      {:id id :status :executed :result {}})})})
         cb (callbacks commands (atom []))
         base {:protocol-version 1 :bridge-id "tolglow-m4l" :kind "midi" :event-id "process:1"
-              :event {:type "note-on" :channel 1 :note 36 :velocity 100}}]
+              :event {:type "note-on" :channel 1 :note 36 :velocity 100 :time-ms 999 :source-id :untrusted}}]
     (try
       (is (false? (live-sync/ingest-live! manager base)))
       (let [first-run (sync/start! manager cb) message (assoc base :sync-session-id (:run-id first-run))]
@@ -298,6 +331,12 @@
         (is (true? (live-sync/ingest-live! manager message)))
         (is (false? (live-sync/ingest-live! manager message)))
         (is (session/flush! manager)) (is (= 1 (count @commands)))
+        (let [launch (first @commands)]
+          (is (= {:beats 1/2} (:grid launch)))
+          (is (= {:time-ms 35} (:raw launch)))
+          (is (= :ableton-live (get-in launch [:source :source-id])))
+          (is (live-sync/acknowledge! manager 36 {:status :accepted :command-id (:command-id launch)
+                                                  :instance-id :live-1} (envelope "fired"))))
         (is (:stopped? (sync/stop! manager)))
         (is (false? (live-sync/ingest-live! manager (assoc message :event-id "process:2"))))
         (let [second-run (sync/start! manager cb)]
@@ -397,4 +436,35 @@
       (is (some? (live-sync/parameter-routing manager)))
       (sync/stop! manager)
       (is (nil? (live-sync/parameter-routing manager)))
+      (finally (sync/close! manager)))))
+
+(deftest polled-forward-seek-fences-clock-without-treating-tempo-or-latency-as-a-seek
+  (let [now (atom 0)
+        sample (atom {:beat 10 :bpm 120 :latency-ms 20})
+        statuses (LinkedBlockingQueue.)
+        manager (live-sync/create-manager
+                 {:now-ms #(deref now)
+                  :config {:selected-source :ableton-live :live {:enabled? true :poll-ms 500}}
+                  :live-factory (fn [_]
+                                  {:open! (fn [_] :live) :close! (fn [_])
+                                   :request! (fn [_ id _ _]
+                                               (let [{:keys [beat bpm latency-ms]} @sample]
+                                                 (swap! now + latency-ms)
+                                                 {:id id :status :executed
+                                                  :result {:clock {:beat beat :bpm bpm :playing? true}}}))})})
+        await-status! #(.poll statuses 2 TimeUnit/SECONDS)
+        source-epoch #(get-in (session/clock-at manager @now) [:clock :source-epoch])]
+    (try
+      (sync/start! manager {:events! #(when (= :live/status (:type %)) (.add statuses (:status %)))})
+      (is (= 10 (get-in (await-status!) [:clock :beat])))
+      (let [epoch (source-epoch)]
+        (doseq [[start-ms beat bpm latency-ms expected]
+                [[500 111/10 180 20 epoch]
+                 [1000 111/5 180 300 epoch]
+                 [1500 221/5 180 20 (inc epoch)]
+                 [2000 457/10 180 20 (inc epoch)]]]
+          (reset! sample {:beat beat :bpm bpm :latency-ms latency-ms})
+          (reset! now start-ms)
+          (is (= beat (get-in (await-status!) [:clock :beat])))
+          (is (= expected (source-epoch)))))
       (finally (sync/close! manager)))))

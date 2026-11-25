@@ -71,7 +71,7 @@
     :fixed (if (number? current) current min)
     :audio {:variable [:audio/energy] :default (if (number? current) current min)}
     :random {:random {:seed 1 :distribution :uniform} :period {:beats 1} :phase :global :range [min max]}
-    :waveform {:waveform :sine :period {:beats 4} :phase :global :range [min max]}
+    :waveform {:waveform :sine :period {:beats 4} :phase-reference :transport :range [min max]}
     :shared (when-let [id (first (sort-by events/wire-id (keys signals)))] {:signal id})
     :data current))
 
@@ -108,6 +108,14 @@
 
 (declare field)
 
+(defn waveform-reference [spec]
+  (:phase-reference spec (if (= :local (:phase spec)) :launch :transport)))
+
+(defn set-waveform-reference [spec reference]
+  (if (contains? (:period spec) :ms)
+    (-> spec (dissoc :phase-reference) (assoc :phase (if (= :launch reference) :local :global)))
+    (-> spec (dissoc :phase) (assoc :phase-reference reference))))
+
 (defn- wave-fields [key label spec options signals change!]
   (let [{:keys [entries error]} @(rf/subscribe [::registry])
         {:keys [min max step percent?]} options
@@ -124,9 +132,15 @@
         [:label "Random seed" [:input {:aria-label (str label " random seed") :type "text" :input-mode "numeric"
                                         :value (get-in spec [:random :seed])
                                         :on-change #(let [v (.. % -target -value)] (change! (fn [s] (assoc-in s [:random :seed] v))))}]]])
-     [choice (str label " phase") (:phase spec :global) [[:global "Show clock"] [:local "Since activation"]]
-      (fn [v] (change! #(assoc % :phase v)))]
-     [duration-field (str label " period") (or (:period spec) {:beats 4}) (fn [v] (change! #(assoc % :period v)))]
+     (if id
+       [choice (str label " phase reference") (waveform-reference spec)
+        [[:transport "Show transport"] [:launch "Since activation"]]
+        (fn [reference] (change! #(set-waveform-reference % reference)))]
+       [choice (str label " phase") (:phase spec :global) [[:global "Show clock"] [:local "Since activation"]]
+        (fn [v] (change! #(assoc % :phase v)))])
+     [duration-field (str label " period") (or (:period spec) {:beats 4})
+      (fn [v] (change! #(cond-> (assoc % :period v)
+                        (:phase-reference %) (set-waveform-reference (waveform-reference %)))))]
      (for [[i bound v] [[0 "minimum" lo] [1 "maximum" hi]] :when (number? v)]
        ^{:key bound} [numeric-slider (str label " " bound) v min max step percent?
                      (fn [v] (change! #(assoc-in % [:range i] v)))])

@@ -18,6 +18,16 @@
     (is (= {p {:base 0.3 :stages []}} (builder/replace-stages b p [])))
     (is (= b (builder/replace-stages (assoc b [:outputs :color] {:stages [:x]}) [:outputs :color] [])))))
 
+(deftest oscillator-timing-retains-period-offset-and-scope
+  (is (= {:op :oscillator-phase :phase-reference :launch :period {:bars 1} :phase 0.0}
+         (builder/oscillator-timing {:op :bar} false)))
+  (is (= :transport (:phase-reference (builder/oscillator-timing {:op :beat} true))))
+  (let [phase {:op :oscillator-phase :phase-reference :transport :period {:beats 1.5} :phase 0.25}
+        binding {[:outputs :dimmer] {:stages [{:block :lfo/saw :inputs {:phase phase}}]}}]
+    (is (= phase (builder/oscillator-timing phase false)))
+    (is (= (str "{:id :fx :outputs {:dimmer 0.3}\n :blocks " (pr-str binding) "}")
+           (builder/write-bindings "{:id :fx :outputs {:dimmer 0.3}}" binding)))))
+
 (deftest picker-previews-the-materials-in-the-unpublished-draft
   (let [shared {:optics/gel {:source :builtin} :show/water {:source :show}}
         definition {:imported-prefabs {:optics/gel :touring-gel :show/water :previous-water}

@@ -6,6 +6,7 @@
             [afterglow.time :as time]
             [clojure.string :as str]
             [tolglow.automation.random :as random]
+            [tolglow.oscillator :as oscillator]
             [tolglow.registry :as registry]
             [tolglow.signals :as signals]
             [tolglow.waveforms :as waveforms]))
@@ -28,7 +29,10 @@
   (and (vector? path) (<= 1 (count path) 32) (every? id? path)))
 
 (defn- timed-source? [spec child?]
-  (and (#{:local :global} (:phase spec :global)) (positive-duration? (:period spec {:bars 1}))
+  (and (if (contains? spec :phase-reference)
+         (and (not (contains? spec :phase)) (oscillator/phase-references (:phase-reference spec))
+              (oscillator/musical-period? (:period spec {:bars 1})))
+         (and (#{:local :global} (:phase spec :global)) (positive-duration? (:period spec {:bars 1}))))
        (child? (:offset spec 0))
        (let [range (:range spec [0 1])]
          (and (vector? range) (= 2 (count range)) (every? child? range)))))
@@ -42,7 +46,7 @@
       (:variable spec) (and (every? #{:variable :default} (keys spec)) (identifier-path? (:variable spec)))
       (:signal spec) (and (every? #{:signal :default} (keys spec)) (id? (:signal spec)))
       (:waveform spec)
-      (and (every? #{:waveform :version :phase :period :offset :range :params :default} (keys spec))
+      (and (every? #{:waveform :version :phase :phase-reference :period :offset :range :params :default} (keys spec))
            (id? (:waveform spec)) (or (nil? (:version spec)) (pos-int? (:version spec)))
            (timed-source? spec child?)
            (let [params (:params spec {})]
@@ -103,6 +107,17 @@
 
 (defn- numeric-or [n fallback] (double (if (time/finite-number? n) n fallback)))
 
+(defn- musical-phase [model options spec]
+  (let [reference (:phase-reference spec)
+        clock (time/frame-clock model)
+        instance (when (= reference :launch) (get-in model [:instances (:instance-id options)]))
+        origin (if instance {:beat (:started-at-beat instance) :meter (:timing-meter instance)} (:start-clock options))
+        private-beat (:beat (if instance (system/private-clock instance clock) clock))
+        elapsed (when (and (time/finite-number? private-beat) (time/finite-number? (:beat origin)))
+                  (- private-beat (:beat origin)))]
+    (when (oscillator/phase-references reference)
+      (oscillator/phase (merge {:period {:bars 1}} spec) clock elapsed (:meter origin)))))
+
 (defn- phase-coordinate [model options spec]
   (let [clock (time/frame-clock model)
         local? (= :local (:phase spec))
@@ -134,7 +149,7 @@
   (let [bank (or (:waveforms model) builtin-registry)
         id (:waveform spec)
         definition (if-let [version (:version spec)] (get-in bank [:versions [id version]]) (get-in bank [:waveforms id]))
-        phase (phase-coordinate model options spec)]
+        phase (if (contains? spec :phase-reference) (musical-phase model options spec) (phase-coordinate model options spec))]
     (when (and definition phase (every? (:params definition) (keys (:params spec))))
       (let [params (reduce-kv (fn [values k schema]
                                 (let [value (if-let [binding (get (:params spec) k)] (sample binding) (:default schema))
@@ -155,6 +170,8 @@
 (defn value
   "Resolve a numeric binding using the committed show. A local waveform uses
   :start-clock, or an :instance-id for its private, pause-aware launch clock.
+  Musical :phase-reference :launch captures the activation meter, and
+  :transport follows the shared beat and current meter.
   Named signals use [:settings :autopilot :signals] and a shared show phase.
   :default (zero if omitted) handles missed inputs or retired registry entries."
   ([model spec] (value model spec {}))

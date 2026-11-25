@@ -153,6 +153,7 @@
         cue (find-id (:cues show) cue-id)
         preview (or (get colors cue-id) (when (string? cue-id) (get colors (keyword cue-id))))
         active (filter #(= cue-id (:cue-id %)) (:instances show))
+        queued? (and cue (some #(= cue-id (:cue-id %)) (:pending-cue-launches show)))
         cell {:cue-id cue-id :x x :y y :page-id (:id page)}
         down (fn [event]
                (when (and (or cue (not recent?))
@@ -163,11 +164,13 @@
     [:button.cue-cell
      {:class (str (when-not cue "empty ") (when (seq active) "active ")
                   (when (some #(= "releasing" (:phase %)) active) "releasing ")
+                  (when queued? "queued ")
                   (when (and (:edit? ui) (not recent?)) "editing"))
       :style (when cue (if preview {"--cue-color" (widgets/color-css preview)} (color-style cue)))
       :data-preview (when preview "live") :data-x x :data-y y :data-cue-id (or cue-id "")
       :disabled (not (get-in db [:connection :connected?]))
-      :aria-label (str (if cue (display-name cue) "Empty cell") ", column " (inc x) ", row " (inc y))
+      :aria-label (str (if cue (display-name cue) "Empty cell") ", column " (inc x) ", row " (inc y)
+                       (when queued? ", queued"))
       :aria-pressed (boolean (seq active)) :on-pointer-down down
       :on-pointer-move #(send! [:studio/gesture-move {:pointer-id (.-pointerId %) :client-x (.-clientX %) :client-y (.-clientY %)}])
       :on-pointer-up #(send! [:studio/gesture-up (.-pointerId %)])
@@ -196,8 +199,24 @@
       :on-blur #(send! [:studio/gesture-cancel "keyboard"])}
      (if cue
        [:<> [:span.cue-index (str (inc y) "." (inc x))] [:span.cue-dot]
-        [:span.cue-name (display-name cue)] [:span.cue-category (or (:category cue) "CUE")]]
+        [:span.cue-name (display-name cue)] [:span.cue-category (if queued? "Queued" (or (:category cue) "CUE"))]]
        (when-not recent? "+"))]))
+
+(defn queued-cues [db]
+  (let [{:keys [cues pending-cue-launches]} (:show db)]
+    (when (seq pending-cue-launches)
+      [:section.queued-launches {:aria-label "Queued cue launches"}
+       [:strong "Queued launches"]
+       [:ul
+        (for [{:keys [command-id cue-id due-beat] :as launch} pending-cue-launches
+              :let [cue-name (or (some-> (find-id cues cue-id) display-name) (label cue-id))]]
+          ^{:key command-id}
+           [:li {:data-launch-id command-id}
+           [:span (str cue-name " · beat " (numeric/number-label due-beat))]
+           (when (events/owns-cue-launch? db launch)
+             [:button.text-button {:type "button" :aria-label (str "Cancel queued " cue-name)
+                                   :disabled (not (get-in db [:connection :connected?]))
+                                   :on-click #(send! [:studio/cancel-queued-cue command-id])} "Cancel"])])]])))
 
 (defn- cue-grid [db]
   (let [show (:show db) ui (:ui db)
@@ -220,13 +239,21 @@
          ^{:key mode} [:button {:data-mode mode :class (when (= mode (:launch-mode ui)) "selected")
                                 :aria-pressed (= mode (:launch-mode ui))
                                 :on-click #(send! [:studio/set-launch mode])} title])]
+      [:label.launch-grid {:for "launch-grid"}
+       [:span "Launch grid"]
+       [:select#launch-grid {:value (:launch-grid ui "off") :on-change #(set-ui! [:launch-grid] (input-value %))}
+        (for [[choice title] events/launch-grids]
+          ^{:key choice} [:option {:value choice} title])]]
       (when-not selected-recent
         [:button#edit-grid.edit-button {:aria-pressed (boolean (:edit? ui)) :on-click #(send! [:studio/toggle-edit])} "Edit grid"])]
      [:div.cue-grid-scroll
       [pad-preview/grid (:id page) rows (and (not selected-recent) (= :perform (:view ui))
                                              (get-in db [:connection :connected?]))
        cue-cell db page]]
+     [queued-cues db]
      [:div.grid-footer [:span#gesture-hint (cond (and (:edit? ui) (not selected-recent)) "Choose a cell to edit its actions."
+                                               (and (= "held" (:launch-mode ui)) (not= "off" (:launch-grid ui)))
+                                               "Hold through the grid boundary to play. Release to cancel or fade out."
                                                (= "held" (:launch-mode ui)) "Hold a cue to play it. Release to fade it out."
                                                selected-recent "Tap to play."
                                                :else "Tap to play. Long-press for cue actions.")]
@@ -794,8 +821,11 @@
                                                      :on-click #(send! [:studio/cue-action :assign])} "Place cue"]])
        (when cue [spatial/cue-target-picker (:id cue)])
        [:div.radial-actions
-        (for [[action icon title] [[:launch "▷" "One-shot"] [:inspect "⌁" "Inspect"] [:copy "⧉" "Copy cue"]
-                                   [:paste "↙" "Paste here"] [:compose "+" "Add to composition"] [:edit "⌘" "Edit definition"] [:remove "−" "Clear cell"]]]
+        (for [[action icon title] (cond-> [[:launch "▷" "One-shot"]]
+                                   (not= "off" (get-in db [:ui :launch-grid])) (conj [:launch-now "▷" "One-shot now"])
+                                   true (into [[:inspect "⌁" "Inspect"] [:copy "⧉" "Copy cue"]
+                                               [:paste "↙" "Paste here"] [:compose "+" "Add to composition"]
+                                               [:edit "⌘" "Edit definition"] [:remove "−" "Clear cell"]]))]
           ^{:key action} [:button {:data-cue-action (name action)
                                     :disabled (if (= action :paste) (or (nil? clipboard) (some? cue)) (nil? cue))
                                     :on-click #(send! [:studio/cue-action action])} [:span icon] title])]

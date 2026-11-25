@@ -4,7 +4,9 @@
             [afterglow.render.ir :as ir]
             [afterglow.runtime :as runtime]
             [afterglow.runtime.keyframes :as keyframes]
-            [tolglow.composition.tween :as tween]))
+            [afterglow.time :as time]
+            [tolglow.composition.tween :as tween]
+            [tolglow.oscillator :as oscillator]))
 
 (defn- fail! [path message]
   (throw (ex-info message {:errors [{:path (into [:blocks] path) :message message}]})))
@@ -53,9 +55,9 @@
           (vswap! uniforms assoc path input)
           input))))
 
-(defn reads-variable? [expression]
-  (and (map? expression) (or (= :variable (:op expression))
-                             (some reads-variable? (:args expression)))))
+(defn needs-plan? [expression]
+  (and (map? expression) (or (#{:variable :oscillator-phase} (:op expression))
+                             (some needs-plan? (:args expression)))))
 
 (defn- raw-value [{:keys [type-param entries] :as compiler} [kind id :as path]]
   (case kind
@@ -86,12 +88,26 @@
         (vswap! tweens assoc spec {:input input :sample sample})
         input)))
 
+(defn- phase-input [{:keys [oscillators]} path node]
+  (when-not (and (every? #{:op :phase-reference :period :phase} (keys node))
+                 (oscillator/phase-references (:phase-reference node :launch))
+                 (oscillator/musical-period? (:period node))
+                 (time/finite-number? (:phase node 0.0)))
+    (fail! path "Oscillator phase needs a launch or transport reference, a positive musical period and a finite phase offset"))
+  (or (get @oscillators node)
+      (let [index (count @oscillators)
+            input {:op :param :key (keyword "tolglow.block-phase" (str index)) :type :number}]
+        (when (>= index 64) (fail! path "A field plan supports up to 64 distinct oscillator phase inputs"))
+        (vswap! oscillators assoc node input)
+        input)))
+
 (defn- lower [compiler current trail depth node]
   (when (> depth 64) (fail! current "Expression nesting exceeds 64 levels"))
   (if-let [path (and (map? node) (path-of node))]
     (lower-input compiler current trail node path)
     (cond
       (= :tween (:op node)) (tween-input compiler node)
+      (= :oscillator-phase (:op node)) (phase-input compiler current node)
       (or (number? node) (vector? node)) {:op :const :value node}
       (and (map? node) (contains? node :args))
       (do (when-not (and (vector? (:args node)) (<= (count (:args node)) 64))
@@ -140,15 +156,19 @@
         ;; compiling this definition and never enters the live step or show file.
         prepared (volatile! {})
         tweens (volatile! {})
+        oscillators (volatile! {})
         compiler {:bindings blocks :entries entries :uniforms uniforms :prepared prepared :tweens tweens
+                  :oscillators oscillators
                   :catalog (merge blocks/library imported-prefabs prefabs)
                   :type-param #(prepare-expression %1 params %2)}]
-    (when (some (comp #{"tolglow.block-input" "tolglow.block-tween"} namespace) (keys params))
+    (when (some (comp #{"tolglow.block-input" "tolglow.block-tween" "tolglow.block-phase"} namespace) (keys params))
       (fail! [] "Parameter ID collides with a block input binding"))
     (doseq [path (keys blocks)] (binding-plan compiler path #{}))
     (let [outputs (mapv (partial output-entry compiler) (range) entries)]
       {:outputs outputs
        :tweens (mapv (fn [{:keys [input sample]}] [(:key input) sample]) (vals @tweens))
+       :oscillators (mapv (fn [[spec input]] [spec (:key input)]) @oscillators)
+       :transport-clock? (boolean (some #(= :transport (:phase-reference %)) (keys @oscillators)))
        :uniforms @uniforms
        :targets (when (some? targets) (set targets))
        :output-bindings (binding-outputs entries (keys blocks))
@@ -156,9 +176,9 @@
        :traces (update-vals @prepared blocks/compile-trace)})))
 
 (defn step-info [metadata plan]
-  (if (seq (:uniforms plan))
-    (assoc metadata ::keyframes/variable-paths (vec (keys (:uniforms plan))))
-    metadata))
+  (cond-> metadata
+    (seq (:uniforms plan)) (assoc ::keyframes/variable-paths (vec (keys (:uniforms plan))))
+    (:transport-clock? plan) (assoc ::keyframes/transport-clock? true)))
 
 (defn with-variables [plan params frame]
   (reduce-kv (fn [result path uniform]
@@ -166,9 +186,17 @@
                  (if (nil? value) result (assoc result (:key uniform) value))))
              params (:uniforms plan)))
 
-(defn sample-tweens [plan env]
-  (reduce (fn [out [id sample]] (assoc-in out [:params id] (:value (sample env))))
-          env (:tweens plan)))
+(defn sample-inputs
+  ([plan env transport-clock] (sample-inputs plan env transport-clock false))
+  ([plan env transport-clock isolate-phases?]
+   (let [env (reduce (fn [out [id sample]] (assoc-in out [:params id] (:value (sample env))))
+                     env (:tweens plan))]
+     (reduce (fn [out [spec id]]
+               (try
+                 (assoc-in out [:params id] (oscillator/phase spec transport-clock (:elapsed-beats env) (:meter env)))
+                 (catch clojure.lang.ExceptionInfo error
+                   (if isolate-phases? out (throw error)))))
+             env (:oscillators plan)))))
 
 (defn fixture-index
   "Index this rig on first inspection. Effects that nobody views never build the index."

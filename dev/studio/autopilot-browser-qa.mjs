@@ -60,7 +60,7 @@ try {
   await pilot.getByLabel('Target release fraction', {exact: true}).fill('1/8');
   await box(pilot, 'Brightness target source').selectOption({label: 'Audio energy'});
   await box(pilot, 'Visual activity target source').selectOption({label: 'Waveform'});
-  await box(pilot, 'Visual activity target phase').selectOption({label: 'Since activation'});
+  await box(pilot, 'Visual activity target phase reference').selectOption({label: 'Since activation'});
   await pilot.getByRole('textbox', {name: 'Visual activity target period', exact: true}).fill('3/4');
   const wave = box(pilot, 'Visual activity target waveform');
   await wave.focus();
@@ -73,7 +73,7 @@ try {
   assert.deepEqual(started.interval, {beats: 0.25});
   assert.deepEqual(started.targets.brightness.variable, ['audio/energy']);
   assert.deepEqual(started.targets.activity.period, {beats: 0.75});
-  assert.equal(started.targets.activity.phase, 'local');
+  assert.equal(started.targets.activity['phase-reference'], 'launch');
   assert.equal(started.targets.activity.waveform, 'triangle');
   const meters = pilot.getByRole('region', {name: 'Measured energy'});
   await meters.getByRole('meter', {name: 'Visual activity rolling average'}).waitFor();
@@ -90,6 +90,7 @@ try {
   const shared = (await write(pilot.getByRole('button', {name: 'Apply autopilot settings'}))).settings.autopilot;
   assert.equal(shared.targets.brightness.signal, signalID);
   assert.equal(shared.signals[signalID].waveform, 'sine');
+  assert.equal(shared.signals[signalID]['phase-reference'], 'transport');
 
   await write(enable);
   await hdr.locator('summary').filter({hasText: 'Gain and spatial spill'}).click();

@@ -217,7 +217,8 @@
                         :elapsed-beats (when (and (number? (:beat clock)) (number? (:started-at-beat instance)))
                                          (max 0 (- (:beat clock) (:started-at-beat instance))))
                         :meter (time/normalize-meter (:timing-meter instance))}
-                   env (if (and (seq (:tweens block-plan)) (not done?)) (blocks/sample-tweens block-plan env) env)
+                   env (if (and block-plan (not done?))
+                         (blocks/sample-inputs block-plan env (or (:transport-clock frame) clock)) env)
                    exact? (exact-environment? numeric env)
                    blocks (if (or done? exact?) []
                               (mapv #(contribution % env envelope-result envelope-attributes (:hdr? frame)) groups))]

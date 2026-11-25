@@ -8,7 +8,7 @@
 (def defaults
   {:enabled? false :source-id :ableton-live :bridge-id "tolglow-m4l" :endpoint "http://127.0.0.1:8750/live"
    :poll-ms 500 :timeout-ms 2000 :record-route :bridge :mode :lighting :channel 1
-   :mappings {} :parameters {} :pairing nil :automap? true :observed-parameters {}})
+   :launch-grid :off :mappings {} :parameters {} :pairing nil :automap? true :observed-parameters {}})
 
 (defn- bounded-int? [value low high] (and (integer? value) (<= low value high)))
 (defn- text? [value limit] (and (string? value) (<= 1 (count value) limit)))
@@ -16,6 +16,14 @@
 
 (defn- check! [condition message]
   (when-not condition (fail! :invalid-config message)))
+
+(defn- normalize-grid [grid]
+  (let [grid (if (= "off" grid) :off grid)]
+    (check! (or (= :off grid)
+                (and (empty? (musical-time/validate-duration grid))
+                     (not (contains? grid :ms)) (pos? (val (first grid)))))
+            "Live launch grid must be off or one positive beat, bar or phrase interval")
+    grid))
 
 (defn- mapping-key [key]
   (let [key (if (keyword? key) (name key) key)
@@ -50,7 +58,9 @@
                    (when (or (:duration-ms value) (seq (musical-time/validate-duration (:duration value)))
                              (not (pos? (val (first (:duration value))))))
                      (fail! :invalid-config "Mapping duration must use one positive musical/explicit time unit")))
-                 [(mapping-key key) value]) values)))
+                 [(mapping-key key) (cond-> value
+                                      (and (= kind :notes) (contains? value :grid))
+                                      (update :grid normalize-grid))]) values)))
 
 (defn- check-endpoint! [endpoint]
   (let [^URI uri (try (URI. endpoint) (catch Exception _ nil))]
@@ -62,6 +72,7 @@
   (let [live (-> settings
                  (update :record-route keyword)
                  (update :mode keyword)
+                 (update :launch-grid normalize-grid)
                  (update :mappings #(mappings (into {} (map (fn [[k v]] [k (cond-> v (string? (:mode v)) (update :mode keyword))]) %)) :notes))
                  (update :parameters mappings :parameters)
                  (update :observed-parameters live-params/sources))

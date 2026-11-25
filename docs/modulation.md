@@ -258,13 +258,19 @@ Use the instance ID from a launch receipt to attach a waveform to one parameter.
 (show/submit! runtime :modulation-bind
   {:instance-id instance-id :param :level
    :binding {:type :lfo :waveform :pulse :period {:beats 1/2}
-             :phase 0.25 :inputs {:duty 0.35} :from 0.15 :to 0.9}})
+             :phase-reference :transport :phase 0.25
+             :inputs {:duty 0.35} :from 0.15 :to 0.9}})
 (show/submit! runtime :modulation-hold {:instance-id instance-id :params [:level]})
 (show/submit! runtime :modulation-resume {:instance-id instance-id :params [:level]})
 (show/submit! runtime :modulation-unbind {:instance-id instance-id :param :level})
 ```
 
-Studio uses the same operations through typed Transit POSTs to `/api/modulation/bind`, `/hold`, `/resume` and `/unbind` under the modulation route. Binding again edits the current source. Musical periods accept beats, bars or phrases. Phase runs in cycles on the activation's private beat clock and captured meter. Holding the parameter exposes its base while the phase continues. Pausing the effect freezes its private clock. Ending the activation releases its bindings and the compiled plan is retired on the next frame.
+Studio uses the same operations through typed Transit POSTs to `/api/modulation/bind`, `/hold`, `/resume` and `/unbind` under the modulation route. Binding again edits the current source. Musical periods accept beats, bars or phrases. The **Phase (cycles)** offset adds the same fraction of a cycle for either setting of **Phase reference**. Choose the phase reference independently of cue launch quantization.
+
+- **Cue launch** (`:launch`, the default for existing bindings) measures elapsed beats since the activation started. Bars and phrases use the meter captured at launch. An instance pause freezes this phase, and a transport seek preserves its elapsed phase.
+- **Show transport** (`:transport`) measures beats from transport beat zero. Equal periods and offsets align across cue launches. A transport seek changes the phase immediately. Bars and phrases use the shared meter of the current frame, so a meter change can also change their phase. An instance pause leaves the source following the shared beat. When the shared beat stops advancing, the waveform holds its phase.
+
+Holding the parameter exposes its base while the waveform keeps its clock reference. Ending the activation releases its bindings and the compiled plan is retired on the next frame.
 
 Registered waveform values are normalized from their declared range, clamped to 0–1, and interpolated between the two typed endpoints. Colors, coordinates and ranges interpolate component-wise. Integers round to the nearest value and boolean or enum inputs select the second endpoint at halfway. Live revisions of the selected waveform recompile its plan. A composite authored with `signals/sample` captures the nested expression at publication. Republishing the composite picks up a new constituent waveform. An incompatible destination or waveform input is reported on that source while the underlying parameter remains usable. Show files retain bindings, original schema, waveform registry and manual holds across instance-ID changes.
 

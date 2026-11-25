@@ -125,9 +125,10 @@
 (defn- sample [snapshot plan inst t beat]
   (let [model (:model snapshot)
         transport (assoc (:transport model) :beat beat)
-        clock (system/private-clock inst {:time-ms t :transport transport})
+        transport-clock (time/frame-clock {:time-ms t :transport transport})
+        clock (system/private-clock inst transport-clock)
         input {:hdr? (boolean (:preview-hdr snapshot)) :time-ms (:time-ms clock) :fixtures (:rig plan) :variables (:variables model)
-               :transport (merge transport clock)}
+               :transport (merge transport clock) :transport-clock transport-clock}
         context {:frame input :instance inst :state (:state inst {}) :assignments [] :intents []}
         rows (:assignments ((:step plan) context))
         preview-rows (cond-> rows (and (:dimmer-tint plan) (seq rows))

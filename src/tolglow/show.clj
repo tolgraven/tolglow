@@ -47,6 +47,7 @@
             [tolglow.lighting-scenes :as lighting-scenes]
             [tolglow.lighting-levels :as lighting-levels]
             [tolglow.clock :as show-clock]
+            [tolglow.cue-timing :as cue-timing]
             [tolglow.signals :as signals]
             [afterglow.reactive :as graph]
             [tolglow.observations :as observations]
@@ -170,6 +171,8 @@
                                   (update :system (fn [s] (merge {:opacity 1.0 :paused? false}
                                                                (select-keys s [:opacity :gain :paused? :attack :release])))))
                              (sort-by :order (vals (:instances model))))
+            :pending-cue-launches (cue-timing/pending model)
+            :cue-launch-outcomes (cue-timing/outcomes model)
             :pages (mapv (fn [page] (update page :cells
                                            #(mapv (fn [[[x y] cue]] {:x x :y y :cue-id cue})
                                                   (sort-by key %)))) (sort-by (comp str :id) (vals (:pages model))))
@@ -317,7 +320,8 @@
                     :keyframes (effect-keyframes/restored model)
                     :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?})
                     :status {}})
-      :queue (LinkedBlockingQueue. 256) :lock (Object.) :running (atom true)
+      :queue (LinkedBlockingQueue. 256) :cue-release-queue (LinkedBlockingQueue. 256)
+      :ingress-order (volatile! 0) :lock (Object.) :running (atom true)
       :venue-fog (atom {}) :fog-deadlines (atom nil)
       :clock clock :sink sink :pause-layer-cache (volatile! nil)
       :adaptive-keyframes (:adaptive-keyframes options) :cue-pad-previews (cue-pads/manager)
@@ -468,12 +472,33 @@
   (let [updated (update model :revision inc)]
     {:model updated :ack {:status :accepted :revision (:revision updated)}}))
 
+(defn- cue-clock-identity [runtime {:keys [show-id epoch transport]}]
+  [show-id epoch (:source transport) (:source-epoch transport)
+   (:source-selection-epoch transport) @(:presentation-clock runtime)])
+
+(defn- dispatch-owner-command [runtime model payload time-ms]
+  (cond
+    (and (= :cue/launch (:op payload)) (contains? payload :grid))
+    (cue-timing/schedule model (cue-clock-identity runtime model) time-ms
+                         (assoc (select-keys payload [:grid :raw]) :command (dissoc payload :grid :raw))
+                         command)
+
+    (and (cue-timing/active? model) (cue-timing/receipt model (:command-id payload)))
+    {:model model :ack {:status :rejected :reason :command-id-conflict :command-id (:command-id payload)}}
+
+    (= :cue/cancel-launch (:op payload))
+    (cue-timing/cancel-owned model (cue-clock-identity runtime model) time-ms payload command)
+
+    :else (command model payload time-ms)))
+
 (defn- apply-message [model {:keys [type payload expected-epoch]} time-ms & [runtime]]
   (when (and (some? expected-epoch) (not= expected-epoch (:epoch model)))
     (throw (ex-info "Operation belongs to a previous show session" {:expected-epoch (:epoch model)
                                                                     :received-epoch expected-epoch})))
   (case type
-    :command (command model payload time-ms)
+    :command (dispatch-owner-command runtime model payload time-ms)
+    :cue-schedule (cue-timing/schedule model (cue-clock-identity runtime model) time-ms payload command)
+    :cue-cancel (cue-timing/cancel model (cue-clock-identity runtime model) payload)
     :spatial-cue (spatial-cues/spawn model payload time-ms command)
     :autopilot-authored (autopilot/accept-authored model payload time-ms command)
     :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
@@ -945,7 +970,9 @@
             block))))))
 
 (defn- source-clock-model [runtime model time-ms]
-  (let [{:keys [selected-source clock follow-transport?]} (session/clock-at (connections/sync (:connections runtime)) time-ms)]
+  (let [{:keys [selected-source selection-epoch clock follow-transport?]}
+        (session/clock-at (connections/sync (:connections runtime)) time-ms)
+        model (assoc-in model [:transport :source-selection-epoch] selection-epoch)]
     (if-let [captured (cond
                         (= :manual selected-source)
                         (assoc (:transport (advance-transport model time-ms))
@@ -995,14 +1022,20 @@
           (assoc-in [:variables :sync :events] (:events captured))
           (routing/admit-sync (:events captured))) model)))
 
-(defn- observe-sync-commands! [runtime before after receipts]
+(defn- observe-sync-commands! [runtime before after receipts events fired-outcomes]
   (let [manager (connections/sync (:connections runtime))
         old-ids (if (= (:epoch before) (:epoch after))
                   (set (get-in before [:control :history-order])) #{})
-        epoch (:epoch after)]
+        epoch (:epoch after)
+        fired (filter #(= epoch (get-in % [:ack :epoch])) fired-outcomes)
+        skip-ids (into old-ids (map #(get-in % [:ack :command-id])) fired)
+        history (get-in after [:control :history])
+        from-history (keep #(when-not (skip-ids %) (get history %)) (get-in after [:control :history-order]))
+        outcomes (if (seq fired) (sort-by #(get-in % [:ack :revision]) (concat fired from-history)) from-history)]
+    (doseq [[_ ack command] receipts :when (#{:rejected :pending :cancelled} (:status ack))]
+      (acknowledge-sync! runtime manager command ack epoch))
     ;; Include automation, composition and controller commands, not only HTTP.
-    (doseq [id (get-in after [:control :history-order]) :when (not (old-ids id))
-            :let [{:keys [command ack]} (get-in after [:control :history id])]]
+    (doseq [{:keys [command ack]} outcomes]
       (let [instance (get-in after [:instances (:instance-id ack)])
             timing (or (:duration instance) (when-let [ms (:duration-ms instance)] {:ms ms}))]
         (live-sync/record! manager (cond-> command
@@ -1012,8 +1045,12 @@
                                (and (= :cue/launch (:op command)) timing) (assoc :recording-duration timing))
                       ack))
       (acknowledge-sync! runtime manager command ack epoch))
-    (doseq [[_ ack command] receipts :when (= :rejected (:status ack))]
-      (acknowledge-sync! runtime manager command ack epoch))))
+    (doseq [{:keys [type emitter data]} events
+            :when (and (= {:kind :runtime :id :cue-timing} emitter)
+                       (#{:cue/launch-cancelled :cue/launch-missed} type))
+            :let [source (cue-timing/source after (:command-id data))]
+            :when source]
+      (acknowledge-sync! runtime manager {:op :cue/launch :source source} data epoch))))
 
 (defn- finish-resource-work! [runtime retired candidates devices restored-generation restarted-generation]
   (when (and restarted-generation @(:running runtime))
@@ -1055,6 +1092,11 @@
                                    options (or (pause-look/blackout? model) (zero? (:master model)))
                                    (assoc slot :timeline-id clock-id :output-context @(:patch runtime)))))
 
+(def ^:private ingress-order
+  (reify java.util.Comparator
+    (compare [_ left right]
+      (Long/compare (:ingress-order left) (:ingress-order right)))))
+
 (defn tick!
   "Advance one owner cycle; restore resources/model together, then retire IO
   outside the owner lock. Reactive actions from the previous publication enter
@@ -1074,7 +1116,10 @@
                  time-ms (max target (get-in before [:model :time-ms]))
                  messages (java.util.ArrayList.)
                  inline-registrations (volatile! {})
-                 _ (.drainTo ^LinkedBlockingQueue (:queue runtime) messages 256)
+                 ordinary-count (.drainTo ^LinkedBlockingQueue (:queue runtime) messages 256)
+                 release-count (.drainTo ^LinkedBlockingQueue (:cue-release-queue runtime) messages 256)
+                 _ (when (and (pos? ordinary-count) (pos? release-count))
+                     (.sort messages ingress-order))
                  _ (vreset! candidates (vec (keep #(get-in % [:payload :candidate]) messages)))
                  reactive-error (volatile! nil)
                  actions (try (connections/drain-actions! (:connections runtime))
@@ -1120,6 +1165,9 @@
                        (reset! (:sync-input runtime) {:epoch (:epoch model) :events []}))
                      (locking (:audio-input runtime)
                        (reset! (:audio-input runtime) {:epoch (:epoch model) :events [] :features nil})))
+                 model (if (cue-timing/active? model)
+                         (cue-timing/advance model (cue-clock-identity runtime model) time-ms @(:leases runtime) command)
+                         model)
                  model (reduce (fn [m instance]
                                  (let [session (get-in instance [:source :session-id])
                                        seen (get @(:leases runtime) session (:started-at-ms instance))]
@@ -1308,6 +1356,8 @@
                  ;; Confidence belongs to this live clock sample and its resource generation.
                  next-state (assoc next-state :audio-clock-confidence
                                    (when-not (or restored? @restarted-generation) audio-clock-confidence))
+                 fired-outcomes (cue-timing/fired-outcomes (:model next-state))
+                 next-state (if (seq fired-outcomes) (update next-state :model cue-timing/clear-fired-outcomes) next-state)
                  committed (show-events/commit (:event-admit runtime) (:model before) next-state operations)
                  next-state (venue-fog/commit! runtime (:state committed)
                               (patch! runtime (get-in next-state [:model :rig :fixtures])) restored?)]
@@ -1324,7 +1374,8 @@
                                 (assoc (:data event) :type :event/handler-failed)))) (:events committed)))
              (doseq [[reply ack] receipts] (deliver reply ack))
              (when-not restored?
-               (try (observe-sync-commands! runtime (:model before) (:model next-state) receipts)
+               (try (observe-sync-commands! runtime (:model before) (:model next-state) receipts
+                                           (:events committed) fired-outcomes)
                     (catch Exception error
                       (swap! (:state runtime) assoc-in [:status :sync-error] (error-data error)))))
              (try (if (:independent-output? runtime)
@@ -1373,9 +1424,16 @@
                    (update :fixtures (partial fixture-patch/expand (get-in model [:registry :fixtures]))))]
     {:basis basis :rig (rig/prepare-edit basis proposed)}))
 
+(defn- ingress-queue [runtime type payload]
+  (if (or (= type :cue-cancel)
+          (and (= type :command) (= :cue/cancel-launch (:op payload))))
+    (:cue-release-queue runtime)
+    (:queue runtime)))
+
 (defn submit!
   "Enqueue an operation. Full restores are validated and resource-prepared off
-  the frame-owner lock, then committed atomically by the next owner cycle."
+  the frame-owner lock, then committed atomically by the next owner cycle.
+  Use :cue-schedule and :cue-cancel for explicit musical launch timing."
   ([runtime payload] (submit! runtime :command payload))
   ([runtime type payload]
    (let [reply (promise) candidate (volatile! nil)]
@@ -1412,15 +1470,24 @@
                                         :result (calibration-session/solve scan (calibration/resolve-fixture-ids before (:verified-axis-fixture-ids payload)))))
                                (dissoc payload :runtime-id :expected-epoch)))
                            (dissoc payload :runtime-id :expected-epoch)))
+               queue (ingress-queue runtime type payload)
                accepted? (locking (:lock runtime)
                            (and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch]))
-                                (.offer ^LinkedBlockingQueue (:queue runtime)
-                                        {:type type :payload payload :reply reply :expected-epoch epoch})))]
+                                (.offer ^LinkedBlockingQueue queue
+                                        {:type type :payload payload :reply reply :expected-epoch epoch
+                                         :ingress-order (vswap! (:ingress-order runtime) inc)})))]
            (when-not accepted? (throw (ex-info "Show changed or command queue is full" {})))))
        (catch Exception error
          (when @candidate (connections/abort-prepared! @candidate))
-         (deliver reply (merge {:status :rejected} (error-data error)))))
+         (let [command-id (or (:command-id payload) (get-in payload [:command :command-id]))]
+           (deliver reply (cond-> (merge {:status :rejected} (error-data error))
+                            command-id (assoc :command-id command-id))))))
      reply)))
+
+(defn quantized-cue-status
+  "Return a queued, fired, cancelled or missed launch receipt by command ID."
+  [runtime command-id]
+  (cue-timing/receipt (:model @(:state runtime)) command-id))
 
 (defn register-event-subscriber!
   "Register show data from the REPL. A raw :middleware function is bound to its
@@ -1460,12 +1527,13 @@
   (let [candidates (volatile! [])
         stop? (locking (:lock runtime)
                 (when (compare-and-set! (:running runtime) true false)
-                  (loop []
-                    (when-let [message (.poll ^LinkedBlockingQueue (:queue runtime))]
-                      (when-let [candidate (get-in message [:payload :candidate])]
-                        (vswap! candidates conj candidate))
-                      (deliver (:reply message) {:status :rejected :message "Show stopped"})
-                      (recur)))
+                  (doseq [queue [(:queue runtime) (:cue-release-queue runtime)]]
+                    (loop []
+                      (when-let [message (.poll ^LinkedBlockingQueue queue)]
+                        (when-let [candidate (get-in message [:payload :candidate])]
+                          (vswap! candidates conj candidate))
+                        (deliver (:reply message) {:status :rejected :message "Show stopped"})
+                        (recur))))
                   true))]
     ;; No cleanup waits while holding the owner lock: a closing device or agent
     ;; may synchronously dispatch, and must receive its stopped receipt promptly.
@@ -1593,7 +1661,7 @@
                          :midi devices/open-midi! :osc devices/open-osc! :sensor devices/open-sensor!
                          (throw (ex-info "Unknown device kind" {:kind kind})))
             options (cond-> options
-                      (#{:push-2 :push-3} kind) (assoc :target-search targets/search)
+                      (#{:push-2 :push-3} kind) (assoc :target-search targets/search :launch-receipt cue-timing/receipt)
                       (and (= kind :push-2) (:native-display? options) (not (:display options)))
                       (assoc :display (push-native-display runtime))
                       (and (= kind :push-2) (not (contains? options :feedback-source)))
@@ -1605,8 +1673,12 @@
                                           :now-ms! #(now-ms runtime)
                                           :dispatch! (fn [command]
                                                        (heartbeat! runtime id)
-                                                       (deref (submit! runtime (assoc command :expected-epoch epoch)) 5000
-                                                              {:status :pending}))}))]
+                                                       (let [reply (submit! runtime (assoc command :expected-epoch epoch))
+                                                             quantized? (or (= :cue/cancel-launch (:op command))
+                                                                            (and (= :cue/launch (:op command))
+                                                                                 (contains? command :grid)))]
+                                                         (deref reply (if quantized? 0 5000)
+                                                                {:status :pending :command-id (:command-id command)})))}))]
         (if (locking (:lock runtime)
               (when (and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch])))
                 (swap! (:devices runtime) assoc id device)

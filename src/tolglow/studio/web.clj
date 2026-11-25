@@ -73,7 +73,13 @@
   ;; Geometry interprets textual enums itself, at the same boundary as the REPL.
   (if (and (= uri "/api/rig") (contains? data :pixel-layouts))
     (assoc (data/normalize-json (dissoc data :pixel-layouts)) :pixel-layouts (:pixel-layouts data))
-    (data/normalize-json data)))
+    (let [data (data/normalize-json data)]
+      (cond-> data
+        (and (= uri "/api/command") (= :cue/launch (:op data)) (= "off" (:grid data)))
+        (assoc :grid :off)
+        (and (= uri "/api/command") (= :cue/cancel-launch (:op data))
+             (#{"held-release" "operator-cancel"} (:reason data)))
+        (update :reason keyword)))))
 
 (defn- wrap-api-body [handler]
   (fn [request]

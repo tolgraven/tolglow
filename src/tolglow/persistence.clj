@@ -13,6 +13,7 @@
             [afterglow.render.frame :as render]
             [afterglow.time :as time]
             [tolglow.registry :as registry]
+            [tolglow.cue-timing :as cue-timing]
             [tolglow.persistence.audio :as saved-audio]
             [tolglow.compiler :as compiler]
             [tolglow.effects.variable-blocks :as variable-blocks]
@@ -403,7 +404,7 @@
       (update-in [:frame-output :universes] unpack-universes))))
 
 (defn- make-document [model frame-output]
-  (cond-> {:schema-version schema-version :model (validate-model model)}
+  (cond-> {:schema-version schema-version :model (validate-model (cue-timing/without-queue model))}
     (some? frame-output) (assoc :frame-output (validate-frame-output model frame-output))))
 
 (defn freeze
@@ -441,7 +442,7 @@
   (validate-document! document)
   (check! (and (natural? (:epoch current-model)) (natural? (:revision current-model)))
           [:current-model] "Current model needs valid epoch/revision")
-  (let [saved (-> (:model document) saved-audio/restore validate-model audio-return/disarm)
+  (let [saved (-> (:model document) cue-timing/without-queue saved-audio/restore validate-model audio-return/disarm)
         epoch (inc (max (:epoch current-model) (:epoch saved)))
         ordered (sort-by (juxt :order :id) (vals (:instances saved)))
         ids (into {} (map-indexed (fn [i instance] [(:id instance) (str epoch ":" (inc i))]) ordered))

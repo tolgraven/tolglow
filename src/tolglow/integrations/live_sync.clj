@@ -13,7 +13,7 @@
   (:import [java.util UUID]))
 
 (defn- bridge [config]
-  (ableton/new-bridge (assoc (select-keys (:live config) [:mappings :parameters :channel :mode]) :id :live)))
+  (ableton/new-bridge (assoc (select-keys (:live config) [:mappings :parameters :channel :mode :launch-grid]) :id :live)))
 
 (defn parameter-routing
   "Snapshot destinations currently owned by a running Live or mapped MIDI input."
@@ -46,7 +46,8 @@
     (if-not valid? false
       (let [event (case kind
                     :status {:type :live/status :status (:status payload) :time-ms ((get-in manager [:options :now-ms]))}
-                    :midi {:type :live/midi :event (-> (:event payload) (update :type #(if (string? %) (keyword %) %))
+                    :midi {:type :live/midi :time-ms ((get-in manager [:options :now-ms]))
+                           :event (-> (:event payload) (update :type #(if (string? %) (keyword %) %))
                                                                     (update :origin #(if (string? %) (keyword %) %)))}
                     (:parameter :parameter-error) {:type (if (= kind :parameter) :live/parameter :live/parameter-error)
                                 :sample (:sample payload) :event-id (:event-id payload)
@@ -75,25 +76,13 @@
 (defn- receive-ack! [manager note acknowledgement envelope]
   (let [resolved
         (locking (:lock manager)
-          (let [state @(:state manager)
-                matches? (fn [entry run-id]
-                           (and (some? (:command-id acknowledgement))
-                                (or (= (:command-id acknowledgement) (get-in entry [:held note :command-id]))
-                                    (= note (get-in entry [:pending-launches (:command-id acknowledgement) :note] ::missing)))
-                                (or (nil? (:sync-run-id acknowledgement)) (= run-id (:sync-run-id acknowledgement)))))
-                current (:active state)
-                retired-index (first (keep-indexed (fn [index entry] (when (matches? (:bridge entry) (:id entry)) index)) (:retired state)))]
-            (cond
-              (and current (matches? (:bridge state) (:id current)))
-              (let [result (ableton/acknowledge-launch (:bridge state) note acknowledgement envelope)]
-                (swap! (:state manager) assoc :bridge (:state result)) [current (:commands result)])
-              (some? retired-index)
-              (let [retired (get-in state [:retired retired-index])
-                    result (ableton/acknowledge-launch (:bridge retired) note acknowledgement envelope)]
-                (swap! (:state manager) update :retired
-                       #(filterv (comp seq :held :bridge) (assoc % retired-index (assoc retired :bridge (:state result)))))
-                [retired (:commands result)])
-              :else nil)))]
+          (let [{:keys [active bridge]} @(:state manager)
+                {:keys [command-id sync-run-id]} acknowledgement]
+            (when (and active (or (nil? sync-run-id) (= (:id active) sync-run-id))
+                       (ableton/awaiting-launch? bridge note command-id))
+              (let [result (ableton/acknowledge-launch bridge note acknowledgement envelope)]
+                (swap! (:state manager) assoc :bridge (:state result))
+                [active (:commands result)]))))]
     (when resolved (commands! manager (first resolved) (second resolved)))
     (boolean resolved)))
 
@@ -103,10 +92,7 @@
       (let [envelope (envelope!)
             result (locking (:lock manager)
                      (let [state @(:state manager) result (ableton/handoff (:bridge state) :live envelope)]
-                       (swap! (:state manager)
-                              #(cond-> (assoc % :bridge (bridge (:config state)))
-                                 (seq (get-in result [:state :held]))
-                                 (update :retired conj {:id (:id run) :callbacks (run-callbacks run) :bridge (:state result)})))
+                       (swap! (:state manager) assoc :bridge (bridge (:config state)))
                        result))]
         (commands! manager run (:commands result)))
       (catch Exception error (emit! manager run {:type :sync/error :error (error-data error)})))))
@@ -183,7 +169,16 @@
           (cond-> (assoc sample :beat (clip-beat-at sample delta))
             (finite? (:song-beat sample)) (update :song-beat + delta)))))))
 
-(defn- process-status! [manager run result at-ms round-trip-ms]
+(defn- forward-jump? [previous current]
+  (when (and previous current (<= (:at-ms previous) (:at-ms current)))
+    (let [elapsed-ms (+ (- (:at-ms current) (:at-ms previous))
+                        (/ (+ (:round-trip-ms previous) (:round-trip-ms current)) 2.0))
+          ;; LOM Song.tempo can automate anywhere in 20–999 BPM between polls.
+          ;; Use the full range and allow a quarter beat of measurement error.
+          max-progress (+ 1/4 (* 999 (/ elapsed-ms 60000.0)))]
+      (> (- (:beat current) (:beat previous)) max-progress))))
+
+(defn- process-status! [manager run result at-ms round-trip-ms polled?]
   (let [config (:config @(:state manager)) source (get-in config [:live :source-id])
         transport (:clock result)
         recording (assoc result :sampled-at-ms at-ms :round-trip-ms round-trip-ms)]
@@ -193,8 +188,14 @@
                    (or (nil? transport) (and (map? transport) (finite? (:bpm transport)) (pos? (:bpm transport)))))
       (fail! :invalid-live-status "Invalid Live status timing"))
     (when transport
-      (apply-clock! manager run (merge transport {:type :clock :kind :ableton-live :source-id source :time-ms at-ms
-                                                :confidence (max 0.0 (- 1.0 (/ round-trip-ms (/ 60000.0 (:bpm transport 120)))))})))
+      (let [sample (when (and polled? (finite? (:beat transport)))
+                     {:at-ms at-ms :round-trip-ms round-trip-ms :beat (:beat transport)})
+            previous @(:polled-position run)
+            clock (merge transport {:type :clock :kind :ableton-live :source-id source :time-ms at-ms
+                                    :confidence (max 0.0 (- 1.0 (/ round-trip-ms (/ 60000.0 (:bpm transport 120)))))})]
+        (apply-clock! manager run (cond-> clock (forward-jump? previous sample) (assoc :discontinuity? true)))
+        (when (or sample (:discontinuity? transport))
+          (reset! (:polled-position run) sample))))
     (when (and (:mode result) (compare-and-set! (:setup-mode? run) false true)
                (not= (keyword (:mode result)) (get-in config [:live :mode])))
       (live-request! manager run (str (UUID/randomUUID)) :handoff {:mode (get-in config [:live :mode])}))
@@ -218,12 +219,11 @@
             mapping (get-in state [:bridge :parameters controller])
             instance (when (and mapping (not (:disabled? mapping)) (:resolve-instance! callbacks))
                        ((:resolve-instance! callbacks) (:cue-id mapping)))
-            result (bridge-step! manager #(ableton/midi->commands % event envelope instance))
-            commands (mapv #(update % :source merge
-                                    (cond-> {:sync-run-id (:id run) :source-id (or (:source-id event) (get-in state [:config :live :source-id]))}
-                                      (contains? event :note) (assoc :note (:note event)))) (:commands result))]
+            source (cond-> {:sync-run-id (:id run) :source-id (:source-id event)}
+                     (contains? event :note) (assoc :note (:note event)))
+            result (bridge-step! manager #(ableton/midi->commands % event (assoc envelope :source source) instance))]
         (doseq [notice (:events result)] (emit! manager run notice))
-        (commands! manager run commands)))))
+        (commands! manager run (:commands result))))))
 
 (defn- receive-handoff! [manager run {:keys [mode envelope]}]
   (let [result (bridge-step! manager #(ableton/handoff % mode envelope))]
@@ -271,7 +271,7 @@
 (defn- receive-response! [manager run {:keys [op response status-version time-ms round-trip-ms payload]}]
   (when (and (= :executed (:status response)) (#{:inspect :configure-destination} op))
     (if (= status-version @(:status-version run))
-      (process-status! manager run (:result response) time-ms round-trip-ms)
+      (process-status! manager run (:result response) time-ms round-trip-ms true)
       (swap! (:state manager) update-in [:metrics :stale-live-statuses] (fnil inc 0))))
   (when (= :executed (:status response))
     (case op
@@ -288,15 +288,16 @@
 
 (defn- receive! [manager run event at]
   (case (:type event)
-    :midi/control (midi-control! manager run (:event event))
-    :live/status (do (process-status! manager run (:status event) (get event :time-ms at) (get event :round-trip-ms 0.0))
+    :midi/control (midi-control! manager run (update (:event event) :time-ms #(or % at)))
+    :live/status (do (process-status! manager run (:status event) (get event :time-ms at) (get event :round-trip-ms 0.0) false)
                      (swap! (:status-version run) inc))
     (:live/parameter :live/parameter-error) (receive-parameter! manager run event)
     :live/forget-parameter (do (swap! (:state manager) update-in [:config :live :observed-parameters] dissoc (:id event))
                                (update-parameter-watchers! manager run))
-    :live/midi (let [message (:event event)]
+    :live/midi (let [at (:time-ms event at)
+                     message (assoc (:event event) :source-id (get-in @(:state manager) [:config :live :source-id]) :time-ms at)]
                  (when-not (= :tolglow-feedback (:origin message))
-                   (midi/observe-midi! manager run message :live :live-playback (get event :time-ms at)))
+                   (midi/observe-midi! manager run message :live :live-playback at))
                  (midi-control! manager run message))
     :live/acknowledgement (receive-ack! manager (:note event) (:ack event) (:envelope event))
     :live/handoff (receive-handoff! manager run event)
@@ -306,15 +307,12 @@
     :live/response (receive-response! manager run event)))
 
 
-(defn- prepare-state [state phase]
-  (when (and (= phase :start) (>= (count (:retired state)) 16))
-    (fail! :pending-acknowledgements "Resolve pending launch acknowledgements before opening more synchronization sessions"))
-  (cond-> (assoc state :bridge (bridge (:config state)) :recording nil :previous-recording nil :parameter-watch nil)
-    (or (= phase :rebind) (nil? (:retired state))) (assoc :retired [])))
+(defn- prepare-state [state _phase]
+  (assoc state :bridge (bridge (:config state)) :recording nil :previous-recording nil :parameter-watch nil))
 
 (defn- run-state []
   {:status-version (atom 0) :parameter-generation (atom nil) :setup-watchers? (atom false) :setup-mode? (atom false) :mirrored-pair (atom nil)
-   :poll-pending? (atom false) :next-poll (atom 0) :callback-ids (atom [])})
+   :poll-pending? (atom false) :next-poll (atom 0) :callback-ids (atom []) :polled-position (atom nil)})
 
 (defn- tick! [manager run now]
   (when (and (:live @(:resources run)) (>= now @(:next-poll run))
@@ -330,6 +328,7 @@
               (when-let [pairing (get-in @(:state manager) [:config :live :pairing])]
                 (live-request! manager run (str (UUID/randomUUID)) :configure-destination pairing)))
     :rebind (do (reset! (:callback-ids run) []) (reset! (:poll-pending? run) false)
+                (reset! (:polled-position run) nil)
                 (reset! (:setup-watchers? run) false) (reset! (:parameter-generation run) nil))
     :stopping (release-held! manager run)))
 
