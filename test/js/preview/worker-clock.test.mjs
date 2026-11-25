@@ -19,21 +19,31 @@ const bundle = await build({stdin: {
       this.renderer = {getContext: () => graphics.gl, info: {memory: {}, programs: []}, dispose() {}};
     };
     SceneRenderer.prototype.draw = function (dt) {graphics.draw(dt); this.draws++;};
-    SceneRenderer.prototype.resize = function () {};`
+    SceneRenderer.prototype.resize = function () {graphics.resize();};
+    SceneRenderer.prototype.restoreContext = function () {
+      this.lost = false; this.restorePending = false;
+    };`
 }, bundle: true, format: 'iife', platform: 'browser', write: false});
 
 function worker({hz = 60, work = 0, software = false, quality = software ? 'auto' : 'mobile',
   yieldMs, readyAfterYields = Infinity} = {}) {
-  let now = 0, nextId = 0, stateId = 0, fenceReady = true, fences = 0, closed = false, yields = 0;
+  let now = 0, nextId = 0, stateId = 0, readyThrough = Infinity, serial = 0, closed = false, yields = 0;
+  const fences = new Set(), bitmaps = [], listeners = new Map(), resizes = [];
   const rafs = new Map(), timers = new Map(), messages = [], draws = [];
   const timer = (callback, delay) => {
     const id = ++nextId; timers.set(id, {callback, at: now + delay}); return id;
   };
-  const graphics = {software, draw(dt) {draws.push({at: now, dt}); now += work;}, gl: {
+  const graphics = {software, resize() {resizes.push(fences.size);},
+    draw(dt) {draws.push({at: now, dt}); now += work;}, gl: {
     SYNC_GPU_COMMANDS_COMPLETE: 1, ALREADY_SIGNALED: 2, CONDITION_SATISFIED: 3, WAIT_FAILED: 4, TIMEOUT_EXPIRED: 5,
-    fenceSync() {assert.equal(++fences, 1, 'only one GPU frame may be outstanding'); return {};},
-    clientWaitSync() {return fenceReady ? this.CONDITION_SATISFIED : this.TIMEOUT_EXPIRED;},
-    deleteSync() {fences--;}, flush() {}
+    fenceSync() {
+      const fence = ++serial; fences.add(fence);
+      assert.ok(fences.size <= (software ? 1 : 2), 'GPU ownership must be bounded');
+      return fence;
+    },
+    clientWaitSync(fence) {return fence <= readyThrough ? this.CONDITION_SATISFIED : this.TIMEOUT_EXPIRED;},
+    deleteSync(fence) {assert.ok(fences.delete(fence), 'each fence must be deleted exactly once');},
+    flush() {}
   }};
   const host = {graphics, AbortController, console, performance: {now: () => now, timeOrigin: 0},
     requestAnimationFrame(callback) {
@@ -42,11 +52,24 @@ function worker({hz = 60, work = 0, software = false, quality = software ? 'auto
     },
     cancelAnimationFrame: id => rafs.delete(id), setTimeout: timer, clearTimeout: id => timers.delete(id),
     postMessage: message => messages.push(message), close: () => {closed = true;},
-    OffscreenCanvas: class {addEventListener() {} transferToImageBitmap() {return {close() {}};}}
+    OffscreenCanvas: class {
+      addEventListener(type, listener) {
+        if (!listeners.has(type)) listeners.set(type, []);
+        listeners.get(type).push(listener);
+      }
+      transferToImageBitmap() {
+        const bitmap = {closed: false, close() {
+          assert.equal(this.closed, false, 'each bitmap must be closed exactly once');
+          this.closed = true;
+        }};
+        bitmaps.push(bitmap);
+        return bitmap;
+      }
+    }
   };
   if (yieldMs != null) host.scheduler = {yield() {
     yields++; now += yieldMs;
-    if (yields >= readyAfterYields) fenceReady = true;
+    if (yields >= readyAfterYields) readyThrough = Infinity;
     return Promise.resolve();
   }};
   host.self = host;
@@ -69,12 +92,18 @@ function worker({hz = 60, work = 0, software = false, quality = software ? 'auto
     now = Math.max(now, time);
   }
   send({type: 'activity', active: true, generation: 1}); update(); healthy();
-  return {draws, messages, frames, healthy, update, advance,
+  return {draws, messages, frames, healthy, update, advance, state, bitmaps, resizes, fences, send,
     get engine() {return graphics.engine;},
     get yields() {return yields;},
     get timerWaits() {return [...timers.values()].map(entry => entry.at - now);},
-    set fenceReady(value) {fenceReady = value;},
-    acknowledge(frameId = frames().at(-1)?.frameId) {send({type: 'frame-ack', frameId}); healthy();},
+    set fenceReady(value) {readyThrough = value ? Infinity : 0;},
+    completeThrough(fence) {readyThrough = fence;},
+    acknowledge(frameId = frames().at(-1)?.frameId) {
+      const frame = frames().find(frame => frame.frameId === frameId);
+      if (frame && !frame.bitmap.closed) frame.bitmap.close();
+      send({type: 'frame-ack', frameId}); healthy();
+    },
+    contextEvent(type) {for (const listener of listeners.get(type) ?? []) listener({preventDefault() {}});},
     async refresh(timestamp) {
       await advance(timestamp + 2);
       const callbacks = [...rafs.values()]; rafs.clear();
@@ -82,8 +111,9 @@ function worker({hz = 60, work = 0, software = false, quality = software ? 'auto
       await settle(); healthy();
     },
     dispose() {
+      if (closed) return;
       send({type: 'dispose'}); healthy();
-      assert.ok(closed); assert.equal(fences, 0); assert.equal(rafs.size, 0); assert.equal(timers.size, 0);
+      assert.ok(closed); assert.equal(fences.size, 0); assert.equal(rafs.size, 0); assert.equal(timers.size, 0);
     }
   };
 }
@@ -130,24 +160,97 @@ test('worker timestamp tolerance cannot accumulate into rate creep on 144/240 Hz
   }
 });
 
-test('GPU completion and matching bitmap acknowledgement gate the next worker render', async t => {
+test('hardware prepares two frames but transfers only one until the matching canvas ack', async t => {
   const w = worker(); t.after(() => w.dispose());
   w.fenceReady = false;
-  await w.refresh(1000 / 60); w.update();
+  await w.refresh(1000 / 60);
   await w.refresh(2 * 1000 / 60);
-  assert.equal(w.draws.length, 1); assert.equal(w.frames().length, 0);
-  assert.equal(w.messages.filter(message => message.type === 'state-ack').length, 1);
+  assert.equal(w.draws.length, 2); assert.equal(w.fences.size, 2); assert.equal(w.frames().length, 0);
   w.fenceReady = true; await w.advance(45);
   assert.equal(w.frames().length, 1);
-  assert.equal(w.messages.filter(message => message.type === 'state-ack').length, 2);
+  assert.equal(w.frames()[0].rendering, true);
   w.acknowledge(999);
   for (let frame = 3; frame <= 5; frame++) await w.refresh(frame * 1000 / 60);
-  assert.equal(w.draws.length, 1); assert.equal(w.frames().length, 1);
-  w.acknowledge();
+  assert.equal(w.draws.length, 2); assert.equal(w.frames().length, 1);
+  w.acknowledge(1);
+  assert.equal(w.frames()[1].frameId, 2);
   await w.refresh(100);
-  assert.equal(w.draws.length, 2); assert.equal(w.frames().length, 2);
+  assert.equal(w.draws.length, 3); assert.equal(w.frames().length, 2);
+  w.acknowledge(2);
+  assert.equal(w.frames()[2].frameId, 3);
+  w.acknowledge(3);
+});
+
+test('changed scene state drains both fences before acknowledging its resize and pause', async t => {
+  const w = worker(); t.after(() => w.dispose());
+  w.fenceReady = false;
+  await w.refresh(1000 / 60);
+  await w.refresh(2 * 1000 / 60);
+  const acks = () => w.messages.filter(message => message.type === 'state-ack').map(message => message.id);
+  w.state.viewport = {width: 900, height: 600, pixelRatio: 2};
+  w.state.paused = true;
+  w.update();
+  w.completeThrough(1); await w.advance(45);
+  assert.deepEqual(acks(), [1]);
+  assert.equal(w.engine.platform.viewport.width, 640);
+  w.acknowledge(1);
+  await w.refresh(3 * 1000 / 60);
+  assert.equal(w.draws.length, 2);
+  w.fenceReady = true; await w.advance(65);
+  assert.deepEqual(acks(), [1, 2]);
+  assert.equal(w.engine.platform.viewport.width, 900);
+  assert.equal(w.frames()[1].stateId, 1);
+  w.acknowledge(2);
+  await w.refresh(5 * 1000 / 60);
+  assert.equal(w.draws.length, 2);
+  w.state.actions = [{id: 1, type: 'draw'}];
+  w.update(); await w.refresh(100);
+  assert.equal(w.frames()[2].stateId, 3);
+  assert.equal(w.frames()[2].actionThrough, 1);
+  w.acknowledge(3);
   await w.refresh(7 * 1000 / 60);
-  assert.equal(w.draws.length, 2, 'late acknowledgement must not cause a catch-up burst');
+  assert.equal(w.draws.length, 3, 'explicit paused draw must happen once');
+  assert.deepEqual([...new Set(w.resizes)], [0]);
+});
+
+test('old visibility generations and disposal retire both untransferred bitmaps', async t => {
+  const w = worker(); t.after(() => w.dispose());
+  w.fenceReady = false;
+  await w.refresh(1000 / 60);
+  await w.refresh(2 * 1000 / 60);
+  w.update();
+  w.send({type: 'activity', active: false, generation: 2});
+  w.fenceReady = true; await w.advance(70);
+  assert.equal(w.frames().length, 0);
+  assert.ok(w.bitmaps.every(bitmap => bitmap.closed));
+  assert.equal(w.fences.size, 0);
+  const acks = w.messages.filter(message => message.type === 'state-ack');
+  assert.equal(acks.at(-1).id, 2, 'invalidating a deferred generation releases its state mailbox');
+  w.state.generation = 3;
+  w.send({type: 'activity', active: true, generation: 3});
+  w.update(); w.fenceReady = false;
+  await w.refresh(5 * 1000 / 60);
+  await w.refresh(6 * 1000 / 60);
+  assert.equal(w.fences.size, 2);
+  w.dispose();
+  assert.ok(w.bitmaps.every(bitmap => bitmap.closed));
+});
+
+test('context loss retires both frames and restoration applies the deferred state', async t => {
+  const w = worker(); t.after(() => w.dispose());
+  w.fenceReady = false;
+  await w.refresh(1000 / 60);
+  await w.refresh(2 * 1000 / 60);
+  w.update();
+  w.contextEvent('webglcontextlost');
+  assert.ok(w.bitmaps.every(bitmap => bitmap.closed));
+  assert.equal(w.fences.size, 0);
+  assert.deepEqual(w.timerWaits, []);
+  w.contextEvent('webglcontextrestored');
+  w.fenceReady = true; await w.refresh(4 * 1000 / 60);
+  assert.equal(w.frames().length, 1);
+  assert.equal(w.frames()[0].stateId, 2);
+  w.acknowledge();
 });
 
 test('short hardware completion can yield tasks without entering timer polling', async t => {

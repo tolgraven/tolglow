@@ -101,10 +101,10 @@ export class WorkerRoomPreview {
       this.actions = this.actions.filter(action => action.id > message.actionThrough); this.channel.acknowledge(message.id);
     } else if (message.type === 'status') this.setStatus(message.text);
     else if (message.type === 'render-start') {this.rendering = true; this.startedRendering = true;}
-    else if (message.type === 'render-retired') this.rendering = false;
+    else if (message.type === 'render-retired') this.rendering = !!message.rendering;
     else if (message.type === 'error') this.fail(message.message);
     else if (message.type === 'frame') {
-      this.rendering = false;
+      this.rendering = !!message.rendering;
       try {
         if (!this.visible || message.generation !== this.generation) {
           message.bitmap.close(); this.discardedFrames++; return;
