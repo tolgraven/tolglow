@@ -123,11 +123,17 @@
             options (fixture-agent/options manager fixture-agent/completed!)]
         (Files/createDirectory (.resolve ^Path root "settings-home") fixtures/attrs)
         (Files/createSymbolicLink linked (.resolve real "settings-home") fixtures/attrs)
-        (let [owner (agents/create-manager (assoc options :config-path (str (.resolve linked "settings.edn"))))]
+        (let [owner (agents/create-manager (assoc options :config-path (str (.resolve linked "config/settings.edn"))))]
           (try
             (is (:configuration-persisted? (agents/configure-provider! owner {:credential-ref fixture-agent/reference})))
-            (is (Files/isRegularFile (.resolve real "settings-home/settings.edn") (make-array LinkOption 0)))
+            (is (Files/isRegularFile (.resolve real "settings-home/config/settings.edn") (make-array LinkOption 0)))
             (finally (agents/close! owner))))
+        (testing "the settings directory itself is not followed"
+          (let [owner (agents/create-manager (assoc options :config-path (str (.resolve linked "settings.edn"))))]
+            (try
+              (is (thrown? clojure.lang.ExceptionInfo (agents/configure-provider! owner {:credential-ref fixture-agent/reference})))
+              (is (not (Files/exists (.resolve real "settings-home/settings.edn") (make-array LinkOption 0))))
+              (finally (agents/close! owner)))))
         (let [outside (.resolve ^Path root "outside-settings.edn")
               target (.resolve ^Path root "preexisting-link.edn")]
           (spit (str outside) "private unrelated file")
@@ -144,6 +150,39 @@
             (Files/createSymbolicLink (.resolve ^Path root "planted-home") (.resolve real "settings-home") fixtures/attrs)
             (is (thrown? clojure.lang.ExceptionInfo (agents/configure-provider! owner {:credential-ref fixture-agent/reference})))
             (finally (agents/close! owner))))))))
+
+(deftest workspace-parent-replaced-by-a-link-before-start-refuses-default-settings
+  ;; Review of #639: the default settings file lives in the workspace parent, so a
+  ;; parent redirected before construction must not move provider settings.
+  (let [root (Files/createTempDirectory "tolglow-application-agent-redirect-" fixtures/attrs)
+        tolglow (fixtures/repo! root "tolglow") afterglow (fixtures/repo! root "afterglow")
+        elsewhere (.resolve root "elsewhere")
+        planted (.resolve elsewhere ".tolglow-application-agents.edn")
+        options {:repositories {:tolglow (str tolglow) :afterglow (str afterglow)}
+                 :workspace-parent (str (.resolve root "branches"))
+                 :runner workspace/run-trusted-process!
+                 :check-profiles {:unit {:repo :tolglow :argv ["git" "status" "--porcelain"]}}
+                 :app-agent-options {:execute! fixture-agent/completed!
+                                     :credential-store (credentials/file-store (.resolve root "credentials.edn"))}}]
+    (try
+      (Files/createDirectory elsewhere fixtures/attrs)
+      (spit (str planted) "{:version 1 :providers {:codex {:credential-ref \"credential-00000000-0000-0000-0000-00000000dead\"}}}")
+      (Files/createSymbolicLink (.resolve root "branches") elsewhere fixtures/attrs)
+      (let [error (try (development/close! (development/create options)) nil
+                       (catch clojure.lang.ExceptionInfo error error))]
+        (is (= :unsafe-config (:app-agent/error (ex-data error)))))
+      (is (str/includes? (slurp (str planted)) "00000000dead"))
+      (is (not (Files/exists (.resolve elsewhere ".tolglow-workspaces.edn") (make-array LinkOption 0))))
+      (let [manager (workspace/create-manager (dissoc options :app-agent-options))
+            owner (agents/create-manager (assoc (fixture-agent/options manager fixture-agent/completed!)
+                                                :config-path (str (.resolve root "branches/.tolglow-application-agents.edn"))))]
+        (try
+          (is (thrown? clojure.lang.ExceptionInfo (agents/restore-configuration! owner)))
+          (is (thrown? clojure.lang.ExceptionInfo (agents/configure-provider! owner {:credential-ref fixture-agent/reference})))
+          (is (= #{".tolglow-application-agents.edn"}
+                 (set (map #(str (.getFileName ^Path %)) (iterator-seq (.iterator (Files/list elsewhere)))))))
+          (finally (agents/close! owner) (workspace/close! manager))))
+      (finally (fixtures/delete-tree! root)))))
 
 (deftest unavailable-application-agent-service-does-not-fall-back-to-show-chat
   (let [app (web/app {})]

@@ -234,6 +234,20 @@
             (try
               (is (= :symlink (symlink-error manager "linked-parent")))
               (finally (workspace/close! manager))))))
+      (testing "a dangling link on an ancestor is kept literal and refused"
+        (Files/createSymbolicLink (.resolve root "dangling") (.resolve real "missing-target") attrs)
+        (let [manager (configure (.resolve root "dangling/agent-workspaces"))]
+          (try
+            (is (= :symlink (symlink-error manager "dangling")))
+            (is (not (Files/exists (.resolve real "missing-target") (make-array LinkOption 0))))
+            (finally (workspace/close! manager)))))
+      (testing "distinct repository roots compare real locations"
+        (Files/createSymbolicLink (.resolve root "alias-tolglow") first attrs)
+        (is (= :invalid-options
+               (:workspace/error (ex-data (try (workspace/create-manager
+                                                {:repositories {:tolglow (str first) :afterglow (str (.resolve root "alias-tolglow"))}
+                                                 :workspace-parent (str (.resolve root "separate"))})
+                                               (catch clojure.lang.ExceptionInfo error error)))))))
       (testing "repository separation compares canonical locations"
         (Files/createSymbolicLink (.resolve root "linked-tolglow") first attrs)
         (is (= :invalid-parent
