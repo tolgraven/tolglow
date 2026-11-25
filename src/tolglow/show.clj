@@ -74,6 +74,7 @@
             [afterglow.output.scheduler :as output-scheduler]
             [tolglow.output.pause-look :as pause-look]
             [tolglow.effects.faults :as effect-faults]
+            [tolglow.effects.state-migration :as state-migration]
             [tolglow.show.preview :as preview]
             [tolglow.show.push-scene :as push-scene]
             [tolglow.show.recovery :as recovery]
@@ -455,6 +456,7 @@
                               :publish! #(submit! @runtime-ref :rdm-update (merge %1 %2))}))
       :response-cache (atom {:responses [] :middleware identity})
       :compute compute-owner :compiler-context compiler-context :batch? batch?
+      :state-migrations (atom {})
       :parameter-precision (atom nil)
       :optics-plan (atom (reflections/plan (:rig model)))
       :patch (atom {:fixtures fixtures :compiled patch :retirement (retirement/plan nil nil patch)
@@ -1862,7 +1864,10 @@
                                           (let [step (spatial-cues/with-aims definition ((:compile runtime) definition))]
                                             ;; Certified literals have no parameter schemas, and
                                             ;; these transforms touch only declared parameters.
-                                            (keyframes/with-inputs step inputs {:preserve-time-invariance? true})))
+                                            ;; :migrate reloads call this pure transform once, at takeover.
+                                            ;; Its compiled form is cached per declaration and version.
+                                            (state-migration/attach (:state-migrations runtime) definition
+                                                                    (keyframes/with-inputs step inputs {:preserve-time-invariance? true}))))
                            result (update (engine/advance (subscribers/with-frame-overlays model ramp-frame) frame-input compile-step
                                                           (executor/mapper (:executor runtime)))
                                           :model subscribers/without-frame-overlays model ramp-frame)

@@ -301,7 +301,7 @@
     (try
       (when-not (and (string? text) (<= (count text) 8192))
         (throw (ex-info "Invalid stream control" {})))
-      (let [{:keys [op token enabled? queries fault] :as message} (transit/decode text)]
+      (let [{:keys [op token enabled? queries fault] :as message} (transit/decode-command text)]
         (case op
           :ack (let [[old _] (swap-vals! client
                                 (fn [{:keys [pending] :as state}]
