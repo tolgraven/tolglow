@@ -1,6 +1,8 @@
 // Evaluate inside the real, foreground Studio tab. The worker listener counts
-// accepted bitmap presentations after the proxy processed each message. Main
-// rendering counts completed film passes. Neither path requests an extra draw.
+// accepted presentations after the proxy processed each message. A worker that
+// owns the canvas reports when it showed each frame, and that time is used: the
+// page can read several of its reports in one late task. Main rendering counts
+// completed film passes. Neither path requests an extra draw.
 export async function measureRoom(durationMs) {
   const canvas = document.querySelector('#preview');
   const engine = canvas?.tolglowPreview;
@@ -19,9 +21,11 @@ export async function measureRoom(durationMs) {
       workerFrameMs: t.workerFrameMs ?? null, cpuSubmitMs: t.frameCPUms ?? null,
       gpuFenceWaitMs: t.gpuCompletionWaitMs ?? null, gpuTimerMs: t.gpuTimeMs ?? null});
   };
-  const mark = () => frames.push(performance.now());
+  const mark = (at = performance.now()) => frames.push(at);
   const onBitmap = event => {
-    if (event.data?.type === 'frame' && event.data.telemetry === engine.telemetry) mark();
+    if (event.data?.type !== 'frame' || event.data.telemetry !== engine.telemetry) return;
+    const shown = event.data.telemetry.presentedAtMs;
+    mark(Number.isFinite(shown) ? shown - performance.timeOrigin : undefined);
   };
   const original = renderer.draw;
   if (worker) worker.addEventListener('message', onBitmap);
@@ -77,7 +81,8 @@ export async function measureRoom(durationMs) {
     roomOverDisplay: windowRaf.hz ? presented.hz / windowRaf.hz : null,
     withinFivePercentOfConfigured: targetHz ? presented.hz >= .95 * targetHz : null};
   return {durationMs: elapsedMs, invalid, rendererThread: worker ? 'worker' : 'main',
-    frameMeasurement: worker ? 'accepted DOM bitmap' : 'completed main-thread film pass',
+    frameMeasurement: !worker ? 'completed main-thread film pass'
+      : end.presentation === 'worker' ? 'worker canvas submission' : 'accepted DOM bitmap',
     presented, windowRaf, cadence, policySamples: samples, scales: [...scales], frameOffsetsMs: frames.map(t => t - boundary),
     qualities: [...qualities], sceneSizes: [...sizes].map(s => JSON.parse(s)), backing: [canvas.width, canvas.height],
     css: [rect.width, rect.height], dpr: devicePixelRatio, displayPixels: end.displayPixels,

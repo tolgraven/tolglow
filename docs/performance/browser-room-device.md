@@ -36,6 +36,19 @@ Sampling starts after both eight warm seconds and four additional renderer frame
 
 Auto first chooses desktop or mobile from viewport and pointer, or low for an identified software renderer. After its first draw, it compares measured work with the current tier's frame budget. Four consecutive samples above 135% reduce internal scale, with a one-second hold between changes. Eight such samples at the 0.5 floor allow a tier drop. Sixty samples below 65% can restore scale and then a tier. Before the display-cadence change, mobile and desktop always requested 120 Hz and low requested 10 Hz. The current Auto policy samples the foreground display, uses its measured frequency up to 120 Hz, and can use low spatial quality on hardware without forcing a 10 Hz rate. Manual low and software rendering retain the 10 Hz cap. The worker also spaces frames using measured work and its GPU fence; a fence wait includes scheduling time. A missing GPU timer is recorded as null. Chrome's M4 model identity alone does not select low.
 
+## Compare two Room bundles without a show
+
+`dev/preview/room-load-run.mjs` serves a released bundle and this checkout's bundle on loopback, starts its own Chrome profile and alternates the two through the synthetic rig in `dev/preview/room-load.mjs`. It needs `npm ci` and `npm run preview:build`. No JVM, show or fixture output is involved.
+
+```sh
+node dev/preview/room-load-run.mjs --out target/room-load.json
+node dev/preview/room-load-run.mjs --headed --position 0,0 --window 1172x927 --out target/room-load-foreground.json
+```
+
+The first form uses headless Chrome with the real GPU. Its frame source is a synthetic 60 Hz clock and nothing is scanned out, so it measures rendering and canvas submission only. The second opens a Chrome window at that screen position, on whichever display contains it. Leave the window focused and unobstructed until it closes. The report records focus, visibility, the page's animation callback rate and the display rate the renderer believed. `--baseline` takes a git ref or a directory, and each `--scenario` sets `installRoomLoad` options such as `heads=64,quality=auto,busy=45/50`.
+
+Accepted presentations are canvas submissions. The browser commits a canvas once per display frame, so `distinctRefreshHz` estimates how many refreshes per second received a new image. Scanout itself is not instrumented by either form.
+
 ## Physical M4 Air baseline
 
 The local operator measured Chrome 158, ANGLE Metal, with a 16 GB M4 Air (10 CPU cores, 8 GPU cores) on AC and macOS 27.2.1. DPR was 1.8, the canvas backing was 2806 × 1260, and the display delivered approximately 60 Hz. Both fixed tiers held scale 1. Each sample had eight emitting heads and verified pan motion in the dense scene.

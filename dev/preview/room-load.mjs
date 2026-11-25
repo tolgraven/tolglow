@@ -9,7 +9,12 @@
 //   console.log(await load.measure(8000, 4000)); load.dispose();
 //
 // Presentation times come from the worker when it owns the canvas, otherwise
-// from the page task that showed the bitmap.
+// from the page task that showed the bitmap. Either is a canvas submission, not
+// scanout: the browser commits a canvas once per display frame, so two
+// submissions inside one refresh show only the later. `distinctRefreshHz`
+// estimates the refresh intervals per second that received a new image, at the
+// display rate the renderer believed, and `gapsUnder2Ms` counts submissions
+// made in the same task as their predecessor.
 // `rafHz` is the page's animation callback rate and `longTasks` its blocked
 // time. A hidden or background page throttles both; say so with the numbers.
 export async function installRoomLoad({base = '/studio/', heads = 8, pixels = 0, stripLength = 200, feedHz = 40, quality = 'auto', fog = .3, workLight = .12, lightingMode = 'hold', mainThread = false, surface = true, displayHz = null, busy = null, workerPrefix = ''}) {
@@ -86,8 +91,13 @@ export async function installRoomLoad({base = '/studio/', heads = 8, pixels = 0,
       const gaps = xs => xs.slice(1).map((t, i) => t - xs[i]);
       const col = i => tele.map(r => r[i]).filter(Number.isFinite);
       const t = engine.getTelemetry();
+      // Adjacent submissions closer than one refresh share a display frame with
+      // probability 1 - gap / refresh, for any phase of the display clock.
+      const refresh = 1000 / (t.displayHz || 60), shared = gaps(frames).reduce((sum, gap) => sum + Math.max(0, 1 - gap / refresh), 0);
       return {heads, pixels, quality, fogAmount: fog, lightingMode, elapsedMs: Math.round(elapsed), focused: document.hasFocus(), hidden: document.hidden,
         presentedHz: +(frames.length * 1000 / elapsed).toFixed(2), frameGapP50: q(gaps(frames), .5), frameGapP95: q(gaps(frames), .95),
+        frameGapP99: q(gaps(frames), .99), frameGapMax: q(gaps(frames), 1), gapsUnder2Ms: gaps(frames).filter(gap => gap < 2).length,
+        distinctRefreshHz: +((frames.length - shared) * 1000 / elapsed).toFixed(2),
         rafHz: +(rafs.length * 1000 / elapsed).toFixed(2), fedHz: +((frame - f0) * 1000 / elapsed).toFixed(2),
         mainUpdateMsP50: q(feedMs, .5), mainUpdateMsP95: q(feedMs, .95), longTasks: long.length, longTaskMsTotal: Math.round(long.reduce((a, b) => a + b, 0)),
         workerFrameMs: [q(col(0), .5), q(col(0), .95)], gpuFenceWaitMs: [q(col(1), .5), q(col(1), .95)], cpuSubmitMs: [q(col(2), .5), q(col(2), .95)],
