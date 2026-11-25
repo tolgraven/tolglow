@@ -44,7 +44,7 @@ java -Xmx384m -Djava.awt.headless=true \
 cmp /tmp/legacy-oracle.edn "$oracle/legacy.edn"
 ```
 
-[`legacy.edn`](legacy.edn) contains every original byte. [`paired-report.edn`](paired-report.edn) records each mismatch as `[universe address legacy paired]`, with 1-based DMX addresses. The comparison command exits nonzero if the generated report differs from the checked report. Intentional output changes require review of the exact updated bytes.
+[`legacy.edn`](legacy.edn) contains every original byte. [`paired-report.edn`](paired-report.edn) records each mismatch as `[universe address legacy paired]`, with 1-based DMX addresses. The comparison command exits nonzero if the generated report differs from the checked report. Intentional output changes require review of the exact updated bytes. On a mismatch the error data carries `:only-expected` and `:only-observed` from `clojure.data/diff`, and the emitted report remains on disk for a file diff. The receipts' `:source` names the pair that first produced them; `tolglow.legacy-frame-oracle-test` in the `test-pure` lane re-verifies them against the current checkout and paired Afterglow.
 
 ## Observed differences
 

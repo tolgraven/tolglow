@@ -5,6 +5,7 @@
             [afterglow.render.frame :as render]
             [afterglow.runtime.engine :as engine]
             [afterglow.runtime.replay :as replay]
+            [clojure.data :as data]
             [tolglow.compiler :as compiler]
             [tolglow.compiler.batch :as batch]
             [tolglow.legacy-frame-oracle.scenario :as scenario]))
@@ -101,7 +102,9 @@
 
 (defn- ensure-equal! [message expected observed]
   (when-not (= expected observed)
-    (throw (ex-info message {:expected expected :observed observed}))))
+    (let [[only-expected only-observed] (data/diff expected observed)]
+      (throw (ex-info message {:only-expected only-expected :only-observed only-observed
+                               :expected expected :observed observed})))))
 
 (defn- byte-differences [legacy paired]
   (ensure-equal! "Universe sets differ" (set (keys legacy)) (set (keys paired)))
