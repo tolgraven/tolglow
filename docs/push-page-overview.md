@@ -31,6 +31,12 @@ touch strip step through exact ratios for bounded beat-ratio parameters,
 independent of Shift fine tuning. Studio's **Cue variations** panel under a
 running cue's Detail controls also accepts numerator and denominator directly.
 
+On Push 3, set `:cue-variations? true` on the connection and bind a captured
+encoder to the beat-ratio parameter. Encoder turns follow the same Preferred
+or Free setting. Hold Accent before touching the encoder to try a ratio and
+restore its previous value when you lift your finger. Set the ratio mode for
+the running cue from Studio or the REPL.
+
 ```clojure
 (let [options {:instance-id instance-id :layout :full :seed 0}
       preview (show/cue-variation-preview runtime options)
