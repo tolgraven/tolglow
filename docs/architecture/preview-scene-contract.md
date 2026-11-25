@@ -160,9 +160,8 @@ render-independent show-control deadline even if the preview reduces quality.
 
 ## Display refresh and committed lighting
 
-The default **Follow show frames** presents each committed fixture output on
-arrival. Camera movement and the atmospheric pass use local display time. The
-mobile, desktop and high quality tiers request display callbacks up to 120 Hz.
+Camera movement and the atmospheric pass use local display time. The mobile,
+desktop and high quality tiers request display callbacks up to 120 Hz.
 The low tier retains a 10 Hz budget for software rendering. Actual cadence
 depends on the display, GPU completion time, graphics settings and browser.
 Auto quality reduces target dimensions after repeated over-budget frames and
@@ -174,8 +173,8 @@ Workers use display callbacks when supported and an elapsed-time deadline on
 browsers that only provide worker timers. A worker waits for the previous GPU
 frame and bitmap acknowledgement before scheduling another draw.
 
-**Smooth · one frame delay** blends the two latest consecutive committed frames
-over their timestamp difference, normally 25 ms. Only linear emitted RGB,
+The default **Smooth · one frame delay** blends the two latest consecutive
+committed frames over their timestamp difference, normally 25 ms. Only linear emitted RGB,
 dimmer, intensity and resolved pan/tilt travel can blend. Axis interpolation
 uses fixture calibration and the backend's chosen physical travel. Missing axes
 and half-turn jumps follow the latest resolved direction. Fixture functions,
@@ -184,7 +183,8 @@ A shutter transition, tagged fixture cut, or active strobe snaps the fixture to 
 sample when updates stall. A reconnect with a new runtime or epoch, rig edit,
 command revision, blackout transition, observed lifecycle cut or skipped frame
 starts a fresh pair. Authored steps on continuous parameters can still look
-smoother in this mode. Use **Follow show frames** to see their exact timing.
+smoother in this mode. **Follow show frames** presents each committed fixture
+output on arrival so you can inspect its exact timing.
 
 The canvas consumes the acknowledged server projection. The worker receives the
 rig once per change and receives new output independently from camera input.
