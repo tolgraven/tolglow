@@ -365,6 +365,42 @@
 #view-perform .cue-index { position: static; font-size: 9px; font-weight: 500; line-height: 12px; font-variant-numeric: tabular-nums; color: #e3e9dd; opacity: .78; }
 #view-perform .cue-dot { position: static; justify-self: end; }
 #view-perform .cue-name { grid-column: 1 / -1; align-self: end; font-weight: 550; line-height: 1.15; font-size: 12px; overflow-wrap: anywhere; }
+/* Running pads breathe with the transport, like playing clips on Push (#659).
+   One clock on #cue-grid sets --breath (raised cosine, peak on the beat),
+   --release-blink (Afterglow's ending blink: bright for the first 40% of a
+   beat) and --queued-flash (half-beat blink). This light layer sits between
+   the pad's live preview colour and its label, so the preview keeps playing
+   underneath. Opacity alone changes per frame. */
+.cue-cell { isolation: isolate; }
+.cue-cell:not(.empty)::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(130% 100% at 50% 110%,
+              color-mix(in srgb, var(--cue-color) 82%, white) 0%,
+              color-mix(in srgb, var(--cue-color) 30%, transparent) 52%,
+              transparent 82%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cue-color) 75%, white),
+              inset 0 0 16px color-mix(in srgb, var(--cue-color) 40%, transparent);
+  opacity: 0;
+  will-change: opacity;
+}
+.cue-cell.running::before { opacity: calc(.12 + .6 * var(--breath, .5)); }
+.cue-cell.held::before { opacity: calc(.55 + .35 * var(--breath, .5)); }
+.cue-cell.releasing::before { opacity: calc(.05 + .25 * var(--release-blink, 0)); transition: opacity 90ms linear; }
+.cue-cell.queued:not(.active)::before { opacity: calc(.06 + .3 * var(--queued-flash, 0)); transition: opacity 90ms linear; }
+.cue-cell.queued .cue-dot { opacity: calc(.3 + .7 * var(--queued-flash, 1)); }
+@media (prefers-reduced-motion: reduce) {
+  .cue-cell:not(.empty)::before { transition: none; }
+  .cue-cell.running::before { opacity: .4; }
+  .cue-cell.held::before { opacity: .62; }
+  .cue-cell.releasing::before { opacity: .14; }
+  .cue-cell.queued:not(.active)::before { opacity: .22; }
+  .cue-cell.queued .cue-dot { opacity: 1; }
+}
 @container (min-width: 660px) {
   #view-perform .cue-cell:not(.empty) { padding: 8px; }
   #view-perform .cue-name { font-size: 13px; }

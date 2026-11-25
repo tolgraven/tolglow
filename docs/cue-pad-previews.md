@@ -31,6 +31,32 @@ expression using the effect's existing parameter schema.
 Set `:pad-preview false` for a static pad. A missing target, unsupported
 definition or invalid expression falls back to its authored color.
 
+## Breathing pads
+
+On the web grid, a pad whose cue has a running instance breathes once per beat
+over its preview colour, like a playing clip on a Push session view. The
+breath peaks on the downbeat, the same phase convention as Afterglow's
+`snapshot-beat-phase`. A releasing pad blinks bright for the first 40% of each
+beat and dim for the rest, as Afterglow's Push grid blinks an ending cue. A
+queued pad flashes twice per beat, and a pad held in **Hold** mode keeps a
+brighter floor. The preview sample and the light layer are separate, so the
+preview animation keeps playing underneath. With `prefers-reduced-motion` the
+pads show a steady running indicator instead.
+
+One shared animation frame loop drives every pad on the page. It runs only
+while the page has a running, releasing or queued pad and the transport is
+playing. It interpolates the latest projected transport sample (`:beat`,
+`:bpm`, `:playing?`) between stream frames and re-anchors on each new sample
+or transport generation, so a tempo change or seek takes effect on the next
+frame. It holds the last beat after two seconds without a sample. It writes
+`--beat-phase`, `--breath`, `--release-blink` and `--queued-flash` on
+`#cue-grid`, and each pad's CSS reads them. The phase functions live in
+[`pad_breath.cljs`](../src/studio/tolglow/studio/pad_breath.cljs).
+
+From the REPL, the same inputs are `(:transport (show/snapshot runtime))` and
+each instance's `:phase`. The physical Push adapter scales the preview sample
+by state, as described above, and does not breathe yet.
+
 ## Timing and ownership
 
 A worker samples the present and predicted color a quarter beat apart, bounded
