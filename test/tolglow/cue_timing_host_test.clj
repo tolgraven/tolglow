@@ -237,6 +237,25 @@
       (is (empty? (:instances (model runtime))))
       (finally (show/stop! runtime)))))
 
+(deftest one-clock-fence-projects-every-pending-miss-in-order
+  (let [runtime (show/create-runtime {:workspace-options nil})
+        manager (connections/sync (:connections runtime))
+        ids (mapv #(str "pending-" %) (range 128))
+        source {:adapter :web :session-id "queue-test"}]
+    (try
+      (let [replies (mapv #(show/submit! runtime {:op :cue/launch :cue-id :ember :command-id %
+                                                 :grid {:bars 1} :source source}) ids)]
+        (show/tick! runtime 125)
+        (is (every? #(= :pending (:status (deref % 1000 nil))) replies))
+        (sync/select-source! manager :midi-clock)
+        (show/tick! runtime 150)
+        (let [snapshot (show/snapshot runtime)
+              missed (:cue-launch-outcomes snapshot)]
+          (is (empty? (:pending-cue-launches snapshot)))
+          (is (= ids (mapv :command-id missed)))
+          (is (every? #(= :clock-changed (:reason %)) missed))))
+      (finally (show/stop! runtime)))))
+
 (deftest live-recording-observes-each-fire-even-when-retry-history-evicts-it
   (let [runtime (show/create-runtime {:workspace-options nil
                                      :model (assoc-in (demo/model) [:control :history-limit] 1)})

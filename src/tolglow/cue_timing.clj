@@ -8,7 +8,8 @@
 (def ^:private early-path (conj path :early-releases))
 (def ^:private held-lease-ms 10000)
 (def ^:private feedback-path (conj path :feedback))
-(def ^:private feedback-limit 64)
+;; Keep a full tick's clock-fenced pending launches plus ordinary intake.
+(def ^:private feedback-limit 384)
 
 (defn active? [model] (some? (get-in model path)))
 
@@ -47,7 +48,7 @@
 
 (defn- emit [model event receipt]
   (let [status (:status receipt)
-        owner (when (#{:missed :fired :cancelled} status)
+        owner (when (= :missed status)
                 (source-owner (source model (:command-id receipt))))
         model (if (web-source? owner)
                 (let [outcome (assoc (select-keys receipt [:command-id :cue-id :status :reason :code :instance-id])
