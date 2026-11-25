@@ -325,6 +325,10 @@
                         (assoc-in [:fixtures 0 :color-correction] {:red 0.5})
                         (assoc-in [:fixtures 1 :color-correction] {:green 0.75 :white 0.5}))]
       (try
+        (doseq [trims [{:red 1.2} {:green -0.1} {:white 0.5} {:dimmer 0.5}]
+                :let [fixture (if (= {:white 0.5} trims) 0 1)]]
+          (is (= :rejected (:status (issue! rt clock :rig (assoc-in rig [:fixtures fixture :color-correction] trims))))
+              (str "invalid trim " trims)))
         (is (= :accepted (:status (issue! rt clock :rig corrected))))
         (is (= :accepted (:status (issue! rt clock :lighting-scene
                                     {:op :apply :group-id :pair :effect-ids [:lit-pair]
