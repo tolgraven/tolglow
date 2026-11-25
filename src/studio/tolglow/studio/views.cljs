@@ -359,6 +359,27 @@
                :aria-label (str "Preview " label)
                :on-change #(when-let [v (number-value %)] (input! [:studio/preview-setting key v]))}]])])
 
+(defn- scene-draft-banner [db]
+  (when-let [{:keys [id revision operations status due-beat pending? connected?]} (events/scene-draft-control db)]
+    (let [busy? (or pending? (not connected?))
+          scheduled? (= :scheduled status)]
+      [:div.scene-draft-banner {:role "status" :aria-label "Room draft audition" :data-draft-id id}
+       [:div [:strong "Draft audition"]
+        [:span.small.muted (str " · " id " · revision " revision " · " operations " staged"
+                                (case status
+                                  :scheduled (str " · applies at beat " due-beat)
+                                  :stale " · stale: the rig changed"
+                                  :error " · audition failed"
+                                  nil))]
+        [:p.small.muted "The Room shows this draft. Live output is unchanged until you apply it."]]
+       [:div.button-row
+        [:button.button.primary {:type "button" :disabled (or busy? scheduled? (#{:stale :error} status))
+                                 :on-click #(send! [:studio/scene-draft-apply nil])} "Apply"]
+        [:button.button {:type "button" :disabled (or busy? scheduled? (#{:stale :error} status))
+                         :on-click #(send! [:studio/scene-draft-apply {:bars 1}])} "Apply on next bar"]
+        [:button.text-button {:type "button" :disabled busy?
+                              :on-click #(send! [:studio/scene-draft-discard])} "Discard"]]])))
+
 (defn- preview-panel [db]
   [:section#preview-panel.preview-panel.panel {:aria-label "Live fixture preview"
                                               :class (when (get-in db [:ui :preview-expanded?]) "expanded")}
@@ -372,6 +393,7 @@
                             :on-click #(send! [:studio/preview-expand])} (if (get-in db [:ui :preview-expanded?]) "Compact" "Expand")]
      [:button.icon-button {:type "button" :aria-label "Fullscreen preview" :title "Fullscreen preview"
                             :on-click #(input! [:studio/preview-fullscreen])} "⛶"]]]
+   [scene-draft-banner db]
    [spatial-preview/scene (or (:server-presentation db) (:show db)) (get-in db [:server-projection :view :settings :spatial]) :perform]
    [camera-controls/controls]
    (when (get-in db [:ui :preview-controls?])

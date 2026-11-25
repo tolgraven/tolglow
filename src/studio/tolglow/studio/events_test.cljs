@@ -1485,3 +1485,28 @@
                                             {:status "pending" :message "Command remains queued"}))]
       (is (= saved (draft queued)))
       (is (nil? (:pending (spatial-drafts/state queued)))))))
+
+(deftest room-draft-controls-apply-or-discard-the-staged-revision
+  (let [view (assoc (:show base) :runtime-id "draft-owner" :show-id :main
+                    :scene-draft {:draft {:id "scene" :revision 2 :operations [{:op :cue/launch} {:op :instance/end}]}
+                                  :status :auditioning})
+        db (:db (full-frame base view))
+        applying (transition db [:studio/scene-draft-apply {:bars 1}])
+        [_ sent] (first (:fx applying))
+        reply (transition (:db applying) (conj (:on-success sent) {:status "scheduled" :due-beat 8}))
+        discarding (transition db [:studio/scene-draft-discard])
+        [_ dropped] (first (:fx discarding))
+        failed (transition (:db discarding) (conj (:on-failure dropped) "Stale draft"))
+        idle (:db (full-frame base (:show base)))]
+    (is (= {:id "scene" :revision 2 :operations 2 :status :auditioning :due-beat nil :pending? false :connected? true}
+           (events/scene-draft-control db)))
+    (is (= "scene-draft/apply" (:op sent)))
+    (is (= {:draft-id "scene" :expected-draft-revision 2 :grid {:bars 1}} (dissoc (:fields sent) :command-id)))
+    (is (= (get-in applying [:db :scene-draft-request :id]) (get-in sent [:fields :command-id])))
+    (is (:pending? (events/scene-draft-control (:db applying))))
+    (is (= [:studio/toast "Room draft applies at beat 8."] (:dispatch reply)))
+    (is (nil? (get-in reply [:db :scene-draft-request])))
+    (is (= "scene-draft/discard" (:op dropped)))
+    (is (= [:studio/failure "Room draft: Stale draft"] (:dispatch failed)))
+    (is (nil? (events/scene-draft-control idle)))
+    (is (empty? (transition idle [:studio/scene-draft-discard])))))

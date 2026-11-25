@@ -591,6 +591,47 @@
   (fn [{:keys [db]} [_ owner {:keys [instance-id]}]]
     (when (and instance-id (current-show? (:show db) owner))
       {:db (assoc-in db [:ui :selected-instance] instance-id)})))
+(defn scene-draft-control
+  "The staged Room draft as Studio shows it, or nil."
+  [db]
+  (when-let [{:keys [draft status pending-apply]} (get-in db [:server-projection :view :scene-draft])]
+    (when draft
+      {:id (:id draft) :revision (:revision draft) :operations (count (:operations draft))
+       :status (keyword status) :due-beat (:due-beat pending-apply)
+       :pending? (= (:id draft) (get-in db [:scene-draft-request :draft-id]))
+       :connected? (true? (get-in db [:connection :connected?]))})))
+
+(defn- scene-draft-fx [db unique op fields]
+  (let [{:keys [id revision]} (scene-draft-control db)]
+    (when id
+      {:db (assoc db :scene-draft-request {:id unique :draft-id id})
+       :fx [(-> (command db op (merge {:draft-id id :expected-draft-revision revision} fields)
+                         [:studio/scene-draft-result unique])
+                (assoc-in [1 :fields :command-id] unique)
+                (assoc-in [1 :on-failure] [:studio/scene-draft-failed unique]))]})))
+
+(rf/reg-event-fx :studio/scene-draft-apply [(rf/inject-cofx :studio/unique)]
+  (fn [{:keys [db unique]} [_ grid]]
+    (scene-draft-fx db unique "scene-draft/apply" (when grid {:grid grid}))))
+
+(rf/reg-event-fx :studio/scene-draft-discard [(rf/inject-cofx :studio/unique)]
+  (fn [{:keys [db unique]} _]
+    (scene-draft-fx db unique "scene-draft/discard" nil)))
+
+(rf/reg-event-fx :studio/scene-draft-result
+  (fn [{:keys [db]} [_ id {:keys [status due-beat discarded?]}]]
+    (when (= id (get-in db [:scene-draft-request :id]))
+      {:db (dissoc db :scene-draft-request)
+       :dispatch [:studio/toast (cond discarded? "Room draft discarded."
+                                      (#{:scheduled "scheduled"} status) (str "Room draft applies at beat " due-beat ".")
+                                      :else "Room draft applied to the show.")]})))
+
+(rf/reg-event-fx :studio/scene-draft-failed
+  (fn [{:keys [db]} [_ id message]]
+    (when (= id (get-in db [:scene-draft-request :id]))
+      {:db (dissoc db :scene-draft-request)
+       :dispatch [:studio/failure (str "Room draft: " message)]})))
+
 (rf/reg-event-fx :studio/end-all
   (fn [{:keys [db]} _] {:fx (mapv #(command db "instance/end" {:instance-id (:id %)}) (get-in db [:show :instances]))}))
 

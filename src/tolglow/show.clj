@@ -74,6 +74,7 @@
             [tolglow.effects.faults :as effect-faults]
             [tolglow.show.preview :as preview]
             [tolglow.show.push-scene :as push-scene]
+            [tolglow.show.scene-draft :as scene-draft]
             [tolglow.show.recovery :as recovery]
             [tolglow.show.lighting :as lighting]
             [tolglow.integrations.analysis :as analysis]
@@ -169,7 +170,11 @@
         definitions (precision/model-definitions (:parameter-precision runtime) model)
         gains (if (identical? fixtures (:fixtures patch))
                 (:brightness-gains patch)
-                (preview/brightness-gains fixtures))]
+                (preview/brightness-gains fixtures))
+        audition (:scene-audition snapshot)
+        ;; A Room audition replaces only the preview values. Packets, fog and
+        ;; capacity readings stay those of the committed live frame.
+        preview-output (or (:output audition) output)]
     (merge (select-keys model [:show-id :epoch :revision :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
             :section-patterns-enabled? (some? (:section-patterns runtime))
@@ -224,7 +229,9 @@
             :compositions (mapv #(assoc % :running? (contains? (:composition-runs model) (:id %))
                                         :playback (get-in model [:composition-runs (:id %) :playback]))
                                 (sort-by (comp str :id) (vals (:compositions model))))
-            :output {:values (reflections/with-footprints optics (preview/values output fixtures gains))
+            :scene-draft (not-empty (dissoc audition :output))
+            :output {:values (reflections/with-footprints optics (preview/values preview-output fixtures gains))
+                     :draft (when (:output audition) (select-keys (:draft audition) [:id :revision]))
                      :edge-tracking (:edge-tracking output [])
                      :atmosphere (:atmosphere output)
                      :fog-control (fog-control/view (:fog-control output))
@@ -388,6 +395,7 @@
       :leases (atom {})
       :audio-returns (duplex/create) :open-audio-returns! (get options :open-audio-returns! duplex/open-java!)
       :variable-plan (volatile! nil) :scene-eligible (atom {}) :scene-plans (volatile! {})
+      :scene-draft (atom nil)
       :capacity-plan (volatile! nil) :capacity-audio (volatile! nil)
       :audio-input (atom {:epoch (:epoch model) :events [] :features nil})
       :section-patterns music
@@ -605,8 +613,102 @@
       {:model model :events [] :ack {:status :rejected :command-id (:command-id payload) :code code :message message}}
       (command model payload time-ms authority))))
 
+(def ^:private audition-state-keys
+  [:keyframes :variable-observation :spatial-cache :hdr-scope :autopilot-cache :lighting-history
+   :parameter-samples :modulation-view :preview-hdr])
+
+(defn- audition-caches
+  "Private render caches. The audition never resets or reuses live caches."
+  []
+  {:patch (atom nil) :capacity-plan (volatile! nil) :pause-layer-cache (volatile! nil)
+   :response-cache (atom {:responses [] :middleware identity})
+   :variable-plan (volatile! nil) :scene-plans (volatile! {})})
+
+(defn- begin-audition
+  "Start a private timeline from the committed frame state. Its first frame
+  renders the staged model with the live frame's previous state, as the live
+  show would after applying the draft at the staging time."
+  [runtime draft]
+  (let [before @(:state runtime)]
+    {:draft draft :caches (audition-caches) :next-model (:model draft)
+     :frame (assoc (select-keys before audition-state-keys)
+                   :model (:model before)
+                   ;; Response smoothing seeds from the previous packets. Copy them so the
+                   ;; audition never shares a buffer owned by live output.
+                   :output (-> (:output before)
+                               (dissoc :fog-demands :fog-control)
+                               (update :universes update-vals #(aclone ^bytes %))))}))
+
+(defn- scene-draft-command
+  "Owner admission for Room drafts. Stage and discard change only owner draft
+  state. Apply commits through one command transaction, now or at a grid
+  boundary on the show transport."
+  [runtime model payload time-ms]
+  (let [command (merge {:command-id (str (UUID/randomUUID)) :show-id (:show-id model) :epoch (:epoch model)
+                        :source {:adapter :studio :session-id "studio"}}
+                       payload {:time-ms time-ms})
+        {:keys [command-id draft-id op]} command
+        state (:scene-draft runtime)
+        {:keys [draft pending-apply]} @state
+        reply (fn [status details]
+                {:model model
+                 :ack (merge (select-keys model [:show-id :epoch :revision])
+                             {:status status :command-id command-id} details)})
+        reject (fn [code message] (reply :rejected {:code code :message message}))
+        cached (get-in model [:control :history command-id])]
+    (cond
+      (not= [(:show-id model) (:epoch model)] [(:show-id command) (:epoch command)])
+      (reject :stale-epoch "The draft command belongs to another show session")
+
+      (and cached (= op :scene-draft/apply))
+      {:model model :ack (:ack cached) :replayed? true}
+
+      (and pending-apply (= command-id (get-in pending-apply [:command :command-id])))
+      (reply :scheduled (merge (select-keys pending-apply [:due-beat :grid]) {:draft-id (:id draft) :duplicate? true}))
+
+      (and pending-apply (not= op :scene-draft/discard))
+      (reject :apply-pending "The draft is already scheduled to apply; discard it to cancel")
+
+      (= op :scene-draft/stage)
+      (let [{:keys [ack] staged :draft} (scene-draft/stage model draft command time-ms)]
+        (when staged (reset! state (begin-audition runtime staged)))
+        {:model model :ack (assoc ack :command-id command-id)})
+
+      (nil? draft) (reject :no-draft "No Room draft is staged")
+
+      (not= draft-id (:id draft)) (reject :wrong-draft "Another Room draft is staged")
+
+      (= op :scene-draft/discard)
+      (do (reset! state nil)
+          (reply :accepted {:draft-id draft-id :draft-revision (:revision draft) :discarded? true
+                            :cancelled-apply (get-in pending-apply [:command :command-id])}))
+
+      (not= (:expected-draft-revision command) (:revision draft))
+      (reject :stale-draft "The draft changed before application")
+
+      (and (some? (:grid command)) (not= :off (:grid command)))
+      (try
+        (let [due-beat (scene-draft/grid-boundary (:grid command) (:transport model))
+              pending {:command (dissoc command :grid :time-ms) :grid (:grid command) :due-beat due-beat
+                       :clock (cue-clock-identity runtime model)
+                       :requested-at {:time-ms time-ms :beat (get-in model [:transport :beat])}}]
+          (swap! state assoc :pending-apply pending)
+          (reply :scheduled {:draft-id draft-id :draft-revision (:revision draft) :due-beat due-beat :grid (:grid command)}))
+        (catch clojure.lang.ExceptionInfo error
+          (reject (:code (ex-data error) :invalid-grid) (ex-message error))))
+
+      :else
+      (let [result (scene-draft/apply-draft model draft (dissoc command :grid))]
+        (when (= :accepted (get-in result [:ack :status]))
+          (reset! state {:last-outcome (assoc (select-keys (:ack result) [:command-id :revision :draft-id :draft-revision])
+                                              :status :applied :time-ms time-ms)}))
+        result))))
+
 (defn- dispatch-owner-command [runtime model payload time-ms authority]
   (cond
+    (scene-draft/operations (:op payload))
+    (scene-draft-command runtime model payload time-ms)
+
     (and (= :cue/launch (:op payload)) (contains? payload :grid))
     (cue-timing/schedule model (cue-clock-identity runtime model) time-ms
                          (assoc (select-keys payload [:grid :raw]) :command (dissoc payload :grid :raw))
@@ -1507,6 +1609,265 @@
                                    options (or (pause-look/blackout? model) (zero? (:master model)))
                                    (assoc slot :timeline-id clock-id :output-context @(:patch runtime)))))
 
+(defn- render-frame
+  "Render one lighting frame from a model whose inputs this cycle already owns.
+  The live owner and a private Room audition call this same path. Callers
+  supply `before`, the previous frame state of that same timeline. With
+  :audition? the frame uses private caches and no worker pool, renders on
+  the CPU where it can, and never plans fog or keeps cadence samples.
+  Nothing here sends output, invokes callbacks or performs device IO."
+  [runtime before model time-ms {:keys [started frame-start-ns photo-session sampling-session audition?]}]
+  (let [parameter-samples (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)}
+                                                   (get-in before [:parameter-samples :plans]))
+        control-view (if (seq (:overrides parameter-samples))
+                       (update (:modulation-view before) :overrides
+                               #(merge-with merge % (:overrides parameter-samples)))
+                       (:modulation-view before))
+        patch (patch! runtime (get-in model [:rig :fixtures]))
+        space (when (or (get-in model [:settings :spatial :enabled?]) (get-in model spatial/state-path) (spatial-cues/needed? model))
+                (spatial/advance model (assoc before :modulation-view control-view) time-ms (reactions runtime) command))
+        model (or (:model space) model)
+        conductor? (autopilot-config/enabled? model)
+        calibrating? (or photo-session (calibration/current model) (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
+        bypass? (or calibrating? (false? (get-in model [:transport :playing?])) (pause-look/blackout? model))
+        hard-off? (or (pause-look/blackout? model) (zero? (:master model)))
+        suspended? (or bypass? hard-off?)
+        meter-plan (when (or conductor? (lighting/needs-meter? (:settings model))) (capacity-plan! runtime patch))
+        ;; An audition renders on the CPU unless its compiled steps need the
+        ;; compute owner's expression fields.
+        resolve-frame (compute/frame-renderer (when (or (not audition?) (compute/expressions-enabled? (:compute runtime)))
+                                                (:compute runtime)) frame-start-ns)
+        previous-cache (when (= (:epoch model) (get-in before [:model :epoch])) (:autopilot-cache before))
+        prior-output (when (and (= (:epoch model) (get-in before [:model :epoch]))
+                                (identical? (:rig model) (get-in before [:model :rig])))
+                       (:output before))
+        prepared (when (or conductor? (get-in model autopilot/run-path))
+                   (autopilot/prepare model previous-cache patch meter-plan time-ms suspended?
+                     (delay (if (and (:blocks previous-cache) (identical? patch (get-in previous-cache [:plan :patch])))
+                              (resolve-frame patch (:blocks previous-cache) (:raw-options previous-cache))
+                              prior-output)) command control-view prior-output))
+        model (autopilot/start-hdr-clock (or (:model prepared) model) time-ms)
+        hdr? (or conductor? (get-in model [:settings :hdr :enabled?]))
+        hdr-scope (when hdr? (autopilot/standalone-scope (:hdr-scope before) model patch))
+        hdr-opts (when hdr? (or (autopilot/render-options (assoc model :time-ms time-ms) prepared suspended?
+                                                           control-view hdr-scope) {}))
+        modulation-result (modulation/advance (:modulation model) model
+                                               {:time-ms time-ms :transport (:transport model)})
+        model (assoc model :modulation (:state modulation-result))
+        input-overrides (merge-with merge (:overrides modulation-result) (:overrides parameter-samples)
+                                    (get-in space [:fields :overrides]))
+        modulation-middleware (modulation/middleware input-overrides)
+        _ (when-not audition? (prepare-compiler! runtime (get-in model [:rig :fixtures])))
+        variable-plan (variable-blocks/prepare! (:variable-plan runtime) (get-in model [:settings :variable-blocks]) (prefabs/catalog model))
+        variables (variable-blocks/sample variable-plan model time-ms (:variable-observation before))
+        model (variable-blocks/collect-events model (:variable-observation before) variables)
+        variable-inputs (when variables (:variables (variable-blocks/resolved model variables)))
+        sampling (when sampling-session (vreset! sampling-session (cadence/begin runtime before model)))
+        frame-input (merge {:time-ms time-ms :epoch (:epoch model) :show-id (:show-id model)
+                            :keyframes (:keyframes before) :keyframe-params input-overrides
+                            :keyframe-generation (:responses model) :spatial-aims (get-in space [:fields :aims])
+                            :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
+                           (connections/effect-frame-inputs (:connections runtime) (:epoch model))
+                           (:inputs sampling))
+        group-levels (group-channels/frame-levels model)
+        ;; Spatial membership is attached after the engine runs. Keep
+        ;; those contributions intact until their native member mix.
+        spatial-groups (get-in space [:fields :groups])
+        spatial-levels (when (and group-levels spatial-groups)
+                         (not-empty (select-keys group-levels (keys spatial-groups))))
+        engine-levels (if spatial-levels
+                        (not-empty (apply dissoc group-levels (keys spatial-levels)))
+                        group-levels)
+        frame-input (cond-> frame-input
+                      variables (assoc :resolved-variables variable-inputs)
+                      engine-levels (assoc ::engine/opacity-factors engine-levels))
+        response (response-middleware! runtime (:responses model []))
+        inputs (comp response modulation-middleware)
+        compile-step (fn [definition]
+                       (let [step (spatial-cues/with-aims definition ((:compile runtime) definition))]
+                         ;; Certified literals have no parameter schemas, and
+                         ;; these transforms touch only declared parameters.
+                         (keyframes/with-inputs step inputs {:preserve-time-invariance? true})))
+        result (if audition?
+                 (engine/advance model frame-input compile-step)
+                 (engine/advance model frame-input compile-step
+                                 (executor/mapper (:executor runtime))))
+        manual-aim (surface-aim/contribution model patch)
+        pause-layer (pause-layer! runtime model)
+        meter-opts (get-in model [:settings :lighting-capacity])
+        plan (when (:enabled? meter-opts) meter-plan)
+        audio @(:capacity-audio runtime)
+        previous (when (= (:epoch model) (get-in before [:model :epoch]))
+                   (get-in before [:output :lighting-capacity]))
+        budget (lighting/prepare-budget before model patch meter-plan calibrating? hard-off?)
+        standby (when-not bypass? (:standby-block budget))
+        observation (when (identical? (:rig model) (get-in before [:model :rig])) (get-in before [:output :atmosphere]))
+        observation (if (and (not audition?) (get-in model [:settings :fog-control :enabled?]))
+                      (fog-control/with-forecast (:plan @(:venue-fog runtime)) observation) observation)
+        previous-control (get-in before [:output :fog-control])
+        fog-bypass? (or bypass? (zero? (:master model)) (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
+        limit (when plan
+                (capacity/control (merge capacity/defaults meter-opts)
+                  previous
+                  (:master model) time-ms (when (= (:epoch model) (:epoch audio)) audio)
+                  bypass?))
+        fog (when (and plan (not audition?) (or (:fog? meter-opts) (:fog previous)))
+              (capacity/fog-policy meter-opts plan (:fog previous) time-ms limit fog-bypass?
+                                   (:reference-rms meter-opts (:reference-rms capacity/defaults))))
+        ;; Fog arbitration checks whether a manual source is visible.
+        ;; Spatial member levels apply later, so omit muted sources here.
+        fog-blocks (cond->> (:contributions result)
+                     (some #(if (map? %) (some zero? (vals %)) (zero? %)) (vals spatial-levels))
+                     (filterv (fn [{{:keys [instance-id effect-version]} :source}]
+                                (pos? (engine/opacity-factor spatial-levels instance-id effect-version)))))
+        ;; An audition never plans fog: its private frame has no fog leases.
+        setpoint (when-not audition?
+                   (fog-control/frame model patch observation previous-control
+                     (if (get-in runtime [:sink :send!]) ((get-in runtime [:publisher :now-ms])) time-ms)
+                     fog-bypass? fog-blocks (:block fog)))
+        extra-blocks (cond-> (fog-control/with-demands [] (:feedback setpoint))
+                       manual-aim (conj manual-aim)
+                       (:music setpoint) (conj (:music setpoint))
+                       (:block photo-session) (conj (:block photo-session))
+                       pause-layer (conj pause-layer))
+        render-options (cond-> {:master (get limit :effective-master (:master model))
+                                :blackout? (pause-look/blackout? model)
+                                :include-values? (not (:batch? runtime)) :compact-values? (:batch? runtime)
+                                :edge-tracking (when (seq (get-in model [:rig :edge-tracking]))
+                                                 (:links (reflections/plan-for (:optics-plan runtime) (:rig model))))
+                                :previous-values (or (get-in before [:output :values]) {})
+                                :previous-compact (get-in before [:output :compact])}
+                         hdr? (assoc :hdr hdr-opts)
+                         (:observe-hdr? space) (assoc :observe-hdr? true))
+        resolved (effect-faults/resolve-output result
+                   #(resolve-frame patch (lighting/contributions standby % extra-blocks) render-options)
+                   (if spatial-groups
+                     #(spatial-cues/mask-contributions % spatial-groups spatial-levels) identity))
+        result (:result resolved)
+        finished (when (or (get-in model [:settings :output-response :enabled?])
+                           (get-in model [:settings :lighting-budget :enabled?])
+                           (get-in model [:settings :lighting-activity :enabled?]))
+                   (lighting/finish-frame before (:model result) patch meter-plan budget (:output resolved)
+                     (lighting/contributions standby (:contributions result) extra-blocks) time-ms
+                     calibrating? hard-off?
+                     (get limit :effective-master (:master model))))
+        delivered (or (:frame finished) (:output resolved))
+        frame (cond-> delivered
+                setpoint (assoc :fog-control (:status setpoint) :fog-demands (:leases setpoint))
+                plan (assoc :lighting-capacity
+                            (merge limit (capacity/measure plan (:universes delivered))
+                                   (cond-> {:writers (if (or (pause-look/blackout? model) (zero? (:master model))) []
+                                                       (capacity/writers plan (into (:contributions result) extra-blocks)))}
+                                     fog (assoc :fog (:state fog))))))]
+    (let [observation (when (:plan prepared)
+                        (autopilot/observe (:model result) prepared previous-cache frame
+                          (lighting/contributions standby (:contributions result) extra-blocks)
+                          {:suspended? suspended? :calibrating? calibrating?}
+                          (assoc (select-keys render-options [:master :edge-tracking :previous-values :previous-compact])
+                            :hdr {} :compact-values? false :include-values? false)
+                          (:contributions result)))]
+    {:model (let [with-fog (cond-> (or (:model observation) (:model result))
+                             setpoint (fog-control/publish previous-control (:status setpoint)))
+                  updated (advance-light-scenes runtime (lighting/publish with-fog frame) patch frame time-ms bypass?)]
+              (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
+     :output frame :variable-observation variables
+     ::show-events/intent-emissions (:intent-emissions result)
+     :preview-hdr (when (:hdr? frame-input) (or hdr-opts {}))
+     :keyframes (:keyframes result) :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
+     :lighting-history (:state finished) :fault-events (:fault-events result)
+     :parameter-samples (assoc parameter-samples :spatial-overrides (get-in space [:fields :overrides])
+                               :live-routing (when-not audition? (live-sync/parameter-routing (connections/sync (:connections runtime)))))
+     :resolved-param-overrides input-overrides
+     :modulation-view (select-keys modulation-result [:overrides :diagnostics])
+     :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}})))
+
+(defn- fire-scene-draft
+  "Apply a quantized draft once the transport reaches its boundary. Every
+  step commits at the boundary's logical time and beat, before this cycle's
+  queued input, then the sampled transport is restored."
+  [runtime model time-ms]
+  (let [state (:scene-draft runtime)
+        {:keys [draft pending-apply]} @state
+        {:keys [command due-beat clock grid]} pending-apply
+        transport (:transport model)
+        outcome (fn [status details]
+                  (merge {:status status :command-id (:command-id command) :draft-id (:id draft)
+                          :draft-revision (:revision draft) :grid grid :due-beat due-beat} details))]
+    (cond
+      (nil? pending-apply) model
+
+      (not= clock (cue-clock-identity runtime model))
+      (do (swap! state #(-> % (dissoc :pending-apply) (assoc :last-outcome (outcome :missed {:code :clock-changed}))))
+          model)
+
+      (or (not (:playing? transport)) (< (:beat transport) due-beat)) model
+
+      :else
+      (let [at (scene-draft/boundary-time transport time-ms due-beat (:time-ms model))
+            {:keys [ack] applied :model}
+            (scene-draft/apply-draft (update model :transport assoc :beat due-beat :time-ms at)
+                                     draft (assoc command :time-ms at))]
+        (if (= :accepted (:status ack))
+          (do (reset! state {:last-outcome (outcome :applied {:revision (:revision ack) :time-ms at})})
+              (assoc applied :transport transport))
+          (do (swap! state #(-> % (dissoc :pending-apply)
+                                (assoc :last-outcome (outcome :missed (select-keys ack [:code :message])))))
+              model))))))
+
+(defn- audition-projection [{:keys [draft frame pending-apply last-outcome error stale]}]
+  (cond-> {}
+    draft (assoc :draft (scene-draft/summary draft) :time-ms (get-in frame [:model :time-ms])
+                 :status (cond error :error stale :stale pending-apply :scheduled :else :auditioning))
+    (and draft (not error) (not stale) (:output frame))
+    (assoc :output (select-keys (:output frame) [:values :compact :target-order]))
+    pending-apply (assoc :pending-apply (assoc (select-keys pending-apply [:due-beat :grid :requested-at])
+                                               :command-id (get-in pending-apply [:command :command-id])))
+    last-outcome (assoc :last-outcome last-outcome)
+    error (assoc :error error)
+    stale (assoc :stale stale)))
+
+(defn- advance-audition!
+  "Render one private audition frame after the live frame has been delivered.
+  The private model follows the live transport, master and blackout, while
+  its instances, keyframes, modulation and response state advance only in
+  this timeline. Output stays in the projection; no packet, fog lease, event
+  or callback leaves it. Failures mark the draft and never touch the live show."
+  [runtime live time-ms]
+  (let [state (:scene-draft runtime)
+        {:keys [draft frame caches next-model error stale]} @state]
+    (cond
+      (nil? draft) nil
+
+      (not= (:epoch live) (get-in draft [:base :epoch])) (reset! state nil)
+
+      (or error stale) nil
+
+      (not= (get-in (or next-model (:model frame)) [:rig :fixtures]) (:fixtures @(:compiler-context runtime)))
+      (swap! state assoc :stale :stale-patch)
+
+      :else
+      (try
+        (let [started (System/nanoTime)
+              model (-> (or next-model (:model frame))
+                        (merge (select-keys live [:transport :master :blackout?]))
+                        (composition/advance time-ms))
+              rendered (render-frame (merge runtime caches) frame model time-ms
+                                     {:audition? true :started started :frame-start-ns started})]
+          (swap! state #(-> % (dissoc :next-model)
+                            (assoc :frame (assoc (select-keys rendered audition-state-keys)
+                                                 :model (staging/finish (:model rendered))
+                                                 :output (:output rendered) :status (:status rendered))))))
+        (catch Exception failure
+          (swap! state assoc :error (error-data failure)))))
+    (when-let [current @state]
+      (swap! (:state runtime) assoc :scene-audition (audition-projection current)))))
+
+(defn scene-draft
+  "Read the staged Room draft, its audition status, any scheduled apply and
+  the last apply outcome. Returns nil when no draft has been staged."
+  [runtime]
+  (not-empty (dissoc (:scene-audition @(:state runtime)) :output)))
+
 (def ^:private ingress-order
   (reify java.util.Comparator
     (compare [_ left right]
@@ -1580,13 +1941,14 @@
                       (catch Exception error
                         [model (conj receipts [reply (merge {:status :rejected} (error-data error)) (when (= :command (:type message)) (:payload message))])
                          restored? restored-output])))
-                  [(-> (consume-sync! runtime (consume-audio! runtime (staging/collect (staging/begin clock-model)
-                                                       :reactive {:kind :runtime :id :reactive} (:pending-reactive-faults before)) time-ms))
+                  [(-> (consume-sync! runtime (consume-audio! runtime (fire-scene-draft runtime (staging/collect (staging/begin clock-model)
+                                                       :reactive {:kind :runtime :id :reactive} (:pending-reactive-faults before)) time-ms) time-ms))
                        (calibration/advance physical-receipts physical-now)
                        (photometry/advance physical-receipts physical-now)
                        (fog-scan/expire physical-now)) [] false nil] messages)
                  time-ms (if restored? (:time-ms model) time-ms)
                  _ (when (or restored? @restarted-generation)
+                     (reset! (:scene-draft runtime) nil)
                      (when restored? (reset! (:clock runtime) {:origin-nanos (System/nanoTime) :time-ms time-ms}))
                      (reset! (:leases runtime) {})
                      (locking (:sync-input runtime)
@@ -1635,163 +1997,10 @@
                                      (subscribers/advance time-ms (event-callbacks/results (:event-callbacks runtime)))
                                      (composition/advance time-ms) (advance-auto time-ms runtime)
                                      (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms routing/admit-sync)
-                                     (routing/advance time-ms command))
-                           parameter-samples (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)}
-                                                                      (get-in before [:parameter-samples :plans]))
-                           control-view (if (seq (:overrides parameter-samples))
-                                          (update (:modulation-view before) :overrides
-                                                  #(merge-with merge % (:overrides parameter-samples)))
-                                          (:modulation-view before))
-                           patch (patch! runtime (get-in model [:rig :fixtures]))
-                           space (when (or (get-in model [:settings :spatial :enabled?]) (get-in model spatial/state-path) (spatial-cues/needed? model))
-                                   (spatial/advance model (assoc before :modulation-view control-view) time-ms (reactions runtime) command))
-                           model (or (:model space) model)
-                           conductor? (autopilot-config/enabled? model)
-                           calibrating? (or photo-session (calibration/current model) (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
-                           bypass? (or calibrating? (false? (get-in model [:transport :playing?])) (pause-look/blackout? model))
-                           hard-off? (or (pause-look/blackout? model) (zero? (:master model)))
-                           suspended? (or bypass? hard-off?)
-                           meter-plan (when (or conductor? (lighting/needs-meter? (:settings model))) (capacity-plan! runtime patch))
-                           resolve-frame (compute/frame-renderer (:compute runtime) frame-start-ns)
-                           previous-cache (when (= (:epoch model) (get-in before [:model :epoch])) (:autopilot-cache before))
-                           prior-output (when (and (= (:epoch model) (get-in before [:model :epoch]))
-                                                   (identical? (:rig model) (get-in before [:model :rig])))
-                                          (:output before))
-                           prepared (when (or conductor? (get-in model autopilot/run-path))
-                                      (autopilot/prepare model previous-cache patch meter-plan time-ms suspended?
-                                        (delay (if (and (:blocks previous-cache) (identical? patch (get-in previous-cache [:plan :patch])))
-                                                 (resolve-frame patch (:blocks previous-cache) (:raw-options previous-cache))
-                                                 prior-output)) command control-view prior-output))
-                           model (autopilot/start-hdr-clock (or (:model prepared) model) time-ms)
-                           hdr? (or conductor? (get-in model [:settings :hdr :enabled?]))
-                           hdr-scope (when hdr? (autopilot/standalone-scope (:hdr-scope before) model patch))
-                           hdr-opts (when hdr? (or (autopilot/render-options (assoc model :time-ms time-ms) prepared suspended?
-                                                                              control-view hdr-scope) {}))
-                           modulation-result (modulation/advance (:modulation model) model
-                                                                  {:time-ms time-ms :transport (:transport model)})
-                           model (assoc model :modulation (:state modulation-result))
-                           input-overrides (merge-with merge (:overrides modulation-result) (:overrides parameter-samples)
-                                                       (get-in space [:fields :overrides]))
-                           modulation-middleware (modulation/middleware input-overrides)
-                           _ (prepare-compiler! runtime (get-in model [:rig :fixtures]))
-                           variable-plan (variable-blocks/prepare! (:variable-plan runtime) (get-in model [:settings :variable-blocks]) (prefabs/catalog model))
-                           variables (variable-blocks/sample variable-plan model time-ms (:variable-observation before))
-                           model (variable-blocks/collect-events model (:variable-observation before) variables)
-                           variable-inputs (when variables (:variables (variable-blocks/resolved model variables)))
-                           sampling (vreset! sampling-session (cadence/begin runtime before model))
-                           frame-input (merge {:time-ms time-ms :epoch (:epoch model) :show-id (:show-id model)
-                                               :keyframes (:keyframes before) :keyframe-params input-overrides
-                                               :keyframe-generation (:responses model) :spatial-aims (get-in space [:fields :aims])
-                                               :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
-                                              (connections/effect-frame-inputs (:connections runtime) (:epoch model))
-                                              (:inputs sampling))
-                           group-levels (group-channels/frame-levels model)
-                           ;; Spatial membership is attached after the engine runs. Keep
-                           ;; those contributions intact until their native member mix.
-                           spatial-groups (get-in space [:fields :groups])
-                           spatial-levels (when (and group-levels spatial-groups)
-                                            (not-empty (select-keys group-levels (keys spatial-groups))))
-                           engine-levels (if spatial-levels
-                                           (not-empty (apply dissoc group-levels (keys spatial-levels)))
-                                           group-levels)
-                           frame-input (cond-> frame-input
-                                         variables (assoc :resolved-variables variable-inputs)
-                                         engine-levels (assoc ::engine/opacity-factors engine-levels))
-                           response (response-middleware! runtime (:responses model []))
-                           inputs (comp response modulation-middleware)
-                           compile-step (fn [definition]
-                                          (let [step (spatial-cues/with-aims definition ((:compile runtime) definition))]
-                                            ;; Certified literals have no parameter schemas, and
-                                            ;; these transforms touch only declared parameters.
-                                            (keyframes/with-inputs step inputs {:preserve-time-invariance? true})))
-                           result (engine/advance model frame-input compile-step
-                                                  (executor/mapper (:executor runtime)))
-                           manual-aim (surface-aim/contribution model patch)
-                           pause-layer (pause-layer! runtime model)
-                           meter-opts (get-in model [:settings :lighting-capacity])
-                           plan (when (:enabled? meter-opts) meter-plan)
-                           audio @(:capacity-audio runtime)
-                           previous (when (= (:epoch model) (get-in before [:model :epoch]))
-                                      (get-in before [:output :lighting-capacity]))
-                           budget (lighting/prepare-budget before model patch meter-plan calibrating? hard-off?)
-                           standby (when-not bypass? (:standby-block budget))
-                           observation (when (identical? (:rig model) (get-in before [:model :rig])) (get-in before [:output :atmosphere]))
-                           observation (if (get-in model [:settings :fog-control :enabled?])
-                                         (fog-control/with-forecast (:plan @(:venue-fog runtime)) observation) observation)
-                           previous-control (get-in before [:output :fog-control])
-                           fog-bypass? (or bypass? (zero? (:master model)) (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
-                           limit (when plan
-                                   (capacity/control (merge capacity/defaults meter-opts)
-                                     previous
-                                     (:master model) time-ms (when (= (:epoch model) (:epoch audio)) audio)
-                                     bypass?))
-                           fog (when (and plan (or (:fog? meter-opts) (:fog previous)))
-                                 (capacity/fog-policy meter-opts plan (:fog previous) time-ms limit fog-bypass?
-                                                      (:reference-rms meter-opts (:reference-rms capacity/defaults))))
-                           ;; Fog arbitration checks whether a manual source is visible.
-                           ;; Spatial member levels apply later, so omit muted sources here.
-                           fog-blocks (cond->> (:contributions result)
-                                        (some #(if (map? %) (some zero? (vals %)) (zero? %)) (vals spatial-levels))
-                                        (filterv (fn [{{:keys [instance-id effect-version]} :source}]
-                                                   (pos? (engine/opacity-factor spatial-levels instance-id effect-version)))))
-                           setpoint (fog-control/frame model patch observation previous-control
-                                      (if (get-in runtime [:sink :send!]) ((get-in runtime [:publisher :now-ms])) time-ms)
-                                      fog-bypass? fog-blocks (:block fog))
-                           extra-blocks (cond-> (fog-control/with-demands [] (:feedback setpoint))
-                                          manual-aim (conj manual-aim)
-                                          (:music setpoint) (conj (:music setpoint))
-                                          (:block photo-session) (conj (:block photo-session))
-                                          pause-layer (conj pause-layer))
-                           render-options (cond-> {:master (get limit :effective-master (:master model))
-                                                   :blackout? (pause-look/blackout? model)
-                                                   :include-values? (not (:batch? runtime)) :compact-values? (:batch? runtime)
-                                                   :edge-tracking (when (seq (get-in model [:rig :edge-tracking]))
-                                                                    (:links (reflections/plan-for (:optics-plan runtime) (:rig model))))
-                                                   :previous-values (or (get-in before [:output :values]) {})
-                                                   :previous-compact (get-in before [:output :compact])}
-                                            hdr? (assoc :hdr hdr-opts)
-                                            (:observe-hdr? space) (assoc :observe-hdr? true))
-                           resolved (effect-faults/resolve-output result
-                                      #(resolve-frame patch (lighting/contributions standby % extra-blocks) render-options)
-                                      (if spatial-groups
-                                        #(spatial-cues/mask-contributions % spatial-groups spatial-levels) identity))
-                           result (:result resolved)
-                           finished (when (or (get-in model [:settings :output-response :enabled?])
-                                              (get-in model [:settings :lighting-budget :enabled?])
-                                              (get-in model [:settings :lighting-activity :enabled?]))
-                                      (lighting/finish-frame before (:model result) patch meter-plan budget (:output resolved)
-                                        (lighting/contributions standby (:contributions result) extra-blocks) time-ms
-                                        calibrating? hard-off?
-                                        (get limit :effective-master (:master model))))
-                           delivered (or (:frame finished) (:output resolved))
-                           frame (cond-> delivered
-                                   setpoint (assoc :fog-control (:status setpoint) :fog-demands (:leases setpoint))
-                                   plan (assoc :lighting-capacity
-                                               (merge limit (capacity/measure plan (:universes delivered))
-                                                      (cond-> {:writers (if (or (pause-look/blackout? model) (zero? (:master model))) []
-                                                                          (capacity/writers plan (into (:contributions result) extra-blocks)))}
-                                                        fog (assoc :fog (:state fog))))))]
-                       (let [observation (when (:plan prepared)
-                                           (autopilot/observe (:model result) prepared previous-cache frame
-                                             (lighting/contributions standby (:contributions result) extra-blocks)
-                                             {:suspended? suspended? :calibrating? calibrating?}
-                                             (assoc (select-keys render-options [:master :edge-tracking :previous-values :previous-compact])
-                                               :hdr {} :compact-values? false :include-values? false)
-                                             (:contributions result)))]
-                       {:model (let [with-fog (cond-> (or (:model observation) (:model result))
-                                                setpoint (fog-control/publish previous-control (:status setpoint)))
-                                     updated (advance-light-scenes runtime (lighting/publish with-fog frame) patch frame time-ms bypass?)]
-                                 (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
-                        :output frame :variable-observation variables
-                        ::show-events/intent-emissions (:intent-emissions result)
-                        :preview-hdr (when (:hdr? frame-input) (or hdr-opts {}))
-                        :keyframes (:keyframes result) :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
-                        :lighting-history (:state finished) :fault-events (:fault-events result)
-                        :parameter-samples (assoc parameter-samples :spatial-overrides (get-in space [:fields :overrides])
-                                                  :live-routing (live-sync/parameter-routing (connections/sync (:connections runtime))))
-                        :resolved-param-overrides input-overrides
-                        :modulation-view (select-keys modulation-result [:overrides :diagnostics])
-                        :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}}))
+                                     (routing/advance time-ms command))]
+                       (render-frame runtime before model time-ms
+                                     {:started started :frame-start-ns frame-start-ns
+                                      :photo-session photo-session :sampling-session sampling-session}))
                      (catch Exception error
                        (assoc before :model model :status {:error (error-data error)} :fault-events []
                               :output (if (or (pause-look/blackout? model) (zero? (:master model)))
@@ -1852,6 +2061,7 @@
                                   (get-in next-state [:output :fog-demands])))
                   (catch Exception error
                     (swap! (:state runtime) assoc-in [:status :output-error] (error-data error))))
+             (advance-audition! runtime (:model next-state) (get-in next-state [:model :time-ms]))
              (let [observers (vals @(:observers runtime))
                    publication (try (connections/publish! (:connections runtime) (effect-keyframes/source (block-trace/source next-state) (:keyframes next-state))
                                             (boolean (some (fn [observer] ((:tracing? observer))) observers)))

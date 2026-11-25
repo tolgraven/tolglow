@@ -181,6 +181,60 @@ The REPL and Studio receive the fresh reference session ID or a refusal from
 the same show operation. For manually owned mpv connections, use the existing
 [REPL adapter flow](../src/tolglow/integrations/README.md#observe-a-known-local-recording-in-mpv).
 
+## Audition a scene in the Room
+
+Stage several cue and effect changes as one Room draft, watch them in the
+Room, then apply them as one show transaction or discard them. Live output
+keeps sending the committed show while the draft is staged. Stage, apply and
+discard are ordinary owner commands, so the REPL, Studio and any adapter
+receive the same acknowledgements and refusals.
+[Draft model and transaction](../src/tolglow/show/scene_draft.clj) · [Issue #531](https://github.com/tolgraven/tolglow/issues/531)
+
+```clojure
+(require '[tolglow.show :as show])
+
+;; Each stage captures the current show; a revision keeps the draft ID.
+@(show/submit! runtime {:op :scene-draft/stage :draft-id "chorus"
+                        :operations [{:op :cue/launch :cue-id :indigo}
+                                     {:op :effect/launch :effect-id :sweep}]})
+
+(show/scene-draft runtime)   ; draft, :auditioning status, scheduled apply, last outcome
+
+;; Apply now, or on the next bar of the show transport. One command ID,
+;; one revision and one history entry cover every staged operation.
+@(show/submit! runtime {:op :scene-draft/apply :draft-id "chorus"
+                        :expected-draft-revision 0 :grid {:bars 1}})
+
+@(show/submit! runtime {:op :scene-draft/discard :draft-id "chorus"})
+```
+
+In Studio, a staged draft shows **Draft audition** above **The Room** with its
+ID, revision and number of staged operations. The Room renders the draft's
+private frames, and `:output :draft` in the snapshot names the draft they come
+from. **Apply**, **Apply on next bar** and **Discard** send the same commands
+with the displayed revision. A stale revision, changed rig or registry, or a
+retired instance is refused and reported in both places.
+
+The audition renders through the live frame function with its own clock,
+instance state, keyframes, modulation and response history. It never sends
+packets, plans fog, raises events or invokes callbacks. Input stages that
+belong to the live show (sensors, subscribers, automatic policy, audio returns
+and patch routing) do not run in the audition. Each audition frame costs about
+one extra show frame on the owner thread.
+
+Open gaps, owned by [issue #531](https://github.com/tolgraven/tolglow/issues/531):
+
+- Studio cannot compose a draft yet. Stage it from the REPL or another adapter;
+  Studio shows, applies and discards it. Acceptance: compose and revise a draft
+  from the cue grid, then inspect the same revision with `show/scene-draft`.
+- The Push simulator and rig views still show the live frame. Acceptance: the
+  Push Room shows the draft frames and a draft indicator.
+- There is no structural undo for launches and definitions anywhere in the
+  show. An applied draft is one history entry, so such an undo can treat it as
+  one unit. Acceptance: one undo restores the show as it was before applying.
+- Room screenshots on hardware and a captured boundary change remain to be
+  recorded.
+
 ## Reviewing a show feature
 
 - **Find it from either side.** Name the view, control label and public REPL entry point. Include the shared command, input units, identifiers and scope so an operator who knows one surface can recognize the other.
