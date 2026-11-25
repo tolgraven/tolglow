@@ -247,13 +247,16 @@
     (is (= 1 @closed))
     (audio/close! manager)))
 
+(defn section-pcm-values []
+  (map (fn [index]
+         (let [beat (quot index 4000)
+               notes (if (< beat 4) [48.0 84.0] [84.0 48.0])
+               seconds (/ (rem index 4000) 8000.0)]
+           (long (* 12000 (Math/sin (* 2.0 Math/PI (nth notes (mod beat 2)) seconds))))))
+       (range 40000)))
+
 (deftest opt-in-section-evidence-reaches-owned-capture-callbacks
-  (let [values (map (fn [index]
-                      (let [beat (quot index 4000)
-                            notes (if (< beat 4) [48.0 84.0] [84.0 48.0])
-                            seconds (/ (rem index 4000) 8000.0)]
-                        (long (* 12000 (Math/sin (* 2.0 Math/PI (nth notes (mod beat 2)) seconds))))))
-                    (range 40000))
+  (let [values (section-pcm-values)
         closed (atom 0) ticks (atom 0) events (atom []) feels (atom [])
         manager (audio/create-manager {:open-source! (fn [_] (memory-source values 719 closed))
                                        :now-ms #(+ 2.0 (* 80.0 (swap! ticks inc)))})

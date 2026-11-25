@@ -17,7 +17,7 @@
    :reactive [:reactive/fault :event/handler-failed]
    :atmosphere [:fog/below-target :fog/in-band :fog/above-target :fog/target-changed :fog/demand-started :fog/demand-ended]
    :lighting (into [:lighting/activity] (concat lighting-levels/group-event-types lighting-levels/rig-event-types))
-   :audio [:audio/kick :audio/beat :audio/energy :audio/breakdown-start :audio/breakdown-end]
+   :audio [:audio/kick :audio/beat :audio/energy :audio/breakdown-start :audio/breakdown-end :audio/section-change]
    :show [:show/restored]
    :clock [:clock/beat :clock/bar :clock/phrase]
    :control [:instance/launched :instance/removed :instance/released :instance/system-changed

@@ -175,6 +175,44 @@
           (is (= 1 @closed))))
       (finally (show/stop! runtime)))))
 
+(deftest captured-section-change-reaches-an-explicit-owner-subscriber-once
+  (let [closed (atom 0) observed (atom [])
+        ;; The in-memory source returns immediately. Start the owner clock
+        ;; at the end of the captured interval and keep its musical origin.
+        model (-> (demo/model)
+                  (assoc :time-ms 5000.0)
+                  (update :transport assoc :time-ms 5000.0 :beat 10.0))
+        runtime (show/create-runtime
+                 {:model model :workspace-options nil
+                  :audio-options {:open-source! (fn [_] (pcm-test/memory-source (pcm-test/section-pcm-values) 719 closed))}})
+        subscriber {:id :sections :match {:type :audio/section-change}
+                    :actions [{:op :effect/launch :select {:ids [:ember] :pick :first}}]}]
+    (try
+      (is (some #{{:category :audio :type :audio/section-change}} (:events (sub/catalog model))))
+      (show/attach-observer! runtime :section-regression
+        (fn [] {:events! (fn [_ events _ _]
+                          (swap! observed into (filter #(= :audio/section-change (:type %)) events)))
+                :frame! (fn [_]) :tracing? (constantly false) :close! (fn [])}))
+      (let [receipt (show/register-event-subscriber! runtime subscriber)]
+        (show/tick! runtime 5000)
+        (is (= :accepted (:status (deref receipt 1000 ::timeout)))))
+      (is (empty? (:instances (show/snapshot runtime))))
+      (let [handle (connections/start-audio! (:connections runtime)
+                                             {:default? true :sample-rate 8000.0 :block-frames 640
+                                              :analyzer-options {:sections {:beats-per-window 2}}}
+                                             (show/audio-callbacks runtime))
+            result (deref (:result handle) 5000 ::timeout)]
+        (is (= :completed (:status result)) (pr-str (:error result))))
+      (doseq [time [5001 5002 5020 5050]] (show/tick! runtime time))
+      (let [[event] @observed
+            instances (:instances (show/snapshot runtime))]
+        (is (= 1 @closed (count @observed) (count instances)))
+        (is (= {:boundary-beat 4.0 :confirmed-at-beat 8.0 :clock-source :manual :clock-epoch 0}
+               (select-keys (:data event) [:boundary-beat :confirmed-at-beat :clock-source :clock-epoch])))
+        (is (= [:ember :event-subscriber]
+               ((juxt :effect-id #(get-in % [:source :adapter])) (first instances)))))
+      (finally (show/stop! runtime)))))
+
 (deftest middleware-can-update-variables-and-queue-actions-without-blocking-the-owner
   (let [entered (promise) release (promise)
         middleware (fn [context event]
