@@ -23,7 +23,7 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.studio
+        PRODUCT_BUNDLE_IDENTIFIER: se.tolgraven.tolglow.studio
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.music
         INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: Host an audience stage while its invitation is active.
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect to lighting equipment configured by the show operator.

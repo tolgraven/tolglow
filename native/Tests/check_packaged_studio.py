@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import plistlib
 from pathlib import Path
 import subprocess
 import tempfile
@@ -70,6 +71,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app", type=Path)
     args = parser.parse_args()
-    resources = args.app.resolve() / "Contents/Resources"
+    contents = args.app.resolve() / "Contents"
+    with (contents / "Info.plist").open("rb") as metadata:
+        identifier = plistlib.load(metadata)["CFBundleIdentifier"]
+    if identifier != "se.tolgraven.tolglow.studio":
+        raise RuntimeError(f"Unexpected Studio bundle identifier: {identifier}")
+    resources = contents / "Resources"
     env = {**os.environ, "PATH": "/usr/bin:/bin", "JAVA_HOME": "/nonexistent"}
     exercise(resources / "runtime/bin/java", resources / "studio.jar", env)
