@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Reuse an existing loopback Studio host; never starts a JVM or physical output.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+origin="${1:?Pass an existing loopback Studio URL}"
+out="${2:?Pass an output directory}"
+mkdir -p "$out"
+out="$(cd "$out" && pwd)"
+xcrun swiftc -swift-version 5 -module-cache-path "$out/module-cache" \
+  "$root/native/macOS/StudioNavigation.swift" \
+  "$root/native/macOS/StudioContentView.swift" \
+  "$root/native/macOS/ShaderQualification.swift" \
+  "$root/native/Tests/verify-metal.swift" -o "$out/verify-metal"
+"$out/verify-metal" "$origin" "$out/metal-qualification.json" \
+  "$root/native/macOS/ShaderQualification.js"
