@@ -214,10 +214,13 @@
                 :cue-id :actual-cue :adapter :event-subscriber}
         nested {:id "foreign" :effect-id :foreign :effect-version 12 :cue-id :foreign-cue
                 :launch-mode :held :source {:adapter :studio}}
-        explicit {:instance-id "other" :effect-id :target :effect-version 7 :cue-id :target-cue}
+        explicit {:instance-id "other" :effect-id :target :effect-version 7
+                  :cue-id :target-cue :launch-mode :one-shot}
+        partial (select-keys explicit [:instance-id :effect-id])
         intents [{:type :test/inspect :instance nested :cause-adapter :studio}
                  (merge explicit {:type :test/inspect :instance nested :cause-adapter :studio})
-                 {:type :test/inspect :instance {:cue-id :partial-cue}}
+                 (assoc explicit :type :test/inspect)
+                 (assoc partial :type :test/inspect :instance {:cue-id :partial-cue})
                  {:type :test/inspect :instance {}}]
         model (subscribers/configure (demo/model)
                                     {:op :save :subscriber {:id :inspect
@@ -230,16 +233,17 @@
                                     (update state ::show-events/intent-emissions
                                             #(mapv (fn [emission] (assoc-in emission [:source :adapter] :repl)) %))
                                     [])
-        origin (-> source (dissoc :adapter) (assoc :cause-adapter :event-subscriber))]
-    (is (= (repeat 4 {:kind :effect :id :actual}) (map :emitter (:events result))))
-    (is (= [{:instance-id "foreign" :effect-id :foreign :effect-version 12 :cue-id :foreign-cue
-             :launch-mode :held :cause-adapter :event-subscriber}
-            (merge origin explicit {:launch-mode :held})
-            (assoc origin :cue-id :partial-cue)
+        origin (-> source (dissoc :adapter) (assoc :cause-adapter :event-subscriber))
+        target {:instance-id "foreign" :effect-id :foreign :effect-version 12 :cue-id :foreign-cue
+                :launch-mode :held :cause-adapter :event-subscriber}]
+    (is (= (repeat 5 {:kind :effect :id :actual}) (map :emitter (:events result))))
+    (is (= [target target
+            (merge origin explicit)
+            (merge origin partial {:cue-id :partial-cue})
             origin]
            (mapv :data (:events result))))
     (is (empty? (:deliveries result)))
-    (is (= {0 [:inspect] 1 [:inspect] 2 [:inspect] 3 [:inspect]} (:deliveries manual)))
+    (is (= {0 [:inspect] 1 [:inspect] 2 [:inspect] 3 [:inspect] 4 [:inspect]} (:deliveries manual)))
     (is (every? #(= :repl (get-in % [:data :cause-adapter])) (:events manual)))
     (is (= (dissoc state ::show-events/intent-emissions) (:state result)))))
 

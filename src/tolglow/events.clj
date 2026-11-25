@@ -37,9 +37,9 @@
                      origin (select-keys source [:instance-id :effect-id :effect-version :cue-id])]
                  (if (map? target)
                    (merge origin
+                          (dissoc intent :instance)
                           (cond-> (select-keys target [:cue-id :effect-id :effect-version :launch-mode])
-                            (contains? target :id) (assoc :instance-id (:id target)))
-                          (dissoc intent :instance))
+                            (contains? target :id) (assoc :instance-id (:id target))))
                    (merge origin intent)))
                intent)]
     {:category :effect :emitter {:kind :effect :id emitter-id}
