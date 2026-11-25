@@ -59,6 +59,11 @@ const loadEffect = async (page, version) => {
   await visualBuilder(page);
 };
 const capture = (page, name) => page.screenshot({path: join(output, name + '.png'), animations: 'disabled'});
+const validationError = async page => {
+  const feedback = page.locator('#validation-result.error');
+  await feedback.waitFor();
+  return feedback.innerText();
+};
 const registrySource = async () => (await get(`/api/definition?kind=effects&id=${id}`)).source;
 const publish = async page => {
   const pending = page.waitForResponse(response => response.url().endsWith('/api/definition') && response.request().method() === 'POST');
@@ -82,7 +87,7 @@ try {
   await desktop.getByLabel('Input 2 Subscription query').fill('[:studio-qa/gain]');
   await desktop.getByLabel('Transition (beats)').fill('1/3');
   await desktop.getByRole('button', {name: 'Validate & publish'}).click();
-  await desktop.locator('#validation-result.error').filter({hasText: 'use each alias once'}).waitFor();
+  assert.match(await validationError(desktop), /use each alias once/);
   await capture(desktop, '01-duplicate-alias');
   await desktop.getByLabel('Input 2 alias').fill('gain');
   await capture(desktop, '02-ready');
@@ -105,9 +110,11 @@ try {
                  (deref (show/submit! runtime :definition
                             {:kind :effects :definition revised :expected-version 1}) 2000 :timeout))`);
   await selectedEffect(desktop, 2).waitFor();
+  const ownerSource = await registrySource();
   await desktop.getByLabel('Transition (beats)').fill('1/2');
   assert.equal((await publish(desktop)).ok(), false);
-  await desktop.locator('#validation-result.error').filter({hasText: 'Definition changed'}).waitFor();
+  assert.match(await validationError(desktop), /Definition changed/);
+  assert.equal(await registrySource(), ownerSource);
   await capture(desktop, '04-owner-rejected-stale-edit');
 
   await loadEffect(desktop, 2);
