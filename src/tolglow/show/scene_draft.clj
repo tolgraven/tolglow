@@ -247,12 +247,19 @@
         lower (* interval (Math/floor (/ (double beat) interval)))]
     (if (== beat lower) lower (+ lower interval))))
 
-(defn boundary-time
-  "The logical time at which the transport crossed boundary-beat, given its
-  sample at time-ms. Never earlier than floor-ms or later than time-ms."
+(defn boundary-commit
+  "Where a quantized apply commits, given the transport sample at time-ms:
+  {:time-ms :beat}. While the transport crossed boundary-beat inside this
+  cycle, between floor-ms and time-ms, that is the crossing time and exactly
+  boundary-beat. A crossing before floor-ms commits at floor-ms with the beat
+  the transport had then, so time and beat stay on one transport line."
   [{:keys [beat bpm]} time-ms boundary-beat floor-ms]
-  (let [elapsed (if (and (number? bpm) (pos? bpm)) (/ (* (- beat boundary-beat) 60000.0) bpm) 0.0)]
-    (min time-ms (max floor-ms (- time-ms elapsed)))))
+  (let [ms-per-beat (when (and (number? bpm) (pos? bpm)) (/ 60000.0 bpm))
+        crossed (if ms-per-beat (- time-ms (* (- beat boundary-beat) ms-per-beat)) time-ms)]
+    (if (<= floor-ms crossed time-ms)
+      {:time-ms crossed :beat boundary-beat}
+      (let [at (min time-ms (max floor-ms crossed))]
+        {:time-ms at :beat (if ms-per-beat (- beat (/ (- time-ms at) ms-per-beat)) boundary-beat)}))))
 
 (defn summary
   "Portable projection of a draft for Studio and the REPL."

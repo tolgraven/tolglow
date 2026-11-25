@@ -1957,7 +1957,7 @@
   [runtime state model time-ms]
   (let [{:keys [draft pending-apply]} @state
         {:keys [command due-beat clock grid last-beat]} pending-apply
-        {:keys [beat bpm playing?] :as transport} (:transport model)
+        {:keys [beat playing?] :as transport} (:transport model)
         outcome (fn [status details]
                   (merge {:status status :command-id (:command-id command) :draft-id (:id draft)
                           :draft-revision (:revision draft) :grid grid :due-beat due-beat} details))
@@ -1975,12 +1975,8 @@
       (do (swap! state assoc-in [:pending-apply :last-beat] beat) model)
 
       :else
-      (let [at (scene-draft/boundary-time transport time-ms due-beat (:time-ms model))
-            ms-per-beat (when (and (number? bpm) (pos? bpm)) (/ 60000.0 bpm))
-            ;; Keep time and beat on one transport line, even after a long stall.
-            at-beat (if (and ms-per-beat (not (== at (- time-ms (* (- beat due-beat) ms-per-beat)))))
-                      (- beat (/ (- time-ms at) ms-per-beat))
-                      due-beat)
+      (let [;; Time and beat stay on one transport line, even after a long stall.
+            {at :time-ms at-beat :beat} (scene-draft/boundary-commit transport time-ms due-beat (:time-ms model))
             {:keys [ack] applied :model}
             (scene-draft/apply-draft (update model :transport assoc :beat at-beat :time-ms at)
                                      draft (assoc command :time-ms at))]

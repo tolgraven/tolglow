@@ -92,8 +92,24 @@
   (is (== 4 (draft/grid-boundary {:bars 1} {:beat 1.25})))
   (is (== 4 (draft/grid-boundary {:bars 1} {:beat 4})))
   (is (== 6 (draft/grid-boundary {:beats 3} {:beat 4.5 :meter {:beats-per-bar 3}})))
-  (is (near? 1990.0 (draft/boundary-time {:beat 4.02 :bpm 120} 2000 4 0)))
   (is (thrown? clojure.lang.ExceptionInfo (draft/grid-boundary {:ms 100} {:beat 0}))))
+
+(deftest a-boundary-inside-the-cycle-commits-on-its-exact-beat
+  (let [commit (fn [& args] ((juxt :time-ms :beat) (apply draft/boundary-commit args)))]
+    (let [[time-ms beat] (commit {:beat 4.02 :bpm 120} 2000 4 0)]
+      (is (near? 1990.0 time-ms))
+      (is (== 4 beat)))
+    (testing "rounding in the boundary time never moves the beat off the grid"
+      (let [[time-ms beat] (commit {:beat 1.0477855364105344 :bpm 90} 467029.09608858987 1.0 0)]
+        (is (near? 466997.2390643 time-ms))
+        (is (== 1.0 beat))))
+    (testing "a boundary before the cycle commits at the cycle's first time and that time's beat"
+      (let [[time-ms beat] (commit {:beat 4.02 :bpm 120} 2000 4 1995)]
+        (is (== 1995 time-ms))
+        (is (near? 4.01 beat)))
+      (is (= [2000 4.02] (commit {:beat 4.02 :bpm 120} 2000 4 2000))))
+    (testing "without a tempo the boundary commits now"
+      (is (= [2000 4] (commit {:beat 4.02} 2000 4 0))))))
 
 ;; Runtime evidence. Each runtime renders the same deterministic show at the
 ;; same logical frame times; a sink captures every live packet. Tests wait for
