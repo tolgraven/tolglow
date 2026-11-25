@@ -48,7 +48,7 @@ export class DisplayRefresh {
     this.tick = this.tick.bind(this);
   }
   setActive(active) {
-    if (active === this.active || !this.host.requestAnimationFrame) return;
+    if (active === this.active || this.unsupported || !this.host.requestAnimationFrame) return;
     this.active = active;
     if (active) this.start();
     else {
@@ -60,7 +60,16 @@ export class DisplayRefresh {
     this.gaps = [];
     this.samples = 0;
     this.previous = null;
-    this.raf = this.host.requestAnimationFrame(this.tick);
+    this.request();
+  }
+  request() {
+    try {this.raf = this.host.requestAnimationFrame(this.tick);}
+    catch (error) {
+      // A worker without a frame source keeps its timer pacing. It has no
+      // sample to offer, which must not stop the renderer it belongs to.
+      if (error.name !== 'NotSupportedError') throw error;
+      this.active = false; this.unsupported = true;
+    }
   }
   tick(time) {
     if (!this.active) return;
@@ -69,7 +78,7 @@ export class DisplayRefresh {
     this.previous = time;
     if (gap >= 3 && gap <= 120) this.gaps.push(gap);
     if (this.gaps.length < 16 && this.samples < 40) {
-      this.raf = this.host.requestAnimationFrame(this.tick);
+      this.request();
       return;
     }
     // Normalize missed refreshes using the faster quartile, then take the

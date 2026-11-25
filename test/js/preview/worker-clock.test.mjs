@@ -31,7 +31,7 @@ const bundle = await build({stdin: {
 }, bundle: true, format: 'iife', platform: 'browser', write: false});
 
 function worker({hz = 60, work = 0, software = false, quality = software ? 'auto' : 'mobile',
-  yieldMs, readyAfterYields = Infinity} = {}) {
+  yieldMs, readyAfterYields = Infinity, animationFrames = true} = {}) {
   let now = 0, nextId = 0, stateId = 0, readyThrough = Infinity, serial = 0, closed = false, yields = 0;
   const fences = new Set(), bitmaps = [], listeners = new Map(), resizes = [];
   const rafs = new Map(), timers = new Map(), messages = [], draws = [];
@@ -52,6 +52,8 @@ function worker({hz = 60, work = 0, software = false, quality = software ? 'auto
   }};
   const host = {graphics, AbortController, console, performance: {now: () => now, timeOrigin: 0},
     requestAnimationFrame(callback) {
+      // Chrome refuses animation frames in a worker without a parent frame sink.
+      if (!animationFrames) throw Object.assign(new Error('unsupported'), {name: 'NotSupportedError'});
       // The refresh sampler owns its own short burst beside the draw wakeup.
       const sampler = callback.name === 'bound tick';
       assert.equal([...rafs.values()].filter(pending => (pending.name === 'bound tick') === sampler).length, 0,
@@ -386,6 +388,16 @@ test('a surface keeps GPU ownership bounded and closes images from a show the pa
   assert.equal(w.frames().at(-1).presented, true);
   w.dispose();
   assert.equal(shown.at(-1), null, 'disposal blanks the canvas only the worker can reach');
+});
+
+test('a worker whose animation frames are unsupported renders on timers', async t => {
+  const w = worker({animationFrames: false}); t.after(() => w.dispose());
+  for (let frame = 1; frame <= 6; frame++) {
+    await w.advance(frame * 1000 / 60);
+    if (w.frames().at(-1)?.bitmap && !w.frames().at(-1).bitmap.closed) w.acknowledge();
+  }
+  assert.ok(w.draws.length >= 5, `only ${w.draws.length} timer-paced draws`);
+  assert.equal(w.engine.targetHz, 60);
 });
 
 test('the worker samples the display itself when the page reports a starved callback rate', async t => {
