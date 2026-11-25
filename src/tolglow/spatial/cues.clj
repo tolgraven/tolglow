@@ -8,6 +8,8 @@
             [afterglow.time :as time]
             [thi.ng.color.core :as color]
             [tolglow.autopilot.signal :as signal]
+            [tolglow.personalities :as personalities]
+            [tolglow.personalities.forms :as forms]
             [tolglow.registry :as registry]))
 
 (def run-path [:extensions ::members])
@@ -104,7 +106,7 @@
   "Publish a reusable effect and cue, place it on the page and launch it. All
   edits operate on a private value until successful. An explicit ID and cell
   protect occupied user definitions; different presses may use distinct IDs."
-  [model {:keys [op id name page-id cell volume paint members scene-id sources launch priority]} now command]
+  [model {:keys [op id name page-id cell volume paint members scene-id sources launch priority personality]} now command]
   (let [id (or id (str "volume-" (:epoch model) "-" (:revision model)))
         page-id (or page-id :spatial)
         page (get-in model [:pages page-id] {:id page-id :name "Spatial" :cells {}})
@@ -116,7 +118,8 @@
         member-list (into (vec (scene-slots model scene-id)) members)
         params (merge (dimensions model volume) (into {} (map paint-param) paint))
         spec (cond-> {:volume volume :sources sources :members (mapv (partial validate-member! model) member-list)}
-               aim-volume? (assoc :aim-at-volume? true))
+               aim-volume? (assoc :aim-at-volume? true)
+               personality (assoc :personality (personalities/input-declaration :sculpt personality)))
         scene-opacity (get-in model [:compositions scene-id :opacity] 1.0)
         effect {:id id :version 1 :name (or name (str id)) :show-control? true
                 :spatial-volume spec :ui/layout :volume :layer {:transforms []} :params params
@@ -130,6 +133,8 @@
                    (or aim-volume? (seq paint) (seq member-list))
                    (map? sources) (every? params (keys sources)) (every? source? (vals sources)))
       (fail! "Choose a new cue ID, a native paint or scene, and valid parameter sources" {:id id}))
+    (when (and personality (not (and (#{:sphere :rounded-box} (:shape volume)) (nil? (:geometry volume)))))
+      (fail! "A personality shapes a static sphere or rounded box volume" {:id id}))
     (field/prepare volume)
     (physics/validate! (assoc (select-keys (get-in model [:settings :spatial]) [:bounds :gravity]) :volumes {id volume}))
     (when-let [errors (seq (registry/validate-definition :effects effect))]
@@ -196,17 +201,29 @@
     (let [{:keys [instance expired?]} (engine/instance-lifecycle model clock instance)]
       (when (and (not expired?) (controls? instance)) instance))))
 
+(defn- personality-form
+  "The form the active personality picks for a cue that declared this input.
+  No selection, or one with no sculpt form, leaves the authored shape alone."
+  [model instance spec]
+  (when-let [declaration (:personality spec)]
+    (personalities/input-choice (personalities/active model) declaration
+                                (or (:cue-id instance) (:effect-id instance)))))
+
 (defn- live-volume [model modulation previous settings key instance]
   (let [{:keys [members] :as spec} (get-in instance [:definition :spatial-volume])]
     (try
       (let [values (controls model instance modulation)
+            choice (personality-form model instance spec)
+            values (cond-> values
+                     choice (merge (forms/sculpt-values (:input choice) (reduce max (:size values)))))
             resolved (volume (:volume spec) values)
             room (select-keys settings [:bounds :gravity])]
         (when-not (and (= room (select-keys previous [:bounds :gravity]))
                        (= resolved (get-in previous [:volumes key])))
           (physics/validate! (assoc room :volumes {key resolved}))
           (field/prepare resolved))
-        {:instance instance :volume resolved :values values :members members})
+        (cond-> {:instance instance :volume resolved :values values :members members}
+          choice (assoc :personality-form (:form choice))))
       (catch Exception ex
         {:instance instance :error (ex-message ex)}))))
 
@@ -331,8 +348,9 @@
         error (or (:error entry) (get-in model (into run-path [key :error])))
         paint (cond-> (select-keys values (keys (get-in instance [:definition :outputs])))
                 (:aim-at-volume? spec) (assoc :aim :volume))
-        view {:volume volume :cue-id (:cue-id instance) :instance-id (:id instance)
-              :paint paint :affected-head-count (count weights)}]
+        view (cond-> {:volume volume :cue-id (:cue-id instance) :instance-id (:id instance)
+                      :paint paint :affected-head-count (count weights)}
+               (:personality-form entry) (assoc :personality-form (:personality-form entry)))]
     (cond-> (-> frame
                 (update :groups into (group-rows model key entry weights))
                 (assoc-in [:overrides (:id instance)] (select-keys values (keys (:sources spec))))
