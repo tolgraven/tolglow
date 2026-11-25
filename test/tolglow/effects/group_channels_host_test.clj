@@ -44,6 +44,7 @@
   (:instance-id (accepted! runtime time {:op :cue/launch :cue-id cue})))
 
 (defn- level [id value] {:op :effect-groups/level-set :channel-id id :value value})
+
 (defn- configure [config] {:op :effect-groups/configure :config config})
 
 (defn- committed-model [runtime] (:model @(:state runtime)))

@@ -6,7 +6,9 @@
             [tolglow.registry :as registry]))
 
 (def ^:private settings-path [:settings :effect-group-channels])
+
 (def ^:private defaults {:manual [] :overlays {} :active-overlay nil})
+
 (def ^:private selector-keys {:fixtures :fixture-ids :categories :categories :cue-pages :page-ids})
 
 (defn operation? [op]

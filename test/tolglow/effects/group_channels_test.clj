@@ -161,6 +161,7 @@
                                   compiler/compile-effect)))
 
 (defn- resolved [blocks] (frame/resolve-contributions fixtures blocks))
+
 (defn- front-level [blocks] (get-in (resolved blocks) [:values :front :channels :dimmer]))
 
 (deftest unity-preserves-interleaved-blend-order-and-packed-bytes
