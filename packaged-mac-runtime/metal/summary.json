@@ -1,0 +1,140 @@
+{
+  "status": "qualified",
+  "reason": "rendered",
+  "backendEvidence": "translated MSL",
+  "applicationBundle": "org.tolglow.studio",
+  "os": "Version 27.2.1 (Build 26B131)",
+  "webKitVersion": "22625.2.8.11.9",
+  "linkedPrograms": 29,
+  "metalShaders": 58,
+  "drawObserved": true,
+  "truncated": false,
+  "expectedRoute": "not compared",
+  "routePreserved": true,
+  "snapshot": {
+    "documentFocused": true,
+    "documentHidden": false,
+    "previews": [
+      {
+        "height": 500,
+        "presented": true,
+        "ready": true,
+        "route": "worker",
+        "telemetry": {
+          "activeLights": 8,
+          "bitmapTransferMs": 0.13999999999941792,
+          "camera": [
+            1.0800000000000003,
+            2.4000000000000008,
+            7.5999999999999961
+          ],
+          "coalescedStates": 205,
+          "deviceRenderer": "Apple GPU",
+          "discardedFrames": 0,
+          "displayHz": 60,
+          "displayPixels": [
+            816,
+            500
+          ],
+          "displayRange": "sdr",
+          "edgeFilter": "FXAA",
+          "epoch": 0,
+          "failed": null,
+          "film": {
+            "bloom": 0.28000000000000003,
+            "exposure": 0.84999999999999998,
+            "grain": 0.0015
+          },
+          "fixtureCount": 8,
+          "fog": {
+            "activeSources": 1,
+            "cells": 8064,
+            "cpuUpdateMs": 0,
+            "droppedSeconds": 0,
+            "heat": 0.0042721936833609187,
+            "lightCount": 8,
+            "massEstimate": 94.044021910633006,
+            "maximumDensity": 2.3486180305480957,
+            "maximumRaySteps": 64,
+            "meanDensity": 0.15674003651772167,
+            "quality": "mobile",
+            "raySteps": 32,
+            "shadowCount": 2,
+            "steps": 33,
+            "targetSize": [
+              236,
+              144
+            ],
+            "time": 1.6500000000000008,
+            "uploads": 33
+          },
+          "fogAmount": 0.29999999999999999,
+          "frameCPUms": 0.96000000000003638,
+          "frameIntervalMs": 16.666666666666668,
+          "frameNumber": 372,
+          "frames": 93,
+          "geometryCount": 208,
+          "gpuCompletionWaitMs": 15.199999999999818,
+          "hidden": false,
+          "idleBudgetMs": 0.36666666666739545,
+          "inFlightState": 62,
+          "lightCap": 16,
+          "lightIds": [
+            "head-1",
+            "head-2",
+            "head-3",
+            "head-4",
+            "head-5",
+            "head-6",
+            "head-7",
+            "head-8"
+          ],
+          "lightingMode": "hold",
+          "lost": false,
+          "measuredFrameMs": 14.9399999999996,
+          "navigation": {
+            "interacting": false,
+            "mode": "orbit",
+            "reduced-motion": false,
+            "speed": 2,
+            "tour-fixture": null,
+            "tour-waiting": false
+          },
+          "paused": false,
+          "pendingState": false,
+          "pixels": [
+            590,
+            361
+          ],
+          "programCount": 23,
+          "quality": "mobile",
+          "rafDeliveryMs": 0.020000000000436557,
+          "ready": true,
+          "readyForFrameMs": 14.9399999999996,
+          "reflectedPatches": [],
+          "renderer": "Three.js r187",
+          "rendering": true,
+          "renderScale": 0.72249999999999992,
+          "revision": 2,
+          "sceneSamples": 4,
+          "shadowCount": 2,
+          "softwareRenderer": false,
+          "target": [
+            0,
+            1.9000000000000001,
+            -2.8000000000000007
+          ],
+          "targetRefreshHz": 60,
+          "textureCount": 29,
+          "thread": "worker",
+          "tierMaxHz": 120,
+          "visible": true,
+          "visibleFixtures": 8,
+          "workerFrameMs": 16.299999999999272,
+          "workLight": 0
+        },
+        "width": 816
+      }
+    ]
+  }
+}
