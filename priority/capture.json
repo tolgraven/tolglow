@@ -1,0 +1,186 @@
+[
+  {
+    "name": "01-launch",
+    "frame": 3198,
+    "rgb": [
+      0,
+      0,
+      255
+    ],
+    "order": [
+      "0:1",
+      "0:2"
+    ],
+    "render-error": null,
+    "instances": [
+      {
+        "id": "0:1",
+        "cue-id": "red-wash",
+        "priority": -2,
+        "started-at-ms": 552.9380366666667,
+        "params": {
+          "level": 0.85
+        }
+      },
+      {
+        "id": "0:2",
+        "cue-id": "blue-wash",
+        "priority": 1,
+        "started-at-ms": 719.6049173333333,
+        "params": {
+          "level": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "03-studio",
+    "frame": 3380,
+    "rgb": [
+      255,
+      0,
+      0
+    ],
+    "order": [
+      "0:2",
+      "0:1"
+    ],
+    "render-error": null,
+    "instances": [
+      {
+        "id": "0:1",
+        "cue-id": "red-wash",
+        "priority": -2,
+        "render-priority": 4.5,
+        "started-at-ms": 552.9380366666667,
+        "params": {
+          "level": 0.85
+        }
+      },
+      {
+        "id": "0:2",
+        "cue-id": "blue-wash",
+        "priority": 1,
+        "started-at-ms": 719.6049173333333,
+        "params": {
+          "level": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "04-repl",
+    "frame": 3493,
+    "rgb": [
+      0,
+      0,
+      255
+    ],
+    "order": [
+      "0:1",
+      "0:2"
+    ],
+    "render-error": null,
+    "instances": [
+      {
+        "id": "0:1",
+        "cue-id": "red-wash",
+        "priority": -2,
+        "render-priority": -2.5,
+        "started-at-ms": 552.9380366666667,
+        "params": {
+          "level": 0.85
+        }
+      },
+      {
+        "id": "0:2",
+        "cue-id": "blue-wash",
+        "priority": 1,
+        "started-at-ms": 719.6049173333333,
+        "params": {
+          "level": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "05-osc",
+    "frame": 3523,
+    "rgb": [
+      255,
+      0,
+      0
+    ],
+    "order": [
+      "0:2",
+      "0:1"
+    ],
+    "render-error": null,
+    "instances": [
+      {
+        "id": "0:1",
+        "cue-id": "red-wash",
+        "priority": -2,
+        "render-priority": 6,
+        "started-at-ms": 552.9380366666667,
+        "params": {
+          "level": 0.85
+        }
+      },
+      {
+        "id": "0:2",
+        "cue-id": "blue-wash",
+        "priority": 1,
+        "started-at-ms": 719.6049173333333,
+        "params": {
+          "level": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "06-osc-launch",
+    "frame": 3570,
+    "rgb": [
+      0,
+      0,
+      255
+    ],
+    "order": [
+      "0:2",
+      "0:1",
+      "0:3"
+    ],
+    "render-error": null,
+    "instances": [
+      {
+        "id": "0:1",
+        "cue-id": "red-wash",
+        "priority": -2,
+        "render-priority": 6,
+        "started-at-ms": 552.9380366666667,
+        "params": {
+          "level": 0.85
+        }
+      },
+      {
+        "id": "0:2",
+        "cue-id": "blue-wash",
+        "priority": 1,
+        "started-at-ms": 719.6049173333333,
+        "params": {
+          "level": 1
+        }
+      },
+      {
+        "id": "0:3",
+        "cue-id": "blue-wash",
+        "priority": 7,
+        "started-at-ms": 341505.63114799996,
+        "params": {
+          "level": 1
+        }
+      }
+    ]
+  }
+]
