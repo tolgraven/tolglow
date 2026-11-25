@@ -240,13 +240,14 @@
                                  (constantly nil))
             receive (atom nil) openings (atom 0) closes (atom 0)
             frames (LinkedBlockingQueue. 96)
-            options (cond-> {:session-id "captured" :schedule! nil
+            transport display/transport
+            options (cond-> {:session-id "captured" :schedule! nil :timeout-ms 30000
                              :catalog-controls restore-controls :catalog-saves saves
                              :midi {:open! (fn [callback] (reset! receive callback) (swap! openings inc))
                                     :close! (fn [_] (swap! closes inc))
                                     :send! (fn [& _])}
                              :display-options {:sink {:device kind :open! (constantly :sink) :close! (fn [_])
-                                                      :render! (fn [_ view] (.offer frames view))}}}
+                                                      :render! (fn [_ _])}}}
                       (= kind :push-3) (assoc :user-mode? true :expression-mode :poly-aftertouch
                                             :layout {:encoders {:level {:channel 0 :controller 71}}
                                                      :encoder-touches {:level {:channel 0 :note 0}}}
@@ -261,7 +262,11 @@
           (recovery/close! @(:recovery runtime))
           (is (= :accepted (:status (deref (show/submit! runtime {:op :master/set :value 0.91}) 3000 {}))))
           (with-redefs [display/process-capture (constantly {:open! (constantly :camera) :close! (fn [_])
-                                                            :capture! (fn [_ view] view)})]
+                                                            :capture! (fn [_ view] view)})
+                        display/transport (fn [options]
+                                            (transport (update options :presented!
+                                                         (fn [presented!]
+                                                           (fn [view] (presented! view) (.offer frames view))))))]
             (let [device (catalog/connect-device! runtime kind options)
                   old-input @receive
                   before (:epoch (show/snapshot runtime))]
