@@ -16,14 +16,37 @@ struct DanceAudienceView: View {
 
     private var participating: Bool { workout.active || workout.requesting }
 
-    private func routeButton(_ route: AudienceWatchRoute, title: String, icon: String, id: String) -> some View {
-        Button { link.select(route) } label: {
+    @ViewBuilder private func routeButton(_ route: AudienceWatchRoute, title: String, icon: String, id: String) -> some View {
+        let button = Button { link.select(route) } label: {
             Label(title, systemImage: link.route == route ? "checkmark.circle.fill" : icon)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .accessibilityIdentifier(id)
         .accessibilityAddTraits(link.route == route ? .isSelected : [])
         .disabled(participating || !route.available(phoneJoined: link.phoneJoined))
+        #if DEBUG && targetEnvironment(simulator)
+        if WatchFloorLink.interruptedStageFixture && route == .nearbyStage {
+            button.accessibilityValue(Text(link.interruptedStageDiagnostics))
+        } else {
+            button
+        }
+        #else
+        button
+        #endif
+    }
+
+    @ViewBuilder private var stageStatus: some View {
+        #if DEBUG && targetEnvironment(simulator)
+        if WatchFloorLink.interruptedStageFixture {
+            Text(stage.status)
+                .accessibilityIdentifier("reconnection-stage-status")
+                .accessibilityValue(Text(link.interruptedStageDiagnostics))
+        } else {
+            Text(stage.status)
+        }
+        #else
+        Text(stage.status)
+        #endif
     }
 
     private var destination: some View {
@@ -32,7 +55,7 @@ struct DanceAudienceView: View {
             routeButton(.nearbyStage, title: "Nearby stage", icon: "antenna.radiowaves.left.and.right", id: "route-direct")
             if link.route == .nearbyStage {
                 if stage.reconnecting {
-                    Text(stage.status).accessibilityAddTraits(.updatesFrequently)
+                    stageStatus.accessibilityAddTraits(.updatesFrequently)
                     Button("Cancel reconnection") { workout.stop() }
                 } else if stage.joined {
                     Label("Connected to stage", systemImage: "checkmark.circle")
@@ -49,7 +72,7 @@ struct DanceAudienceView: View {
                     ForEach(stage.venues) { venue in
                         Button(venue.name) { link.choose(venue) }
                     }
-                    Text(stage.status).font(.caption2)
+                    stageStatus.font(.caption2)
                 }
             } else if !participating {
                 Text(link.phoneJoined ? "Your iPhone is on the floor. Leave on iPhone to join directly." :
@@ -115,7 +138,15 @@ struct DanceAudienceView: View {
         }
         .navigationTitle("Dance floor")
         .sheet(isPresented: $reviewingPulse) { pulseConsent }
-        .onAppear { workout.prepareConnection() }
+        .onAppear {
+            #if DEBUG && targetEnvironment(simulator)
+            if WatchFloorLink.interruptedStageFixture {
+                link.seedInterruptedStageFixture()
+                return
+            }
+            #endif
+            workout.prepareConnection()
+        }
         .onDisappear {
             if participating || link.route == .nearbyStage { workout.stop() }
         }
