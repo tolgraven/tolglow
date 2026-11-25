@@ -3,6 +3,7 @@
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
             [tolglow.studio.fog-fields :as fog]
+            [tolglow.studio.operator-history :as history]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.page-routes :as pages]
             [tolglow.studio.state-socket]
@@ -167,6 +168,80 @@
 (defn draft [db key op fields]
   (assoc-in db [:drafts key] {:op op :fields fields :epoch (get-in db [:show :epoch]) :runtime-id (get-in db [:show :runtime-id])}))
 
+(def ^:private history-path [:ui :operator-history])
+
+(defn history-inspector [db]
+  (let [projection (get-in db [:server-projection :view :operator-history])
+        state (get-in db history-path)]
+    {:open? (:open? state)
+     :projection projection
+     :view-state state
+     :apply-status (cond-> {:pending? (boolean (:pending state))
+                           :message (:message state) :error? (:error? state) :conflict (:conflict state)}
+                     (or (:awaiting-full? db) (not (get-in db [:connection :connected?])))
+                     (assoc :connection-message "Waiting for the live show to reconnect."))}))
+
+(defn- settle-history [db]
+  (let [{:keys [operator-history revision]} (get-in db [:server-projection :view])
+        {:keys [identity open? pending preview] :as state} (get-in db history-path)
+        {:keys [receipt]} pending]
+    (cond
+      (nil? state) db
+      (not= identity (:identity operator-history))
+      (assoc-in db history-path {:identity (:identity operator-history) :open? open?})
+      (and receipt (>= revision (:revision receipt)))
+      (let [current (:current-id operator-history)]
+        (update-in db history-path
+                   #(cond-> (-> %
+                                (dissoc :pending :conflict :error?)
+                                (assoc :message (if (= current (:history-cursor receipt))
+                                                  "History step applied."
+                                                  "History applied. The current step has since changed.")))
+                      (= (:preview pending) preview) (-> (dissoc :preview) (assoc :focus-id current)))))
+      :else db)))
+
+(rf/reg-event-db :operator-history/open
+  (fn [db _] (-> db (assoc-in (conj history-path :open?) true) settle-history)))
+(rf/reg-event-db :operator-history/close
+  (fn [db _]
+    (update-in db history-path #(-> % (assoc :open? false) (dissoc :preview :focus-id :message :conflict :error?)))))
+(rf/reg-event-db :operator-history/inspect
+  (fn [db [_ interaction]]
+    (let [{:keys [open? projection view-state]} (history-inspector db)]
+      (if (and open? projection)
+        (assoc-in db history-path (history/update-interaction view-state projection interaction))
+        db))))
+
+(rf/reg-event-fx :operator-history/navigate
+  (fn [{:keys [db]} [_ op request]]
+    (let [{:keys [open? projection view-state apply-status]} (history-inspector db)]
+      (when (and open? request (not (:pending? apply-status)))
+        (if (= request (get (history/commands projection view-state apply-status) op))
+          (let [{[runtime-id _ epoch] :identity :keys [expected-cursor target-id]} request
+                command-id (str (random-uuid))
+                fields (cond-> {:expected-epoch epoch :expected-cursor expected-cursor :command-id command-id}
+                         (#{:history/redo :history/select} op) (assoc :node-id target-id))
+                [effect payload] (command db op fields [:operator-history/accepted command-id] epoch false runtime-id)]
+            {:db (update-in db history-path #(-> % (dissoc :message :conflict :error?)
+                                                 (assoc :pending {:id command-id :op op :preview (:preview view-state)})))
+             :fx [[effect (assoc payload :on-failure [:operator-history/rejected command-id])]]})
+          {:db (assoc-in db (conj history-path :message) "The live history changed. Review the current step.")})))))
+
+(rf/reg-event-db :operator-history/accepted
+  (fn [db [_ command-id receipt]]
+    (if (= command-id (get-in db (into history-path [:pending :id])))
+      (-> db (assoc-in (into history-path [:pending :receipt]) receipt) settle-history)
+      db)))
+(rf/reg-event-db :operator-history/rejected
+  (fn [db [_ command-id message]]
+    (update-in db history-path
+               (fn [{:keys [pending preview] :as state}]
+                 (if (= command-id (:id pending))
+                   (cond-> (-> state (dissoc :pending) (assoc :message message :error? true))
+                     (and (= :history/select (:op pending)) (= (:preview pending) preview))
+                     (assoc :conflict message))
+                   state)))))
+
 (rf/reg-event-fx :studio/initialize
   (fn [_ [_ session]] {:db (initial-db session) :studio/open-stream session}))
 
@@ -225,6 +300,7 @@
         epoch-changed? (or runtime-changed? (and (:show db) (not= (get-in db [:show :epoch]) (:epoch show))))
         updated (-> db (assoc :show show :snapshot-order order :drafts drafts :connection {:connected? true}
                              :server-projection server :server-presentation presentation)
+                    settle-history
                     spatial-drafts/settle
                     (assoc-in [:ui :page-id] (if (some #(= page-id (:id %)) (:pages show)) page-id (:id (first (:pages show))))))
         updated (settle-connection-drafts updated (:server-presentation db) (get-in db [:server-projection :view]))

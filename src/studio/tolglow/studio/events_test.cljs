@@ -9,6 +9,7 @@
             [reagent.core :as r]
             ["react-dom/server" :refer [renderToStaticMarkup]]
             [tolglow.studio.events :as events]
+            [tolglow.studio.operator-history :as history]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.spatial :as spatial]
             [tolglow.studio.spatial-drafts :as spatial-drafts]
@@ -43,6 +44,71 @@
                  :identity (projection/identity-of view) :view view}))
 
 (defn first-command [effects] (second (first (:fx effects))))
+
+(defn- history-frame [db runtime epoch revision cursor]
+  (let [view {:runtime-id runtime :show-id "history-show" :epoch epoch :revision revision :frame-number revision
+              :operator-history {:identity [runtime "history-show" epoch] :current-id cursor
+                                 :nodes [{:id 0 :parent-id nil}
+                                         {:id 1 :parent-id 0 :parameter :gain :before 0.25 :after 0.8}
+                                         {:id 2 :parent-id 0 :parameter :gain :before 0.25 :after 0.4}]}}]
+    (:db (stream-event db {:protocol projection/protocol :kind :full :token (str runtime "-" revision)
+                           :identity (projection/identity-of view) :view view}))))
+
+(defn- history-command [db op]
+  (let [{:keys [projection view-state apply-status]} (events/history-inspector db)]
+    [:operator-history/navigate op (get (history/commands projection view-state apply-status) op)]))
+
+(deftest history-preview-is-local-and-apply-waits-for-a-committed-frame
+  (let [live (history-frame (with-stream base) "runtime" 7 3 1)
+        open (:db (transition live [:operator-history/open]))
+        inspected (transition open [:operator-history/inspect [:preview 2]])
+        apply-step (history-command (:db inspected) :history/select)
+        submitted (transition (:db inspected) apply-step)
+        pending (:db submitted)
+        command (first-command submitted)
+        receipt (conj (:on-success command) {:revision 4 :history-cursor 2})
+        confirmed (:db (transition pending receipt))
+        state-first (history-frame pending "runtime" 7 4 2)
+        both-ways [(history-frame confirmed "runtime" 7 4 2)
+                   (:db (transition state-first receipt))]]
+    (is (empty? (:fx inspected)))
+    (is (= :history/select (:op command)))
+    (is (= {:node-id 2 :expected-cursor 1 :expected-epoch 7} (dissoc (:fields command) :command-id)))
+    (is (= "runtime" (:runtime-id command)))
+    (is (string? (get-in command [:fields :command-id])))
+    (is (empty? (:fx (transition pending apply-step))))
+    (is (= 1 (get-in (events/history-inspector confirmed) [:projection :current-id])))
+    (is (get-in (events/history-inspector confirmed) [:apply-status :pending?]))
+    (doseq [db both-ways]
+      (let [{:keys [projection view-state apply-status]} (events/history-inspector db)]
+        (is (= 2 (:current-id projection)))
+        (is (nil? (:preview view-state)))
+        (is (false? (:pending? apply-status)))
+        (is (= "History step applied." (:message apply-status)))))))
+
+(deftest stale-or-rejected-history-commands-preserve-the-stream-projection
+  (let [live (history-frame (with-stream base) "runtime" 7 3 1)
+        open (:db (transition live [:operator-history/open]))
+        preview (:db (transition open [:operator-history/inspect [:preview 2]]))
+        apply-step (history-command preview :history/select)
+        submitted (transition preview apply-step)
+        pending (:db submitted)
+        failure (conj (:on-failure (first-command submitted)) "The parameter changed after this edit.")
+        declined (:db (transition pending failure))
+        moved (history-frame preview "runtime" 7 4 0)
+        stale (transition moved apply-step)
+        replaced (history-frame pending "new-runtime" 8 5 1)
+        late (:db (transition replaced failure))]
+    (is (empty? (:fx stale)))
+    (is (= 0 (get-in (events/history-inspector (:db stale)) [:projection :current-id])))
+    (is (= 1 (get-in (events/history-inspector declined) [:projection :current-id])))
+    (is (= "The parameter changed after this edit." (get-in (events/history-inspector declined) [:apply-status :message])))
+    (is (nil? (last (history-command declined :history/select))))
+    (is (some? (last (history-command (:db (transition declined [:operator-history/inspect [:preview 2]])) :history/select))))
+    (is (get-in (events/history-inspector late) [:open?]))
+    (is (nil? (get-in (events/history-inspector late) [:view-state :preview])))
+    (is (false? (get-in (events/history-inspector late) [:apply-status :pending?])))
+    (is (nil? (get-in (events/history-inspector late) [:apply-status :message])))))
 
 (deftest rapid-rotary-keypresses-use-current-app-db-instead-of-a-stale-rendered-value
   (let [schema {:type "number" :bounds [0 1]}
