@@ -164,7 +164,7 @@
          (if push?
            [:figcaption.push-reading
             (for [[axis value] (map-indexed vector (take 3 actual))]
-              ^{:key axis} [component-reading schema labels axis value true])]
+              (with-meta (component-reading schema labels axis value true) {:key axis}))]
            [:figcaption (str/join " · " (map-indexed #(compact-number schema %1 %2) (take 3 actual)))])
          [:small.parameter-domain caption]]))))
 
@@ -221,7 +221,7 @@
     [:figure.parameter-history {:aria-label "Observed parameter history" :data-dmx-bits (:dmx-bits schema)}
      [:div.history-reading {:class (when push? "push-reading") :data-components (count values)}
       (for [[i v] (map-indexed vector values)]
-        ^{:key i} [component-reading schema labels i v push?])]
+        (with-meta (component-reading schema labels i v push?) {:key i}))]
      [:svg {:view-box "0 0 100 44" :preserve-aspect-ratio "none" :role "img" :style {:overflow "hidden"}
             :aria-label (str "Last " window " beats")}
       (for [x [0 25 50 75 100]]

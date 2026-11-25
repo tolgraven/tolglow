@@ -153,7 +153,7 @@
 
 (defn- parameter-id [parameter] (or (:param parameter) (:id parameter)))
 
-(defn- encoder-slots [view]
+(defn encoder-slots [view]
   (let [touches (cons (:touched-parameter view) (:touched-parameters view))]
     (mapv (fn [index]
             (let [parameter (get (:parameters view) index)
@@ -171,7 +171,7 @@
   (when (#{:color :range :vector} (widgets/parameter-kind (:schema parameter)))
     (parameter-id parameter)))
 
-(defn- compound-areas [slots]
+(defn compound-areas [slots]
   (keep (fn [group]
           (when-let [selected (first (filter :touched? group))]
             (let [start (:index (first group))
