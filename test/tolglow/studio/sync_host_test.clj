@@ -1,11 +1,17 @@
 (ns tolglow.studio.sync-host-test
   (:require [clojure.test :refer [deftest is]]
             [clojure.data.json :as json]
+            [clojure.java.io :as io]
+            [ring.adapter.jetty :as jetty]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
             [tolglow.connections :as connections]
+            [tolglow.persistence :as persistence]
             [afterglow.sync :as sync]
-            [afterglow.sync.session :as session]))
+            [afterglow.sync.session :as session])
+  (:import [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]
+           [java.util.concurrent TimeUnit]))
 
 (defn- fixture []
   (let [opened (promise) closed (atom 0)
@@ -168,6 +174,131 @@
       (if-let [ready (check)] ready
           (if (< (System/nanoTime) deadline) (do (Thread/sleep 15) (recur))
               (throw (ex-info "Timed out waiting for Live bridge" {})))))))
+
+(defn- with-fresh-live-peer! [callback port check!]
+  (let [command ["node" "test/js/ableton-live/behavioral_host.js" callback (str port)]
+        child (.start (doto (ProcessBuilder. ^java.util.List command)
+                        (.redirectError java.lang.ProcessBuilder$Redirect/INHERIT)))]
+    (try
+      (with-open [input (.getOutputStream child)
+                  output (io/reader (.getInputStream child))]
+        (await-live #(.ready output))
+        (check! (:port (json/read-str (.readLine output) :key-fn keyword))))
+      (finally
+        (when-not (.waitFor child 2 TimeUnit/SECONDS)
+          (.destroyForcibly child)
+          (.waitFor child 2 TimeUnit/SECONDS))))))
+
+(defn- recording-destination [runtime]
+  (get-in (show/sync-action! runtime :status {}) [:recording :destination-id]))
+
+(defn- load-at! [runtime file time-ms]
+  (let [receipt (show/load-show! runtime (str file))]
+    (show/tick! runtime time-ms)
+    (is (= :accepted (:status (deref receipt 2000 nil))))))
+
+(deftest saved-pairings-reacquire-the-deck-and-live-clip-after-a-cold-restart
+  (let [file (Files/createTempFile "tolglow-pairings-" ".transit" (make-array FileAttribute 0))
+        callback-handler (atom nil)
+        server (jetty/run-jetty #(@callback-handler %) {:host "127.0.0.1" :port 0 :join? false})
+        callback (str "http://127.0.0.1:" (.getLocalPort (first (.getConnectors server))) "/api/live")
+        deck {:device-number 2 :hardware-address "02:00:00:00:00:02"}
+        clip {:track-index 0 :clip-slot-index 0 :expected-track-name "Lights" :expected-clip-name "Light sequence"}
+        receive (atom nil)
+        opens (atom 0)
+        closes (atom 0)
+        options {:workspace-options nil
+                 :sync-options {:beat-link-factory (fn [_ _]
+                                                     {:open! (fn [receive!]
+                                                               (swap! opens inc)
+                                                               (reset! receive receive!))
+                                                      :close! (fn [_] (swap! closes inc))})}}
+        beat {:type :beat-link/beat :source-id :beat-link :time-ms 1000 :bpm 123.0
+              :beat-within-bar 3 :bar-meaningful? true}
+        author (atom nil)]
+    (try
+      (with-fresh-live-peer! callback 0
+        (fn [port]
+          (let [runtime (show/create-runtime options)]
+            (reset! callback-handler (studio/handler runtime))
+            (try
+              (show/sync-action! runtime :configure
+                {:config {:selected-source :beat-link
+                          :beat-link {:enabled? true :align-bars? true :peer deck}
+                          :live {:enabled? true :automap? false :mappings {60 {:cue-id :ember}}
+                                 :endpoint (str "http://127.0.0.1:" port "/live") :pairing clip}}})
+              (is (zero? @opens))
+              (show/sync-action! runtime :start {})
+              (is (= "clip:3" (await-live #(recording-destination runtime))))
+              (let [peer (assoc deck :address "192.0.2.18")
+                    manager (connections/sync (:connections runtime))]
+                (is (@receive {:type :peer/found :peer peer}))
+                (is (@receive (assoc beat :peer peer :bpm 118.0)))
+                (is (session/flush! manager))
+                (show/tick! runtime 1000)
+                (is (= 118.0 (get-in (show/snapshot runtime) [:transport :bpm])))
+                (show/save-show! runtime (str file))
+                (let [saved (get-in (persistence/read-string (slurp (.toFile file))) [:model :integrations :sync])]
+                  (is (= deck (get-in saved [:config :beat-link :peer])))
+                  (is (= clip (get-in saved [:config :live :pairing])))
+                  (is (true? (:wanted? saved)))
+                  (reset! author {:port port :run-id (sync/active-run-id manager) :receive! @receive :saved saved})))
+              (finally (show/stop! runtime))))))
+      (is (= 1 @opens @closes))
+      (let [{:keys [port run-id receive! saved]} @author]
+        (with-fresh-live-peer! callback port
+          (fn [reopened-port]
+            (is (= port reopened-port))
+            (let [runtime (show/create-runtime options)]
+              (reset! callback-handler (studio/handler runtime))
+              (try
+                (is (nil? (recording-destination runtime)))
+                (is (= 1 @opens))
+                (load-at! runtime file 0)
+                (is (= 1000 (:time-ms (show/snapshot runtime))))
+                (is (= "clip:3" (await-live #(recording-destination runtime))))
+                (let [manager (connections/sync (:connections runtime))
+                      current-run (sync/active-run-id manager)
+                      callback {:protocol-version 1 :bridge-id "tolglow-m4l" :event-id "saved-sync-run"
+                                :kind :midi :event {:type :note-on :note 60 :velocity 100 :channel 1}}
+                      other (assoc deck :address "192.0.2.20" :hardware-address "02:00:00:00:00:03")
+                      paired (assoc deck :address "192.0.2.21")]
+                  (is (= 2 @opens))
+                  (is (= saved (get-in (show/export-show runtime) [:model :integrations :sync])))
+                  (is (string? current-run))
+                  (is (not= run-id current-run))
+                  (is (empty? (:peers (sync/status manager))))
+                  (is (false? (receive! (assoc beat :peer paired))))
+                  (is (false? (:accepted? (show/sync-action! runtime :live (assoc callback :sync-session-id run-id)))))
+                  (is (empty? (:instances (show/snapshot runtime))))
+                  (is (@receive {:type :peer/found :peer other}))
+                  (is (@receive (assoc beat :peer other)))
+                  (is (session/flush! manager))
+                  (is (= :waiting (:status (session/clock-at manager 1000))))
+                  (is (@receive {:type :peer/found :peer paired}))
+                  (is (@receive (assoc beat :peer paired)))
+                  (is (session/flush! manager))
+                  (show/tick! runtime 1000)
+                  (is (= {:selected-source :beat-link :status :locked}
+                         (select-keys (session/clock-at manager 1000) [:selected-source :status])))
+                  (is (= 123.0 (get-in (show/snapshot runtime) [:transport :bpm])))
+                  (is (:accepted? (show/sync-action! runtime :live (assoc callback :sync-session-id current-run))))
+                  (is (session/flush! manager))
+                  (show/tick! runtime 1050)
+                  (is (= [:ember] (mapv :cue-id (:instances (show/snapshot runtime)))))
+                  (is (:stopped? (show/sync-action! runtime :stop {})))
+                  (show/save-show! runtime (str file)))
+                (finally (show/stop! runtime))))))
+        (let [runtime (show/create-runtime options)]
+          (try
+            (load-at! runtime file 0)
+            (is (= (assoc saved :wanted? false) (get-in (show/export-show runtime) [:model :integrations :sync])))
+            (is (= :stopped (:state (show/sync-action! runtime :status {}))))
+            (is (= 2 @opens @closes))
+            (finally (show/stop! runtime)))))
+      (finally
+        (.stop server)
+        (Files/deleteIfExists file)))))
 
 (defn- exercise-live-parameter! [runtime manager host! instance-id]
   (let [source "live/ableton-live/parameter/cutoff"

@@ -92,7 +92,7 @@ if (require.main === module) {
     });
     vm.runInContext(fs.readFileSync(path.join(__dirname, "../../../resources/devices/ableton-live/max_adapter.js"), "utf8"), max);
     const bridge = createBridge({sendToMax: (_, json) => max.request(json)});
-    const {port} = await bridge.start({port: 0, callback: process.argv[2]});
+    const {port} = await bridge.start({port: Number(process.argv[3] || 0), callback: process.argv[2]});
     const write = result => process.stdout.write(JSON.stringify(result) + "\n");
     write({port});
     for await (const line of require("node:readline").createInterface({input: process.stdin})) {

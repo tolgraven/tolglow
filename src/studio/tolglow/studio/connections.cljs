@@ -2,6 +2,7 @@
   "Explicit connection controls. Reading status never acquires a device; every
   start, stop, clock selection and Live handoff is a named re-frame event."
   (:require [clojure.string :as str]
+            [afterglow.sync.peer :as pairing]
             [re-frame.core :as rf]
             [tolglow.studio.compute-client :as compute-client]
             [reagent.core :as r]
@@ -586,7 +587,7 @@
 
 (defn- beat-link-panel [s disabled?]
   (let [peers (get-in s [:sync :peers]) selected (get-in s [:sync-form :beat-link :peer])
-        index (first (keep-indexed #(when (= (select-keys %2 [:device-number :address]) (select-keys selected [:device-number :address])) %1) peers))]
+        index (first (keep-indexed #(when (pairing/matches-pairing? selected %2) %1) peers))]
     [:section.panel
      [:div.panel-top [:span.section-label "PRO DJ LINK"] [checkbox s [:sync-form :beat-link :enabled?] "Enabled" disabled?]]
      [:div.form-body
