@@ -543,8 +543,8 @@
   [show-id epoch (:source transport) (:source-epoch transport)
    (:source-selection-epoch transport) @(:presentation-clock runtime)])
 
-(defn- push-gesture-end? [payload {::keys [push-session-id]}]
-  (and (= :gesture/end (:op payload)) push-session-id
+(defn- push-gesture-terminal? [payload {::keys [push-session-id]}]
+  (and (#{:gesture/end :gesture/cancel} (:op payload)) push-session-id
        (= {:adapter :push-2 :session-id push-session-id} (:source payload))))
 
 (defn- push-gesture-key [{:keys [instance-id param control-id gesture-id]} {:keys [operator-id]}]
@@ -568,7 +568,7 @@
     (= :cue/cancel-launch (:op payload))
     (cue-timing/cancel-owned model (cue-clock-identity runtime model) time-ms payload command)
 
-    (push-gesture-end? payload authority)
+    (and (= :gesture/end (:op payload)) (push-gesture-terminal? payload authority))
     (let [gesture (open-push-gesture model (push-gesture-key payload authority))]
       (command model (cond-> payload gesture (assoc :last-sequence (:last-sequence gesture))) time-ms authority))
 
@@ -1776,7 +1776,7 @@
 
 (defn- enqueue-push-gesture-end! [runtime {:keys [payload authority reply expected-epoch] :as message}]
   ;; Under the owner lock, each open gesture or queued begin can reserve only
-  ;; one end. Both sources are bounded and drained in the same owner cycle.
+  ;; one end or cancel. Both sources are bounded and drained in the same owner cycle.
   (let [ends (:push-gesture-ends runtime)
         key (push-gesture-key payload authority)
         queued-begin? (fn [queued]
@@ -1845,7 +1845,7 @@
                                 (let [message (cond-> {:type type :payload payload :reply reply :expected-epoch epoch
                                                        :ingress-order (vswap! (:ingress-order runtime) inc)}
                                                 (and (= :command type) authority) (assoc :authority authority))]
-                                  (if (and (= :command type) (push-gesture-end? payload authority))
+                                  (if (and (= :command type) (push-gesture-terminal? payload authority))
                                     (do (enqueue-push-gesture-end! runtime message) true)
                                     (.offer ^LinkedBlockingQueue queue message)))))]
            (when-not accepted? (throw (ex-info "Show changed or command queue is full" {})))))
@@ -2061,8 +2061,9 @@
   :push-2/:push-3/:push-3-midi/:seaboard/:x-touch/:midi/:osc/:sensor. Options select ports,
   expression modes and bindings; imported namespaces never acquire devices.
   Push 2 accepts :native-display? true for the Wayang parameter display and
-  :operator-gestures? true to record held scalar encoder edits. An explicit
-  :display transport takes precedence."
+  :operator-gestures? true to record held scalar encoder edits. Set
+  :temporary-encoder-modifier to :shift or a mapped button CC to restore the
+  value on encoder release. An explicit :display transport takes precedence."
   [runtime kind options]
   (let [id (:session-id options) epoch (get-in @(:state runtime) [:model :epoch])]
     (when-not (and (string? id) (seq id)) (throw (ex-info "Device requires session-id" {})))
