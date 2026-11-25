@@ -82,6 +82,14 @@ vec3 incident(int i,vec3 position,float density,bool halo){
   vec3 shadowPoint=position;
   float axial=dot(delta,lightDirection[i]);
   float path=max(0.,axial-lightStart[i]);
+  if(!halo && lightStart[i]>0.){
+   // The lens fills its clear aperture. Develop the angular penumbra
+   // downstream instead of shaping the illuminated disk at the glass.
+   float radius=lightStart[i]*lightProfile[i].y;
+   float radial=length(delta-axial*lightDirection[i]);
+   float disk=1.-smoothstep(.88*radius,radius,radial);
+   spot=mix(disk,spot,smoothstep(0.,2.*radius,path));
+  }
   if(halo){
    // Forward scattering can illuminate the room just outside the optical
    // field. The additional width starts at zero at the actual lens.

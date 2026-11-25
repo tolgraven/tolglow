@@ -41,7 +41,7 @@ export function createTruss(spec, materials) {
   mesh.castShadow = mesh.receiveShadow = true; group.add(mesh); return group;
 }
 export function createMovingHead(fixture, materials) {
-  const radius = .119;
+  const radius = apertureRadius({});
   const root = new THREE.Group(); root.name = `fixture:${fixture.id}`; root.position.fromArray(fixture.position || [0, 0, 0]);
   // Fixture origin is the optical origin, unchanged by decorative geometry.
   const base = box(root, [.52, .15, .36], [0, .62, 0], materials.housing, .025);
@@ -57,9 +57,9 @@ export function createMovingHead(fixture, materials) {
   // Lens at optical origin; local -Y is the head's optical axis.
   box(head, [.34, .36, .3], [0, .24, 0], materials.housing, .055);
   const barrel = new THREE.Mesh(new THREE.CylinderGeometry(radius * 1.22, radius * 1.01, .16, 32), materials.blackMetal);
-  barrel.position.y = .075; barrel.castShadow = barrel.receiveShadow = true; head.add(barrel);
+  barrel.position.y = .081; barrel.castShadow = barrel.receiveShadow = true; head.add(barrel);
   const lensMaterial = new THREE.MeshPhysicalMaterial({color: 0x20313a, metalness: .35, roughness: .1, clearcoat: 1, clearcoatRoughness: .04, emissive: new THREE.Color(0, 0, 0), emissiveIntensity: 1});
-  const lens = new THREE.Mesh(new THREE.CircleGeometry(radius, 40), lensMaterial); lens.rotation.x = Math.PI / 2; lens.position.y = -.007; head.add(lens);
+  const lens = new THREE.Mesh(new THREE.CircleGeometry(radius, 40), lensMaterial); lens.rotation.x = Math.PI / 2; head.add(lens);
   const ring = new THREE.Mesh(new THREE.TorusGeometry(radius + .014, .012, 8, 40), materials.metal); ring.rotation.x = Math.PI / 2; ring.position.y = -.002; head.add(ring);
   for (let n = 0; n < 6; n++) box(head, [.27, .012, .012], [0, .17 + n * .034, .156], materials.rubber);
   // Small manufacturer display is non-emissive: no invented output light.
@@ -67,6 +67,7 @@ export function createMovingHead(fixture, materials) {
   const entry = {root, head, yoke, lensMaterial,
     setAperture(fixture) {
       const next = apertureRadius(fixture), scale = next / radius;
+      this.lensRadius = next;
       barrel.scale.set(scale, 1, scale); lens.scale.set(scale, scale, 1);
       const ringScale = (next + .014) / (radius + .014);
       ring.scale.set(ringScale, ringScale, 1);

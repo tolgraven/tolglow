@@ -12,6 +12,7 @@ import {displayTransform, EdgePass, FilmPass} from './film.js';
 import {TIERS, rasterSizes, supportedSamples, sceneSamples, presentationHz, adjacentQuality, hdrDisplayAvailable, configureDisplayRange, GpuTimer} from './render-quality.js';
 import {createMaterials, disposeMaterials} from './materials.js';
 import {createRoom} from './room.js';
+import {createDiffuserTubes} from './diffuser-tubes.js';
 import {createMovingHead, createTruss, disposeGeometry} from './geometry.js';
 import {clamp, roomDimensions, fixtureDirection, emittedColor, beamAngle, structuralKey, axisDegrees} from './math.js';
 import {SurfaceReflections} from './reflections.js';
@@ -74,10 +75,12 @@ export class SceneRenderer {
     this.displayHz = hz;
     this.overBudget = this.underBudget = 0;
   }
-  autoQuality() {
+  autoQuality(width = this.platform.viewport?.width ?? this.canvas.getBoundingClientRect().width) {
     if (this.softwareRenderer) return 'low';
-    return (this.platform.worker ? this.platform.coarsePointer || this.platform.viewport.width < 700
-      : matchMedia('(pointer: coarse)').matches || innerWidth < 700) ? 'mobile' : 'desktop';
+    const coarse = this.platform.worker ? this.platform.coarsePointer : matchMedia('(pointer: coarse)').matches;
+    // Hysteresis keeps resizable panes and mobile browser chrome from
+    // reallocating shadow maps and fog targets around the layout threshold.
+    return coarse || width < (this.autoLayoutTier === 'mobile' ? 740 : 660) ? 'mobile' : 'desktop';
   }
   setStatus(text) { if (this.status && this.status.textContent !== text) this.status.textContent = text; }
   initialize() {
@@ -89,7 +92,7 @@ export class SceneRenderer {
     this.gpuTimer = this.platform.worker ? null : new GpuTimer(context);
     this.deviceRenderer = debug ? context.getParameter(debug.UNMASKED_RENDERER_WEBGL) : context.getParameter(context.RENDERER);
     this.softwareRenderer = /swiftshader|llvmpipe|softpipe|software rasterizer/i.test(this.deviceRenderer || '');
-    this.quality = this.autoQuality(); this.options = TIERS[this.quality]; this.frameInterval = 1000 / this.targetHz;
+    this.quality = this.autoLayoutTier = this.autoQuality(); this.options = TIERS[this.quality]; this.frameInterval = 1000 / this.targetHz;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace; this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = .85;
     this.renderer.shadowMap.enabled = true; this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.debug.onShaderError = (gl, program, vertex, fragment) => {
@@ -103,6 +106,7 @@ export class SceneRenderer {
     for (const material of Object.values(this.materials)) finiteApertureMaterial(material, this.apertureUniform, this.patchRadii);
     this.refreshEnvironment();
     this.hemisphere = new THREE.HemisphereLight(0xc5d9f0, 0x3a2c20, 0); this.scene.add(this.hemisphere);
+    this.diffuseBounce = new THREE.HemisphereLight(0, 0, 1); this.scene.add(this.diffuseBounce);
     this.workLamp = new THREE.DirectionalLight(0xffe3c4, 0); this.workLamp.position.set(2, 6, 4); this.scene.add(this.workLamp);
     this.setWorkLight(this.workLight);
     this.sceneTarget = new THREE.WebGLRenderTarget(1, 1, {type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: true});
@@ -161,7 +165,8 @@ export class SceneRenderer {
       this.scaleChangedAt = performance.now();
     }
     this.qualityChoice = value; if (!this.visible || !this.renderer) return;
-    const next = value === 'auto' ? (choiceChanged ? this.autoQuality() : this.quality) : value;
+    if (value === 'auto' && choiceChanged) this.autoLayoutTier = this.autoQuality();
+    const next = value === 'auto' ? (choiceChanged ? this.autoLayoutTier : this.quality) : value;
     if (next === this.quality) {if (choiceChanged) this.resize(); return;}
     this.applyTier(next);
   }
@@ -201,7 +206,10 @@ export class SceneRenderer {
     this.editorOverlay ||= new RigOverlay(); this.editorOverlay.update(snapshot);
     this.snapshot = snapshot; const rig = snapshot.rig || {};
     const key = rig === this.lastRig ? this.key : structuralKey(rig);
-    if (rig !== this.lastRig) this.fixtureById = new Map((rig.fixtures || []).map(f => [String(f.id), f]));
+    if (rig !== this.lastRig) {
+      this.fixtureById = new Map((rig.fixtures || []).map(f => [String(f.id), f]));
+      this.beamById = new Map([...this.fixtureById].filter(([, f]) => !(f['pixel-layout-id'] && f['diffuser-radius-m'])));
+    }
     this.lastRig = rig;
     if (force || this.key !== key) { this.ready = false; this.rebuild(rig); this.key = key; }
     for (const entry of this.trusses || []) {
@@ -213,7 +221,7 @@ export class SceneRenderer {
     this.lighting.accept(snapshot, rig, receivedAt);
     const selection = snapshot.editor?.selection;
     const selected = selection?.kind === 'fixtures' ? String(selection.id) : null;
-    const slots = fixtureSlots(this.fixtureById, snapshot.output?.values || {}, selected,
+    const slots = fixtureSlots(this.beamById, snapshot.output?.values || {}, selected,
       this.fixtures.map(entry => entry.id), this.lightIds, this.options.shadows);
     this.lightIds = slots.lights;
     const spotById = new Map(this.lightIds.map((id, index) => [id, this.spots[index]]));
@@ -227,10 +235,11 @@ export class SceneRenderer {
       entry.root.rotation.set(...(fixture['rotation-deg'] || [0, 0, 0]).map(v => v * Math.PI / 180), 'ZYX');
       entry.light = spotById.get(id);
     });
-    this.applyLighting(this.lighting.values(this.fixtures, receivedAt));
+    this.applyLighting(this.lighting.values(this.fixtureSamples, receivedAt));
   }
   applyLighting(output) {
     this.displayedValues = output;
+    for (const tube of this.diffuserTubes) tube.update(output);
     this.activeLights = 0;
     this.lightEntries = [];
     const candidates = [];
@@ -247,7 +256,7 @@ export class SceneRenderer {
       if (lit) this.activeLights++;
       light.color.setRGB(...rgb); light.intensity = 145 * brightness; light.angle = beamAngle(entry.fixture, resolved);
       light.penumbra = clamp(.72 - (Number(resolved.focus) || 0) * .52, .2, .8);
-      const optics = opticalFrustum(entry.fixture.position, direction, light.angle, apertureRadius(entry.fixture));
+      const optics = opticalFrustum(entry.fixture.position, direction, light.angle, entry.lensRadius);
       light.position.copy(optics.virtual);
       light.distance = Math.max(...this.room) * 2.5 + optics.apexDistance;
       if (light.shadow.camera.near !== optics.apexDistance + .006) {
@@ -261,14 +270,20 @@ export class SceneRenderer {
       this.lightEntries.push(beam);
       this.reflections.addCandidate(candidates, entry, beam, resolved['beam-footprint']);
     }
-    // Low-order room bounce estimate: only actual emitted, floor-directed light
-    // contributes. This illuminates airborne density, not a second fixture output.
+    // Approximate one diffuse floor bounce from beams whose axes hit the
+    // room floor. Use the same energy for surfaces and airborne haze.
     const bounce = new THREE.Color(0, 0, 0);
     for (const entry of this.lightEntries) {
-      if (entry.pseudo) continue;
-      const downward = Math.max(0, -entry.direction.y);
-      bounce.add(entry.color.clone().multiplyScalar(downward * .045 * entry.intensity / 145));
+      if (entry.pseudo || entry.direction.y >= 0) continue;
+      const distance = -entry.position.y / entry.direction.y;
+      const x = entry.position.x + distance * entry.direction.x;
+      const z = entry.position.z + distance * entry.direction.z;
+      if (distance <= 0 || Math.abs(x) > this.room[0] / 2 || Math.abs(z) > this.room[2] / 2) continue;
+      const weight = -entry.direction.y * .045 * entry.intensity / 145 / (1 + distance * distance / 24);
+      bounce.r += entry.color.r * weight; bounce.g += entry.color.g * weight; bounce.b += entry.color.b * weight;
     }
+    this.diffuseBounce.color.copy(bounce).multiplyScalar(.14);
+    this.diffuseBounce.groundColor.copy(bounce).multiplyScalar(.55);
     this.bounceColor = bounce;
     // The permanent spot order matches Three's shadow-first uniform order.
     if (this.spots.length) {
@@ -286,6 +301,7 @@ export class SceneRenderer {
     if (this.content) {
       this.scene.remove(this.content); disposeGeometry(this.content);
       for (const entry of this.fixtures) entry.dispose();
+      for (const tube of this.diffuserTubes || []) tube.dispose();
       for (const light of this.spots || []) light.dispose();
       this.reflections?.dispose();
     }
@@ -299,7 +315,10 @@ export class SceneRenderer {
         {const root = createTruss(spec, this.materials); this.content.add(root); this.trusses.push({id: String(spec.id), root});}
     }
     this.spots = []; this.lightIds = [];
-    this.fixtures = (rig.fixtures || []).slice(0, this.options.fixtures).map((fixture, index) => {
+    const fixtures = rig.fixtures || [];
+    this.diffuserTubes = createDiffuserTubes(fixtures.filter(f => f['pixel-layout-id'] && f['diffuser-radius-m']), this.content);
+    this.fixtures = fixtures.filter(f => !(f['pixel-layout-id'] && f['diffuser-radius-m']))
+      .slice(0, this.options.fixtures).map((fixture, index) => {
       const entry = createMovingHead(fixture, this.materials); finiteApertureMaterial(entry.lensMaterial, this.apertureUniform, this.patchRadii); entry.id = String(fixture.id); entry.fixture = fixture;
       const rotation = (fixture['rotation-deg'] || [0, 0, 0]).map(v => (Number(v) || 0) * Math.PI / 180);
       entry.root.rotation.set(...rotation, 'ZYX'); this.content.add(entry.root);
@@ -314,7 +333,8 @@ export class SceneRenderer {
       }
       return entry;
     });
-    const optedIn = (rig.fixtures || []).filter(f => f['pseudo-fixture']).length;
+    this.fixtureSamples = this.fixtures.concat(this.diffuserTubes.flatMap(tube => tube.rows));
+    const optedIn = fixtures.filter(f => f['pseudo-fixture']).length;
     const reflectedCap = this.quality === 'mobile' || this.quality === 'low' ? 1 : 2;
     this.reflections = new SurfaceReflections(this.content, Math.min(reflectedCap, optedIn), Math.min(512,this.options.shadowSize), this.fixtures);
     this.spotUniformOrder = [...this.spots.filter(l => l.castShadow), ...this.reflections.lights, ...this.spots.filter(l => !l.castShadow)];
@@ -353,6 +373,15 @@ export class SceneRenderer {
     this.resizePending = false;
     const bounds = this.platform.worker ? this.platform.viewport : this.canvas.getBoundingClientRect();
     if (!bounds.width || !bounds.height) return;
+    if (this.qualityChoice === 'auto') {
+      const layoutTier = this.autoQuality(bounds.width);
+      if (layoutTier !== this.autoLayoutTier) {
+        this.autoLayoutTier = layoutTier;
+        this.renderScale = 1; this.overBudget = this.underBudget = 0;
+        this.scaleChangedAt = performance.now();
+        if (layoutTier !== this.quality) {this.applyTier(layoutTier); return;}
+      }
+    }
     const pixelRatio = this.platform.worker ? bounds.pixelRatio : devicePixelRatio;
     const {scene: [width, height], display: [displayWidth, displayHeight]} = rasterSizes(
       bounds.width, bounds.height, pixelRatio, this.options, this.renderScale, this.maxDimension);
@@ -441,7 +470,7 @@ export class SceneRenderer {
     if (this.resizePending) this.resize();
     const started = performance.now(); if (this.platform.worker) this.controls.update();
     if (this.lighting.latest) {
-      const values = this.lighting.values(this.fixtures, started);
+      const values = this.lighting.values(this.fixtureSamples, started);
       if (values !== this.displayedValues) this.applyLighting(values);
     }
     const simulate = !this.reducedMotion.matches || this.clock < this.fogAnimationUntil;
@@ -507,6 +536,7 @@ export class SceneRenderer {
     this.editorInput?.dispose(); this.editorOverlay?.dispose();
     this.navigation?.dispose(); this.controls?.dispose(); this.fog?.dispose();
     for (const entry of this.fixtures) entry.dispose();
+    for (const tube of this.diffuserTubes || []) tube.dispose();
     for (const light of this.spots || []) light.dispose();
     this.reflections?.dispose();
     if (this.content) disposeGeometry(this.content);

@@ -4,6 +4,7 @@
             [afterglow.render.frame :as render]
             [afterglow.render.photometry :as photometry]
             [tolglow.automation.prediction :as prediction]
+            [tolglow.autopilot.signal :as signal]
             [tolglow.lighting-budget.allocation :as allocation]
             [tolglow.lighting-capacity :as capacity]))
 
@@ -41,10 +42,20 @@
   (every? (fn [id] (= (get-in previous [:members id]) (get-in groups [id :fixture-ids])))
           (keys (:groups config))))
 
+(defn- resolve-limits [model config]
+  (let [resolve-rule (fn [rule]
+                       (let [limit (:limit rule)]
+                         (if (map? limit)
+                           (assoc rule :limit (-> (signal/value model limit) (min 1.0) (max 0.0)))
+                           rule)))]
+    (cond-> config
+      (:global config) (update :global resolve-rule)
+      (seq (:groups config)) (update :groups update-vals resolve-rule))))
+
 (defn prepare-frame-context
   "Reuse the immutable patch, rule and group compilation while a show runs."
   [previous model patch meter-plan]
-  (let [config (get-in model [:settings :lighting-budget])
+  (let [config (resolve-limits model (get-in model [:settings :lighting-budget]))
         groups (get-in model [:extensions :tolglow.lighting-scenes/control :groups])]
     (if (and (identical? patch (:patch previous)) (identical? meter-plan (:meter previous))
              (= config (:config previous)) (same-group-members? previous config groups))

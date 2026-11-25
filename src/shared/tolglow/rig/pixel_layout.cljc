@@ -175,14 +175,19 @@
   [{:keys [id group] :as spec}]
   (check-identity! spec)
   (let [{:keys [order start]} (patch-plan spec)
+        diffuser (:diffuser-radius-m spec)
         width (count order)
         channels (zipmap order (range 1 (inc width)))
         points (positions spec)]
+    (when (and (some? diffuser)
+               (not (and (finite? diffuser) (pos? diffuser) (<= 2 (count points)))))
+      (invalid! :diffuser-radius-m "A diffuser needs a positive radius in metres and at least two pixels"))
     (mapv (fn [i position]
             (let [[universe address] (location (+ start (* i width)))]
-              {:id (head-id id i) :fixture-id id :pixel-layout-id id :pixel-index i
-               :groups (if group [group] []) :position position :channels channels
-               :universe universe :address address :footprint width}))
+              (cond-> {:id (head-id id i) :fixture-id id :pixel-layout-id id :pixel-index i
+                       :groups (if group [group] []) :position position :channels channels
+                       :universe universe :address address :footprint width}
+                diffuser (assoc :diffuser-radius-m diffuser))))
           (range (count points)) points)))
 
 (defn- spelling [id]
