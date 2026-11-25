@@ -7,7 +7,8 @@
             [tolglow.output-response :as response]
             [tolglow.events :as show-events]
             [tolglow.show :as show]
-            [tolglow.show.scene-draft :as draft]))
+            [tolglow.show.scene-draft :as draft])
+  (:import [java.util.concurrent CountDownLatch TimeUnit]))
 
 (def blue
   {:id :blue :version 1
@@ -340,30 +341,52 @@
         (is (= {:rendered 41 :skipped 0} (:frames (show/scene-draft (:runtime auditioned))))))
       (finally (show/stop! (:runtime plain)) (show/stop! (:runtime auditioned))))))
 
-(deftest a-slow-audition-never-delays-or-changes-live-frames
+(deftest a-held-audition-frame-never-blocks-or-changes-live-frames
+  ;; The first audition frame is held open on its worker. Every live tick must
+  ;; still return, so the test needs no wall-clock bound.
   (let [render @#'show/render-audition-frame
-        untouched (runtime nil {}) slowed (runtime nil {})]
+        entered (CountDownLatch. 1) release (CountDownLatch. 1)
+        untouched (runtime nil) held (runtime nil)
+        times (range 50 551 frame-ms)
+        frames #(:frames (show/scene-draft (:runtime held)))]
     (try
-      (with-redefs [show/render-audition-frame (fn [& args] (Thread/sleep 80) (apply render args))]
+      (with-redefs [show/render-audition-frame (fn [& args]
+                                                 (.countDown entered)
+                                                 (.await release 10 TimeUnit/SECONDS)
+                                                 (apply render args))]
         (let [live-id (launch-live! untouched)
-              _ (launch-live! slowed)
-              staged (submit slowed {:op :scene-draft/stage :draft-id "scene" :operations (operations live-id)})
-              durations (doall (for [time-ms (range 50 551 frame-ms)]
-                                 (do (show/tick! (:runtime untouched) time-ms)
-                                     (let [started (System/nanoTime)]
-                                       (show/tick! (:runtime slowed) time-ms)
-                                       (/ (- (System/nanoTime) started) 1.0e6)))))
-              _ (show/await-audition (:runtime slowed) 5000)
-              {:keys [rendered skipped]} (:frames (show/scene-draft (:runtime slowed)))]
+              _ (launch-live! held)
+              staged (submit held {:op :scene-draft/stage :draft-id "scene" :operations (operations live-id)})]
+          (doseq [time-ms times]
+            (show/tick! (:runtime untouched) time-ms)
+            (show/tick! (:runtime held) time-ms))
           (is (= :accepted (:status (receipt staged))))
-          (is (< (apply max (drop 2 durations)) 60) "no live tick waits for an 80 ms audition frame")
-          (is (pos? rendered))
-          (is (pos? skipped) "busy audition frames are skipped and counted")
-          (is (= (+ rendered skipped) (count durations)))
-          (is (= @(:sent untouched) @(:sent slowed)) "live packets are unchanged")
+          (is (.await entered 5 TimeUnit/SECONDS))
+          (testing "every live tick returned while the first audition frame was still rendering"
+            (is (= 1 (.getCount release)))
+            (is (= {:rendered 0 :skipped (dec (count times))} (frames)) "busy frames are skipped and counted")
+            (is (nil? (:draft-output (view held)))))
+          (.countDown release)
+          (is (show/await-audition (:runtime held) 5000))
+          (is (= {:rendered 1 :skipped (dec (count times))} (frames)))
+          (is (some? (:draft-output (view held))))
+          (is (= @(:sent untouched) @(:sent held)) "live packets are unchanged")
           (is (= (get-in @(:state (:runtime untouched)) [:cadence :state])
-                 (get-in @(:state (:runtime slowed)) [:cadence :state])) "live cadence state matches")))
-      (finally (show/stop! (:runtime untouched)) (show/stop! (:runtime slowed))))))
+                 (get-in @(:state (:runtime held)) [:cadence :state])) "live cadence state matches")))
+      (finally (.countDown release) (show/stop! (:runtime untouched)) (show/stop! (:runtime held))))))
+
+(deftest a-live-frame-over-its-share-skips-the-audition
+  ;; With no share to spare, every live frame is over budget.
+  (let [rt (runtime nil {:max-live-share 0})]
+    (try
+      (let [live-id (launch-live! rt)
+            staged (submit rt {:op :scene-draft/stage :draft-id "scene" :operations (operations live-id)})]
+        (run! #(tick rt %) (range 50 301 frame-ms))
+        (is (= :accepted (:status (receipt staged))))
+        (is (= {:status :auditioning :frames {:rendered 0 :skipped 11}}
+               (select-keys (show/scene-draft (:runtime rt)) [:status :frames])))
+        (is (nil? (:draft-output (view rt)))))
+      (finally (show/stop! (:runtime rt))))))
 
 (defn- schedule-on-bar! [rt]
   (let [live-id (launch-live! rt)
