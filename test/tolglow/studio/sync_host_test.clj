@@ -214,23 +214,37 @@
     (await-live #(zero? (:listeners (host! {:listeners true}))))
     (is (contains? (get-in (sync/export-state manager) [:config :live :observed-parameters]) "cutoff"))))
 
-(deftest recorded-and-edited-midi-clip-plays-through-real-loopback-bridge
-  (let [runtime (show/create-runtime)
-        server (ring.adapter.jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false})
+(defn- with-live-host! [runtime exercise!]
+  (let [server (ring.adapter.jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false})
         callback (str "http://127.0.0.1:" (.getLocalPort (first (.getConnectors server))) "/api/live")
         child (.start (doto (ProcessBuilder. ^java.util.List
                                              ["node" "test/js/ableton-live/behavioral_host.js" callback])
-                         (.redirectError java.lang.ProcessBuilder$Redirect/INHERIT)))
-        manager (connections/sync (:connections runtime))]
+                         (.redirectError java.lang.ProcessBuilder$Redirect/INHERIT)))]
     (try
       (with-open [out (clojure.java.io/writer (.getOutputStream child))
                   in (clojure.java.io/reader (.getInputStream child))]
         (let [receive! (fn [] (await-live #(.ready in)) (json/read-str (.readLine in) :key-fn keyword))
               host! (fn [msg] (.write out (str (json/write-str msg) "\n")) (.flush out) (receive!))
-              {port :port} (receive!)
-              config (:config (show/sync-action! runtime :configure
-                               {:config {:live {:enabled? true :endpoint (str "http://127.0.0.1:" port "/live")
-                                                :pairing {:track-index 0 :clip-slot-index 0}}} :page-id :main}))
+              {port :port} (receive!)]
+          (exercise! host! (str "http://127.0.0.1:" port "/live"))))
+      (finally
+        (show/stop! runtime)
+        (.stop server)
+        (.destroyForcibly child)
+        (.waitFor child 2 java.util.concurrent.TimeUnit/SECONDS)))))
+
+(defn- pair-session-clip! [runtime endpoint & [poll-ms]]
+  (:config (show/sync-action! runtime :configure
+             {:config {:live (cond-> {:enabled? true :endpoint endpoint :pairing {:track-index 0 :clip-slot-index 0}}
+                               poll-ms (assoc :poll-ms poll-ms))}
+              :page-id :main})))
+
+(deftest recorded-and-edited-midi-clip-plays-through-real-loopback-bridge
+  (let [runtime (show/create-runtime)
+        manager (connections/sync (:connections runtime))]
+    (with-live-host! runtime
+      (fn [host! endpoint]
+        (let [config (pair-session-clip! runtime endpoint)
               pitch (first (for [[note m] (get-in config [:live :mappings]) :when (= :ember (:cue-id m))] note))
               lane (some #(when (= [:ember :level] ((juxt :cue-id :param) %)) (:lane-note %))
                          (vals (get-in config [:live :parameters])))
@@ -267,9 +281,101 @@
                 (show/tick! runtime)
                 (is (= :releasing (get-in @(:state runtime) [:model :instances (:id instance) :phase])))
                 (restore-live-parameter! runtime show-file host!)))
-            (is (= 3 (count (host! {:notes true})))))))
-      (finally
-        (show/stop! runtime)
-        (.stop server)
-        (.destroyForcibly child)
-        (.waitFor child 2 java.util.concurrent.TimeUnit/SECONDS)))))
+            (is (= 3 (count (host! {:notes true}))))))))))
+
+(deftest operator-gesture-writes-and-restores-on-an-editable-session-lane
+  (let [clock (atom 0)
+        runtime (show/create-runtime {:workers 1 :workspace-options nil})
+        clock-time @#'show/clock-time
+        manager (connections/sync (:connections runtime))
+        source {:adapter :push-2 :session-id "captured"}
+        authority {:operator-id "push-2/captured" :tolglow.show/push-source source}
+        act! (fn [time command]
+               (reset! clock time)
+               (let [reply (show/submit! runtime :command command authority)]
+                 (show/tick! runtime time)
+                 (deref reply 1000 ::missing)))
+        running #(->> (vals (get-in @(:state runtime) [:model :instances]))
+                     (filter (comp #{:running} :phase)) first)]
+    (with-redefs-fn {#'show/clock-time (fn [owner-clock] (if (identical? owner-clock (:clock runtime)) @clock (clock-time owner-clock)))}
+      (fn [] (with-live-host! runtime
+         (fn [host! endpoint]
+           (let [config (pair-session-clip! runtime endpoint 10000)
+                 pitch (some (fn [[note mapping]] (when (= :ember (:cue-id mapping)) note))
+                             (get-in config [:live :mappings]))
+                 lane (some (fn [mapping] (when (= [:ember :level] ((juxt :cue-id :param) mapping)) (:lane-note mapping)))
+                            (vals (get-in config [:live :parameters])))
+                 notes #(host! {:notes true})
+                 restore! (fn [time source destination]
+                            (let [receipt (show/submit! runtime :import {:source source})]
+                              (reset! clock time)
+                              (show/tick! runtime time)
+                              (is (= :accepted (:status (deref receipt 1000 ::missing)))))
+                            (let [restored (connections/sync (:connections runtime))
+                                  recording (await-live #(let [status (:recording (sync/status restored))]
+                                                           (when (= destination (:destination-id status)) status)))]
+                              (is (true? (:recording? recording)))))
+                 play! (fn [time note beat & [release?]]
+                         (reset! clock time)
+                         (is (:accepted? (host! {:play true :pitch note :atBeat beat :release release?})))
+                         (is (session/flush! (connections/sync (:connections runtime))))
+                         (show/tick! runtime time))]
+             (show/sync-action! runtime :start {})
+             (await-live #(get-in (sync/status manager) [:recording :destination-id]))
+             (let [launch (act! 0 {:command-id "launch" :op :cue/launch :cue-id :ember
+                                   :launch {:mode :held :params {:level 0.25}}})
+                   id (:instance-id launch)
+                   turn {:source source :instance-id id :param :level :control-id "encoder-0" :gesture-id "turn"}
+                   accent (assoc turn :gesture-id "accent")
+                   sample (assoc turn :op :gesture/sample :command-id "second" :sequence 2 :value 0.75)]
+               (is (= :accepted (:status launch)))
+               (is (= :accepted (:status (act! 25 (assoc turn :op :gesture/begin)))))
+               (is (= :accepted (:status (act! 125 (assoc turn :op :gesture/sample :sequence 1 :value 0.5)))))
+               (let [receipt (act! 250 sample)]
+                 (is (= :accepted (:status receipt)))
+                 (is (= receipt (act! 255 sample))))
+               (is (= :accepted (:status (act! 270 (assoc turn :op :gesture/sample :sequence 3 :value 0.75)))))
+               (is (= :stale-sample (:code (act! 275 (assoc turn :op :gesture/sample :sequence 1 :value 0.1)))))
+               (is (= :accepted (:status (act! 290 (assoc turn :op :gesture/end :last-sequence 3)))))
+               (is (= :accepted (:status (act! 330 (assoc accent :op :gesture/begin :temporary? true)))))
+               (is (= :accepted (:status (act! 375 (assoc accent :op :gesture/sample :sequence 1 :value 1.0)))))
+               (is (= 1.0 (get-in (running) [:params :level])))
+               (is (= :accepted (:status (act! 500 (assoc accent :op :gesture/cancel)))))
+               (is (= 0.75 (get-in (running) [:params :level])))
+               (show/snapshot runtime)
+               (show/export-show-source runtime)
+               (show/tick! runtime 550)
+               (is (= :accepted (:status (act! 625 {:op :instance/end :instance-id id}))))
+               (let [recorded (await-live #(let [captured (notes)]
+                                             (when (some (fn [note] (== 1.25 (:duration note))) captured) captured)))]
+                 (is (= [[pitch 2.0 127] [lane 2.0 33] [lane 2.25 64]
+                         [lane 2.5 96] [lane 2.75 127] [lane 3.0 96]]
+                        (mapv (juxt :pitch (comp double :start_time) :velocity) recorded)))
+                 (restore! 650 (show/export-show-source runtime) "clip:3")
+                 (is (= recorded (notes)))
+                 (is (:edited (host! {:edit true :pitch lane :atBeat 2.5 :velocity 1 :beat 2.625})))
+                 (let [edited (notes)]
+                   (play! 1500 pitch 2.0)
+                   (play! 1510 lane 2.0)
+                   (is (= (/ 32.0 126.0) (get-in (running) [:params :level])))
+                   (play! 1625 lane 2.25)
+                   (is (= 0.5 (get-in (running) [:params :level])))
+                   (play! 1812.5 lane 2.625)
+                   (is (= 0.0 (get-in (running) [:params :level])))
+                   (is (zero? (get-in (show/snapshot runtime) [:output :values :head-1 :intensity])))
+                   (play! 1875 lane 2.75)
+                   (is (= 1.0 (get-in (running) [:params :level])))
+                   (play! 2000 lane 3.0)
+                   (is (= (/ 95.0 126.0) (get-in (running) [:params :level])))
+                   (let [replayed-id (:id (running))]
+                     (is (and (string? replayed-id) (not= id replayed-id)))
+                     (play! 2125 pitch 2.0 true)
+                     (is (= :releasing (get-in @(:state runtime) [:model :instances replayed-id :phase]))))
+                   (is (= edited (notes)))
+                   (let [other (assoc-in (show/export-show runtime)
+                                         [:model :integrations :sync :config :live :pairing :clip-slot-index] 1)]
+                     (restore! 2250 (pr-str other) "clip:5")
+                     (show/snapshot runtime)
+                     (show/tick! runtime 2300)
+                     (is (empty? (host! {:notes true :slot 1})))
+                     (is (= edited (notes))))))))))))))
