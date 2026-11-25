@@ -305,7 +305,8 @@
     "/api/definition" (fn [{:keys [query-params]}]
                         (if-let [definition (definition! (keyword (get query-params "kind" "effects"))
                                                          (keyword (get query-params "id" "")))]
-                          (ok {:source (pr-str definition)})
+                          (ok (cond-> {:source (pr-str definition)}
+                                (= "true" (get query-params "data")) (assoc :definition definition)))
                           (data-response 404 {:message "Definition not found"})))
     "/api/export" (fn [_] {:status 200 :headers {"Content-Type" transit-type
                                                  "Content-Disposition" "attachment; filename=tolglow-show.transit"}

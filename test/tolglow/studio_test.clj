@@ -126,6 +126,23 @@
                                     :headers {"origin" "https://elsewhere.test" "host" "localhost:8500"}}))))
       (is (= 404 (:status (handler {:request-method :get :uri "/../deps.edn"})))))))
 
+(deftest authoring-can-read-the-exact-registered-reactive-definition
+  (with-runtime [r]
+    (let [definition {:id :reactive :version 1 :targets [:head-1]
+                      :reactive {:inputs {:level [:subscription [:wash/level 2/3]]}
+                                 :transition {:beats 1/3}}
+                      :outputs {:dimmer {:op :reactive :key :level}}}
+          ack (apply-at! r :definition {:kind :effects :definition definition} 0)
+          request {:request-method :get :uri "/api/definition" :query-string "kind=effects&id=reactive"
+                   :headers {"accept" "application/transit+json"}}
+          handler (studio/handler r)
+          source (wire/decode (:body (handler request)))
+          typed (wire/decode (:body (handler (update request :query-string str "&data=true"))))]
+      (is (= :accepted (:status ack)))
+      (is (= #{:source} (set (keys source))))
+      (is (= (:source source) (:source typed)))
+      (is (= definition (:definition typed))))))
+
 (deftest stopped-runtime-rejects-instead-of-orphaning-promises
   (let [r (show/create-runtime)
         pending (show/submit! r {:op :master/set :value 0.2})]

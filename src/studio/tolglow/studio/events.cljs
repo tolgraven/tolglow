@@ -7,6 +7,7 @@
             [tolglow.studio.operator-history :as history]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.page-routes :as pages]
+            [tolglow.studio.reactive-editor :as reactive-editor]
             [tolglow.studio.state-socket]
             [tolglow.studio.spatial-drafts :as spatial-drafts]
             [tolglow.transit :as transit]
@@ -25,6 +26,10 @@
 (def default-preview-settings
   {:worklight 0.12 :quality "auto" :camera "audience" :lighting-mode "interpolate"})
 
+(def default-builder
+  {:id "after-hours" :name "After hours" :color "#b981a3" :level 0.7
+   :duration-value 4 :duration-unit "beats" :release-value 1 :release-unit "beats" :cue? true})
+
 (defn initial-db [session]
   {:session session :show nil :pointers {} :pending-params {} :drafts {} :stream-id nil
    :connection {:connected? false :error "Connecting to the studio…"}
@@ -34,8 +39,7 @@
         :composition {:id "evening-drift" :name "Evening drift" :mode "sequence" :loop "once" :slots []}
         :definition {:kind "effects" :source initial-source :version 1 :engine :textarea :mode :source
                      :auto? false :status "Ready to create" :result "" :error? false}
-        :builder {:id "after-hours" :name "After hours" :color "#b981a3" :level 0.7
-                  :duration-value 4 :duration-unit "beats" :release-value 1 :release-unit "beats" :cue? true}
+        :builder default-builder
         :response-form {:id "performance-envelope" :params "level" :scope "all"
                         :attack-value 0.5 :release-value 1 :unit "beats" :curve "smoothstep"}
         :auto-form {:interval-value 8 :interval-unit "beats" :count 1 :scope "page" :mode "timed" :duration-value 4 :duration-unit "beats"}
@@ -976,18 +980,35 @@
                                     "Rig saved. Your newer edits remain unsaved.")]}))))
 
 (rf/reg-event-fx :studio/definition-load
-  (fn [_ [_ kind id]] {:studio/http {:path (str "/api/definition?kind=" kind "&id=" (js/encodeURIComponent id))
-                                    :on-success [:studio/definition-loaded kind id]}}))
+  (fn [{:keys [db]} [_ kind id]]
+    (let [owner (select-keys (:show db) [:runtime-id :epoch])
+          token (assoc owner :id (str (random-uuid)))
+          typed? (= "effects" kind)]
+      {:db (assoc-in db [:ui :definition :load-token] token)
+       :studio/http {:path (str "/api/definition?kind=" kind "&id=" (js/encodeURIComponent id) (when typed? "&data=true"))
+                     :typed? typed? :raw-response? typed?
+                     :on-success [:studio/definition-loaded kind id token]}})))
 (rf/reg-event-fx :studio/definition-loaded
-  (fn [{:keys [db]} [_ kind id {:keys [source]}]]
-    (let [version (js/parseInt (or (second (re-find #":version\s+(\d+)" source)) "1") 10)]
-      {:db (update-in db [:ui :definition] merge {:kind kind :source source :loaded-id id :version version
-                                                :mode :source :auto? false :status (str id " · v" version)
-                                                :result "Loaded from the running show." :error? false})
-       :studio/nvim-source source})))
+  (fn [{:keys [db]} [_ kind id token {:keys [source definition]}]]
+    (when (and (= token (get-in db [:ui :definition :load-token]))
+               (= (select-keys token [:runtime-id :epoch]) (select-keys (:show db) [:runtime-id :epoch])))
+      (let [version (or (:version definition) (js/parseInt (or (second (re-find #":version\s+(\d+)" source)) "1") 10))
+            typed (when (and (= "effects" kind) (:reactive definition)) definition)]
+        {:db (cond-> (update-in db [:ui :definition] merge {:kind kind :source source :loaded-id id :version version
+                                                          :mode :source :auto? false :status (str id " · v" version)
+                                                          :result "Loaded from the running show." :error? false
+                                                          :publication nil :publishing? false :load-token nil})
+               (or typed (get-in db [:ui :builder :reactive :base])) (assoc-in [:ui :builder] default-builder)
+               typed (update-in [:ui :builder] merge {:id id :name (or (:name typed) id) :cue? false
+                                                    :reactive (reactive-editor/loaded-draft typed)}))
+         :studio/nvim-source source}))))
 (rf/reg-event-fx :studio/definition-new
-  (fn [{:keys [db]} _] {:db (update-in db [:ui :definition] merge {:kind "effects" :source initial-source :loaded-id nil :version 1 :auto? false :status "New definition" :result ""})
-                        :studio/nvim-source initial-source}))
+  (fn [{:keys [db]} _]
+    {:db (cond-> (update-in db [:ui :definition] merge {:kind "effects" :source initial-source :loaded-id nil :version 1
+                                                       :auto? false :status "New definition" :result "" :error? false
+                                                       :publication nil :publishing? false :load-token nil})
+           (get-in db [:ui :builder :reactive]) (assoc-in [:ui :builder] default-builder))
+     :studio/nvim-source initial-source}))
 (defn- edit-definition-source [db source]
   (let [revision (inc (get-in db [:ui :definition :edit-revision] 0))]
     {:db (update-in db [:ui :definition] merge {:source source :status "Unpublished changes" :edit-revision revision
@@ -1023,17 +1044,46 @@
     (throw (js/Error. "Choose a finite musical duration and a supported unit.")))
   {(keyword unit) value})
 
-(defn builder-definition [{:keys [id name color level duration-value duration-unit release-value release-unit keyframes blocks]} version]
-  (when-not (re-matches #"[a-zA-Z][a-zA-Z0-9._/-]*" id) (throw (js/Error. "Use an identifier beginning with a letter.")))
-  (when-not (and (number? level) (<= 0 level 1) (pos? duration-value) (<= 0 release-value))
-    (throw (js/Error. "Intensity must be 0–1, duration positive, and release zero or positive.")))
-  (cond-> {:id (keyword id) :version version :name name :swatch color :duration (musical-duration duration-value duration-unit)
-   :envelope {:attack (if (= release-unit "ms") {:ms 100} {:beats 0.125}) :release (musical-duration release-value release-unit)}
-   :params {:level {:type :number :default level :bounds [0.0 1.0]}}
-   :outputs {:color {:op :const :value (mapv #(/ (js/parseInt (subs color % (+ % 2)) 16) 255) [1 3 5])}
-             :dimmer {:op :param :key :level}}}
-    keyframes (assoc :keyframes keyframes)
-    (seq blocks) (assoc :blocks blocks)))
+(defn builder-definition
+  [{:keys [id name color level duration-value duration-unit release-value release-unit keyframes blocks reactive]} version]
+  (when-not (or (:base reactive) (re-matches #"[a-zA-Z][a-zA-Z0-9._/-]*" id))
+    (throw (js/Error. "Use an identifier beginning with a letter.")))
+  (when (and (:base reactive) (not (:enabled? reactive)))
+    (throw (js/Error. "Replace reactive output expressions in EDN to change the evaluation mode of this definition.")))
+  (let [color-output {:op :const :value (mapv #(/ (js/parseInt (subs color % (+ % 2)) 16) 255) [1 3 5])}
+        draft {:id (keyword id) :version version :name name :swatch color
+               :duration (musical-duration duration-value duration-unit)}]
+    (if (:enabled? reactive)
+      (let [{:keys [targets dimmer] config :reactive} (reactive-editor/definition-fields reactive)]
+        (if-let [base (:base reactive)]
+          (cond-> (assoc base :version version :targets targets :reactive config)
+            (not= name (or (:name base) id)) (assoc :name name))
+          (do
+            (when-not (pos? duration-value) (throw (js/Error. "Duration must be positive.")))
+            (assoc draft :targets targets :reactive config :outputs {:color color-output :dimmer dimmer}))))
+      (do
+        (when-not (and (number? level) (<= 0 level 1) (pos? duration-value) (<= 0 release-value))
+          (throw (js/Error. "Intensity must be 0–1, duration positive, and release zero or positive.")))
+        (cond-> (assoc draft
+                       :envelope {:attack (if (= release-unit "ms") {:ms 100} {:beats 0.125})
+                                  :release (musical-duration release-value release-unit)}
+                       :params {:level {:type :number :default level :bounds [0.0 1.0]}}
+                       :outputs {:color color-output :dimmer {:op :param :key :level}})
+          keyframes (assoc :keyframes keyframes)
+          (seq blocks) (assoc :blocks blocks))))))
+
+(defn- builder-source [db]
+  (let [definition (builder-definition (get-in db [:ui :builder]) (get-in db [:ui :definition :version] 1))
+        fixtures (into #{} (map :id) (get-in db [:server-projection :view :rig :fixtures]))]
+    (when (and (:reactive definition) (not (every? fixtures (:targets definition))))
+      (throw (js/Error. "Choose targets from the current rig.")))
+    (pr-str definition)))
+
+(rf/reg-event-db :studio/builder-reactive
+  (fn [db [_ draft]]
+    (if (get-in db [:ui :definition :publishing?]) db
+      (-> db (assoc-in [:ui :builder :reactive] draft)
+          (update-in [:ui :definition] merge {:status "Unpublished changes" :result "" :error? false})))))
 
 (rf/reg-event-fx :studio/apply-block-source
   (fn [{:keys [db]} [_ baseline updated]]
@@ -1044,7 +1094,7 @@
 (rf/reg-event-fx :studio/builder-generate
   (fn [{:keys [db]} _]
     (try
-      (let [source (pr-str (builder-definition (get-in db [:ui :builder]) (get-in db [:ui :definition :version] 1)))]
+      (let [source (builder-source db)]
         {:db (update-in db [:ui :definition] merge {:source source :kind "effects" :mode :source :status "Generated EDN"})
          :studio/nvim-source source})
       (catch :default error {:dispatch [:studio/editor-error (error-message error)]}))))
@@ -1065,7 +1115,7 @@
         (let [definition (get-in db [:ui :definition]) built? (= :form (:mode definition))
               token (assoc (select-keys (:show db) [:runtime-id :epoch]) :id (str (random-uuid)))
               pending (update-in db [:ui :definition] merge {:publication token :publishing? true})
-              source (if built? (pr-str (builder-definition (get-in db [:ui :builder]) (:version definition))) (:source definition))]
+              source (if built? (builder-source db) (:source definition))]
           (if (and (= :neovim (:engine definition)) (not built?))
             {:db pending :studio/nvim-read {:on-success [:studio/publish-source token automatic? nil]
                                            :on-failure [:studio/publication-error token]}}
@@ -1077,7 +1127,10 @@
       (let [{:keys [kind loaded-id version]} (get-in db [:ui :definition])
           kind (if built "effects" kind)
           existing (when built (effect db (:id built)))
-          expected (if built (:version existing) (when loaded-id version))]
+          expected (cond
+                     (and (get-in built [:reactive :enabled?]) (= loaded-id (:id built))) version
+                     built (:version existing)
+                     loaded-id version)]
       {:db (update-in db [:ui :definition] merge {:publishing? true :source source :kind kind})
        :studio/http {:path "/api/definition" :body (cond-> {:kind kind :source source :expected-epoch (:epoch token) :runtime-id (:runtime-id token)} expected (assoc :expected-version expected))
                      :on-success [:studio/published token automatic? built kind expected]
