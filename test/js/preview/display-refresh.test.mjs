@@ -12,11 +12,11 @@ function display() {
     clearTimeout() {nextBurst = null;}
   };
   const observed = [], sample = new DisplayRefresh(hz => observed.push(hz), host);
-  function runBurst(gap) {
+  function runBurst(gap, jitter = [0]) {
     for (let i = 0; tick && i < 80; i++) {
       const callback = tick; tick = null;
       elapsed += gap * (i % 7 === 0 ? 2 : 1);
-      callback(elapsed);
+      callback(elapsed + jitter[i % jitter.length]);
     }
     assert.equal(tick, null, 'the sample leaves no continuous animation callback');
   }
@@ -44,6 +44,19 @@ test('very slow callbacks do not relabel the physical display or spin forever', 
   assert.deepEqual(d.observed, []);
   assert.ok(d.scheduled());
   d.sample.setActive(false);
+});
+
+test('timestamp jitter and missed callbacks do not inflate measured display refresh', () => {
+  for (const hz of [60, 120]) {
+    const d = display();
+    d.sample.setActive(true);
+    // Six of sixteen gaps are short; a faster-quartile estimate alone reports
+    // an inflated rate. Missed refreshes still occur every seventh callback.
+    d.runBurst(1000 / hz, [0, -.6, -1.2, 0, 0, .6, 0, 0]);
+    assert.deepEqual(d.observed, [hz]);
+    assert.ok(d.scheduled());
+    d.sample.setActive(false); assert.equal(d.scheduled(), false);
+  }
 });
 
 test('hardware quality uses its display budget while software and manual low retain their cap', () => {
