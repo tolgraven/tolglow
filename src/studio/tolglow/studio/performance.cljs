@@ -8,6 +8,7 @@
             [tolglow.authoring.parameter-layout :as layout]
             [tolglow.studio.events :as events]
             [tolglow.studio.cue-variations :as variations]
+            [tolglow.studio.effect-selection :as selection]
             [tolglow.studio.modulation :as modulation]
             [tolglow.studio.effect-inspector :as inspect]
             [tolglow.studio.spatial-picker :as spatial]
@@ -343,7 +344,7 @@
        (when error [:p.performance-error {:role "alert"} error])
        (when-not compact? [envelope-controls state key target instances disabled?])])))
 
-(defn group-panel [_db]
+(defn group-panel [selection-view rows]
   (let [{:keys [state form groups instances target key opacity error]} @(rf/subscribe [:performance/group])
         disabled? (empty? instances)
         all-zero? (and (seq instances) (every? #(zero? (get-in % [:system :opacity] 1)) instances))]
@@ -369,6 +370,9 @@
                                        :on-change #(rf/dispatch [:performance/group-set :match (.. % -target -value)])}
            [:option {:value "any"} "Match any category"] [:option {:value "all"} "Match every category"]])
         [:div.performance-actions.performance-group-actions
+         (when (:selection selection-view)
+           (selection/action-buttons selection-view (:selector target)
+                                     (selection/group-flags (map #(get rows (:id %)) instances))))
          [action-button target "instance/pause" "Pause" {}]
          [action-button target "instance/resume" "Resume" {}]
          [:button.button {:type "button"
@@ -381,6 +385,18 @@
          [envelope-controls state key target instances false]
          [action-button target "instance/remove" "Remove now" {:class "performance-remove" :title "Remove selected instances immediately."}]]])
      (when error [:p.performance-error {:role "alert"} error])]))
+
+(defn- layer-controls [selection-view instances]
+  (when-let [layers (seq (get-in selection-view [:selection :layers]))]
+    (let [names (into {} (map (juxt :id #(or (:name %) (widgets/label (:cue-id %))))) instances)]
+      [:details.effect-selection-layers
+       [:summary (str "Layers (" (count layers) ")")]
+       (for [{:keys [id instance-ids] :as layer} layers
+             :let [label (str/join " + " (map names instance-ids))]]
+         ^{:key id}
+         [:div.effect-selection-layer {:role "group" :aria-label (str "Layer " label) :data-selection-layer (wire id)}
+          [:span {:title (str label " · " (wire id))} label]
+          (selection/action-buttons selection-view {:layer-id id} layer)])])))
 
 (defn control-id [{:keys [attribute components parameter]}]
   (if components
@@ -485,7 +501,8 @@
       :on-click #(rf/dispatch [:performance/reorder-pick capture id])}
      label]))
 
-(defn- instance-card [show instance parameter-control {:keys [duplicate? reorder? source-id] :as options}]
+(defn- instance-card [show instance parameter-control
+                      {:keys [duplicate? reorder? source-id selection-view selection-row] :as options}]
   (let [id (wire (:id instance)) expanded? @(rf/subscribe [:performance/card-expanded id])
         definition (card-definition show instance)
         faults @(rf/subscribe [:inspect/faults])
@@ -508,15 +525,21 @@
        [:h3 title]
        [:div.live-effect-meta
         [:span.live-effect-phase (cond faulted? "Fault" paused? "Paused" :else (widgets/label (:phase instance)))]
+        (when-let [label (case (:suppressed-by selection-row) :mute "Muted" :solo "Excluded by Solo" nil)]
+          [:span.live-selection-state {:data-suppressed-by (name (:suppressed-by selection-row))} label])
         (when duplicate? [:span.live-effect-phase (str "Launch " id)])
         [widgets/category-tags (or (:categories instance) (:categories definition)) (:category-colors show)]]]
-      (if reorder?
-        (when (= "running" (:phase instance)) [reorder-button id title options])
-        [:button.live-effect-expand {:type "button" :aria-expanded expanded?
-                                     :aria-label (str (if expanded? "Collapse " "Expand ") title " controls"
-                                                      (when duplicate? (str " for launch " id)))
-                                     :on-click #(rf/dispatch [:performance/card-toggle id (select-keys show [:runtime-id :epoch])])}
-         (if expanded? "Compact" "Detail")])]
+      [:div.live-effect-header-actions
+       (when selection-row
+         (selection/action-buttons selection-view {:instance-ids [(:id selection-row)]}
+                                   (selection/instance-flags selection-row)))
+       (if reorder?
+         (when (= "running" (:phase instance)) [reorder-button id title options])
+         [:button.live-effect-expand {:type "button" :aria-expanded expanded?
+                                      :aria-label (str (if expanded? "Collapse " "Expand ") title " controls"
+                                                       (when duplicate? (str " for launch " id)))
+                                      :on-click #(rf/dispatch [:performance/card-toggle id (select-keys show [:runtime-id :epoch])])}
+          (if expanded? "Compact" "Detail")])]]
      (when (seq controls)
        [:div.live-effect-body
         [parameter-bank show instance controls (not expanded?) parameter-control]
@@ -538,6 +561,8 @@
 (defn board [db parameter-control]
   (let [show (:show db)
         instances (ordered-instances show)
+        selection-view @(rf/subscribe [:effect-selection/view])
+        rows (selection/by-instance (:selection selection-view))
         duplicate-counts (frequencies (map :cue-id instances))
         capture (mix-capture show instances)
         ready? (< 1 (count (peek (:identity capture))))
@@ -547,10 +572,14 @@
     [:section.live-board {:aria-label "Running effects"}
      [:div.live-board-heading
       [:h2 "In the mix"] [:span#active-count.count (str (count instances) " active")]
-      (when (or ready? open?)
-        [:button.button.live-reorder-toggle {:type "button" :disabled (boolean pending?)
-                                            :on-click #(rf/dispatch [:performance/reorder-toggle])}
-         (if open? "Done" "Reorder")])]
+      [:div.live-board-actions
+       (when (:selection selection-view) [selection/toolbar selection-view])
+       (when (or ready? open?)
+         [:button.button.live-reorder-toggle {:type "button" :disabled (boolean pending?)
+                                             :on-click #(rf/dispatch [:performance/reorder-toggle])}
+          (if open? "Done" "Reorder")])]]
+     (when-let [error (get-in selection-view [:interaction :error])]
+       [:p.performance-error {:role "alert"} error])
      (when open?
        (if error
          [:p.live-reorder-status {:role "alert"} error]
@@ -563,12 +592,14 @@
                 :else "Choose a cue to move.")]))
      [inspect/unassigned-faults show @(rf/subscribe [:inspect/faults])]
      (if (seq instances)
-       [:<> [group-panel db]
+       [:<> [group-panel selection-view rows]
+        [layer-controls selection-view instances]
         [:div.live-effect-grid
          (for [instance instances]
            ^{:key (wire (:id instance))}
            [instance-card show instance parameter-control
             {:duplicate? (< 1 (get duplicate-counts (:cue-id instance) 0)) :reorder? open?
-             :capture capture :source-id source-id :ready? (and ready? (not pending?))}])]]
+             :capture capture :source-id source-id :ready? (and ready? (not pending?))
+             :selection-view selection-view :selection-row (get rows (:id instance))}])]]
        [:div.live-board-empty [:span "◌"] [:strong "Your running effects appear here"]
         [:p "Launch cues to mix their parameters together."]])]))

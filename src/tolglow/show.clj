@@ -6,6 +6,7 @@
             [afterglow.control.pages :as cue-pages]
             [tolglow.studio.parameter-precision :as precision]
             [afterglow.control.categories :as categories]
+            [afterglow.control.effect-selection :as effect-selection]
             [afterglow.control.devices.expressive :as expressive-mapping]
             [afterglow.control.sensors :as sensor-core]
             [afterglow.runtime.engine :as engine]
@@ -195,9 +196,11 @@
                                   (assoc :definition (get definitions [(:definition %) (:targets %)])
                                          :parameter-sources (parameter-sources/project % (get sources (:id %)) resolve-inputs responses?)
                                          :categories (registry/definition-categories (:definition %)))
+                                  (dissoc ::effect-selection/selected)
                                   (update :system (fn [s] (merge {:opacity 1.0 :paused? false}
                                                                (select-keys s [:opacity :gain :paused? :attack :release])))))
                              (sort-by :order (vals (:instances model))))
+            :effect-selection (effect-selection/projection model)
             :pending-cue-launches (cue-timing/pending model)
             :cue-launch-outcomes (cue-timing/outcomes model)
             :operator-history (operator-history/project (:id runtime) model)

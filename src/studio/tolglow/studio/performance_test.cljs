@@ -4,6 +4,7 @@
             [tolglow.authoring.parameter-layout :as layout]
             [re-frame.interceptor :as interceptor]
             [re-frame.registrar :as registrar]
+            [tolglow.studio.effect-selection :as selection]
             [tolglow.studio.effect-inspector :as inspect]
             [tolglow.studio.events :as events]
             [tolglow.studio.parameter-visualization :as visual]
@@ -29,6 +30,45 @@
                                                (registrar/get-handler :event (first event))))))
 
 (defn command [result] (second (first (:fx result))))
+
+(deftest solo-and-mute-send-shared-selectors-and-consume-the-touch-modifier
+  (let [identity {:runtime-id "runtime-a" :show-id :test :epoch 4}
+        view (assoc identity :revision 7 :effect-selection {:modes {:solo :exclusive :mute :exclusive}})
+        db (assoc base :server-projection {:view view})
+        armed (transition db [:effect-selection/add-once identity])
+        selector {:instance-ids ["4:1"]}
+        sent (transition (:db armed) [:effect-selection/toggle identity :solo selector false])
+        payload (command sent)
+        accepted (transition (:db sent) (conj (:on-success payload) {:status "accepted" :revision 8}))
+        ready (assoc-in (:db accepted) [:server-projection :view :revision] 8)
+        normal (command (transition ready [:effect-selection/toggle identity :mute {:layer-id :layer/test} false]))
+        shifted (command (transition ready [:effect-selection/toggle identity :mute (:selector group-target) true]))
+        configured (command (transition ready [:effect-selection/configure identity :mute :additive]))
+        newer (assoc-in (:db sent) [:server-projection :view :epoch] 5)]
+    (is (= :effect-selection/toggle (:op payload)))
+    (is (= {:control :solo :selector selector :additive? true} (dissoc (:fields payload) :command-id)))
+    (is (= [4 "runtime-a" "performance-session"] ((juxt :epoch :runtime-id :session) payload)))
+    (is (= (:server-projection db) (get-in sent [:db :server-projection])))
+    (is (nil? (:fx (transition (:db accepted) [:effect-selection/toggle identity :solo selector false]))))
+    (is (= {:control :mute :selector {:layer-id :layer/test} :additive? false}
+           (dissoc (:fields normal) :command-id)))
+    (is (= {:control :mute :selector (:selector group-target) :additive? true}
+           (dissoc (:fields shifted) :command-id)))
+    (is (= :effect-selection/configure (:op configured)))
+    (is (= {:mute :additive} (get-in configured [:fields :modes])))
+    (is (= newer (:db (transition newer (conj (:on-failure payload) "Instance no longer exists")))))
+    (is (= "Instance no longer exists"
+           (get-in (transition (:db sent) (conj (:on-failure payload) "Instance no longer exists"))
+                   [:db :ui :effect-selection :error])))))
+
+(deftest solo-and-mute-button-flags-reflect-the-committed-selection
+  (let [a {:id "4:1" :soloed? true :muted? true :suppressed-by :mute}
+        b {:id "4:2" :soloed? false :muted? true :suppressed-by :mute}
+        rows (selection/by-instance {:instances [a b]})]
+    (is (= a (get rows "4:1")))
+    (is (= {:solo :all :mute :all} (selection/instance-flags a)))
+    (is (= {:solo :none :mute :all} (selection/instance-flags b)))
+    (is (= {:solo :partial :mute :all} (selection/group-flags (vals rows))))))
 
 (deftest visible-membership-comes-from-server-groups-and-never-infers-output-tags
   (let [show (:show base)
