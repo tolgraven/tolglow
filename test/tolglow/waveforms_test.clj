@@ -206,6 +206,9 @@
       (finally ((:close! transport) handle)))))
 
 (deftest native-push-displays-the-same-live-parameter-projection
+  ;; The first draw initializes AWT fonts. Do that before the bounded wait for a worker frame.
+  (transports/render-view! (BufferedImage. display/width display/height BufferedImage/TYPE_INT_RGB)
+                           {:title "Push 2"})
   (let [runtime (show/create-runtime {:workers 1 :workspace-options nil})
         definition (-> (get-in (fixture) [:model :instances "0:1" :definition])
                        (assoc :targets [:head-1])
@@ -264,6 +267,7 @@
           (is (= [8 16 8] (mapv #(get-in before [:rows % :schema :dmx-bits]) [:level :pan :width])))
           (is (= [8 16 8] (mapv #(get-in studio-instance [:definition :params % :dmx-bits]) [:level :pan :width])))
           (is (= 65 (count (get-in before [:rows :waveform :preview-samples]))))
+          (is (some true? (:trace before)))
           (is (not (identical? caller (:thread before))))
           (let [changes {:width 0.75 :level (/ 128.0 255) :pan (/ 32768.0 65535)}
                 receipts (mapv (fn [[parameter value]]
@@ -274,6 +278,7 @@
             (is (= (browser-rows) (:rows after)))
             (is (not= (get-in before [:rows :waveform :preview-samples])
                       (get-in after [:rows :waveform :preview-samples])))
+            (is (some true? (:trace after)))
             (is (not= (:trace before) (:trace after)))))
         (is (= :accepted (:status (apply! :command {:op :instance/end :instance-id id :force? true} 100))))
         (let [stale (deref stale-frame 2000 {})]
