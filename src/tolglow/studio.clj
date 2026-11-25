@@ -32,16 +32,11 @@
             [tolglow.studio.web :as web])
   (:import [org.eclipse.jetty.server NetworkConnector]))
 
-(defn- with-section-pattern-capability [view runtime]
-  (assoc view :section-patterns-enabled? (some? (:section-patterns runtime))))
-
 (defn stream-view
   "Common Studio fields for a committed show state. A client leases spatial
   signals or membership separately through the state stream's query controls."
   [runtime state]
-  (-> (show/project-snapshot runtime state)
-      (with-section-pattern-capability runtime)
-      (dissoc :spatial)))
+  (dissoc (show/project-snapshot runtime state) :spatial))
 
 (defn- bind! [runtime id]
   (show/attach-observer! runtime id
@@ -89,7 +84,7 @@
   inspection requests can retrieve a complete or authoring-conditional view."
   ([runtime query] (browser-snapshot runtime query #(bind! runtime :studio)))
   ([runtime query bindings!]
-  (let [view (with-section-pattern-capability (show/snapshot runtime) runtime)
+  (let [view (show/snapshot runtime)
         partial? (and (= (:runtime-id view) (get query "runtime-id"))
                       (= (str (:epoch view)) (get query "epoch"))
                       (= (str (:revision view)) (get query "revision")))]
