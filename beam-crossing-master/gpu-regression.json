@@ -1,0 +1,60 @@
+{
+  "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+  "zeroAmountDifference": 0,
+  "emptyFieldDifference": 0,
+  "extinctionRatio": 0.03739704699944919,
+  "noInventedRadiance": true,
+  "behindOpaqueDifference": 0,
+  "clearShadowDifference": 0,
+  "clearShadowRatio": 1,
+  "comparisonDepthTexture": true,
+  "unshadowedRadiance": 798.3597884774208,
+  "shadowedRadiance": 689.1232672333717,
+  "shadowSlots": 1,
+  "shadowRatio": 0.8631738185957765,
+  "finiteNonnegative": true,
+  "blackoutRadiance": 0,
+  "ambientRadiance": 2200.7738342285156,
+  "emptyAmbientRadiance": 0,
+  "narrowShaftMin": 0.020782470703125,
+  "narrowShaftMax": 0.08599853515625,
+  "narrowShaftCoverage": 1,
+  "behindLensRadiance": 0,
+  "apertureCoverage": [
+    0.58154296875,
+    0.60400390625,
+    0.62646484375,
+    0.60498046875,
+    0.5830078125
+  ],
+  "manualDuringShow": false,
+  "dryHostDifference": 0,
+  "jetDarkest": 0.0027426410743353227,
+  "jetClearest": 1,
+  "roomTransmission": 0.36787845903418337,
+  "calibratedTransmission": 0.13530927835051546,
+  "calibratedMass": 25.600000381469727,
+  "opticalCore": 0.039154052734375,
+  "overlappingBeamCore": [
+    4.10546875,
+    4.10546875
+  ],
+  "overlappingBeamHaloInCore": 0,
+  "halo": 0.0017461776733398438,
+  "haloGreen": 0,
+  "brighterHalo": 0.0034923553466796875,
+  "dryHalo": 0,
+  "uniformIntervals": {
+    "count": 2401,
+    "minimum": 48,
+    "maximum": 48,
+    "minimumCompleted": 48
+  },
+  "boundaryIntervals": {
+    "count": 2401,
+    "minimum": 72,
+    "maximum": 72,
+    "minimumCompleted": 48
+  },
+  "glError": 0
+}
