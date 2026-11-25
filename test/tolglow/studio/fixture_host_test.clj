@@ -24,7 +24,9 @@
                   extra)))
 
 (defn- fixture-types [runtime] (get-in @(:state runtime) [:model :registry :fixtures]))
+
 (defn- rig [runtime] (get-in @(:state runtime) [:model :rig]))
+
 (defn- no-network [_] (throw (ex-info "Host test does not permit network access" {})))
 
 (def rgbw-type

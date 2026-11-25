@@ -9,7 +9,9 @@
            [java.util UUID]))
 
 (defn- failure [code message] (ex-info message {:audio/error code}))
+
 (defn- finite? [x] (and (number? x) (Double/isFinite (double x))))
+
 (defn- monotonic-ms [] (/ (double (System/nanoTime)) 1000000.0))
 
 (defn list-inputs

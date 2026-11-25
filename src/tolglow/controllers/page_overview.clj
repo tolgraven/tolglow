@@ -7,6 +7,7 @@
             [thi.ng.color.core :as colors]))
 
 (def ^:private neutral "#727c78")
+
 (def ^:private tag-palette ["#72b6c6" "#c490d9" "#dfac78" "#8bc69c" "#db889c" "#9aa5df"])
 
 (defn- color [value]

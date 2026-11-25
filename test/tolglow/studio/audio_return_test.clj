@@ -8,28 +8,36 @@
   (:import [java.util.concurrent LinkedBlockingQueue TimeUnit]))
 
 (def fixture {:id :wash :position [0 0 0] :universe 1 :address 1 :channels {:dimmer 1}})
+
 (def effect {:id :light :version 1 :params {:level {:type :number :bounds [0 1] :default 0.5}}
              :outputs {:dimmer {:op :param :key :level}}})
+
 (def lane {:id "kick" :dry-cue :dry :dry-param :level :wet-cue :echo :wet-param :level
            :send-channel 1 :return-channel 2 :frequency-range [100 1200]})
+
 (def config {:input-mixer "Live Return" :output-mixer "Live Send" :channels 2
              :sample-rate 8000 :block-frames 512 :lanes [lane]})
+
 (defn show []
   (control/new-show {:rig {:fixtures [fixture]}
                      :registry {:effects {:light effect}
                                 :cues (into {} (for [id [:dry :echo :fader :reverb]]
                                                  [id {:id id :version 1 :effect-id :light}]))}
                      :settings {:audio-returns config}}))
+
 (defn send! [runtime op t]
   (let [receipt (show/submit! runtime op)]
     (show/tick! runtime t)
     (deref receipt 1000 :timeout)))
+
 (defn dimmer [runtime]
   (bit-and 255 (aget ^bytes (get-in @(:state runtime) [:output :universes 1]) 0)))
+
 (defn await-value [f]
   (let [until (+ (System/nanoTime) 3000000000)]
     (loop []
       (or (f) (when (< (System/nanoTime) until) (Thread/sleep 3) (recur))))))
+
 (defn scale [samples gain] (double-array (map #(* gain %) samples)))
 
 (deftest independent-lanes-validate-registry-and-channel-isolation

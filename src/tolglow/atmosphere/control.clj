@@ -4,8 +4,11 @@
             [afterglow.render.atmosphere :as atmosphere]))
 
 (def defaults {:enabled? false :target 0.2 :hysteresis 0.05 :fog-fixture-ids []})
+
 (def default-duty {:max-on-s 0.4 :min-off-s 6.0 :max-level 0.5})
+
 (defn- finite? [x] (and (number? x) (Double/isFinite (double x))))
+
 (defn- unit? [x] (and (finite? x) (<= 0 x 1)))
 
 (defn settings [values]

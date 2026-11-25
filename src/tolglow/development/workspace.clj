@@ -16,13 +16,21 @@
            [java.util.concurrent ArrayBlockingQueue ThreadPoolExecutor ThreadPoolExecutor$AbortPolicy ThreadFactory TimeUnit RejectedExecutionException]))
 
 (defn- fail! [code message] (throw (ex-info message {:workspace/error code})))
+
 (def ^:private no-links (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
+
 (def ^:private attrs (make-array FileAttribute 0))
+
 (defn- path [value] (.normalize (.toAbsolutePath (Paths/get (str value) (make-array String 0)))))
+
 (defn- id? [value] (and (string? value) (boolean (re-matches #"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}" value))))
+
 (defn- now-ms [] (System/currentTimeMillis))
+
 (defn- hex [bytes] (apply str (map #(format "%02x" (bit-and 255 %)) bytes)))
+
 (defn- sha [bytes] (hex (.digest (MessageDigest/getInstance "SHA-256") ^bytes bytes)))
+
 (defn- kill-process! [^Process process]
   (doseq [handle (reverse (vec (iterator-seq (.iterator (.descendants (.toHandle process))))))]
     (try (.destroyForcibly ^java.lang.ProcessHandle handle) (catch Exception _)))
@@ -157,11 +165,13 @@
 
 (defn- owned [manager id]
   (or (get-in @(:state manager) [:workspaces id]) (fail! :unknown-workspace "Unknown owned workspace")))
+
 (defn- public-workspace [workspace]
   (-> (select-keys workspace [:id :state :created-at-ms :revision :root :repositories :checks :preview :error])
       (assoc :running-checks (into {} (map (fn [[profile run]] [profile {:run-id (:id run) :status :running}]) (:active-checks workspace))))
       (update :root str)
       (update :repositories #(into {} (map (fn [[id repo]] [id (update (select-keys repo [:path :base :branch]) :path str)]) %)))))
+
 (defn status
   ([manager] {:closed? (:closed? @(:state manager)) :workspaces (mapv public-workspace (sort-by :id (vals (:workspaces @(:state manager)))))})
   ([manager id] (public-workspace (owned manager id))))
@@ -248,7 +258,9 @@
     (when (some #(or (#{"" "." ".."} %) (= ".git" (str/lower-case %))) parts)
       (fail! :invalid-path "Traversal and Git metadata paths are not editable"))
     parts))
+
 (defn- relative-path [name] (Paths/get ^String name (make-array String 0)))
+
 (defn- secure-parent
   "Resolve through NOFOLLOW directory handles, never via a path-string parent.
   New files require existing parent directories; no unsafe recursive mkdir."
@@ -272,6 +284,7 @@
 (defn- file-attributes [^SecureDirectoryStream parent ^Path leaf]
   (try (.readAttributes (.getFileAttributeView parent leaf BasicFileAttributeView no-links))
        (catch java.nio.file.NoSuchFileException _ nil)))
+
 (defn- read-bytes [^SecureDirectoryStream parent ^Path leaf limit]
   (let [info (file-attributes parent leaf)]
     (when-not info (fail! :missing-file "File does not exist"))
@@ -286,12 +299,14 @@
               (when (> (+ (.size out) n) limit) (fail! :file-limit "File grew beyond the configured read limit"))
               (.write out (.array buffer) 0 n) (recur))))
         (.toByteArray out)))))
+
 (defn- decode-text [bytes]
   (try (str (.decode (doto (.newDecoder StandardCharsets/UTF_8) (.onMalformedInput CodingErrorAction/REPORT)
                         (.onUnmappableCharacter CodingErrorAction/REPORT)) (ByteBuffer/wrap bytes)))
        (catch java.nio.charset.CharacterCodingException _ nil)))
 
 (def ^:private catalog-name ".tolglow-workspaces.edn")
+
 (defn- catalog-data [manager]
   {:version 1 :repositories (into {} (map (fn [[id root]] [id (str root)]) (:repositories manager)))
    :workspaces (mapv (fn [workspace]

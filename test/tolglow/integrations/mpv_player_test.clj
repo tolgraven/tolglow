@@ -12,8 +12,11 @@
            [java.nio.file.attribute FileAttribute]))
 
 (def ^:private provenance {:source-id :mpv :session-id :socket-test :clock-id :test-clock})
+
 (def ^:private track "/tmp/reference-🎵.wav")
+
 (def ^:private reference {:id :track :version 1})
+
 (def ^:private catalog {track {:reference reference :duration-ms 12000.0}})
 
 (defn- await! [ready!]

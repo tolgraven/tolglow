@@ -8,9 +8,11 @@
   (:import [java.util UUID]))
 
 (def ^:private id-schema {:type "string" :minLength 1 :maxLength 256})
+
 (def ^:private page-offset {:type "integer" :minimum 0 :maximum 2147483647})
 
 (def ^:private level-schema {:type "number" :minimum 0 :maximum 1})
+
 (def ^:private musical-duration
   {:type "object" :description "One positive musical duration, for example {beats:0.5}."
    :properties (zipmap [:beats :bars :phrases] (repeat {:type "number" :minimum 0}))
@@ -87,7 +89,9 @@
                  :required ["configuration"] :additionalProperties false}}])
 
 (defn- field [m k] (if (contains? m k) (get m k) (get m (name k))))
+
 (defn- key-name [k] (if (keyword? k) (name k) (str k)))
+
 (defn- portable? [x]
   (cond (or (nil? x) (string? x) (keyword? x) (boolean? x)) true
         (number? x) (Double/isFinite (double x))

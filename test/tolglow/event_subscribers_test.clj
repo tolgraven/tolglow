@@ -19,8 +19,11 @@
 
 (def kick {:category :audio :type :audio/kick :emitter {:kind :audio :id :analysis}
            :data {:confidence 0.92} :time {:beat 0}})
+
 (def launch {:op :cue/launch :select {:ids [:ember :ice] :pick :random} :launch {:mode :one-shot}})
+
 (defn listener [actions] {:id :kicks :enabled? true :match {:type :audio/kick} :actions actions})
+
 (defn configured [actions] (sub/configure (demo/model) {:op :save :subscriber (listener actions)}))
 
 (deftest bounded-registry-candidates-exclude-show-control-and-respect-page-and-ids

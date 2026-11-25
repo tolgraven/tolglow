@@ -44,6 +44,7 @@
                       1 10 Math/PI 10 :explode)))
 
 (defonce scaler (atom 1))
+
 (defn dump []
 (def sine (param/quick-lfo "sine" :low 0.02 :high 2.5 :beats 27)) ;see this is where mutability could come handy
 (def saw (param/quick-lfo "sawtooth" :low 0.09 :high 1.9 :beats 9)) ;see this is where mutability could come handy

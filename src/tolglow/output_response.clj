@@ -8,7 +8,9 @@
             [tolglow.output-response.scopes :as scopes]))
 
 (def defaults {:enabled? false :global {} :groups {} :fixtures {} :cues {} :compositions {}})
+
 (defn- id? [x] (or (string? x) (keyword? x)))
+
 (defn- magnitude? [x] (and (time/finite-number? x) (not (neg? x))))
 
 (defn- duration-binding? [binding]

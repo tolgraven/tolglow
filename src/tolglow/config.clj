@@ -141,6 +141,7 @@
            {fixture (builder-fn data)})))
 
 (def fixture-categories [:moving :wash :strip :cob #_:other])
+
 (def fixture-types (apply merge (map make-group-data fixture-categories)))
 
 
@@ -188,6 +189,7 @@
 (def main-fixture-units
  [:moving-1 :moving-2 :moving-3 :moving-4
   :moving-mini-1 :moving-mini-2 :moving-mini-3 :moving-mini-4])
+
 (def static-fixture-units
  [:wash-1 :wash-2 :wash-3 :wash-4
   :strip-1 :strip-2 :tube-1 :cob-1])
@@ -419,6 +421,7 @@ Arguments: name of fn to define, docstring, map where to search."
 
 
 (defn wall   [side] (side (cfg :venue :wall)))
+
 (defn wall-x [side] [(wall side) (cfg :venue :rig) 0 :ignore-z true])
 
 (def measure-data {:rig-center [0 (cfg :venue :rig) 0 :ignore-z true]
@@ -451,6 +454,7 @@ Arguments: name of fn to define, docstring, map where to search."
 
            :function {}
            }}})
+
 (def effects ; replace hardcoded defaults with settings. LATER when enough helpers allow complete defs
  {:can-can
   {:type :movement #_"ie what capabilities does it use, fixtures need to be easily discoverable by ability"
@@ -477,6 +481,7 @@ Arguments: name of fn to define, docstring, map where to search."
 
 (def cue-data "defaults n stuff for various cue creation fns"
  {:bloom {}})
+
 (def cues "Individual cues"
  {:code
   [[[1 0] "Randomize Cue Vars"

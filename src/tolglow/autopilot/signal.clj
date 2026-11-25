@@ -12,12 +12,16 @@
             [tolglow.waveforms :as waveforms]))
 
 (defn- id? [x] (or (keyword? x) (and (string? x) (not (str/blank? x)))))
+
 (def ^:private builtin-registry (signals/new-registry))
+
 (def ^:private builtin-functions
   (update-vals (:waveforms builtin-registry) #(ir/compile-expression (:expression %))))
 
 (def ^:private arities {:add 2 :subtract 2 :multiply 2 :divide 2 :min 2 :max 2 :abs 1 :mix 3 :clamp 3})
+
 (def ^:private arguments [:a :b :c])
+
 (def ^:private operators
   (into {} (for [[op n] arities]
              [op (ir/compile-expression {:op op :args (mapv #(hash-map :op :param :key %) (take n arguments))})])))

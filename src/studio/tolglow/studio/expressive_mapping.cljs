@@ -7,11 +7,15 @@
             [tolglow.studio.parameter-widgets :as widgets]))
 
 (def device-kinds [["push-3" "Push 3 · MPE"] ["seaboard-m" "Seaboard M"] ["mpe" "Generic MPE"]])
+
 (def axis-names {"strike" "Strike · note velocity" "pressure" "Pressure · aftertouch"
                  "glide" "Glide · pitch bend" "slide" "Slide · CC74" "lift" "Lift · release velocity"})
+
 (def defaults {:device-id "push-main" :cue-id nil :device-kind "push-3" :scope :cue
                :axes ["strike" "pressure" "glide" "slide"] :generation 0 :drafts {} :dirty #{} :numeric {}})
+
 (defn wire-id [id] (if (keyword? id) (subs (str id) 1) (str id)))
+
 (defn wire-data
   "Preserve namespaces in IDs through clj->js, which otherwise uses keyword name."
   [value]
@@ -19,18 +23,27 @@
         (or (sequential? value) (set? value)) (mapv wire-data value)
         (keyword? value) (wire-id value)
         :else value))
+
 (defn state [db] (merge defaults (:expressive-mapping db)))
+
 (defn context [db] (select-keys (:show db) [:runtime-id :epoch]))
+
 (defn saved-devices [db] (get-in db [:show :settings :expressive :devices] {}))
+
 (defn device-policy [db]
   (let [{:keys [device-id drafts]} (state db) id (keyword device-id)]
     (get drafts id (get (saved-devices db) id {}))))
+
 (defn scope-path [s] (if (= :cue (:scope s)) [:cues (keyword (:cue-id s))] []))
+
 (defn scoped-policy [db] (get-in (device-policy db) (scope-path (state db))))
+
 (defn request-token [db]
   (let [s (state db)]
     [(context db) (:generation s) (:device-id s) (:cue-id s) (:instance-id s) (:device-kind s)]))
+
 (defn current? [db token] (and (= (:context (state db)) (context db)) (= token (request-token db))))
+
 (defn open-state [db]
   (let [s (state db) reset? (not= (:context s) (context db))
         device (or (some-> (saved-devices db) keys sort first wire-id) "push-main")
@@ -40,6 +53,7 @@
            (if reset? (assoc defaults :context (context db) :device-id device :cue-id cue
                             :generation (inc (:generation s)))
                (cond-> (assoc s :error nil) (not (:saving? s)) (update :generation inc))))))
+
 (defn edit-policy [db path value remove?]
   (let [s (state db) id (keyword (:device-id s)) policy (device-policy db)
         policy (if remove?
@@ -50,6 +64,7 @@
     (assoc db :expressive-mapping
            (-> s (assoc-in [:drafts id] policy) (update :dirty conj id)
                (update :generation inc) (dissoc :error :saved?) (assoc :numeric {})))))
+
 (defn preview-request [db]
   (let [s (state db) token (request-token db)]
     {:path "/api/expressive/preview"
@@ -57,28 +72,36 @@
              (= "mpe" (:device-kind s)) (assoc :axes (:axes s))
              (:instance-id s) (assoc :instance-id (:instance-id s)))
      :on-success [:expressive/previewed token] :on-failure [:expressive/failed token :preview]}))
+
 (defn refresh [db]
   (cond-> {:db (assoc-in db [:expressive-mapping :preview-pending?] (some? (:cue-id (state db))))}
     (:cue-id (state db)) (assoc :dispatch-later [{:ms 180 :dispatch [:expressive/preview (request-token db)]}])))
+
 (defn parameter-mode [policy param]
   (if (contains? (:params policy) param) (if (nil? (get-in policy [:params param])) "off" "manual") "inherit"))
+
 (defn bindings [value]
   (cond (vector? value) value (map? value) [value]
         (or (keyword? value) (string? value)) [{:axis (wire-id value)}] :else []))
+
 (defn compound-size [schema]
   (case (keyword (:type schema)) :color 3 :range 2 :vector (:size schema) nil))
+
 (defn mapping-bindings [preview param]
   (mapv #(select-keys % [:axis :component :range :input-range :curve :inverted? :enabled?])
         (filter #(= (wire-id param) (wire-id (:param %))) (:mappings preview))))
+
 (defn manual-value [db param]
   (let [s (state db) schema (get-in s [:preview :schemas param]) existing (mapping-bindings (:preview s) param)
         values (if (seq existing) existing [(cond-> {:axis (or (some-> (:preview s) :axes keys sort first wire-id) "pressure")}
                                                              (compound-size schema) (assoc :component 0))])]
     (if (compound-size schema) values (first values))))
+
 (defn save-request [db]
   {:path "/api/settings"
    :body {:scope "expressive" :device-id (:device-id (state db)) :values (wire-data (device-policy db))}
    :on-success [:expressive/saved (request-token db)] :on-failure [:expressive/failed (request-token db) :save]})
+
 (defn- change-binding [db param index f]
   (let [s (state db) path (into (scope-path s) [:params param]) raw (get-in (device-policy db) path)
         values (bindings raw) values (assoc values index (f (get values index)))]
@@ -164,16 +187,23 @@
                                                     (update :generation inc) (assoc :numeric {}) (dissoc :error :saved? :preview))))))))
 
 (defn- text [event] (.. event -target -value))
+
 (defn- checked [event] (.. event -target -checked))
+
 (defn- dispatch! [event] (rf/dispatch-sync event))
+
 (defn- identifier-label [id] (widgets/label (wire-id id)))
+
 (defn- axis-label [axis] (get axis-names (wire-id axis) (identifier-label axis)))
+
 (defn- select-control [label value options on-change attrs]
   [:label.expressive-field [:span label]
    [:select (merge {:value value :on-change #(on-change (text %))} attrs)
     (for [[id title] options] ^{:key id} [:option {:value id} title])]])
+
 (defn- toggle [label enabled? change attrs]
   [:label.expressive-toggle [:input (merge {:type "checkbox" :checked enabled? :on-change #(change (checked %))} attrs)] [:span label]])
+
 (defn- range-field [s param index field values]
   [:div.expressive-range
    (for [endpoint [0 1] :let [key [(:scope s) (:cue-id s) param index field endpoint]]]
@@ -184,6 +214,7 @@
                :value (get (:numeric s) key (get values endpoint))
                :on-change #(dispatch! [:expressive/number-edit key (text %)])
                :on-blur #(dispatch! [:expressive/number-commit param index field endpoint values key])}]])])
+
 (defn- binding-editor [s param schema index binding]
   (let [preview (:preview s) axis (wire-id (:axis binding)) axes (:axes preview)
         source-range (get-in axes [(keyword axis) :range]) n (compound-size schema)
@@ -204,6 +235,7 @@
         [:button.text-button {:type "button" :on-click #(do (dispatch! [:expressive/binding param index :range nil true])
                                                            (dispatch! [:expressive/binding param index :input-range nil true]))} "Reset ranges"])
       (when n [:button.text-button {:type "button" :on-click #(dispatch! [:expressive/component param index])} "Remove component"])]]))
+
 (defn- parameter-row [db s param schema]
   (let [preview (:preview s) policy (scoped-policy db) mode (parameter-mode policy param)
         mappings (filter #(= (wire-id param) (wire-id (:param %))) (:mappings preview))

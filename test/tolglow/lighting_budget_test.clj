@@ -15,6 +15,7 @@
     watts (assoc :max-watts watts)))
 
 (def lamps (mapv #(lamp (keyword (str "lamp" %)) % (* 10 %) (if (even? %) [:even] [:odd])) (range 1 10)))
+
 (defn- setup [fixtures definitions settings]
   (let [reg (reduce (fn [r e]
                       (let [id (:id e)]

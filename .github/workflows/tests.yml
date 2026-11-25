@@ -47,6 +47,10 @@ jobs:
         working-directory: tolglow
         run: |
           if [[ "${{ matrix.suite }}" == pure ]]; then lein test-pure; else lein test; fi
+      - name: Check blank lines between definitions
+        if: matrix.java == '21' && matrix.suite == 'pure'
+        working-directory: tolglow
+        run: lein check-definition-spacing
       - name: Exercise Linux GATT and the paired OSC receiver
         if: matrix.java == '21' && matrix.suite == 'pure' && needs.native-changes.outputs.linux_audience == 'true'
         working-directory: tolglow/linux/audience

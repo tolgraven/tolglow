@@ -32,7 +32,9 @@
    [0.75 0.0 0.0] [1.0 1.0 1.0] [0.4 0.7 0.2]])
 
 (defn alphas [i] (nth alpha-cycle (mod i (count alpha-cycle))))
+
 (defn effect-id [layer group] (keyword "moving-profile" (str "layer-" layer "-group-" group)))
+
 (defn- op [kind & args] {:op kind :args (vec args)})
 
 (defn definitions [fixtures]

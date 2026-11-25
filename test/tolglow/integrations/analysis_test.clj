@@ -3,10 +3,14 @@
             [tolglow.integrations.analysis :as analysis]))
 
 (def sample-rate 48000.0)
+
 (def clock {:time-ms 0.0 :beat 0.0 :bpm 120.0 :source :midi-clock :epoch 1 :confidence 0.9})
+
 (defn close? [a b tolerance] (< (Math/abs (double (- a b))) tolerance))
+
 (defn sine [frequency amplitude time-ms]
   (* amplitude (Math/sin (/ (* 2.0 Math/PI frequency time-ms) 1000.0))))
+
 (defn kick-train [time-ms]
   (let [local (mod (- time-ms 1000.0) 500.0)]
     (if (and (>= time-ms 1000) (< local 160))
@@ -27,11 +31,15 @@
                                                :received-at-ms (+ start (* 1000.0 (/ n sample-rate)) 2.0)
                                                :clock transport})]
            (recur (+ position n) (:state result) (into events (:events result)))))))))
+
 (defn events-of [result type] (filterv #(= type (:type %)) (:events result)))
 
 (def ^:private section-rate 8000)
+
 (def ^:private section-beat-samples 4000)
+
 (def ^:private section-origin-ms 2000.0)
+
 (def ^:private section-clock
   {:time-ms 2500.0 :beat 1.0 :bpm 120.0 :source :midi-clock :source-epoch 3
    :session-id "transport-a" :confidence 0.9 :playing? true})

@@ -9,17 +9,23 @@
             [tolglow.composition.tween :as tween]))
 
 (def ^:private numeric-types #{:number :integer :color :vector :range})
+
 (def ^:private selectors {:instance-ids :id :effect-ids :effect-id :cue-ids :cue-id})
+
 (def ^:private config-keys
   #{:id :seed :every :select :params :mode :curve :priority :ranges :distribution
     :max-change :exclude-owner? :max-catch-up})
 
 (defn- id? [x] (or (keyword? x) (and (string? x) (not (empty? x)))))
+
 (defn- controller-id? [x]
   (or (id? x) (and (vector? x) (= 2 (count x)) (= :cue (first x)) (string? (second x)))))
+
 (defn- fail! [type message data] (throw (ex-info message (assoc data :type type))))
+
 (defn- pair? [x]
   (and (vector? x) (= 2 (count x)) (every? time/finite-number? x) (apply <= x)))
+
 (defn- keys? [x]
   (and (vector? x) (every? keyword? x) (= (count x) (count (distinct x)))))
 

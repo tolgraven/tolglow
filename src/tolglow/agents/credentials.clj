@@ -13,10 +13,13 @@
            [java.util UUID]))
 
 (defn- failure [code message] (ex-info message {:credentials/error code}))
+
 (defn valid-reference? [reference]
   (and (string? reference) (boolean (re-matches #"credential-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" reference))))
+
 (defn- valid-secret? [secret]
   (and (string? secret) (not (str/blank? secret)) (<= (count secret) 16384) (not (re-find #"[\r\n]" secret))))
+
 (defn- valid-audience? [value]
   (and (string? value) (not (str/blank? value)) (<= (count value) 8192)))
 
@@ -26,8 +29,11 @@
            (valid-audience? (:audience entry)) (valid-secret? (:secret entry)))))
 
 (def ^:private no-links (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
+
 (def ^:private owner-rw (PosixFilePermissions/fromString "rw-------"))
+
 (def ^:private owner-rwx (PosixFilePermissions/fromString "rwx------"))
+
 (defn- attrs [permissions] (into-array FileAttribute [(PosixFilePermissions/asFileAttribute permissions)]))
 
 (defn- read-store [^Path path]

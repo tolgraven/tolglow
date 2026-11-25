@@ -8,23 +8,31 @@
 
 (def fixtures [{:id :front :groups [:wash :front] :universe 0 :address 1 :channels {:dimmer 1 :red 2 :blue 3 :strobe 4}}
                {:id :back :groups [:wash] :universe 0 :address 5 :channels {:dimmer 1}}])
+
 (def patch (frame/compile-patch fixtures))
+
 (defn source [front back]
   (frame/resolve-frame patch
     [{:target-id :front :attribute :red :value front}
      {:target-id :front :attribute :strobe :value 0.8}
      {:target-id :back :attribute :dimmer :value back}] {:include-values? false :compact-values? true}))
+
 (def empty-frame (frame/resolve-frame patch [] {}))
+
 (def show (model/new-show {}))
+
 (def opts {:enabled? true :global {:attack {:beats 1/2} :release {:beats 1/2}}
            :groups {:front {:release {:bars 1}}}})
+
 (defn tick [previous opts input ms beat & [model]]
   (let [m (-> (or model show) (assoc :time-ms ms)
               (assoc-in [:transport :beat] beat)
               (assoc-in [:settings :output-response] (response/settings opts)))]
     (response/advance (:state previous) m patch input false (or (:master m) 1.0) nil)))
+
 (defn value [result fixture attr]
   (get (light/emitted-levels (get-in patch [:by-id fixture]) (:frame result)) attr))
+
 (defn near? [a b] (< (abs (- a b)) 0.008))
 
 (deftest a-rendered-change-and-its-release-follow-the-selected-musical-clock

@@ -3,8 +3,11 @@
   the JVM; this scanner only locates balanced delimiters around a caret.")
 
 (def opening {"(" ")" "[" "]" "{" "}"})
+
 (def closing #{")" "]" "}"})
+
 (defn- separator? [ch] (or (nil? ch) (contains? #{"(" ")" "[" "]" "{" "}" "\"" ";" ","} ch) (boolean (re-matches #"\s" ch))))
+
 (defn- prefix-start [source start]
   (loop [i start]
     (cond
@@ -12,6 +15,7 @@
       (and (> i 1) (contains? #{"~@" "#_" "#?"} (subs source (- i 2) i))) (recur (- i 2))
       (and (pos? i) (contains? #{"'" "`" "~" "@" "#"} (subs source (dec i) i))) (recur (dec i))
       :else i)))
+
 (defn form-at
   "Return the smallest balanced collection/string containing the caret, or the
   atom there. Strings, line comments and character literals cannot fake brackets.

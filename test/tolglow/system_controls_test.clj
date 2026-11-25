@@ -8,20 +8,25 @@
             [tolglow.compiler.batch :as batch]))
 
 (def rig [{:id :lamp :position [0 0 0] :universe 1 :address 1 :channels {:dimmer 1}}])
+
 (def definition {:id :light :version 1 :params {:level {:type :number :default 0.8 :bounds [0 1]}}
                  :outputs {:dimmer {:op :param :key :level}}})
+
 (defn apply! [show op]
   (let [result (control/apply-command show (merge {:command-id (str (:revision show)) :source :test
                                                  :show-id (:show-id show) :epoch (:epoch show) :time-ms (:time-ms show)} op))]
     (is (= :accepted (get-in result [:ack :status])))
     (:model result)))
+
 (defn launch [options]
   (-> (control/new-show)
       (apply! {:op :registry/publish :kind :effects :definition definition})
       (apply! {:op :cue/put :cue {:id :light :effect-id :light}})
       (apply! {:op :cue/launch :cue-id :light :launch options})))
+
 (defn advance [show ms beat compile]
   (engine/advance (assoc-in show [:transport :beat] beat) {:time-ms ms :fixtures rig} compile))
+
 (defn value-byte [result]
   (bit-and 255 (aget ^bytes (get-in (render/resolve-contributions rig (:contributions result)
                                                                {:include-values? false}) [:universes 1]) 0)))

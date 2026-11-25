@@ -5,11 +5,13 @@
   (:require [tolglow.repl :as repl]))
 
 (defn- fail! [code message] (throw (ex-info message {:repl/error code})))
+
 (defn- id! [id]
   (let [id (if (keyword? id) (name id) (or id "main"))]
     (when-not (and (string? id) (re-matches #"[A-Za-z0-9_.-]{1,64}" id))
       (fail! :invalid-session "REPL session IDs use 1..64 letters, digits, dots, underscores or hyphens"))
     id))
+
 (defn- empty-session [] {:schema-version 1 :history [] :scratch {}})
 
 (defn validate-state
@@ -130,7 +132,9 @@
 (defn complete
   ([manager id prefix] (repl/complete (session! manager id) prefix))
   ([manager id prefix limit] (repl/complete (session! manager id) prefix limit)))
+
 (defn lookup [manager id symbol] (repl/lookup (session! manager id) symbol))
+
 (def cancel-request! interrupt!)
 
 (defn set-scratch!

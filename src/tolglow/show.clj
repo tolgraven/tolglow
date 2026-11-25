@@ -115,10 +115,15 @@
 (defn- clock-time [clock]
   (let [{:keys [origin-nanos time-ms]} @clock]
     (+ time-ms (/ (- (System/nanoTime) origin-nanos) 1.0e6))))
+
 (defn- now-ms [runtime] (clock-time (:clock runtime)))
+
 (defn agent-manager [runtime] (connections/agents (:connections runtime)))
+
 (defn reactions [runtime] (connections/reactive (:connections runtime)))
+
 (defn repls [runtime] (connections/repls (:connections runtime)))
+
 (defn- error-data [error] {:message (.getMessage ^Throwable error) :details (ex-data error)})
 
 (defn- scene-eligible-ids [runtime fixtures]

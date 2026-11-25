@@ -9,6 +9,7 @@
            [javax.crypto.spec SecretKeySpec]))
 
 (def ^:private cookie-name "tolglow-studio-session")
+
 (def ^:private session-seconds (* 12 3600))
 
 (defn operator-authority
@@ -22,6 +23,7 @@
     #(handler (assoc % ::operator-authority authority))))
 
 (defn- bytes-of [s] (.getBytes ^String s StandardCharsets/UTF_8))
+
 (defn- equal-text? [a b] (MessageDigest/isEqual (bytes-of a) (bytes-of b)))
 
 (defn- sign [key text]

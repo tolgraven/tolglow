@@ -6,13 +6,18 @@
 (def defaults {:generation 0 :busy? false :error nil :notice nil :form {}
                :universe "1" :uid "" :sub-device "0" :fixture-id ""
                :address nil :personality nil :label nil :pid "0x0060" :bytes "" :command "get"})
+
 (def connection-fields #{:host :port :controller-uid :bind-host :local-port :bind-index :physical-port
                          :timeout-ms :job-timeout-ms})
+
 (def query [:rdm/status])
+
 (defn identity-of [db] (select-keys (:show db) [:runtime-id :epoch]))
+
 (defn- ui [db]
   (let [id (identity-of db) local (get-in db [:ui :rdm])]
     (if (= id (:identity local)) local (assoc defaults :identity id))))
+
 (defn- settings-form [transport config]
   (let [defaults (merge {:timeout-ms 2000 :job-timeout-ms 30000}
                         (if (= :art-net transport)
@@ -20,6 +25,7 @@
                           {:host "127.0.0.1" :port 9010}))
         settings (if (= transport (:transport config :ola)) (merge defaults config) defaults)]
     (into {} (map (fn [[k v]] [k (str v)])) (select-keys settings connection-fields))))
+
 (defn- discovery-inventory [snapshot universe]
   (let [uids (get-in snapshot [:discovered universe])
         pending? (and (:connected? snapshot)
@@ -36,6 +42,7 @@
                     (empty? uids) (str "Last inventory for universe " universe " listed no RDM devices.")
                     :else (str device-count (if (= 1 device-count) " RDM device" " RDM devices")
                                " in the last inventory for universe " universe "."))}))
+
 (defn- view [local snapshot]
   (let [config (:config snapshot)
         draft (when-not (:connected? snapshot) local)
@@ -44,14 +51,21 @@
     (merge local (settings-form transport config) (:form draft)
            {:snapshot snapshot :transport transport
             :inventory (when (and snapshot universe) (discovery-inventory snapshot universe))})))
+
 (defn state [db]
   (view (ui db) (get-in db [:server-projection :view :subscriptions query :value])))
+
 (defn current-request? [db token]
   (= token [(:identity (ui db)) (:generation (ui db))]))
+
 (defn key-text [value] (if (keyword? value) (subs (str value) 1) (str value)))
+
 (defn device [s] {:universe (parse-long (:universe s)) :uid (:uid s) :sub-device (parse-long (:sub-device s))})
+
 (defn device-key [s] (str (:universe s) "/" (str/lower-case (:uid s)) "/" (:sub-device s)))
+
 (defn observation [s] (get-in s [:snapshot :observations (device-key s)]))
+
 (defn config [s]
   (let [common {:transport (:transport s) :host (:host s) :port (parse-long (:port s))
                 :timeout-ms (parse-long (:timeout-ms s)) :job-timeout-ms (parse-long (:job-timeout-ms s))}]
@@ -63,6 +77,7 @@
       common)))
 
 (defn- hex-number [text] (js/parseInt text 16))
+
 (defn hex-bytes [text]
   (let [parts (if (str/blank? text) [] (str/split (str/trim text) #"\s+"))]
     (when-not (and (<= (count parts) 231) (every? #(re-matches #"[0-9a-fA-F]{2}" %) parts))
@@ -114,10 +129,14 @@
                                                :address nil :personality nil :label nil})))))
 
 (defn- input! [key event] (rf/dispatch-sync [:rdm/set key (.. event -target -value)]))
+
 (defn- action! [operation payload] (rf/dispatch [:rdm/action operation payload]))
+
 (defn- command! [s parameter value] (action! :command (merge (device s) {:command :set :parameter parameter :value value})))
+
 (defn- field [s key title type]
   [:label title [:input {:aria-label title :type type :value (get s key "") :on-change #(input! key %)}]])
+
 (defn- pid-number [text]
   (if (re-matches #"0[xX][0-9a-fA-F]+" text) (hex-number (subs text 2)) (parse-long text)))
 

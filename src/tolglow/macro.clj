@@ -38,11 +38,13 @@
 
 (defn load-from-file
   [filter-or-something?]) ;; idea: macros can be put on another "layer" above regular grid. Making it mostly east to keep relevant stuff where makes sense
+
 ;; then also easier to just save and load casually since no worries new regular cues will suddenly be in the way etc
 ;;
 ;;might even just be fully integrated with cues ns, such similar stuff...
 (defn save-show-to-file ;which is like same tech but again not really macro. oh well its the right ns to work on this stuff.
   [filename])
+
 (defn load-show-from-file
   [filename])
 

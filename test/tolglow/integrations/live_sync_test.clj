@@ -16,17 +16,21 @@
            [com.sun.net.httpserver HttpServer HttpHandler]))
 
 (defn envelope [id] {:show-id :show :epoch 1 :time-ms 0.0 :command-id id})
+
 (defn callbacks [commands events]
   (let [id (atom 0)]
     {:events! #(swap! events conj %) :commands! #(swap! commands into %)
      :envelope! #(envelope (str "capture-" (swap! id inc)))}))
+
 (defn fake-midi [opens closes receiver sent]
   (fn [_ _]
     {:open! (fn [receive!] (swap! opens inc) (reset! receiver receive!) :owned)
      :close! (fn [handle] (is (= :owned handle)) (swap! closes inc))
      :send! (fn [_ bytes] (swap! sent into bytes))}))
+
 (def midi-config {:selected-source :midi-clock :midi {:enabled? true :input-index 0 :control? true}
                   :live {:mappings {36 {:cue-id :red :mode :held}}}})
+
 (defn send-midi! [manager at bytes]
   (is (session/ingest! manager {:type :midi/message :source-id :midi-clock :time-ms at :bytes bytes})))
 

@@ -5,6 +5,7 @@
 
 (def group-event-types
   [:lighting/group-seeking :lighting/group-at-target :lighting/group-limited :lighting/group-released])
+
 (def rig-event-types [:lighting/rig-level :lighting/rig-unavailable])
 
 (defn- group-event [status]

@@ -6,9 +6,12 @@
 (def view {:runtime-id "runtime" :show-id "main" :epoch 0 :revision 2 :frame-number 10
            :nullable 3 :drop true
            :instances [{:id "0:1" :params {:rig/aim [0 1 2] :level 0.5}}]})
+
 (def full {:protocol projection/protocol :kind :full :base-token nil :token "first"
            :identity (projection/identity-of view) :view view})
+
 (def current (:state (projection/receive nil full)))
+
 (def patch {:protocol projection/protocol :kind :patch :base-token "first" :token "second"
             :identity (projection/identity-of view)
             :changes [[:remove [:drop]] [:set [:nullable] nil]
