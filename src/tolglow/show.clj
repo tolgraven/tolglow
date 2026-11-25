@@ -826,15 +826,15 @@
       (-> model (assoc-in [:auto :state] state) (assoc-in [:auto :reasons] reasons))) model))
 
 (defn- output-retirement [runtime {:keys [compiled retirement] :as context}]
-  (let [{wire-context :context wire-plan :plan :as wire} @(:wire-retirement runtime)]
-    (if (identical? context wire-context)
+  (let [{wire-context :context wire-plan :plan :keys [possible] :as wire} @(:wire-retirement runtime)]
+    (if (and (identical? context wire-context) (nil? possible))
       wire
       {:context context
-       ;; A transient claim can discard an off byte from the configured plan.
-       ;; Keep the last delivered layout and retirements until a full handoff.
-       :plan (if wire-context
-               (retirement/plan {:known (into (:known retirement) (:known wire-plan))
-                                 :held (merge (:held retirement) (:held wire-plan))}
+       ;; Delivered off bytes win over possible off bytes for the same slot.
+       ;; The current patch owns every claimed slot in either case.
+       :plan (if (or wire-context possible)
+               (retirement/plan {:known (into (:known retirement) (concat (:known wire-plan) (:known possible)))
+                                 :held (merge (:held retirement) (:held possible) (:held wire-plan))}
                                 (:compiled wire-context) compiled)
                retirement)})))
 
@@ -891,11 +891,22 @@
       (vary-meta corrected assoc ::wire-retirement wire))))
 
 (defn- present-output! [runtime packet frame-number]
-  (let [metadata (meta packet)]
-    ((get-in runtime [:sink :send!]) (with-meta packet (dissoc metadata ::wire-retirement)) frame-number)
-    (when (:plan @(:venue-fog runtime))
-      (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet))
-    (reset! (:wire-retirement runtime) (::wire-retirement metadata))))
+  (let [metadata (meta packet)
+        {:keys [context plan] :as wire} (::wire-retirement metadata)]
+    (try
+      ((get-in runtime [:sink :send!]) (with-meta packet (dissoc metadata ::wire-retirement)) frame-number)
+      (when (:plan @(:venue-fog runtime))
+        (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet))
+      (catch Exception error
+        ;; A failed handoff may already have driven some universes. Keep one
+        ;; possible off byte per slot, using the latest attempt on disagreement.
+        (let [off-bytes (render/physical-off-bytes (:compiled context))]
+          (swap! (:wire-retirement runtime) update :possible
+                 (fn [{:keys [known held]}]
+                   {:known (into (or known #{}) (:known plan))
+                    :held (merge held (:held plan) off-bytes)})))
+        (throw error)))
+    (reset! (:wire-retirement runtime) wire)))
 
 (defn- send-output! [runtime universes frame-number fog-demands]
   (when (get-in runtime [:sink :send!])

@@ -10,12 +10,13 @@
 (defn- bytes-copy [universes]
   (into {} (map (fn [[u data]] [u (mapv #(bit-and (int %) 255) data)])) universes))
 
-(defn- fog-capture [off & [stall-ms]]
+(defn- fog-capture [off & [{:keys [stall-ms include-pump?] :or {include-pump? true}}]]
   (let [clock (atom 0) sent (atom []) stall? (atom false) partial? (atom false)
         pump {:id :pump :universe 1 :address 2 :channels {:fog 1}
               :fogger {:flow-m3-min 60 :dmx-range [off (if (zero? off) 255 0)]}}
-        fixtures [{:id :light :universe 1 :address 1 :channels {:dimmer 1}}
-                  pump {:id :other :universe 2 :address 1 :channels {:dimmer 1}}]
+        fixtures (conj (cond-> [{:id :light :universe 1 :address 1 :channels {:dimmer 1}}]
+                         include-pump? (conj pump))
+                       {:id :other :universe 2 :address 1 :channels {:dimmer 1}})
         runtime (show/create-runtime {:model (control/new-show {:rig {:fixtures fixtures}})
                                       :workspace-options nil :independent-output? true
                                       :physical-now-ms #(deref clock)
@@ -29,7 +30,7 @@
                           (let [packet (prepare buffers source)]
                             (when @stall? (swap! clock + (or stall-ms 26)))
                             packet))))]
-    {:clock clock :sent sent :stall? stall? :partial? partial? :runtime runtime :owner owner}))
+    {:clock clock :sent sent :stall? stall? :partial? partial? :runtime runtime :owner owner :pump pump}))
 
 (defn- offer-fog! [{:keys [clock runtime owner]} slot red fog until]
   (let [{:keys [compiled] :as patch} @(:patch runtime)
@@ -67,7 +68,7 @@
       (finally (show/stop! runtime)))))
 
 (deftest a-fog-cutoff-can-expire-before-an-otherwise-valid-slot-is-admitted
-  (let [{:keys [runtime sent stall?] :as capture} (fog-capture 196 2)]
+  (let [{:keys [runtime sent stall?] :as capture} (fog-capture 196 {:stall-ms 2})]
     (try
       (offer-fog! capture 1 10 100 26)
       (reset! stall? true)
@@ -252,6 +253,48 @@
           (is (not (:expired-before-send? (publish-fog! capture 100))))
           (is (= next-bytes (second (peek @sent))))
           (finally (show/stop! runtime)))))))
+
+(deftest a-partially-introduced-fog-pump-retires-after-later-patch-changes
+  (doseq [[prior-send? complete-claim?] [[false false] [true false] [true true]]]
+    (let [{:keys [runtime clock sent stall? partial? pump] :as capture}
+          (fog-capture 196 {:include-pump? false})
+          base (get-in @(:state runtime) [:model :rig :fixtures])
+          claim {:id :replacement :universe 1 :address 2 :channels {:dimmer 1}}
+          repatch! (fn [time fixture]
+                     (let [{:keys [epoch rig]} (:model @(:state runtime))
+                           fixtures (cond-> base fixture (conj fixture))
+                           receipt (show/submit! runtime :rig (assoc rig :fixtures fixtures :expected-epoch epoch))]
+                       (reset! clock time)
+                       (show/tick! runtime time)
+                       (is (= :accepted (:status @receipt)) (str @receipt))))]
+      (try
+        (when prior-send?
+          (offer-fog! capture 1 10 0 nil)
+          (publish-fog! capture 25)
+          (is (= [10 0] (second (peek @sent)))))
+        (repatch! 30 pump)
+        (offer-fog! capture 2 20 100 nil)
+        (reset! partial? true)
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Second universe write failed"
+                              (publish-fog! capture 50)))
+        (is (= [20 100] (second (peek @sent))))
+        (reset! partial? false)
+        (repatch! 55 claim)
+        (when complete-claim?
+          (publish-fog! capture 60)
+          (is (= [0 0] (second (peek @sent)))))
+        (repatch! 65 nil)
+        (reset! stall? true)
+        (let [previous-count (count @sent)
+              receipt (publish-fog! capture 75)
+              expected (cond complete-claim? [] prior-send? [[10 196]] :else [[0 196]])]
+          (is (:expired-before-send? receipt))
+          (is (= (not complete-claim?) (boolean (:safety-output? receipt))))
+          (is (= expected (mapv second (subvec @sent previous-count)))))
+        (reset! stall? false)
+        (is (not (:expired-before-send? (publish-fog! capture 125))))
+        (is (= [0 (if complete-claim? 0 196)] (second (peek @sent))))
+        (finally (show/stop! runtime))))))
 
 (deftest a-published-fog-cutoff-outlasts-the-producer-history
   (let [{:keys [runtime sent clock stall?] :as capture} (fog-capture 196)]
