@@ -82,6 +82,9 @@
                        (is (session/flush! manager))
                        (show/tick! runtime tick))
             pending-id #(-> (show/snapshot runtime) :pending-cue-launches first :command-id)]
+        (message! receive! 50 [0x90 60 100])
+        (midi-at! 70 90 [0x80 60 0])
+        (is (empty? (:pending-cue-launches (show/snapshot runtime))))
         (midi-at! 110 120 [0x90 60 100])
         (let [id (pending-id)]
           (is (= {:status :pending :due-beat 1}

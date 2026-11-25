@@ -180,9 +180,9 @@
 
 (defn- release-hold [state envelope entry]
   (cond
+    (:owner-launch? entry) (cancel-launch state envelope entry :held-release)
     (:instance-id entry) (command state envelope :instance/end
-                                  {:instance-id (:instance-id entry) :source (:source entry)})
-    (:owner-launch? entry) (cancel-launch state envelope entry :held-release)))
+                                  {:instance-id (:instance-id entry) :source (:source entry)})))
 
 (defn parameter-controller [state {:keys [type controller note]}]
   (case type :cc controller :note-on (get-in (indexes state) [:lane-controllers note]) nil))
@@ -190,8 +190,8 @@
 (defn midi->commands
   "Translate a MIDI event without applying commands. Supply the shared control
   envelope with command/show/epoch/time and any ingress source identity.
-  Return owner receipts through acknowledge-launch. Held grid launches awaiting
-  a receipt cancel by launch command ID. Echoed feedback and unmapped or
+  Return owner receipts through acknowledge-launch. Held grid launches release
+  through the show owner by launch command ID. Echoed feedback and unmapped or
   other-channel input yield no commands. Live mode transfers surface ownership."
   ([state event envelope] (midi->commands state event envelope nil))
   ([state {:keys [type note velocity controller value channel origin time-ms] :as event} envelope resolved-instance]

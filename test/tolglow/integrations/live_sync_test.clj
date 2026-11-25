@@ -108,7 +108,9 @@
           (is (live-sync/acknowledge! manager 36 {:status :accepted :command-id (:command-id new-launch) :instance-id :new}
                                  (envelope "ack-new")))
           (send-midi! manager 0 [0x80 36 0]) (is (session/flush! manager))
-          (is (= :new (:instance-id (last @commands))))
+          (is (= :cue/cancel-launch (:op (last @commands))))
+          (is (= (:gesture-id new-launch) (:launch-command-id (last @commands))))
+          (is (= (:source new-launch) (:source (last @commands))))
           (is (false? (live-sync/acknowledge! manager 36 {} (envelope "missing"))))))
       (finally (sync/close! manager)))))
 
@@ -123,10 +125,13 @@
       (is (= {:op :param/set :param :level :value 20.0 :instance-id :current}
              (select-keys (last @commands) [:op :param :value :instance-id])))
       (send-midi! manager 0 [0x90 36 100]) (is (session/flush! manager))
-      (live-sync/acknowledge! manager 36 {:status :accepted :command-id (:command-id (last @commands)) :instance-id :held}
-                         (envelope "ack"))
-      (is (live-sync/handoff! manager :live (envelope "handoff"))) (is (session/flush! manager))
-      (is (= :held (:instance-id (last @commands))))
+      (let [launch (last @commands)]
+        (is (live-sync/acknowledge! manager 36 {:status :accepted :command-id (:command-id launch) :instance-id :held}
+                                    (envelope "ack")))
+        (is (live-sync/handoff! manager :live (envelope "handoff"))) (is (session/flush! manager))
+        (is (= :cue/cancel-launch (:op (last @commands))))
+        (is (= (:gesture-id launch) (:launch-command-id (last @commands))))
+        (is (= (:source launch) (:source (last @commands)))))
       (is (= :live (get-in (sync/export-state manager) [:config :live :mode])))
       (let [n (count @commands)]
         (send-midi! manager 0 [0x90 36 100]) (is (session/flush! manager))

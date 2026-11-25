@@ -136,9 +136,9 @@ source ID, sync-run ID and the logical time when the adapter received the MIDI
 message. Set `:live :launch-grid` to `:off` (the default), `{:beats 1/2}`,
 `{:bars 1}` or `{:phrases 1}`. Each note mapping can override it with `:grid`.
 The show owner schedules launches against the selected transport. Note-off
-before an accepted launch receipt asks the owner to cancel that specific launch.
-Note-off after acceptance ends the instance named by the receipt. Graceful
-handoff or stop releases held cues and asks the owner to cancel pending
+uses the original launch ID to cancel a pending request or end its exact
+accepted instance. Graceful handoff or stop releases held cues and asks the
+owner to cancel pending
 launches. The host returns receipts through `acknowledge!`. A receipt from a
 prior run or an earlier press leaves the current note binding alone.
 Polled Live clock samples flag forward jumps beyond what can occur within the

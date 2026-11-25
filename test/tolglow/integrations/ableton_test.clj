@@ -70,7 +70,7 @@
            (select-keys (first (:commands fired)) [:op :instance-id :value])))
     (is (= "live-press" (-> released :commands first :launch-command-id)))
     (is (= (-> live-press :commands first :source) (-> released :commands first :source)))
-    (is (= [{:op :instance/end :instance-id "midi-instance"}
+    (is (= [{:op :cue/cancel-launch :launch-command-id "midi-press" :reason :held-release}
             {:op :cue/cancel-launch :launch-command-id "persistent" :reason :surface-handoff}]
            (mapv #(select-keys % [:op :instance-id :launch-command-id :reason]) (:commands handoff))))))
 
