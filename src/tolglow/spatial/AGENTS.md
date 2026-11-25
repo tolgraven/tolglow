@@ -10,3 +10,10 @@ registry, launch and restore operations. Afterglow resolves per-head optical
 weights and blends native groups. The host supplies immutable previous-frame
 observations and keeps the optical reader out of saved state. A faulty shape
 affects only its own cue. [Volume cue regressions](../../../test/tolglow/spatial_cues_test.clj)
+
+`sampling.clj` owns the show's field-sampling workers. It slices a large patch
+into contiguous ranges, runs Afterglow's public samplers on each range and
+replays the hits in the serial insertion order. Keep per-head arithmetic in
+Afterglow. Every task finishes before `sample` returns, and a failure is
+rethrown as the worker threw it. Compare any change with the serial sampler
+for entries and iteration order. [Sampler regressions](../../../test/tolglow/spatial/sampling_test.clj)

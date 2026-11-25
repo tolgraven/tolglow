@@ -6,32 +6,6 @@ private class Lifetime: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
 
-private final class StudioContentView: WKWebView {
-    private var needsInitialFocus = true
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        let center = NotificationCenter.default
-        center.removeObserver(self, name: NSWindow.didBecomeKeyNotification, object: nil)
-        guard needsInitialFocus, let window else { return }
-        center.addObserver(self, selector: #selector(focusWhenKey(_:)), name: NSWindow.didBecomeKeyNotification, object: window)
-        focusWhenKey()
-    }
-
-    @objc private func focusWhenKey(_ notification: Notification? = nil) {
-        guard needsInitialFocus, let window, window.isKeyWindow else { return }
-        // SwiftUI attaches the show view after startup. Wait for the attachment
-        // to settle before giving WebKit its initial keyboard focus.
-        DispatchQueue.main.async { [weak self, weak window] in
-            guard let self, let window, self.window === window, window.isKeyWindow, self.needsInitialFocus else { return }
-            if window.makeFirstResponder(self) {
-                self.needsInitialFocus = false
-                NotificationCenter.default.removeObserver(self, name: NSWindow.didBecomeKeyNotification, object: window)
-            }
-        }
-    }
-}
-
 @main
 struct TolglowStudioApp: App {
     @NSApplicationDelegateAdaptor(Lifetime.self) private var lifetime
@@ -88,17 +62,19 @@ struct TolglowStudioApp: App {
 
 private struct StudioWindow: NSViewRepresentable {
     let url: URL
-    func makeCoordinator() -> StudioNavigation { StudioNavigation(origin: url) }
+    @MainActor final class Coordinator {
+        let navigation: StudioNavigation
+        let qualification = ShaderQualification.fromArguments()
+        init(url: URL) { navigation = StudioNavigation(origin: url) }
+    }
+    func makeCoordinator() -> Coordinator { Coordinator(url: url) }
     func makeNSView(context: Context) -> WKWebView {
-        let configuration = WKWebViewConfiguration()
-        configuration.allowsAirPlayForMediaPlayback = true
-        let view = StudioContentView(frame: .zero, configuration: configuration)
-        view.navigationDelegate = context.coordinator
-        view.load(URLRequest(url: url))
-        return view
+        studioWebView(origin: url, navigation: context.coordinator.navigation,
+                      qualification: context.coordinator.qualification)
     }
     func updateNSView(_ view: WKWebView, context: Context) {}
-    static func dismantleNSView(_ view: WKWebView, coordinator: StudioNavigation) {
+    static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
+        coordinator.qualification?.stop(view)
         view.stopLoading()
         view.navigationDelegate = nil
     }

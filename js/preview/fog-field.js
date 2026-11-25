@@ -148,16 +148,31 @@ export class FogField {
     const [nx, ny, nz] = this.grid, [sx, sy, sz] = this.spacing, stride = nx * ny;
     const a = this.data, heat = this.temperature, b = this.advected, h = this.advectedHeat;
     const time = this.time, w = this.room[0], d = this.room[2];
+    // Each term of the analytic curl varies along one axis. Evaluate it once
+    // per plane, then combine the terms with each cell's temperature.
+    const flowX = Array.from({ length: nx }, (_, x) => {
+      const px = (x + 0.5) * sx - w / 2;
+      return [px, Math.cos(px * 1.5 + time * 0.43), Math.cos(px * 1.5 - time * 0.43), Math.cos(px * 4.3 - time * .8)];
+    });
+    const flowY = Array.from({ length: ny }, (_, y) => {
+      const py = (y + 0.5) * sy;
+      return [py, Math.cos(py * 1.7 + time * 0.43), Math.sin(py * 1.7 + time * 0.31),
+        Math.cos(py * 4.1 - time * .8), Math.sin(py * 4.1 + time * .7)];
+    });
+    const flowZ = Array.from({ length: nz }, (_, z) => {
+      const pz = (z + 0.5) * sz - d / 2;
+      return [pz, Math.sin(pz * 1.3 - time * 0.31), Math.sin(pz * 1.3 + time * 0.31), Math.sin(pz * 3.7 + time * .7)];
+    });
     for (let z = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
-      const i = x + y * nx + z * stride, px = (x + 0.5) * sx - w / 2, py = (y + 0.5) * sy, pz = (z + 0.5) * sz - d / 2;
+      const i = x + y * nx + z * stride;
+      const [px, xBaseY, xBaseZ, xTurbulence] = flowX[x];
+      const [py, yBaseX, yBaseZ, yTurbulenceX, yTurbulenceZ] = flowY[y];
+      const [pz, zBaseX, zBaseY, zTurbulence] = flowZ[z];
       // Divergence-free analytic curl components plus cooling-dependent buoyancy.
       const turbulence = Math.min(1, heat[i]) * .17;
-      let vx = 0.12 + 0.11 * (Math.cos(py * 1.7 + time * 0.43) - Math.sin(pz * 1.3 - time * 0.31))
-        + turbulence * (Math.cos(py * 4.1 - time * .8) - Math.sin(pz * 3.7 + time * .7));
-      let vy = heat[i] * 0.38 + 0.035 + 0.08 * (Math.sin(pz * 1.3 + time * 0.31) - Math.cos(px * 1.5 + time * 0.43))
-        + turbulence * (Math.sin(pz * 3.7 + time * .7) - Math.cos(px * 4.3 - time * .8));
-      let vz = 0.025 + 0.11 * (Math.cos(px * 1.5 - time * 0.43) - Math.sin(py * 1.7 + time * 0.31))
-        + turbulence * (Math.cos(px * 4.3 - time * .8) - Math.sin(py * 4.1 + time * .7));
+      let vx = 0.12 + 0.11 * (yBaseX - zBaseX) + turbulence * (yTurbulenceX - zTurbulence);
+      let vy = heat[i] * 0.38 + 0.035 + 0.08 * (zBaseY - xBaseY) + turbulence * (zTurbulence - xTurbulence);
+      let vz = 0.025 + 0.11 * (xBaseZ - yBaseZ) + turbulence * (xTurbulence - yTurbulenceZ);
       let injection = 0;
       for (const source of this.sources) {
         const dx = px - source.position[0], dy = py - source.position[1], dz = pz - source.position[2];
