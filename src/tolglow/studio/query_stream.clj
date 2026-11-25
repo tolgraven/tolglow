@@ -16,13 +16,16 @@
 
 (defn read-result [lease source]
   (if-let [sample! (:sample! lease)]
-    (let [source (if-let [current (:source! lease)] (current) source)
-          last @(:last lease)]
-      (if (and last (identical? source (:source last))) (:value last)
-        (let [value (try {:value (sample! source)}
-                         (catch Exception _ {:error :unavailable}))]
-          (vreset! (:last lease) {:source source :value value})
-          value)))
+    (let [slot (:last lease)]
+      (locking slot
+        (let [last @slot]
+          (when-not (= ::retired last)
+            (let [source (if-let [current (:source! lease)] (current) source)]
+              (if (and last (identical? source (:source last))) (:value last)
+                (let [value (try {:value (sample! source)}
+                                 (catch Exception _ {:error :unavailable}))]
+                  (vreset! slot {:source source :value value})
+                  value)))))))
     @(:result lease)))
 
 (defn validate [queries]
@@ -32,8 +35,14 @@
   (set queries))
 
 (defn- close-lease! [lease]
-  (when-let [detach! (:detach! lease)] (detach!))
-  (when-let [close! (:close! lease)] (close!)))
+  ;; A delivery pass may already hold this lease. Finish any active sample
+  ;; and prevent that pass from starting a new one after cleanup.
+  (when-let [slot (:last lease)]
+    (locking slot (vreset! slot ::retired)))
+  (try
+    (when-let [detach! (:detach! lease)] (detach!))
+    (finally
+      (when-let [close! (:close! lease)] (close!)))))
 
 (defn close! [store]
   (let [[before _] (locking store (reset-vals! (:state store) {:closed? true}))]
@@ -45,23 +54,8 @@
 (defn retiring-queries [store]
   (:retiring @(:state store)))
 
-(defn release-unused-graph-leases!
-  "Retire unobserved Afterglow queries independently of projection delivery."
-  [store wanted-queries candidates]
+(defn- finish-retirement! [store retired]
   (let [state (:state store)
-        retired (locking store
-                  (let [before @state wanted (wanted-queries)
-                        unused (filterv #(and (contains? (:leases before) %)
-                                              (not (contains? wanted %))
-                                              (not (surface-query? store %)))
-                                        candidates)]
-                    (when (seq unused)
-                      (reset! state (-> before
-                                        (update :leases #(apply dissoc % unused))
-                                        (update :wanted #(apply disj % unused))
-                                        (update :missing #(apply disj % unused))
-                                        (update :retiring (fnil into #{}) unused)))
-                      (select-keys (:leases before) unused))))
         failure (reduce (fn [first-error [query lease]]
                           (try
                             (close-lease! lease)
@@ -74,6 +68,24 @@
                               ((:wake! store)))))
                         nil retired)]
     (when failure (throw failure))))
+
+(defn release-unused-leases!
+  "Retire unobserved graph and surface queries independently of projection delivery."
+  [store wanted-queries candidates]
+  (let [state (:state store)
+        retired (locking store
+                  (let [before @state wanted (wanted-queries)
+                        unused (filterv #(and (contains? (:leases before) %)
+                                              (not (contains? wanted %)))
+                                        candidates)]
+                    (when (seq unused)
+                      (reset! state (-> before
+                                        (update :leases #(apply dissoc % unused))
+                                        (update :wanted #(apply disj % unused))
+                                        (update :missing #(apply disj % unused))
+                                        (update :retiring (fnil into #{}) unused)))
+                      (select-keys (:leases before) unused))))]
+    (finish-retirement! store retired)))
 
 (defn- open-graph-lease [system query allowed? wake!]
   (if-not allowed?
@@ -100,7 +112,7 @@
   "Share leases across sockets. Changing show identity, graph or public-query
   policy invalidates previous acquisitions, including unavailable queries."
   [store source wanted-queries]
-  (let [[leases retired]
+  (let [[leases retired-graph retired-surfaces]
         (locking store
           (let [state (:state store) before @state
                 ;; Opening while its old watcher is still alive would reuse
@@ -121,18 +133,22 @@
                                        (into #{} (filter #(reactive/registered-sub? system (first %))) (:missing before)))
                     keep? #(and compatible? (contains? wanted %) (not (contains? newly-registered %)))]
                 (if (and compatible? (empty? newly-registered) (= wanted (:wanted before)))
-                  [prior nil]
+                  [prior]
                   (let [{surfaces true graph false}
-                        (group-by #(surface-query? store (key %)) (remove #(keep? (key %)) prior))]
-                    (doseq [[_ lease] surfaces] (close-lease! lease))
-                    (let [leases (into {} (map (fn [q] [q (or (when (keep? q) (get prior q))
+                        (group-by #(surface-query? store (key %)) (remove #(keep? (key %)) prior))
+                        surface-queries (map key surfaces)
+                        wanted (reduce disj wanted surface-queries)
+                        leases (into {} (map (fn [q] [q (or (when (keep? q) (get prior q))
                                                              (open-lease store system q public))])
-                                               wanted))]
-                      (reset! state {:system system :identity identity :leases leases :wanted wanted :public public
-                                     :retiring (:retiring before)
-                                     :missing (into #{} (keep (fn [[q lease]] (when (:await-registration? lease) q))) leases)})
-                      [leases graph])))))))]
-    (doseq [[_ lease] retired] (close-lease! lease))
+                                          wanted))]
+                    (reset! state {:system system :identity identity :leases leases :wanted wanted :public public
+                                   :retiring (into (or (:retiring before) #{}) surface-queries)
+                                   :missing (into #{} (keep (fn [[q lease]] (when (:await-registration? lease) q))) leases)})
+                    [leases graph surfaces]))))))]
+    (try
+      (doseq [[_ lease] retired-graph] (close-lease! lease))
+      (finally
+        (finish-retirement! store retired-surfaces)))
     leases))
 
 (defn reconcile! [store source wanted]
