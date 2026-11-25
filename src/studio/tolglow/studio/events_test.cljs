@@ -121,6 +121,22 @@
     (is (= {:name "Fresh edit"} (get-in completed [:db :ui :rig-draft])))
     (is (true? (get-in completed [:db :ui :rig-dirty?])))))
 
+(deftest an-early-checkpoint-ack-keeps-edits-made-while-waiting-for-the-view
+  (let [{:keys [db]} (checkpoint-db)
+        db (update db :ui assoc :rig-dirty? true :rig-draft {:name "Old unsaved rig"})
+        chosen (:db (transition db [:checkpoints/confirm :restore :named]))
+        submitted (transition chosen [:checkpoints/submit])
+        ack (conj (get-in submitted [:studio/http :on-success]) {:status :accepted :epoch 8})
+        waiting (:db (transition (:db submitted) ack))
+        edited (:db (transition waiting [:studio/rig-set [:name] "Fresh edit"]))
+        view (merge (:show base) checkpoint-owner {:epoch 8 :revision 4 :rig {:name "Restored rig"}})
+        installed (:db (full-frame edited view))
+        completed (:db (transition installed [:checkpoints/show-changed]))]
+    (is (= "Restored Named save." (get-in completed [:show-checkpoints :feedback :message])))
+    (is (= (:rig view) (get-in completed [:show :rig])))
+    (is (= {:name "Fresh edit"} (get-in completed [:ui :rig-draft])))
+    (is (true? (get-in completed [:ui :rig-dirty?])))))
+
 (deftest a-peer-show-change-keeps-the-draft-when-our-restore-is-rejected
   (let [{:keys [db]} (checkpoint-db)
         draft {:name "Unconfirmed draft"}

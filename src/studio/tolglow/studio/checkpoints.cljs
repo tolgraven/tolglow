@@ -50,6 +50,7 @@
 (defn replaces-rig-draft? [db view]
   (let [{:keys [action identity phase epoch]} (get-in db [:show-checkpoints :operation])]
     (and (= :restore action) (= :awaiting-view phase) (= identity (identity-of db))
+         (original-rig-draft? db)
          (= (assoc identity :epoch epoch) (projection/identity-of view)))))
 
 (rf/reg-event-fx :checkpoints/open
