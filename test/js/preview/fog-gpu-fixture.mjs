@@ -18,6 +18,7 @@ target.depthTexture = new THREE.DepthTexture(width, height, THREE.UnsignedIntTyp
 const output = new THREE.WebGLRenderTarget(width, height, {type: THREE.HalfFloatType, depthBuffer: false});
 const fog = new VolumetricFog(renderer, {quality: 'desktop'}); fog.setRoom([8, 4, 8]); fog.setSize(width, height);
 const pixels = renderTarget => {
+  const {width, height} = renderTarget;
   const data = new Uint16Array(width * height * 4); renderer.readRenderTargetPixels(renderTarget, 0, 0, width, height, data);
   return Array.from(data, value => THREE.DataUtils.fromHalfFloat(value));
 };
@@ -142,6 +143,33 @@ window.fogTest = () => {
   result.brighterHalo=render([{...vertical,intensity:320}])[mid];
   fog.setAtmosphere('venue',host(55000,0,0,25.6,0));
   result.dryHalo=render([vertical])[mid];
+  fog.setAtmosphere(null, null); fog.setAmount(.05);
+  fog.field.clear(.15); fog.upload();
+  const material = fog.volumeMaterial, originalShader = material.fragmentShader;
+  const counted = originalShader.replace('float transmission=1.;','float transmission=1.;float samples=0.;')
+    .replace('transmission*=segment;','transmission*=segment;samples+=1.;')
+    .replace('volumeOutput=vec4(radiance,transmission);','volumeOutput=vec4(samples,float(baseIndex),0.,1.);');
+  const countIntervals = shader => {
+    material.fragmentShader = shader; material.needsUpdate = true;
+    render([]);
+    const data = pixels(fog.target), steps = [], completed = [];
+    for (let i = 0; i < data.length; i += 4) if (data[i] > 0) {
+      steps.push(data[i]); completed.push(data[i + 1]);
+    }
+    return {count: steps.length, minimum: Math.min(...steps), maximum: Math.max(...steps),
+      minimumCompleted: Math.min(...completed)};
+  };
+  result.uniformIntervals = countIntervals(counted);
+  // Exercise touching plume endpoints that round on either side of a base
+  // interval. The 72-step cap must still leave enough work to finish every ray.
+  result.boundaryIntervals = countIntervals(counted
+    .replace('float baseStep=(finish-start)/float(raySteps);',
+      `float rayId=floor(gl_FragCoord.x)+floor(gl_FragCoord.y)*${fog.target.width}.;
+       start=.03+mod(rayId,127.)*.071;finish=start+3.1+mod(rayId,71.)*.103;
+       float baseStep=(finish-start)/float(raySteps);`)
+    .replace('if(all(lessThan(detailMin,detailMax)))detailSpan=boxHit(eye,ray,detailMin,detailMax);',
+      'detailSpan=start+vec2(mod(rayId,24.),mod(rayId,24.)+24.)*baseStep;'));
+  material.fragmentShader = originalShader;
   result.glError = gl.getError();
   renderer.setRenderTarget(null); renderer.clear();
   scene.remove(blocker); blocker.geometry.dispose(); blocker.material.dispose();

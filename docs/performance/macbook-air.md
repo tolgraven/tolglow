@@ -90,6 +90,12 @@ The smaller Mobile fog raster used 28% fewer rays. Across matched audience, cros
 
 A separate synthetic 120 Hz pass isolation measured about 53 accepted bitmaps/s with the full scene, 92 when bypassing the volumetric fog pass, 55 with bloom disabled and 120 when replaying the same finished image. The system-wide AGX Device Utilization counter read 100% in all sampled full-scene intervals, with a 19% idle median. The pass comparison uses controlled pass toggles and actual canvas acknowledgements.
 
+### Brightness at beam crossings in fresh fog
+
+The eight-head crossing fixture reproduced a bright local error in the linear fog pass. Controlled pairs remained additive and the half-float stages remained finite through eightfold input gain. The shader now subdivides the ray through dense plume bounds, samples density within each clipped interval and evaluates the optics at its midpoint. It tests beam intersection once per camera ray and marches only the lights that can contribute. [Crossing fixture and results](https://github.com/tolgraven/tolglow/issues/392)
+
+Against matching full-length 192-step references on Apple M4, p95 relative luminance error in the crossing region fell from 10.47% to 2.69% at Mobile and 5.49% to 0.87% at Desktop. The two quality comparisons hold each tier's fog raster and camera fixed. Uniform Desktop haze used 48 intervals, and all boundary-tested rays completed all 48 base intervals within the 72-evaluation cap.
+
 ## Machine and replay
 
 The Air had 10 CPU cores, eight GPU cores and 16 GB of memory. It ran arm64 macOS 27.2.1, JDK 27.0.1.1 and Leiningen 2.12.1-SNAPSHOT. The local wrapper used niceness 10 and gave the JVM an active processor count of one, two compiler threads and one GC thread. These settings describe this capture. The experiment did not measure the machine with unrestricted CPU scheduling or verify a fixed 1.5-core duty limit.

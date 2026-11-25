@@ -34,6 +34,22 @@ test('quality changes keep linked material owners and carry the live fog field f
   fog.dispose();
 });
 
+test('fog upload keeps uniform haze coarse and pads dense cells through interpolation support', () => {
+  const fog = new VolumetricFog({}, {quality: 'mobile'});
+  try {
+    fog.setRoom([8, 4, 8]);
+    fog.field.clear(.15); fog.upload();
+    const lower = fog.uniforms.detailMin.value, upper = fog.uniforms.detailMax.value;
+    assert.ok(lower.x > upper.x);
+    const [nx, ny, nz] = fog.field.grid;
+    fog.field.data[2 + 3 * nx + 4 * nx * ny] = .8; fog.upload();
+    lower.toArray().forEach((value, i) => near(value, [(1 / nx - .5) * 8, 2 / ny * 4, (3 / nz - .5) * 8][i]));
+    upper.toArray().forEach((value, i) => near(value, [(4 / nx - .5) * 8, 5 / ny * 4, (6 / nz - .5) * 8][i]));
+    fog.field.clear(0); fog.upload();
+    assert.ok(lower.x > upper.x);
+  } finally {fog.dispose();}
+});
+
 test('analytic positive cone intervals retain narrow shafts and reject the backward cone', () => {
   const hit = intersectCone([-1, 0, -2], [1, 0, 0], [0, 0, 0], [0, 0, -1], .01, [0, 10]);
   near(hit[0], 1 - 2 * Math.tan(.01)); near(hit[1], 1 + 2 * Math.tan(.01));
