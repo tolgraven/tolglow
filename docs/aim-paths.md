@@ -87,9 +87,16 @@ committed state unchanged, when:
   calibrated rates at the current tempo.
 - `:start-wrap-mismatch`: a head's committed pan is nearer another in-range
   wrap of the start pose than the published one, so frame 0 would command a
-  full-turn jump. This check runs for launches that enter through the runtime
-  owner and reads the last committed frame; scheduled grid launches are
-  checked when scheduled.
+  full-turn jump. `tick!` binds the last committed frame for its owner cycle
+  only, and launches resolve before the next frame is rendered. Outside an owner
+  cycle there is no committed frame, so only this check is skipped.
+
+The checks run in `tolglow.spatial/apply-command`, which every Tolglow cue or
+effect launch reaches: Studio, REPL, Push and HTTP commands, quantized grid
+launches when they fire, macro and sequence slots, and event-subscriber
+actions. A refused slot is appended to `:composition-faults` and the run keeps
+playing. A refused subscriber action becomes a handler fault. Lighting scenes
+launch only the generated cues they own, which are never synchronized paths.
 
 A tempo change while the move is running is not rechecked. The timing
 describes scheduled pan/tilt commands. Physical arrival depends on the heads'

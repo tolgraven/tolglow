@@ -138,6 +138,14 @@
         (is (= [false "loop" {:beats 2}] ((juxt :sync-arrival? :mode :duration) (:body converted)))
             "Studio can convert a synchronized path back to an ordinary musical path")
         (is (false? (get-in plain-request [:body :sync-arrival?])))
+        (let [zero (-> (editor/editor loaded) (assoc-in [:path :duration-value] 0) (assoc-in [:path :duration-unit] "beats"))
+              toggled (:db (transition (editor/put-editor loaded zero) [:rig-editor/sync-arrival false]))]
+          (is (= [false 4 "bars"] ((juxt :sync-arrival? :duration-value :duration-unit) (:path (editor/editor toggled))))
+              "Leaving sync with the default zero minimum restores a positive musical duration")
+          (is (= {:bars 4} (get-in (editor/publish-request toggled false "zero") [:body :duration]))))
+        (is (= [2 "bars"] ((juxt :duration-value :duration-unit)
+                           (:path (editor/editor (:db (transition loaded [:rig-editor/sync-arrival false]))))))
+            "A positive minimum is kept")
         (is (= "Aim path cue created. Heads arrive together after 4.00 s at the current tempo."
                (editor/published-message {:arrival-duration-ms 4000}))))
       (finally (restore)))))

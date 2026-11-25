@@ -533,7 +533,8 @@
 
 (defn- committed-values
   "ID -> row lookup into the last committed frame, rich or compact. Rows are
-  projected only when looked up, so ordinary launches pay nothing."
+  projected only when looked up, so ordinary launches pay nothing. tick! binds
+  it to aim-paths/*committed-values* for its owner cycle only."
   [runtime]
   (when-let [{:keys [values compact]} (some-> runtime :state deref :output)]
     (let [indices (delay (when compact (zipmap (:target-order compact) (range))))]
@@ -541,11 +542,6 @@
         (or (get values id)
             (when-let [index (and compact (get @indices id))]
               (first (render/project-compact compact [index]))))))))
-
-(defn- launch-refusal [model payload committed]
-  (when-not (get-in model [:control :history (:command-id payload)])
-    (when-let [[code message] (aim-paths/launch-problem model payload committed)]
-      {:model model :events [] :ack {:status :rejected :command-id (:command-id payload) :code code :message message}})))
 
 (defn- command
   ([model payload time-ms] (command model payload time-ms nil))
@@ -569,9 +565,7 @@
                          payload {:time-ms time-ms})
          operation (:op envelope)
          variation? (variations/operations operation)
-         refusal (when-not previous (launch-refusal model envelope nil))
          result (cond
-                  refusal refusal
                   variation? (variations/apply-command model envelope)
                   (group-channels/operation? operation)
                   (control/apply-domain-command model envelope group-channels/apply-operation)
@@ -664,30 +658,26 @@
       (command model payload time-ms authority))))
 
 (defn- dispatch-owner-command [runtime model payload time-ms authority]
-  ;; Only the owner sees committed output, so the start-wrap check runs here
-  ;; as well as the model-only checks inside command.
-  (or
-   (launch-refusal model payload (committed-values runtime))
-   (cond
-     (and (= :cue/launch (:op payload)) (contains? payload :grid))
-     (cue-timing/schedule model (cue-clock-identity runtime model) time-ms
-                          (assoc (select-keys payload [:grid :raw]) :command (dissoc payload :grid :raw))
-                          command)
+  (cond
+    (and (= :cue/launch (:op payload)) (contains? payload :grid))
+    (cue-timing/schedule model (cue-clock-identity runtime model) time-ms
+                         (assoc (select-keys payload [:grid :raw]) :command (dissoc payload :grid :raw))
+                         command)
 
-     (and (cue-timing/active? model) (cue-timing/receipt model (:command-id payload)))
-     {:model model :ack {:status :rejected :reason :command-id-conflict :command-id (:command-id payload)}}
+    (and (cue-timing/active? model) (cue-timing/receipt model (:command-id payload)))
+    {:model model :ack {:status :rejected :reason :command-id-conflict :command-id (:command-id payload)}}
 
-     (= :cue/cancel-launch (:op payload))
-     (cue-timing/cancel-owned model (cue-clock-identity runtime model) time-ms payload command)
+    (= :cue/cancel-launch (:op payload))
+    (cue-timing/cancel-owned model (cue-clock-identity runtime model) time-ms payload command)
 
-     (and (= :gesture/sample (:op payload)) (contains? payload :sample-context))
-     (dispatch-ratio-pad-sample runtime model payload time-ms authority)
+    (and (= :gesture/sample (:op payload)) (contains? payload :sample-context))
+    (dispatch-ratio-pad-sample runtime model payload time-ms authority)
 
-     (and (= :gesture/end (:op payload)) (push-gesture-terminal? payload authority))
-     (let [gesture (open-push-gesture model (push-gesture-key payload authority))]
-       (command model (cond-> payload gesture (assoc :last-sequence (:last-sequence gesture))) time-ms authority))
+    (and (= :gesture/end (:op payload)) (push-gesture-terminal? payload authority))
+    (let [gesture (open-push-gesture model (push-gesture-key payload authority))]
+      (command model (cond-> payload gesture (assoc :last-sequence (:last-sequence gesture))) time-ms authority))
 
-     :else (command model payload time-ms authority))))
+    :else (command model payload time-ms authority)))
 
 (defn- require-import-device! [runtime {:keys [session-id lease]}]
   (when-not (and lease (identical? lease (get-in @(:devices runtime) [session-id ::restore-lease])))
@@ -868,7 +858,7 @@
                 (update :revision inc)) :ack {:status :accepted}}
     :surface-aim (surface-aim/apply-operation model payload)
     :aim-path
-    (let [definition (aim-paths/definition model payload (committed-values runtime))
+    (let [definition (aim-paths/definition model payload aim-paths/*committed-values*)
           id (:id definition)
           synchronized? (get-in definition [:editor :sync-arrival?])
           requested-cue-id (:cue-id payload id)
@@ -1592,9 +1582,14 @@
          restored-generation (volatile! nil) restarted-generation (volatile! nil)
          restoring-device (volatile! nil)
          committed-fault-events (volatile! [])
-         author-request (volatile! nil)]
+         author-request (volatile! nil)
+         committed-bound? (volatile! false)]
      (try
        (locking (:lock runtime)
+         ;; Launch checks read the last committed frame only on this owner
+         ;; thread, under the lock and before the next frame is resolved.
+         (push-thread-bindings {#'aim-paths/*committed-values* (committed-values runtime)})
+         (vreset! committed-bound? true)
          (when-let [[target output-slot] (when @(:running runtime) (capture-render-time runtime time-ms output-slot))]
            (let [before @(:state runtime)
                  time-ms (max target (get-in before [:model :time-ms]))
@@ -1954,6 +1949,7 @@
                  (swap! (:state runtime) assoc :cadence
                         (cadence/finish (assoc sampling :defer-live-slowdown? defer?) (:model next-state) elapsed)))))))
        (finally
+         (when @committed-bound? (pop-thread-bindings))
          (when-let [request @author-request]
            (authoring/request! (agent-manager runtime) request #(submit! runtime :autopilot-authored %)))
          (effect-faults/offer! (:effect-logs runtime) @committed-fault-events)

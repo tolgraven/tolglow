@@ -9,6 +9,11 @@
 
 (def max-points 256)
 
+(def ^:dynamic *committed-values*
+  "ID -> committed output row lookup, bound by the runtime owner for one cycle.
+  Nil outside an owner cycle, which skips only the start-wrap launch check."
+  nil)
+
 (defn- fail! [path message]
   (throw (ex-info message {:errors [{:path path :message message}]})))
 

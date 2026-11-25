@@ -1,8 +1,12 @@
 (ns tolglow.aim-paths-test
   (:require [clojure.test :refer [deftest is]]
+            [afterglow.control.model :as control]
             [afterglow.render.frame :as frame]
             [tolglow.aim-paths :as paths]
             [tolglow.compiler :as compiler]
+            [tolglow.composition :as composition]
+            [tolglow.event-subscribers :as sub]
+            [tolglow.spatial :as spatial]
             [tolglow.registry :as registry]
             [tolglow.composition.tween :as tween]))
 
@@ -215,3 +219,37 @@
     (is (nil? (paths/launch-problem (registered rig neutral) launch {:far-travel {:pan (pan-of -100.0) :tilt 0.5}}))
         "A head that is merely not yet prepositioned is not a wrap mismatch")
     (is (nil? (paths/launch-problem (registered rig neutral) launch nil)))))
+
+(defn- stale-show
+  "A real control model with a published synchronized cue whose slow head was
+  recalibrated after publication."
+  []
+  (let [rig (control/new-show {:rig {:fixtures paired-heads}})
+        effect (paths/definition rig synchronized-spec)]
+    (-> rig
+        (assoc-in [:registry :effects (:id effect)] effect)
+        (assoc-in [:registry :cues :paired-cue] {:id :paired-cue :effect-id (:id effect) :version 1})
+        (assoc-in [:rig :fixtures 1 :calibration :motor-rate-deg-per-sec :pan] 60))))
+
+(deftest every-spatial-launch-route-refuses-a-stale-synchronized-cue
+  (let [model (stale-show)
+        result (spatial/apply-command model {:op :cue/launch :cue-id :paired-cue :command-id "direct"
+                                             :show-id (:show-id model) :epoch (:epoch model) :time-ms 0
+                                             :source {:adapter :test}})]
+    (is (= [:rejected :stale-calibration] ((juxt :status :code) (:ack result))))
+    (is (empty? (:instances (:model result)))))
+  (let [model (composition/save (stale-show) {:id :run :mode :sequence :timebase :ms
+                                              :slots [{:cue-id :paired-cue :duration {:ms 500}}]})
+        advanced (composition/advance (composition/start model :run 0) 10)
+        [fault] (:composition-faults advanced)]
+    (is (empty? (:instances advanced)) "The sequence slot does not launch the stale cue")
+    (is (= [:composition/launch-refused :stale-calibration :paired-cue] ((juxt :type :code :cue-id) fault)))
+    (is (contains? (:composition-runs advanced) :run) "A refused slot faults without stopping the run"))
+  (let [model (sub/configure (stale-show)
+                             {:op :save :subscriber {:id :kicks :enabled? true :match {:type :audio/kick}
+                                                     :actions [{:op :cue/launch :select {:ids [:paired-cue]}}]}})
+        admitted (sub/admit model [{:category :audio :type :audio/kick :emitter {:kind :audio :id :analysis}
+                                    :data {} :time {:beat 0}}])
+        advanced (sub/advance (:model admitted) 0 {})]
+    (is (empty? (:instances advanced)))
+    (is (re-find #"calibration changed" (str (get-in advanced [:event-subscribers :last-error :message]))))))

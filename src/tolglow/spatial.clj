@@ -2,6 +2,7 @@
   "Show-owned spatial bindings, event delivery and query inputs. Physics and
   emitted light contacts come from Afterglow; durable show state contains data only."
   (:require [afterglow.control.model :as control]
+            [tolglow.aim-paths :as aim-paths]
             [afterglow.reactive :as graph]
             [afterglow.render.frame :as render]
             [afterglow.runtime.events :as staging]
@@ -97,19 +98,25 @@
 
 (defn apply-command
   "Resolve a cue's selected fixture scope on every Tolglow control surface,
-  including subscriber callbacks, composition steps and simulated admissions."
+  including subscriber callbacks, composition steps and simulated admissions.
+  Every such launch also passes the synchronized aim path launch checks."
   ([model command] (apply-command model command nil))
   ([model command authority]
    (if-not (#{:cue/launch :effect/launch} (:op command))
      (if authority (control/apply-command model command authority)
          (control/apply-command model command))
-     (let [prepared (try
-                      (let [members (selection-members model command (:time-ms command (:time-ms model)))]
-                        {:command (targets/resolve-command model command members)})
-                      (catch clojure.lang.ExceptionInfo error
-                        {:ack (merge (select-keys model [:show-id :epoch :revision])
-                                     {:command-id (:command-id command) :status :rejected :code :invalid-target
-                                      :message (ex-message error) :details (ex-data error)})}))]
+     (let [refusal (when-not (get-in model [:control :history (:command-id command)])
+                     (aim-paths/launch-problem model command aim-paths/*committed-values*))
+           prepared (if-let [[code message] refusal]
+                      {:ack (merge (select-keys model [:show-id :epoch :revision])
+                                   {:command-id (:command-id command) :status :rejected :code code :message message})}
+                      (try
+                        (let [members (selection-members model command (:time-ms command (:time-ms model)))]
+                          {:command (targets/resolve-command model command members)})
+                        (catch clojure.lang.ExceptionInfo error
+                          {:ack (merge (select-keys model [:show-id :epoch :revision])
+                                       {:command-id (:command-id command) :status :rejected :code :invalid-target
+                                        :message (ex-message error) :details (ex-data error)})})))]
        (if-let [scoped (:command prepared)]
          (targets/remember (control/apply-command model scoped) scoped)
          {:model model :events [] :ack (:ack prepared)})))))

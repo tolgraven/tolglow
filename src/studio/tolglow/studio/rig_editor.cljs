@@ -160,6 +160,16 @@
                                                         "Surface aim applied.") result)))) db))))
 (rf/reg-event-db :rig-editor/set
   (fn [db [_ path value]] (put-editor db (assoc-in (editor db) path value))))
+(defn set-sync-arrival
+  "Toggle synchronized arrival. An ordinary path needs a positive duration, so
+  leaving sync with a zero minimum restores the default musical length."
+  [path on?]
+  (cond-> (assoc path :sync-arrival? on?)
+    (and (not on?) (not (pos? (:duration-value path))))
+    (merge (select-keys (:path defaults) [:duration-value :duration-unit]))))
+
+(rf/reg-event-db :rig-editor/sync-arrival
+  (fn [db [_ on?]] (put-editor db (update (editor db) :path set-sync-arrival on?))))
 (rf/reg-event-db :rig-editor/pixels
   (fn [db [_ command]] (pixel-edit db (editor db) command true)))
 (rf/reg-event-db :rig-editor/pixel-value
@@ -357,7 +367,7 @@
          [choice "Playback" (:mode path) [["loop" "Loop"] ["ping-pong" "Back and forth"] ["once" "Once"]] [:path :mode]]
          [choice "Curve" (:curve path) [["linear" "Linear"] ["smoothstep" "Smooth"] ["sine" "Sine"] ["ease-in" "Ease in"] ["ease-out" "Ease out"]] [:path :curve]]])]
      [:label.rig-checkbox [:input {:type "checkbox" :checked (true? (:sync-arrival? path))
-                                   :on-change #(dispatch! [:rig-editor/set [:path :sync-arrival?] (.. % -target -checked)])}]
+                                   :on-change #(dispatch! [:rig-editor/sync-arrival (.. % -target -checked)])}]
       "Arrive together using calibrated motor rates"]
      (if (:sync-arrival? path)
        [:p.small.muted "Two points, played once. Every selected head needs pan and tilt motor rates in its calibration. The slowest head sets the travel time; the duration is a lower bound."]
