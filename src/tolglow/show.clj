@@ -206,6 +206,7 @@
             :cue-launch-outcomes (cue-timing/outcomes model)
             :operator-history (operator-history/project (:id runtime) model)
             :history-command-outcomes (:history-command-outcomes snapshot [])
+            :parameter-source-outcomes (:parameter-source-outcomes snapshot [])
             :pages (mapv (fn [page] (update page :cells
                                            #(mapv (fn [[[x y] cue]] {:x x :y y :cue-id cue})
                                                   (sort-by key %)))) (sort-by (comp str :id) (vals (:pages model))))
@@ -273,6 +274,46 @@
                         (let [[before _] (swap-vals! (:observers runtime) dissoc id)]
                           (get before id)))]
     ((:close! observer))))
+
+(defn lease-response-samples!
+  "Ask the show owner to retain exact live response inputs on committed frames
+  while a display reads them. demanded? is polled once per owner tick and must
+  only read state. A throwing predicate counts as not demanded and is recorded
+  for response-sample-faults. Returns an idempotent release function."
+  ([runtime] (lease-response-samples! runtime (constantly true)))
+  ([runtime demanded?]
+   (let [lease (Object.)]
+     (swap! (:response-sample-readers runtime) assoc lease {:demanded? demanded?})
+     (fn [] (swap! (:response-sample-readers runtime) dissoc lease) nil))))
+
+(defn response-sample-faults
+  "The first failure and failure count of each current response-sample lease whose predicate threw."
+  [runtime]
+  (into [] (keep :fault) (vals @(:response-sample-readers runtime))))
+
+(defn- record-response-sample-fault! [runtime lease error]
+  ;; Bounded: one entry per live lease, keeping the first failure and a count.
+  (swap! (:response-sample-readers runtime)
+         (fn [readers]
+           (if (contains? readers lease)
+             (update-in readers [lease :fault]
+                        #(if % (update % :count inc) (assoc (error-data error) :count 1)))
+             readers))))
+
+(defn- interrupted-cause? [^Throwable error]
+  (boolean (some #(instance? InterruptedException %) (take-while some? (iterate #(.getCause ^Throwable %) error)))))
+
+(defn- response-samples-demanded? [runtime]
+  ;; Poll every lease so each failing reader is recorded. Errors such as
+  ;; StackOverflowError propagate to the tick as they would without a lease.
+  (reduce (fn [demanded? [lease {reader :demanded?}]]
+            (or (try (boolean (reader))
+                     (catch Exception error
+                       (when (interrupted-cause? error) (.interrupt (Thread/currentThread)))
+                       (record-response-sample-fault! runtime lease error)
+                       false))
+                demanded?))
+          false (some-> (:response-sample-readers runtime) deref)))
 
 (defn- compiler-context [fixtures batch? compute-owner]
   (let [options (cond-> {:enabled? batch? :bind-pure reuse/evaluator}
@@ -380,7 +421,7 @@
       :adaptive-keyframes (:adaptive-keyframes options) :cue-pad-previews (cue-pads/manager)
       :capture-effect-samples? (:capture-effect-samples? options)
       :browser-observations browser-inputs
-      :observers (atom {}) :frame-rate (get options :frame-rate 40)
+      :observers (atom {}) :response-sample-readers (atom {}) :frame-rate (get options :frame-rate 40)
       :publisher publisher :presentation-clock (volatile! 0) :wire-retirement (atom nil)
       :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
@@ -795,9 +836,11 @@
                   (update :revision inc))
        :ack (assoc (select-keys result [:placements :collisions :overflow]) :status :accepted :page-id id)})
     (:modulation-bind :modulation-unbind)
-    (let [edit (if (= type :modulation-bind) parameter-sources/bind parameter-sources/unbind)]
-      {:model (update (edit model payload) :revision inc)
-       :ack {:status :accepted :instance-id (:instance-id payload) :param (:param payload)}})
+    (let [edit (if (= type :modulation-bind) parameter-sources/bind parameter-sources/unbind)
+          updated (update (edit model payload) :revision inc)]
+      {:model updated
+       :ack {:status :accepted :instance-id (:instance-id payload) :param (:param payload)
+             :revision (:revision updated)}})
     :modulation-start
     {:model (-> model (update :modulation #(modulation/start (or % (modulation/new-state)) payload
                                                             {:time-ms time-ms :transport (:transport model)}))
@@ -1704,6 +1747,13 @@
                            model (variable-blocks/collect-events model (:variable-observation before) variables)
                            variable-inputs (when variables (:variables (variable-blocks/resolved model variables)))
                            sampling (vreset! sampling-session (cadence/begin runtime before model))
+                           response-frame (when (and (some #(not= false (:enabled? %)) (:responses model))
+                                                     (response-samples-demanded? runtime))
+                                            {:show-id (:show-id model) :epoch (:epoch model) :time-ms time-ms
+                                             :transport-generation @(:presentation-clock runtime)
+                                             :frame-number (inc (get model :frame-number 0))
+                                             :responses (:responses model)
+                                             :adaptive-intervals (get-in sampling [:inputs :keyframe-intervals])})
                            frame-input (merge {:time-ms time-ms :epoch (:epoch model) :show-id (:show-id model)
                                                :keyframes (:keyframes before) :keyframe-params input-overrides
                                                :keyframe-generation (:responses model) :spatial-aims (get-in space [:fields :aims])
@@ -1721,9 +1771,14 @@
                                            group-levels)
                            frame-input (cond-> frame-input
                                          variables (assoc :resolved-variables variable-inputs)
+                                         response-frame (assoc ::waveforms/response-frame response-frame)
                                          engine-levels (assoc ::engine/opacity-factors engine-levels))
                            response (response-middleware! runtime (:responses model []))
-                           inputs (comp response modulation-middleware)
+                           inputs (if response-frame
+                                    (fn [context]
+                                      (let [dry (modulation-middleware context)]
+                                        (waveforms/capture-response dry (response dry))))
+                                    (comp response modulation-middleware))
                            compile-step (fn [definition]
                                           (let [step (spatial-cues/with-aims definition ((:compile runtime) definition))]
                                             ;; Certified literals have no parameter schemas, and
@@ -1808,6 +1863,7 @@
                                      updated (advance-light-scenes runtime (lighting/publish with-fog frame) patch frame time-ms bypass?)]
                                  (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
                         :output frame :variable-observation variables
+                        ::waveforms/response-frame response-frame
                         ::show-events/intent-emissions (:intent-emissions result)
                         :preview-hdr (when (:hdr? frame-input) (or hdr-opts {}))
                         :keyframes (:keyframes result) :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
@@ -1843,8 +1899,12 @@
                  epoch (get-in next-state [:model :epoch])
                  previous-outcomes (if (= epoch (get-in before [:model :epoch]))
                                      (:history-command-outcomes before []) [])
+                 previous-source-outcomes (if (= epoch (get-in before [:model :epoch]))
+                                            (:parameter-source-outcomes before []) [])
                  next-state (assoc next-state :history-command-outcomes
-                                   (operator-history/committed-outcomes previous-outcomes epoch message-receipts))]
+                                   (operator-history/committed-outcomes previous-outcomes epoch message-receipts)
+                                   :parameter-source-outcomes
+                                   (parameter-sources/committed-outcomes previous-source-outcomes epoch message-receipts))]
              (when (or (seq (get-in next-state [:output :fog-demands])) @(:fog-deadlines runtime))
                (swap! (:fog-deadlines runtime) fog-deadline/remember
                       (or (:frame-id presentation-token) (get-in next-state [:model :frame-number] 0))
@@ -2179,6 +2239,18 @@
       (->> (waveforms/project-display cache snapshot view capture)
            (precision/push-view precision-cache (:model snapshot))))))
 
+(defn- leasing-response-samples
+  "Retain exact response inputs on committed frames only while this display is open."
+  [runtime transport]
+  (assoc transport
+         :open! (fn []
+                  (let [release (lease-response-samples! runtime)]
+                    (try (assoc ((:open! transport)) ::release-response-samples release)
+                         (catch Throwable error (release) (throw error)))))
+         :close! (fn [handle]
+                   (try ((:close! transport) handle)
+                        (finally (when-let [release (::release-response-samples handle)] (release)))))))
+
 (defn push-browser-display
   "Build a Push display transport using Studio's shared reactive components.
   Capture and waveform projection run on the display worker, not the show clock.
@@ -2188,7 +2260,8 @@
   (let [project-parameters (push-parameter-projector)
         pages (volatile! nil)
         scene-cache (push-scene/create-cache)]
-    (display/browser-display
+    (leasing-response-samples runtime
+     (display/browser-display
      (assoc options :project!
             (fn [view]
               (let [snapshot (assoc @(:state runtime) :runtime-id (:id runtime))
@@ -2209,13 +2282,14 @@
                              (#{:simulator :rig} mode) (push-scene/project-display scene-cache snapshot
                                                       (assoc view :runtime-id (:id runtime)))
                              :else view)]
-                (page-overview/project-display pages model visual)))))))
+                (page-overview/project-display pages model visual))))))))
 
 (defn- push-native-display [runtime]
   (let [project-parameters (push-parameter-projector)]
-    (display/native-display
-      {:project! (fn [view]
-                   (project-parameters @(:state runtime) view nil))})))
+    (leasing-response-samples runtime
+      (display/native-display
+        {:project! (fn [view]
+                     (project-parameters @(:state runtime) view nil))}))))
 
 (def ^:private device-command-wait-ms 5000)
 

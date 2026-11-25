@@ -48,6 +48,10 @@ compare the tab with the committed page in the snapshot.
 (:recent-page (show/snapshot runtime))
 ```
 
+## Match strip pixels to a fixture
+
+Publish a fixture type with `:bounds-m` using **Fixture Library → Advanced definition · EDN**. Its patched extent appears in the rig snapshot in both Studio and the REPL. The REPL's `strip-segment-selector` produces the fixture IDs that either client can submit with a cue launch. Studio's picker still requires a resolved selection. [Strip extent example](spatial-show.md#match-a-strip-to-a-fixtures-extent)
+
 ## Select and reorder running cues
 
 In **Perform → In the mix**, open **Detail** on a running card to select that
@@ -206,6 +210,16 @@ At revision `0681a694`, Studio's effect keyframe editor offers **Sample at a fix
 ```
 
 The global toggle and ranked timing view were missing from Studio at that revision. The **Perceptual scheduling and interpolation** owner tracks this in [issue #307](https://github.com/tolgraven/tolglow/issues/307). Close the gap when an operator can find and change the global policy in Studio, inspect the same committed setting in the REPL and compare diagnostics for the same show. [Keyframe editor](../src/studio/tolglow/studio/keyframe_editor.cljs) · [Scheduler behavior tests](../test/tolglow/predictive_keyframes_test.clj) · [GitHub Issues](https://github.com/tolgraven/tolglow/issues)
+
+Studio and Push read one committed response sample instead of evaluating the response again. The owner retains that sample only while a reader holds a lease. An open Push display, a connected Studio client and an explicit REPL lease all count. A REPL can take a lease and read faults from lease predicates that threw:
+
+```clojure
+(def release (show/lease-response-samples! runtime))
+(show/response-sample-faults runtime)
+(release)
+```
+
+Studio does not display these lease faults yet. Close the gap when Studio shows the same fault records as the REPL. [Issue #533](https://github.com/tolgraven/tolglow/issues/533) · [PR #624](https://github.com/tolgraven/tolglow/pull/624)
 
 Calibrated paired aim arrival uses one host operation from both surfaces. In Studio, **Rig & space → Draw path → Arrive together using calibrated motor rates** lists, reopens, publishes and converts synchronized paths. Studio always sends `:sync-arrival?` explicitly and shows the solved arrival time or the refusal. The REPL submits the same `:aim-path` operation and reads `:arrival-duration-ms` from the acknowledgement. Launch refusals (`:stale-calibration`, `:tempo-exceeds-motor-rate`, `:start-wrap-mismatch`) come back from the shared launch command on both surfaces. [Aim paths](aim-paths.md#calibrated-paired-arrival) · [Issue #481](https://github.com/tolgraven/tolglow/issues/481)
 
