@@ -418,6 +418,64 @@
           (is (empty? (:parameter-source-outcomes (projection))))))
       (finally (show/stop! rt)))))
 
+(deftest paused-moves-use-the-captured-schema-until-the-instance-resumes
+  (doseq [[captured-high published-high status dimmer]
+          [[3 5 :rejected 51] [5 3 :accepted 255]]]
+    (testing (str "publishing upper bound " published-high " while paused at " captured-high)
+      (let [model (-> (live-model)
+                      (assoc-in [:registry :effects :wash :params :step]
+                                {:type :integer :bounds [1 captured-high] :default 1})
+                      (assoc-in [:registry :effects :wash :outputs :dimmer]
+                                {:op :divide :args [{:op :param :key :step} 5]}))
+            packet (atom nil)
+            rt (show/create-runtime {:model model
+                                     :sink {:send! (fn [universes _]
+                                                     (reset! packet (bit-and 255 (aget ^bytes (get universes 1) 0))))}})
+            enqueue! (partial show/submit! rt)
+            tick! #(show/tick! rt 250)
+            submit! (fn [type payload]
+                      (let [receipt (enqueue! type payload)]
+                        (tick!)
+                        @receipt))
+            instance #(first (:instances (show/snapshot rt)))
+            source #(get-in (instance) [:parameter-sources % :sources 0])]
+        (try
+          (let [launch (submit! :command {:op :cue/launch :cue-id :wash
+                                          :launch {:reload-policy :preserve-state}})
+                address {:instance-id (:instance-id launch)}
+                move (fn [from to endpoints]
+                       (assoc address :from-param from :param to :expected-source (:identity (source from))
+                              :binding endpoints))
+                new-effect (-> (get-in model [:registry :effects :wash]) (assoc :version 2)
+                               (assoc-in [:params :step :bounds] [1 published-high]))]
+            (is (= :accepted (:status launch)))
+            (is (= :accepted (:status (submit! :modulation-bind (assoc address :param :level :binding saw)))))
+            (is (= :accepted (:status (submit! :command (assoc address :op :instance/pause)))))
+            (let [identity (:identity (source :level))]
+              (is (= :accepted (:status (submit! :definition {:kind :effects :definition new-effect}))))
+              (is (= 1 (:effect-version (instance))))
+              (is (= [1 captured-high] (get-in (instance) [:definition :params :step :bounds])))
+              (is (= identity (:identity (source :level))))
+              (is (= status (:status (submit! :modulation-bind (move :level :step {:from 5 :to 5})))))
+              (is (= dimmer @packet))
+              (if (= :accepted status)
+                (do (is (nil? (source :level)))
+                    (is (= 5 (get-in (instance) [:parameter-sources :step :effective-value]))))
+                (do (is (= identity (:identity (source :level))))
+                    (is (nil? (source :step))))))
+            (let [from (if (= :accepted status) :step :level)
+                  to (if (= :accepted status) :level :step)
+                  endpoints (if (= :accepted status) {:from 0.5 :to 0.5} {:from 2 :to 2})
+                  resume (enqueue! :command (assoc address :op :instance/resume))
+                  stale (enqueue! :modulation-bind (move from to endpoints))]
+              (tick!)
+              (is (= :accepted (:status @resume)))
+              (is (= :rejected (:status @stale)))
+              (is (re-find #"source or its effect revision changed" (:message @stale)))
+              (is (= 2 (:effect-version (instance))))
+              (is (= [1 published-high] (get-in (instance) [:definition :params :step :bounds])))))
+          (finally (show/stop! rt)))))))
+
 (deftest observed-source-types-and-static-projection-cost
   (let [base (fixture/model)
         older (get-in base [:instances "0:1"])
