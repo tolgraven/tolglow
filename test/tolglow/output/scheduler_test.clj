@@ -211,6 +211,48 @@
           (is (= [255 255 196 128 255 255 128] (peek @sent)))
           (finally (show/stop! runtime)))))))
 
+(deftest repatch-retirement-survives-an-unconfirmed-slot-claim
+  (let [claim {:id :replacement :universe 1 :address 2 :channels {:dimmer 1}}
+        inverted (assoc claim :channels {:dimmer {:offset 1 :inverted-from 0}})]
+    (doseq [[initial intermediate final-claim late-bytes next-bytes]
+            [[100 :skipped nil [10 196] [0 196]]
+             [196 :skipped nil nil [0 196]]
+             [100 :partial nil [10 196] [0 196]]
+             [100 :delivered nil nil [0 0]]
+             [100 :skipped inverted [10 255] [0 255]]]]
+      (let [{:keys [runtime clock sent stall? partial?] :as capture} (fog-capture 196)
+            remaining (filterv #(not= :pump (:id %)) (get-in @(:state runtime) [:model :rig :fixtures]))
+            repatch! (fn [time fixture]
+                       (let [{:keys [epoch rig]} (:model @(:state runtime))
+                             fixtures (cond-> remaining fixture (conj fixture))
+                             receipt (show/submit! runtime :rig (assoc rig :fixtures fixtures :expected-epoch epoch))]
+                         (reset! clock time)
+                         (show/tick! runtime time)
+                         (is (= :accepted (:status @receipt)) (str @receipt))))]
+        (try
+          (offer-fog! capture 1 10 initial nil)
+          (publish-fog! capture 25)
+          (is (= [10 initial] (second (peek @sent))))
+          (repatch! 30 claim)
+          (case intermediate
+            :skipped nil
+            :partial (do (reset! partial? true)
+                         (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Second universe write failed"
+                                               (publish-fog! capture 35)))
+                         (reset! partial? false))
+            :delivered (publish-fog! capture 35))
+          (repatch! 40 final-claim)
+          (reset! stall? true)
+          (let [previous-count (count @sent)
+                receipt (publish-fog! capture 50)]
+            (is (:expired-before-send? receipt))
+            (is (= (boolean late-bytes) (boolean (:safety-output? receipt))))
+            (is (= (if late-bytes [late-bytes] []) (mapv second (subvec @sent previous-count)))))
+          (reset! stall? false)
+          (is (not (:expired-before-send? (publish-fog! capture 100))))
+          (is (= next-bytes (second (peek @sent))))
+          (finally (show/stop! runtime)))))))
+
 (deftest a-published-fog-cutoff-outlasts-the-producer-history
   (let [{:keys [runtime sent clock stall?] :as capture} (fog-capture 196)]
     (try

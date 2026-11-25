@@ -329,7 +329,7 @@
       :capture-effect-samples? (:capture-effect-samples? options)
       :browser-observations browser-inputs
       :observers (atom {}) :frame-rate (get options :frame-rate 40)
-      :publisher publisher :presentation-clock (volatile! 0)
+      :publisher publisher :presentation-clock (volatile! 0) :wire-retirement (atom nil)
       :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
       :leases (atom {})
@@ -825,12 +825,30 @@
                                 [model state] commands)]
       (-> model (assoc-in [:auto :state] state) (assoc-in [:auto :reasons] reasons))) model))
 
-(defn- prepare-output [runtime {:keys [compiled retirement]} universes {:keys [safety-state stale-source?]}]
+(defn- output-retirement [runtime {:keys [compiled retirement] :as context}]
+  (let [{wire-context :context wire-plan :plan :as wire} @(:wire-retirement runtime)]
+    (if (identical? context wire-context)
+      wire
+      {:context context
+       ;; A transient claim can discard an off byte from the configured plan.
+       ;; Keep the last delivered layout and retirements until a full handoff.
+       :plan (if wire-context
+               (retirement/plan {:known (into (:known retirement) (:known wire-plan))
+                                 :held (merge (:held retirement) (:held wire-plan))}
+                                (:compiled wire-context) compiled)
+               retirement)})))
+
+(defn- guard-output [runtime compiled retirement universes {:keys [safety-state stale-source?]}]
   (let [packet (retirement/include-retired retirement universes)]
     (if (seq safety-state)
       (fog-deadline/guard-source @(:fog-deadlines runtime) compiled packet safety-state
                                  ((get-in runtime [:publisher :now-ms])) stale-source?)
       packet)))
+
+(defn- prepare-output [runtime context universes source]
+  (let [{:keys [plan] :as wire} (output-retirement runtime context)]
+    (vary-meta (guard-output runtime (:compiled context) plan universes source)
+               assoc ::wire-retirement wire)))
 
 (defn- hold-unchanged-fixtures
   "Start with current idle output. Preserve complete wire values for compatible
@@ -852,12 +870,13 @@
 
 (defn- prepare-safety-output
   [runtime universes {:keys [output-context wire-patch stale-source? uncertain?] :as source}]
-  (let [{:keys [compiled retirement]} output-context
+  (let [compiled (:compiled output-context)
+        {retirement :plan :as wire} (output-retirement runtime output-context)
         layout-changed? (and (contains? source :wire-patch) (not= wire-patch compiled))
         off-bytes (:fog-off-bytes compiled)
         corrected (if layout-changed?
                     (retirement/include-retired retirement (hold-unchanged-fixtures compiled wire-patch universes))
-                    (prepare-output runtime output-context universes source))
+                    (guard-output runtime compiled retirement universes source))
         corrected (if (and (not layout-changed?) (or stale-source? uncertain?) (seq off-bytes))
                     (let [missing (into #{} (comp (map (comp first key)) (remove #(contains? corrected %))) off-bytes)
                           packet (if (seq missing) (merge corrected (select-keys (render/idle-universes compiled) missing)) corrected)]
@@ -869,12 +888,14 @@
                    (some (fn [[universe ^bytes bytes]]
                            (not (Arrays/equals ^bytes (get universes universe) bytes)))
                          corrected)))
-      corrected)))
+      (vary-meta corrected assoc ::wire-retirement wire))))
 
 (defn- present-output! [runtime packet frame-number]
-  ((get-in runtime [:sink :send!]) packet frame-number)
-  (when (:plan @(:venue-fog runtime))
-    (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet)))
+  (let [metadata (meta packet)]
+    ((get-in runtime [:sink :send!]) (with-meta packet (dissoc metadata ::wire-retirement)) frame-number)
+    (when (:plan @(:venue-fog runtime))
+      (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet))
+    (reset! (:wire-retirement runtime) (::wire-retirement metadata))))
 
 (defn- send-output! [runtime universes frame-number fog-demands]
   (when (get-in runtime [:sink :send!])
