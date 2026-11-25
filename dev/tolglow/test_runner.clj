@@ -48,7 +48,8 @@
     tolglow.event-subscribers-test tolglow.studio.projection-test tolglow.studio.active-preview-test tolglow.push-scene-test
     tolglow.controllers.content-browser-test tolglow.controllers.content-browser-host-test
     tolglow.controllers.content-browser-display-test
-    tolglow.preview.airplay-test])
+    tolglow.preview.airplay-test
+    tolglow.personalities-test tolglow.personalities.icon-test])
 
 (def suites
   {"pure" pure-tests
