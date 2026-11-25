@@ -3,6 +3,8 @@
             [afterglow.runtime :as runtime]
             [clojure.data.json :as json]
             [tolglow.clock :as clock]
+            [tolglow.composition.response :as response]
+            [tolglow.demo :as demo]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
             [tolglow.waveforms :as waveforms]
@@ -143,6 +145,98 @@
         params (waveforms/effective-params snapshot (get-in snapshot [:model :instances "0:1"]))]
     (is (near? 0.4 (:width params)))
     (is (= 0.25 (get-in snapshot [:model :instances "0:1" :params :width])))))
+
+(defn- response-show [update-definition]
+  (-> (demo/model)
+      (update-in [:registry :effects :ember] update-definition)
+      (assoc :responses [{:id :gain :select {:cue-ids [:ember]} :params [:level]
+                          :operation :multiply :range [0.0 1.0] :envelope {:attack {:beats 1}}
+                          :state {:started-at-ms 0 :started-at-beat 0}}])))
+
+(defn- command-at! [runtime at command]
+  (let [reply (show/submit! runtime command)]
+    (show/tick! runtime at)
+    (deref reply 1000 ::timeout)))
+
+(defn- counted-response [calls]
+  (let [compile-response response/compile-response]
+    (fn [spec]
+      (let [evaluate (compile-response spec)]
+        (fn [context]
+          (let [result (evaluate context)]
+            (when (not= (:response-values result) (:response-values context))
+              (swap! calls conj (get-in context [:frame :beat])))
+            result))))))
+
+(deftest studio-and-push-read-the-committed-exact-response
+  (let [calls (atom [])
+        model (response-show
+                #(assoc % :blocks {[:outputs :color] {:stages [{:block :optics/gel}]}}))
+        runtime (show/create-runtime {:model model :workspace-options nil :worker-timeout-ms 10000})
+        project (with-redefs [display/browser-display :project!] (show/push-browser-display runtime {}))]
+    (try
+      (with-redefs [response/compile-response (counted-response calls)]
+        (let [{:keys [instance-id status]} (command-at! runtime 0 {:op :cue/launch :cue-id :ember})
+              _ (reset! calls [])
+              _ (show/tick! runtime 125)
+              snap @(:state runtime)
+              instance (get-in snap [:model :instances instance-id])
+              view (assoc (push/display-view {:selected-instance instance-id :selected-cue :ember
+                                              :page-id :main :origin [0 0]} (:model snap))
+                          :display-mode :parameters)]
+          (is (= :accepted status))
+          (is (= [0.25] @calls))
+          (is (= 0.175 (get-in (studio/stream-view runtime snap) [:instances 0 :parameter-sources :level :effective-value])))
+          (is (= 0.175 (:effective-value (first (filter #(= :level (:param %)) (:parameters (project view)))))))
+          (is (= 45 (Byte/toUnsignedInt (aget ^bytes (get-in snap [:output :universes 1]) 0))))
+          (is (seq (:stages (runtime/observe instance [[:outputs :color] :head-1]))))
+          (is (= [0.25] @calls))
+          (is (= 0.1 (:level (waveforms/effective-params
+                              (assoc-in snap [:resolved-param-overrides instance-id :level] 0.4) instance))))
+          (is (= 0.35 (:level (waveforms/effective-params snap (assoc-in instance [:system :last-clock :beat] 0.5)))))
+          (is (= 0.175 (:level (waveforms/effective-params (update snap :transport-generation inc) instance))))
+          (is (= 0.175 (:level (waveforms/effective-params
+                                (assoc-in snap [:model :epoch] 1) instance))))
+          (is (= 0.175 (:level (waveforms/effective-params
+                                snap (assoc-in instance [:definition :params :level :bounds] [0 2])))))
+          (is (= [0.25 0.25 0.5 0.25 0.25 0.25] @calls))
+          (is (= :accepted (:status (command-at! runtime 175 {:op :param/set :instance-id instance-id
+                                                              :param :level :value 0.4}))))
+          (is (near? 0.14 (:effective-value (first (filter #(= :level (:param %)) (:parameters (project view)))))))
+          (is (= 0.35 (last @calls)))
+          (is (= 7 (count @calls)))))
+      (finally (show/stop! runtime)))))
+
+(deftest forecast-and-fault-observations-keep-their-own-response-semantics
+  (let [forecast (response-show #(assoc % :keyframes {:interval {:beats 1}}))
+        fails-at-zero (response-show #(assoc-in % [:outputs :dimmer]
+                                               {:op :divide :args [0.1 {:op :param :key :level}]}))]
+    (doseq [[model fault?] [[forecast false] [fails-at-zero true]]]
+      (let [runtime (show/create-runtime {:model model :workspace-options nil :worker-timeout-ms 10000
+                                          :effect-log! (fn [_])})
+            calls (atom [])]
+        (try
+          (with-redefs [response/compile-response (counted-response calls)]
+            (let [{:keys [instance-id status]} (command-at! runtime 125 {:op :cue/launch :cue-id :ember})]
+              (is (= :accepted status))
+              (if fault?
+                (let [reply (command-at! runtime 175 {:op :param/set :instance-id instance-id :param :level :value 0.0})
+                      snapshot @(:state runtime)
+                      instance (get-in snapshot [:model :instances instance-id])]
+                  (is (= :accepted (:status reply)))
+                  (is (= :evaluate (get-in instance [:fault :stage])))
+                  (is (= [0.25 0.35] @calls))
+                  (is (zero? (:level (waveforms/effective-params snapshot instance))))
+                  (is (= [0.25 0.35 0.35] @calls)))
+                (do
+                  (is (= [0.25 1.25] @calls))
+                  (show/tick! runtime 250)
+                  (let [snapshot @(:state runtime)
+                        instance (get-in snapshot [:model :instances instance-id])]
+                    (is (= [0.25 1.25] @calls))
+                    (is (= 0.35 (:level (waveforms/effective-params snapshot instance))))
+                    (is (= [0.25 1.25 0.5] @calls)))))))
+          (finally (show/stop! runtime)))))))
 
 (deftest clock-bound-shape-inputs-use-the-captured-private-frame
   (let [snapshot (assoc-in (fixture) [:model :instances "0:1" :definition :params :waveform :choices 0 :params :duty]

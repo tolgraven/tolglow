@@ -1660,6 +1660,12 @@
                            model (variable-blocks/collect-events model (:variable-observation before) variables)
                            variable-inputs (when variables (:variables (variable-blocks/resolved model variables)))
                            sampling (vreset! sampling-session (cadence/begin runtime before model))
+                           response-frame (when (some #(not= false (:enabled? %)) (:responses model))
+                                            {:show-id (:show-id model) :epoch (:epoch model) :time-ms time-ms
+                                             :transport-generation @(:presentation-clock runtime)
+                                             :frame-number (inc (get model :frame-number 0))
+                                             :responses (:responses model)
+                                             :adaptive-intervals (get-in sampling [:inputs :keyframe-intervals])})
                            frame-input (merge {:time-ms time-ms :epoch (:epoch model) :show-id (:show-id model)
                                                :keyframes (:keyframes before) :keyframe-params input-overrides
                                                :keyframe-generation (:responses model) :spatial-aims (get-in space [:fields :aims])
@@ -1677,9 +1683,14 @@
                                            group-levels)
                            frame-input (cond-> frame-input
                                          variables (assoc :resolved-variables variable-inputs)
+                                         response-frame (assoc ::waveforms/response-frame response-frame)
                                          engine-levels (assoc ::engine/opacity-factors engine-levels))
                            response (response-middleware! runtime (:responses model []))
-                           inputs (comp response modulation-middleware)
+                           inputs (if response-frame
+                                    (fn [context]
+                                      (let [dry (modulation-middleware context)]
+                                        (waveforms/capture-response dry (response dry))))
+                                    (comp response modulation-middleware))
                            compile-step (fn [definition]
                                           (let [step (spatial-cues/with-aims definition ((:compile runtime) definition))]
                                             ;; Certified literals have no parameter schemas, and
@@ -1764,6 +1775,7 @@
                                      updated (advance-light-scenes runtime (lighting/publish with-fog frame) patch frame time-ms bypass?)]
                                  (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
                         :output frame :variable-observation variables
+                        ::waveforms/response-frame response-frame
                         ::show-events/intent-emissions (:intent-emissions result)
                         :preview-hdr (when (:hdr? frame-input) (or hdr-opts {}))
                         :keyframes (:keyframes result) :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
