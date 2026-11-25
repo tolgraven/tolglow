@@ -88,7 +88,7 @@
         duration (get-in effect [:editor :arrival-duration :ms])]
     (is (empty? (registry/validate-definition :effects effect)))
     (is (near? 2000.0 duration))
-    (is (nil? (:duration effect)) "The active cue holds the endpoint after one traversal")
+    (is (= {:ms duration} (:duration effect)) "Timed and one-shot slots use the solved interval")
     (is (= [[{:ms 0} {:ms duration}]]
            (into [] (comp (map #(mapv :at (get-in % [:value :spec :keyframes]))) (distinct)) (:outputs effect))))
     (doseq [[fixture start end] (map vector paired-heads [-45.0 -42.5] [45.0 2.5])]
@@ -121,7 +121,7 @@
         effect (paths/definition rig synchronized-spec)
         reopened (merge synchronized-spec (:editor effect))
         faster (assoc-in rig [:rig :fixtures 1 :calibration :motor-rate-deg-per-sec :pan] 60)]
-    (is (= {:ms 0} (get-in effect [:editor :duration])) "The editor keeps the requested minimum, not the solved interval")
+    (is (= {:beats 0} (get-in effect [:editor :duration])) "The editor keeps the requested minimum, not the solved interval")
     (is (= effect (paths/definition rig reopened)))
     (is (near? 1000.0 (get-in (paths/definition faster reopened) [:editor :arrival-duration :ms]))
         "Republishing saved editor settings after recalibration does not ratchet the old interval")
@@ -132,13 +132,86 @@
     (doseq [spec [(assoc synchronized-spec :mode :ping-pong)
                   (assoc synchronized-spec :closed? true)
                   (assoc synchronized-spec :curve :sine)
-                  (assoc synchronized-spec :duration {:beats 1})
                   (assoc synchronized-spec :points [[-1 0 0] [0 1 0] [1 0 0]])]]
       (is (thrown? clojure.lang.ExceptionInfo (paths/definition rig spec))))
     (doseq [invalid [nil 0 -1 ##Inf ##NaN]]
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"positive calibrated pan and tilt rates"
                             (paths/definition (assoc-in rig [:rig :fixtures 1 :calibration :motor-rate-deg-per-sec :pan] invalid)
                                               synchronized-spec))))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"need mechanical travel"
+                          (paths/definition (assoc-in model [:rig :fixtures] [(first paired-heads)])
+                                            (assoc synchronized-spec :targets [:far-travel] :duration {:ms 500}
+                                                   :points [[0 0 1] [0 0 3]])))
+        "A positive minimum does not admit a move in which no head travels")
+    (is (near? 2000.0 (get-in (paths/definition rig (assoc synchronized-spec :points [[-1 0 0] [-1 0 0] [1 0 0]]))
+                              [:editor :arrival-duration :ms]))
+        "Repeated points collapse before the two-point check")
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"cannot reach this aim point"
                           (paths/definition (assoc-in rig [:rig :fixtures 0 :calibration :pan] {:min-deg -50 :max-deg 20})
                                             synchronized-spec)))))
+
+(def transport {:bpm 120 :playing? true :beat 0.0 :meter {:beats-per-bar 4 :bars-per-phrase 4}})
+
+(defn- registered [rig effect]
+  (-> rig
+      (assoc-in [:registry :effects (:id effect)] effect)
+      (assoc-in [:registry :cues :paired-cue] {:id :paired-cue :effect-id (:id effect)})))
+
+(def launch {:op :cue/launch :cue-id "paired-cue"})
+
+(deftest musical-minimum-uses-the-show-tempo-and-motor-rates-remain-a-bound
+  (let [rig (-> model (assoc-in [:rig :fixtures] paired-heads) (assoc :transport transport))
+        bars (paths/definition rig (assoc synchronized-spec :duration {:bars 2}))
+        beat (paths/definition rig (assoc synchronized-spec :duration {:beats 1}))]
+    (is (= {:bars 2} (get-in bars [:editor :arrival-duration]) (:duration bars))
+        "Two bars at 120 BPM outlast the 2 s motor limit, so the move stays musical")
+    (is (near? 4000.0 (get-in bars [:editor :arrival-duration-ms])))
+    (is (= [[{:bars 0} {:bars 2}]]
+           (into [] (comp (map #(mapv :at (get-in % [:value :spec :keyframes]))) (distinct)) (:outputs bars))))
+    (is (near? 2000.0 (get-in beat [:editor :arrival-duration :ms])) "One beat is shorter than the motor limit")
+    (is (nil? (paths/launch-problem (registered rig bars) launch nil)))
+    (is (= :tempo-exceeds-motor-rate
+           (first (paths/launch-problem (assoc-in (registered rig bars) [:transport :bpm] 480) launch nil))))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"finite, positive show tempo"
+                          (paths/definition (assoc-in rig [:transport :bpm] 0) (assoc synchronized-spec :duration {:bars 2}))))))
+
+(deftest launch-refuses-a-path-solved-against-another-mount-or-calibration
+  (let [rig (assoc-in model [:rig :fixtures] paired-heads)
+        effect (paths/definition rig synchronized-spec)
+        model (registered rig effect)]
+    (is (= #{"far-travel" "slow-motor"} (set (keys (get-in effect [:editor :rig-fingerprint])))))
+    (is (nil? (paths/launch-problem model launch nil)))
+    (is (nil? (paths/launch-problem (assoc-in model [:rig :fixtures 0 :calibration :motor-rate-deg-per-sec :pan] 90.0) launch nil))
+        "A JSON round trip of the same numbers keeps the fingerprint")
+    (is (nil? (paths/launch-problem (assoc-in model [:rig :fixtures 0 :address] 1) launch nil))
+        "Repatching addresses does not change the solved angles")
+    (doseq [changed [(assoc-in model [:rig :fixtures 1 :calibration :motor-rate-deg-per-sec :pan] 60)
+                     (assoc-in model [:rig :fixtures 1 :rotation-deg] [0 25 0])
+                     (assoc-in model [:rig :fixtures 0 :position] [0 0 -2])
+                     (assoc-in model [:rig :fixtures 0 :calibration :pan] {:min-deg -270 :max-deg 270})
+                     (update-in model [:rig :fixtures] (comp vec rest))]]
+      (is (= :stale-calibration (first (paths/launch-problem changed launch nil)))))
+    (is (nil? (paths/launch-problem (assoc-in model [:registry :effects :paired :editor :type] :aim-path) launch nil)))))
+
+(deftest start-wrap-follows-the-committed-pose-and-launch-refuses-a-mismatch
+  (let [head (-> (first paired-heads)
+                 (assoc :position [0 0 0])
+                 (assoc-in [:calibration :pan] {:min-deg -270 :max-deg 270}))
+        rig (assoc-in model [:rig :fixtures] [head])
+        point (fn [yaw y] (let [r (Math/toRadians yaw)] [(Math/sin r) y (Math/cos r)]))
+        spec (assoc synchronized-spec :targets [:far-travel] :points [(point -170 0) (point -150 0)])
+        pan-of (fn [degrees] (/ (+ degrees 270.0) 540.0))
+        committed {:far-travel {:pan (pan-of 190.0) :tilt 0.5}}
+        start-deg (fn [effect] (:pan-deg (frame/fixture-pose head {:pan (first (axis-endpoints effect :far-travel :pan)) :tilt 0.5})))
+        neutral (paths/definition rig spec)
+        from-pose (paths/definition rig spec committed)]
+    (is (near? -170.0 (start-deg neutral)) "Without history the start wrap is nearest neutral")
+    (is (near? 190.0 (start-deg from-pose)) "A committed pose at +190 degrees selects the matching wrap")
+    (is (near? 210.0 (:pan-deg (frame/fixture-pose head {:pan (second (axis-endpoints from-pose :far-travel :pan)) :tilt 0.5}))))
+    (is (near? (get-in neutral [:editor :arrival-duration :ms]) (get-in from-pose [:editor :arrival-duration :ms])))
+    (is (= :start-wrap-mismatch (first (paths/launch-problem (registered rig neutral) launch committed)))
+        "Launching the -170 degree start from +190 degrees would command a full-turn jump")
+    (is (nil? (paths/launch-problem (registered rig from-pose) launch committed)))
+    (is (nil? (paths/launch-problem (registered rig neutral) launch {:far-travel {:pan (pan-of -100.0) :tilt 0.5}}))
+        "A head that is merely not yet prepositioned is not a wrap mismatch")
+    (is (nil? (paths/launch-problem (registered rig neutral) launch nil)))))

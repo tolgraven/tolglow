@@ -490,6 +490,22 @@
 
       :else result)))
 
+(defn- committed-values
+  "ID -> row lookup into the last committed frame, rich or compact. Rows are
+  projected only when looked up, so ordinary launches pay nothing."
+  [runtime]
+  (when-let [{:keys [values compact]} (some-> runtime :state deref :output)]
+    (let [indices (delay (when compact (zipmap (:target-order compact) (range))))]
+      (fn [id]
+        (or (get values id)
+            (when-let [index (and compact (get @indices id))]
+              (first (render/project-compact compact [index]))))))))
+
+(defn- launch-refusal [model payload committed]
+  (when-not (get-in model [:control :history (:command-id payload)])
+    (when-let [[code message] (aim-paths/launch-problem model payload committed)]
+      {:model model :events [] :ack {:status :rejected :command-id (:command-id payload) :code code :message message}})))
+
 (defn- command
   ([model payload time-ms] (command model payload time-ms nil))
   ([model payload time-ms authority]
@@ -512,7 +528,9 @@
                          payload {:time-ms time-ms})
          operation (:op envelope)
          variation? (variations/operations operation)
+         refusal (when-not previous (launch-refusal model envelope nil))
          result (cond
+                  refusal refusal
                   variation? (variations/apply-command model envelope)
                   (group-channels/operation? operation)
                   (control/apply-domain-command model envelope group-channels/apply-operation)
@@ -605,26 +623,30 @@
       (command model payload time-ms authority))))
 
 (defn- dispatch-owner-command [runtime model payload time-ms authority]
-  (cond
-    (and (= :cue/launch (:op payload)) (contains? payload :grid))
-    (cue-timing/schedule model (cue-clock-identity runtime model) time-ms
-                         (assoc (select-keys payload [:grid :raw]) :command (dissoc payload :grid :raw))
-                         command)
+  ;; Only the owner sees committed output, so the start-wrap check runs here
+  ;; as well as the model-only checks inside command.
+  (or
+   (launch-refusal model payload (committed-values runtime))
+   (cond
+     (and (= :cue/launch (:op payload)) (contains? payload :grid))
+     (cue-timing/schedule model (cue-clock-identity runtime model) time-ms
+                          (assoc (select-keys payload [:grid :raw]) :command (dissoc payload :grid :raw))
+                          command)
 
-    (and (cue-timing/active? model) (cue-timing/receipt model (:command-id payload)))
-    {:model model :ack {:status :rejected :reason :command-id-conflict :command-id (:command-id payload)}}
+     (and (cue-timing/active? model) (cue-timing/receipt model (:command-id payload)))
+     {:model model :ack {:status :rejected :reason :command-id-conflict :command-id (:command-id payload)}}
 
-    (= :cue/cancel-launch (:op payload))
-    (cue-timing/cancel-owned model (cue-clock-identity runtime model) time-ms payload command)
+     (= :cue/cancel-launch (:op payload))
+     (cue-timing/cancel-owned model (cue-clock-identity runtime model) time-ms payload command)
 
-    (and (= :gesture/sample (:op payload)) (contains? payload :sample-context))
-    (dispatch-ratio-pad-sample runtime model payload time-ms authority)
+     (and (= :gesture/sample (:op payload)) (contains? payload :sample-context))
+     (dispatch-ratio-pad-sample runtime model payload time-ms authority)
 
-    (and (= :gesture/end (:op payload)) (push-gesture-terminal? payload authority))
-    (let [gesture (open-push-gesture model (push-gesture-key payload authority))]
-      (command model (cond-> payload gesture (assoc :last-sequence (:last-sequence gesture))) time-ms authority))
+     (and (= :gesture/end (:op payload)) (push-gesture-terminal? payload authority))
+     (let [gesture (open-push-gesture model (push-gesture-key payload authority))]
+       (command model (cond-> payload gesture (assoc :last-sequence (:last-sequence gesture))) time-ms authority))
 
-    :else (command model payload time-ms authority)))
+     :else (command model payload time-ms authority))))
 
 (defn- require-import-device! [runtime {:keys [session-id lease]}]
   (when-not (and lease (identical? lease (get-in @(:devices runtime) [session-id ::restore-lease])))
@@ -803,7 +825,7 @@
                 (update :revision inc)) :ack {:status :accepted}}
     :surface-aim (surface-aim/apply-operation model payload)
     :aim-path
-    (let [definition (aim-paths/definition model payload)
+    (let [definition (aim-paths/definition model payload (committed-values runtime))
           id (:id definition)
           synchronized? (get-in definition [:editor :sync-arrival?])
           requested-cue-id (:cue-id payload id)
@@ -827,7 +849,8 @@
       (update result :ack merge
               (cond-> {:effect-id id :cue-id cue-id :version (:version definition)}
                 synchronized?
-                (assoc :arrival-duration-ms (get-in definition [:editor :arrival-duration :ms])))))
+                (assoc :arrival-duration (get-in definition [:editor :arrival-duration])
+                       :arrival-duration-ms (get-in definition [:editor :arrival-duration-ms])))))
     :modulation-cue
     (let [id (:id payload) config (:modulation payload)
           previous (get-in model [:registry :effects id])

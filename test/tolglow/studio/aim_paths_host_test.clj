@@ -2,6 +2,7 @@
   (:require [clojure.test :refer [deftest is]]
             [clojure.data.json :as json]
             [afterglow.control.model :as control]
+            [afterglow.render.frame :as frame]
             [tolglow.aim-paths-test :as paths]
             [tolglow.show :as show]
             [tolglow.studio :as studio])
@@ -163,4 +164,70 @@
           (show/tick! runtime 2500)
           (is (= end (pan-words)))
           (is (nil? (get-in (show/snapshot runtime) [:status :error])))))
+      (finally (show/stop! runtime)))))
+
+(deftest synchronized-launch-refuses-stale-calibration-and-runs-in-a-timed-slot
+  (let [runtime (show/create-runtime
+                 {:workspace-options nil
+                  :model (control/new-show {:rig {:fixtures paths/paired-heads}})
+                  :sink {:send! (fn [_ _])}})
+        spec (assoc paths/synchronized-spec :duration {:bars 2})]
+    (try
+      (let [response (post! runtime "/api/aim-path" spec 0)]
+        (is (= "accepted" (get-in response [:data :status])))
+        (is (< (abs (- 4000.0 (get-in response [:data :arrival-duration-ms]))) 1.0e-9))
+        (let [one-shot (submit-at! runtime :command {:op :cue/launch :cue-id :paired :launch {:mode :one-shot}} 10)]
+          (is (= :accepted (:status one-shot)))
+          (is (= {:bars 2} (get-in @(:state runtime) [:model :instances (:instance-id one-shot) :duration]))))
+        (let [rig (get-in @(:state runtime) [:model :rig])
+              faster (assoc-in rig [:fixtures 1 :calibration :motor-rate-deg-per-sec :pan] 60)]
+          (is (= :accepted (:status (submit-at! runtime :rig faster 20))))
+          (let [before (get-in @(:state runtime) [:model :instances])
+                refused (submit-at! runtime :command {:op :cue/launch :cue-id :paired} 30)]
+            (is (= :rejected (:status refused)))
+            (is (= :stale-calibration (:code refused)))
+            (is (= (keys before) (keys (get-in @(:state runtime) [:model :instances])))))
+          (is (= "accepted" (get-in (post! runtime "/api/aim-path" spec 40) [:data :status])))
+          (is (= :accepted (:status (submit-at! runtime :command {:op :cue/launch :cue-id :paired} 50)))))
+        (is (nil? (get-in (show/snapshot runtime) [:status :error]))))
+      (finally (show/stop! runtime)))))
+
+(defn- committed-pan-deg [runtime fixture]
+  (let [{:keys [values compact]} (:output @(:state runtime))
+        row (or (get values (:id fixture))
+                (some #(when (= (:id fixture) (:id %)) %) (frame/project-compact compact)))]
+    (:pan-deg (frame/fixture-pose fixture row))))
+
+(deftest synchronized-start-wrap-follows-the-committed-pose
+  (let [head (-> (first paths/paired-heads)
+                 (assoc :position [0 0 0])
+                 (assoc-in [:calibration :pan] {:min-deg -270 :max-deg 270}))
+        runtime (show/create-runtime
+                 {:workspace-options nil
+                  :model (control/new-show {:rig {:fixtures [head]}})
+                  :sink {:send! (fn [_ _])}})
+        point (fn [yaw] (let [r (Math/toRadians yaw)] [(Math/sin r) 0 (Math/cos r)]))
+        sync-spec {:id :wrapped :targets [:far-travel] :points [(point -170) (point -150)] :sync-arrival? true}]
+    (try
+      ;; Published before prepositioning, the start resolves to the neutral -170 degree wrap.
+      (is (= "accepted" (get-in (post! runtime "/api/aim-path" sync-spec 0) [:data :status])))
+      ;; An ordinary once path sweeps continuously from -90 to +190 degrees and holds there.
+      (is (= "accepted" (get-in (post! runtime "/api/aim-path" {:id :preposition :targets [:far-travel] :mode "once"
+                                                                :duration {:ms 1000}
+                                                                :points (mapv point [-90 0 90 150 190])} 0)
+                                [:data :status])))
+      (let [preposition (submit-at! runtime :command {:op :cue/launch :cue-id :preposition} 0)]
+        (doseq [t (range 50 1101 50)] (show/tick! runtime t))
+        (is (< (abs (- 190.0 (committed-pan-deg runtime head))) 1.0e-3))
+        (let [refused (submit-at! runtime :command {:op :cue/launch :cue-id :wrapped} 1150)]
+          (is (= :rejected (:status refused)))
+          (is (= :start-wrap-mismatch (:code refused))))
+        (is (= "accepted" (get-in (post! runtime "/api/aim-path" sync-spec 1200) [:data :status])))
+        (let [effect (get-in @(:state runtime) [:model :registry :effects :wrapped])
+              start (get-in (first (:outputs effect)) [:value :spec :keyframes 0 :value])]
+          (is (< (abs (- 190.0 (:pan-deg (frame/fixture-pose head {:pan start :tilt 0.5})))) 1.0e-6)))
+        (is (= :accepted (:status preposition)))
+        (is (= :accepted (:status (submit-at! runtime :command {:op :cue/launch :cue-id :wrapped} 1300))))
+        (is (< (abs (- 190.0 (committed-pan-deg runtime head))) 1.0e-3)
+            "Frame 0 commands the prepositioned wrap, not a full-turn jump"))
       (finally (show/stop! runtime)))))

@@ -37,39 +37,62 @@ explicit cue creation/launch and reopening paths from saved shows.
 ## Calibrated paired arrival
 
 Publish an opt-in point-to-point move with `:sync-arrival? true` through
-`POST /api/aim-path` or the same `:aim-path` operation from a running REPL.
-Each selected fixture needs measured positive pan and tilt rates under its
-patched `:calibration :motor-rate-deg-per-sec`, for example
-`{:pan 90 :tilt 45}`. Supply two reachable world-space points. The move uses
-an open `:once` traversal with `:linear` easing. An optional `:duration {:ms n}`
-sets a lower bound on the travel time.
+`POST /api/aim-path`, the same `:aim-path` operation from a running REPL, or
+**Rig & space → Draw path → Arrive together using calibrated motor rates** in
+Studio. Each selected fixture needs measured positive pan and tilt rates under
+its patched `:calibration :motor-rate-deg-per-sec`, for example
+`{:pan 90 :tilt 45}`. Supply two reachable world-space points; repeated points
+collapse first. The move uses an open `:once` traversal with `:linear` easing.
+An optional `:duration` is a lower bound in beats, bars, phrases or explicit
+milliseconds (default `{:beats 0}`).
 
 ```clojure
 (tolglow.show/submit! runtime :aim-path
                       {:id :paired-arrival :sync-arrival? true
                        :targets [:head-a :head-b]
-                       :points [[-1 0 0] [1 0 0]]})
+                       :points [[-1 0 0] [1 0 0]]
+                       :duration {:bars 2}})
 ```
 
 Publication solves both endpoints with each fixture's mount and calibration.
-It chooses the destination pan wrap relative to the starting pose and takes
-the maximum of mechanical angular travel divided by calibrated rate across
-all heads and both axes. Pan and tilt then interpolate linearly in their
-mechanical coordinates for that common interval. The acknowledgement reports
-`:arrival-duration-ms`. The effect keeps the endpoint and timing data in
-ordinary saved show state. Its editor metadata keeps the requested minimum as
-`:duration` and the solved interval as `:arrival-duration`, so republishing
-saved editor settings after a recalibration solves the interval again.
+The start pan wrap follows the head's last committed pose when the runtime
+has one, and the destination wrap follows the start. The physical minimum is
+the maximum of mechanical angular travel divided by calibrated rate across all
+heads and both axes; a move in which no head travels is refused. Pan and tilt
+interpolate linearly in their mechanical coordinates for one common interval:
 
-Preposition the heads at the first-point pose before launching. Launch the
-published cue normally from the Studio cue grid or REPL with
-`{:op :cue/launch :cue-id :paired-arrival}`. The cue traverses once and holds the
-endpoint until ended. Republish after changing a selected fixture's mount or
-calibration. Running instances keep their launch version. The 3D drawing
-editor handles musical world-space paths. Calibrated paired arrival is
-authored through the host operation and launched from the same cue grid.
+- When a musical minimum, estimated through the show transport's tempo and
+  meter, is at least the physical minimum, the keyframes stay musical and
+  follow the transport like other aim paths.
+- Otherwise the keyframes use the physical interval in milliseconds, the
+  calibrated rates being a device boundary.
 
-The timing describes scheduled pan/tilt commands. Physical arrival depends on
-the heads' acceleration, internal position control and DMX delivery, and
-requires a hardware measurement. Fixture-specific speed channels need their
-own calibration.
+The acknowledgement and Studio report `:arrival-duration-ms` at the current
+tempo. The effect's `:duration` is the solved interval, so timed and one-shot
+slots work. Editor metadata keeps the requested minimum as `:duration`, the
+solved interval as `:arrival-duration`, the physical `:minimum-travel-ms` and a
+`:rig-fingerprint` of each head's position, rotation and calibration.
+Republishing saved editor settings solves everything again.
+
+Preposition the heads at the first-point pose, then publish or republish, then
+launch the cue from the Studio cue grid or REPL with
+`{:op :cue/launch :cue-id :paired-arrival}`. Studio's **Create + run** launches
+it persistently. The cue traverses once and holds the endpoint until ended.
+Running instances keep their launch version. A launch is refused, with the
+committed state unchanged, when:
+
+- `:stale-calibration`: a selected head's position, rotation or calibration
+  no longer matches the fingerprint. Repatching addresses does not count.
+- `:tempo-exceeds-motor-rate`: a musical arrival would now be faster than the
+  calibrated rates at the current tempo.
+- `:start-wrap-mismatch`: a head's committed pan is nearer another in-range
+  wrap of the start pose than the published one, so frame 0 would command a
+  full-turn jump. This check runs for launches that enter through the runtime
+  owner and reads the last committed frame; scheduled grid launches are
+  checked when scheduled.
+
+A tempo change while the move is running is not rechecked. The timing
+describes scheduled pan/tilt commands. Physical arrival depends on the heads'
+acceleration, internal position control and DMX delivery, and requires a
+hardware measurement. Fixture-specific speed channels need their own
+calibration.
