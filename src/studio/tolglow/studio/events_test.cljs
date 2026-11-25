@@ -968,9 +968,34 @@
     (is (= ["level"] (:params response)))
     (is (= {:beats 0.5} (get-in response [:envelope :attack])))
     (is (= {:beats 1} (get-in response [:envelope :release])))
+    (is (not (contains? (:envelope response) :decay)))
+    (is (not (contains? (:envelope response) :sustain)))
     (is (= "/api/response" (get-in start [:studio/http :path])))
     (is (= "/api/response/release" (get-in release [:studio/http :path])))
     (is (thrown? js/Error (events/response-definition (assoc-in db [:ui :selected-instance] nil))))))
+
+(deftest response-envelope-submits-decay-and-sustain-through-the-existing-command
+  (let [db (update-in base [:ui :response-form] merge {:attack-value 80 :decay-value 120
+                                                       :sustain 0 :release-value 250 :unit "ms"})
+        submitted (get-in (transition db [:studio/response-start]) [:studio/http :body])]
+    (is (nil? (:select submitted)))
+    (is (= {:attack {:ms 80} :decay {:ms 120} :sustain 0 :release {:ms 250} :curve "smoothstep"}
+           (:envelope submitted))))
+  (let [db (-> base
+               (assoc-in [:ui :selected-instance] "7:9")
+               (assoc-in [:show :instances 0 :effect-id] "ember")
+               (update-in [:ui :response-form] merge {:scope "effect" :decay-value 0.25 :sustain 0.6}))
+        submitted (get-in (transition db [:studio/response-start]) [:studio/http :body])]
+    (is (= {:effect-ids ["ember"]} (:select submitted)))
+    (is (= {:beats 0.25} (get-in submitted [:envelope :decay])))
+    (is (= 0.6 (get-in submitted [:envelope :sustain])))))
+
+(deftest response-envelope-rejects-invalid-decay-and-sustain-before-submitting
+  (doseq [[field value] [[:decay-value -0.1] [:decay-value js/Infinity]
+                         [:sustain -0.1] [:sustain 1.1] [:sustain js/NaN]]]
+    (let [result (transition (assoc-in base [:ui :response-form field] value) [:studio/response-start])]
+      (is (= :studio/failure (first (:dispatch result))))
+      (is (nil? (:studio/http result))))))
 
 (deftest registry-page-action-uses-existing-reconciliation-api
   (let [request (transition base [:studio/generate-page])
