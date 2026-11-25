@@ -115,6 +115,18 @@
       (macro/launch-plan (:id definition) slots))
     (-> model (assoc-in [:compositions (:id definition)] definition) (update :revision inc))))
 
+(defn append-macro-cue
+  "Append a cue slot to an existing saved macro in the current model. Running
+  executions keep the definition they captured at launch."
+  [model macro-id cue-id]
+  (let [definition (get-in model [:compositions macro-id])
+        slots (:slots definition)]
+    (when-not (= :macro (:mode definition))
+      (fail! [:macro-id] "Choose an existing saved macro"))
+    (let [used-ids (into #{} (map :id) slots)
+          slot-id (first (remove used-ids (map #(str "slot-" %) (iterate inc (count slots)))))]
+      (save model (update definition :slots conj {:id slot-id :cue-id cue-id})))))
+
 (defn- time! [time-ms]
   (when-not (and (registry/finite-number? time-ms) (not (neg? time-ms)))
     (fail! [:time-ms] "Composition time must be finite and nonnegative"))

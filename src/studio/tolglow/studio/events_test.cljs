@@ -1313,6 +1313,71 @@
     (is (= "held" (get-in result [:db :ui :launch-mode])))
     (is (= "7:12" (:studio/focus-instance result)))))
 
+(deftest cue-macro-picker-saves-typed-projection-identities-and-follows-the-receipt
+  (let [view (assoc (:show base) :runtime-id "host" :show-id :main
+                    :pages [{:id :main :cells [{:x 1 :y 2 :cue-id :ember}]}
+                            {:id "main" :cells [{:x 1 :y 2 :cue-id "ember"}]}]
+                    :cues [{:id :ember :name "Keyword Ember"} {:id "ember" :name "Literal Ember"}]
+                    :compositions [{:id :stage/night :name "Night set" :mode :macro}
+                                   {:id "stage/night" :name "Different macro" :mode :macro}
+                                   {:id :steps :mode :sequence}])
+        db (:db (full-frame base view))
+        cell {:page-id "main" :typed-page-id "main" :x 1 :y 2 :cue-id "ember" :typed-cue-id "ember"}
+        open-actions [:studio/open-actions cell]
+        actions (:db (transition db open-actions))
+        picker (:db (transition actions [:studio/macro-picker-open]))
+        canceled (transition picker [:studio/macro-picker-back])
+        chosen (assoc-in picker [:ui :macro-picker :macro-id] :stage/night)
+        submitted (transition chosen [:studio/macro-picker-submit])
+        request (:studio/http submitted)
+        in-flight (:db submitted)
+        failed (:db (transition in-flight (:on-uncertain request)))
+        refused (:db (transition in-flight (conj (:on-failure request) "The cue cell changed. Open its actions again.")))
+        after-refusal (-> refused (transition [:studio/close-actions]) :db (transition open-actions) :db
+                          (transition [:studio/macro-picker-open]) :db
+                          (assoc-in [:ui :macro-picker :macro-id] :stage/night)
+                          (transition [:studio/macro-picker-submit]))
+        closed (:db (transition failed [:studio/close-actions]))
+        reopened (:db (transition (:db (transition closed open-actions)) [:studio/macro-picker-open]))
+        retry (transition (assoc-in reopened [:ui :macro-picker :macro-id] :stage/night) [:studio/macro-picker-submit])
+        receipt {:status :accepted :macro-id :stage/night :command-id (get-in request [:body :command-id]) :revision 8}
+        reply (conj (get-in retry [:studio/http :on-success]) receipt)
+        accepted (transition (:db retry) reply)
+        pending (transition in-flight (conj (:on-success request) {:status :pending}))
+        replaced-cell #(assoc-in % [:server-projection :view :pages 1 :cells 0 :cue-id] :ember)
+        stale-open (transition (replaced-cell actions) [:studio/macro-picker-open])
+        stale-submit (transition (replaced-cell chosen) [:studio/macro-picker-submit])
+        replacement (:db (full-frame in-flight (assoc view :epoch 8)))]
+    (is (= [:stage/night "stage/night"] (mapv :id (events/saved-macros picker))))
+    (is (= actions (:db canceled)))
+    (is (empty? (transition picker [:studio/macro-picker-submit])))
+    (is (= "/api/composition/append" (:path request)))
+    (is (true? (:typed? request)))
+    (is (= "Literal Ember" (get-in picker [:ui :macro-picker :cue-name])))
+    (is (= {:macro-id :stage/night :cue-id "ember" :expected-epoch 7 :runtime-id "host"
+            :base-revision 3 :cell {:page-id "main" :x 1 :y 2}}
+           (dissoc (:body request) :command-id)))
+    (is (empty? (transition in-flight [:studio/macro-picker-submit])))
+    (is (= (:body request) (get-in retry [:studio/http :body])))
+    (is (= "Macro update is still processing." (get-in pending [:db :ui :macro-picker :error])))
+    (is (events/macro-picker-retry? (:db pending) {:cue-id "ember" :macro-id :stage/night}))
+    (is (nil? (:studio/http stale-submit)))
+    (is (= "The cue cell changed. Open its actions again." (get-in stale-submit [:db :ui :macro-picker :error])))
+    (is (= "The cue cell changed. Open its actions again." (get-in stale-open [:db :ui :action-cell :error])))
+    (is (= [[:dispatch [:studio/toast "Added to Night set."]]] (:fx accepted)))
+    (is (nil? (get-in accepted [:db :ui :action-cell])))
+    (is (= (get-in db [:ui :composition]) (get-in accepted [:db :ui :composition])))
+    (is (= (get-in db [:show :instances]) (get-in accepted [:db :show :instances])))
+    (is (= "The show did not reply. Retry append to confirm the same change." (get-in failed [:ui :macro-picker :error])))
+    (is (events/macro-picker-retry? failed {:cue-id "ember" :macro-id :stage/night}))
+    (is (= "The cue cell changed. Open its actions again." (get-in refused [:ui :macro-picker :error])))
+    (is (not (events/macro-picker-retry? refused {:cue-id "ember" :macro-id :stage/night})))
+    (is (not= (get-in request [:body :command-id]) (get-in after-refusal [:studio/http :body :command-id]))
+        "a refused command is not replayed")
+    (is (not (events/macro-picker-retry? (:db accepted) {:cue-id "ember" :macro-id :stage/night})))
+    (is (nil? (get-in replacement [:ui :action-cell])))
+    (is (empty? (transition replacement (conj (:on-success request) receipt))))))
+
 (deftest live-connection-preserves-arrangement-and-disabled-parameter-lanes
   (let [form (-> connections/sync-defaults
                  (assoc-in [:live :automap?] false)

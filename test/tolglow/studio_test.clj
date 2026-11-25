@@ -10,7 +10,8 @@
             [tolglow.demo :as demo]
             [tolglow.agents.venue :as venue]
             [tolglow.transit :as wire]
-            [tolglow.agents :as agents]))
+            [tolglow.agents :as agents])
+  (:import [java.util.concurrent LinkedBlockingQueue]))
 
 (defmacro with-runtime [[name] & body]
   `(let [~name (show/create-runtime)]
@@ -71,6 +72,81 @@
     (apply-at! r :composition-stop {:id :test} 300)
     (show/tick! r 2000)
     (is (= [:spot] (mapv :cue-id (:instances (show/snapshot r)))))))
+
+(deftest ring-macro-append-preserves-an-earlier-queued-repl-edit
+  (with-runtime [runtime]
+    (let [accepted-appends (volatile! [])
+          admit (:event-admit runtime)
+          runtime (assoc runtime :event-admit
+                         (fn [model events]
+                           (vswap! accepted-appends into (keep #(when (and (= :command/accepted (:type %))
+                                                                          (= :composition-append (get-in % [:data :operation])))
+                                                                 (get-in % [:data :command-id])) events))
+                           (admit model events)))
+          macro-id :opening-look
+          macro {:id macro-id :mode :macro :name "Opening look"
+                 :slots [{:id :first :cue-id :ember}]}
+          edited-slot {:id :second :cue-id :ice :params {:level 1/3}}]
+      (is (= :accepted (:status (apply-at! runtime :composition macro 0))))
+      (is (= :accepted (:status (apply-at! runtime :composition-run {:id macro-id} 0))))
+      (let [before (show/snapshot runtime)
+            repl-save (show/submit! runtime :composition (update macro :slots conj edited-slot))
+            handler (studio/handler runtime)
+            payload {:macro-id macro-id :cue-id :spot :command-id "browser-append" :base-revision (:revision before)
+                     :expected-epoch (:epoch before) :runtime-id (:runtime-id before)}
+            submitted (future (handler {:request-method :post :uri "/api/composition/append"
+                                        :headers {"host" "localhost" "accept" "application/transit+json"
+                                                  "content-type" "application/transit+json"}
+                                        :body (java.io.StringReader. (wire/encode payload))}))
+            ^LinkedBlockingQueue queue (:queue runtime)
+            deadline (+ (System/nanoTime) 3000000000)]
+        (try
+          ;; Admit both requests before advancing the frame owner.
+          (loop []
+            (when (and (< (.size queue) 2) (not (realized? submitted)) (< (System/nanoTime) deadline))
+              (Thread/sleep 5)
+              (recur)))
+          (is (= 2 (.size queue)))
+          (show/tick! runtime 10)
+          (is (= {:status :accepted} (deref repl-save 1000 ::missing)))
+          (let [response (deref submitted 1000 ::missing)
+                receipt (some-> response :body wire/decode)
+                after (show/snapshot runtime)
+                saved (some #(when (= macro-id (:id %)) %) (:compositions after))]
+            (is (= 200 (:status response)))
+            (is (= {:status :accepted :command-id "browser-append" :macro-id macro-id :revision (:revision after)} receipt))
+            (is (= receipt (apply-at! runtime :composition-append payload 10)))
+            (is (= ["browser-append"] @accepted-appends))
+            (is (= [:ember :ice :spot] (mapv :cue-id (:slots saved))))
+            (is (= edited-slot (get-in saved [:slots 1])))
+            (is (:running? saved))
+            (is (= (mapv :id (:instances before)) (mapv :id (:instances after))))
+            (let [rejected (apply-at! runtime :composition-append (assoc payload :command-id "bad-append" :cue-id :missing) 10)]
+              (is (= :rejected (:status rejected)))
+              (is (= [:slots 3] (get-in rejected [:details :errors 0 :path])))
+              (is (= (:compositions after) (:compositions (show/snapshot runtime))))))
+          (finally (future-cancel submitted)))))))
+
+(deftest macro-append-replay-and-cell-validation-use-exact-typed-identities
+  (with-runtime [runtime]
+    (let [macro {:id :set :mode :macro :slots [{:cue-id :ice}]}
+          page {:id "main" :cells {[0 0] "ember"}}]
+      (is (= :accepted (:status (apply-at! runtime :command {:op :cue/put :cue {:id "ember" :effect-id :ember}} 0))))
+      (is (= :accepted (:status (apply-at! runtime :command {:op :page/put :page page} 0))))
+      (is (= :accepted (:status (apply-at! runtime :composition macro 0))))
+      (let [{:keys [epoch revision runtime-id]} (show/snapshot runtime)
+            payload {:macro-id :set :cue-id "ember" :cell {:page-id "main" :x 0 :y 0}
+                     :command-id "original" :base-revision revision :expected-epoch epoch :runtime-id runtime-id}
+            accepted (apply-at! runtime :composition-append payload 1)]
+        (is (= :accepted (:status accepted)))
+        (is (= [:ice "ember"] (mapv :cue-id (get-in @(:state runtime) [:model :compositions :set :slots]))))
+        (apply-at! runtime :command {:op :page/put :page (assoc-in page [:cells [0 0]] :ember)} 2)
+        (is (= "The cue cell changed. Open its actions again."
+               (:message (apply-at! runtime :composition-append (assoc payload :command-id "stale") 2))))
+        (is (= :rejected (:status (apply-at! runtime :composition-append (assoc payload :cue-id :ember) 2))))
+        (apply-at! runtime :composition macro 2)
+        (is (= accepted (apply-at! runtime :composition-append payload 2)))
+        (is (= [:ice] (mapv :cue-id (get-in @(:state runtime) [:model :compositions :set :slots]))))))))
 
 (deftest full-state-export-import-restores-output-and-rejects-stale-operations
   (with-runtime [r]
