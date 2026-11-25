@@ -103,6 +103,27 @@
        (keep #(get-in % [:state-stream :client-faults])) (mapcat deref)
        (sort-by :at) (take-last 64) vec))
 
+(defn- checkpoint-action! [runtime action payload]
+  (try
+    (let [identity (select-keys payload [:runtime-id :show-id :epoch])]
+      (case action
+        :status (select-keys (show/recovery-status runtime)
+                            [:runtime-id :show-id :epoch :checkpoints :enabled?])
+        :restore
+        (let [kind (case (:kind payload)
+                     (:recovery "recovery") :recovery
+                     (:named "named") :named
+                     (:prior "prior") :prior
+                     (throw (ex-info "Unknown show checkpoint kind" {})))]
+          (deref (show/load-latest-show! runtime kind identity) 5000
+                 {:status :pending :message "Restore remains queued"}))
+        :discard-prior
+        (if (show/discard-prior-recovery! runtime identity)
+          {:status :accepted}
+          {:status :rejected :message "Previous session checkpoint is unavailable"})))
+    (catch java.io.IOException error
+      (throw (ex-info "Could not access the show checkpoint" {:code :checkpoint-io} error)))))
+
 (defn handler
   "Create the portable Ring application for this explicitly owned runtime."
   ([runtime] (handler runtime (bind! runtime :studio)))
@@ -130,6 +151,7 @@
                              (or (get definitions id)
                                  (when (keyword? id) (get definitions (subs (str id) 1))))))
             :export! #(show/export-show-source runtime)
+            :checkpoint! (partial checkpoint-action! runtime)
             :fog-calibration! #(let [model (:model @(:state runtime))]
                                  {:runtime-id (:id runtime) :epoch (:epoch model)
                                   :fixtures (fog-scan/fixtures model)

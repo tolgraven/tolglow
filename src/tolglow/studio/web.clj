@@ -240,7 +240,7 @@
    (available service message (fn [request] (ok (service operation (params request)))))))
 
 (defn- get-routes
-  [{:keys [snapshot! materials! definition! export! heartbeat! provider-get! chat-history! patch!
+  [{:keys [snapshot! materials! definition! export! heartbeat! provider-get! chat-history! patch! checkpoint!
            app-agent! fixture! rdm! audio! sync! waveform! workspace! terminal! sensor! repl! calibration! photometry! fog-calibration! event-subscribers!]}]
   (merge
    {"/api/event-subscribers" (available event-subscribers! "Event subscribers unavailable" (fn [_] (ok (event-subscribers!))))
@@ -252,6 +252,7 @@
                    (ok (snapshot! query-params)))
     "/api/materials" (available materials! "Material library unavailable" (fn [_] (ok (materials!))))
     "/api/settings" (fn [_] (ok (:settings (snapshot! {}))))
+    "/api/show/checkpoints" (read-action checkpoint! :status "Show checkpoints unavailable")
     "/api/definition" (fn [{:keys [query-params]}]
                         (if-let [definition (definition! (keyword (get query-params "kind" "effects"))
                                                          (keyword (get query-params "id" "")))]
@@ -303,13 +304,15 @@
              [(str prefix suffix)
               (available service unavailable-message #(respond (service operation (:json-params %))))])))
 
-(defn- post-routes [{:keys [material-preview! variable-sources! spatial-search! submit! heartbeat! provider-put! chat! chat-select! app-agent!
+(defn- post-routes [{:keys [material-preview! variable-sources! spatial-search! submit! heartbeat! provider-put! chat! chat-select! app-agent! checkpoint!
                              sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync!]
                      :or {material-preview! materials/preview}}]
   (merge
    (into {} (for [[path op] operations] [path (submit-handler submit! heartbeat! op)]))
    (post-actions "/api/application-agents/" app-agent! ok
                  {"configure" :configure "start" :start "cancel" :cancel} "Application agents unavailable")
+   (post-actions "/api/show/checkpoints/" checkpoint! acknowledgement
+                 {"restore" :restore "discard-prior" :discard-prior} "Show checkpoints unavailable")
    (post-actions "/api/sensors/" sensor! acknowledgement
                  {"pair" :pair "configure" :configure "sample" :sample "arm" :arm "calibrate" :calibrate
                   "osc/start" :osc-start "osc/stop" :osc-stop
