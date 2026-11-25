@@ -613,6 +613,46 @@
       (is (= 1 (count (:instances (show/snapshot runtime)))))
       (finally (deliver release true) (show/stop! runtime)))))
 
+(deftest callback-fault-keeps-its-location-and-attributes-the-exact-active-launch
+  (let [logged (promise)
+        runtime (show/create-runtime {:workspace-options nil :effect-log! #(deliver logged %)})
+        path [:variables :qa :gain]
+        commit! (fn [reply t]
+                  (show/tick! runtime t)
+                  (deref reply 1000 ::timeout))
+        launch! (fn [t] (commit! (show/submit! runtime {:op :cue/launch :cue-id :ember}) t))
+        register! (fn [id middleware]
+                    (commit! (show/register-event-subscriber!
+                              runtime {:id id :match {:type :instance/launched} :middleware middleware}) 0))]
+    (try
+      (let [healthy (:instance-id (launch! 0))]
+        (is (= :accepted (:status (register! :a-broken (fn [_ _]
+                                                        (throw (ex-info "Callback gain unavailable"
+                                                                        {:path path :internal "omit-this"})))))))
+        (is (= :accepted (:status (register! :b-sibling
+                                     (fn [context event]
+                                       (assoc context :actions [{:op :instance/opacity :value 0.35
+                                                                 :select {:ids [(get-in event [:data :instance-id])]}}]))))))
+        (let [affected (:instance-id (launch! 10))]
+          (loop [t 11]
+            (when (and (< t 160) (seq (get-in @(:state runtime) [:model :event-subscribers :runs])))
+              (show/tick! runtime t)
+              (Thread/sleep 5)
+              (recur (inc t))))
+          (let [{:keys [instances reactive-faults]} (show/snapshot runtime)
+                [fault :as failures] (filterv #(= :event/handler-failed (:type %)) reactive-faults)
+                by-id (into {} (map (juxt :id identity)) instances)]
+            (is (= 1 (count failures)))
+            (is (not= healthy affected))
+            (is (= [:a-broken :ember affected] ((juxt :subscriber-id :cue-id :instance-id) fault)))
+            (is (= [{:path path}] (mapv :location (:causes fault))))
+            (is (= "Callback gain unavailable" (:message fault)))
+            (is (seq (:stacktrace fault)))
+            (is (= fault (deref logged 2000 ::timeout)))
+            (is (== 1.0 (get-in by-id [healthy :system :opacity])))
+            (is (== 0.35 (get-in by-id [affected :system :opacity]))))))
+      (finally (show/stop! runtime)))))
+
 (defn- play-kick! [runtime]
   (let [model #(:model @(:state runtime))
         start (:time-ms (model))]
