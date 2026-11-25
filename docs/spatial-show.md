@@ -22,6 +22,26 @@ The aggregate query `[:spatial/scene]` returns signals by volume. `[:spatial/bod
 
 Open **Rig → Spatial** to edit, throw and inspect. The subscriptions guide covers linked query lifetimes, immutable Transit projections and resynchronization. The cue inspector shows the affected instance and effect inputs. [Spatial Studio](spatial-studio.md) · [Studio subscriptions](studio-subscriptions.md) · [Cue inspector](cue-inspector.md)
 
+## Match a strip to a fixture's extent
+
+Declare `:bounds-m {:min [0 -0.2 -1] :max [0 0.2 1]}` on a fixture type, a patch placement or a builder head. These are metre coordinates in the fixture or head's local space. In Studio, add the field in **Fixture Library → Advanced definition · EDN** before publishing and patching the type.
+
+Resolve a strip segment from the current rig before launching a cue. The reference can be a fixture or an individual head with declared bounds. For a fixture with only head channels, the first patched head stores the body's original placement and extent. The selection projects the rotated bounds onto the requested venue axis and includes the named strip's pixel centers on either boundary. Use the strip's fixture or pixel-layout ID.
+
+The projection reduces angles in degrees before computing the rotation coefficients. Selection compares the original pixel centers with the projected edges.
+
+```clojure
+(require '[tolglow.show :as show] '[tolglow.spatial.targets :as targets])
+
+(let [selector (targets/strip-segment-selector
+                (show/snapshot runtime)
+                {:strip-id :stage-strip :reference-id :front-panel :axis :x})]
+  (show/submit! runtime :command
+                {:op :cue/launch :cue-id :wash :launch {:selector selector}}))
+```
+
+Studio clients can send the same command with the resolved `:fixture-ids` selector to `POST /api/command`. Resolve the segment again for the next launch after changing the reference or pixel positions. A strip with no matching pixels yields an empty selector.
+
 ## Launch a sculpted volume as a cue
 
 **Rig → Volumes** places a sculpted region on a cue page, starts it, and shows its current shape in the rig. The same operation runs headless. For example, this ball paints blue toward its centre, follows a show variable for hue and follows the ordinary cue lifecycle.
