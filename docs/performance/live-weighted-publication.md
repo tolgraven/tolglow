@@ -24,6 +24,13 @@ AFTERGLOW_ROOT=../afterglow lein with-profile +benchmark run \
   -m tolglow.perf.weighted-live target/live-weighted-venue.edn 20000 160 240
 ```
 
+The show splits field sampling for this patch across its workers by default.
+Add `-Dtolglow.spatial.workers=1` to `JVM_OPTS` to record the serial path on
+the same revision, or another count to bound the workers. The JVM needs more
+than two available processors for the default to split. The report's `:rig`
+entry records the effective `:spatial-sampling` settings. No comparison of the
+two paths has been recorded here yet.
+
 From a REPL loaded with the benchmark profile, call
 `(tolglow.perf.weighted-live/capture {:pixels 20000 :warmup 160 :slots 240})`.
 The result includes both source revisions. Show startup supplies its default

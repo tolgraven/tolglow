@@ -204,12 +204,14 @@
         origin (System/nanoTime) clock #(now-since origin)
         wire (atom []) sink (transport/sink pixels clock wire)
         options {:model model :frame-rate 40 :workers 2 :workspace-options nil
+                 :spatial-sampling (bench/spatial-sampling)
                  :physical-now-ms clock :capture-effect-samples? true}
         runtime (show/start! options (constantly sink))]
     (try
       (assoc (record! runtime volume-ids clock wire (inc warmup) (+ warmup slots))
              :rig {:pixels pixels :moving-heads 64 :washes 8 :volumes 4 :mixed-chart true
                    :selection scene/selection :frame-rate 40 :workers 2 :transport :in-memory-artdmx
+                   :spatial-sampling (select-keys (:spatial-sampling runtime) [:workers :partitions :min-fixtures])
                    :active-effect-ids (mapv :effect-id (sort-by :order (vals (:instances model))))
                    :adaptive-keyframes (:adaptive-keyframes runtime)}
              :environment {:java (System/getProperty "java.version") :clojure (clojure-version)

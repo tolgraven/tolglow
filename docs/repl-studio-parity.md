@@ -225,6 +225,25 @@ override, which reconnect preserves.
 The REPL and Studio receive the fresh reference session ID or a refusal from
 the same show operation. For manually owned mpv connections, use the existing
 [REPL adapter flow](../src/tolglow/integrations/README.md#observe-a-known-local-recording-in-mpv).
+## Add a cue to a saved macro
+
+In **Perform**, open a cue cell’s actions and choose **Add to macro**. Select a saved macro and press **Add cue**. Studio confirms the accepted save and the new slot appears in **Compose**. If the reply is lost, **Retry append** resends the same operation. If the cell changed before the save reached the show owner, reopen actions on the cue you want.
+
+From the running REPL, use the IDs from `show/snapshot`, preserving keyword and string IDs as shown. Replace `:opening-look` with the ID of your saved macro.
+
+```clojure
+(require '[tolglow.show :as show])
+
+(def append-request
+  (let [{:keys [runtime-id epoch revision]} (show/snapshot runtime)]
+    {:runtime-id runtime-id :expected-epoch epoch :base-revision revision
+     :macro-id :opening-look :cue-id :ember :command-id (str (random-uuid))}))
+
+@(show/submit! runtime :composition-append append-request)
+(some #(when (= (:macro-id append-request) (:id %)) %) (:compositions (show/snapshot runtime)))
+```
+
+To retry an uncertain reply, resubmit `append-request` unchanged. If it has expired, inspect the committed slots before starting another append. The shared operation saves cue membership and leaves running instances in place.
 
 ## Reviewing a show feature
 
@@ -261,3 +280,12 @@ Studio and Push read one committed response sample instead of evaluating the res
 ```
 
 Studio does not display these lease faults yet. Close the gap when Studio shows the same fault records as the REPL. [Issue #533](https://github.com/tolgraven/tolglow/issues/533) · [PR #624](https://github.com/tolgraven/tolglow/pull/624)
+
+Calibrated paired aim arrival uses one host operation from both surfaces. In Studio, **Rig & space → Draw path → Arrive together using calibrated motor rates** lists, reopens, publishes and converts synchronized paths. Studio always sends `:sync-arrival?` explicitly and shows the solved arrival time or the refusal. The REPL submits the same `:aim-path` operation and reads `:arrival-duration-ms` from the acknowledgement. Launch refusals (`:stale-calibration`, `:tempo-exceeds-motor-rate`, `:start-wrap-mismatch`) come back from the shared launch command on both surfaces. [Aim paths](aim-paths.md#calibrated-paired-arrival) · [Issue #481](https://github.com/tolgraven/tolglow/issues/481)
+
+```clojure
+@(show/submit! runtime :aim-path {:id :paired :sync-arrival? true :targets [:head-a :head-b]
+                                  :points [[-1 0 0] [1 0 0]] :duration {:bars 2}})
+```
+
+The remaining gaps are tracked in issue #481. Studio has no editor for `:calibration :motor-rate-deg-per-sec`, so rates are set through the rig data or the REPL. Studio also cannot display the physical `:minimum-travel-ms` or the fingerprint behind a stale-calibration refusal. Close these gaps when an operator can enter rates in the fixture inspector and see why a launch was refused without the REPL.

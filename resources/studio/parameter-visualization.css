@@ -15,21 +15,7 @@
 .parameter-views button[aria-pressed=true]{color:var(--text,#e3ebdc);background:#324732}
 .parameter-views label{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted)}
 .parameter-visualizer .parameter-space{margin:4px auto;max-width:185px}
-#push-display .parameter-space svg{height:57px}
-#push-display .parameter-domain{font-size:9px;line-height:11px}
-#push-display .parameter-space figcaption{white-space:nowrap;font-size:9px;line-height:13px}
-#push-display .parameter-space[data-dmx-bits="16"] svg{height:44px}
-#push-display .parameter-space[data-dmx-bits="16"] figcaption{white-space:normal}
-#push-display .parameter-history svg{height:44px}
-#push-display .parameter-history figcaption{font-size:9px}
 .history-reading{display:flex;gap:6px;flex-wrap:wrap;min-height:12px;margin:2px 0;font:10px ui-monospace,monospace}
-#push-display .history-reading{display:flex;gap:3px;margin:0 0 3px;font:8px ui-monospace,monospace}
-#push-display .parameter-history{margin-top:3px}
-#push-display .history-reading{height:22px;align-content:start}
-#push-display .parameter-history svg{height:40px}
-#push-display .parameter-history[data-dmx-bits="16"]{display:grid;height:80px;grid-template-rows:auto minmax(0,1fr) auto}
-#push-display .parameter-history[data-dmx-bits="16"] svg{height:100%}
-#push-display .parameter-history[data-dmx-bits="16"] figcaption span:last-child{white-space:nowrap}
 @media (min-width:740px){
   .live-effect-card .param-row:has(>.parameter-visualizer){display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,36%);column-gap:18px;align-items:start}
   .live-effect-card .param-row:has(>.parameter-visualizer)>*{grid-column:1}
