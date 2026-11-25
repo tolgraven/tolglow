@@ -339,16 +339,219 @@
           (is (empty? (:errors (device-session/snapshot device))))))
       (finally (show/stop! runtime)))))
 
-(defn- open-history-push! [runtime]
+(deftest captured-push-3-encoder-restores-through-the-durable-owner-queue
+  (with-redefs [show/device-command-wait-ms 0]
+    (let [receive (atom nil)
+          dimmer (atom nil)
+          runtime (show/create-runtime {:workspace-options nil
+                                        :sink {:send! (fn [packet _]
+                                                        (reset! dimmer (bit-and 255 (aget ^bytes (get packet 1) 0))))}})
+          options {:session-id "push3-owner" :user-mode? true :expression-mode :poly-aftertouch
+                   ;; Synthetic User Mode capture from the paired device regression.
+                   :layout {:encoder-touches {:level {:channel 2 :note 9}}
+                            :encoders {:level {:channel 2 :controller 19}}
+                            :buttons {:shift-button {:channel 4 :controller 23}}}
+                   :button-bindings {:shift-button :shift}
+                   :encoder-bindings {:level {:param :level :step 0.02}}
+                   :operator-gestures? true :temporary-encoder-modifier :shift :schedule! nil
+                   :display {:device :push-3 :input :view :open! (constantly :capture-display)
+                             :render! (fn [_ _]) :close! (fn [_])}
+                   :midi {:open! (fn [callback] (reset! receive callback) :capture)
+                          :send! (fn [_ _] (throw (ex-info "Unexpected Push 3 MIDI output" {})))
+                          :close! (fn [_])}}
+          connect! #(show/connect-device! runtime :push-3 options)]
+      (try
+        (let [id (:instance-id (apply-at! runtime :command {:op :cue/launch :cue-id :ember} 0))
+              _ (show/tick! runtime 100)
+              device (connect!)
+              input! (fn [time bytes] (@receive bytes) (show/tick! runtime (+ 100 time)))
+              model #(:model @(:state runtime))
+              level #(get-in (model) [:instances id :params :level])
+              history #(get-in (model) [:control :edit-history])
+              open #(get-in (history) [:open [:instance-param id :level]])
+              terminals #(vals @(:push-gesture-ends runtime))
+              initial (level)
+              initial-dimmer @dimmer
+              source {:adapter :push-3 :session-id "push3-owner"}]
+          (is (= id (get-in (device-session/snapshot device) [:local :selected-instance])))
+          (input! 10 [0xb4 23 127])
+          (input! 20 [0x92 9 127])
+          (let [{:keys [actor gesture-id control-id]} (open)
+                forged {:op :gesture/cancel :instance-id id :param :level :gesture-id gesture-id
+                        :control-id control-id :source source :temporary? true
+                        :operator-id actor ::show/push-source source}]
+            (is (re-find #"^push-3/push3-owner/" actor))
+            (is (= :level control-id))
+            (is (= :operator-required (:code (apply-at! runtime :command forged 125))))
+            (is (= actor (:actor (open)))))
+          (input! 30 [0xb2 19 12])
+          (let [peak (level)
+                {:keys [model frame-output]} (show/export-show runtime)]
+            (is (> peak initial))
+            (is (> @dimmer initial-dimmer))
+            (is (= initial (get-in model [:instances id :params :level])))
+            (is (nil? frame-output))
+            (input! 40 [0xb4 23 0])
+            (is (= peak (level))))
+          (@receive [0xb2 19 1])
+          (dotimes [_ 255] (show/submit! runtime {:op :master/set :value 1}))
+          (is (= :rejected (:status (deref (show/submit! runtime {:op :master/set :value 1}) 0 nil))))
+          (@receive [0x82 9 0])
+          (@receive [0x92 9 0])
+          (let [{:keys [payload authority reply]} (first (terminals))]
+            (is (= 1 (count (terminals))))
+            (is (= :gesture/cancel (:op payload)))
+            (is (= source (:source payload) (::show/push-source authority)))
+            (is (= (:actor (open)) (:operator-id authority)))
+            (show/tick! runtime 150)
+            (is (= :accepted (:status (deref reply 0 nil))))
+            (is (= [initial initial-dimmer] [(level) @dimmer]))
+            (is (empty? (:open (history))))
+            (is (= [0 0] ((juxt :cursor :position) (history)))))
+          (input! 60 [0x92 9 127])
+          (input! 70 [0xb2 19 1])
+          (input! 80 [0x82 9 0])
+          (let [committed (level)]
+            (is (= (+ initial 0.02) committed))
+            (is (= [1 1] ((juxt :cursor :position) (history))))
+            (input! 90 [0xb4 23 127])
+            (input! 100 [0x92 9 127])
+            (@receive [0xb2 19 10])
+            (let [old-receive @receive old-actor (:actor (open))]
+              (show/disconnect-device! runtime "push3-owner")
+              (is (= :closed (:status (device-session/snapshot device))))
+              (is (= :gesture/cancel (get-in (first (terminals)) [:payload :op])))
+              (let [reply (:reply (first (terminals)))]
+                (show/tick! runtime 210)
+                (is (= :accepted (:status (deref reply 0 nil)))))
+              (is (= committed (level)))
+              (let [replacement (connect!)]
+                (input! 120 [0xb4 23 127])
+                (input! 130 [0x92 9 127])
+                (is (not= old-actor (:actor (open))))
+                (old-receive [0x82 9 0])
+                (is (empty? (terminals)))
+                (input! 140 [0x82 9 0])
+                (is (= committed (level)))
+                (is (empty? (:open (history))))
+                (is (empty? (:errors (device-session/snapshot replacement)))))))
+          (is (empty? (:errors (device-session/snapshot device)))))
+        (finally (show/stop! runtime))))))
+
+(defn- open-history-push! [runtime & [options]]
   (let [input (atom nil)
         midi {:open! (fn [receive!] (reset! input receive!) :capture)
               :send! (fn [_ _]) :close! (fn [_])}
         device (show/connect-device! runtime :push-2
-                                     {:session-id "manual-push" :midi midi
-                                      :operator-gestures? true :schedule! nil :timeout-ms 30000})]
+                                     (merge {:session-id "manual-push" :midi midi
+                                             :operator-gestures? true :schedule! nil :timeout-ms 30000}
+                                            options))]
     (doseq [index (range 128)]
       (@input (assoc (push-codec/palette-write 0 index [0 0 0 0]) 6 4)))
     {:device device :receive! @input}))
+
+(deftest temporary-push-turn-restores-owned-value-and-output-with-a-full-ingress-queue
+  (with-redefs [show/device-command-wait-ms 0]
+    (let [dimmer (atom nil)
+          runtime (show/create-runtime {:workspace-options nil
+                                        :sink {:send! (fn [packet _]
+                                                        (reset! dimmer (bit-and 255 (aget ^bytes (get packet 1) 0))))}})]
+      (try
+        (let [id (:instance-id (apply-at! runtime :command {:op :cue/launch :cue-id :ember} 0))
+              {:keys [device receive!]} (open-history-push! runtime {:temporary-encoder-modifier :shift})
+              model #(:model @(:state runtime))
+              level #(get-in (model) [:instances id :params :level])
+              hold #(get-in (model) [:modulation :holds id :level])
+              history #(get-in (model) [:control :edit-history])
+              readout #(vector (level) @dimmer)
+              input! (fn [time bytes] (receive! bytes) (show/tick! runtime time))
+              target {:instance-id id :params [:level]}]
+          (apply-at! runtime :modulation-start {:id :rhythm :seed 42 :every {:beats 1/4} :params [:level]
+                                               :select {:instance-ids [id]} :ranges {:level [0.1 0.4]}} 100)
+          (apply-at! runtime :modulation-hold (assoc target :until-beat 4) 110)
+          (let [[original original-byte :as baseline] (readout)]
+            (is (pos? original-byte))
+            (input! 120 [0xb0 49 127])
+            (input! 130 [0x90 0 127])
+            (input! 140 [0xb0 71 30])
+            (is (> (level) original))
+            (is (> @dimmer original-byte))
+            (let [live (readout)
+                  {:keys [model frame-output]} (show/export-show runtime)]
+              (is (= original (get-in model [:instances id :params :level])))
+              (is (= {:until-beat 4} (get-in model [:modulation :holds id :level])))
+              (is (= [0 0] (mapv #(get-in model [:control :edit-history %]) [:cursor :position])))
+              (is (nil? frame-output))
+              (is (= live (readout))))
+            (input! 150 [0xb0 49 0])
+            (is (> (level) original))
+            (receive! [0xb0 71 5])
+            (dotimes [_ 255] (show/submit! runtime {:op :master/set :value 1}))
+            (is (= :rejected (:status (deref (show/submit! runtime {:op :master/set :value 1}) 0 nil))))
+            (receive! [0x80 0 0])
+            (receive! [0x80 0 0])
+            (let [{:keys [payload authority reply]} (first (vals @(:push-gesture-ends runtime)))]
+              (is (= :gesture/cancel (:op payload)))
+              (is (= :gesture-end-queued
+                     (:code (deref (show/submit! runtime :command
+                                                 (assoc payload :command-id "duplicate-cancel") authority) 0 nil))))
+              (show/tick! runtime 160)
+              (is (= :accepted (:status (deref reply 0 nil))))
+              (is (= baseline (readout)))
+              (is (= {:until-beat 4} (hold)))
+              (is (= [0 0] ((juxt :cursor :position) (history))))
+              (is (empty? (:open (history)))))
+            (input! 170 [0x90 0 127])
+            (input! 180 [0xb0 71 5])
+            (input! 190 [0x80 0 0])
+            (is (> (level) original))
+            (is (> @dimmer original-byte))
+            (is (= [1 1] ((juxt :cursor :position) (history))))
+            (is (some? (:frame-output (show/export-show runtime))))
+            (is (empty? (:errors (device-session/snapshot device))))))
+        (finally (show/stop! runtime))))))
+
+(deftest disconnect-queues-temporary-cancel-and-only-restores-the-owning-generation
+  (with-redefs [show/device-command-wait-ms 0]
+    (let [runtime (show/create-runtime {:workspace-options nil})
+          options {:temporary-encoder-modifier 41}]
+      (try
+        (let [id (:instance-id (apply-at! runtime :command {:op :cue/launch :cue-id :ember} 0))
+              level #(get-in @(:state runtime) [:model :instances id :params :level])
+              history #(get-in @(:state runtime) [:model :control :edit-history])
+              original (level)
+              open-touch! (fn [time]
+                            (let [{:keys [receive!] :as connected} (open-history-push! runtime options)]
+                              (receive! [0xb0 41 127])
+                              (receive! [0x90 0 127])
+                              (show/tick! runtime time)
+                              (receive! [0xb0 71 5])
+                              connected))
+              old (open-touch! 20)]
+          ;; The sample is pending when the callback and transports are detached.
+          (show/disconnect-device! runtime "manual-push")
+          (let [reply (:reply (first (vals @(:push-gesture-ends runtime))))]
+            (is (= :closed (:status (device-session/snapshot (:device old)))))
+            (show/tick! runtime 30)
+            (is (= :accepted (:status (deref reply 0 nil))))
+            (is (= original (level)))
+            (is (empty? (:open (history)))))
+          (let [{:keys [receive!]} (open-touch! 40)]
+            (show/tick! runtime 50)
+            (is (> (level) original))
+            ((:receive! old) [0x80 0 0])
+            (is (empty? @(:push-gesture-ends runtime)))
+            (apply-at! runtime :command {:op :param/set :instance-id id :param :level :value 0.4} 60)
+            (receive! [0x80 0 0])
+            (show/disconnect-device! runtime "manual-push")
+            (let [reply (:reply (first (vals @(:push-gesture-ends runtime))))]
+              (show/tick! runtime 70)
+              (is (= {:status :accepted :discarded :history-conflict}
+                     (select-keys (deref reply 0 nil) [:status :discarded]))))
+            (is (= 0.4 (level)))
+            (is (= [0 0] ((juxt :cursor :position) (history))))
+            (is (empty? (:open (history))))))
+        (finally (show/stop! runtime))))))
 
 (deftest pending-push-touch-releases-through-a-full-command-queue
   (with-redefs [show/device-command-wait-ms 0]
