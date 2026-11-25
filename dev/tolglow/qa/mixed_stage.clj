@@ -1,5 +1,6 @@
 (ns tolglow.qa.mixed-stage
-  "Repeatable, disconnected fixture and cue load for GPU qualification."
+  "Repeatable, disconnected fixture and cue load for GPU qualification.
+  Capture one frame or pass a frame count for a consecutive 25 ms replay."
   (:require [afterglow.control.model :as control-model]
             [clojure.data.json :as json]
             [tolglow.application :as app]
@@ -140,16 +141,25 @@
     (run! accepted! bindings)
     ids))
 
-(defn- capture! [file]
+(defn- preview-frame [snapshot]
+  (-> (select-keys snapshot [:show-id :epoch :time-ms :frame-number :revision])
+      (assoc :output (select-keys (:output snapshot) [:atmosphere :values]))))
+
+(defn- capture! [file frame-count]
   (let [runtime (show/create-runtime {:model (model) :workspace-options nil})
-        t (atom -25)]
+        t (atom -25)
+        tick #(show/tick! runtime (swap! t + 25))]
     (try
-      (start-look! runtime #(show/tick! runtime (swap! t + 25)))
-      (doseq [ms (range 50 8025 25)] (show/tick! runtime ms))
-      (let [snapshot (show/snapshot runtime)]
-        (spit file (json/write-str
-                     (-> (select-keys snapshot [:show-id :epoch :rig :time-ms :frame-number :revision])
-                         (assoc :output (select-keys (:output snapshot) [:atmosphere :values]))))))
+      (start-look! runtime tick)
+      (while (< @t 8000) (tick))
+      (let [snapshot (show/snapshot runtime)
+            first-frame (preview-frame snapshot)
+            capture (if frame-count
+                      {:rig (:rig snapshot)
+                       :frames (into [first-frame]
+                                     (repeatedly (dec frame-count) #(do (tick) (preview-frame (show/snapshot runtime)))))}
+                      (assoc first-frame :rig (:rig snapshot)))]
+        (spit file (json/write-str capture)))
       (finally (show/stop! runtime) (shutdown-agents)))))
 
 (defn- serve! []
@@ -169,5 +179,10 @@
         (app/stop! host)
         (throw error)))))
 
-(defn -main [argument]
-  (if (= "studio" argument) (serve!) (capture! argument)))
+(defn -main [argument & [count-text]]
+  (if (= "studio" argument)
+    (serve!)
+    (let [frame-count (some-> count-text parse-long)]
+      (when (and count-text (not (pos-int? frame-count)))
+        (throw (ex-info "Frame count must be a positive integer" {:frame-count count-text})))
+      (capture! argument frame-count))))
