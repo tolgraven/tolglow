@@ -272,6 +272,24 @@ Studio uses the same operations through typed Transit POSTs to `/api/modulation/
 
 Holding the parameter exposes its base while the waveform keeps its clock reference. Ending the activation releases its bindings and the compiled plan is retired on the next frame.
 
+To switch a running waveform to another parameter, open its **Source** editor, choose a **Destination**, set that parameter's **From** and **To** values, and select **Move LFO**. Studio lists parameters on the same activation that can accept a waveform. The move takes effect together at the next owner update. The original parameter returns to its underlying input, and the waveform keeps its shape, period, inputs, and clock phase. Manual holds stay with their parameters.
+
+The same operation is available through the typed bind endpoint or the show API. Pass `:from-param` to identify the currently bound parameter, its projected LFO source `:identity` as `:expected-source`, and the destination's typed endpoints in `:binding`.
+
+```clojure
+(let [{:keys [instances runtime-id epoch]} (show/snapshot runtime)
+      instance (some #(when (= instance-id (:id %)) %) instances)
+      lfo-source (some #(when (= :lfo (:type %)) %)
+                       (get-in instance [:parameter-sources :level :sources]))]
+  (show/submit! runtime :modulation-bind
+    {:runtime-id runtime-id :expected-epoch epoch
+     :instance-id instance-id :from-param :level :param :step
+     :expected-source (:identity lfo-source)
+     :binding {:from 1 :to 5}}))
+```
+
+An occupied destination, invalid endpoints, or an intervening source or effect revision change reject the move and retain both parameters' previous sources. Studio waits for the committed projection before releasing a pending edit. For clients that supply `:request-id`, the projection's bounded `:parameter-source-outcomes` also exposes terminal results for requests whose HTTP reply is pending.
+
 Registered waveform values are normalized from their declared range, clamped to 0–1, and interpolated between the two typed endpoints. Colors, coordinates and ranges interpolate component-wise. Integers round to the nearest value and boolean or enum inputs select the second endpoint at halfway. Live revisions of the selected waveform recompile its plan. A composite authored with `signals/sample` captures the nested expression at publication. Republishing the composite picks up a new constituent waveform. An incompatible destination or waveform input is reported on that source while the underlying parameter remains usable. Show files retain bindings, original schema, waveform registry and manual holds across instance-ID changes.
 
 Committed Studio snapshots include the registered waveform choices in `:parameter-waveforms`. Each bound entry under `[:instances n :parameter-sources param]` exposes its base value, effective input and sources, including held and constant-valued sources. A random controller waiting for its next legal sample is marked pending. A rejected sample carries a diagnostic on that frame. The input pipeline applies the random controller, instance waveform, spatial overrides and response middleware in order. Parameter blocks inside an effect can yield a different result per fixture. Live destinations list the MIDI controller and current ports while the lighting bridge owns them. Handing the device back to Live or stopping the input removes that source. Patch destinations include their captured route and source IDs, including audio pitch or level. A spatial field reports its configured variable, cue parameter or volume control. Their authored block source contains the path for `:runtime/block-trace`, which returns the committed result for the requested fixture.

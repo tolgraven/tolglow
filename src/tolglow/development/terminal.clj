@@ -40,13 +40,13 @@
   workspace/runtime-paths data. image/docker/python/bridge-path are trusted host
   options, never HTTP fields. Network defaults to :none; :bridge is an explicit
   administrator choice for dependency downloads. No ports are published."
-  [{:keys [resolve-workspace image docker python bridge-path max-sessions output-bytes network uid gid create-timeout-ms]
+  [{:keys [resolve-workspace image docker python bridge-path max-sessions output-bytes network uid gid create-timeout-ms start-timeout-ms]
     :or {image "tolglow-dev:local" docker "docker" python "/usr/bin/python3"
-         max-sessions 4 output-bytes 1048576 network :none create-timeout-ms 120000}}]
+         max-sessions 4 output-bytes 1048576 network :none create-timeout-ms 120000 start-timeout-ms 10000}}]
   (when-not (and (ifn? resolve-workspace) (clean-string? image) (not (str/starts-with? image "-"))
                  (clean-string? docker) (clean-string? python) (#{:none :bridge} network)
                  (bounded-int? max-sessions 1 8) (bounded-int? output-bytes 4096 8388608)
-                 (bounded-int? create-timeout-ms 1 300000)
+                 (bounded-int? create-timeout-ms 1 300000) (bounded-int? start-timeout-ms 1 120000)
                  (or (nil? uid) (bounded-int? uid 1 2147483647)) (or (nil? gid) (bounded-int? gid 1 2147483647)))
     (fail! :invalid-options "Terminal service needs a trusted resolver and bounded configuration"))
   (let [unix (UnixSystem.)]
@@ -54,7 +54,7 @@
      :bridge-path bridge-path
      :uid (or uid (.getUid unix)) :gid (or gid (.getGid unix)) :network network
      :max-sessions max-sessions :output-bytes output-bytes :id (str (UUID/randomUUID)) :lock (Object.)
-     :create-timeout-ms create-timeout-ms
+     :create-timeout-ms create-timeout-ms :start-timeout-ms start-timeout-ms
      :state (atom {:closed? false :sessions {} :jobs {} :containers {}})}))
 
 (defn- bridge-file! [manager]
@@ -359,6 +359,43 @@
     (when-not queue (fail! :not-running "Terminal is not ready for input"))
     (when-not (.offer queue message) (fail! :input-capacity "Terminal input queue is full; wait for the reader"))))
 
+(defn- exited-bridge-diagnostic
+  "Bounded, non-blocking read of what an already exited bridge left in its
+  pipes, so Docker's own start error reaches Studio as error details."
+  [^Process process]
+  (let [drain (fn [^java.io.InputStream in]
+                (let [n (min 65536 (max 0 (.available in))) buffer (byte-array n)]
+                  (String. buffer 0 (max 0 (.read in buffer 0 n)) StandardCharsets/UTF_8)))
+        events (keep #(try (json/read-str % :key-fn keyword) (catch Exception _ nil))
+                     (str/split-lines (try (drain (.getInputStream process)) (catch Exception _ ""))))
+        output (apply str (for [{:keys [kind data]} events :when (= "output" kind)]
+                            (try (String. ^bytes (decode data) StandardCharsets/UTF_8) (catch Exception _ ""))))
+        stderr (try (drain (.getErrorStream process)) (catch Exception _ ""))
+        tail #(let [t (str/trim (str/replace % #"[\x00-\x08\x0b-\x1f\x7f]" ""))] (subs t (max 0 (- (count t) 2048))))]
+    (cond-> {:bridge-exit-code (.exitValue process)}
+      (some #(= "exit" (:kind %)) events) (assoc :exit-code (:exit-code (last (filter #(= "exit" (:kind %)) events))))
+      (seq (tail output)) (assoc :output (tail output))
+      (seq (tail stderr)) (assoc :bridge-error (tail stderr)))))
+
+(defn- await-container-start! [manager id name ^Process process]
+  ;; Launching the local bridge does not mean Docker has started the shell.
+  ;; Studio fits the viewport immediately after opening, so Docker must already
+  ;; be able to execute the resize in the container by then.
+  (let [deadline (+ (System/nanoTime) (.toNanos TimeUnit/MILLISECONDS (:start-timeout-ms manager 10000)))]
+    (loop []
+      (when (or (:closed? @(:state manager)) (= :closed (:state (session manager id))))
+        (throw (InterruptedException. "Terminal opening was cancelled")))
+      (when-not (.isAlive process)
+        (throw (ex-info "The terminal bridge exited before Docker started the shell"
+                        (assoc (exited-bridge-diagnostic process) :terminal/error :start-failed))))
+      (when (>= (System/nanoTime) deadline)
+        (fail! :start-timeout "Docker did not start the shell within the terminal startup budget"))
+      (let [{:keys [exit-code output timed-out?]}
+            (run-host! manager ["inspect" "--type" "container" "--format" "{{.State.Running}}" name] 1000)]
+        (when-not (and (not timed-out?) (= 0 exit-code) (= "true" (str/trim output)))
+          (Thread/sleep 50)
+          (recur))))))
+
 (defn open!
   "Open a real Docker/zsh PTY for an owned workspace. No input is evaluated on
   the host. Explicit operation; ordinary status/snapshot calls never open it."
@@ -385,6 +422,10 @@
       (when (= :closed (:state (session manager id))) (throw (InterruptedException. "Terminal opening was cancelled")))
       (let [argv (start-argv manager name)
             process (.start (ProcessBuilder. ^java.util.List [(:python manager) bridge-path (json/write-str {:argv argv :rows rows :cols cols})]))
+            _ (try (await-container-start! manager id name process)
+                   (catch Throwable error
+                     (.destroyForcibly process)
+                     (throw error)))
             writer (OutputStreamWriter. (.getOutputStream process) StandardCharsets/UTF_8)
             input-queue (ArrayBlockingQueue. 8)
             input-thread (Thread. (fn []
@@ -422,10 +463,9 @@
             (.destroyForcibly process)
             (throw (InterruptedException. "Terminal opening was cancelled")))
           (swap! (:state manager) update-in [:sessions id] assoc :state :running :process process :writer writer :reader reader
-                 :input-queue input-queue :input-thread input-thread))
-        (.setDaemon input-thread true) (.start input-thread)
-        (.setDaemon reader true) (.start reader)
-        (when (:closed? @(:state manager)) (send! (session manager id) {:op "close"}))
+                 :input-queue input-queue :input-thread input-thread)
+          (.setDaemon input-thread true) (.start input-thread)
+          (.setDaemon reader true) (.start reader))
         (public-session (session manager id)))
       (catch Throwable error
         (swap! (:state manager) update-in [:sessions id]
@@ -482,8 +522,10 @@
     observation/unavailable))
 
 (defn close-session! [manager id]
-  (let [s (session manager id)]
-    (swap! (:state manager) update-in [:sessions id] assoc :state :closed :closed-at-ms (System/currentTimeMillis))
+  (let [s (locking (:lock manager)
+            (let [s (session manager id)]
+              (swap! (:state manager) update-in [:sessions id] assoc :state :closed :closed-at-ms (System/currentTimeMillis))
+              s))]
     (when (:writer s) (try (send! s {:op "close"}) (catch Exception _)))
     (cleanup-container! manager (:container-name s))
     (when-let [^Process p (:process s)] (when-not (.waitFor p 1000 TimeUnit/MILLISECONDS) (.destroyForcibly p)))

@@ -22,6 +22,26 @@ The aggregate query `[:spatial/scene]` returns signals by volume. `[:spatial/bod
 
 Open **Rig → Spatial** to edit, throw and inspect. The subscriptions guide covers linked query lifetimes, immutable Transit projections and resynchronization. The cue inspector shows the affected instance and effect inputs. [Spatial Studio](spatial-studio.md) · [Studio subscriptions](studio-subscriptions.md) · [Cue inspector](cue-inspector.md)
 
+## Match a strip to a fixture's extent
+
+Declare `:bounds-m {:min [0 -0.2 -1] :max [0 0.2 1]}` on a fixture type, a patch placement or a builder head. These are metre coordinates in the fixture or head's local space. In Studio, add the field in **Fixture Library → Advanced definition · EDN** before publishing and patching the type.
+
+Resolve a strip segment from the current rig before launching a cue. The reference can be a fixture or an individual head with declared bounds. For a fixture with only head channels, the first patched head stores the body's original placement and extent. The selection projects the rotated bounds onto the requested venue axis and includes the named strip's pixel centers on either boundary. Use the strip's fixture or pixel-layout ID.
+
+The projection reduces angles in degrees before computing the rotation coefficients. Selection compares the original pixel centers with the projected edges.
+
+```clojure
+(require '[tolglow.show :as show] '[tolglow.spatial.targets :as targets])
+
+(let [selector (targets/strip-segment-selector
+                (show/snapshot runtime)
+                {:strip-id :stage-strip :reference-id :front-panel :axis :x})]
+  (show/submit! runtime :command
+                {:op :cue/launch :cue-id :wash :launch {:selector selector}}))
+```
+
+Studio clients can send the same command with the resolved `:fixture-ids` selector to `POST /api/command`. Resolve the segment again for the next launch after changing the reference or pixel positions. A strip with no matching pixels yields an empty selector.
+
 ## Launch a sculpted volume as a cue
 
 **Rig → Volumes** places a sculpted region on a cue page, starts it, and shows its current shape in the rig. The same operation runs headless. For example, this ball paints blue toward its centre, follows a show variable for hue and follows the ordinary cue lifecycle.
@@ -43,6 +63,7 @@ The receipt gives the `:cue-id`, `:instance-id`, `:page-id` and `:cell`. Omit `:
 - **Fixture selection.** `#{:position}` selects heads by their world origin. Add `:beam` to include illuminated beams that enter the field, or `:aimable` to include heads that can point into it. Multiple modes take their greatest weight for each head. The beam calculation reads the last committed fixture output, fog extinction and receiver surfaces. A launch with `:targets` further restricts the field. Set `:paint {:aim :volume}` to steer reachable heads toward points inside the moving volume.
 - **Paint and scene blending.** A head inside the solid centre gets `:strength` times the final group opacity. A head within the edge feather receives a fraction. Its lower-priority look remains visible underneath. `:paint` accepts native color, dimmer, focus, direction or other registered fixture fields. Supply `:members [{:cue-id :wash} {:effect-id :sweep :launch {:params {:speed 0.3}}}]` or `:scene-id :saved-macro` to apply an existing look inside the volume. Each member gets one owned instance. All its native writes and slot transforms compose before the field weight is applied. A cue outside this group keeps its own identity.
 - **Live controls.** Cue parameters expose strength, edge feather, velocity, bounciness, size, position and the declared paint. `:sources` can take a scalar signal, a show variable, a running cue parameter, three component sources or an HSL triple. The ordinary parameter commands, modulation controls and device mappings apply. The active shape, paint, membership count and any invalid-volume fault appear in the leased `[:spatial/scene]` view. An invalid room or shape edit removes the affected field from output and emits a `:spatial/invalid-volume` event. Correcting it resumes output. If a scene member rejects its parameter overrides, the cue reports that rejection and retries when the referenced registry definition changes.
+- **Large patches.** A patch of 4,096 or more fixtures samples each field over contiguous fixture ranges on workers owned by the show. Afterglow's samplers still evaluate every head, and the ranges merge in the serial order, so the weights, aim points and their iteration order match the serial path. The default uses one fewer worker than the JVM's available processors, counting the render thread, and smaller patches stay serial. `(show/create-runtime {:spatial-sampling {:workers 1}})` keeps every patch serial. `:partitions` and `:min-fixtures` set the range count and the threshold. Membership of configured volumes and ball motion still run on the render thread. No timing has been recorded for this path. [Sampler regressions](../test/tolglow/spatial/sampling_test.clj)
 - **Save and restore.** Saving a show captures the grid cue, field, sources, launching cue/effect references and owned member runs. Loading it remaps runtime instance identities. Stopping the restored parent releases its owned scene and leaves other performers’ launches running. [Show files](show-files.md)
 
 ## Review and verification

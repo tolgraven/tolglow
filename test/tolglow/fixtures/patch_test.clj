@@ -1,10 +1,15 @@
 (ns tolglow.fixtures.patch-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [clojure.test :refer [deftest is testing]]
+            [afterglow.control.model :as control]
             [afterglow.render.frame :as render]
             [tolglow.application :as application]
             [tolglow.demo :as demo]
             [tolglow.persistence :as files]
+            [tolglow.fixtures.bounds :as bounds]
             [tolglow.fixtures.patch :as patch]
+            [tolglow.registry :as registry]
+            [tolglow.rig :as rig]
+            [tolglow.spatial.targets :as targets]
             [tolglow.show :as show]))
 
 (def pixel {:id :rgbw :name "RGBW" :version 1 :footprint 4
@@ -86,3 +91,136 @@
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"needs a target with a fog channel"
                           (patch/expand {:panel (assoc panel :heads [{:channels {:blue 2}}])}
                                         {:rig {:universe 1 :list [[:panel {:fogger placed}]]}})))))
+
+(deftest head-only-fixture-keeps-its-body-and-head-extents-distinct
+  (let [body {:min [-1 0 0] :max [1 0 0]}
+        head {:min [0 0 0] :max [1 0 0]}
+        panel {:id :panel :version 1 :bounds-m body
+               :heads [{:x 1 :channels {:red 1} :bounds-m head}
+                       {:x -1 :channels {:red 2}}]}
+        strip {:id :strip :version 1
+               :heads (mapv (fn [i] {:y (- i 2) :channels {:red (inc i)}}) (range 5))}
+        groups {:rig {:universe 1 :list [[:panel {:rotation-deg [0 0 90]}] :strip]}}
+        fixtures (patch/expand {:panel panel :strip strip} groups)
+        [first-head other-head] fixtures
+        model {:rig {:fixtures fixtures}}
+        select (fn [reference]
+                 (targets/strip-segment-selector model {:strip-id "rig-2" :reference-id reference :axis :y}))]
+    (is (= head (:bounds-m first-head)))
+    (is (= body (:fixture-bounds-m first-head)))
+    (is (= {:position [0 0 0] :rotation-deg [0 0 90]} (:fixture-bounds-pose first-head)))
+    (is (nil? (:bounds-m other-head)))
+    (is (= {:fixture-ids [:rig-2-head-2 :rig-2-head-3 :rig-2-head-4]} (select :rig-1)))
+    (is (= {:fixture-ids [:rig-2-head-4 :rig-2-head-5]} (select :rig-1-head-1)))
+    (is (thrown? clojure.lang.ExceptionInfo (select :rig-1-head-2)))
+    (testing "Head-relative body extents already in saved rigs are still readable"
+      (let [legacy (update-in model [:rig :fixtures 0]
+                              #(-> %
+                                   (dissoc :fixture-bounds-pose)
+                                   (assoc :fixture-bounds-m {:min [-2 0 0] :max [0 0 0]})))]
+        (is (= (select :rig-1)
+               (targets/strip-segment-selector legacy {:strip-id :rig-2 :reference-id :rig-1 :axis :y})))))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (patch/expand {:panel (assoc panel :bounds-m {:min [1 0 0] :max [0 0 0]})
+                                :strip strip} groups)))))
+
+(deftest head-only-body-edge-uses-the-original-placement-and-bounds
+  (let [body {:min [0.1 0 0] :max [0.2 0 0]}
+        panel {:id :panel :version 1 :bounds-m body :heads [{:x 1 :channels {:red 1}}]}
+        strip {:id :strip :version 1
+               :heads (mapv (fn [i x] {:x x :channels {:red (inc i)}})
+                            (range) [(Math/nextDown 0.1) 0.1 0.2 (Math/nextUp 0.2)])}
+        fixtures (patch/expand {:panel panel :strip strip}
+                               {:rig {:universe 1 :list [[:panel {:id :panel}] [:strip {:id :strip}]]}})
+        request {:strip-id :strip :reference-id :panel}
+        invalid-pose (assoc-in fixtures [0 :fixture-bounds-pose :position] [0 0])]
+    (is (= [1.0 0.0 0.0] (:position (first fixtures))))
+    (is (= {:fixture-ids [:strip-head-2 :strip-head-3]}
+           (targets/strip-segment-selector {:rig {:fixtures fixtures}} request)))
+    (is (some #(= [:fixtures 0 :fixture-bounds-pose] (:path %))
+              (rig/errors {:fixtures invalid-pose})))))
+
+(deftest strip-segment-includes-rotated-edges-without-selecting-nearby-pixels
+  (let [plane {:min [0 1 -1] :max [0 2 1]}
+        line {:min [-1 0 0] :max [1 0 0]}
+        diagonal {:min [-1 -1 0] :max [1 1 0]}
+        edge-pixels (fn [lo hi] [(Math/nextUp (double hi)) hi (Math/nextDown (double lo)) lo])]
+    (doseq [[label box rotation axis position positions]
+            [["A quarter turn collapses the projected interval to zero"
+              plane [0 0 90] :y [0 0 0] (edge-pixels 0.0 0.0)]
+             ["A wrapped quarter turn maps the projected axis to an unaffected axis"
+              plane [30 0 -270] :y [0 0 0] (edge-pixels 0.0 0.0)]
+             ["An oblique projection includes authored half-metre edges"
+              line [0 0 30] :y [0 0 0] (edge-pixels -0.5 0.5)]
+             ["The complementary 120 degree projection retains both edges"
+              line [0 0 120] :x [0 0 0] (edge-pixels -0.5 0.5)]
+             ["The 330 degree projection excludes the adjacent outside pixels"
+              line [0 0 330] :y [0 0 0] (edge-pixels -0.5 0.5)]
+             ["Venue translation preserves the computed edges"
+              line [0 0 30] :y [0 1.0e9 0] (edge-pixels 999999999.5 1000000000.5)]]]
+      (testing label
+        (let [panel (assoc pixel :bounds-m box)
+              strip {:id :strip :version 1
+                     :heads (mapv (fn [i coordinate] {axis coordinate :channels {:red (inc i)}})
+                                  (range) positions)}
+              fixtures (patch/expand {:panel panel :strip strip}
+                                     {:rig {:universe 1 :list [[:panel {:id :reference :position position
+                                                                      :rotation-deg rotation}]
+                                                              [:strip {:id :strip}]]}})]
+          (is (= positions (mapv (comp ({:x first :y second} axis) :position) (rest fixtures))))
+          (is (= {:fixture-ids [:strip-head-2 :strip-head-4]}
+                 (targets/strip-segment-selector {:rig {:fixtures fixtures}}
+                                                 {:strip-id :strip :reference-id :reference :axis axis}))))))
+    (doseq [angle [30 390 750]]
+      (is (= [-0.5 0.5] (bounds/world-span {:rotation-deg [0 0 angle]} line 1))))
+    (is (= [-1.4142135623730951 1.4142135623730951]
+           (bounds/world-span {:rotation-deg [0 0 45]} diagonal 1)))
+    (let [huge-span (bounds/world-span {:rotation-deg [0 0 1.0e20]} line 1)]
+      (is (= (bounds/world-span {:rotation-deg [0 0 -80.0]} line 1) huge-span))
+      (is (< (first huge-span) -0.98 0.98 (second huge-span))))))
+
+(deftest published-fixture-extent-selects-only-the-aligned-strip-pixels
+  (let [declared {:min [0 -0.2 -1] :max [0 0.2 1]}
+        panel (assoc pixel :bounds-m declared)
+        strip {:id :strip :version 1
+               :heads (mapv (fn [i]
+                              {:x i :channels {:red (inc (* 3 i)) :green (+ 2 (* 3 i)) :blue (+ 3 (* 3 i))}})
+                            (range 5))}
+        fixtures (patch/expand {:strip strip}
+                               {:rig {:universe 1 :offset 506 :list [[:strip {:id :strip-a}] [:strip {:id :strip-b}]]}})
+        effect {:id :red :version 1 :params {} :outputs {:red 1.0}}
+        cue {:id :wash :version 1 :effect-id :red}
+        model (assoc (control/new-show {:registry {:effects {:red effect} :cues {:wash cue}}})
+                     :rig {:fixtures fixtures})
+        captured (atom nil)
+        runtime (show/create-runtime {:model model :workspace-options nil :workers 1
+                                      :sink {:send! (fn [universes _] (reset! captured universes))}})
+        submit (fn [operation payload now]
+                 (let [receipt (show/submit! runtime operation payload)]
+                   (show/tick! runtime now)
+                   (deref receipt 1000 {:status :timeout})))]
+    (try
+      (doseq [invalid [nil '(1 2 3)]]
+        (is (some #(= [:bounds-m] (:path %))
+                  (registry/validate-definition :fixtures (assoc panel :bounds-m invalid)))))
+      (is (some #(= [:fixtures 0 :bounds-m] (:path %))
+                (rig/errors {:fixtures [(assoc (first fixtures) :bounds-m {:min [0 0 0] :max [1 1]})]})))
+      (is (= :accepted (:status (submit :definition {:kind :fixtures :definition panel} 0))))
+      (is (= :rejected (:status (submit :fixture-patch {:id :bad :fixture-type-id :rgbw :universe 3 :address 1
+                                                       :bounds-m {:min [2 0 0] :max [1 0 0]}} 25))))
+      (is (= :accepted (:status (submit :fixture-patch {:id :reference :fixture-type-id :rgbw
+                                                       :universe 3 :address 1 :position [2 1 0]
+                                                       :rotation-deg [0 90 0]} 50))))
+      (let [model (show/snapshot runtime)
+            selector (targets/strip-segment-selector model {:strip-id :strip-a :reference-id "reference"})]
+        (is (= declared (:bounds-m (last (get-in model [:rig :fixtures])))))
+        (is (= {:fixture-ids [:strip-a-head-2 :strip-a-head-3 :strip-a-head-4]} selector))
+        (is (= {:fixture-ids []}
+               (targets/strip-segment-selector model {:strip-id :strip-a :reference-id :reference :axis :y})))
+        (is (= :accepted (:status (submit :command {:op :cue/launch :cue-id :wash :launch {:selector selector}} 75))))
+        (is (= [[1 509 255] [1 512 255] [2 3 255]]
+               (vec (for [[universe payload] (sort-by key @captured)
+                          [index value] (map-indexed vector payload)
+                          :when (not (zero? value))]
+                      [universe (inc index) (bit-and 255 value)])))))
+      (finally (show/stop! runtime)))))

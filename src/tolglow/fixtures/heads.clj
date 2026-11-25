@@ -1,7 +1,7 @@
 (ns tolglow.fixtures.heads
   "Convert fixture-builder channel records and their heads into rig targets.
   Positions and channel offsets in a builder's heads are relative to the fixture."
-  (:require [tolglow.calibration.geometry :as geometry]
+  (:require [tolglow.fixtures.bounds :as bounds]
             [tolglow.fixtures.library :as library]))
 
 (defn- channel-map [channels]
@@ -31,15 +31,6 @@
                             (cond-> (update entry :offset - delta)
                               (:fine-offset entry) (update :fine-offset - delta))))))
 
-(defn- world-position [origin rotation local]
-  (let [[x y z] (map #(Math/toRadians (double %)) rotation)
-        c #(Math/cos %) s #(Math/sin %)]
-    (->> local
-         (geometry/rotate [[1 0 0] [0 (c x) (- (s x))] [0 (s x) (c x)]])
-         (geometry/rotate [[(c y) 0 (s y)] [0 1 0] [(- (s y)) 0 (c y)]])
-         (geometry/rotate [[(c z) (- (s z)) 0] [(s z) (c z) 0] [0 0 1]])
-         (geometry/add origin))))
-
 (defn- calibration [template]
   (reduce (fn [result axis]
             (let [center (get template (keyword (str (name axis) "-center")))
@@ -58,7 +49,11 @@
   [template options slot]
   (let [channels (channel-map (:channels template))
         heads (:heads template)
-        definition (-> template (dissoc :heads) (assoc :channels channels :calibration (calibration template)))]
+        definition (-> template (dissoc :heads) (assoc :channels channels :calibration (calibration template)))
+        placement (merge {:position [0 0 0] :rotation-deg [0 0 0]} (select-keys options [:position :rotation-deg]))
+        body (merge (select-keys template [:bounds-m]) (select-keys options [:bounds-m]))]
+    (when-let [problem (first (bounds/errors body))]
+      (throw (ex-info "Invalid grouped fixture bounds" (assoc problem :id (:id options)))))
     (if-not (seq heads)
       (let [fixture (instance definition options)]
         {:fixtures [fixture] :footprint (:footprint fixture)})
@@ -67,6 +62,7 @@
                           {:id (let [parent (:id options) id (str (name parent) "-head-" (inc i))]
                                  (if (keyword? parent) (keyword (namespace parent) id) id))
                            :optics (select-keys head [:beam-angle :zoom-range-deg :lens-radius-m :pseudo-fixture :fogger])
+                           :head-bounds (select-keys head [:bounds-m])
                            :local (mapv #(get head % 0) [:x :y :z]) :channels (channel-map (:channels head))})
                         heads)
             parts (cond->> head-parts (seq channels) (cons {:id (:id options) :channels channels}))
@@ -87,13 +83,14 @@
                                                         :warm-white :cold-white :cool-white :cyan :lime])
                          (and local (contains? channels :dimmer))))
             emitters (count (filter emits? sorted))
+            body-on-head? (and (empty? channels) (contains? body :bounds-m))
             occupied (apply max (map :last sorted))
             footprint (:footprint template occupied)
             _ (when-not (and (pos-int? footprint) (>= footprint occupied))
                 (throw (ex-info "Fixture footprint excludes a head channel" {:id (:id options)})))]
         {:footprint footprint
          :fixtures
-         (mapv (fn [i {:keys [id local channels optics first] :as part}]
+         (mapv (fn [i {:keys [id local channels optics head-bounds first] :as part}]
                  (let [start (if (zero? i) 1 first)
                        delta (dec start)
                        address (+ slot delta)
@@ -101,14 +98,18 @@
                        owns-fog? (contains? channels :fog)
                        authored (-> definition (dissoc :channel-definitions :heads)
                                     (cond-> (not owns-fog?) (dissoc :fogger))
+                                    (cond-> local (dissoc :bounds-m))
                                     (assoc :channels (rebase channels delta) :footprint (- end start))
-                                    (merge optics))
+                                    (merge optics head-bounds))
                        where (cond-> (assoc options :id id :address (inc (mod address 512)) :universe (inc (quot address 512)))
                                (not owns-fog?) (dissoc :fogger))
-                       where (cond-> where local
-                               (assoc :position (world-position (:position options [0 0 0])
-                                                                (:rotation-deg options [0 0 0]) local)))]
+                       where (cond-> where
+                               local (dissoc :bounds-m)
+                               local (assoc :position (bounds/world-position (:position placement)
+                                                                             (:rotation-deg placement) local)))]
                    (cond-> (instance authored where)
                      (pos? emitters) (assoc :emission-share (if (emits? part) (/ 1.0 emitters) 0.0))
-                     local (assoc :fixture-id (:id options)))))
+                     local (assoc :fixture-id (:id options))
+                     (and body-on-head? (zero? i)) (assoc :fixture-bounds-m (:bounds-m body)
+                                                        :fixture-bounds-pose placement))))
                (range) sorted)}))))

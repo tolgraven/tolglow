@@ -193,3 +193,32 @@
     (is (= "—" (widgets/number-label js/NaN)))
     (is (= 256 (count (distinct (codes 8)))))
     (is (= 65536 (count (distinct (codes 16)))))))
+
+(deftest encoder-touches-match-the-projected-instance-with-or-without-an-encoder
+  (let [color {:id "tint" :param "tint" :schema {:type "color"}}
+        level {:id "level" :param "level" :schema {:type "number" :bounds [0 1]}}
+        view {:instance-id "a" :parameters [(assoc color :component 0) (assoc color :component 1) level]}
+        touched (fn [view] (mapv (comp boolean :touched?) (display/encoder-slots view)))]
+    ;; Push 3 projects the parameter without an encoder; Push 2 also names one.
+    (is (= [true true false false false false false false]
+           (touched (assoc view :touched-parameter {:instance-id "a" :param "tint" :component 0}))))
+    (is (= [false true false false false false false false]
+           (touched (assoc view :touched-parameter {:instance-id "a" :param "tint" :encoder 1}))))
+    (is (every? false? (touched (assoc view :touched-parameter {:instance-id "b" :param "tint"}))))
+    (is (every? false? (touched view)))
+    (is (= [true false true false false false false false]
+           (touched (assoc view :touched-parameter {:instance-id "a" :param "tint" :encoder 0}
+                                :touched-parameters [{:instance-id "a" :param "level" :encoder 2}]))))
+    (is (= 8 (count (:touched-parameters (display/normalize-view {:touched-parameters (repeat 20 {:param "x"})})))))))
+
+(deftest touched-compound-values-extend-only-into-free-adjacent-slots
+  (let [color {:id "tint" :param "tint" :schema {:type "color"}}
+        level {:id "level" :param "level" :schema {:type "number" :bounds [0 1]}}
+        touch {:instance-id "a" :param "tint"}
+        view (fn [parameters & [t]] {:instance-id "a" :touched-parameter t :parameters parameters})
+        areas (fn [v] (mapv #(select-keys % [:start :width]) (display/compound-areas (display/encoder-slots v))))]
+    (is (= [{:start 1 :width 4}] (areas (view [level color color nil nil level] touch))))
+    (is (= [] (areas (view [level color color nil nil level]))) "untouched compounds keep their slots")
+    (is (= [] (areas (view [color level] touch))) "a single slot followed by another parameter stays in place")
+    (is (= [{:start 0 :width 8}] (areas (view [color] touch))))
+    (is (= [] (areas (view [level] {:instance-id "a" :param "level"}))) "scalars never expand")))

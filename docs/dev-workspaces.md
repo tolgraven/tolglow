@@ -41,6 +41,15 @@ new file. UTF-8 text is limited to two MiB; binary files report size/hash withou
 becoming an editable text buffer. New files require an existing parent directory.
 Directory creation/deletion/renames are not yet exposed through this file API.
 
+The manager resolves the ancestors of the configured `:workspace-parent` (and
+the application-agent `:config-path`) once at construction, so system links such
+as macOS `/var -> /private/var` or a symlinked home are accepted. The configured
+workspace parent itself, and both the settings file and its directory, are not
+followed: the default settings file lives in the workspace parent, so a parent
+replaced by a link refuses settings instead of redirecting them. A symbolic link
+that later appears anywhere on the stored canonical path refuses creation or
+settings access.
+
 File access traverses `SecureDirectoryStream` handles with `NOFOLLOW_LINKS` at
 each component. Absolute paths, `..`, `.`, `.git`, backslashes, control characters
 and symlink traversal are rejected. A write checks its hash and replaces the file

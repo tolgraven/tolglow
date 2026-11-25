@@ -224,6 +224,9 @@
   run on demand. Exclude opaque effect state from the captured environment."
   [context plan env frame index]
   (if (empty? (:traces plan)) context
-    (let [inputs (dissoc env :state) number (:number frame) rig (:fixtures frame)]
+    (let [inputs (dissoc env :state) number (:number frame) rig (:fixtures frame)
+          read-inputs (::runtime/observe (meta context))]
       (vary-meta context assoc ::runtime/observe
-                 (fn [[path target]] (observation plan inputs number rig index path target))))))
+                 (fn [[path target :as query]]
+                   (or (when read-inputs (read-inputs query))
+                       (observation plan inputs number rig index path target)))))))
