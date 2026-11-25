@@ -1,5 +1,6 @@
 (ns tolglow.authoring.variation-control-test
   (:require [afterglow.control.codecs.push-2 :as codec]
+            [afterglow.control.display :as presentation]
             [afterglow.control.devices.push-3.display :as push-3-display]
             [afterglow.control.devices.session :as session]
             [clojure.test :refer [deftest is testing]]
@@ -371,6 +372,77 @@
           (encoder! 70 [0xb0 49 0]))
         (is (empty? (:errors (session/snapshot device)))))
       (finally (show/stop! runtime)))))
+
+(defn- exercise-ratio-pads [mode]
+  (let [runtime (show/create-runtime {:model (fixture-model) :workspace-options nil})
+        callback (atom nil) surface (atom nil)
+        captured {:session-id "push3-encoder-chooser" :user-mode? true :schedule! nil
+                  :cue-variation-pads? true
+                  :layout {:pads {[0 7] {:channel 3 :note 13} [1 6] {:channel 3 :note 14}}
+                           :encoder-touches {:period {:channel 2 :note 9} :level {:channel 2 :note 10}}
+                           :encoders {:period {:channel 2 :controller 19} :level {:channel 2 :controller 20}}
+                           :buttons {:cycle {:channel 4 :controller 28}}}
+                  :encoder-bindings {:period {:param :period} :level {:param :level}}
+                  :button-bindings {:cycle :variation/cycle}
+                  :display {:device :push-3 :input :view :presentation-receipts? true
+                            :open! (constantly :capture) :render! (fn [_ view] (reset! surface view))
+                            :close! (fn [_])}
+                  :midi {:open! #(do (reset! callback %) :capture) :close! (fn [_])
+                         :send! (fn [_ _] (throw (ex-info "Unexpected Push 3 MIDI output" {})))}}]
+    (try
+      (let [{id :instance-id} (submit! runtime {:op :cue/launch :cue-id :ember})
+            device (show/connect-device! runtime :push-3 (assoc captured :expression-mode mode))
+            instance #(get-in (model runtime) [:instances id])
+            param #(get-in (instance) [:params %])
+            history #(get-in (model runtime) [:control :edit-history])
+            packet! #(while-ticking runtime (fn [] (@callback %)))
+            press! #(packet! [0x93 % 100])
+            lift! #(packet! [0x83 % 0])
+            present! #(presentation/presented! @surface)
+            overlay #(get @surface :pad-overlay)]
+        (packet! [0x92 9 127])
+        (is (= :beat-ratios (:layout (overlay))))
+        (is (= [{:position [1 6] :label "4/3" :selected? false}] (:cells (overlay))))
+        (press! 14)
+        (present!)
+        (press! 14)
+        (is (= 1 (param :period)))
+        (lift! 14)
+        (packet! [0x92 10 127])
+        (let [level (param :level)]
+          (packet! [0xb2 20 1])
+          (is (> (param :level) level)))
+        (packet! [0x82 10 0])
+        (is (= :beat-ratios (:layout (overlay))))
+        (press! 13)
+        (lift! 13)
+        (is (= 1 (param :period)))
+        (present!)
+        (press! 14)
+        (is (= 4/3 (param :period)))
+        (is (= "4/3" (:current-ratio (overlay))))
+        (is (true? (get-in (overlay) [:cells 0 :selected?])))
+        (is (= #{id} (set (keys (:instances (model runtime))))))
+        (let [expected (:value (variations/edit-parameter (model runtime) (instance) :period 1 {:mode :relative}))]
+          (packet! [0xb2 19 1])
+          (is (= expected (param :period)))
+          (is (not= 4/3 expected)))
+        (packet! [0x82 9 0])
+        (is (nil? (overlay)))
+        (present!)
+        (lift! 14)
+        (is (empty? (:open (history))))
+        (let [last-change (get-in (history) [:nodes (:cursor (history))])]
+          (is (= [:instance-param id :period] (:target last-change)))
+          (is (= 1 (:before last-change)))
+          (is (= (param :period) (:after last-change))))
+        (is (empty? (:errors (session/snapshot device)))))
+      (finally (show/stop! runtime)))))
+
+(deftest push-3-ratio-pads-share-the-encoder-gesture-and-exact-owner-value
+  (doseq [mode [:poly-aftertouch :mono-aftertouch]]
+    (testing (name mode)
+      (exercise-ratio-pads mode))))
 
 (deftest exact-ratios-and-banked-states-survive-the-owned-save-restore
   (let [runtime (show/create-runtime {:model (fixture-model) :workspace-options nil})]

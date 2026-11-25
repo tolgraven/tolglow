@@ -35,9 +35,13 @@
                           :parameter-bank :active-effect-navigation :touched-parameter :fine?])
         (assoc :saved-show-catalog (saved-show-catalog (:saved-show-catalog view))
                :pad-overlay (when-let [overlay (:pad-overlay view)]
-                              (assoc (select-keys overlay [:layout :ratio-mode])
-                                     :rows (vec (take 7 (:rows overlay)))
-                                     :cells (vec (take 64 (:cells overlay)))))
+                              (if (#{:beat-ratios "beat-ratios"} (:layout overlay))
+                                (assoc (select-keys overlay [:layout :ratio-mode :param :title :current-ratio])
+                                       :cells (mapv #(select-keys % [:position :label :selected?])
+                                                    (take 16 (:cells overlay))))
+                                (assoc (select-keys overlay [:layout :ratio-mode])
+                                       :rows (vec (take 7 (:rows overlay)))
+                                       :cells (vec (take 64 (:cells overlay))))))
                :target-picker (when-let [picker (:target-picker view)]
                                  (assoc (select-keys picker [:open? :page :pages :armed])
                                         :rows (mapv #(select-keys % [:kind :label]) (take 8 (:rows picker)))))
@@ -193,6 +197,22 @@
                    [:small (str "Saved " (inc i))]
                    (when-let [row (nth row-labels i nil)] [:strong (widgets/label row)])])]]))
 
+(defn- ratio-overlay [{:keys [param title current-ratio ratio-mode cells]}]
+  (let [by-position (into {} (map (juxt :position identity)) cells)]
+    [:section.push-targets {:aria-label "Beat ratio pad choices"}
+     [:div.push-targets-heading
+      [:strong "Beat ratios"]
+      [:span (or title (widgets/label param)) " · " current-ratio]
+      [:span (if (#{:free "free"} ratio-mode) "Free" "Preferred")]
+      [:small "Top two pad rows · Lift encoder to return"]]
+     [:div.push-ratio-pads
+      (for [y [7 6] x (range 8)
+            :let [{:keys [label selected?]} (get by-position [x y])]]
+        ^{:key (str x "-" y)}
+        [:div {:class (cond selected? "selected" (nil? label) "unavailable")
+               :aria-label (when selected? (str label ", current"))}
+         (or label "—")])]]))
+
 (defn- live-display [view]
   (let [cue (:cue view) effect (:effect view) accent (widgets/color-css (or (:swatch view) (:color cue)))
         active? (:active? cue) audio? (contains? #{:audio "audio"} (:display-mode view))
@@ -216,6 +236,7 @@
       [:span.push-status {:class (cond (:blackout? view) "blackout" (:releasing? cue) "releasing" active? "active")}
        (cond (:blackout? view) "BLACKOUT" (:releasing? cue) "RELEASE" active? "PLAYING" :else (widgets/label (:status view)))]]
      (cond
+       (#{:beat-ratios "beat-ratios"} (get-in view [:pad-overlay :layout])) [ratio-overlay (:pad-overlay view)]
        (:pad-overlay view) [variation-overlay (:pad-overlay view)]
        (get-in view [:target-picker :open?]) [target-choices (:target-picker view)]
        (contains? #{:simulator :rig "simulator" "rig"} (:display-mode view)) [scene/view view]

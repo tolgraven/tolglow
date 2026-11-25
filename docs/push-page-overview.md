@@ -55,11 +55,25 @@ choices from saved states. Choose a pad once the corresponding frame arrives.
 A cue pad held before entering the overlay keeps its release binding. This
 route was exercised with injected MIDI and USB transfers.
 
+With those options, touch an encoder bound to the selected cue's beat-ratio
+parameter while the cue grid is open. The display shows exact ratios mapped
+to the top two captured pad rows, filtered by the parameter bounds, ratio
+component limits and Preferred or Free mode. Tap a shown pad to choose it.
+Several changes from the pads or turns of that encoder share one Undo step
+when you lift. Lifting returns to the cue grid. Accent-touch retains its
+temporary audition behavior, and a second encoder keeps its own control.
+Push 2 uses the ratio encoder and Cue variations controls above. In touch
+Studio, open the running cue's **Detail → Cue variations** and enter the
+numerator and denominator.
+
 ```clojure
 (let [options {:instance-id instance-id :layout :full :seed 0}
       preview (show/cue-variation-preview runtime options)
       selection (select-keys preview [:basis :layout :seed :row-page :instance-id])]
   (show/submit! runtime (assoc selection :op :cue-variation/apply :position [0 1])))
+
+(show/submit! runtime {:op :cue-variation/ratio-set :instance-id instance-id
+                       :param :period :numerator 4 :denominator 3})
 ```
 
 The REPL, Studio and Push use the same cue projection and commands. A projection

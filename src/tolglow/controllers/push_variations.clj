@@ -1,6 +1,47 @@
 (ns tolglow.controllers.push-variations
   "Push interaction for the common cue parameter variation projection."
-  (:require [tolglow.authoring.variation-control :as variations]))
+  (:require [tolglow.authoring.cue-variations :as ratios]
+            [tolglow.authoring.variation-control :as variations]))
+
+(def ^:private ratio-grid
+  (for [[y values] [[7 [1/8 1/6 1/4 1/3 3/8 1/2 2/3 3/4]]
+                    [6 [1 4/3 3/2 2 3 4 6 8]]]
+        [x value] (map-indexed vector values)]
+    {:position [x y] :value value}))
+
+(defn- ratio-projection [{:keys [instance-id param positions] :as selection} model]
+  (let [{:keys [cue-id phase definition params]} (get-in model [:instances instance-id])
+        schema (get-in definition [:params param])
+        value (get params param)
+        mode (get-in model [:extensions variations/state-key cue-id :ratio-mode] :preferred)]
+    (when (and (= :running phase) (get-in model [:registry :cues cue-id])
+               (number? value) (ratios/ratio-schema? schema))
+      (let [choices (filterv #(and (positions (:position %))
+                                   (ratios/valid-beat-ratio? schema (:value %) mode)) ratio-grid)
+            current (if (decimal? value) (rationalize value) value)]
+        (when (seq choices)
+          {:view (assoc selection :cells choices :value current :ratio-mode mode)
+           :display {:layout :beat-ratios :param param :title (:name schema)
+                     :ratio-mode mode :current-ratio (str value)
+                     :cells (mapv (fn [{:keys [position value]}]
+                                    {:position position :label (str value) :selected? (== current value)})
+                                  choices)}})))))
+
+(defn- open-ratio-encoder [model instance-id param positions]
+  (let [selection {:layout :beat-ratios :instance-id instance-id :param param :positions (set positions)}]
+    (when (ratio-projection selection model) selection)))
+
+(defn- ratio-input [selection position presented model]
+  (let [{:keys [instance-id param]} presented
+        value (some #(when (= position (:position %)) (:value %)) (:cells presented))]
+    {:state selection
+     :encoder-sample? true
+     :commands (when (and value (not (== value (:value presented)))
+                          (= presented (:view (ratio-projection selection model))))
+                 [{:op :cue-variation/ratio-set :instance-id instance-id :param param
+                   :value value
+                   :numerator (if (ratio? value) (numerator value) value)
+                   :denominator (if (ratio? value) (denominator value) 1)}])}))
 
 (defn- projection [selection model prior]
   (let [{:keys [instance-id]} selection
@@ -71,4 +112,13 @@
 
 (def pad-overlay {:input push-2-input :project projection})
 
-(def push-3-pad-overlay {:input input :project projection})
+(def push-3-pad-overlay
+  {:open-encoder open-ratio-encoder
+   :input (fn [selection event model context]
+            (if (= :beat-ratios (:layout selection))
+              (ratio-input selection (:position event) (:presented context) model)
+              (input selection event model context)))
+   :project (fn [selection model prior]
+              (if (= :beat-ratios (:layout selection))
+                (ratio-projection selection model)
+                (projection selection model prior)))})
