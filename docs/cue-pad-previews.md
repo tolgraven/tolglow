@@ -45,19 +45,22 @@ pads show a steady running indicator instead.
 
 Each light layer is a CSS opacity animation lasting one beat, or half a beat
 for the queued flash. No JavaScript runs per frame and there are no per-pad
-timers. One clock per page aligns the animations to the transport. On each
-new projected transport sample (`:beat`, `:bpm`, `:playing?`) or transport
-generation, it sets every pad animation's start time on the document timeline
-to the local time of the last downbeat. A tempo change or seek therefore takes
-effect with the next sample. Animations already within 20 ms are left alone, so
-frame quantisation and stream jitter do not nudge them. Alignment runs only
-when the anchor changes or a pad animation starts. The clock writes
-`data-breath` and `--beat-duration` (rounded to 0.1 ms) on `#cue-grid` only
-when they change. Pads show the steady
-indicator when nothing on the page animates, the transport is paused or has no
-tempo, two seconds pass without a sample, the page is hidden or motion is
-reduced. The next sample, visibility change or reduced-motion change restarts
-them. The phase functions and the clock live in
+timers. One clock per page aligns the animations to the transport. Each new
+projected transport sample (`:beat`, `:bpm`, `:playing?`) gives the local time
+of the last downbeat, and the clock holds every pad animation's start time on
+the document timeline there. Stream and frame latency only ever delay a
+sample, so the clock keeps the least-delayed sample of the last second and
+moves the start time only when that estimate is more than 20 ms away. Samples
+that were delayed longer, and start times a whole beat apart, change nothing.
+A new tempo, a new transport generation (a seek or restart) or a jump of more
+than 100 ms is followed with the next sample. The clock reads the animations
+when a sample arrives or a pad animation starts. It writes `data-breath` and
+`--beat-duration` (rounded to 0.1 ms) on `#cue-grid` only when they change.
+Pads show the steady indicator when nothing on the page animates, the
+transport is paused or has no tempo, two seconds pass without a sample, the
+page is hidden or motion is reduced. One timer per sample decides that the
+stream is silent. The next sample, visibility change or reduced-motion change
+restarts the pads. The phase functions and the clock live in
 [`pad_breath.cljs`](../src/studio/tolglow/studio/pad_breath.cljs).
 
 From the REPL, the same inputs are `(:transport (show/snapshot runtime))` and

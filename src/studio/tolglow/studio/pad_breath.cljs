@@ -4,11 +4,12 @@
   animations on each pad, layered over its live preview colour. There is no
   per-frame JavaScript and no per-pad timer.
 
-  One clock per page aligns those animations to the transport. When a new
-  transport sample arrives it sets each animation's start time on the
-  document timeline so that its progress equals the beat phase. The only
-  musical-time arithmetic here interpolates the latest projected sample
-  (beat, bpm, playing?). A seek or restart arrives as a new transport
+  One clock per page aligns those animations to the transport. Each
+  projected transport sample gives the local time of the last downbeat. The
+  clock holds every animation's start time on the document timeline at the
+  least-delayed recent sample, so that its progress equals the beat phase.
+  The only musical-time arithmetic here interpolates the latest projected
+  sample (beat, bpm, playing?). A seek or restart arrives as a new transport
   generation and re-anchors immediately."
   (:require [reagent.core :as r]
             [tolglow.studio.events :as events]))
@@ -30,11 +31,22 @@
   #{"pad-breath" "pad-breath-held" "pad-release-blink" "pad-queued-flash" "pad-queued-dot"})
 
 (def sync-tolerance-ms
-  "Leave an animation alone when it is already this close to the transport.
-  The document timeline advances once per display frame and samples arrive
-  with receive jitter, so a tighter bound would reset every pad on most
-  samples and add visible edge jitter."
+  "Leave the pad animations alone while the least-delayed recent sample is this
+  close to the start time they hold. The document timeline advances once per
+  display frame, so a tighter bound would follow frame quantisation."
   20)
+
+(def latency-window-ms
+  "How long a sample counts toward the least-delayed estimate. The stream
+  delivers about thirty samples a second, so a second holds enough of them to
+  include one that arrived promptly."
+  1000)
+
+(def resync-ms
+  "A sample this far from the held start time is a jump in the transport, such
+  as a clock source correcting its phase, rather than receive jitter. It is
+  followed at once."
+  100)
 
 (defn sample-key
   "Identity of one projected transport sample. Unrelated re-renders reuse the
@@ -138,14 +150,47 @@
   (let [half (/ period 2)]
     (- (mod (+ (- a b) half) period) half)))
 
-(defn- align! [host el anchor]
-  (when-let [target (start-time anchor)]
-    (let [duration (beat-duration-ms anchor)]
-      (doseq [^js animation ((:animations host) el)]
-        (let [current (.-startTime animation)]
-          (when (or (nil? current)
-                    (> (js/Math.abs (phase-offset-ms current target duration)) sync-tolerance-ms))
-            (set! (.-startTime animation) target)))))))
+(defn next-lock
+  "The start time the pad animations should hold after the sample `anchor`.
+  Stream and frame latency only ever delay a sample, so among recent samples
+  the one with the earliest downbeat is the closest to the transport. The
+  lock moves to that least-delayed sample once it is more than the tolerance
+  away and holds through samples that were delayed longer. A new tempo, a new
+  transport generation or a jump beyond receive jitter starts a fresh
+  estimate from the sample.
+
+  `lock` is nil or a map of :start, :duration, :generation, the :key of its
+  latest sample and :recent, a vector of [local-ms offset-from-start] for
+  each sample in the window."
+  [lock {:keys [at generation key] :as anchor}]
+  (let [duration (beat-duration-ms anchor)
+        target (start-time anchor)
+        offset (when (and lock (= duration (:duration lock)) (= generation (:generation lock)))
+                 (phase-offset-ms target (:start lock) duration))]
+    (cond
+      (and lock (= key (:key lock))) lock
+
+      (or (nil? offset) (> (js/Math.abs offset) resync-ms))
+      {:start target :duration duration :generation generation :key key :recent [[at 0]]}
+
+      :else
+      (let [recent (conj (filterv #(< (- at (first %)) latency-window-ms) (:recent lock)) [at offset])
+            least (apply min (map second recent))]
+        (if (> (js/Math.abs least) sync-tolerance-ms)
+          (assoc lock :key key :start (+ (:start lock) least)
+                 :recent (mapv (fn [[sampled-at from-start]] [sampled-at (- from-start least)]) recent))
+          (assoc lock :key key :recent recent))))))
+
+(def ^:private held-within-ms
+  "An animation holds the locked start time when it reads back this close to
+  it. A new animation starts wherever the browser created it and is moved."
+  1)
+
+(defn- align! [host el {:keys [start duration]}]
+  (doseq [^js animation ((:animations host) el)]
+    (let [current (.-startTime animation)]
+      (when (or (nil? current) (> (js/Math.abs (phase-offset-ms current start duration)) held-within-ms))
+        (set! (.-startTime animation) start)))))
 
 (declare refresh!)
 
@@ -160,12 +205,12 @@
 
 (defn refresh!
   "Apply the current mode to the grid. Writes the grid only when its mode or
-  beat duration changed. Aligns animations only when the anchor, grid or
-  duration changed while live; new pad animations align on animationstart.
-  Keeps a single stale-stream timer per anchor. A sample whose timer ran stays
-  stale until the next sample replaces it."
+  beat duration changed. While live, each new sample updates the lock and the
+  animations are checked against it; new pad animations also align on
+  animationstart. Keeps a single stale-stream timer per anchor. A sample whose
+  timer ran stays stale until the next sample replaces it."
   [ctl]
-  (let [{:keys [host anchor animate? timer timer-key written aligned expired]} @ctl
+  (let [{:keys [host anchor animate? timer timer-key written aligned expired lock]} @ctl
         now ((:now host))
         el ((:grid host))
         stale? (and (some? expired) (= expired (:key anchor)))
@@ -177,17 +222,18 @@
         wanted {:el el :mode next-mode :duration (or duration (when-not fresh? (:duration written)))}
         live? (and el (= :live next-mode))
         alignment (when live? [el (:key anchor) duration])
+        lock (when live? (next-lock lock anchor))
         keep-timer? (and live? timer (= timer-key (:key anchor)))
         stale-in (when (and live? (not keep-timer?)) (max 0 (- (+ (:at anchor) max-extrapolation-ms) now)))]
     (when (and timer (not keep-timer?)) ((:clear-timeout host) timer))
     (when (and el (not= wanted written))
       ((:write! host) el next-mode write-duration))
-    (when (and live? (not= alignment aligned)) (align! host el anchor))
+    (when (and live? (not= alignment aligned)) (align! host el lock))
     (let [key (:key anchor)
           timer (cond keep-timer? timer
                       stale-in ((:set-timeout host) #(expire! ctl key) stale-in))]
       (swap! ctl assoc :timer timer :timer-key (when timer key) :mode next-mode
-             :written (when el wanted) :aligned alignment :expired (when stale? expired)))))
+             :written (when el wanted) :aligned alignment :lock lock :expired (when stale? expired)))))
 
 (defn sample!
   "Record the latest projection and refresh. Reads the clock before updating
@@ -201,9 +247,9 @@
 (defn align-now!
   "A pad animation just started; bring it into phase."
   [ctl]
-  (let [{:keys [host anchor mode]} @ctl
+  (let [{:keys [host lock mode]} @ctl
         el ((:grid host))]
-    (when (and el (= :live mode)) (align! host el anchor))))
+    (when (and el lock (= :live mode)) (align! host el lock))))
 
 (defn attach! [ctl]
   (let [unwatch ((:watch (:host @ctl)) {:changed #(refresh! ctl) :animation-started #(align-now! ctl)})]
@@ -213,7 +259,8 @@
   (let [{:keys [host timer unwatch]} @ctl]
     (when timer ((:clear-timeout host) timer))
     (when unwatch (unwatch))
-    (swap! ctl assoc :timer nil :timer-key nil :unwatch nil :mode nil :written nil :aligned nil :animate? false)))
+    (swap! ctl assoc :timer nil :timer-key nil :unwatch nil :mode nil :written nil :aligned nil :lock nil
+           :animate? false)))
 
 (defn- motion-query []
   (when (exists? js/matchMedia) (js/matchMedia "(prefers-reduced-motion: reduce)")))

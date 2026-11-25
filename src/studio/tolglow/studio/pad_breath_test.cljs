@@ -246,6 +246,53 @@
       (is (= [1 1] [(.-sets animation) (.-sets flash)]) "one write, not one per beat")
       (is (near? 4875 (.-startTime animation))))))
 
+(deftest the-least-delayed-sample-sets-the-phase
+  ;; Stream and frame latency only ever delay a sample. Measured on loopback,
+  ;; consecutive samples differ by 25 to 33 ms, more than the tolerance.
+  (let [animation (counting-animation "pad-breath")
+        state (atom {:now 5000 :grid :grid :animations [animation] :writes [] :timers {} :walks 0})
+        ctl (breath/controller (fake-host state))
+        sample! (fn [now delay]
+                  (swap! state assoc :now now)
+                  (breath/sample! ctl {:beat (+ 8.25 (/ (- now 5000 delay) 500)) :bpm 120 :playing? true
+                                       :time-ms (- now 4000 delay)}
+                                  0 true))
+        phase-start #(mod (.-startTime animation) 500)]
+    (breath/attach! ctl)
+    (sample! 5000 30)
+    (is (near? 405 (phase-start)) "the first sample is all the clock has: 30 ms after the true downbeat at 375")
+    (testing "a slightly fresher sample within the tolerance changes nothing"
+      (sample! 5033.3 25)
+      (is (= 1 (.-sets animation))))
+    (testing "a sample that arrived sooner is closer to the transport and is followed at once"
+      (sample! 5066.6 5)
+      (is (near? 380 (phase-start)))
+      (is (= 2 (.-sets animation))))
+    (testing "samples delayed beyond the tolerance do not nudge the pads"
+      (sample! 5100 38)
+      (sample! 5133.3 30)
+      (sample! 5166.6 12)
+      (is (near? 380 (phase-start)))
+      (is (= 2 (.-sets animation))))
+    (testing "when every sample for a second is later, the transport itself moved"
+      (doseq [now (range 5200 6040 33.3)] (sample! now 35))
+      (is (= 2 (.-sets animation)) "the fresher sample still counts within its window")
+      (doseq [now (range 6040 6200 33.3)] (sample! now 35))
+      (is (near? 410 (phase-start)))
+      (is (= 3 (.-sets animation)))
+      (is (<= (count (:recent (:lock @ctl))) 31) "the estimate keeps one window of samples"))
+    (testing "a jump far beyond receive jitter is a transport change and is followed at once"
+      (sample! 6233.3 235)
+      (is (near? 110 (phase-start)))
+      (is (= 4 (.-sets animation))))
+    (testing "a tempo change or a seek starts a fresh estimate"
+      (swap! state assoc :now 6300)
+      (breath/sample! ctl {:beat 20.5 :bpm 100 :playing? true :time-ms 2300} 0 true)
+      (is (near? 6000 (.-startTime animation)) "half a 600 ms beat before now")
+      (breath/sample! ctl {:beat 3.25 :bpm 100 :playing? true :time-ms 2300} 1 true)
+      (is (near? 6150 (.-startTime animation)))
+      (is (= 6 (.-sets animation))))))
+
 (def ^:private cues
   [{:id :ember :name "Ember"} {:id :haze :name "Haze"} {:id :strobe :name "Strobe"}
    {:id :wash :name "Wash"} {:id :gate :name "Gate"} {:id :idle :name "Idle"}])
