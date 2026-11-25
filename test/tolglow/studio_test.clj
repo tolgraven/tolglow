@@ -196,6 +196,65 @@
       (is (= authored (:pages (show/snapshot r))))
       (is (nil? (get-in @(:state r) [:model :registry :cues :attempted]))))))
 
+(deftest studio-and-repl-share-committed-compositing-order
+  (let [model (reduce #(assoc-in %1 [:registry :effects %2 :envelope :attack] {:beats 0}) (demo/model) [:ember :ice])
+        r (show/start! {:model model :recovery false})
+        submit! #(deref (show/submit! r %) 5000 ::missing)
+        launch! (fn [cue priority level]
+                  (:instance-id
+                    (submit! {:op :cue/launch :cue-id cue :launch {:priority priority :params {:level level}}})))
+        handler (studio/handler r)
+        ring-state #(json/read-str (:body (handler {:request-method :get :uri "/api/state"})) :key-fn keyword)
+        ring-command! (fn [payload]
+                        (let [response (handler {:request-method :post :uri "/api/command"
+                                                 :headers {"content-type" "application/transit+json"
+                                                           "accept" "application/transit+json"
+                                                           "x-tolglow-form" "studio-v1"}
+                                                 :body (java.io.ByteArrayInputStream.
+                                                         (.getBytes (wire/encode payload) "UTF-8"))})]
+                          [(:status response) (wire/decode (:body response))]))
+        emitted #(get-in (show/snapshot r) [:output :values :head-1 :emitted-color])]
+    (try
+      (let [first-ember (launch! :ember -1 0.86)
+            second-ember (launch! :ember 0 0.48)
+            ice (launch! :ice 4 0.74)
+            view (ring-state)
+            before (emitted)
+            move {:op "instance/move-after" :source {:adapter "web" :session-id "studio-order"}
+                  :epoch (:epoch view) :runtime-id (:runtime-id view) :expected-revision (:revision view)
+                  :instance-id first-ember :after-instance-id ice}
+            [status ack] (ring-command! move)
+            after (emitted)
+            [stale-status stale] (ring-command! (assoc move :instance-id second-ember))]
+        (is (= 3 (count (set [first-ember second-ember ice]))))
+        (is (= [first-ember second-ember ice] (:active-instance-order view)))
+        (is (= [200 :accepted [second-ember ice first-ember]]
+               [status (:status ack) (:instance-ids ack)]))
+        (is (= (:instance-ids ack) (:active-instance-order (ring-state))
+               (:active-instance-order (show/snapshot r))))
+        (is (= [422 :stale-revision] [stale-status (:code stale)]))
+        (is (= [[first-ember 0.86] [second-ember 0.48] [ice 0.74]]
+               (mapv (juxt :id #(get-in % [:params :level])) (:instances (show/snapshot r)))))
+        (is (> (last before) (first before) 0))
+        (is (> (first after) 0.8 (last after)))
+        (let [saved (show/export-show-source r)]
+          (is (= :accepted (:status (submit! {:op :instance/move-after :instance-id ice
+                                              :after-instance-id first-ember :expected-revision (:revision ack)}))))
+          (is (= [second-ember first-ember ice] (:active-instance-order (ring-state))))
+          (is (= :accepted (:status (deref (show/submit! r :import {:source saved}) 5000 ::missing))))
+          (let [restored (show/snapshot r)
+                by-id (into {} (map (juxt :id #(get-in % [:params :level]))) (:instances restored))
+                [restored-second restored-ice restored-first] (:active-instance-order restored)]
+            (is (= [0.48 0.74 0.86] (mapv by-id (:active-instance-order restored))))
+            (is (= :accepted (:status (submit! {:op :instance/end :instance-id restored-first}))))
+            (let [new-ember (launch! :ember 4 0.92)]
+              (is (not= restored-first new-ember))
+              (is (= :instance-not-running (:code (submit! {:op :instance/move-after :instance-id restored-first
+                                                            :after-instance-id restored-ice}))))
+              (is (some #{restored-second} (:active-instance-order (ring-state))))
+              (is (some #{new-ember} (:active-instance-order (ring-state))))))))
+      (finally (app/stop! r)))))
+
 (deftest graphical-rig-edits-preserve-existing-string-identities
   (with-runtime [r]
     (let [initial (get-in @(:state r) [:model :rig])
