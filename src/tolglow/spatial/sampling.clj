@@ -186,7 +186,9 @@
       (try
         (run! (fn [task] (.execute executor ^Runnable task)) tasks)
         (catch RejectedExecutionException _)
-        (catch OutOfMemoryError _)))
+        (catch OutOfMemoryError error
+          (when-not (some-> (.getMessage error) (.contains "native thread"))
+            (throw error)))))
     ;; Workers take the head of the queue. This thread claims unstarted work
     ;; from the tail. A FutureTask runs once, so the other side skips it. A
     ;; full or closing pool therefore still completes the frame here.
