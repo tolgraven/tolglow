@@ -206,3 +206,6 @@ kind resolution and complete universe bytes, then compares the same authored
 inputs with the released scalar and batch compilers. The report records exact
 byte differences for this scenario. The historical JVM runs separately from the
 functional runtime and sends its completed frames to an in-memory capture.
+The fixture-local tilt translation has its own [verified receipt](../dev/tolglow/legacy_frame_oracle/translated-report.edn).
+It checks all universe bytes, the two aim reachability results, and the exact
+reasons for the 39 remaining historical byte differences.

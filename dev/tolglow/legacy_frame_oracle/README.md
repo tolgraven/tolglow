@@ -27,6 +27,14 @@ AFTERGLOW_ROOT=/path/to/afterglow-released lein run -m tolglow.legacy-frame-orac
   "$oracle/legacy.edn" /tmp/paired-report.edn "$oracle/paired-report.edn"
 ```
 
+Verify the original and fixture-translated outputs together.
+
+```sh
+AFTERGLOW_ROOT=/path/to/afterglow-released lein run -m tolglow.legacy-frame-oracle.compare \
+  "$oracle/legacy.edn" /tmp/paired-report.edn "$oracle/paired-report.edn" \
+  /tmp/translated-report.edn "$oracle/translated-report.edn"
+```
+
 To recapture historical data, create detached worktrees at the two historical commits above. Supply the application dependency JARs from a warmed classpath, with Clojure replaced by `org.clojure/clojure:1.11.4` and Java3D replaced by `java3d/vecmath`, `java3d/j3d-core` and `java3d/j3d-core-utils`, all `1.3.1`. `thi.ng/color` 1.5.1, `thi.ng/math` 0.3.2 and Beat Link 8.0.0 were present in the warmed dependencies. The remaining dependencies came from the warmed application classpath, so the run does not reconstruct the historical dependency lock. Use only JAR entries in `LEGACY_JARS`.
 
 ```sh
@@ -57,5 +65,31 @@ The two independent historical JVM runs produced identical EDN captures. The pai
 - At 300 ms, both lanes resolve the white cover, with legacy RGBW `[255 255 255 255]` and paired `[0 0 0 255]`. The legacy conversion writes RGB and computes white separately from HSL. The paired fixture subtracts its minimum RGB component to obtain the white channel. [Historical color resolver](https://github.com/tolgraven/afterglow/blob/4f7a82eab41862f80e43d91a8c2530b00aa51925/src/afterglow/effects/color.clj#L91-L109) · [Paired RGBW packing](https://github.com/tolgraven/afterglow/blob/d0ee56528aafb6d73cbe86b53d618a23b64c081e/src/afterglow/render/frame.clj#L609-L648)
 - With the same calibration and front point, legacy pan/tilt bytes are `[132 7 0 0]` and paired bytes are `[131 138 24 133]`. With the back point and movement history they are `[216 93 14 252]` and `[216 53 0 0]`. The old solver selects among pan/tilt solutions using prior movement and the historical channel writer packs coarse and fine bytes separately. The paired solver converts local yaw/elevation and packs the normalized result as a continuous 16-bit value. [Historical transform](https://github.com/tolgraven/afterglow/blob/4f7a82eab41862f80e43d91a8c2530b00aa51925/src/afterglow/transform.clj#L333-L374) · [Historical channel writer](https://github.com/tolgraven/afterglow/blob/4f7a82eab41862f80e43d91a8c2530b00aa51925/src/afterglow/effects/channel.clj#L18-L44) · [Paired aim](https://github.com/tolgraven/afterglow/blob/d0ee56528aafb6d73cbe86b53d618a23b64c081e/src/afterglow/render/frame.clj#L410-L456)
 - The paired packer defaults a fixture with emitters to full dimmer when no contribution sets it. The legacy frame clears unassigned channels. The idle RGBW and shutter bytes are zero in both lanes. [Historical buffer clearing](https://github.com/tolgraven/afterglow/blob/4f7a82eab41862f80e43d91a8c2530b00aa51925/src/afterglow/show.clj#L170-L174) · [Paired dimmer packing](https://github.com/tolgraven/afterglow/blob/d0ee56528aafb6d73cbe86b53d618a23b64c081e/src/afterglow/render/frame.clj#L615-L644)
+
+## Fixture-local tilt translation
+
+The historical fixture's positive tilt scale applies to rotation about +X.
+The paired renderer uses positive elevation. The translated replay changes this
+fixture's paired scale to `[0 -256]` and keeps the original capture and unadapted
+receipt. It compares all 4,096 output bytes in each paired compiler lane, checks
+the same command history, contribution order, intents and events, and verifies
+that only DMX addresses 39 and 40 change from the unadapted replay. [Historical tilt convention](https://github.com/tolgraven/afterglow/blob/4f7a82eab41862f80e43d91a8c2530b00aa51925/src/afterglow/transform.clj#L278-L298) · [Paired elevation convention](https://github.com/tolgraven/afterglow/blob/d0ee56528aafb6d73cbe86b53d618a23b64c081e/src/afterglow/render/frame.clj#L414-L454)
+
+The front aim at 100, 200, 300 and 750 ms is outside the calibrated tilt
+range. Both lanes emit `[0 0]` at addresses 39 and 40. The back aim at 400
+and 500 ms is reachable and gives `[15 12]` with the continuous 16-bit
+encoder, representing the same tilt as the historical `[14 252]` within
+their quantization. The translated report lists each remaining change as
+`[universe address legacy paired reason]`. [16-bit encoder](https://github.com/tolgraven/afterglow/blob/d0ee56528aafb6d73cbe86b53d618a23b64c081e/src/afterglow/render/dmx.clj#L4-L15) · [Translated receipt](translated-report.edn)
+
+| Reason | Changed bytes |
+| --- | ---: |
+| Pan word encoding of equivalent solved pan | 10 |
+| Tilt word encoding of equivalent solved tilt | 4 |
+| Implicit fixture dimmer | 3 |
+| Declared RGBW extraction | 13 |
+| White-byte rounding at the same intensity | 3 |
+| Componentwise HTP with RGBW extraction | 6 |
+| Total | 39 |
 
 This witness covers one fixture in one universe. The checked-in 36-input functional replay remains the separate witness for worker reordering and seeded running-instance state. Cross-universe legacy output, live schedulers, graceful fades, larger rigs and physical fixtures require their own captures.

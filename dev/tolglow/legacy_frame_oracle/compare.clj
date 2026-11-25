@@ -2,6 +2,7 @@
   "Run the corresponding authored scenario with the functional runtime."
   (:require [afterglow.control.instance-order :as instance-order]
             [afterglow.control.model :as control]
+            [afterglow.render.frame :as render]
             [afterglow.runtime.engine :as engine]
             [afterglow.runtime.replay :as replay]
             [tolglow.compiler :as compiler]
@@ -10,6 +11,11 @@
 
 (def rig [(assoc scenario/fixture :channels scenario/channels
                  :calibration scenario/calibration :rgbw-policy :extract-min)])
+
+(def ^:private translated-rig
+  ;; The original scale is for rotation about +X. The paired fixture expects
+  ;; positive elevation, which is the opposite sign for this fixture.
+  (update-in rig [0 :calibration :tilt 1] -))
 
 (defn- definitions [authored-rgb]
   (for [[id {:keys [kind attribute aim blend dmx percent]}] (sort-by key scenario/cues)]
@@ -31,7 +37,7 @@
       (throw (ex-info "Unexpected command status" {:command payload :ack (:ack result)})))
     result))
 
-(defn- initial-show [authored-rgb]
+(defn- initial-show [rig authored-rgb]
   (reduce (fn [model {:keys [id] :as definition}]
             (let [published (:model (command model [:definition id]
                                              {:op :registry/publish :kind :effects :definition definition}
@@ -45,8 +51,8 @@
 (defn- ordering [model]
   (mapv :cue-id (instance-order/ordered model)))
 
-(defn- run-scenario [authored-rgb compile-effect]
-  (loop [operations (map-indexed vector scenario/operations), model (initial-show authored-rgb)
+(defn- run-scenario [rig authored-rgb compile-effect]
+  (loop [operations (map-indexed vector scenario/operations), model (initial-show rig authored-rgb)
          previous nil, launches {}, first-launches {}, history [], frames []]
     (if-let [[index [op time-ms label :as input]] (first operations)]
       (let [beat (/ time-ms 500.0)
@@ -66,6 +72,8 @@
             (recur next-operations model output launches first-launches history
                    (conj frames {:label label :epoch (:epoch model) :time-ms time-ms :beat beat
                                  :active ordering :contributions sources
+                                 :aim (:aim (first (render/project-compact (:compact output))))
+                                 :intents (:intents result) :events (:events result)
                                  :universes (into (sorted-map)
                                                   (map (fn [[id bytes]] [id (scenario/unsigned-bytes bytes)]))
                                                   (:universes output))})))
@@ -105,12 +113,11 @@
              :when (not= before after)]
          [universe (inc index) before after])))
 
-(defn- compare-scenario [legacy]
-  (ensure-equal! "Wrong legacy source" scenario/legacy-source (:source legacy))
-  (ensure-equal! "Wrong legacy scenario seed" scenario/seed (:seed legacy))
-  (let [paired (run-scenario (:authored-rgb legacy) (batch/compiler-for-rig rig))
-        scalar (run-scenario (:authored-rgb legacy) compiler/compile-effect)
-        frame-fields [:label :epoch :time-ms :active]
+(def ^:private frame-fields [:label :epoch :time-ms :active])
+
+(defn- compare-scenario [legacy rig]
+  (let [paired (run-scenario rig (:authored-rgb legacy) (batch/compiler-for-rig rig))
+        scalar (run-scenario rig (:authored-rgb legacy) compiler/compile-effect)
         history-fields [:input :epoch :active :outcome]
         project (fn [fields entries] (mapv #(select-keys % fields) entries))]
     (ensure-equal! "Scalar and typed execution must agree" scalar paired)
@@ -125,25 +132,92 @@
       (doseq [{:keys [sources]} (:reductions old)]
         (ensure-equal! "Contribution order differs within a legacy assignment chain"
                        sources (filterv (set sources) (:contributions current)))))
-    {:source scenario/paired-source
-     :matching-lifecycle-operations (count (:history paired))
-     :stale-rejection (:rejection (last (:history paired)))
-     :frames (mapv (fn [old current]
-                     (assoc (select-keys current frame-fields)
-                            :legacy-reductions (:reductions old)
-                            :legacy-resolution-order (:resolution-order old)
-                            :paired-contributions (:contributions current)
-                            :byte-differences (byte-differences (:universes old) (:universes current))))
-                   (:frames legacy) (:frames paired))}))
+    paired))
 
-(defn -main [& [legacy-path report-path expected-path]]
+(defn- original-report [legacy paired]
+  {:source scenario/paired-source
+   :matching-lifecycle-operations (count (:history paired))
+   :stale-rejection (:rejection (last (:history paired)))
+   :frames (mapv (fn [old current]
+                   (assoc (select-keys current frame-fields)
+                          :legacy-reductions (:reductions old)
+                          :legacy-resolution-order (:resolution-order old)
+                          :paired-contributions (:contributions current)
+                          :byte-differences (byte-differences (:universes old) (:universes current))))
+                 (:frames legacy) (:frames paired))})
+
+(defn- difference-reason [label [_ address :as change]]
+  (case address
+    (37 38) :pan-word-encoding
+    (39 40) :tilt-word-encoding
+    42 :implicit-dimmer
+    (44 45 46 47)
+    (cond
+      (and (= 47 address) (#{:base-with-override :base-revealed :relaunch-survives} label))
+      :white-rounding
+      (and (#{44 46 47} address) (#{:overlapping-colors :back-aim-with-history} label))
+      :htp-and-rgbw-extraction
+      :else :rgbw-extraction)
+    (throw (ex-info "Unexpected changed channel in translated render" {:frame label :change change}))))
+
+(defn- translated-frame [fixture old original current]
+  (let [{:keys [label aim universes]} current
+        {:keys [address universe]} fixture
+        tilt-indices (mapv #(+ (- address 2) %) (get-in fixture [:channels :tilt]))
+        reachable? (when aim (render/aim-reachable? fixture aim))
+        expected-reachable? (case label
+                              (:back-aim-with-history :base-revealed) true
+                              (:base-with-override :overlapping-colors :equal-priority-cover :relaunch-survives) false
+                              (:idle :after-restart) nil)
+        tilt-bytes (if expected-reachable? [15 12] [0 0])
+        expected-universes (reduce (fn [output [index value]] (assoc-in output [universe index] value))
+                                   (:universes original) (map vector tilt-indices tilt-bytes))]
+    (ensure-equal! "Translated fixture changed frame state, contribution order, aim, or events"
+                   (dissoc original :universes) (dissoc current :universes))
+    (ensure-equal! "Unexpected translated aim reachability" expected-reachable? reachable?)
+    ;; Prove the complete output by changing only the two predicted tilt bytes.
+    (ensure-equal! "Translated universe must match the predicted tilt bytes and all other channels"
+                   expected-universes universes)
+    (assoc (select-keys current frame-fields)
+           :tilt-bytes tilt-bytes :aim-reachable? reachable?
+           :byte-differences (mapv #(conj % (difference-reason label %))
+                                   (byte-differences (:universes old) universes)))))
+
+(defn- translated-report [legacy original]
+  (let [translated (compare-scenario legacy translated-rig)
+        fixture (first translated-rig)
+        frames (mapv (partial translated-frame fixture)
+                     (:frames legacy) (:frames original) (:frames translated))]
+    (ensure-equal! "Translated fixture changed command history" (:history original) (:history translated))
+    {:source scenario/paired-source
+     :calibration (:calibration fixture)
+     :matching-lifecycle-operations (count (:history translated))
+     :stale-rejection (:rejection (last (:history translated)))
+     :difference-totals (into (sorted-map) (frequencies (map peek (mapcat :byte-differences frames))))
+     :frames frames}))
+
+(defn reports
+  "Return the original paired comparison and optionally the fixture-local tilt translation."
+  [legacy translate?]
+  (ensure-equal! "Wrong legacy source" scenario/legacy-source (:source legacy))
+  (ensure-equal! "Wrong legacy scenario seed" scenario/seed (:seed legacy))
+  (let [paired (compare-scenario legacy rig)]
+    (cond-> {:original (original-report legacy paired)}
+      translate? (assoc :translated (translated-report legacy paired)))))
+
+(defn- write-report! [report report-path expected-path]
+  (scenario/write-edn! report-path report)
+  (when expected-path
+    (ensure-equal! "Parity evidence changed, review the emitted report"
+                   (scenario/read-edn expected-path) report))
+  (println (:matching-lifecycle-operations report) "lifecycle operations matched")
+  (println (count (:frames report)) "complete frames compared, with"
+           (transduce (map (comp count :byte-differences)) + (:frames report)) "changed bytes"))
+
+(defn -main [& [legacy-path report-path expected-path translated-path translated-expected-path]]
   (when-not (and legacy-path report-path)
-    (throw (ex-info "Supply legacy capture, report, and optional expected report paths" {})))
-  (let [report (compare-scenario (scenario/read-edn legacy-path))]
-    (scenario/write-edn! report-path report)
-    (when expected-path
-      (ensure-equal! "Parity evidence changed, review the emitted report"
-                     (scenario/read-edn expected-path) report))
-    (let [counts (mapv (comp count :byte-differences) (:frames report))]
-      (println (:matching-lifecycle-operations report) "lifecycle operations matched")
-      (println (count counts) "complete frames compared, with" (reduce + counts) "changed bytes"))))
+    (throw (ex-info "Supply legacy capture, report, and optional original and translated report paths" {})))
+  (let [{:keys [original translated]} (reports (scenario/read-edn legacy-path) (some? translated-path))]
+    (write-report! original report-path expected-path)
+    (when translated-path
+      (write-report! translated translated-path translated-expected-path))))

@@ -12,9 +12,12 @@
    :afterglow "d0ee56528aafb6d73cbe86b53d618a23b64c081e"})
 
 (def seed 206)
+
 (def fixture {:id :beam :universe 1 :address 37 :position [0.6 1.5 0.0]})
+
 (def channels {:pan [1 2] :tilt [3 4] :movement-speed 5 :dimmer 6 :shutter 7
                :red 8 :green 9 :blue 10 :white 11 :auto 12 :control 13})
+
 (def calibration {:pan [127 85] :tilt [0 256]})
 
 ;; Color spreads feed the original Tolglow color authoring function. The realized
