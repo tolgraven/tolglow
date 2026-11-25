@@ -195,8 +195,11 @@
   (assoc-in db [:drafts key] {:op op :fields fields :epoch (get-in db [:show :epoch]) :runtime-id (get-in db [:show :runtime-id])}))
 
 (def ^:private history-path [:ui :operator-history])
+
 (def ^:private history-http-timeout-ms 7000)
+
 (def ^:private history-confirmation-ms 30000)
+
 (def ^:private history-waiting-message "Waiting for the live show to confirm the history command.")
 
 (defn history-inspector [db]

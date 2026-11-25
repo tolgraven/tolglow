@@ -234,6 +234,7 @@
       (await-acknowledgement (submit! operation payload)))))
 
 (def ^:private history-operations #{:history/undo :history/redo :history/select})
+
 (def ^:private history-ack-timeout-ms 5000)
 
 (defn- history-handler [submit-history!]
