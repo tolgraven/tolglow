@@ -48,6 +48,7 @@
             [tolglow.lighting-levels :as lighting-levels]
             [tolglow.clock :as show-clock]
             [tolglow.cue-timing :as cue-timing]
+            [tolglow.expressive :as expressive]
             [tolglow.signals :as signals]
             [afterglow.reactive :as graph]
             [tolglow.observations :as observations]
@@ -1336,6 +1337,7 @@
                                      updated (advance-light-scenes runtime (lighting/publish with-fog frame) patch frame time-ms bypass?)]
                                  (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
                         :output frame :variable-observation variables
+                        ::show-events/intent-emissions (:intent-emissions result)
                         :preview-hdr (when (:hdr? frame-input) (or hdr-opts {}))
                         :keyframes (:keyframes result) :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
                         :lighting-history (:state finished) :fault-events (:fault-events result)
@@ -1567,6 +1569,22 @@
              (let [now (now-ms runtime)]
                (assoc (into {} (filter (fn [[_ seen]] (< (- now seen) 60000))) leases) session now))))))
 
+(defn- show-identity [model]
+  (select-keys model [:epoch :show-id]))
+
+(defn- require-show-identity! [expected model]
+  (when-not (= expected (show-identity model))
+    (throw (ex-info "Agent run belongs to a previous show session" {}))))
+
+(defn- agent-inspection [runtime state inspect]
+  (let [identity (show-identity (:model state))
+        result (inspect)]
+    ;; Projection reads live diagnostics as well as the committed frame.
+    ;; Wait for an active restore to publish before comparing identities.
+    (locking (:lock runtime)
+      (require-show-identity! identity (:model @(:state runtime))))
+    result))
+
 (defn dispatch-tool!
   "Agent and REPL tool boundary; all mutation uses the same owner queue as UI."
   [runtime tool arguments metadata]
@@ -1598,9 +1616,26 @@
           "configure_auto" [:auto (merge (:configuration arguments) (select-keys envelope [:expected-epoch]))]
           (throw (ex-info "Unknown studio tool" {:tool tool})))]
     (case type
-      :inspect (project-snapshot runtime state)
-      :inspect-lighting (venue-tools/inspect state payload #(measure-sources runtime state %))
+      :inspect (agent-inspection runtime state #(project-snapshot runtime state))
+      :inspect-lighting (agent-inspection runtime state
+                          (fn [] (venue-tools/inspect state payload #(measure-sources runtime state %))))
       (deref (submit! runtime type payload) 5000 {:status :pending :message "Command remains queued"}))))
+
+(defn start-chat!
+  "Start a chat on this show. The initial snapshot and tool calls are bound to
+  the show session captured at admission. Supply :emit! and :done! callbacks.
+  Returns the cancellable agent run handle, including its :result promise."
+  [runtime payload {:keys [emit! done!]}]
+  (let [[manager identity] (locking (:lock runtime)
+                            [(agent-manager runtime) (show-identity (:model @(:state runtime)))])
+        admission (assoc identity :expected-epoch (:epoch identity))]
+    (agents/start-chat! manager payload
+                        {:snapshot! (fn []
+                                      (let [state @(:state runtime)]
+                                        (require-show-identity! identity (:model state))
+                                        (agent-inspection runtime state #(project-snapshot runtime state))))
+                         :dispatch! #(dispatch-tool! runtime %1 %2 (merge %3 admission))
+                         :emit! emit! :done! done!})))
 
 (defn- push-parameter-projector []
   (let [cache (waveforms/create-cache)
@@ -1691,6 +1726,25 @@
   (locking (:devices runtime)
     (when-let [device (get @(:devices runtime) id)]
       (try (devices/close! device) (finally (swap! (:devices runtime) dissoc id))))))
+
+(defn expressive-preview
+  "Preview the selected cue's expressive mapping using the connected device's
+  axes and defaults when :device-id matches its mapping ID (or session ID when
+  no mapping ID is configured). Otherwise use the requested device kind."
+  [runtime request]
+  (let [[model connected] (locking (:lock runtime)
+                            [(:model @(:state runtime)) @(:devices runtime)])
+        wire-id #(if (keyword? %) (subs (str %) 1) %)
+        requested-id (wire-id (:device-id request))
+        options (some (fn [[id {:keys [options]}]]
+                        (when (= requested-id (wire-id (or (:mapping-id options) id)))
+                          options))
+                      connected)
+        profile (when options
+                  {:id (get-in options [:profile :id])
+                   :axes (keys (get-in options [:profile :capabilities :available-axes]))
+                   :defaults (select-keys options [:mapping-policy :param-mappings :cue-mappings])})]
+    (expressive/preview model request profile)))
 
 (defn- capture-show [runtime format-show]
   ;; Model/output come from one commit. Serialize after releasing the frame

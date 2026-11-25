@@ -67,7 +67,9 @@ settings scope. Preserve other device entries when saving an edited device:
 
 The server normalizes JSON axis/curve strings and disabled-axis arrays, validates
 policy shape and rejects invalid writes before changing the show. Explicit nil
-parameter entries survive JSON and show-file round trips.
+parameter entries survive JSON and show-file round trips. Studio's Transit forms
+normalize textual policy keys while preserving namespaced IDs. A form that
+supplies both the text and keyword spelling of one key is rejected.
 
 `POST /api/expressive/preview` accepts:
 

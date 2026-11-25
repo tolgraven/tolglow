@@ -33,6 +33,8 @@ Group IDs select patched groups or the membership of a named lighting scene. Fix
 
 The global stage supplies the default. A matching local stage takes precedence, and overlapping local stages use the smallest requested step for that interval independently for attack and release. Blackout, zero master and output calibration retain their existing precedence. Seeking backwards and replacing the show clear the old light history.
 
+When edge tracking rejects a follower's aim, that fixture goes dark immediately. Once tracking succeeds again, its configured attack starts from darkness. Editing tracking links preserves the output response history of other fixtures.
+
 Numeric amounts can come from a running cue parameter or a show variable. The fallback applies while the source is unavailable.
 
 ```clojure

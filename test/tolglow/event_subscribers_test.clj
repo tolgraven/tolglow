@@ -41,7 +41,8 @@
   (let [model (configured [launch {:op :instance/opacity :select {:pick :all} :value 0 :delay {:bars 1/2}}
                            {:op :instance/kill :select {:pick :all} :delay {:beats 1/2}}])
         admitted (sub/admit model [kick (assoc kick :type :audio/energy)
-                                   (assoc-in kick [:emitter :id] :event-subscriber)])
+                                   (assoc kick :emitter {:kind :adapter :id :event-subscriber})
+                                   (assoc kick :emitter {:kind :command :id :event-subscriber})])
         execute #(sub/advance % 0 {})
         started (execute (:model admitted))
         id (ffirst (:instances started))
