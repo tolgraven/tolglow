@@ -1,0 +1,288 @@
+{
+  "platform": {
+    "os": "linux",
+    "arch": "x64",
+    "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+    "node": "v24.22.3"
+  },
+  "pixelBudget": 0.25,
+  "profiles": [
+    {
+      "name": "Push",
+      "width": 101,
+      "height": 40,
+      "dpr": 1,
+      "rasterHeight": 40,
+      "selected": "unorm8",
+      "reasons": {
+        "auto": "within-raster-budget",
+        "full": "full-selected"
+      },
+      "theoreticalMaximumPx": {
+        "full": 0,
+        "unorm8": 0.0677361853832442,
+        "unorm16": 0.00026356492367021094,
+        "fp16": 0.008433948863636364
+      },
+      "observedMaximumPx": {
+        "full": 0,
+        "unorm8": 0.06773618538324397,
+        "unorm16": 0.00026356492367020997,
+        "fp16": 0.008433948863636364
+      }
+    },
+    {
+      "name": "Studio default",
+      "width": 220,
+      "height": 58,
+      "dpr": 1,
+      "rasterHeight": 58,
+      "selected": "unorm8",
+      "reasons": {
+        "auto": "within-raster-budget",
+        "full": "full-selected"
+      },
+      "theoreticalMaximumPx": {
+        "full": 0,
+        "unorm8": 0.0982174688057041,
+        "unorm16": 0.00038216913932180585,
+        "fp16": 0.012229225852272728
+      },
+      "observedMaximumPx": {
+        "full": 0,
+        "unorm8": 0.09821746880570376,
+        "unorm16": 0.0003821691393218045,
+        "fp16": 0.012229225852272728
+      }
+    },
+    {
+      "name": "Studio monitor",
+      "width": 220,
+      "height": 70,
+      "dpr": 1,
+      "rasterHeight": 70,
+      "selected": "unorm8",
+      "reasons": {
+        "auto": "within-raster-budget",
+        "full": "full-selected"
+      },
+      "theoreticalMaximumPx": {
+        "full": 0,
+        "unorm8": 0.11853832442067737,
+        "unorm16": 0.0004612386164228691,
+        "fp16": 0.014759410511363636
+      },
+      "observedMaximumPx": {
+        "full": 0,
+        "unorm8": 0.11853832442067694,
+        "unorm16": 0.0004612386164228675,
+        "fp16": 0.014759410511363636
+      }
+    },
+    {
+      "name": "Studio effect card",
+      "width": 220,
+      "height": 90,
+      "dpr": 1,
+      "rasterHeight": 90,
+      "selected": "unorm8",
+      "reasons": {
+        "auto": "within-raster-budget",
+        "full": "full-selected"
+      },
+      "theoreticalMaximumPx": {
+        "full": 0,
+        "unorm8": 0.15240641711229946,
+        "unorm16": 0.0005930210782579745,
+        "fp16": 0.01897638494318182
+      },
+      "observedMaximumPx": {
+        "full": 0,
+        "unorm8": 0.15240641711229894,
+        "unorm16": 0.0005930210782579725,
+        "fp16": 0.01897638494318182
+      }
+    },
+    {
+      "name": "Studio detail",
+      "width": 320,
+      "height": 105,
+      "dpr": 1,
+      "rasterHeight": 105,
+      "selected": "unorm8",
+      "reasons": {
+        "auto": "within-raster-budget",
+        "full": "full-selected"
+      },
+      "theoreticalMaximumPx": {
+        "full": 0,
+        "unorm8": 0.17780748663101606,
+        "unorm16": 0.0006918579246343037,
+        "fp16": 0.022139115767045456
+      },
+      "observedMaximumPx": {
+        "full": 0,
+        "unorm8": 0.17780748663101542,
+        "unorm16": 0.0006918579246343012,
+        "fp16": 0.022139115767045456
+      }
+    },
+    {
+      "name": "Studio detail 2×",
+      "width": 320,
+      "height": 105,
+      "dpr": 2,
+      "rasterHeight": 210,
+      "selected": "unorm16",
+      "reasons": {
+        "auto": "unorm8-raster-budget-exceeded",
+        "full": "full-selected"
+      },
+      "theoreticalMaximumPx": {
+        "full": 0,
+        "unorm8": 0.3556149732620321,
+        "unorm16": 0.0013837158492686075,
+        "fp16": 0.04427823153409091
+      },
+      "observedMaximumPx": {
+        "full": 0,
+        "unorm8": 0.35561497326203084,
+        "unorm16": 0.0013837158492686025,
+        "fp16": 0.04427823153409091
+      }
+    },
+    {
+      "name": "Studio detail 3×",
+      "width": 320,
+      "height": 105,
+      "dpr": 3,
+      "rasterHeight": 315,
+      "selected": "unorm16",
+      "reasons": {
+        "auto": "unorm8-raster-budget-exceeded",
+        "full": "full-selected"
+      },
+      "theoreticalMaximumPx": {
+        "full": 0,
+        "unorm8": 0.5334224598930482,
+        "unorm16": 0.002075573773902911,
+        "fp16": 0.06641734730113637
+      },
+      "observedMaximumPx": {
+        "full": 0,
+        "unorm8": 0.5334224598930463,
+        "unorm16": 0.002075573773902904,
+        "fp16": 0.06641734730113637
+      }
+    }
+  ],
+  "scalarSweep": {
+    "full": {
+      "samples": 66815,
+      "maximumError": 0
+    },
+    "unorm8": {
+      "samples": 66815,
+      "maximumError": 0.0019607843137255387
+    },
+    "unorm16": {
+      "samples": 66815,
+      "maximumError": 0.000007629510948348184
+    },
+    "fp16": {
+      "samples": 66815,
+      "maximumError": 0.000244140625
+    }
+  },
+  "payloadBytesForEightFullTraces": {
+    "full": {
+      "values": 16384,
+      "beatsAndTimeMs": 32768,
+      "exactLatest": 64,
+      "total": 49216
+    },
+    "unorm8": {
+      "values": 2048,
+      "beatsAndTimeMs": 32768,
+      "exactLatest": 64,
+      "total": 34880
+    },
+    "unorm16": {
+      "values": 4096,
+      "beatsAndTimeMs": 32768,
+      "exactLatest": 64,
+      "total": 36928
+    },
+    "fp16": {
+      "values": 4096,
+      "beatsAndTimeMs": 32768,
+      "exactLatest": 64,
+      "total": 36928
+    }
+  },
+  "timing": {
+    "repeats": 11,
+    "framesPerRound": 200,
+    "packIntoPreallocated": {
+      "full": {
+        "medianUsPerEightTraces": 3.1094949999999244,
+        "p90UsPerEightTraces": 4.122804999999801,
+        "maxUsPerEightTraces": 4.661485000000027
+      },
+      "unorm8": {
+        "medianUsPerEightTraces": 64.8226950000003,
+        "p90UsPerEightTraces": 85.98816,
+        "maxUsPerEightTraces": 162.37761000000006
+      },
+      "unorm16": {
+        "medianUsPerEightTraces": 58.00415500000043,
+        "p90UsPerEightTraces": 76.31375999999989,
+        "maxUsPerEightTraces": 83.25248499999987
+      },
+      "fp16": {
+        "medianUsPerEightTraces": 6.944835000000182,
+        "p90UsPerEightTraces": 11.609205000000031,
+        "maxUsPerEightTraces": 11.891755000000046
+      }
+    },
+    "pathFromStoredValues": {
+      "full": {
+        "medianUsPerEightTraces": 23.483925000000454,
+        "p90UsPerEightTraces": 41.406999999999805,
+        "maxUsPerEightTraces": 107.45197000000019
+      },
+      "unorm8": {
+        "medianUsPerEightTraces": 34.771749999999884,
+        "p90UsPerEightTraces": 98.20445500000005,
+        "maxUsPerEightTraces": 169.25123499999984
+      },
+      "unorm16": {
+        "medianUsPerEightTraces": 38.20549500000027,
+        "p90UsPerEightTraces": 62.81672999999955,
+        "maxUsPerEightTraces": 68.87058500000023
+      },
+      "fp16": {
+        "medianUsPerEightTraces": 25.752365000000168,
+        "p90UsPerEightTraces": 45.242900000000084,
+        "maxUsPerEightTraces": 73.59523499999966
+      }
+    },
+    "selectionPackAndPath": {
+      "full": {
+        "medianUsPerEightTraces": 24.029635000000553,
+        "p90UsPerEightTraces": 27.277829999999312,
+        "maxUsPerEightTraces": 34.75281999999993
+      },
+      "push": {
+        "medianUsPerEightTraces": 98.95145500000014,
+        "p90UsPerEightTraces": 116.38417499999944,
+        "maxUsPerEightTraces": 124.42761500000073
+      },
+      "studio2x": {
+        "medianUsPerEightTraces": 107.16015500000027,
+        "p90UsPerEightTraces": 155.9340700000007,
+        "maxUsPerEightTraces": 340.63574000000017
+      }
+    }
+  }
+}

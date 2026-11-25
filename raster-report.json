@@ -1,0 +1,1412 @@
+{
+  "chromium": "156.0.8078.79",
+  "profiles": [
+    {
+      "name": "Push",
+      "width": 101,
+      "height": 40,
+      "dpr": 1,
+      "selected": "unorm8",
+      "comparisons": [
+        {
+          "label": "linear ramp",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 4040,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 4040,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 10,
+              "pixels": 4040,
+              "maxChannel": 51,
+              "meanMaxChannel": 0.036386138613861384
+            }
+          }
+        },
+        {
+          "label": "modulated sine",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 53,
+              "pixels": 4040,
+              "maxChannel": 28,
+              "meanMaxChannel": 0.027475247524752475
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 4040,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 4040,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        },
+        {
+          "label": "pulse",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 4040,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 4040,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 4040,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        },
+        {
+          "label": "DMX8 steps",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 4040,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 4040,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 4040,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        },
+        {
+          "label": "near UNORM8 midpoint",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 4040,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 4040,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 4040,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        },
+        {
+          "label": "near binary16 midpoint",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 4040,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 4040,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 4040,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        },
+        {
+          "label": "low amplitude, off midpoint",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 1,
+              "pixels": 4040,
+              "maxChannel": 1,
+              "meanMaxChannel": 0.00024752475247524753
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 4040,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 1,
+              "pixels": 4040,
+              "maxChannel": 1,
+              "meanMaxChannel": 0.00024752475247524753
+            }
+          }
+        },
+        {
+          "label": "endpoints and gain changes",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 4040,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 4040,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 4040,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Studio default",
+      "width": 220,
+      "height": 58,
+      "dpr": 1,
+      "selected": "unorm8",
+      "comparisons": [
+        {
+          "label": "linear ramp",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 12760,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 12760,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 25,
+              "pixels": 12760,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.04639498432601881
+            }
+          }
+        },
+        {
+          "label": "modulated sine",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 180,
+              "pixels": 12760,
+              "maxChannel": 51,
+              "meanMaxChannel": 0.3028996865203762
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 12760,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 15,
+              "pixels": 12760,
+              "maxChannel": 2,
+              "meanMaxChannel": 0.0012539184952978057
+            }
+          }
+        },
+        {
+          "label": "pulse",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 30,
+              "pixels": 12760,
+              "maxChannel": 1,
+              "meanMaxChannel": 0.0023510971786833857
+            },
+            "unorm16": {
+              "changed": 21,
+              "pixels": 12760,
+              "maxChannel": 1,
+              "meanMaxChannel": 0.0016457680250783699
+            },
+            "fp16": {
+              "changed": 49,
+              "pixels": 12760,
+              "maxChannel": 6,
+              "meanMaxChannel": 0.006347962382445141
+            }
+          }
+        },
+        {
+          "label": "DMX8 steps",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 12760,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 12760,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 12760,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        },
+        {
+          "label": "near UNORM8 midpoint",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 230,
+              "pixels": 12760,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.9129310344827586
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 12760,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 12760,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        },
+        {
+          "label": "near binary16 midpoint",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 12760,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 12760,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 12760,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        },
+        {
+          "label": "low amplitude, off midpoint",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 12760,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 12760,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 12760,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        },
+        {
+          "label": "endpoints and gain changes",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 12760,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 12760,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 12760,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Studio monitor",
+      "width": 220,
+      "height": 70,
+      "dpr": 1,
+      "selected": "unorm8",
+      "comparisons": [
+        {
+          "label": "linear ramp",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 15400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 15400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 28,
+              "pixels": 15400,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.0437012987012987
+            }
+          }
+        },
+        {
+          "label": "modulated sine",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 223,
+              "pixels": 15400,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.2268181818181818
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 15400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 5,
+              "pixels": 15400,
+              "maxChannel": 1,
+              "meanMaxChannel": 0.0003246753246753247
+            }
+          }
+        },
+        {
+          "label": "pulse",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 235,
+              "pixels": 15400,
+              "maxChannel": 4,
+              "meanMaxChannel": 0.018441558441558443
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 15400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 94,
+              "pixels": 15400,
+              "maxChannel": 3,
+              "meanMaxChannel": 0.007272727272727273
+            }
+          }
+        },
+        {
+          "label": "DMX8 steps",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 15400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 15400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 15400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        },
+        {
+          "label": "near UNORM8 midpoint",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 230,
+              "pixels": 15400,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.7566883116883117
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 15400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 15400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        },
+        {
+          "label": "near binary16 midpoint",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 220,
+              "pixels": 15400,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.7550649350649351
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 15400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 15400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        },
+        {
+          "label": "low amplitude, off midpoint",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 1,
+              "pixels": 15400,
+              "maxChannel": 1,
+              "meanMaxChannel": 0.00006493506493506494
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 15400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 1,
+              "pixels": 15400,
+              "maxChannel": 1,
+              "meanMaxChannel": 0.00006493506493506494
+            }
+          }
+        },
+        {
+          "label": "endpoints and gain changes",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 15400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 15400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 15400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Studio effect card",
+      "width": 220,
+      "height": 90,
+      "dpr": 1,
+      "selected": "unorm8",
+      "comparisons": [
+        {
+          "label": "linear ramp",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 19800,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 19800,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 34,
+              "pixels": 19800,
+              "maxChannel": 48,
+              "meanMaxChannel": 0.02404040404040404
+            }
+          }
+        },
+        {
+          "label": "modulated sine",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 220,
+              "pixels": 19800,
+              "maxChannel": 51,
+              "meanMaxChannel": 0.1905050505050505
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 19800,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 11,
+              "pixels": 19800,
+              "maxChannel": 46,
+              "meanMaxChannel": 0.013939393939393939
+            }
+          }
+        },
+        {
+          "label": "pulse",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 19800,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 19800,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 19800,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        },
+        {
+          "label": "DMX8 steps",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 19800,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 19800,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 19800,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        },
+        {
+          "label": "near UNORM8 midpoint",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 230,
+              "pixels": 19800,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.5886363636363636
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 19800,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 19800,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        },
+        {
+          "label": "near binary16 midpoint",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 220,
+              "pixels": 19800,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.5868686868686869
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 19800,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 19800,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        },
+        {
+          "label": "low amplitude, off midpoint",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 1,
+              "pixels": 19800,
+              "maxChannel": 1,
+              "meanMaxChannel": 0.000050505050505050505
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 19800,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 1,
+              "pixels": 19800,
+              "maxChannel": 1,
+              "meanMaxChannel": 0.000050505050505050505
+            }
+          }
+        },
+        {
+          "label": "endpoints and gain changes",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 19800,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 19800,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 19800,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Studio detail",
+      "width": 320,
+      "height": 105,
+      "dpr": 1,
+      "selected": "unorm8",
+      "comparisons": [
+        {
+          "label": "linear ramp",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 33600,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 33600,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 86,
+              "pixels": 33600,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.056220238095238094
+            }
+          }
+        },
+        {
+          "label": "modulated sine",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 440,
+              "pixels": 33600,
+              "maxChannel": 55,
+              "meanMaxChannel": 0.287827380952381
+            },
+            "unorm16": {
+              "changed": 2,
+              "pixels": 33600,
+              "maxChannel": 1,
+              "meanMaxChannel": 0.000059523809523809524
+            },
+            "fp16": {
+              "changed": 7,
+              "pixels": 33600,
+              "maxChannel": 1,
+              "meanMaxChannel": 0.00020833333333333335
+            }
+          }
+        },
+        {
+          "label": "pulse",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 1315,
+              "pixels": 33600,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.5244047619047619
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 33600,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 542,
+              "pixels": 33600,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.08303571428571428
+            }
+          }
+        },
+        {
+          "label": "DMX8 steps",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 33600,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 33600,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 16,
+              "pixels": 33600,
+              "maxChannel": 5,
+              "meanMaxChannel": 0.000744047619047619
+            }
+          }
+        },
+        {
+          "label": "near UNORM8 midpoint",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 640,
+              "pixels": 33600,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.9866369047619048
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 33600,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 33600,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        },
+        {
+          "label": "near binary16 midpoint",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 320,
+              "pixels": 33600,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.503095238095238
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 33600,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 176,
+              "pixels": 33600,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.2639285714285714
+            }
+          }
+        },
+        {
+          "label": "low amplitude, off midpoint",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 1,
+              "pixels": 33600,
+              "maxChannel": 1,
+              "meanMaxChannel": 0.000029761904761904762
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 33600,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 1,
+              "pixels": 33600,
+              "maxChannel": 1,
+              "meanMaxChannel": 0.000029761904761904762
+            }
+          }
+        },
+        {
+          "label": "endpoints and gain changes",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 33600,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 33600,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 33600,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Studio detail 2×",
+      "width": 320,
+      "height": 105,
+      "dpr": 2,
+      "selected": "unorm16",
+      "comparisons": [
+        {
+          "label": "linear ramp",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 134400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 134400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 336,
+              "pixels": 134400,
+              "maxChannel": 56,
+              "meanMaxChannel": 0.05407738095238095
+            }
+          }
+        },
+        {
+          "label": "modulated sine",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 1248,
+              "pixels": 134400,
+              "maxChannel": 102,
+              "meanMaxChannel": 0.24667410714285715
+            },
+            "unorm16": {
+              "changed": 68,
+              "pixels": 134400,
+              "maxChannel": 44,
+              "meanMaxChannel": 0.005982142857142857
+            },
+            "fp16": {
+              "changed": 151,
+              "pixels": 134400,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.019233630952380953
+            }
+          }
+        },
+        {
+          "label": "pulse",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 1578,
+              "pixels": 134400,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.23319940476190476
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 134400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 491,
+              "pixels": 134400,
+              "maxChannel": 4,
+              "meanMaxChannel": 0.004337797619047619
+            }
+          }
+        },
+        {
+          "label": "DMX8 steps",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 134400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 134400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 25,
+              "pixels": 134400,
+              "maxChannel": 5,
+              "meanMaxChannel": 0.0003199404761904762
+            }
+          }
+        },
+        {
+          "label": "near UNORM8 midpoint",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 1276,
+              "pixels": 134400,
+              "maxChannel": 106,
+              "meanMaxChannel": 0.7419345238095238
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 134400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 134400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        },
+        {
+          "label": "near binary16 midpoint",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 1280,
+              "pixels": 134400,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.5031473214285714
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 134400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 134400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        },
+        {
+          "label": "low amplitude, off midpoint",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 329,
+              "pixels": 134400,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.12491071428571429
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 134400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 73,
+              "pixels": 134400,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.019159226190476192
+            }
+          }
+        },
+        {
+          "label": "endpoints and gain changes",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 134400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 134400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 134400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Studio detail 3×",
+      "width": 320,
+      "height": 105,
+      "dpr": 3,
+      "selected": "unorm16",
+      "comparisons": [
+        {
+          "label": "linear ramp",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 302400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 4,
+              "pixels": 302400,
+              "maxChannel": 1,
+              "meanMaxChannel": 0.000013227513227513228
+            },
+            "fp16": {
+              "changed": 643,
+              "pixels": 302400,
+              "maxChannel": 56,
+              "meanMaxChannel": 0.0484755291005291
+            }
+          }
+        },
+        {
+          "label": "modulated sine",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 2052,
+              "pixels": 302400,
+              "maxChannel": 148,
+              "meanMaxChannel": 0.21517195767195768
+            },
+            "unorm16": {
+              "changed": 14,
+              "pixels": 302400,
+              "maxChannel": 4,
+              "meanMaxChannel": 0.00007605820105820106
+            },
+            "fp16": {
+              "changed": 197,
+              "pixels": 302400,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.006868386243386243
+            }
+          }
+        },
+        {
+          "label": "pulse",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 4588,
+              "pixels": 302400,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.32439484126984125
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 302400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 2420,
+              "pixels": 302400,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.030218253968253967
+            }
+          }
+        },
+        {
+          "label": "DMX8 steps",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 302400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 302400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 685,
+              "pixels": 302400,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.09717592592592593
+            }
+          }
+        },
+        {
+          "label": "near UNORM8 midpoint",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 1916,
+              "pixels": 302400,
+              "maxChannel": 159,
+              "meanMaxChannel": 0.8227083333333334
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 302400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 302400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        },
+        {
+          "label": "near binary16 midpoint",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 2880,
+              "pixels": 302400,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.503095238095238
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 302400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 528,
+              "pixels": 302400,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.08809193121693122
+            }
+          }
+        },
+        {
+          "label": "low amplitude, off midpoint",
+          "window": 16,
+          "formats": {
+            "unorm8": {
+              "changed": 276,
+              "pixels": 302400,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.04535383597883598
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 302400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 178,
+              "pixels": 302400,
+              "maxChannel": 53,
+              "meanMaxChannel": 0.025148809523809525
+            }
+          }
+        },
+        {
+          "label": "endpoints and gain changes",
+          "window": 4,
+          "formats": {
+            "unorm8": {
+              "changed": 0,
+              "pixels": 302400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "unorm16": {
+              "changed": 0,
+              "pixels": 302400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            },
+            "fp16": {
+              "changed": 0,
+              "pixels": 302400,
+              "maxChannel": 0,
+              "meanMaxChannel": 0
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
