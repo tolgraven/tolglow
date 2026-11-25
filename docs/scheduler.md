@@ -135,7 +135,10 @@ place of a top-level timing key.
   direct commands immediately. The owner also compares the committed value with
   the value the ramp started from, each frame after macros, automation and
   routing have run, so a writer that bypasses the hook is caught too. The
-  destination keeps the written value. A gesture, trusted operator authority, or
+  destination keeps the written value. A `:gesture/begin` writes nothing, so the
+  owner first commits the ramp's current frame value: the gesture takes over
+  from where the ramp is, and cancelling the gesture returns to that value. A
+  refused gesture leaves the ramp running. A gesture, trusted operator authority, or
   a Studio, web, Push, X-Touch (including the Extender), Seaboard, MPE, MIDI,
   OSC, sensor or REPL source records `:reason :human-override`. Other sources, such as agents, reactive actions and
   macro or automation commands, record `:reason :superseded`. `:by` holds the
@@ -365,6 +368,8 @@ real owner tick and captures ArtDmx packets from the output sink:
   parameter. A variable ramp from a vector to a number is refused when due and
   later frames still render. A scheduled set rejected when due leaves the
   running ramp alone.
+- A gesture that begins on a ramped parameter takes over from the ramp's
+  current value, and a refused gesture leaves the ramp running.
 - Same-beat events fire in the projection's order after a reschedule. A
   requester whose source has no adapter cannot move or cancel anything. A group
   gain change leaves an opacity ramp running, and a group opacity change
@@ -373,10 +378,6 @@ real owner tick and captures ArtDmx packets from the output sink:
 ## Remaining gaps
 
 - Modulation depth (waveform binding endpoints) is not yet a ramp destination.
-- A `:gesture/begin` on a ramped parameter cancels the ramp before the gesture
-  writes a value, so the parameter returns to the value the ramp started from
-  until the first sample arrives. An explicit cancel holds the current value; a
-  gesture does not yet.
 - Push 3 does not yet display the projection. Its pages read the same snapshot
   when one is added.
 - Hardware-timed output and physical device evidence are outside these tests.

@@ -728,3 +728,40 @@
                (select-keys (last (recent rt)) [:event-id :status :reason])))
         (is (= 204 (dimmer (peek @packets))) "the operator's group opacity stays"))
       (finally (show/stop! rt)))))
+
+(deftest a-gesture-takes-over-a-ramped-parameter-from-its-current-value
+  (let [{:keys [rt packets]} (harness)]
+    (try
+      (let [id (:instance-id (at! rt 0 {:op :cue/launch :cue-id :wash :launch {:mode :persistent}}))
+            _ (at! rt 250 {:op :param/ramp :event-id "up" :instance-id id :param :level :to 1.0
+                           :over {:beats 8} :source agent})
+            rising (mapv (fn [t] (show/tick! rt t) (dimmer (peek @packets))) (range 500 2000 250))
+            gesture {:instance-id id :param :level :control-id :encoder-1 :gesture-id :g1
+                     :source {:adapter :push-3 :session-id "push"}}
+            operator {:operator-id :front-of-house}
+            revision #(get-in @(:state rt) [:model :revision])]
+        (is (= 96 (peek rising)))
+        (testing "a gesture refused for lack of an operator leaves the ramp and the parameter alone"
+          (let [before (revision)
+                refused (at! rt 2000 (assoc gesture :op :gesture/begin))]
+            (is (= :rejected (:status refused)))
+            (is (= before (revision)))
+            (is (== 0.0 (level rt id)))
+            (is (= ["up"] (mapv :event-id (:ramps (show/schedule rt)))))
+            (is (= 112 (dimmer (peek @packets))))))
+        (let [begun (at! rt 2250 (assoc gesture :op :gesture/begin) operator)
+              touched (into [(dimmer (peek @packets))]
+                            (map (fn [t] (show/tick! rt t) (dimmer (peek @packets)))) [2500 2750])]
+          (is (= :accepted (:status begun)))
+          (is (every? #(<= 127 % 128) touched)
+              (str "touching the control does not return the output to the ramp's start value: " touched))
+          (is (== 0.5 (level rt id)) "the controller reads the value the ramp had reached")
+          (is (empty? (:ramps (show/schedule rt))))
+          (is (= [:cancelled :human-override :gesture/begin]
+                 ((juxt :status :reason (comp :op :by)) (last (recent rt)))))
+          (is (= :accepted (:status (at! rt 3000 (assoc gesture :op :gesture/sample :sequence 1 :value 0.6) operator))))
+          (is (= 153 (dimmer (peek @packets))))
+          (testing "cancelling the gesture returns to the value it took over, not the ramp's start"
+            (is (= :accepted (:status (at! rt 3250 (assoc gesture :op :gesture/cancel) operator))))
+            (is (== 0.5 (level rt id))))))
+      (finally (show/stop! rt)))))

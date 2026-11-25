@@ -630,13 +630,27 @@
                          payload {:time-ms time-ms})
          operation (:op envelope)
          variation? (variations/operations operation)
-         result (cond
-                  variation? (variations/apply-command model envelope)
-                  (group-channels/operation? operation)
-                  (control/apply-domain-command model envelope group-channels/apply-operation)
-                  (subscribers/operations operation)
-                  (control/apply-domain-command model envelope subscribers/apply-operation)
-                  :else (spatial/apply-command model envelope authority))
+         admit (fn [model]
+                 (cond
+                   variation? (variations/apply-command model envelope)
+                   (group-channels/operation? operation)
+                   (control/apply-domain-command model envelope group-channels/apply-operation)
+                   (subscribers/operations operation)
+                   (control/apply-domain-command model envelope subscribers/apply-operation)
+                   :else (spatial/apply-command model envelope authority)))
+         ;; A gesture takes over a ramped parameter from the ramp's current frame
+         ;; value. Its begin writes nothing, so without this the parameter would
+         ;; return to the ramp's start value until the first sample.
+         held (if (and (= :gesture/begin operation) (nil? previous)
+                       (seq (get-in model [:event-subscribers :ramps])))
+                (subscribers/hold model [{:target :param :instance-id (:instance-id envelope) :param (:param envelope)}]
+                                  time-ms)
+                model)
+         result (let [result (admit held)]
+                  ;; A refused gesture leaves the ramp and its destination untouched.
+                  (if (or (identical? held model) (= :accepted (get-in result [:ack :status])))
+                    result
+                    (admit model)))
          accepted? (= :accepted (get-in result [:ack :status]))]
      (cond
        (and accepted? (= (:revision model) (get-in result [:model :revision])))

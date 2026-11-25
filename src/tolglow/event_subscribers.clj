@@ -691,6 +691,15 @@
                   (commit-ramp m ramp now value "/hold"))))
             model ramps)))
 
+(defn hold
+  "Commit the current frame value of the running ramps on these destinations
+  and keep the ramps. A gesture that begins on a ramped parameter takes over
+  from where the ramp is; the override that follows cancels the ramp."
+  [model destinations now]
+  (let [wanted (set (map destination-key destinations))]
+    (hold-ramps model (filterv #(wanted (destination-key (:destination %))) (get-in model [:event-subscribers :ramps]))
+                now)))
+
 (defn advance-ramps
   "Settle ramp lifecycles on the owner: a committed write to a ramp's
   destination by anyone cancels it with the writer's reason; a finished ramp
