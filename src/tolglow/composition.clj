@@ -70,6 +70,19 @@
     (when-not empty?
       (validate-cue-slot! model index slot))))
 
+(defn- assign-slot-ids
+  "Keep authored slot IDs. Give each unidentified slot the first free
+  \"slot-N\" from its index, so adding after a deletion cannot collide."
+  [slots]
+  (let [taken (set (keep :id slots))]
+    (first
+     (reduce (fn [[result taken] [i slot]]
+               (if (contains? slot :id)
+                 [(conj result slot) taken]
+                 (let [id (first (remove taken (map #(str "slot-" %) (iterate inc i))))]
+                   [(conj result (assoc slot :id id)) (conj taken id)])))
+             [[] taken] (map-indexed vector slots)))))
+
 (defn save
   "Validate and save a macro or sequence. New sequences default to one-beat slots.
   :duration maps support beats, bars, phrases and explicit milliseconds. Slot overrides and
@@ -89,10 +102,10 @@
                                                         :timebase (:timebase definition)}))
         duration {:duration (if (= :beats timebase) {:beats 1} {:ms 1000})}
         slots (mapv (fn [i slot]
-                      (merge {:id (str "slot-" i) :params {}}
+                      (merge {:params {}}
                              (when (and (= :sequence (:mode definition))
                                         (not-any? #(contains? slot %) [:duration :duration-ms :duration-beats])) duration) slot))
-                    (range) (:slots definition))
+                    (range) (assign-slot-ids (:slots definition)))
         definition (assoc definition :timebase timebase :slots slots)]
     (doseq [[i slot] (map-indexed vector slots)] (validate-slot! model (:mode definition) i slot))
     (if (= :sequence (:mode definition))

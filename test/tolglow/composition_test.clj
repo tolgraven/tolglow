@@ -76,6 +76,16 @@
     (is (thrown? clojure.lang.ExceptionInfo
                  (composition/save base (assoc-in program [:slots 2 :cue-id] :unregistered))))))
 
+(deftest unidentified-slots-receive-free-ids-after-an-earlier-deletion
+  (let [saved (composition/save (show) {:id :c :mode :sequence
+                                        :slots [{:cue-id :red} {:cue-id :blue}]})
+        ;; A client removes slot-0 and appends a new cue without an ID.
+        edited (update-in saved [:compositions :c :slots] #(conj (subvec % 1) {:cue-id :spot}))
+        resaved (composition/save saved (get-in edited [:compositions :c]))]
+    (is (= ["slot-0" "slot-1"] (mapv :id (get-in saved [:compositions :c :slots]))))
+    (is (= ["slot-1" "slot-2"] (mapv :id (get-in resaved [:compositions :c :slots]))))
+    (is (= [:blue :spot] (mapv :cue-id (get-in resaved [:compositions :c :slots]))))))
+
 (deftest canonical-musical-slots-save-and-play-with-captured-meter
   (let [definition {:id :bars :mode :sequence
                     :slots [{:cue-id :red :duration {:bars 1}}

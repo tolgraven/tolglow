@@ -574,16 +574,28 @@
                                           :on-click #(send! (if (zero? offset) [:studio/composition-remove index]
                                                              [:studio/composition-move index offset]))} caption])])
 
+(defn empty-slot?
+  "Sequence steps authored with :kind :empty occupy time without a cue."
+  [slot]
+  (= "empty" (some-> (:kind slot) name)))
+
+(defn slot-title
+  "Name a step from the saved program, including empty and muted steps."
+  [cues slot]
+  (str (if (empty-slot? slot) "Empty step" (display-name (find-id cues (:cue-id slot))))
+       (when (:muted? slot) " · muted")))
+
 (defn- composition-slot [db index slot macro? last?]
   (let [[duration-value duration-unit] (slot-duration slot)]
     [:li.composition-slot {:class (when macro? "macro-slot")}
      [:span.slot-number (inc index)]
-     [:strong.slot-title (display-name (find-id (get-in db [:show :cues]) (:cue-id slot)))]
+     [:strong.slot-title (slot-title (get-in db [:show :cues]) slot)]
      (when-not macro?
        [duration-control (str "slot-duration-" index) (str "Step " (inc index) " duration") duration-value duration-unit
         (fn [value unit] (input! [:studio/slot-duration index value unit]))])
      [slot-actions index last?]
-     [:div.slot-editors [slot-parameter-editor db index slot] [layers/slot-controls index slot]]]))
+     (when-not (empty-slot? slot)
+       [:div.slot-editors [slot-parameter-editor db index slot] [layers/slot-controls index slot]])]))
 
 (defn- composition-view [db]
   (let [show (:show db) composition (get-in db [:ui :composition]) slots (:slots composition [])
