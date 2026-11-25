@@ -7,6 +7,7 @@
             [tolglow.demo :as demo]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
+            [tolglow.studio.state-stream :as state-stream]
             [tolglow.waveforms :as waveforms]
             [tolglow.audio.capture :as audio]
             [tolglow.audio.capture-test :as pcm]
@@ -237,16 +238,45 @@
       (testing "closing the display releases the lease once"
         (is (empty? @(:response-sample-readers runtime)))
         (is (= [false false] (sample))))
-      (let [clients (atom {})
-            release (show/lease-response-samples! runtime #(boolean (seq @clients)))]
+      (testing "a failed Studio bind does not leak its lease"
+        (is (thrown? clojure.lang.ExceptionInfo
+                     (with-redefs [state-stream/publish! (fn [& _] (throw (ex-info "publish failed" {})))]
+                       (studio/handler runtime))))
+        (is (empty? @(:response-sample-readers runtime))))
+      (studio/handler runtime)
+      (let [clients (get-in @(:observers runtime) [:studio :state-stream :clients])]
         (show/tick! runtime 200)
         (is (= [false false] (sample)) "an idle Studio stream does not demand samples")
-        (swap! clients assoc :socket {})
+        (swap! clients assoc :socket (atom {}))
         (show/tick! runtime 225)
         (is (= [true true] (sample)) "a connected Studio client demands samples")
-        (release)
+        (swap! clients dissoc :socket)
         (show/tick! runtime 250)
-        (is (= [false false] (sample))))
+        (is (= [false false] (sample)) "the last client leaving drops demand")
+        (show/detach-observer! runtime :studio)
+        (is (empty? @(:response-sample-readers runtime)) "closing the Studio observer releases its lease"))
+      (finally (show/stop! runtime)))))
+
+(deftest a-throwing-response-sample-predicate-does-not-fault-the-tick
+  (let [runtime (show/create-runtime {:model (response-show identity) :workspace-options nil :worker-timeout-ms 10000})
+        broken (show/lease-response-samples! runtime #(throw (ex-info "reader failed" {:reader :broken})))]
+    (try
+      (is (= :accepted (:status (command-at! runtime 0 {:op :cue/launch :cue-id :ember}))))
+      (let [before (get-in @(:state runtime) [:model :frame-number])
+            _ (show/tick! runtime 125)
+            _ (show/tick! runtime 150)
+            snap @(:state runtime)]
+        (is (nil? (get-in snap [:status :error])))
+        (is (= (+ 2 before) (get-in snap [:model :frame-number])) "the owner kept committing frames")
+        (is (nil? (::waveforms/response-frame snap)) "a failing predicate counts as not demanded"))
+      (is (= [{:message "reader failed" :details {:reader :broken} :count 3}]
+             (show/response-sample-faults runtime)) "one bounded record per lease")
+      (let [release (show/lease-response-samples! runtime)]
+        (show/tick! runtime 175)
+        (is (some? (::waveforms/response-frame @(:state runtime))) "other leases still demand samples")
+        (release))
+      (broken)
+      (is (empty? (show/response-sample-faults runtime)))
       (finally (show/stop! runtime)))))
 
 (deftest forecast-and-fault-observations-keep-their-own-response-semantics

@@ -277,15 +277,34 @@
 (defn lease-response-samples!
   "Ask the show owner to retain exact live response inputs on committed frames
   while a display reads them. demanded? is polled once per owner tick and must
-  only read state. Returns an idempotent release function."
+  only read state. A throwing predicate counts as not demanded and is recorded
+  for response-sample-faults. Returns an idempotent release function."
   ([runtime] (lease-response-samples! runtime (constantly true)))
   ([runtime demanded?]
    (let [lease (Object.)]
-     (swap! (:response-sample-readers runtime) assoc lease demanded?)
+     (swap! (:response-sample-readers runtime) assoc lease {:demanded? demanded?})
      (fn [] (swap! (:response-sample-readers runtime) dissoc lease) nil))))
 
+(defn response-sample-faults
+  "The first failure and failure count of each current response-sample lease whose predicate threw."
+  [runtime]
+  (into [] (keep :fault) (vals @(:response-sample-readers runtime))))
+
+(defn- record-response-sample-fault! [runtime lease error]
+  ;; Bounded: one entry per live lease, keeping the first failure and a count.
+  (swap! (:response-sample-readers runtime)
+         (fn [readers]
+           (if (contains? readers lease)
+             (update-in readers [lease :fault]
+                        #(if % (update % :count inc) (assoc (error-data error) :count 1)))
+             readers))))
+
 (defn- response-samples-demanded? [runtime]
-  (boolean (some (fn [demanded?] (demanded?)) (some-> (:response-sample-readers runtime) deref vals))))
+  (boolean
+    (some (fn [[lease {:keys [demanded?]}]]
+            (try (demanded?)
+                 (catch Throwable error (record-response-sample-fault! runtime lease error) false)))
+          (some-> (:response-sample-readers runtime) deref))))
 
 (defn- compiler-context [fixtures batch? compute-owner]
   (let [options (cond-> {:enabled? batch? :bind-pure reuse/evaluator}
