@@ -2130,6 +2130,19 @@
 
 (def ^:private device-command-wait-ms 5000)
 
+(defn- xtouch-effect-group-channels [view model]
+  (let [{:keys [manual] :as mixer} (group-channels/projection model)
+        expanded (when (= :manual view)
+                   (into #{} (map :id) (mapcat #(tree-seq :groups :groups %) manual)))]
+    (into []
+          (comp (filter #(= :group (:type %)))
+                (map (fn [{:keys [id name level depth instance-ids]}]
+                       {:group-id id :label name :level level :active? (boolean (seq instance-ids))
+                        :color (cond (= :overlay view) [1 0 1]
+                                     (pos? depth) [0 0 1]
+                                     :else [0 1 1])})))
+          (group-channels/channel-rows mixer view expanded))))
+
 (defn connect-device!
   "Explicit REPL connection; no devices open at application startup. kind is
   :push-2/:push-3/:push-3-midi/:seaboard/:x-touch/:midi/:osc/:sensor. Options select ports,
@@ -2141,14 +2154,19 @@
   Temporary edits cover typed cue params on Push 2 and numeric params on Push 3.
   Push 2 accepts :native-display? true for the Wayang parameter display.
   An explicit :display transport takes precedence. Set :cue-variations? true
-  for exact beat-ratio edits on both models and the Push 2 Note-button overlay."
+  for exact beat-ratio edits on both models and the Push 2 Note-button overlay.
+  X-Touch accepts :effect-group-view :manual or :overlay. Group faders occupy
+  the first strips, followed by any configured cue channels."
   [runtime kind options]
   (let [id (:session-id options) epoch (get-in @(:state runtime) [:model :epoch])]
     (when-not (and (string? id) (seq id)) (throw (ex-info "Device requires session-id" {})))
     (locking (:devices runtime)
       (when-not @(:running runtime) (throw (ex-info "Show is stopped" {})))
       (when (get @(:devices runtime) id) (throw (ex-info "Device session already connected" {:session-id id})))
-      (let [push-source (when (#{:push-2 :push-3} kind)
+      (let [effect-group-view (when (= :x-touch kind) (:effect-group-view options))
+            _ (when (and (some? effect-group-view) (not (#{:manual :overlay} effect-group-view)))
+                (throw (ex-info "X-Touch effect-group view must be :manual or :overlay" {:view effect-group-view})))
+            push-source (when (#{:push-2 :push-3} kind)
                           {:adapter kind :session-id id})
             operator-id (when push-source (str (name kind) "/" id "/" (UUID/randomUUID)))
             open! (case kind :push-2 devices/open-push-2! :push-3 devices/open-push-3!
@@ -2156,6 +2174,10 @@
                          :midi devices/open-midi! :osc devices/open-osc! :sensor devices/open-sensor!
                          (throw (ex-info "Unknown device kind" {:kind kind})))
             options (cond-> options
+                      effect-group-view
+                      (assoc :group-channels (partial xtouch-effect-group-channels effect-group-view)
+                             :group-level-command (fn [id value]
+                                                    {:op :effect-groups/level-set :channel-id id :value value}))
                       push-source (assoc :operator-gestures? true :target-search targets/search
                                          :launch-receipt cue-timing/receipt)
                       (and push-source (true? (:cue-variations? options)))

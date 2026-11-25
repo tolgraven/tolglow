@@ -147,6 +147,36 @@ The indices above are placeholders for explicitly selected local ports, not
 discovery results. A host must retain its show epoch in callbacks, as the studio
 does for other controllers, and reject stale input across full-show restores.
 
+### Committed effect group levels
+
+In the Tolglow REPL, opt in when connecting an MCU unit to the running show.
+
+```clojure
+(require '[tolglow.show :as show])
+
+(show/connect-device! runtime :x-touch
+  {:session-id "xt-mix" :input-index 0 :output-index 1
+   :effect-group-view :manual
+   :channels [{:cue-id :ember :fader :level :encoder {:param :color :component 1}}]})
+```
+
+Manual groups occupy strips in authored order, with children immediately after
+their parent. Use `:effect-group-view :overlay` to bank the current fixture,
+category, or cue-page overlay. Configured cue channels follow the group strips.
+Group slots stay in place when instances launch or release. Each group shows its
+name, committed level, and whether it has active members. Manual roots use cyan,
+children use blue, and overlay groups use magenta.
+
+The fader commits the same `:effect-groups/level-set` command used by Studio.
+Group and cue faders in this view require touch. A held fader keeps the channel
+it was touching across bank changes, then returns to the current bank's
+committed value on release. Flip and encoders apply to the cue channels. Use
+`(show/effect-group-channels runtime)` to inspect membership and the effective
+levels of member instances. Studio's command endpoint updates the same levels.
+
+Suspend and reconnect clear touches. A standalone session reinitializes its
+configured bank and a coordinated extender follows the group's current bank.
+
 ## Verification and remaining work
 
 Protocol tests use fixed independent byte examples taken from the cited protocol
