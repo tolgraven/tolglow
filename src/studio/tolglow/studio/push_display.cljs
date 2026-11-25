@@ -32,7 +32,7 @@
   (let [view (if (map? view) view {})]
     (-> (select-keys view [:title :page :origin :status :master :blackout? :bpm :selected
                           :cue :effect :swatch :category-colors :page-overview :display-mode :scene :audio-waveform :instance-id
-                          :parameter-bank :active-effect-navigation :touched-parameter :fine?])
+                          :parameter-bank :active-effect-navigation :touched-parameter :fine? :musical-timing])
         (assoc :touched-parameters (vec (take 8 (:touched-parameters view)))
                :saved-show-catalog (saved-show-catalog (:saved-show-catalog view))
                :pad-overlay (when-let [overlay (:pad-overlay view)]

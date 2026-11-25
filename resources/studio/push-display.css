@@ -182,6 +182,25 @@ body.push-display-page,body.push-display-page #app{width:960px;height:160px;min-
   white-space: nowrap;
 }
 .push-signal-value small {margin-left: 3px; color: #b6c6ae; font: 9px system-ui, sans-serif}
+.push-signal > .grid-period {
+  position: absolute;
+  left: 3px;
+  bottom: 1px;
+  padding: 0 2px;
+  border-radius: 2px;
+  background: #101811e8;
+  font: 600 9px/11px system-ui, sans-serif;
+}
+#push-display .parameter-history > .grid-period {
+  top: auto;
+  right: auto;
+  bottom: 13px;
+  left: 3px;
+  padding: 0 2px;
+  border-radius: 2px;
+  background: #101811e8;
+  font: 600 9px/12px system-ui, sans-serif;
+}
 
 .push-slot-content > .typed-parameter,
 .push-compound-area > .typed-parameter {height: 100%; min-width: 0}

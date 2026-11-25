@@ -3,6 +3,7 @@
   (:require [clojure.string :as str]
             [reagent.core :as r]
             [tolglow.studio.numeric-display :as numeric]
+            [tolglow.visualization.musical-grid :as musical-grid]
             [tolglow.visualization.parameter-views :as views]
             [thi.ng.color.core :as color]))
 
@@ -52,10 +53,34 @@
                                     (str (* 100 (/ i (dec (count values)))) ","
                                          (if (pos? span) (- 28 (* 24 (/ (- value low) span))) 16))) values))))))
 
-(defn sparkline [samples]
+(defn grid-lines
+  "Draw a projected musical grid. `x` places a line in chart units; the unit
+  of each line is its class, so the stylesheet owns the tint of a beat, a bar
+  and a phrase."
+  [spec x y1 y2]
+  (when (seq (:lines spec))
+    [:g.musical-grid {:data-minor (some-> (:minor spec) name) :data-major (some-> (:major spec) name)}
+     (for [[index line] (map-indexed vector (:lines spec))]
+       ^{:key index} [:line {:class (name (:unit line)) :x1 (x line) :x2 (x line) :y1 y1 :y2 y2
+                             :vector-effect "non-scaling-stroke"}])]))
+
+(defn grid-period
+  "The signal period of a grid in its largest whole unit, tinted like its lines."
+  [spec]
+  (when-let [text (musical-grid/measure-text (:period spec))]
+    [:small.grid-period {:data-unit (name (get-in spec [:period :unit])) :title (str "Signal period " text)} text]))
+
+(defn- chart-position [line] (* 100 (:position line)))
+
+(defn sparkline
+  "A supplied signal trace. An optional projected grid draws behind it."
+  [samples & [grid]]
   (when-let [points (sample-points samples)]
-    [:svg.parameter-sparkline {:view-box "0 0 100 32" :preserve-aspect-ratio "none"
-                               :role "img" :aria-label "Signal preview from supplied samples"}
+    [:svg.parameter-sparkline {:view-box "0 0 100 32" :preserve-aspect-ratio "none" :role "img"
+                               :aria-label (str "Signal preview from supplied samples"
+                                                (when-let [period (musical-grid/measure-text (:period grid))]
+                                                  (str ", period " period)))}
+     [grid-lines grid chart-position 0 32]
      [:polyline {:points points :fill "none" :stroke "currentColor" :stroke-width 1.6 :vector-effect "non-scaling-stroke"}]]))
 
 (defn duration-label [duration]

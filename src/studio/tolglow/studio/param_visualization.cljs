@@ -7,6 +7,7 @@
             [reagent.core :as r]
             [tolglow.studio.parameter-widgets :as widgets]
             [tolglow.studio.visibility :refer [watch-visibility]]
+            [tolglow.visualization.musical-grid :as musical-grid]
             [tolglow.visualization.parameter-views :as views]))
 
 (def zooms [0.5 1 2 4 8 16])
@@ -198,7 +199,30 @@
                           ["" false] values))]
         {:bounds [low high] :paths (mapv (comp first row) (range (apply max (map #(count (:values %)) values))))}))))
 
-(defn history-chart [schema history window & [attach lead push?]]
+(defn chart-grid
+  "The musical grid behind a history chart, from the transport timing the show
+  supplied. The window ends at the last observed beat and can extend left by
+  the scrolling lead. Each line gains its x in chart units. No timing, no grid."
+  [history window lead timing period-beats]
+  (let [last-beat (:beat (peek history))
+        lead (or lead 0)]
+    (when (and (map? (:meter timing)) (widgets/finite? last-beat))
+      (let [start (- last-beat window)]
+        (some-> (musical-grid/grid (assoc (select-keys timing [:meter :bar-origin-beat :phrase-origin-beat])
+                                          :start-beat (- start lead) :span-beats (+ window lead)
+                                          :period-beats (when (widgets/finite? period-beats) period-beats)
+                                          :aligned? true))
+                (update :lines (partial mapv #(assoc % :x (* 100 (/ (- (:beat %) start) window))))))))))
+
+(defn signal-grid
+  "The musical grid of a sampled cycle preview. The show supplies the window in
+  beats and the meter the period was measured in."
+  [timing signal-timing]
+  (when (widgets/finite? (:period-beats signal-timing))
+    (when-let [meter (or (:meter signal-timing) (:meter timing))]
+      (musical-grid/grid (assoc (select-keys signal-timing [:start-beat :span-beats :period-beats]) :meter meter)))))
+
+(defn history-chart [schema history window & [attach lead push? grid]]
   (let [{:keys [bounds paths]} (chart-paths history window schema lead)
         values (:values (peek history))
         labels (when (> (count paths) 1)
@@ -210,14 +234,14 @@
         (with-meta (component-reading schema labels i v push?) {:key i}))]
      [:svg {:view-box "0 0 100 44" :preserve-aspect-ratio "none" :role "img" :style {:overflow "hidden"}
             :aria-label (str "Last " window " beats")}
-      (for [x [0 25 50 75 100]]
-        ^{:key x} [:line.time-grid {:x1 x :x2 x :y1 0 :y2 44}])
       [:g {:ref attach}
+       [widgets/grid-lines grid :x 0 44]
        (for [[i d] (map-indexed vector paths)]
          ^{:key i} [:path {:d d :stroke (colors i) :fill "none" :stroke-width 1.6
                            :vector-effect "non-scaling-stroke"}])]]
      [:figcaption [:span (if bounds (domain-label schema bounds) "Awaiting samples")]
-      [:span (str window " beats")]]]))
+      [:span (str window " beats")]]
+     (widgets/grid-period grid)]))
 
 (defn history-motion [observations window]
   (when (<= 2 (count observations))
@@ -226,7 +250,7 @@
       (when (and (= (:source prior) (:source last)) (< 0 beats window) (<= 1 elapsed 1000))
         {:beats beats :duration elapsed :offset (* 100 (/ beats window))}))))
 
-(defn- scrolling-history [schema history window]
+(defn- scrolling-history [schema history window timing period-beats]
   (r/with-let [element (atom nil) animation (atom nil) seen (atom nil)
                attach (fn [node] (reset! element node) nil)]
     (let [current (peek history) position [(:source current) window (:beat current)]
@@ -246,7 +270,8 @@
                                            #js {:transform "translateX(0px)"}]
                                       #js {:duration duration :easing "linear"}))))
               (reset! seen position)))))
-      [history-chart schema history window attach beats])
+      [history-chart schema history window attach beats false
+       (chart-grid history window beats timing period-beats)])
     (finally (when-let [active @animation] (.cancel active)))))
 
 (def selected-mode views/selected-mode)
@@ -260,6 +285,21 @@
         :history [id (append-sample (get previous id []) clock values)]
         :spatial [id (spatial-keyframe (get previous id) clock values)]
         nil))))
+
+(defn- history-window [beats] (or (some #{beats} zooms) 4))
+
+(defn- push-grids
+  "Project the grid of each visible signal once per supplied view: the cycle
+  preview from its own timing and the history from the observed window."
+  [timing window observations parameters]
+  (into {} (keep (fn [{:keys [param id signal-timing source-period-beats]}]
+                   (let [key (or param id)
+                         history (get observations key)
+                         preview (signal-grid timing signal-timing)
+                         plotted (when (vector? history) (chart-grid history window 0 timing source-period-beats))
+                         grids (cond-> {} preview (assoc :preview preview) plotted (assoc :history plotted))]
+                     (when (seq grids) [key grids]))))
+        parameters))
 
 (defn update-push [previous next view]
   (let [identity (mapv #(get view %) [:runtime-id :epoch :instance-id :definition-version])
@@ -275,8 +315,12 @@
         visible? (and clock (#{nil :parameters "parameters"} (:display-mode next))
                       (not (get-in next [:target-picker :open?])))
         entries (when visible?
-                  (into {} (keep #(observe-parameter retained clock preference %)) (:parameters next)))]
-    (cond-> (assoc next :parameter-view preference :history-beats (:history-beats view) :visualization-clock clock)
+                  (into {} (keep #(observe-parameter retained clock preference %)) (:parameters next)))
+        timing (:musical-timing view)
+        grids (push-grids timing (history-window (:history-beats view)) entries (:parameters next))]
+    (cond-> (assoc next :parameter-view preference :history-beats (:history-beats view) :visualization-clock clock
+                   :musical-timing timing)
+      (seq grids) (assoc :parameter-grids grids)
       (seq entries) (assoc :parameter-identity identity :parameter-observations entries))))
 
 (defn push [view {:keys [schema effective-value value param id preview-samples] :as parameter} & [touched?]]
@@ -288,14 +332,17 @@
                   (spatial-value schema keyframe (get-in view [:visualization-clock :time-ms]))
                   (components schema shown)) true]
       :history [history-chart schema (get-in view [:parameter-observations (or param id)])
-                (or (some #{(:history-beats view)} zooms) 4) nil nil true]
-      (if-let [trace (when (and (not touched?) (#{:number :integer :choice :enum} (widgets/parameter-kind schema)))
-                       (widgets/sparkline preview-samples))]
-        [:div.push-signal
-         trace
-         [:output.push-signal-value (widgets/value-label schema shown)
-          (when-let [unit (widgets/unit-label schema)] [:small unit])]]
-        [widgets/typed-display parameter]))))
+                (history-window (:history-beats view)) nil nil true
+                (get-in view [:parameter-grids (or param id) :history])]
+      (let [grid (get-in view [:parameter-grids (or param id) :preview])]
+        (if-let [trace (when (and (not touched?) (#{:number :integer :choice :enum} (widgets/parameter-kind schema)))
+                         (widgets/sparkline preview-samples grid))]
+          (into [:div.push-signal
+                 trace
+                 [:output.push-signal-value (widgets/value-label schema shown)
+                  (when-let [unit (widgets/unit-label schema)] [:small unit])]]
+                (remove nil? [(widgets/grid-period grid)]))
+          [widgets/typed-display parameter])))))
 
 (rf/reg-sub ::clock
   (fn [db _]
@@ -303,7 +350,9 @@
       {:time-ms (or (get-in show [:transport :time-ms]) (:time-ms show))
        :beat (get-in show [:transport :beat])
        :source [(:runtime-id show) (:epoch show)]
-       :sample-period-ms (get-in show [:visualization-clock :sample-period-ms])})))
+       :sample-period-ms (get-in show [:visualization-clock :sample-period-ms])
+       ;; The committed transport meter and origins place the musical grid.
+       :timing (select-keys (:transport show) [:meter :bar-origin-beat :phrase-origin-beat])})))
 
 (defn- record! [this]
   (let [[_ mode schema value clock observed] (r/argv this)
@@ -317,12 +366,13 @@
       (swap! observed append-sample clock values 0 1024))))
 
 (defn observed-view
-  "The mounted Studio scope for one committed sample of a parameter."
-  [mode schema value clock observed window]
+  "The mounted Studio scope for one committed sample of a parameter. Options
+  carry the period of the driving source for the musical grid."
+  [mode schema value clock observed window & [options]]
   (case mode
     :spatial [space schema value (spatial-value schema @observed (:time-ms clock))]
     :color [widgets/color-view value]
-    [scrolling-history schema @observed window]))
+    [scrolling-history schema @observed window (:timing clock) (:period-beats options)]))
 
 (def observed-visual
   (r/create-class
@@ -330,28 +380,28 @@
     :component-did-update (fn [this _] (record! this))
     :reagent-render observed-view}))
 
-(defn- visible-visual [mode schema value window]
+(defn- visible-visual [mode schema value window options]
   (r/with-let [observed (r/atom (when (= mode :history) []))]
     (let [sample (if (fn? value) (value) value)]
       (if (some? sample)
-        [observed-visual mode schema sample @(rf/subscribe [::clock]) observed window]
+        [observed-visual mode schema sample @(rf/subscribe [::clock]) observed window options]
         [:span.block-trace-empty "Awaiting sample…"]))))
 
 (defn monitor
   "A single visible scope per performance strip. Sampling starts only when the
   scope intersects the viewport and stops when it leaves."
-  [schema value]
+  [schema value & [options]]
   (let [mode (views/monitor-view schema)]
     [watch-visibility
      (fn [visible?]
        (when visible?
-         ^{:key mode} [visible-visual mode schema value 4]))]))
+         ^{:key mode} [visible-visual mode schema value 4 options]))]))
 
 (def history-toggle views/history-toggle)
 
 (def ^:private view-titles {:spatial "3D" :color "Colour" :history "History"})
 
-(defn studio [schema value]
+(defn studio [schema value & [options]]
   (r/with-let [choice (r/atom :auto) window (r/atom 4)]
     (let [mode (views/studio-view schema @choice)]
       [:div.parameter-visualizer
@@ -370,4 +420,4 @@
        (when (#{:spatial :color :history} mode)
          [watch-visibility
           (fn [visible?] (when visible?
-                           ^{:key mode} [visible-visual mode schema value @window]))])])))
+                           ^{:key mode} [visible-visual mode schema value @window options]))])])))

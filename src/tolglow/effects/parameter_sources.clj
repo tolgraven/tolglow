@@ -259,6 +259,14 @@
         (assoc-in [:priority-overrides id] tier)
         (assoc-in [:sources id priority-param] (assoc source :priority tier :raw-priority raw)))))
 
+(defn- period-beats
+  "Beats in one cycle of a binding, in the meter its phase reference follows."
+  [{:keys [period phase-reference]} instance transport-clock]
+  (try (double (time/duration->beats period (if (= :transport phase-reference)
+                                              (:meter transport-clock)
+                                              (:timing-meter instance))))
+       (catch clojure.lang.ExceptionInfo _ nil)))
+
 (defn- sample-one [model instance transport-clock private-clock previous result param {:keys [binding] :as entry}]
   (let [id (:id instance)
         definition (modulation/owner-definition model instance)
@@ -274,7 +282,9 @@
         held? (boolean (and hold (or (nil? (:until-beat hold))
                                       (< (get-in model [:transport :beat] (:beat private-clock)) (:until-beat hold)))))
         result (assoc-in result [:plans cache-key] plan)
+        period-beats (period-beats binding instance transport-clock)
         source (cond-> {:type :lfo :binding binding :held? held? :identity (source-identity entry definition waveform)}
+                 period-beats (assoc :period-beats period-beats)
                  (and held? (:reason hold)) (assoc :hold-reason (:reason hold)))
         diagnostic (fn [result message]
                      (assoc-in result [:sources id param] (assoc source :error message)))]

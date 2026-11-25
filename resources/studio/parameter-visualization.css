@@ -4,8 +4,17 @@
 .parameter-domain,.parameter-history figcaption{color:#a9b5a6}
 .space-wall,.space-floor{fill:#26332c;stroke:#47584a;stroke-width:.6}
 .space-wall.side{fill:#1d2924}.space-floor{fill:#354437}
-.space-grid,.space-drop,.time-grid{stroke:#899d8e;stroke-width:.6}
-.space-grid{opacity:.4}.space-drop{stroke-dasharray:2 2}.time-grid{opacity:.26}
+.space-grid,.space-drop{stroke:#899d8e;stroke-width:.6}
+.space-grid{opacity:.4}.space-drop{stroke-dasharray:2 2}
+:root{--grid-sixteenth:#93a79c;--grid-beat:#a6d9a4;--grid-bar:#f2cf86;--grid-phrase:#cbb4f7}
+.musical-grid line{stroke-width:1;shape-rendering:crispEdges}
+.musical-grid .sixteenth{stroke:var(--grid-sixteenth);opacity:.4}
+.musical-grid .beat{stroke:var(--grid-beat);opacity:.48}
+.musical-grid .bar{stroke:var(--grid-bar);opacity:.72}
+.musical-grid .phrase{stroke:var(--grid-phrase);opacity:.92;stroke-width:1.5}
+.grid-period{font-size:10px;font-weight:600;white-space:nowrap;color:var(--grid-beat)}
+.grid-period[data-unit=bar]{color:var(--grid-bar)}.grid-period[data-unit=phrase]{color:var(--grid-phrase)}
+.parameter-history{position:relative}.parameter-history>.grid-period{position:absolute;top:1px;right:0}
 .space-axis{font:600 8px system-ui,sans-serif;text-anchor:middle}
 .parameter-space figcaption{color:#dce6d5}.parameter-no-sample{font-size:10px;color:#a6b1a1}
 .parameter-history svg{display:block;width:100%;height:58px;background:#141e19;border-radius:4px}

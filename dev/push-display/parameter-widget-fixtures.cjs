@@ -2,7 +2,7 @@
 // Offline Push display renders of fixture views through the release /push-display
 // page and the shipped capture worker. No show, device or output is involved.
 // The base view and its touch scenarios are the fixtures of the #627 layout
-// evidence. Usage: node dev/push-display/parameter-widget-fixtures.cjs <out-dir> [static-root]
+// evidence, with the musical timing a show supplies for each signal. Usage: node dev/push-display/parameter-widget-fixtures.cjs <out-dir> [static-root]
 // The optional static root holds another build's resources/studio, for comparison.
 const http = require('node:http');
 const fs = require('node:fs');
@@ -31,10 +31,13 @@ const server = http.createServer((req, res) => {
 const wave = f => Array.from({length: 48}, (_, i) => f(i / 47));
 const tint = {name: 'Tint', schema: {type: 'color'}, value: [1, 0.42, 0.12, 1]};
 const parameters = [
+  // Two one-bar cycles and three one-beat cycles, as the show reports them.
   {id: 'level', param: 'level', name: 'Level', schema: {type: 'number', bounds: [0, 1]}, value: 0.62,
-   'preview-samples': wave(t => 0.5 + 0.45 * Math.sin(t * Math.PI * 4))},
+   'preview-samples': wave(t => 0.5 + 0.45 * Math.sin(t * Math.PI * 4)),
+   'signal-timing': {'period-beats': 4, 'start-beat': 0, 'span-beats': 8}},
   {id: 'speed', param: 'speed', name: 'Speed', schema: {type: 'number', bounds: [0, 4], unit: 'beats'}, value: 1.5,
-   'preview-samples': wave(t => (t * 3) % 1 * 4)},
+   'preview-samples': wave(t => (t * 3) % 1 * 4),
+   'signal-timing': {'period-beats': 1, 'start-beat': 0, 'span-beats': 3}},
   {id: 'position', param: 'position', name: 'Position',
    schema: {type: 'vector', size: 3, bounds: [-1, 1], 'dmx-bits': 16}, value: [0.123456, -0.5, 0.8]},
   {...tint, id: 'tint', param: 'tint', component: 0, 'component-label': 'r'},
@@ -43,16 +46,26 @@ const parameters = [
   null,
   {id: 'shape', param: 'shape', name: 'Shape', schema: {type: 'enum', choices: ['sine', 'saw', 'square']}, value: 'saw'}
 ];
+const meter = (beats, bars) => ({'beats-per-bar': beats, 'bars-per-phrase': bars});
 const base = {title: 'Tolglow', page: 'main', status: 'ready', bpm: 124, master: 1, 'instance-id': 'a',
   cue: {name: 'Ember', active: true}, effect: {name: 'Ember wash'}, 'parameter-view': 'auto', parameters,
+  'musical-timing': {meter: meter(4, 4)},
   labels: ['Ember', 'Drift', 'Strobe', 'Sweep', '', '', '', '']};
+// One sine cycle per encoder. Only the period and the meter differ.
+const cycle = (name, beats, own) => ({id: name, param: name, name, schema: {type: 'number', bounds: [0, 1]}, value: 0.5,
+  'preview-samples': wave(t => 0.5 - 0.45 * Math.cos(t * Math.PI * 2)),
+  'signal-timing': {'period-beats': beats, 'start-beat': 0, 'span-beats': beats, ...(own && {meter: own})}});
+const periods = {...base, cue: {name: 'Grid periods', active: true}, 'musical-timing': {meter: meter(4, 8)},
+  parameters: [cycle('1/4 beat', 0.25), cycle('1 beat', 1), cycle('1 bar', 4), cycle('4 bars', 16), cycle('1 phrase', 32),
+               cycle('Phrase 4x4', 16, meter(4, 4)), cycle('Bar 7/8', 3.5, meter(3.5, 4)), cycle('Bar 3/4', 3, meter(3, 4))]};
 const scenarios = {
   untouched: base,
   'single-touch': {...base, 'touched-parameter': {'instance-id': 'a', param: 'level', component: 0}},
   'simultaneous-touch-fixture': {...base, 'touched-parameter': {'instance-id': 'a', param: 'level', component: 0},
     'touched-parameters': [{'instance-id': 'a', param: 'speed', component: 0}]},
   'compound-touch': {...base, 'touched-parameter': {'instance-id': 'a', param: 'tint', component: 0}},
-  'spatial-touch': {...base, 'touched-parameter': {'instance-id': 'a', param: 'position', component: 0}}
+  'spatial-touch': {...base, 'touched-parameter': {'instance-id': 'a', param: 'position', component: 0}},
+  'grid-periods': periods
 };
 
 server.listen(Number(process.env.PORT || 0), '127.0.0.1', async () => {
@@ -88,6 +101,20 @@ server.listen(Number(process.env.PORT || 0), '127.0.0.1', async () => {
     }
     fs.writeFileSync(path.join(outDir, 'history.png'), Buffer.from(result.png, 'base64'));
     console.log('history', JSON.stringify({charts: await page.locator('.parameter-history').count()}));
+    // Sources with a known period on a running transport: a one-bar sine, a
+    // one-beat saw and a two-bar orbit, observed every eighth of a beat.
+    const lfo = [beat => 0.5 + 0.4 * Math.sin(beat * Math.PI / 2), beat => (beat % 1) * 4,
+                 beat => [Math.sin(beat * Math.PI / 4) * 0.9, Math.cos(beat * Math.PI / 4) * 0.5, Math.sin(beat * Math.PI / 8)]];
+    for (let n = 0; n <= 124; n++) {
+      const beat = 4 + n / 8;
+      const active = parameters.map((p, i) => p && i < 3 ? {...p, 'source-state': 'active', 'source-types': ['lfo'],
+        'source-period-beats': [4, 1, 8][i], value: lfo[i](beat)} : p);
+      result = await worker.capture({...base, parameters: active, 'display-mode': 'parameters', 'parameter-view': 'history', 'history-beats': 4,
+        'runtime-id': 'r', epoch: 2, 'definition-version': 1,
+        'visualization-clock': {'time-ms': 2000 + n * 125, beat, source: 'show'}});
+    }
+    fs.writeFileSync(path.join(outDir, 'history-periods.png'), Buffer.from(result.png, 'base64'));
+    console.log('history-periods', JSON.stringify({grids: await page.locator('.parameter-history .musical-grid').count()}));
     console.log('errors', JSON.stringify(errors));
     if (errors.length) process.exitCode = 1;
   } finally { await worker.close(); server.close(); }

@@ -15,6 +15,7 @@ advances an oscillator, opens a device, or creates synthetic readings.
 | Boolean | Explicit switch and On/Off label | Rendering verified; physical controller behavior has its own lane |
 | Color/vector/range | Colour swatch with component gradient tracks, bounded vector component tracks and range endpoints | Push marks the hue, saturation or brightness component its encoder turns; a colour never opens the 3D vector widget (#655); richer web component pickers remain open |
 | Generated waveform | Always-visible compact result plus slope, angular velocity, jagginess, cycles and sample detail | Actual Ring preview changes when another live parameter changes; 513-sample detail and selector verified |
+| Musical grid | Beat, bar and phrase lines behind signal previews, the waveform picker and history plots, in units chosen by the signal period | One shared projection from the period, the meter and the transport origins (#655); a plot without supplied meter draws none |
 | Push generated waveform | Shared sparkline consumes supplied `:preview-samples` | Actual JVM helper → Node → Chromium → PNG capture changes the pulse shape after a live parameter command |
 | Captured audio | Actual peak windows, fixed amplitude, low/mid/high energy colors and supplied beat/bar markers | Timed signed-16 PCM source exercised the production capture/analyzer pipeline, web scope and Push layout |
 | Push audio mode | Full-width audio scope with eight compact encoder value columns | Actual 960×160 browser screenshot; capture data supplied from the real audio endpoint |
