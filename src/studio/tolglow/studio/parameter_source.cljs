@@ -76,7 +76,9 @@
     (some #(when (= id (:id %)) %) (get-in db [:server-projection :view :instances]))))
 
 (defn- identity-of [show] ((juxt :runtime-id :epoch) show))
+
 (defn- context [db] (identity-of (:show db)))
+
 (def ^:private requests-path [:ui :source-requests])
 
 (defn- request-status [db [owner :as key] {:keys [id accepted-revision] :as request}]
