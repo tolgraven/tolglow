@@ -1,0 +1,49 @@
+{
+    "tolglow": "4311a5e49123139905fd7eefd5626367c7a252b5",
+    "afterglow": "16efb8b525e01d02a27897a389960da755247d13",
+    "events": [
+        {
+            "stage": "preview",
+            "status": "preview",
+            "save-name": "Tour rehearsal",
+            "source-kind": "named",
+            "target-show": "tour",
+            "live": {
+                "show-id": "main",
+                "epoch": 0,
+                "master": 0.7
+            }
+        },
+        {
+            "status": "rejected",
+            "reason": "stale-save-source",
+            "stage": "replacement-refusal",
+            "same-modified-time": true,
+            "live": {
+                "show-id": "main",
+                "epoch": 0,
+                "master": 0.7
+            }
+        },
+        {
+            "stage": "confirm",
+            "status": "submitted",
+            "live": {
+                "show-id": "main",
+                "epoch": 0,
+                "master": 0.7
+            },
+            "receipt-pending": true
+        },
+        {
+            "stage": "restore",
+            "status": "accepted",
+            "live": {
+                "show-id": "tour",
+                "epoch": 1,
+                "master": 0.42
+            },
+            "file-master-at-apply": 0.9
+        }
+    ]
+}
