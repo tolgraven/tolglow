@@ -1,5 +1,5 @@
 (ns tolglow.controllers.push-variations
-  "Push 2 interaction for the common cue parameter variation projection."
+  "Push interaction for the common cue parameter variation projection."
   (:require [tolglow.authoring.variation-control :as variations]))
 
 (defn- projection [selection model prior]
@@ -25,12 +25,11 @@
 (defn- admitted-choice [presented op fields]
   (merge (select-keys presented [:instance-id :basis :layout :seed :row-page]) fields {:op op}))
 
-(defn- input [selection {:keys [type controller raw-value]} model
-              {:keys [presented position selected-instance record?]}]
-  (let [button (when (and (= :control-change type) (pos? raw-value)) controller)
-        instance-id (:instance-id selection)]
+(defn- input [selection {:keys [action position]} model
+              {:keys [presented selected-instance record?]}]
+  (let [instance-id (:instance-id selection)]
     (cond
-      (= 50 button)
+      (= :variation/cycle action)
       (cond
         (and record? presented) {:state selection :commands [(admitted-choice presented :cue-variation/append {})]}
         record? {:state selection}
@@ -40,20 +39,21 @@
         {:state {:instance-id selected-instance :layout :full :row-page 0 :seed 0}}
         :else {:state nil})
 
-      (and selection (= 58 button))
+      (and selection (= :variation/ratio-mode action))
       (let [cue-id (get-in model [:instances instance-id :cue-id])
-            mode (get-in model [:extensions variations/state-key cue-id :ratio-mode] :preferred)]
+            mode (or (:ratio-mode presented)
+                     (get-in model [:extensions variations/state-key cue-id :ratio-mode] :preferred))]
         {:state selection
          :commands [{:op :cue-variation/ratio-mode :instance-id instance-id
                      :mode (if (= :free mode) :preferred :free)}]})
 
-      (and selection (#{62 63} button))
+      (and selection (#{:variation/previous-page :variation/next-page} action))
       {:state (if (= :rows (:layout selection))
                 (update selection :row-page #(max 0 (min (dec (:row-pages presented 1))
-                                                        (+ % (if (= 62 button) -1 1)))))
+                                                        (+ % (if (= :variation/previous-page action) -1 1)))))
                 selection)}
 
-      (and presented position (= :note-on type))
+      (and presented position)
       (let [cell (some #(when (= position (:position %)) %) (:cells presented))
             overwrite? (and record? (= :saved (:kind cell)))]
         {:state selection
@@ -61,4 +61,14 @@
                          (and (not record?) cell (not (:stale? cell)))
                          [(admitted-choice presented :cue-variation/apply {:position position})])}))))
 
-(def pad-overlay {:input input :project projection})
+(defn- push-2-input [selection {:keys [type controller raw-value]} model {:keys [position] :as context}]
+  (let [event (cond
+                (= :note-on type) {:position position}
+                (and (= :control-change type) (pos? raw-value))
+                {:action ({50 :variation/cycle 58 :variation/ratio-mode
+                           62 :variation/previous-page 63 :variation/next-page} controller)})]
+    (input selection event model context)))
+
+(def pad-overlay {:input push-2-input :project projection})
+
+(def push-3-pad-overlay {:input input :project projection})
