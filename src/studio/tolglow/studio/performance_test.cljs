@@ -252,6 +252,29 @@
     (is (= 8 (get-in (:db ack) (conj path :request :revision))))
     (is (= (:show db) (get-in ack [:db :show])))))
 
+(deftest rejected-layer-priority-keeps-the-draft-for-the-same-running-launch
+  (let [db (assoc-in base [:show :active-instance-order] ["4:1" "4:2" "4:3"])
+        opened (:db (transition db [:performance/reorder-toggle]))
+        capture {:identity ["runtime-a" 4 ["4:1" "4:2" "4:3"]] :revision 7}
+        selected (:db (transition opened [:performance/reorder-pick capture "4:1"]))
+        sent (transition selected [:performance/reorder-priority-set capture "4:1" "-3.5"])
+        payload (command sent)
+        received-db (-> (:db sent)
+                        (assoc-in [:show :revision] 8)
+                        (assoc-in [:show :active-instance-order] ["4:2" "4:1" "4:3"]))
+        rejected (:db (transition received-db (conj (:on-failure payload) "Show revision changed")))
+        path [:ui :performance :reorder]
+        next-capture {:identity ["runtime-a" 4 ["4:2" "4:1" "4:3"]] :revision 8}
+        retried (transition rejected [:performance/reorder-priority-set next-capture "4:1" (get-in rejected (conj path :priority-draft))])
+        replaced (assoc-in rejected [:show :epoch] 5)
+        next-epoch (assoc-in next-capture [:identity 1] 5)]
+    (is (= "-3.5" (get-in (:db sent) (conj path :priority-draft))))
+    (is (= "-3.5" (get-in rejected (conj path :priority-draft))))
+    (is (= "Show revision changed" (get-in rejected (conj path :error))))
+    (is (nil? (get-in rejected (conj path :request))))
+    (is (= {:instance-id "4:1" :priority -3.5 :expected-revision 8} (:fields (command retried))))
+    (is (empty? (:fx (transition replaced [:performance/reorder-priority-set next-epoch "4:1" "-3.5"]))))))
+
 (deftest grouped-xyz-keeps-editable-base-and-plots-effective-components
   (let [components [[:x {:default 1}] [:y {:default 2}] [:z {:default 3}]]
         instance {:id "4:1" :params {"x" 0.25 :z 0.7}}
