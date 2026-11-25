@@ -255,13 +255,13 @@
     (wake! hub)
     (let [[clients interest] (locking (:clients hub)
                               [(first (reset-vals! (:clients hub) {})) (take-unused-interest! hub)])
-          cleanups (cond-> (into [] (mapcat #(query-cleanups hub (:queries @%) {})) (vals clients))
-                     interest (conj #(release-interest! interest)))
+          releases (into [] (mapcat #(query-cleanups hub (:queries @%) {})) (vals clients))
           worker (when (realized? (:worker hub)) @(:worker hub))
           store (:query-store hub)
           external? (not (identical? worker (Thread/currentThread)))]
       (doseq [socket (keys clients)] (close-socket! socket 1001 "Studio stopped"))
-      (queries/close! store external? cleanups)
+      (queries/close! store external? {:detachments (when interest [#(release-interest! interest)])
+                                       :releases releases})
       (when (and worker external? (not (and store (queries/owns-query-work? store worker))))
         (.interrupt ^Thread worker)))))
 
