@@ -345,12 +345,12 @@ For earlier detection with a known recording, use
 `tolglow.integrations.track-profile/analyze-file` with a local WAV and its beat
 grid. Supply the result as `:profile` in the show's `:section-reference`
 configuration. `:provenance` identifies the trusted player's source, session
-and monotonic clock. From the player worker or REPL, call
-`tolglow.show/section-reference-callbacks`. Pass its `:now-ms!` clock to
-`tolglow.integrations.mpv-observations` and publish the adapter's `:alignment`
-state using `:publish!`. Connect the adapter's JSON lines to the same
-explicitly configured local mpv socket. Use the recording's absolute path in
-both mpv and the adapter catalog. Each show accepts one configured reference.
+and monotonic clock. Open `tolglow.integrations.mpv-player/open!` against an
+existing local mpv socket and pass `tolglow.show/section-reference-callbacks`
+from the running show. The player worker reads and publishes position in the
+same monotonic clock domain and revokes the lock on close. Use the recording's
+absolute path in mpv and in the catalog. Each show accepts one configured
+reference. [REPL example](../src/tolglow/integrations/README.md#observe-a-known-local-recording-in-mpv)
 
 Reference forecasts expire on uncertainty or a playback discontinuity. The
 live capture can then supply a newly confirmed section. The show still owns
