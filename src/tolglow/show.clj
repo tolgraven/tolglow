@@ -805,7 +805,7 @@
         (dispatch-owner-command runtime model
                                 (assoc (select-keys payload [:command-id :show-id :epoch :expected-revision :source])
                                        :op :effect-groups/configure :config-patch values)
-                                time-ms)
+                                time-ms authority)
         (let [values (cond-> values (and (= scope :output) (contains? values :pause-look))
                        (update :pause-look pause-look/normalize))
               settings (edit-scoped-settings model scope values (:device-id payload))
