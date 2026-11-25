@@ -1,0 +1,409 @@
+{
+  "viewport": [
+    1280,
+    720
+  ],
+  "snapshot": {
+    "show-id": "fog-axis-631",
+    "epoch": 1,
+    "revision": 1,
+    "frame-number": 1,
+    "rig": {
+      "room": {
+        "width": 12,
+        "height": 5,
+        "depth": 10
+      },
+      "fixtures": [
+        {
+          "id": "h0",
+          "position": [
+            -4.2,
+            4.4,
+            -1.5
+          ],
+          "rotation-deg": [
+            18,
+            0,
+            40.5
+          ]
+        },
+        {
+          "id": "h1",
+          "position": [
+            -3,
+            4.4,
+            -1.5
+          ],
+          "rotation-deg": [
+            18,
+            0,
+            31.983910012776946
+          ]
+        },
+        {
+          "id": "h2",
+          "position": [
+            -1.8000000000000003,
+            4.4,
+            -1.5
+          ],
+          "rotation-deg": [
+            18,
+            0,
+            20.87873146228337
+          ]
+        },
+        {
+          "id": "h3",
+          "position": [
+            -0.6000000000000005,
+            4.4,
+            -1.5
+          ],
+          "rotation-deg": [
+            18,
+            0,
+            7.317092118740387
+          ]
+        },
+        {
+          "id": "h4",
+          "position": [
+            0.5999999999999996,
+            4.4,
+            -1.5
+          ],
+          "rotation-deg": [
+            18,
+            0,
+            -7.3170921187403755
+          ]
+        },
+        {
+          "id": "h5",
+          "position": [
+            1.7999999999999998,
+            4.4,
+            -1.5
+          ],
+          "rotation-deg": [
+            18,
+            0,
+            -20.87873146228337
+          ]
+        },
+        {
+          "id": "h6",
+          "position": [
+            2.999999999999999,
+            4.4,
+            -1.5
+          ],
+          "rotation-deg": [
+            18,
+            0,
+            -31.983910012776946
+          ]
+        },
+        {
+          "id": "h7",
+          "position": [
+            4.2,
+            4.4,
+            -1.5
+          ],
+          "rotation-deg": [
+            18,
+            0,
+            -40.5
+          ]
+        },
+        {
+          "id": "d0",
+          "position": [
+            -3,
+            4.4,
+            2.5
+          ],
+          "rotation-deg": [
+            -10,
+            0,
+            -25
+          ]
+        },
+        {
+          "id": "d1",
+          "position": [
+            3,
+            4.4,
+            2.5
+          ],
+          "rotation-deg": [
+            -10,
+            0,
+            25
+          ]
+        }
+      ]
+    },
+    "output": {
+      "values": {
+        "h0": {
+          "emitted-color": [
+            1,
+            0.35,
+            0.05
+          ]
+        },
+        "h1": {
+          "emitted-color": [
+            0.2,
+            0.5,
+            1
+          ]
+        },
+        "h2": {
+          "emitted-color": [
+            1,
+            1,
+            1
+          ]
+        },
+        "h3": {
+          "emitted-color": [
+            0.9,
+            0.1,
+            0.6
+          ]
+        },
+        "h4": {
+          "emitted-color": [
+            1,
+            0.35,
+            0.05
+          ]
+        },
+        "h5": {
+          "emitted-color": [
+            0.2,
+            0.5,
+            1
+          ]
+        },
+        "h6": {
+          "emitted-color": [
+            1,
+            1,
+            1
+          ]
+        },
+        "h7": {
+          "emitted-color": [
+            0.9,
+            0.1,
+            0.6
+          ]
+        },
+        "d0": {
+          "emitted-color": [
+            1,
+            0.35,
+            0.05
+          ]
+        },
+        "d1": {
+          "emitted-color": [
+            0.2,
+            0.5,
+            1
+          ]
+        }
+      }
+    }
+  },
+  "runs": {
+    "desktop-master": [
+      {
+        "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+        "quality": "desktop",
+        "grid": [
+          32,
+          18,
+          32
+        ],
+        "densityHash": "8754eb23",
+        "stepMsMedian": 2.100000001490116,
+        "stepMsMean": 2.4100000000248354,
+        "drawPlusReadbackMsMedian": 2,
+        "errors": [
+          "Failed to load resource: the server responded with a status of 404 (Not Found)"
+        ]
+      },
+      {
+        "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+        "quality": "desktop",
+        "grid": [
+          32,
+          18,
+          32
+        ],
+        "densityHash": "8754eb23",
+        "stepMsMedian": 2.5,
+        "stepMsMean": 2.676666666691502,
+        "drawPlusReadbackMsMedian": 1.6000000014901161,
+        "errors": []
+      }
+    ],
+    "desktop-branch": [
+      {
+        "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+        "quality": "desktop",
+        "grid": [
+          32,
+          18,
+          32
+        ],
+        "densityHash": "8754eb23",
+        "stepMsMedian": 1.7000000029802322,
+        "stepMsMean": 2.4483333334326742,
+        "drawPlusReadbackMsMedian": 1.8000000044703484,
+        "errors": []
+      },
+      {
+        "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+        "quality": "desktop",
+        "grid": [
+          32,
+          18,
+          32
+        ],
+        "densityHash": "8754eb23",
+        "stepMsMedian": 1.6999999955296516,
+        "stepMsMean": 2.3066666666418314,
+        "drawPlusReadbackMsMedian": 1.7999999970197678,
+        "errors": []
+      }
+    ],
+    "mobile-master": [
+      {
+        "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+        "quality": "mobile",
+        "grid": [
+          24,
+          14,
+          24
+        ],
+        "densityHash": "d6c905fe",
+        "stepMsMedian": 1,
+        "stepMsMean": 1.1566666666418315,
+        "drawPlusReadbackMsMedian": 1.8000000044703484,
+        "errors": []
+      },
+      {
+        "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+        "quality": "mobile",
+        "grid": [
+          24,
+          14,
+          24
+        ],
+        "densityHash": "d6c905fe",
+        "stepMsMedian": 1.1000000014901161,
+        "stepMsMean": 1.2433333333581686,
+        "drawPlusReadbackMsMedian": 1.6999999955296516,
+        "errors": []
+      }
+    ],
+    "mobile-branch": [
+      {
+        "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+        "quality": "mobile",
+        "grid": [
+          24,
+          14,
+          24
+        ],
+        "densityHash": "d6c905fe",
+        "stepMsMedian": 0.6000000014901161,
+        "stepMsMean": 0.8816666666418314,
+        "drawPlusReadbackMsMedian": 1.5,
+        "errors": []
+      },
+      {
+        "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+        "quality": "mobile",
+        "grid": [
+          24,
+          14,
+          24
+        ],
+        "densityHash": "d6c905fe",
+        "stepMsMedian": 0.7000000029802322,
+        "stepMsMean": 1.1116666667163373,
+        "drawPlusReadbackMsMedian": 1.4000000059604645,
+        "errors": []
+      }
+    ],
+    "high-master": [
+      {
+        "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+        "quality": "high",
+        "grid": [
+          48,
+          24,
+          48
+        ],
+        "densityHash": "1bde5cf7",
+        "stepMsMedian": 8.5,
+        "stepMsMean": 8.889999999850989,
+        "drawPlusReadbackMsMedian": 2,
+        "errors": []
+      },
+      {
+        "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+        "quality": "high",
+        "grid": [
+          48,
+          24,
+          48
+        ],
+        "densityHash": "1bde5cf7",
+        "stepMsMedian": 8.100000001490116,
+        "stepMsMean": 8.279999999950329,
+        "drawPlusReadbackMsMedian": 2.1999999955296516,
+        "errors": []
+      }
+    ],
+    "high-branch": [
+      {
+        "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+        "quality": "high",
+        "grid": [
+          48,
+          24,
+          48
+        ],
+        "densityHash": "1bde5cf7",
+        "stepMsMedian": 6.0999999940395355,
+        "stepMsMean": 6.684999999900659,
+        "drawPlusReadbackMsMedian": 2.1999999955296516,
+        "errors": []
+      },
+      {
+        "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+        "quality": "high",
+        "grid": [
+          48,
+          24,
+          48
+        ],
+        "densityHash": "1bde5cf7",
+        "stepMsMedian": 5,
+        "stepMsMean": 5.67000000004967,
+        "drawPlusReadbackMsMedian": 1.7999999970197678,
+        "errors": []
+      }
+    ]
+  }
+}

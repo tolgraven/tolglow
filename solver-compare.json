@@ -1,0 +1,117 @@
+{
+  "node": "v26.13.1",
+  "results": {
+    "high/haze=0.07": {
+      "grid": [
+        48,
+        24,
+        48
+      ],
+      "cells": 55296,
+      "bytesEqual": true,
+      "maxDensityDiff": 0,
+      "maxTempDiff": 0,
+      "masterStepMs": 16.241,
+      "branchStepMs": 8.776,
+      "speedup": 1.85
+    },
+    "high/haze=0": {
+      "grid": [
+        48,
+        24,
+        48
+      ],
+      "cells": 55296,
+      "bytesEqual": true,
+      "maxDensityDiff": 0,
+      "maxTempDiff": 0,
+      "masterStepMs": 13.917,
+      "branchStepMs": 6.96,
+      "speedup": 2
+    },
+    "desktop/haze=0.07": {
+      "grid": [
+        32,
+        18,
+        32
+      ],
+      "cells": 18432,
+      "bytesEqual": true,
+      "maxDensityDiff": 0,
+      "maxTempDiff": 0,
+      "masterStepMs": 4.264,
+      "branchStepMs": 2.143,
+      "speedup": 1.99
+    },
+    "desktop/haze=0": {
+      "grid": [
+        32,
+        18,
+        32
+      ],
+      "cells": 18432,
+      "bytesEqual": true,
+      "maxDensityDiff": 0,
+      "maxTempDiff": 0,
+      "masterStepMs": 4.939,
+      "branchStepMs": 2.479,
+      "speedup": 1.99
+    },
+    "mobile/haze=0.07": {
+      "grid": [
+        24,
+        14,
+        24
+      ],
+      "cells": 8064,
+      "bytesEqual": true,
+      "maxDensityDiff": 0,
+      "maxTempDiff": 0,
+      "masterStepMs": 4.791,
+      "branchStepMs": 2.128,
+      "speedup": 2.25
+    },
+    "mobile/haze=0": {
+      "grid": [
+        24,
+        14,
+        24
+      ],
+      "cells": 8064,
+      "bytesEqual": true,
+      "maxDensityDiff": 0,
+      "maxTempDiff": 0,
+      "masterStepMs": 4.035,
+      "branchStepMs": 1.902,
+      "speedup": 2.12
+    },
+    "phone/haze=0.07": {
+      "grid": [
+        20,
+        12,
+        20
+      ],
+      "cells": 4800,
+      "bytesEqual": true,
+      "maxDensityDiff": 0,
+      "maxTempDiff": 0,
+      "masterStepMs": 2.556,
+      "branchStepMs": 1.221,
+      "speedup": 2.09
+    },
+    "phone/haze=0": {
+      "grid": [
+        20,
+        12,
+        20
+      ],
+      "cells": 4800,
+      "bytesEqual": true,
+      "maxDensityDiff": 0,
+      "maxTempDiff": 0,
+      "masterStepMs": 1.749,
+      "branchStepMs": 0.881,
+      "speedup": 1.99
+    }
+  }
+}
