@@ -5,7 +5,8 @@
   (:require [afterglow.reactive :as reactive]
             [tolglow.registry :as registry])
   (:import [java.lang System$Logger System$Logger$Level]
-           [java.util.concurrent Executors ThreadFactory TimeUnit]))
+           [java.util.concurrent Executors ThreadFactory ThreadPoolExecutor TimeUnit]
+           [java.util.concurrent.atomic AtomicInteger]))
 
 (def defaults
   #{:clock/beat :clock/beat-in-bar :clock/bar :clock/phrase :clock/phase
@@ -18,6 +19,8 @@
 (def ^:private unavailable-lease {:result (delay {:error :unavailable})})
 
 (defn create
+  "Create a query store. Shutdown can retry a surface's detach callback once
+  after an exception. Surface close callbacks run once even if they throw."
   ([get-graph wake!] (create get-graph wake! {}))
   ([get-graph wake! surfaces]
    {:get-graph get-graph :wake! wake! :state (atom {}) :surfaces surfaces}))
@@ -42,31 +45,27 @@
     (throw (ex-info "Expected up to 32 named subscription queries" {})))
   (set queries))
 
-(defn- close-lease! [lease]
-  ;; A delivery pass may already hold this lease. Finish any active sample
-  ;; and prevent that pass from starting a new one after cleanup.
-  (when-let [slot (:last lease)]
-    (locking slot (vreset! slot ::retired)))
+(defn- cleanup-safely! [query phase cleanup!]
   (try
-    (when-let [detach! (:detach! lease)] (detach!))
-    (finally
-      (when-let [close! (:close! lease)] (close!)))))
-
-(defn- close-lease-safely! [query lease]
-  (try
-    (close-lease! lease)
+    (when cleanup! (cleanup!))
     true
     (catch Throwable error
-      (.log logger System$Logger$Level/WARNING (str "Could not retire Studio query " (first query)) error)
+      (.log logger System$Logger$Level/WARNING (str "Could not " phase " Studio query " (first query)) error)
       false)))
 
-(defn- await-retirements! [completions]
-  (let [deadline (+ (System/nanoTime) (.toNanos TimeUnit/MILLISECONDS close-wait-ms))]
-    (try
-      (when-not (every? #(deref % (max 0 (.toMillis TimeUnit/NANOSECONDS (- deadline (System/nanoTime)))) false)
-                        completions)
-        (.log logger System$Logger$Level/WARNING "Studio query cleanup is still running after shutdown"))
-      (catch InterruptedException _ (.interrupt (Thread/currentThread))))))
+(defn- detach-lease! [query lease]
+  ;; A delivery pass may already hold this lease. Finish any active sample
+  ;; and prevent that pass from starting a new one after detachment.
+  (when-let [slot (:last lease)]
+    (locking slot (vreset! slot ::retired)))
+  (cleanup-safely! query "detach" (:detach! lease)))
+
+(defn- await-retirements! [deadline completions]
+  (try
+    (when-not (every? #(deref % (max 0 (.toMillis TimeUnit/NANOSECONDS (- deadline (System/nanoTime)))) false)
+                      completions)
+      (.log logger System$Logger$Level/WARNING "Studio query cleanup is still running after shutdown"))
+    (catch InterruptedException _ (.interrupt (Thread/currentThread)))))
 
 (defn- surface-query? [store query]
   (contains? (:surfaces store) (first query)))
@@ -82,48 +81,101 @@
 (defn- claim-retirements [leases]
   (into {} (map (fn [[query lease]] [query {:lease lease :owner (atom nil) :done (promise)}])) leases))
 
-(defn- finish-retirement! [store [query {:keys [lease owner done] :as retirement}]]
+(defn- remove-retirement [state query retirement]
+  (if (and retirement (identical? retirement (get-in state [:retiring query])))
+    (update state :retiring dissoc query)
+    state))
+
+(defn- complete-retirement! [store query lease retirement detached?]
+  (let [released? (cleanup-safely! query "close" (:close! lease))
+        failed-detach (when-not detached? (:detach! lease))
+        state (:state store)
+        ;; Keep a throwing lease fenced. Only its failed detach handle is
+        ;; eligible to run again, since close can have arbitrary side effects.
+        retry? (locking store
+                 (let [before @state]
+                   (if (and (:closed? before) failed-detach)
+                     true
+                     (do (reset! state (cond-> (remove-retirement before query retirement)
+                                       (and (not (:closed? before)) (not (and detached? released?)))
+                                       (assoc-in [:failed-retirements query] failed-detach)))
+                         false))))]
+    (when retry?
+      (cleanup-safely! query "retry detach for" failed-detach)
+      (locking store (swap! state remove-retirement query retirement)))
+    (when retirement
+      (deliver (:done retirement) true)
+      ((:wake! store)))))
+
+(defn- finish-retirement! [store [query {:keys [lease owner] :as retirement}]]
   ;; Shutdown can take queued entries from a socket or delivery pass. The
   ;; thread already executing an entry keeps ownership of that callback.
   (when (compare-and-set! owner nil (Thread/currentThread))
-    (let [closed? (close-lease-safely! query lease)]
-      (locking store
-        (swap! (:state store)
-               (fn [state]
-                 (cond-> state
-                   (identical? retirement (get-in state [:retiring query])) (update :retiring dissoc query)
-                   (and (not closed?) (not (:closed? state)))
-                   (update :failed-retirements (fnil conj #{}) query)))))
-      (deliver done true)
-      ((:wake! store)))))
+    (complete-retirement! store query lease retirement (detach-lease! query lease))))
+
+(defn- cleanup-executor [name]
+  (doto ^ThreadPoolExecutor (Executors/newFixedThreadPool
+                             4 (reify ThreadFactory
+                                 (newThread [_ task] (doto (Thread. task name) (.setDaemon true)))))
+    ;; If detachment blocks indefinitely, completed release workers can still exit.
+    (.setKeepAliveTime 1 TimeUnit/SECONDS)
+    (.allowCoreThreadTimeOut true)))
+
+(defn- submit-cleanups! [^ThreadPoolExecutor executor cleanups]
+  (mapv (fn [cleanup!]
+          (let [done (promise)]
+            (.execute executor ^Runnable #(try (cleanup!) (finally (deliver done true))))
+            done))
+        cleanups))
+
+(defn- start-terminal-cleanups! [store retiring detachments releases]
+  (let [queued (filterv (fn [[_ {:keys [owner]}]] (nil? @owner)) retiring)]
+    (when (or (seq queued) (seq detachments) (seq releases))
+      (let [detach-executor (cleanup-executor "tolglow-query-detach")
+            release-executor (cleanup-executor "tolglow-query-release")
+            pending-detachments (AtomicInteger. (count queued))
+            completions (into (submit-cleanups! detach-executor detachments)
+                              (submit-cleanups! release-executor releases))]
+        (doseq [[query {:keys [lease owner] :as retirement}] queued]
+          (.execute detach-executor
+                    ^Runnable #(try
+                                 (when (compare-and-set! owner nil (Thread/currentThread))
+                                   (let [detached? (detach-lease! query lease)]
+                                     (.execute release-executor
+                                               ^Runnable (fn []
+                                                           (reset! owner (Thread/currentThread))
+                                                           (complete-retirement! store query lease retirement detached?)))))
+                                 (finally
+                                   (when (zero? (.decrementAndGet pending-detachments))
+                                     (.shutdown release-executor))))))
+        (.shutdown detach-executor)
+        (when (empty? queued) (.shutdown release-executor))
+        completions))))
 
 (defn close!
+  "Close admission and, when requested, wait up to one second across all
+  cleanup. Detachment and release use separate bounded pools. A phase can
+  still be held up by its own callbacks, which keep ownership after the wait."
   ([store] (close! store true))
-  ([store wait?] (close! store wait? []))
-  ([store wait? cleanups]
-   (let [[retiring reconciling] (when store
-                                 (locking store
-                                   (let [state (:state store) before @state]
-                                     (when-not (:closed? before)
-                                       (let [retiring (merge (:retiring before) (claim-retirements (:leases before)))]
-                                         (reset! state {:closed? true :retiring retiring :reconciling (:reconciling before)})
-                                         [retiring (:reconciling before)])))))
-         completions (mapv (fn [_] (promise)) cleanups)]
-     (let [reentrant? (and store (owns-query-work? store (Thread/currentThread)))
-           queued (remove (fn [[_ entry]] (some? @(:owner entry))) retiring)]
-       (when (or (seq queued) (seq cleanups))
-         (let [executor (Executors/newFixedThreadPool
-                          4 (reify ThreadFactory
-                              (newThread [_ task]
-                                (doto (Thread. task "tolglow-query-cleanup") (.setDaemon true)))))]
-           (doseq [entry queued]
-             (.execute executor ^Runnable #(finish-retirement! store entry)))
-           (doseq [[cleanup! done] (map vector cleanups completions)]
-             (.execute executor ^Runnable #(try (cleanup!) (finally (deliver done true)))))
-           (.shutdown executor)))
-       (when (and wait? (not reentrant?))
-         (await-retirements! (cond-> (into completions (map :done) (vals retiring))
-                              reconciling (conj (:done reconciling)))))))
+  ([store wait?] (close! store wait? {}))
+  ([store wait? {:keys [detachments releases]}]
+   (let [deadline (+ (System/nanoTime) (.toNanos TimeUnit/MILLISECONDS close-wait-ms))
+         [retiring reconciling failed] (when store
+                                        (locking store
+                                          (let [state (:state store) before @state]
+                                            (when-not (:closed? before)
+                                              (let [retiring (merge (:retiring before) (claim-retirements (:leases before)))]
+                                                (reset! state {:closed? true :retiring retiring :reconciling (:reconciling before)})
+                                                [retiring (:reconciling before) (:failed-retirements before)])))))
+         reentrant? (and store (owns-query-work? store (Thread/currentThread)))
+         detachments (into (vec detachments)
+                           (keep (fn [[query detach!]]
+                                   (when detach! #(cleanup-safely! query "retry detach for" detach!))))
+                           failed)
+         completions (start-terminal-cleanups! store retiring detachments releases)]
+     (when (and wait? (not reentrant?))
+       (await-retirements! deadline (cond-> (into (vec completions) (map :done) (vals retiring))
+                                      reconciling (conj (:done reconciling))))))
    nil))
 
 (defn release-unused-leases!
@@ -165,7 +217,7 @@
   (locking store
     (let [state (:state store)]
       (when-not (:closed? @state)
-        (swap! state update :failed-retirements (fnil conj #{}) query)))))
+        (swap! state assoc-in [:failed-retirements query] nil)))))
 
 (defn- open-lease [store system query public]
   (if-let [open! (get (:surfaces store) (first query))]
@@ -175,8 +227,9 @@
           (cond-> lease
             (and observe! (not (:closed? @(:state store)))) (assoc :detach! (observe! (:wake! store))))
           (catch Exception error
-            ;; Opening can allocate resources before installing its observer.
-            (close-lease-safely! query lease)
+            ;; The observer must undo a partial registration if it throws
+            ;; before returning a detach callback.
+            (complete-retirement! store query lease nil (detach-lease! query lease))
             (fence-failed-retirement! store query)
             (throw error))))
       (catch Exception error
@@ -233,9 +286,8 @@
                                                     (update :missing (if (:await-registration? lease) conj disj) query))))
                             [prior])))]
         (if installed
-          (when-let [prior (first installed)] (close-lease-safely! query prior))
-          (when-not (close-lease-safely! query lease)
-            (fence-failed-retirement! store query)))))))
+          (when-let [prior (first installed)] (cleanup-safely! query "close" (:close! prior)))
+          (complete-retirement! store query lease nil (detach-lease! query lease)))))))
 
 (defn reconcile-current!
   "Share leases across sockets. Changing show identity, graph or public-query

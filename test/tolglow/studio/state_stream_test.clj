@@ -659,11 +659,12 @@
             (doseq [client [a b spectator]] (.abort ^WebSocket (:socket client))))))
       (finally (stream/close! hub) (.stop server)))))
 
-(deftest failed-detach-fences-the-surface-on-a-new-socket
+(deftest failed-detach-fences-the-surface-until-shutdown-retries-it
   (let [query [::faulty-surface]
         observed (atom :blue)
         mounts (atom 0)
         closes (atom 0)
+        detach-attempts (atom 0)
         test-detach! (promise)
         hub (stream/create identity (constantly nil)
                            {:get-graph (constantly nil)
@@ -672,8 +673,11 @@
                                          (swap! mounts inc)
                                          (let [lease (observation/selected observed identity identity)]
                                            (assoc lease :observe! (fn [wake!]
-                                                                    (deliver test-detach! ((:observe! lease) wake!))
-                                                                    #(throw (ex-info "Surface detach failed" {})))
+                                                                    (let [detach! ((:observe! lease) wake!)]
+                                                                      (deliver test-detach! detach!)
+                                                                      #(if (= 1 (swap! detach-attempts inc))
+                                                                         (throw (ex-info "Surface detach failed" {}))
+                                                                         (detach!))))
                                                         :close! #(swap! closes inc))))}})
         server (jetty/run-jetty (wrap-params #(stream/response hub %))
                                {:host "127.0.0.1" :port 0 :join? false})
@@ -695,6 +699,10 @@
               (is (= 1 @mounts @closes (count (.getWatches observed))))
               (finally (.abort ^WebSocket (:socket replacement)))))
           (finally (.abort ^WebSocket (:socket first-reader)))))
+      (stream/close! hub)
+      (is (= 2 @detach-attempts))
+      (is (= 1 @closes))
+      (is (empty? (.getWatches observed)))
       (finally
         (stream/close! hub)
         (.stop server)
@@ -770,37 +778,50 @@
         (.stop server)))))
 
 (deftest terminal-query-cleanup-keeps-ownership-after-the-shutdown-wait
-  (let [blocked [::a-blocked]
-        healthy [::z-healthy]
+  (let [blocked (mapv #(vector ::a-blocked %) (range 4))
+        healthy [::z-healthy 0]
+        requested (into (sorted-set healthy) blocked)
         source {:model {:show-id :fixture-show :epoch 0}}
-        closing (CountDownLatch. 1)
+        closing (CountDownLatch. 4)
         finish-close (CountDownLatch. 1)
-        closed (promise)
+        closed (CountDownLatch. 4)
+        healthy-detached (promise)
         healthy-closed (promise)
         observed (atom :blue)
-        attempts (atom 0)
+        attempts (atom {})
         store (query-stream/create (constantly nil) (constantly nil)
-                                   {::a-blocked (fn [_] {:sample! (constantly :blue)
-                                                          :close! (fn []
-                                                                    (swap! attempts inc)
-                                                                    (.countDown closing)
-                                                                    (deliver closed (.await finish-close 10 TimeUnit/SECONDS)))})
-                                    ::z-healthy (fn [_] (assoc (observation/selected observed identity identity)
-                                                               :close! #(deliver healthy-closed true)))})]
+                                   {::a-blocked (fn [query]
+                                                  {:sample! (constantly :blue)
+                                                   :close! (fn []
+                                                             (swap! attempts update query (fnil inc 0))
+                                                             (.countDown closing)
+                                                             (.await finish-close 10 TimeUnit/SECONDS)
+                                                             (.countDown closed))})
+                                    ::z-healthy (fn [_]
+                                                  (let [lease (observation/selected observed identity identity)]
+                                                    (assoc lease
+                                                           :observe! (fn [wake!]
+                                                                       (let [detach! ((:observe! lease) wake!)]
+                                                                         (fn []
+                                                                           (.await closing 3 TimeUnit/SECONDS)
+                                                                           (detach!)
+                                                                           (deliver healthy-detached true))))
+                                                           :close! #(deliver healthy-closed true))))})]
     (try
-      (is (= [blocked healthy] (vec (keys (query-stream/reconcile! store source (sorted-set blocked healthy))))))
+      (is (= (conj blocked healthy) (vec (keys (query-stream/reconcile! store source requested)))))
       (is (= 1 (count (.getWatches observed))))
       (let [shutdown (future (query-stream/close! store) :stopped)]
         (is (.await closing 3 TimeUnit/SECONDS))
-        (is (true? (deref healthy-closed 3000 nil)))
+        (is (true? (deref healthy-detached 3000 nil)))
         (is (empty? (.getWatches observed)))
         (is (= :stopped (deref shutdown 3000 nil)))
-        (is (not (realized? closed)))
-        (is (nil? (query-stream/reconcile! store source #{blocked healthy})))
+        (is (= 4 (.getCount closed)))
+        (is (nil? (query-stream/reconcile! store source requested)))
         (query-stream/close! store)
         (.countDown finish-close)
-        (is (true? (deref closed 3000 nil)))
-        (is (= 1 @attempts)))
+        (is (.await closed 3 TimeUnit/SECONDS))
+        (is (true? (deref healthy-closed 3000 nil)))
+        (is (= (zipmap blocked (repeat 1)) @attempts)))
       (finally (.countDown finish-close) (query-stream/close! store)))))
 
 (deftest invalid-control-closes-the-socket-before-its-lease-finishes
