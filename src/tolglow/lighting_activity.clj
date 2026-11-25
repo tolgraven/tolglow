@@ -10,9 +10,13 @@
             [tolglow.registry :as registry]))
 
 (def ^:private motion-fields #{:pan :tilt :aim :direction})
+
 (def ^:private shutter-fields #{:strobe :shutter})
+
 (def ^:private light-fields (into registry/emitter-attributes [:color :dimmer]))
+
 (def ^:private measured-fields (set/union motion-fields shutter-fields light-fields))
+
 (def ^:private components [:brightness :coverage :flashing :movement :strobe])
 
 (defn- unit ^double [^double x] (min 1.0 (max 0.0 x)))
@@ -217,8 +221,11 @@
                                     (distinct (:groups fixture)))})) levels)}))
 
 (deftype GroupShare [id ^double weight ^double fraction])
+
 (deftype WriterShare [id ^double light ^double flashing ^double movement ^double strobe])
+
 (deftype SourceMix [light motion strobe ^objects writers])
+
 (deftype SampleTarget [id fixture ^long index ^long meterIndex ^double weight
                        ^boolean moving ^boolean shutter ^objects groups ^long recipe])
 

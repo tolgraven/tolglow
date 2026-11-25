@@ -9,7 +9,9 @@
            [java.util Arrays]))
 
 (def ^:private sources 4)
+
 (def ^:private period-ms 25)
+
 (def ^:private ^ThreadMXBean metrics (ManagementFactory/getThreadMXBean))
 
 (defn- create-case [base pixels tracked? independent?]

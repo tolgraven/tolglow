@@ -32,8 +32,11 @@
 
 (defn issue! [rt time type payload]
   (let [ack (show/submit! rt type payload)] (show/tick! rt (swap! time + 25)) @ack))
+
 (defn ticks! [rt time n] (dotimes [_ n] (show/tick! rt (swap! time + 25))))
+
 (defn group! [rt g] (some #(when (= g (:group-id %)) %) (get-in (show/snapshot rt) [:lighting-scenes :groups])))
+
 (defn byte-at [rt i] (bit-and 255 (aget ^bytes (get-in @(:state rt) [:output :universes 1]) i)))
 
 (deftest generated-and-borrowed-looks-with-independent-groups

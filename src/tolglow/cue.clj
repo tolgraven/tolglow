@@ -322,6 +322,7 @@
 
 (def or-various "Fallback & example of various cue settings map"
  {:bloom {:mods? false :keyhole? false :width 0.25 :measure (cfg :measure :default)}})
+
 (defn various "build cue for various effects"
 ;;  [group x y color kind & {:keys [settings fraction-param param-type priority end-rest?]
  [group x y color target-fn & {:keys [id level-param auto-param-type cue-vars settings priority end-rest?]
@@ -645,6 +646,7 @@
 (defn set-column! "Set row to auto-populate with cues"
  [column]
  (swap! put-data #(assoc % :column (+ column (* 8 (:x (:page %)))))))
+
 ;;  (swap! put-data (fn [s] (update s :column (+ column (* 8 (:x (:page @put-data))))))))
 ;; (defn by-row []) ;should also be possible. first of all store state in more reasonable fashion
 (defn set-page! "Set row to auto-populate with cues"

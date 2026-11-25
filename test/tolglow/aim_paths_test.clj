@@ -8,6 +8,7 @@
 (def model {:rig {:fixtures [{:id :mover :channels {:pan [1 2] :tilt [3 4]}}
                              {:id "rgbw" :channels {:red 1 :green 2 :blue 3 :white 4}}]}
             :registry {:effects {} :versions {}}})
+
 (def path-spec {:id :sweep :targets ["mover"] :points [[0 0 0] [1 0 0] [1 0 3]]
                 :duration {:beats 4} :curve :linear :mode :loop})
 

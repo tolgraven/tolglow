@@ -8,6 +8,7 @@
 (defn valid-id? [s] (and (string? s) (re-matches #"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}" s)))
 
 (defn- named? [s] (and (string? s) (<= 1 (count s) 512)))
+
 (defn- finite? [x] (and (number? x) (Double/isFinite (double x))))
 
 (defn descriptor [data]

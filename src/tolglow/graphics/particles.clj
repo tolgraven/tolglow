@@ -28,9 +28,13 @@
 ; add fields as here then put some bounce on eg an aim point...
 ; then modulate force so more powerfull on beat
 (defonce shader (atom nil))
+
 (defonce max-particles (atom 5000))
+
 (defonce fields (atom []))
+
 (def state (atom {})) ;fun-mode so can't mod outside pipeline but still useful for observation
+
 (def queue (atom {})) ;shit waiting to be put in
 
 
@@ -119,6 +123,7 @@
   s))
 
 (def saw (param/quick-lfo "sawtooth" :lo 0.01 :high 0.9 :beats 21))
+
 (defn only-when [s f]
  (if (< 0.1 (param/auto-resolve saw) 0.3)
            f #_(update s :emitters update-objs 500 500 ps/move)

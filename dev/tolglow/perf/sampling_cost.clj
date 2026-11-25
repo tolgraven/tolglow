@@ -8,6 +8,7 @@
   (:import [java.lang.management ManagementFactory ThreadMXBean]))
 
 (def ^:private frame-ms 25)
+
 (defn- op [kind & args] {:op kind :args (vec args)})
 
 (defn- expression [depth]

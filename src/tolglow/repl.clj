@@ -9,11 +9,14 @@
            [java.util.concurrent ArrayBlockingQueue CountDownLatch TimeUnit]))
 
 (def ^:dynamic *session* nil)
+
 (def ^:dynamic *runtime* nil)
 
 (defn- text-limit [value limit] (let [s (str value)] (subs s 0 (min limit (count s)))))
+
 (defn- change! [session f & args]
   (locking (:lock session) (reset! (:state session) (apply f @(:state session) args))))
+
 (defn- open-session! [session]
   (when-not (= :open (:status @(:state session)))
     (throw (ex-info "REPL session is closed or closing" {:type ::closed :session-id (:id session)}))))

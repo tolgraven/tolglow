@@ -10,6 +10,7 @@
 
 (def messages [{:role :system :content "Use the shared show controls."}
                {:role :user :content "Make a red cue."}])
+
 (defn event [data] (str "data: " (json/write-str data) "\r\n\r\n"))
 
 (deftest provider-requests-separate-credentials-and-provider-schemas

@@ -11,10 +11,14 @@
             [tolglow.registry :as registry]))
 
 (def run-path [:extensions ::members])
+
 (defn- fail! [message data] (throw (ex-info message data)))
+
 (defn- id? [v] (or (keyword? v) (and (string? v) (seq v))))
+
 (defn- number-param [v limits]
   (cond-> {:type :number :default v} limits (assoc :bounds limits)))
+
 (defn- vector-param [v] {:type :vector :size 3 :default v})
 
 (defn- dimensions [model volume]
@@ -137,7 +141,9 @@
       (update launched :ack assoc :cue-id id :page-id page-id :cell pos))))
 
 (defn controls? [instance] (boolean (get-in instance [:definition :spatial-volume])))
+
 (defn key-for [instance] (str "spatial-cue/" (:order instance)))
+
 (defn- spatial-candidate? [model instance]
   (or (controls? instance)
       (get-in model [:registry :effects (:effect-id instance) :spatial-volume])))

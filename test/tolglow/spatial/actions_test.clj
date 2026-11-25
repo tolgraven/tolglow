@@ -11,10 +11,13 @@
 (def rig [{:id :head-1 :groups [:head] :universe 1 :address 1 :channels {:dimmer 1}}
           {:id "head-2" :groups [:head] :universe 1 :address 2 :channels {:dimmer 1}}
           {:id :mover :position [0 0 0] :universe 1 :address 3 :channels {:pan [1 2] :tilt [3 4] :strobe 5}}])
+
 (def effect {:id :wash :version 1 :params {:power {:type :number :bounds [0 1] :default 0.5}
                                             :shape {:type :enum :values [:sine :square] :default :square}}
              :outputs {:dimmer {:op :param :key :power}}})
+
 (def cue {:id :sweep :version 1 :effect-id :wash :saved-params {:power 0.6}})
+
 (defn model []
   (assoc (control/new-show {:registry {:effects {:wash effect} :cues {:sweep cue}}}) :rig {:fixtures rig}))
 
@@ -24,6 +27,7 @@
 
 (defn update-area [m heads bindings now]
   (actions/apply-frame m {:members {:ball heads} :signals {:ball {:speed 0.7 :position [2 1.5 4]}}} bindings now command))
+
 (defn packed [m now batch?]
   (let [patch (frame/compile-patch rig)
         tick (engine/advance (assoc-in m [:transport :beat] (/ now 500.0)) {:time-ms now :fixtures (:fixtures patch)}

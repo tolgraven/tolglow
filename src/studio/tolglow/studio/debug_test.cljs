@@ -6,6 +6,7 @@
             [tolglow.transit :as wire]))
 
 (defn row [id] {:id id :type :audio/kick :category :audio :emitter {:id :audio/in} :subscribers [:fx/hit]})
+
 (defn event-batch [runtime n rows] {:runtime-id runtime :protocol "tolglow-debug/1" :kind :events :cursor n :skipped 0 :events rows})
 
 (deftest bounded-feed-retains-real-rows-and-recovers-cursor

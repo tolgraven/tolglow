@@ -10,12 +10,19 @@
             [tolglow.show :as show]))
 
 (def ^:private ground {:id :floor :point [0 0 0] :normal [0 1 0] :u-axis [1 0 0]})
+
 (def ^:private warmup 40)
+
 (def ^:private frames 160)
+
 (def ^:private frame-ms 25)
+
 (def ^:private bpm 120)
+
 (def ^:private groups [[:near 5.0] [:near 40.0] [:far 5.0] [:far 40.0]])
+
 (defn- group-for [i] (nth groups (mod i (count groups))))
+
 (defn- op [name & args] {:op name :args (vec args)})
 
 (defn- rig []

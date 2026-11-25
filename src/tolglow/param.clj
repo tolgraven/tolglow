@@ -180,9 +180,13 @@
    1 #_(bind-keyword-param 1 Number 1))) ;eh why not just return 1??
 
 (defn sum "Get total from values" [& vs] (apply + vs))
+
 (defn sub "Subtract values from first" [& vs] (apply - vs))
+
 (defn avg "Get average of values" [& vs] (/ (apply + vs) (count vs)))
+
 (defn div "Divide value by later (presumably between 0.1-10-ish) ones" [& vs] (apply / (map #(util/clamp % 0.1 10) vs)))
+
 (defn mul "Divide value by later (presumably between 0.1-10-ish) ones" [& vs] (apply * vs))
 
 (defn extremes "Get lowest / highest result possible (assuming linear) from running f on all combinations of min/max input, summing for however many invocations. So can normalize ahead of time."
@@ -220,11 +224,14 @@
                       (util/clamp (apply f ps) min max))
                      f))]
    (apply build-param-formula Number wrapped-fn params))))
+
 (def mix-dmx #(mix %1 %2 :min 0 :max 255))
+
 (def mix-dmx-funky #(mix %1 %2 :min 0 :max 255 :normalize? true))
 
 (defn average "Average value from any number of input params"
  [& params] (mix params avg))
+
 (defn multiply-normalized [& params]
  (mix params mul))
 
@@ -247,8 +254,11 @@
   (Param. "Noise" true Number eval-fn (partial identity))))
 
 (defn jitter "Hold specified value, but keep it jiggly" [])
+
 (defn drift "Drift from specified value, unsteadily, towards target" [])
+
 (defn color-breathing "Color param, but moves around given color, within bounds, never staying static" [])
+
 (defn trigger "Trigger some shit when reaching a specific range. Differs from whatever-param driving a chase by running actual code.  Meaning shit can evolve more better hopefully" [vm])
 
 (defn quick-lfo "quick wrapper around lfo-param, to make lots"
@@ -473,6 +483,7 @@ The compound dynamic parameter will be frame dynamic if any of its input paramet
 
 (defn or-rng "Defaults for random number generator" []
  {:vars {:min 0 :max 255 :min-change 0.1 :interval :beat, :interval-ratio 1, :fade-fraction 0.25, :fade-curve :sine}})
+
 (defn rng "Returns a dynamic number parameter which gets a new random value each interval."
  [& {:keys [min max min-change interval interval-ratio fade-fraction fade-curve] :as args}] ;to skip or not skip listing possible keys...
  {:pre [(some? *show*)]}

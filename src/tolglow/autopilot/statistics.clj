@@ -3,11 +3,15 @@
   (:require [afterglow.time :as time]))
 
 (def ^:private bucket-count 64)
+
 (def ^:private max-edge-spans 16)
+
 (def ^:private bins 10)
 
 (defn- unit? [x] (and (time/finite-number? x) (<= 0 x 1)))
+
 (defn- hist-bin [level] (min (dec bins) (int (* bins (double level)))))
+
 (def ^:private zero-histogram (vec (repeat bins 0.0)))
 
 (defn- observation [levels targets tolerance axis]

@@ -25,9 +25,11 @@
                         command {:time-ms time :epoch (:epoch model)}))]
     (when (= :rejected (get-in result [:ack :status])) (throw (ex-info "Calibration command rejected" (:ack result))))
     (:model result)))
+
 (defn- owned? [scan instance]
   (and (= :rig-calibration (get-in instance [:source :adapter]))
        (= (:session-id scan) (get-in instance [:source :session-id]))))
+
 (defn release
   "Release exactly the session's instances; leave ongoing human effects/state
   alone. Remove its temporary definitions and historical versions as well."
@@ -41,8 +43,10 @@
           (update-in [:registry :effects] dissoc id) (update-in [:registry :cues] dissoc id)
           (update-in [:registry :versions] (fn [versions] (into {} (remove (fn [[[kind key _] _]] (and (#{:effects :cues} kind) (= key id)))) versions)))
           (assoc-in session/artifact-path (assoc scan :status reason :step-index nil :armed? false)))) model))
+
 (defn disarm-restored [model]
   (if (:armed? (current model)) (release model :suspended (:time-ms model)) model))
+
 (defn advance [model receipts physical-now]
   (if-let [scan (current model)]
     (let [model (assoc-in model session/artifact-path (reduce session/receipt scan receipts))]
@@ -54,6 +58,7 @@
 (defn- output-values [step]
   (cond-> {:color (:color step) :dimmer (:dimmer step) :strobe 0.0}
     (:pan step) (assoc :pan (:pan step) :tilt (:tilt step))))
+
 (defn marker
   "Small frame metadata. Expected bytes cover only controlled fixture channels,
   including coarse/fine and inversion as compiled by the actual renderer."

@@ -7,11 +7,17 @@
             [tolglow.studio.subscriber-editor :as editor]))
 
 (def retention 320)
+
 (defn label [value] (if (keyword? value) (subs (str value) 1) (str value)))
+
 (defn- emit! [event] (rf/dispatch event))
+
 (defn- value [event] (.. event -target -value))
+
 (defn- displayed-rows [debug] (or (:frozen debug) (:rows debug) []))
+
 (defn- active? [db handle] (= handle (get-in db [:debug :handle])))
+
 (defn- reply [db message]
   (let [{:keys [handle generation runtime]} (:debug db)]
     [handle generation message runtime]))
@@ -100,18 +106,22 @@
 (rf/reg-sub :debug/state (fn [db _] (:debug db)))
 (rf/reg-sub :debug/universes (fn [db _] (get-in db [:show :output :universes])))
 (def filter-fields [[:type "Event type"] [:category "Category"] [:emitter "Emitter"] [:subscribers "Subscriber"]])
+
 (defn- field-values [row k]
   (case k
     :subscribers (map label (:subscribers row))
     :emitter (keep #(when (some? %) (label %)) [(get-in row [:emitter :id])])
     [(label (get row k))]))
+
 (defn matches? [filters row]
   (every? (fn [[k selected]] (or (str/blank? selected) (some #{selected} (field-values row k)))) filters))
+
 (defn- format-clock [stamp]
   (if (instance? js/Date stamp)
     (let [part #(-> % str (.padStart 2 "0"))]
       (str (part (.getHours stamp)) ":" (part (.getMinutes stamp)) ":" (part (.getSeconds stamp))
            "." (.padStart (str (.getMilliseconds stamp)) 3 "0"))) "—"))
+
 (defn- filters [rows selections]
   [:div.debug-filters
    (for [[k title] filter-fields
@@ -121,8 +131,10 @@
                 [:select {:id (str "debug-filter-" (name k)) :aria-label title :value selected :on-change #(emit! [:debug/filter k (value %)])}
                  [:option {:value ""} "All"]
                  (for [choice (sort options)] ^{:key choice} [:option {:value choice} choice])]])])
+
 (defn- subscribers-label [v]
   (cond (nil? v) "Unobserved" (empty? v) "None" :else (str/join ", " (map label v))))
+
 (defn- event-toolbar [{:keys [filters-open? filters skipped frozen cursor frozen-cursor]} shown total]
   (let [active (keep (fn [[field title]]
                        (when-let [choice (not-empty (get filters field))]
@@ -179,6 +191,7 @@
      (when (< (count shown) (count visible))
        [:button.button {:on-click #(emit! [:debug/more])} "Show older events"])
      ]))
+
 (defn- dmx [debug]
   (let [universes @(rf/subscribe [:debug/universes])
         channel-bank (:bank debug 0) start (* 64 channel-bank) packet (:packet debug)
@@ -201,6 +214,7 @@
        [:p.debug-empty (cond (empty? universes) "No patched output universes."
                              (nil? (:universe debug)) "Select a universe to inspect its 512 output channels."
                              packet "This universe has no committed packet." :else "Waiting for a committed DMX packet.")])]))
+
 (defn panel []
   (r/with-let [handle (str (random-uuid))
                _ (emit! [:debug/open handle])]

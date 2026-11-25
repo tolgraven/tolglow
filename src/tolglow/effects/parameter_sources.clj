@@ -10,6 +10,7 @@
             [tolglow.signals :as signals]))
 
 (def ^:private builtins (delay (signals/new-registry)))
+
 (defn- waveforms [model] (or (:waveforms model) @builtins))
 
 (defn- options [registry]
@@ -17,6 +18,7 @@
        (mapv #(select-keys % [:id :name :range :params :version]))))
 
 (def ^:private builtin-options (delay (options @builtins)))
+
 (defn waveform-options [model]
   (if-let [registry (:waveforms model)] (options registry) @builtin-options))
 

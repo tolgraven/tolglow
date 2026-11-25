@@ -7,6 +7,7 @@
             [reagent.ratom :as ratom]))
 
 (defonce ^:private recent (atom []))
+
 (defonce ^:private db-schema (atom map?))
 
 (defn validate-app-db!

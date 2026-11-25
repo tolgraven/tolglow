@@ -8,9 +8,12 @@
             [tolglow.spatial.targets :as targets]))
 
 (def run-path [:extensions ::run])
+
 (defn- id? [v] (or (keyword? v) (and (string? v) (not (str/blank? v)))))
+
 (defn- duration? [v] (or (= v :contact) (and (map? v) (empty? (time/validate-duration v))
                                              (pos? (val (first v))))))
+
 (defn- action? [a]
   (and (map? a) (= 1 (count a))
        (case (ffirst a)
@@ -60,6 +63,7 @@
     result))
 
 (defn- finite [v] (when (registry/finite-number? v) (double v)))
+
 (defn- parameter [signals value]
   (if (and (map? value) (:signal value))
     (let [sample (get signals (:signal value) (:default value))
@@ -71,6 +75,7 @@
     value))
 
 (defn- controlled [i] (select-keys (:system i) [:opacity :gain :paused? :attack :release]))
+
 (defn- leased? [lease i owner]
   (and i (= owner (:source i)) (= (:params lease) (:params i)) (= (:controls lease) (controlled i))))
 

@@ -11,9 +11,12 @@
 (defn transition [db event]
   (reset! rf-db/app-db db)
   (:effects (interceptor/execute event (remove #(= :do-fx (:id %)) (registrar/get-handler :event (first event))))))
+
 (def route (merge patchbay/route-defaults {:id "kick-wash" :source-id "live/ableton-live/ch/1/note/36"
                                          :cue-id "wash" :param "level" :envelope? true :attack "1/16" :release "1/2"}))
+
 (def form (assoc patchbay/defaults :routes [route] :visible? true))
+
 (def base {:show {:runtime-id "process-A" :epoch 3 :cues [{:id "wash" :effect-id "wash"}]
                  :effects [{:id "wash" :params {:level {:type "number" :bounds [0 1]} :tint {:type "color" :bounds [0 1]}
                                                 :mode {:type "enum" :values ["one" "two"]}}}]}

@@ -5,8 +5,11 @@
             [tolglow.rig :as rig]))
 
 (def artifact-path [:extensions :tolglow.calibration/session])
+
 (def palette [[0.65 0.02 0.02] [0.02 0.65 0.02] [0.02 0.02 0.65]])
+
 (defn- fail! [message] (throw (ex-info message {:component :rig-calibration})))
+
 (defn plan
   "Sequential, deliberately slow color codes, then spatially diverse pan/tilt
   poses. Each step is held explicitly; :minimum-hold is musical authoring data.
@@ -70,6 +73,7 @@
 (defn- color-distance [a b]
   (let [normalize #(g/scale % (/ (max 1.0e-8 (reduce + %))))]
     (g/norm (g/sub (normalize a) (normalize b)))))
+
 (defn match-observation
   "Require a complete exposure uncertainty interval bracketed by consecutive
   actual successful, unmodified presentations of the SAME settled pattern.

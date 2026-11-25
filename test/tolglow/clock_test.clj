@@ -13,6 +13,7 @@
             [tolglow.integrations.patch :as patch]))
 
 (def fixture {:id :head :position [0.0 0.0 0.0] :universe 1 :address 1 :channels {:dimmer 1 :focus 2}})
+
 (def effect {:id :wash :version 1 :params {:level {:type :number :default 0.8 :bounds [0.0 1.0]}}
              :duration {:beats 4} :release-duration {:beats 2}
              :envelope {:attack {:beats 2} :release {:beats 2}}
@@ -37,6 +38,7 @@
                   {:time-ms milliseconds :fixtures [fixture]} compiler/compile-effect))
 
 (defn launched [] (command (show) {:op :cue/launch :cue-id :wash :time-ms 1000.0 :launch {:mode :one-shot}}))
+
 (defn dimmer [result] (->> (:assignments result) (filter #(= :dimmer (:attribute %))) first :value))
 
 (deftest musical-one-shot-and-release-survive-loop-and-forward-seek

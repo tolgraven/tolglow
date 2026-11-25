@@ -12,6 +12,7 @@
 ;; A result and its Transit base64 representation fit Jetty's default 64 KiB
 ;; incoming message limit. The coordinator can distribute larger jobs in slices.
 (def max-result-floats 8192)
+
 (def ^:private max-clients 16)
 
 (defn- credential [value]

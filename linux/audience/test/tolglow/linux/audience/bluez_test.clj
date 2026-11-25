@@ -17,6 +17,7 @@
            [org.freedesktop.dbus.types UInt16 Variant]))
 
 (def adapter "/org/bluez/hci0")
+
 (defn- mock-managers [receipt]
   (reify GattManager1
     (getObjectPath [_] adapter)

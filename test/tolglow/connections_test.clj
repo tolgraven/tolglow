@@ -16,6 +16,7 @@
            [java.nio.file.attribute FileAttribute]))
 
 (defn show [] (model/new-show {:show-id :test :epoch 3 :value 2}))
+
 (defn no-io-options [calls]
   {:credential-store {:get! (fn [_] (swap! calls conj :credential-get) nil)
                       :put! (fn [_] (swap! calls conj :credential-put) "credential-00000000-0000-0000-0000-000000000001")
@@ -35,8 +36,11 @@
                     :status :completed :updated-at-ms 1000}]})
 
 (defn value-sub [{:keys [db]} _] (:value @db))
+
 (defn change-fx [_ value _] {:op :master/set :value (/ value 10.0)})
+
 (def sub-descriptor {:id ::value :kind :sub :implementation {:type :var :symbol "tolglow.connections-test/value-sub"}})
+
 (def fx-descriptor {:id ::change :kind :fx :implementation {:type :var :symbol "tolglow.connections-test/change-fx"}})
 
 (deftest construction-export-and-close-are-inert-and-owned

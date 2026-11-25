@@ -15,18 +15,23 @@
 (defn- field [m k]
   (let [m (if (sorted? m) (into {} m) m)]
     (if (contains? m k) (get m k) (get m (name k)))))
+
 (defn- label [x] (if (keyword? x) (name x) (str x)))
+
 (defn- diagnostic [severity code path message]
   {:severity severity :code code :path path :message message})
+
 (defn- sha256 [text]
   (apply str (map #(format "%02x" (bit-and % 255))
                   (.digest (MessageDigest/getInstance "SHA-256")
                            (.getBytes ^String text StandardCharsets/UTF_8)))))
+
 (defn- canonical [x]
   (cond
     (map? x) (into (sorted-map) (map (fn [[k v]] [(label k) (canonical v)])) x)
     (sequential? x) (mapv canonical x)
     :else x))
+
 (defn- slug [x]
   (-> (str/lower-case (str x)) (str/replace #"[^a-z0-9]+" "-")
       (str/replace #"^-|-$" "")))
@@ -160,10 +165,15 @@
   (let [nodes (.getChildNodes node)]
     (filterv #(= Node/ELEMENT_NODE (.getNodeType ^Node %))
              (mapv #(.item nodes %) (range (.getLength nodes))))))
+
 (defn- tag [^Node node] (or (.getLocalName node) (.getNodeName node)))
+
 (defn- elements [node name] (filterv #(= name (tag %)) (children node)))
+
 (defn- text-at [node name] (some-> (first (elements node name)) (.getTextContent) str/trim))
+
 (defn- attr [^Element node name] (.getAttribute node name))
+
 (defn- parse-xml [text]
   (let [factory (DocumentBuilderFactory/newInstance)]
     (.setNamespaceAware factory true)

@@ -7,6 +7,7 @@
 
 (def hdr-defaults {:gain 1.0 :max-excess 1.0 :white-mix 1.0 :spill 0.0 :spill-white-mix 1.0
                    :radius 1.0 :falloff :linear})
+
 (def defaults
   {:enabled? false :scope :global :targets {:brightness 0.5 :activity 0.4}
    :window {:bars 2} :interval {:beats 1} :duration {:bars 1}

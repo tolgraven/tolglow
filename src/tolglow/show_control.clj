@@ -58,6 +58,7 @@
    :cue-middleware {} ;default would wrap cues in grid probably?
 
    })
+
 (defn register "Register a new show-controller"
   [controller-data] ;probably
   )

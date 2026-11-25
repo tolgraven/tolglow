@@ -11,14 +11,22 @@
 (def defaults {:open? false :session-id "main" :source "(+ 1 2)" :dirty? false
                :generation 0 :activity 0 :polling? false :snapshot nil :entries [] :running? false
                :editor :text :editor-status nil :editor-ready? false :completions []})
+
 (defonce resources (atom {}))
+
 (defn state [db] (merge defaults (:repl db)))
+
 (defn token [db] (let [s (state db)] [(:generation s) (:runtime-id (:snapshot s)) (:epoch (:snapshot s)) (:session-id s)]))
+
 (defn- current? [db value] (= value (token db)))
+
 (defn- set-state [db s] (assoc db :repl s))
+
 (defn- value-of [event] (.. event -target -value))
+
 (defn- guard [s body] (merge {:session-id (:session-id s) :runtime-id (get-in s [:snapshot :runtime-id])
                              :expected-epoch (get-in s [:snapshot :epoch])} body))
+
 (defn- bounded [s] (subs (str s) 0 (min 65536 (count (str s)))))
 
 (defn event-entry [entries event]
@@ -39,6 +47,7 @@
                                     (some? (:result entry)) (conj {:type "result" :value (:result entry)})
                                     (:error entry) (conj (assoc (:error entry) :type "error"))))))
         (take-last 100 history)))
+
 (defn merge-history [entries history]
   (let [prior (into {} (map (juxt :request-id identity) entries))]
     (mapv (fn [entry] (if (seq (:events (get prior (:request-id entry))))
@@ -291,6 +300,7 @@
     "done" (when (contains? #{"rejected" "cancelled"} (:status event))
              [:p.repl-error (str "Evaluation " (:status event) (when (:reason event) (str ": " (:reason event))))])
     nil))
+
 (defn console-view []
   (let [s @(rf/subscribe [:repl/state]) busy? (or (:running? s) (:opening? s) (some? (get-in s [:snapshot :active])))]
     (when (:open? s)

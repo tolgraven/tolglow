@@ -10,6 +10,7 @@
            [java.util.concurrent ExecutionException TimeUnit]))
 
 (def token "test-only-studio-admission-credential")
+
 (def basic (str "Basic " (.encodeToString (Base64/getEncoder) (.getBytes (str "studio:" token) "UTF-8"))))
 
 (deftest lan-listeners-require-an-explicit-operator-policy

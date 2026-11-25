@@ -12,6 +12,7 @@
             [tolglow.lighting-levels :as lighting-levels]))
 
 (def actions [:lighting/scene :cue/launch :effect/launch :instance/end :instance/kill :instance/opacity :callback])
+
 (def event-types
   {:spatial [:spatial/enter :spatial/exit :spatial/bounce :spatial/invalid-volume]
    :reactive [:reactive/fault :event/handler-failed]
@@ -33,12 +34,18 @@
    :effect [:effect/intent :instance/finished :effect/failed :effect/recovered :effect/reload-failed :effect/reloaded]})
 
 (def ^:private empty-state {:subscribers [] :runs [] :next-run 0 :seed 1 :dropped 0})
+
 (defn- state [model] (:event-subscribers model empty-state))
+
 (defn- check [condition message data]
   (when-not condition (throw (ex-info message data))))
+
 (defn- identifier? [id] (or (keyword? id) (and (string? id) (not (str/blank? id)))))
+
 (defn- only-keys? [m allowed] (and (map? m) (every? allowed (keys m))))
+
 (defn- nonnegative-int? [v] (and (integer? v) (not (neg? v))))
+
 (defn- musical [duration]
   (check (and (map? duration) (every? #{:beats :bars :phrases} (keys duration))
               (empty? (time/validate-duration duration))) "Expected a musical duration" {:duration duration})
@@ -199,6 +206,7 @@
        {:model model :deliveries {}} events))))
 
 (def ^:private excluded-roles #{:show-control :code :code-cue})
+
 (defn- musical-definition? [entry]
   (and entry (not (or (excluded-roles (:role entry)) (excluded-roles (:kind entry))
                       (:scene-owner entry) (:code-cue? entry) (:show-control? entry) (some excluded-roles (:tags entry))))))
@@ -310,6 +318,7 @@
           (update :due-beat + (delay-beats step meter))))))
 
 (defn callback-token [model run] [(:epoch model) (:id run) (:index run)])
+
 (defn- callback-result [model run result]
   (let [edits (:edits result)
         current (:variables model)

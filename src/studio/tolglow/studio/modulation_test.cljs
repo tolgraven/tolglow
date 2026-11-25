@@ -9,12 +9,14 @@
 (def effect {:id "red" :name "Red wash" :categories ["color" "intensity"]
              :params {:level {:type "number" :default 0.7 :bounds [0 1] :recommended [0.2 0.8]}
                       :tint {:type "color" :default [1 0 0]}}})
+
 (def base
   (assoc (events/initial-db "test")
          :show {:runtime-id "runtime-a" :epoch 4 :transport {:beat 10 :playing? true}
                 :effects [effect] :cues [{:id "red" :effect-id "red"}]
                 :instances [{:id "4:1" :effect-id "red" :cue-id "red" :definition effect :params {:level 0.7}}]
                 :modulation {:controllers [] :holds {} :overrides {}}}))
+
 (defn transition [db event]
   (reset! rf-db/app-db db)
   (:effects (interceptor/execute event (remove #(= :do-fx (:id %))

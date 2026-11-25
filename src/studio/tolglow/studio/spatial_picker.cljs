@@ -7,7 +7,9 @@
             [tolglow.studio.projection :as projection]))
 
 (defn show [db] (get-in db [:server-projection :view]))
+
 (defn identity-of [db] (projection/identity-of (show db)))
+
 (defn label [id] (if (keyword? id) (subs (str id) 1) (str id)))
 
 (rf/reg-sub ::identity (fn [db _] (identity-of db)))

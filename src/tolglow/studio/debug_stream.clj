@@ -8,8 +8,11 @@
            [java.util.concurrent Semaphore]))
 
 (def protocol "tolglow-debug/1")
+
 (def ^:private history-size 512)
+
 (def ^:private batch-size 64)
+
 (def ^:private max-clients 12)
 
 (defn- named-id [v]

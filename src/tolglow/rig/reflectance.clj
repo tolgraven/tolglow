@@ -6,6 +6,7 @@
   (when-not ok (throw (ex-info message {:component :surface-reflectance}))))
 
 (defn- finite? [x] (and (number? x) (Double/isFinite (double x))))
+
 (defn- positive? [x] (and (finite? x) (pos? x)))
 
 (defn eligible-lamp? [{:keys [channels position measured-relative-brightness]}]

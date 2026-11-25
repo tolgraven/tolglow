@@ -3,9 +3,13 @@
             [tolglow.perf.beam-admission :as admission]))
 
 (def fixture {:position [0.0 6.0 0.0] :beam-angle 5.0 :lens-radius-m 0.005})
+
 (def encoding {:max-code 65025})
+
 (def beat {:op :beat})
+
 (defn- op [name & args] {:op name :args (vec args)})
+
 (defn- plan [x y z rig] (admission/prepare (op :vec3 x y z) rig encoding))
 
 (deftest affine-time-with-unknown-position-and-dynamic-depth-cannot-be-admitted

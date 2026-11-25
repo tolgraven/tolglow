@@ -10,6 +10,7 @@
            [java.util.concurrent.atomic AtomicLong AtomicReference]))
 
 (def protocol "tolglow-state/2")
+
 (def ^:private max-clients 32)
 
 (defn- identity-of [view] (select-keys view [:runtime-id :show-id :epoch]))
