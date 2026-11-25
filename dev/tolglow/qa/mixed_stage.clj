@@ -1,6 +1,7 @@
 (ns tolglow.qa.mixed-stage
   "Repeatable, disconnected fixture and cue load for GPU qualification."
-  (:require [clojure.data.json :as json]
+  (:require [afterglow.control.model :as control-model]
+            [clojure.data.json :as json]
             [tolglow.application :as app]
             [tolglow.demo :as demo]
             [tolglow.rig.pixel-layout :as pixels]
@@ -35,6 +36,7 @@
   (let [c demo/constant
         p demo/param
         x {:op :position :axis :x}
+        z {:op :position :axis :z}
         tick (expr :floor (expr :multiply (c 4) {:op :beat}))
         alternate (expr :floor (expr :multiply (c 2) (expr :fract (expr :multiply (c 0.5) tick))))
         chase-phase (expr :add (expr :floor (expr :multiply x (c 6)))
@@ -50,9 +52,15 @@
                                  (expr :multiply (p :width) (expr :sin (expr :add x {:op :beat}))))
                            (p :height) (c 0.9))}}
      {:id :wash-color :name "Copper wash" :targets (mapv :id washes)
-      :params {:level (control 0.46 0 1) :tint (control 0.22 0 1)}
-      :outputs {:color (expr :vec3 (c 0.70) (p :tint) (c 0.45)) :dimmer (p :level)
-                :aim (expr :vec3 (expr :multiply x (c 0.6)) (c 0.06) (c -0.2))}}
+      :params {:level (control 0.46 0 1) :tint (control 0.30 0 1)}
+      ;; Keep every wash aimed onto the deck or back wall. The low fixtures
+      ;; light the floor and haze upstage instead of shining into the audience.
+      :outputs {:color (expr :vec3 (c 0.70)
+                           (expr :add (c 0.15) (expr :multiply (c 0.52) (p :tint)))
+                           (c 0.10))
+                :dimmer (p :level)
+                :aim (expr :vec3 (expr :multiply x (c 0.74)) (c 0.06)
+                           (expr :add (c -2.60) (expr :multiply z (c 0.64))))}}
      {:id :wash-steps :name "Wash steps" :targets (mapv :id (take 2 washes))
       :priority 20 :params {:depth (control 0.62 0 1)}
       :outputs {:dimmer (expr :add (c 0.12) (expr :multiply (p :depth) alternate))}}
@@ -88,12 +96,14 @@
              :fixtures (into (conj (into movers washes) hazer) strip-fixtures)
              :pixel-layouts tube-layouts}]
     (reduce register-look
-            (assoc-in (assoc (demo/model) :show-id :mixed-stage :pages {:stage page} :rig rig
-                   :settings {:autopilot {:enable-cue :stage-energy :rotate? false :seed 41
-                                         :targets {:brightness (energy :brightness 0.46)
-                                                   :activity (energy :activity 0.39)}}
-                              :lighting-budget {:enabled? true :global {:limit (energy :cap 1.0)
-                                                                        :standby-level 0.015}}})
+            (assoc-in (control-model/new-show
+                        {:show-id :mixed-stage :pages {:stage page} :rig rig
+                         :macros {} :sequences {}
+                         :settings {:autopilot {:enable-cue :stage-energy :rotate? false :seed 41
+                                               :targets {:brightness (energy :brightness 0.46)
+                                                         :activity (energy :activity 0.39)}}
+                                    :lighting-budget {:enabled? true :global {:limit (energy :cap 1.0)
+                                                                              :standby-level 0.015}}}})
                       ;; Repeat the same starting haze without waiting through a
                       ;; minute of physical pre-roll or changing emitter output.
                       venue-fog/saved-path {:mixed-m3 38.0 :sources []})
@@ -105,7 +115,7 @@
   [[:beam-color :level :sine 4 0.53 0.87]
    [:beam-movement :width :triangle 8 0.85 2.35]
    [:beam-movement :height :sine 5 0.75 2.05]
-   [:wash-color :tint :sine 6 0.08 0.62]
+   [:wash-color :tint :sine 6 0.20 0.43]
    [:tube-chase :level :triangle 3 0.48 0.89]])
 
 (defn- accepted! [receipt]

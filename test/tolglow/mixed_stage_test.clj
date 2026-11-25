@@ -28,7 +28,12 @@
         (let [after (show/snapshot runtime)]
           (doseq [id [:head-1 :wash-1 :tube-1-head-1]]
             (is (some pos? (emitted after id)))
-            (is (not= (emitted before id) (emitted after id)))))
+            (is (not= (emitted before id) (emitted after id))))
+          (doseq [{:keys [id]} (filter #(= :wash (:fixture-type %)) (get-in after [:rig :fixtures]))]
+            (let [{:keys [direction emitted-color]} (get-in after [:output :values id])
+                  [r g b] emitted-color]
+              (is (neg? (nth direction 2)) (str id " points upstage"))
+              (is (> r g b 0) (str id " emits a warm wash")))))
         (command {:op :param/set :instance-id energy :param :cap :value 0.22})
         (command {:op :param/set :instance-id energy :param :brightness :value 0.27})
         (let [after (show/snapshot runtime)]
