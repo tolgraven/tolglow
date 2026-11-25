@@ -213,6 +213,81 @@
                ((juxt :effect-id #(get-in % [:source :adapter])) (first instances)))))
       (finally (show/stop! runtime)))))
 
+(defn- capture-pattern-boundary [policy pause?]
+  (let [owner (atom nil) observed (atom []) closed (atom 0) pause-receipt (atom nil)
+        open (fn [_]
+               (let [source (pcm-test/memory-source (pcm-test/section-pcm-values) 1280 closed)
+                     reads (atom -1)]
+                 (update source :read!
+                         (fn [read!]
+                           (fn [out offset length]
+                             (let [time-ms (* 80 (swap! reads inc))
+                                   runtime @owner]
+                               ;; Pace the injected capture timestamps independently of owner frame ticks.
+                               (swap! (:clock runtime) assoc :time-ms (+ time-ms 82.0))
+                               (when (#{80 3920 4000} time-ms)
+                                 (when (and pause? (= 4000 time-ms))
+                                   (reset! pause-receipt (show/submit! runtime {:op :transport/set
+                                                                              :transport {:playing? false}})))
+                                 (show/tick! runtime time-ms))
+                               (read! out offset length)))))))
+        runtime (show/create-runtime (cond-> {:workspace-options nil :audio-options {:open-source! open}}
+                                       policy (assoc :section-patterns policy)))
+        subscriber {:id :track-patterns :match {:category :music :type :music/section-pattern}
+                    :actions [{:op :effect/launch :select {:ids [:ember] :pick :first}}]}]
+    (reset! owner runtime)
+    (try
+      (show/attach-observer! runtime :patterns
+        (fn [] {:events! (fn [_ events _ _]
+                          (swap! observed into (filter #(#{:audio/section-change :clock/bar :music/section-pattern}
+                                                         (:type %)) events)))
+                :frame! (fn [_]) :tracing? (constantly false) :close! (fn [])}))
+      (let [reply (show/register-event-subscriber! runtime subscriber)]
+        (show/tick! runtime 0)
+        (is (= :accepted (:status (deref reply 1000 ::timeout)))))
+      (let [handle (connections/start-audio! (:connections runtime)
+                                             {:default? true :sample-rate 8000.0 :block-frames 640
+                                              :analyzer-options {:sections {:beats-per-window 2}}}
+                                             (show/audio-callbacks runtime))
+            result (deref (:result handle) 5000 ::timeout)]
+        (is (= :completed (:status result)) (pr-str (:error result)))
+        (when pause?
+          (is (= :accepted (:status (deref @pause-receipt 1000 ::timeout))))
+          (let [reply (show/submit! runtime {:op :transport/set :transport {:playing? true}})]
+            (show/tick! runtime 4001)
+            (is (= :accepted (:status (deref reply 1000 ::timeout))))))
+        (doseq [time [4001 4100 5000]] (show/tick! runtime time))
+        {:events @observed :instances (:instances (show/snapshot runtime))
+         :model (:model (show/export-show runtime)) :run-id (:run-id handle) :closed @closed})
+      (finally (show/stop! runtime)))))
+
+(deftest opted-in-captured-patterns-publish-on-owner-bars-and-respect-a-pause
+  (let [policy {:enabled? true :on :bar :patterns [:midnight-groove] :show-seed 514}
+        cases [(capture-pattern-boundary policy false)
+               (capture-pattern-boundary nil false)
+               (capture-pattern-boundary policy true)]
+        [enabled inert paused] cases
+        [intent] (filterv #(= :music/section-pattern (:type %)) (:events enabled))
+        [section] (filterv #(= :audio/section-change (:type %)) (:events enabled))
+        bars (filter #(= :clock/bar (:type %)) (:events enabled))]
+    (is (some #{{:category :music :type :music/section-pattern}} (:events (sub/catalog (demo/model)))))
+    (doseq [{:keys [events run-id model closed]} cases]
+      (let [sections (filterv #(= :audio/section-change (:type %)) events)]
+        (is (= 1 closed (count sections)))
+        (is (= run-id (get-in (first sections) [:data :capture-run-id])))
+        (is (not (contains? model :section-pattern-state)))))
+    (is (= 1 (count (filter #(= :music/section-pattern (:type %)) (:events enabled)))))
+    (is (= [:music :causal :midnight-groove 8.0 4000]
+           [(:category intent) (get-in intent [:data :mode]) (get-in intent [:data :pattern])
+            (get-in intent [:data :show-beat]) (get-in intent [:time :time-ms])]))
+    (is (= (get-in section [:data :clock-session-id]) (get-in intent [:data :scope :clock 2])))
+    (is (some #(= (:time %) (:time intent)) bars))
+    (is (= [[:ember :event-subscriber]]
+           (mapv (juxt :effect-id #(get-in % [:source :adapter])) (:instances enabled))))
+    (doseq [result [inert paused]]
+      (is (not-any? #(= :music/section-pattern (:type %)) (:events result)))
+      (is (empty? (:instances result))))))
+
 (deftest middleware-can-update-variables-and-queue-actions-without-blocking-the-owner
   (let [entered (promise) release (promise)
         middleware (fn [context event]
