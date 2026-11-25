@@ -1,9 +1,16 @@
 (ns tolglow.controllers.content-browser-display-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [afterglow.control.codecs.push-2 :as push-2]
+            [clojure.java.io :as io]
+            [clojure.test :refer [deftest is testing]]
             [tolglow.controllers.content-browser :as browser]
             [tolglow.controllers.content-browser-display :as catalog]
+            [tolglow.demo :as demo]
+            [tolglow.show :as show]
+            [tolglow.show.recovery :as recovery]
             [tolglow.studio.display :as display])
-  (:import [java.util.concurrent LinkedBlockingQueue TimeUnit]))
+  (:import [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]
+           [java.util.concurrent LinkedBlockingQueue TimeUnit]))
 
 (defn- page [view]
   (let [descriptors (mapv (fn [index]
@@ -139,3 +146,160 @@
     (is (= {:unavailable? true}
            (:preview (catalog/display-view selected first-page {:status :rejected :reason :stale-selection}))))
     (is (= {:open? false :page 0} (catalog/navigate next-page first-page :back)))))
+
+(def restore-controls
+  (assoc controls [:checkpoint :named] {:channel 0 :controller 102}
+                  [:checkpoint :recovery] {:channel 0 :controller 103}
+                  :confirm {:channel 0 :controller 104}))
+
+(defn- checkpoint-status [view]
+  (get-in view [:saved-show-catalog :checkpoint :status]))
+
+(deftest the-exact-choice-and-pending-frame-must-be-presented-before-restore
+  (let [receive (atom nil)
+        frames (LinkedBlockingQueue.)
+        ready-captured (promise) present-ready (promise)
+        pending-captured (promise) present-pending (promise)
+        submissions (atom [])
+        confirmation {:token :private}
+        source {:source-kind :named :handle :test/named :revision 2}
+        {:keys [midi display]}
+        (catalog/transports
+         {:controls restore-controls
+          :midi {:open! #(reset! receive %) :send! (fn [& _]) :close! (fn [_])}
+          :project! page
+          :preview! (fn [request]
+                      (if (:source request) {:confirmation confirmation}
+                          {:entry {:name "Show 0" :sources {:named source}}}))
+          :confirm! (fn [exact checkpoint]
+                      (swap! submissions conj [exact checkpoint])
+                      {:status :rejected :reason :stale-save-source})
+          :display! (fn [{:keys [presented!] :as hooks}]
+                      (display/transport
+                       (assoc hooks :max-fps 30
+                              :capture {:open! (constantly :capture) :close! (fn [_]) :capture! (fn [_ view] view)}
+                              :sink {:open! (constantly :sink) :close! (fn [_])
+                                     :render! (fn [_ view]
+                                                (case (checkpoint-status view)
+                                                  :ready (do (deliver ready-captured true) (deref present-ready 2500 nil))
+                                                  :pending (do (deliver pending-captured true) (deref present-pending 2500 nil))
+                                                  nil))}
+                              :presented! (fn [view] (presented! view) (.offer frames view)))))})
+        midi-handle ((:open! midi) (fn [_]))
+        handle ((:open! display))
+        press! (fn [cc] (@receive [0xb0 cc 127]) (@receive [0xb0 cc 0]))]
+    (try
+      ((:render! display) handle {:display-mode :parameters})
+      (press! 56)
+      (is (some? (await-view frames #(get-in % [:saved-show-catalog :rows 0]))))
+      (press! 20)
+      (is (some? (await-view frames #(get-in % [:saved-show-catalog :preview]))))
+      (press! 102)
+      (is (true? (deref ready-captured 2500 false)))
+      (press! 104)
+      (deliver present-ready true)
+      (is (some? (await-view frames #(= :ready (checkpoint-status %)))))
+      (is (empty? @submissions))
+      ((:render! display) handle {:display-mode :parameters :pad-overlay {:layout :full}})
+      (is (some? (await-view frames #(and (:pad-overlay %) (nil? (:saved-show-catalog %))))))
+      (press! 104)
+      (is (empty? @submissions))
+      ((:render! display) handle {:display-mode :parameters})
+      (is (some? (await-view frames #(= :ready (checkpoint-status %)))))
+      (press! 104)
+      (is (true? (deref pending-captured 2500 false)))
+      (press! 104)
+      (is (empty? @submissions))
+      (deliver present-pending true)
+      (is (some? (await-view frames #(= :changed (checkpoint-status %)))))
+      (is (= [[confirmation {:name "Show 0" :label "Latest named"}]] @submissions))
+      (finally
+        (deliver present-ready true)
+        (deliver present-pending true)
+        ((:close! display) handle)
+        ((:close! midi) midi-handle)))))
+
+(defn- checkpoint-fixture [directory kind]
+  (if (= :push-2 kind)
+    (let [file (io/file directory "private-show.transit")
+          saved (show/create-runtime {:workspace-options nil :workers 1
+                                      :model (assoc (demo/model) :show-id :tour :master 0.23)})]
+      (try (show/save-show! saved file) (finally (show/stop! saved)))
+      {:show-id :tour :file file :master 0.23 :control 102
+       :saves [{:show-id :tour :name "Tour" :handle :test/tour :source-kind :named :path file}]})
+    {:show-id :main :master 0.37 :control 103 :saves []}))
+
+(deftest captured-devices-restore-through-the-owner-and-open-a-fresh-session
+  (doseq [kind [:push-2 :push-3]]
+    (testing (name kind)
+      (let [directory (.toFile (Files/createTempDirectory "push-checkpoint-restore-" (make-array FileAttribute 0)))
+            {:keys [show-id file master control saves]} (checkpoint-fixture directory kind)
+            runtime (show/start! {:workspace-options nil :workers 1 :frame-rate 20
+                                  :model (assoc (demo/model) :master 0.37)
+                                  :recovery {:directory directory :enabled? (= kind :push-3) :interval-ms 30}}
+                                 (constantly nil))
+            receive (atom nil) openings (atom 0) closes (atom 0)
+            frames (LinkedBlockingQueue. 96)
+            options (cond-> {:session-id "captured" :schedule! nil
+                             :catalog-controls restore-controls :catalog-saves saves
+                             :midi {:open! (fn [callback] (reset! receive callback) (swap! openings inc))
+                                    :close! (fn [_] (swap! closes inc))
+                                    :send! (fn [& _])}
+                             :display-options {:sink {:device kind :open! (constantly :sink) :close! (fn [_])
+                                                      :render! (fn [_ view] (.offer frames view))}}}
+                      (= kind :push-3) (assoc :user-mode? true :expression-mode :poly-aftertouch
+                                            :layout {:encoders {:level {:channel 0 :controller 71}}
+                                                     :encoder-touches {:level {:channel 0 :note 0}}}
+                                            :encoder-bindings {:level {:param :level}}))
+            press! (fn [cc] (@receive [0xb0 cc 127]) (@receive [0xb0 cc 0]))
+            expect! (fn [predicate] (let [frame (await-view frames predicate)] (is (some? frame)) frame))]
+        (try
+          (when (= kind :push-3)
+            (is (loop [attempts 150]
+                  (if (contains? (:available (show/recovery-status runtime)) :recovery) true
+                      (when (pos? attempts) (Thread/sleep 20) (recur (dec attempts)))))))
+          (recovery/close! @(:recovery runtime))
+          (is (= :accepted (:status (deref (show/submit! runtime {:op :master/set :value 0.91}) 3000 {}))))
+          (with-redefs [display/process-capture (constantly {:open! (constantly :camera) :close! (fn [_])
+                                                            :capture! (fn [_ view] view)})]
+            (let [device (catalog/connect-device! runtime kind options)
+                  old-input @receive
+                  before (:epoch (show/snapshot runtime))]
+              (when (= :push-2 kind)
+                (doseq [index (range 128)] (@receive (assoc (push-2/palette-write 0 index [0 0 0 0]) 6 4)))
+                (@receive (push-2/sysex 0 [0x09])))
+              (expect! #(nil? (:saved-show-catalog %)))
+              (press! 56)
+              (expect! #(get-in % [:saved-show-catalog :rows 0]))
+              (press! 20)
+              (expect! #(get-in % [:saved-show-catalog :preview]))
+              (press! control)
+              (let [view (expect! #(= :ready (checkpoint-status %)))]
+                (is (not (re-find #"token|handle|private-show" (pr-str (:saved-show-catalog view))))))
+              (is (= [before 0.91] ((juxt :epoch :master) (show/snapshot runtime))))
+              (when file
+                (recovery/write-source! file (slurp file))
+                (press! 104)
+                (expect! #(= :pending (checkpoint-status %)))
+                (expect! #(= :changed (checkpoint-status %)))
+                (is (= [before 0.91] ((juxt :epoch :master) (show/snapshot runtime))))
+                (press! 55)
+                (expect! #(get-in % [:saved-show-catalog :preview]))
+                (press! control)
+                (expect! #(= :ready (checkpoint-status %))))
+              (press! 104)
+              (expect! #(= :pending (checkpoint-status %)))
+              (expect! #(= :restored (checkpoint-status %)))
+              (is (= [show-id (inc before) master] ((juxt :show-id :epoch :master) (show/snapshot runtime))))
+              (is (= [2 1] [@openings @closes]))
+              (let [new-device (get @(:devices runtime) "captured")]
+                (is (some? new-device))
+                (is (not (identical? device new-device))))
+              (old-input [0xb0 55 127])
+              (old-input [0xb0 55 0])
+              (expect! #(= :restored (checkpoint-status %)))
+              (press! 55)
+              (expect! #(nil? (:saved-show-catalog %)))))
+          (finally
+            (show/stop! runtime)
+            (doseq [entry (reverse (file-seq directory))] (io/delete-file entry))))))))

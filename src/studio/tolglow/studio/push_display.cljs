@@ -13,11 +13,14 @@
   (when (map? catalog)
     (cond-> (assoc (select-keys catalog [:page :page-count :total])
                    :rows (mapv #(select-keys % [:name :selected? :sources]) (take 8 (:rows catalog))))
+      (map? (:checkpoint catalog))
+      (assoc :checkpoint (select-keys (:checkpoint catalog) [:name :label :modified-at-ms :status]))
       (map? (:preview catalog))
       (assoc :preview (let [preview (:preview catalog)]
-                        (assoc (select-keys preview [:name :unavailable?])
-                               :sources (mapv #(select-keys % [:label :modified-at-ms])
-                                              (take 2 (:sources preview)))))))))
+                        (cond-> (assoc (select-keys preview [:name :unavailable?])
+                                       :sources (mapv #(select-keys % [:label :modified-at-ms])
+                                                      (take 2 (:sources preview))))
+                          (seq (:load-options preview)) (assoc :load-options (vec (take 2 (:load-options preview))))))))))
 
 (defn normalize-view [view]
   (let [view (if (map? view) view {})]
@@ -227,14 +230,33 @@
     (let [utc (.toISOString (js/Date. milliseconds))]
       (str (subs utc 0 10) " " (subs utc 11 16) " UTC"))))
 
-(defn- catalog-display [{:keys [page page-count rows preview total]}]
+(defn- checkpoint-heading [status]
+  (case status
+    (:ready "ready") "Confirm checkpoint restore"
+    (:pending "pending") "Restoring checkpoint"
+    (:restored "restored") "Checkpoint restored"
+    (:changed "changed") "Checkpoint changed"
+    (:unavailable "unavailable") "Checkpoint unavailable"
+    (:session-changed "session-changed") "Show session changed"
+    "Checkpoint restore refused"))
+
+(defn- catalog-display [{:keys [page page-count rows preview total checkpoint]}]
   [:main#push-display.push-catalog {:aria-label "Saved shows"}
    [:header.push-catalog-header
     [:span.push-brand "Tolglow"]
-    [:h1 (if preview "Saved show preview" "Saved shows")]
+    [:h1 (cond checkpoint (checkpoint-heading (:status checkpoint))
+               preview "Saved show preview"
+               :else "Saved shows")]
     (when (pos? (or page-count 0))
       [:span.push-catalog-page (str (inc page) " / " page-count " pages")])]
    (cond
+     checkpoint
+     [:section.push-catalog-detail {:aria-label "Checkpoint restore"}
+      [:h2 (:name checkpoint)]
+      [:div.push-catalog-sources
+       [:article [:strong (:label checkpoint)]
+        (when-let [time (checkpoint-time (:modified-at-ms checkpoint))] [:span time])]]]
+
      (:unavailable? preview)
      [:p.push-catalog-empty "This show is no longer available."]
 
@@ -244,7 +266,7 @@
       [:div.push-catalog-sources
        (for [{:keys [label modified-at-ms]} (:sources preview)]
          ^{:key label} [:article
-                        [:strong label]
+                        [:strong (if (some #{label} (:load-options preview)) (str "Choose " label) label)]
                         (when-let [time (checkpoint-time modified-at-ms)] [:span time])])]]
 
      (empty? rows)
@@ -257,9 +279,15 @@
                        [:strong {:title name} name]
                        (for [source sources] ^{:key source} [:span source])])])
    [:footer.push-catalog-footer
-    [:span (if preview "Back · Saved shows" "Back · Live display")]
-    (when (and (not preview) (pos? (or total 0)))
-      [:span (if (> page-count 1) "Page buttons · Browse   ·   Row buttons · Preview" "Row buttons · Preview")])]])
+    (if checkpoint
+      (case (:status checkpoint)
+        (:pending "pending") [:span "Waiting for the show owner"]
+        (:restored "restored") [:span "Back · Live display"]
+        (:ready "ready") [:<> [:span "Back · Choose checkpoint"] [:span "Confirm · Replace running show"]]
+        [:span "Back · Choose checkpoint"])
+      [:<> [:span (if preview "Back · Saved shows" "Back · Live display")]
+       (when (and (not preview) (pos? (or total 0)))
+         [:span (if (> page-count 1) "Page buttons · Browse   ·   Row buttons · Preview" "Row buttons · Preview")])])]])
 
 (defn display [view]
   (if-let [catalog (:saved-show-catalog view)]

@@ -97,18 +97,21 @@
   descriptors may include a trusted :path, which never comes from the
   confirmation. The import receives frozen bytes at confirmation, and the
   frame owner rechecks the epoch before restoring. On :submitted, deref
-  :receipt for the import result."
-  [runtime configured-saves {:keys [runtime-id selection token] :as confirmation}]
-  (cond
-    (not (current-session? runtime runtime-id selection)) (reject :stale-session)
-    (not (and (string? token) (re-matches #"[0-9a-f]{64}" token))) (reject :confirmation-required)
-    :else
-    (let [selected (select-save runtime (capture runtime configured-saves) confirmation)]
-      (cond
-        (= :rejected (:status selected)) selected
-        (not= token (:token selected)) (reject :stale-save-source)
-        :else {:status :submitted
-               :receipt (show/submit! runtime :import {:runtime-id runtime-id
-                                                       :expected-epoch (:epoch selection)
-                                                       :expected-source-show-id (:target-show-id selected)
-                                                       :source (:source selected)})}))))
+  :receipt for the import result. The device adapter can supply an in-process
+  lease so the owner also fences disconnects."
+  ([runtime configured-saves confirmation] (confirm-load! runtime configured-saves confirmation nil))
+  ([runtime configured-saves {:keys [runtime-id selection token] :as confirmation} device]
+   (cond
+     (not (current-session? runtime runtime-id selection)) (reject :stale-session)
+     (not (and (string? token) (re-matches #"[0-9a-f]{64}" token))) (reject :confirmation-required)
+     :else
+     (let [selected (select-save runtime (capture runtime configured-saves) confirmation)]
+       (cond
+         (= :rejected (:status selected)) selected
+         (not= token (:token selected)) (reject :stale-save-source)
+         :else {:status :submitted
+                :receipt (show/submit! runtime :import {:runtime-id runtime-id
+                                                        :expected-epoch (:epoch selection)
+                                                        :expected-source-show-id (:target-show-id selected)
+                                                        :source (:source selected)}
+                                       device)})))))

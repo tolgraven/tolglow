@@ -387,7 +387,7 @@
                             :input (atom {:epoch (:epoch model) :position initial-position
                                           :used-sessions #{(get-in initial-position [:provenance :session-id])}})})
       :sync-input (atom {:epoch (:epoch model) :events []})
-      :connections owned :devices (atom {}) :development development
+      :connections owned :devices (atom {}) :device-reconnects (atom {}) :development development
       :rdm (rdm/create (merge (:rdm-options options)
                              {:state rdm-state :model! #(get @(:state @runtime-ref) :model)
                               :identity! #(let [runtime @runtime-ref]
@@ -588,6 +588,10 @@
       (command model (cond-> payload gesture (assoc :last-sequence (:last-sequence gesture))) time-ms authority))
 
     :else (command model payload time-ms authority)))
+
+(defn- require-import-device! [runtime {:keys [session-id lease]}]
+  (when-not (and lease (identical? lease (get-in @(:devices runtime) [session-id ::restore-lease])))
+    (throw (ex-info "Checkpoint restore belongs to a retired device session" {:code :stale-device-session}))))
 
 (defn- apply-message [model {:keys [type payload expected-epoch authority]} time-ms & [runtime]]
   (when (and (some? expected-epoch) (not= expected-epoch (:epoch model)))
@@ -842,11 +846,13 @@
           (policy/advance (assoc model :fixtures fixtures) config state time-ms plans)))
       {:model (-> model (assoc :auto {:enabled? enabled? :config config :state state}) (update :revision inc))
        :ack {:status :accepted}})
-     :import
-    {:model (staging/collect (staging/begin (:model payload)) :show {:kind :studio :id :import}
-                             [{:type :show/restored}])
-     :restore? true :restored-output (:frame-output payload)
-     :candidate (:candidate payload) :ack {:status :accepted :epoch (get-in payload [:model :epoch])}}
+    :import
+    (do
+      (when authority (require-import-device! runtime authority))
+      {:model (staging/collect (staging/begin (:model payload)) :show {:kind :studio :id :import}
+                               [{:type :show/restored}])
+       :restore? true :restored-output (:frame-output payload)
+       :candidate (:candidate payload) :ack {:status :accepted :epoch (get-in payload [:model :epoch])}})
     (throw (ex-info "Unknown studio operation" {:type type}))))
 
 (defn- patch! [runtime fixtures]
@@ -1418,6 +1424,22 @@
            (when @(:running runtime)
              (swap! (:state runtime) assoc-in [:status :audio-resume-error] (error-data error)))))))
 
+(defn- reopen-restoring-device! [runtime {:keys [session-id lease after-restore!]}]
+  ;; Startup can acquire a display process and must stay off the show clock.
+  (when (and after-restore! (identical? lease (get @(:device-reconnects runtime) session-id)))
+    (.start (doto (Thread.
+                   (fn []
+                     (try (after-restore! lease)
+                          (catch Exception error
+                            (locking (:lock runtime)
+                              (when (identical? lease (get @(:device-reconnects runtime) session-id))
+                                (swap! (:device-reconnects runtime) dissoc session-id)
+                                (when @(:running runtime)
+                                  (swap! (:state runtime) assoc-in [:status :device-reconnect-error]
+                                         (error-data error))))))))
+                   "tolglow-restored-device")
+              (.setDaemon true)))))
+
 (defn- capture-render-time [runtime time-ms slot]
   (if-not slot [time-ms nil]
     (let [physical ((get-in runtime [:publisher :now-ms]))
@@ -1450,6 +1472,7 @@
    (let [frame-start-ns (System/nanoTime)
          retired (volatile! []) candidates (volatile! []) retired-devices (volatile! [])
          restored-generation (volatile! nil) restarted-generation (volatile! nil)
+         restoring-device (volatile! nil)
          committed-fault-events (volatile! [])
          author-request (volatile! nil)]
      (try
@@ -1480,16 +1503,20 @@
                  [clock-model audio-clock-confidence] (source-clock-model runtime (:model before) time-ms)
                  [model receipts restored? restored-output]
                  (reduce
-                  (fn [[model receipts restored? restored-output] {:keys [reply] :as message}]
+                  (fn [[model receipts restored? restored-output] {:keys [reply authority] :as message}]
                     (try
                       (let [result (apply-message model message (if restored? (:time-ms model) time-ms) runtime)]
                         (when-let [candidate (:candidate result)]
                           (vswap! retired conj (connections/commit-restore! (:connections runtime) candidate))
                           (vreset! restored-generation (:generation (connections/status (:connections runtime))))
+                          (let [{:keys [session-id lease after-restore!]} authority]
+                            (vreset! restoring-device (when after-restore! authority))
+                            (reset! (:device-reconnects runtime) (if after-restore! {session-id lease} {})))
                           ;; Detach atomically; opening sessions also verify their captured epoch.
                           (vswap! retired-devices into (vals (first (swap-vals! (:devices runtime) (constantly {}))))))
                         (when (and (not (:candidate result)) (not= (:epoch model) (get-in result [:model :epoch])))
                           (vreset! restarted-generation (connections/commit-restart! (:connections runtime) (:model result)))
+                          (reset! (:device-reconnects runtime) {})
                           (vswap! retired-devices into (vals (first (swap-vals! (:devices runtime) (constantly {}))))))
                         (when-let [[key handler] (:inline-registration result)]
                           (when (fn? handler) (vswap! inline-registrations assoc key handler)))
@@ -1775,6 +1802,7 @@
          (effect-faults/offer! (:effect-logs runtime) @committed-fault-events)
          (finish-resource-work! runtime @retired @candidates @retired-devices
                                 @restored-generation @restarted-generation)
+         (when-let [device @restoring-device] (reopen-restoring-device! runtime device))
          (rdm/reconcile! (:rdm runtime)))))))
 
 (defn- prepare-rig-edit [model proposed]
@@ -1818,6 +1846,7 @@
                         (or (not (#{:photometry :fog-calibration :venue-surface} type)) (and (= epoch (:expected-epoch payload)) (= (:id runtime) (:runtime-id payload))))
                         (or (nil? (:runtime-id payload)) (= (:id runtime) (:runtime-id payload))))
            (throw (ex-info "Show stopped or session changed" {})))
+         (when (and (= :import type) authority) (require-import-device! runtime authority))
          (let [payload (if (= :rig type) (prepare-rig-edit before payload) payload)
                payload (if (and (= :fog-calibration type) (= :fit (:op payload)))
                          (merge payload (fog-scan/prepare-fit before (:session-id payload) (:trace @(:venue-fog runtime))))
@@ -1849,10 +1878,11 @@
                            (dissoc payload :runtime-id :expected-epoch)))
                queue (ingress-queue runtime type payload)
                accepted? (locking (:lock runtime)
+                           (when (and (= :import type) authority) (require-import-device! runtime authority))
                            (and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch]))
                                 (let [message (cond-> {:type type :payload payload :reply reply :expected-epoch epoch
                                                        :ingress-order (vswap! (:ingress-order runtime) inc)}
-                                                (and (= :command type) authority) (assoc :authority authority)
+                                                (and (#{:command :import} type) authority) (assoc :authority authority)
                                                 checkpoint-request (assoc ::checkpoint-request checkpoint-request))]
                                   (if (and (= :command type) (push-gesture-terminal? payload authority))
                                     (do (enqueue-push-gesture-end! runtime message) true)
@@ -1918,6 +1948,7 @@
   (let [candidates (volatile! [])
         stop? (locking (:lock runtime)
                 (when (compare-and-set! (:running runtime) true false)
+                  (reset! (:device-reconnects runtime) {})
                   (doseq [queue [(:queue runtime) (:cue-release-queue runtime)]]
                     (loop []
                       (when-let [message (.poll ^LinkedBlockingQueue queue)]
@@ -2100,12 +2131,17 @@
   Push 2 accepts :native-display? true for the Wayang parameter display.
   An explicit :display transport takes precedence. Set :cue-variations? true
   for the Push 2 Note-button variation overlay and exact beat-ratio edits."
-  [runtime kind options]
-  (let [id (:session-id options) epoch (get-in @(:state runtime) [:model :epoch])]
+  [runtime kind {:keys [session-id ::restore-lease ::reconnect-lease] :as options}]
+  (let [id session-id epoch (get-in @(:state runtime) [:model :epoch])]
     (when-not (and (string? id) (seq id)) (throw (ex-info "Device requires session-id" {})))
     (locking (:devices runtime)
-      (when-not @(:running runtime) (throw (ex-info "Show is stopped" {})))
-      (when (get @(:devices runtime) id) (throw (ex-info "Device session already connected" {:session-id id})))
+      (locking (:lock runtime)
+        (when-not @(:running runtime) (throw (ex-info "Show is stopped" {})))
+        (when (get @(:devices runtime) id) (throw (ex-info "Device session already connected" {:session-id id})))
+        (if reconnect-lease
+          (when-not (identical? reconnect-lease (get @(:device-reconnects runtime) id))
+            (throw (ex-info "Device reconnect was retired" {:session-id id})))
+          (swap! (:device-reconnects runtime) dissoc id)))
       (let [push-source (when (#{:push-2 :push-3} kind)
                           {:adapter kind :session-id id})
             operator-id (when push-source (str (name kind) "/" id "/" (UUID/randomUUID)))
@@ -2113,7 +2149,7 @@
                          :push-3-midi devices/open-push-3-midi! :seaboard devices/open-seaboard! :x-touch devices/open-x-touch!
                          :midi devices/open-midi! :osc devices/open-osc! :sensor devices/open-sensor!
                          (throw (ex-info "Unknown device kind" {:kind kind})))
-            options (cond-> options
+            options (cond-> (dissoc options ::restore-lease ::reconnect-lease)
                       push-source (assoc :operator-gestures? true :target-search targets/search
                                          :launch-receipt cue-timing/receipt)
                       (and (= kind :push-2) (true? (:cue-variations? options)))
@@ -2143,10 +2179,14 @@
                                                                      (submit! runtime payload))]
                                                          (deref reply (if quantized? 0 device-command-wait-ms)
                                                                 (cond-> {:status :pending :command-id (:command-id command)}
-                                                                  gesture? (assoc :completion reply)))))}))]
+                                                                  gesture? (assoc :completion reply)))))}))
+            device (cond-> device restore-lease (assoc ::restore-lease restore-lease))]
         (if (locking (:lock runtime)
-              (when (and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch])))
+              (when (and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch]))
+                         (or (nil? reconnect-lease)
+                             (identical? reconnect-lease (get @(:device-reconnects runtime) id))))
                 (swap! (:devices runtime) assoc id device)
+                (swap! (:device-reconnects runtime) dissoc id)
                 true))
           device
           (do (devices/close! device)
@@ -2154,8 +2194,10 @@
 
 (defn disconnect-device! [runtime id]
   (locking (:devices runtime)
-    (when-let [device (get @(:devices runtime) id)]
-      (try (devices/close! device) (finally (swap! (:devices runtime) dissoc id))))))
+    (when-let [device (locking (:lock runtime)
+                        (swap! (:device-reconnects runtime) dissoc id)
+                        (get (first (swap-vals! (:devices runtime) dissoc id)) id))]
+      (devices/close! device))))
 
 (defn expressive-preview
   "Preview the selected cue's expressive mapping using the connected device's
