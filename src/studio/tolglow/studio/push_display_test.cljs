@@ -78,6 +78,15 @@
     (is (nil? (display/bank-label {:index 0 :count 1 :total 8 :offset 0}))))
   (is (nil? (display/bank-label nil))))
 
+(deftest beat-ratio-overlay-retains-exact-display-labels
+  (let [cell {:position [1 6] :label "4/3" :selected? true}
+        normalized (:pad-overlay (display/normalize-view
+                                   {:pad-overlay {:layout "beat-ratios" :param "period" :current-ratio "4/3"
+                                                  :cells (repeat 20 (assoc cell :value (/ 4 3)))}}))]
+    (is (= {:layout "beat-ratios" :param "period" :current-ratio "4/3"}
+           (dissoc normalized :cells)))
+    (is (= (vec (repeat 16 cell)) (:cells normalized)))))
+
 (deftest explicit-audio-mode-keeps-the-actual-capture-projection
   (let [waveform {:bins [{:min -0.5 :max 0.4 :rms 0.2 :bands {:low 0.8}}] :sample-end 512}
         view (display/normalize-view {:display-mode "audio" :audio-waveform waveform
