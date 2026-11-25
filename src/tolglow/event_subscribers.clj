@@ -488,11 +488,15 @@
 
 ;; Ramps -----------------------------------------------------------------
 
-(def ^:private human-adapters #{:web "web" :studio :push-2 :push-3 :x-touch :xtouch :midi :osc :sensor :repl})
+(def ^:private human-adapters
+  "Source adapters of operator surfaces. Device sessions use their profile ID
+  (afterglow.control.devices): the X-Touch Extender is :x-touch-xt, a Seaboard
+  :seaboard-m and an MPE controller :mpe."
+  #{:web "web" :studio :push-2 :push-3 :x-touch :x-touch-xt :xtouch :seaboard-m :mpe :midi :osc :sensor :repl})
 
 (defn human-source?
-  "Studio, web, Push, X-Touch, MIDI, OSC, sensor and REPL sources are human
-  operator surfaces; agents, reactive actions and subscribers are not."
+  "Studio, web, Push, X-Touch, Seaboard, MPE, MIDI, OSC, sensor and REPL sources
+  are human operator surfaces; agents, reactive actions and subscribers are not."
   [source]
   (boolean (and (map? source) (human-adapters (:adapter source)))))
 
@@ -530,6 +534,11 @@
     (nil? schema) (tween/interpolate from to fraction)
     (= :gradient (:type schema)) (gradient-interpolate from to fraction)
     :else (modulation/interpolate-value schema from to fraction)))
+
+(defn- same-shape?
+  "A number interpolates with a number, a vector with a vector of equal length."
+  [a b]
+  (if (vector? a) (and (vector? b) (= (count a) (count b))) (not (vector? b))))
 
 (defn- progress [{:keys [start end]} clock]
   (double (max 0 (min 1 (/ (- clock start) (- end start))))))
@@ -602,8 +611,9 @@
                (and (numeric-value? from) (numeric-value? to)))
            "Ramp endpoints must satisfy the destination type" {:destination destination :from from :to to})
     (check (< (count (get-in model [:event-subscribers :ramps])) ramp-limit) "Too many active ramps" {})
-    (when (and (vector? from) (vector? to) (not= :gradient (:type schema)))
-      (check (= (count from) (count to)) "Ramp endpoints need equal shapes" {}))
+    ;; A scalar cannot move to a vector: every later sample would throw on the owner.
+    (when-not (= :gradient (:type schema))
+      (check (same-shape? from to) "Ramp endpoints need equal shapes" {:from from :to to}))
     (-> model
         (supersede destination event-id)
         (update-in [:event-subscribers :ramps] (fnil conj [])
@@ -622,18 +632,23 @@
     (control/apply-domain-command model cmd apply-operation)
     (spatial/apply-command model cmd)))
 
-(defn- commit-ramp [model ramp now]
-  (let [{:keys [target instance-id param variable]} (:destination ramp)
-        cmd (case target
-              :param {:op :param/set :instance-id instance-id :param param :value (:to ramp)}
-              :opacity {:op :instance/opacity-set :instance-id instance-id :value (:to ramp)}
-              :master {:op :master/set :value (:to ramp)}
-              :variable {:op :variable/set :variable variable :value (:to ramp)})]
-    (:model (submit-command
-             model (merge cmd {:show-id (:show-id model) :epoch (:epoch model) :time-ms now
-                               :source (:source ramp)
-                               :command-id (str "ramp/" (:epoch model) "/" (:event-id ramp) "/"
-                                                (pr-str (destination-key (:destination ramp))) "/" (:start ramp))})))))
+(defn- commit-ramp
+  "Write a ramp's value to its destination through the shared reducer: the
+  exact target when it completes, or its current frame value when it is held."
+  ([model ramp now] (commit-ramp model ramp now (:to ramp) nil))
+  ([model ramp now value suffix]
+   (let [{:keys [target instance-id param variable]} (:destination ramp)
+         cmd (case target
+               :param {:op :param/set :instance-id instance-id :param param :value value}
+               :opacity {:op :instance/opacity-set :instance-id instance-id :value value}
+               :master {:op :master/set :value value}
+               :variable {:op :variable/set :variable variable :value value})]
+     (:model (submit-command
+              model (merge cmd {:show-id (:show-id model) :epoch (:epoch model) :time-ms now
+                                :source (:source ramp)
+                                :command-id (str "ramp/" (:epoch model) "/" (:event-id ramp) "/"
+                                                 (pr-str (destination-key (:destination ramp))) "/" (:start ramp)
+                                                 suffix)}))))))
 
 (defn- writes-destination? [command {:keys [target instance-id param variable]}]
   (let [op (:op command)]
@@ -666,6 +681,27 @@
     (and (map? a) (map? b)) (and (= (set (keys a)) (set (keys b))) (every? #(same-value? (get a %) (get b %)) (keys a)))
     :else (= a b)))
 
+(defn- hold-ramps
+  "Commit each cancelled ramp's current frame value, so the destination stays
+  where the ramp left it instead of returning to the value it started from."
+  [model ramps now]
+  (let [beat (get-in model [:transport :beat] 0)]
+    (reduce (fn [m ramp]
+              (let [value (try (second (sample-ramp m ramp beat now)) (catch Exception _ nil))]
+                (if (or (nil? value) (same-value? value (current-value m (:destination ramp))))
+                  m
+                  (commit-ramp m ramp now value "/hold"))))
+            model ramps)))
+
+(defn hold
+  "Commit the current frame value of the running ramps on these destinations
+  and keep the ramps. A gesture that begins on a ramped parameter takes over
+  from where the ramp is; the override that follows cancels the ramp."
+  [model destinations now]
+  (let [wanted (set (map destination-key destinations))]
+    (hold-ramps model (filterv #(wanted (destination-key (:destination %))) (get-in model [:event-subscribers :ramps]))
+                now)))
+
 (defn advance-ramps
   "Settle ramp lifecycles on the owner: a committed write to a ramp's
   destination by anyone cancels it with the writer's reason; a finished ramp
@@ -693,13 +729,19 @@
                        more kept))
 
               :else
-              (let [[p value] (sample-ramp model ramp beat now)]
-                (if (>= p 1.0)
+              (let [[p value] (try (sample-ramp model ramp beat now) (catch Exception _ nil))]
+                (cond
+                  ;; A ramp that cannot be sampled would otherwise fail every owner tick.
+                  (nil? p)
+                  (recur (remember model (ramp-entry model ramp :cancelled {:reason :invalid-endpoints})) more kept)
+
+                  (>= p 1.0)
                   (recur (-> (assoc-in model [:event-subscribers :ramps] (into kept more))
                              (commit-ramp ramp now)
                              (remember (ramp-entry model ramp :completed {:value value})))
                          more kept)
-                  (recur model more (conj kept ramp)))))))))))
+
+                  :else (recur model more (conj kept ramp)))))))))))
 
 (defn frame-overlays
   "Sample every active ramp for the frozen frame: {:params {id {k v}}
@@ -755,10 +797,15 @@
     (str "sched/" (:epoch model) "/" (:id run) "/" n)
     (str "sub/" (:epoch model) "/" (:id run) "/" (:index run) "/" n)))
 
-(defn- apply-step [model run base cmd-id cmd]
-  (let [result (submit-command model (merge base cmd {:command-id cmd-id}))]
-    (if (= :accepted (get-in result [:ack :status])) (:model result)
-        (report model run (get-in result [:ack :message] "Action rejected")))))
+(defn- apply-step
+  "Admit one step command. A destination names the ramp an accepted write
+  replaces; a rejected write leaves that ramp running."
+  ([model run base cmd-id cmd] (apply-step model run base cmd-id cmd nil))
+  ([model run base cmd-id cmd destination]
+   (let [result (submit-command model (merge base cmd {:command-id cmd-id}))]
+     (if (= :accepted (get-in result [:ack :status]))
+       (cond-> (:model result) destination (supersede destination (run-event-id run)))
+       (report model run (get-in result [:ack :message] "Action rejected"))))))
 
 (defn- perform-target [model run action id base cmd-id now]
   (let [destination (when (#{:param :opacity} (destination-target action))
@@ -767,8 +814,7 @@
     (if (= :param/ramp (:op action))
       (try (start-ramp model run action destination now)
            (catch clojure.lang.ExceptionInfo error (report model run (.getMessage error))))
-      (apply-step (cond-> model destination (supersede destination (run-event-id run)))
-                  run base cmd-id (command action id)))))
+      (apply-step model run base cmd-id (command action id) destination))))
 
 (defn- select-and-perform [model run action now budget]
   (let [seed (get-in model [:event-subscribers :seed])
@@ -795,7 +841,6 @@
 (defn- perform-global [model run action now]
   (let [base (command-base model run now)
         cmd-id (command-id model run 0)
-        by (run-event-id run)
         target (destination-target action)
         value (:value action)]
     (case (:op action)
@@ -806,9 +851,9 @@
                                                  (= :variable target) (assoc :variable (:variable action))) now)
       (:master/set :param/set :variable/set)
       (case target
-        :master (apply-step (supersede model {:target :master} by) run base cmd-id {:op :master/set :value value})
-        :variable (apply-step (supersede model {:target :variable :variable (:variable action)} by)
-                              run base cmd-id {:op :variable/set :variable (:variable action) :value value})))))
+        :master (apply-step model run base cmd-id {:op :master/set :value value} {:target :master})
+        :variable (apply-step model run base cmd-id {:op :variable/set :variable (:variable action) :value value}
+                              {:target :variable :variable (:variable action)})))))
 
 (defn- perform [model run action now budget]
   (cond
@@ -880,8 +925,9 @@
 (defn- advance-runs [model now results]
   (if-not (seq (get-in model [:event-subscribers :runs])) model
     (let [meter (get-in model [:transport :meter]) beat (get-in model [:transport :beat])
-          ;; Due order, then admission order (stable sort keeps queue order on ties).
-          runs (sort-by :due-beat (get-in model [:event-subscribers :runs]))]
+          ;; Due order, then admission order. The queue is rewritten in due order each
+          ;; cycle, so ties use the admission serial, as the projection does.
+          runs (sort-by (juxt :due-beat :id) (get-in model [:event-subscribers :runs]))]
       (loop [model model pending (seq runs) keep-runs [] budget 128]
         (if-let [run (first pending)]
           (let [action (get (:steps run) (:index run))
@@ -1060,36 +1106,53 @@
        (or (nil? label) (= label run-label))
        (or (nil? destination) (and dest (destination-match? destination dest ids)))))
 
-(defn- requester-owner [source] (select-keys source [:adapter :session-id]))
+(defn- owner?
+  "Did this requester post it? Same adapter and session. A requester without
+  an adapter has no identity, so it owns nothing."
+  [requester posted]
+  (and (map? requester) (map? posted) (some? (:adapter requester))
+       (= (id-text (:adapter requester)) (id-text (:adapter posted)))
+       (= (id-text (:session-id requester)) (id-text (:session-id posted)))))
 
 (defn cancel
   "Cancel scheduled events and running ramps selected by every supplied
   criterion: :event-ids, :posted-by (a source submap), :label or :destination.
   A human operator surface may cancel anything; any other requester (an agent,
-  a reactive action) only what it posted itself. A ramp holds its value."
+  a reactive action) only what it posted itself. A cancelled ramp commits its
+  current frame value, so its destination holds where the ramp left it."
   [model {:keys [event-ids reason source] :as request}]
-  (check (some #(contains? request %) [:event-ids :posted-by :label :destination])
+  ;; A nil criterion is not a criterion: a request with none would match everything.
+  (check (some #(some? (get request %)) [:event-ids :posted-by :label :destination])
          "Cancel by event IDs, source, label or destination" {})
   (check (or (nil? event-ids) (and (vector? event-ids) (every? identifier? event-ids))) "Event IDs must be a vector" {})
   (let [criteria (select-keys request [:event-ids :posted-by :label :destination])
-        criteria (cond-> criteria
-                   (:destination criteria) (update :destination #(update % :target textual-keyword))
-                   (not (human-source? source)) (assoc :posted-by (requester-owner source)))
+        ;; JSON callers name the target, parameter and variable as text, as events do.
+        textual #(cond-> % (contains? % :target) (update :target textual-keyword)
+                   (contains? % :param) (update :param textual-keyword)
+                   (contains? % :variable) (update :variable textual-keyword))
+        _ (check (or (nil? (:destination criteria)) (map? (:destination criteria)))
+                 "A destination is a map with :target and optional :instance-id, :param or :variable" {})
+        criteria (cond-> criteria (:destination criteria) (update :destination textual))
+        ;; A non-human requester reaches only its own work, whatever criteria it supplies.
+        may-cancel? (if (human-source? source) (constantly true) #(owner? source %))
         reason (or reason :operator-cancel)
         s (state model)
         run-hit? (fn [run]
-                   (when-let [{:keys [event-id label source]} (:scheduled run)]
+                   (when-let [{:keys [event-id label] posted :source} (:scheduled run)]
                      (let [action (first (:steps run))]
-                       (selection-match? criteria event-id source label
-                                         (when (destination-target action) (action-destination action))
-                                         (get-in action [:select :ids])))))
+                       (and (may-cancel? posted)
+                            (selection-match? criteria event-id posted label
+                                              (when (destination-target action) (action-destination action))
+                                              (get-in action [:select :ids]))))))
         {gone true kept false} (group-by (comp boolean run-hit?) (:runs s))
         model (reduce #(remember %1 (run-entry %1 %2 :cancelled {:reason reason}))
                       (assoc-in model [:event-subscribers :runs] (vec kept)) gone)
-        ramp-hit? #(selection-match? criteria (:event-id %) (:source %) (:label %) (:destination %) nil)
-        ramp-ids (keep #(when (ramp-hit? %) (:event-id %)) (get-in model [:event-subscribers :ramps]))]
-    {:model (remove-ramps model ramp-hit? :cancelled {:reason reason})
-     :event-ids (vec (distinct (concat (map run-event-id gone) ramp-ids)))}))
+        ramp-hit? #(and (may-cancel? (:source %))
+                        (selection-match? criteria (:event-id %) (:source %) (:label %) (:destination %) nil))
+        stopped (filterv ramp-hit? (get-in model [:event-subscribers :ramps]))]
+    {:model (-> (remove-ramps model ramp-hit? :cancelled {:reason reason})
+                (hold-ramps stopped (:time-ms request (:time-ms model 0))))
+     :event-ids (vec (distinct (concat (map run-event-id gone) (map :event-id stopped))))}))
 
 (defn move
   "Reschedule one pending event to new timing: {:event-id .. :at|:in|:grid ..}.
@@ -1101,7 +1164,7 @@
         runs (get-in model [:event-subscribers :runs] [])
         index (first (keep-indexed #(when (= (id-text event-id) (get-in %2 [:scheduled :event-id])) %1) runs))]
     (check index "No pending event has that ID" {:event-id event-id})
-    (check (or (human-source? source) (same-source? (requester-owner source) (get-in runs [index :scheduled :source])))
+    (check (or (human-source? source) (owner? source (get-in runs [index :scheduled :source])))
            "Only the event's poster or a human operator can move it" {:event-id event-id})
     (check (= 1 (count timing)) "Move needs one of :at, :in or :grid" {})
     (let [action (validate-action (merge (apply dissoc (first (:steps (nth runs index))) timing-keys) timing))

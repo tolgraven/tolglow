@@ -574,16 +574,18 @@
   destination. Gestures and human surfaces record :human-override; other
   sources (agents, reactive actions) record :superseded. Writers that bypass
   this path are caught by subscribers/advance-ramps from the committed value."
-  [result {:keys [op source instance-id param command-id]} authority]
+  [result {:keys [op source instance-id param command-id action]} authority]
   (if-not (seq (get-in result [:model :event-subscribers :ramps]))
     result
-    (let [destinations (cond-> (vec (keep (fn [{:keys [type] :as event}]
+    (let [;; A group action reports every system change; only its opacity actions write opacity.
+          system-op (if (= :group/apply op) (:op action) op)
+          destinations (cond-> (vec (keep (fn [{:keys [type] :as event}]
                                             (case type
                                               :param/changed {:target :param :instance-id (:instance-id event) :param (:param event)}
                                               :master/changed {:target :master}
                                               :variable/changed {:target :variable :variable (:variable event)}
                                               :instance/system-changed
-                                              (when (#{:instance/opacity-set :instance/opacity-toggle :group/apply} op)
+                                              (when (#{:instance/opacity-set :instance/opacity-toggle} system-op)
                                                 {:target :opacity :instance-id (:instance-id event)})
                                               nil))
                                           (:events result)))
@@ -629,13 +631,27 @@
                          payload {:time-ms time-ms})
          operation (:op envelope)
          variation? (variations/operations operation)
-         result (cond
-                  variation? (variations/apply-command model envelope)
-                  (group-channels/operation? operation)
-                  (control/apply-domain-command model envelope group-channels/apply-operation)
-                  (subscribers/operations operation)
-                  (control/apply-domain-command model envelope subscribers/apply-operation)
-                  :else (spatial/apply-command model envelope authority))
+         admit (fn [model]
+                 (cond
+                   variation? (variations/apply-command model envelope)
+                   (group-channels/operation? operation)
+                   (control/apply-domain-command model envelope group-channels/apply-operation)
+                   (subscribers/operations operation)
+                   (control/apply-domain-command model envelope subscribers/apply-operation)
+                   :else (spatial/apply-command model envelope authority)))
+         ;; A gesture takes over a ramped parameter from the ramp's current frame
+         ;; value. Its begin writes nothing, so without this the parameter would
+         ;; return to the ramp's start value until the first sample.
+         held (if (and (= :gesture/begin operation) (nil? previous)
+                       (seq (get-in model [:event-subscribers :ramps])))
+                (subscribers/hold model [{:target :param :instance-id (:instance-id envelope) :param (:param envelope)}]
+                                  time-ms)
+                model)
+         result (let [result (admit held)]
+                  ;; A refused gesture leaves the ramp and its destination untouched.
+                  (if (or (identical? held model) (= :accepted (get-in result [:ack :status])))
+                    result
+                    (admit model)))
          accepted? (= :accepted (get-in result [:ack :status]))]
      (cond
        (and accepted? (= (:revision model) (get-in result [:model :revision])))
@@ -2229,7 +2245,8 @@
                            {:op :schedule/post :events (vec events)}))))
 
 (defn cancel-events!
-  "Cancel scheduled events and running ramps by :event-ids, :source, :label or :destination."
+  "Cancel scheduled events and running ramps by :event-ids, :posted-by (a
+  source submap), :label or :destination. A cancelled ramp holds its current value."
   [runtime selection]
   (submit! runtime (merge {:source {:adapter :repl :session-id "repl"}} selection {:op :schedule/cancel})))
 

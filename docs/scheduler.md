@@ -32,9 +32,10 @@ Positions are **zero-based** transport coordinates, matching
 one-based counting, as on Live's arrangement ruler, `{:bar 64}` is bar 65 and
 `{:bar 0}` is the first bar. Each post receipt lists the resolved `:due-beats` so
 you can check the conversion. Bars and
-phrases convert through the transport meter. Tempo is not used to decide when an
-event is due, so a tempo change stretches every remaining musical wait in
-wall-clock time.
+phrases convert through the transport meter when the event is posted, moved or
+re-quantized. A later meter change does not move a pending position or wait.
+Tempo is not used to decide when an event is due, so a tempo change stretches
+every remaining musical wait in wall-clock time.
 
 The owner fires due runs during each frame, after it applies queued commands and
 before rendering. Runs fire in due-beat order, then in admission order. The
@@ -134,11 +135,19 @@ place of a top-level timing key.
   direct commands immediately. The owner also compares the committed value with
   the value the ramp started from, each frame after macros, automation and
   routing have run, so a writer that bypasses the hook is caught too. The
-  destination keeps the written value. A gesture, trusted operator authority, or
-  a Studio, web, Push, X-Touch, MIDI, OSC, sensor or REPL source records
-  `:reason :human-override`. Other sources, such as agents, reactive actions and
-  macro or automation commands, record `:reason :superseded`. `:by` holds the
-  writer's op, command ID and source from the shared receipt history.
+  destination keeps the written value. A `:gesture/begin` writes nothing, so the
+  owner first commits the ramp's current frame value: the gesture takes over
+  from where the ramp is, and cancelling the gesture returns to that value. A
+  refused gesture leaves the ramp running. A gesture, trusted operator
+  authority, or a Studio, web, Push, X-Touch (including the Extender),
+  Seaboard, MPE, MIDI, OSC, sensor or REPL source records
+  `:reason :human-override`. Other sources, such as agents, reactive actions
+  and macro or automation commands, record `:reason :superseded`. `:by` holds
+  the writer's op, command ID and source from the shared receipt history.
+- **Cancel.** `:schedule/cancel` stops a running ramp and commits its current
+  frame value through the shared reducer, with the ramp's source. The
+  destination holds where the ramp left it and does not return to the start
+  value. `:recent` records `{:status :cancelled :reason :operator-cancel}`.
 - A removed instance cancels its ramps with `:reason :destination-removed`.
 - A seek or loop shifts beat ramps with the clock, so their elapsed musical
   progress is preserved.
@@ -150,12 +159,13 @@ These are operator defaults:
 - Human master and blackout stay authoritative. An agent (`:adapter :agent`)
   cannot schedule `:master/set`, `:blackout/set` or a master ramp. The batch is
   rejected with a reason.
-- Studio, web, Push, X-Touch, MIDI, OSC, sensor and REPL requests may cancel or
-  move any event. Any other requester, such as an agent or a reactive action,
-  matches only events and ramps it posted itself (same adapter and session),
-  whatever criteria it supplies. An agent therefore cannot cancel a
-  subscriber's ramp or another agent's plan. `cancel_scheduled` with `mine?`
-  makes this explicit.
+- Studio, web, Push, X-Touch, Seaboard, MPE, MIDI, OSC, sensor and REPL
+  requests may cancel or move any event. Any other requester, such as an agent
+  or a reactive action, matches only events and ramps it posted itself (same
+  adapter and session), whatever criteria it supplies. A requester whose source
+  has no adapter owns nothing. An agent therefore cannot cancel a subscriber's
+  ramp or another agent's plan. `cancel_scheduled` with `mine?` makes this
+  explicit.
 - A scheduled `:macro/run` or `:macro/stop` runs as a domain command carrying the
   poster's source, so the receipt records who started the macro.
 
@@ -179,6 +189,7 @@ receipt.
  :curve :ease-in-out :start {:in {:bars 1}} :event-id "swell"}
 
 ;; Cancel pending events and running ramps. All supplied criteria must match.
+;; A cancelled ramp holds its current value.
 {:op :schedule/cancel :event-ids ["swell"]}
 {:op :schedule/cancel :posted-by {:adapter :agent :session-id "run-7"}}
 {:op :schedule/cancel :label "Drop"}
@@ -258,7 +269,7 @@ a low-token view:
 
 ```clojure
 {:legend {:upcoming [:due-beat :event-id :op :label]
-          :ramps [:event-id :destination :progress :value :to :end-beat]
+          :ramps [:event-id :destination :progress :value :to :end]
           :recent [:event-id :status :reason]}
  :beat 130.25 :bar 32 :beats-per-bar 4 :bpm 124.0
  :upcoming [[256.0 "drop" :cue/launch "Drop"] [256.0 "swell" :param/ramp]]
@@ -354,6 +365,16 @@ real owner tick and captures ArtDmx packets from the output sink:
   keeps the remaining milliseconds of an `:ms` ramp.
 - Full backup round trip, millisecond and variable ramps, reserved variables,
   and subscriber `:at`, `:in` and `:grid` timing.
+- A cancelled ramp holds its current value in the output and the committed
+  parameter. A variable ramp from a vector to a number is refused when due and
+  later frames still render. A scheduled set rejected when due leaves the
+  running ramp alone.
+- A gesture that begins on a ramped parameter takes over from the ramp's
+  current value, and a refused gesture leaves the ramp running.
+- Same-beat events fire in the projection's order after a reschedule. A
+  requester whose source has no adapter cannot move or cancel anything. A group
+  gain change leaves an opacity ramp running, and a group opacity change
+  cancels it.
 
 ## Remaining gaps
 

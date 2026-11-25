@@ -572,9 +572,12 @@
                                        {:event-id "subscriber/kicks/3" :origin :subscriber :op :cue/launch
                                         :category :cue :due-beat 2.5}]
                   :ramps [{:event-id "swell" :label "Swell" :to 0.8 :start 2.0 :end 10.0 :unit :beats
-                           :destination {:target :param :instance-id "1:1" :param :level}}]
+                           :destination {:target :param :instance-id "1:1" :param :level}}
+                          {:event-id "fade" :label "Fade" :to 0 :start 120000.0 :end 124000.0 :unit :ms
+                           :destination {:target :master}}]
                   :recent []}
         installed (:db (full-frame base (assoc (:show base) :show-id :main :runtime-id "host" :schedule schedule
+                                                         :time-ms 121000.0
                                                          :transport (assoc (get-in base [:show :transport]) :beat 4.0))))
         html (renderToStaticMarkup (r/as-element [views/scheduled-events installed]))
         cancel (first-command (transition installed [:studio/command "schedule/cancel" {:event-ids ["drop"]}]))]
@@ -583,6 +586,8 @@
     (is (not (str/includes? html "subscriber/kicks")) "subscriber steps stay in Debug")
     (is (str/includes? html "Swell → 0.8 by beat 10"))
     (is (str/includes? html "value=\"0.25\"") "progress is derived from the transport beat (4 of 2..10)")
+    (is (str/includes? html "Fade → 0 in 3 s") "a millisecond ramp shows its remaining time, not a beat")
+    (is (not (str/includes? html "beat 124000")))
     (is (str/includes? html "Cancel scheduled Drop"))
     (is (str/includes? html "Stop ramp Swell"))
     (is (= "schedule/cancel" (:op cancel)))

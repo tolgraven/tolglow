@@ -426,7 +426,12 @@
         (is (= 0.3 (get-in m [:instances id :params :level])) "the writer's value stays")))
     (testing "a write from a human surface records a human override"
       (is (= :human-override (:reason (last (get-in (cancelled {:adapter :push-3 :session-id "p"})
-                                                    [:event-subscribers :recent]))))))))
+                                                    [:event-subscribers :recent]))))))
+    (testing "device sessions are named by their profile ID: an X-Touch Extender, Seaboard or MPE write is human too"
+      (doseq [adapter [:x-touch :x-touch-xt :seaboard-m :mpe :midi :osc]]
+        (is (= :human-override (:reason (last (get-in (cancelled {:adapter adapter :session-id "device"})
+                                                      [:event-subscribers :recent]))))
+            (str adapter))))))
 
 (deftest a-restored-schedule-follows-a-transport-that-starts-elsewhere
   (let [file (java.io.File/createTempFile "schedule-restore" ".tolglow")
@@ -566,3 +571,203 @@
   (is (subscribers/same-value? [{:position 0 :color [1 0 0]}] [{:position 0.0 :color [1.0 0.0 0.0]}]))
   (is (not (subscribers/same-value? 1 1.01)))
   (is (not (subscribers/same-value? [1 0] [1 0 0]))))
+
+(deftest a-ramp-whose-endpoints-cannot-interpolate-is-refused-and-the-owner-keeps-running
+  (let [{:keys [rt packets]} (harness)]
+    (try
+      (let [id (:instance-id (at! rt 0 {:op :cue/launch :cue-id :wash :launch {:mode :persistent :params {:level 1.0}}}))]
+        (at! rt 100 {:op :variable/set :variable :energy :value [0.0 0.0 0.0] :source agent})
+        (is (= :accepted (:status (at! rt 200 {:op :param/ramp :event-id "bad" :target :variable :variable :energy
+                                              :to 1.0 :over {:beats 4} :source agent})))
+            "a variable's shape is only known when the ramp fires")
+        (is (nil? (get-in @(:state rt) [:status :error])) "the owner frame completes")
+        (is (= {:event-id "bad" :status :rejected :message "Ramp endpoints need equal shapes"}
+               (select-keys (last (recent rt)) [:event-id :status :message])))
+        (is (empty? (:upcoming (show/schedule rt))) "the refused event does not stay due")
+        (is (= [0.0 0.0 0.0] (get-in @(:state rt) [:model :variables :energy])))
+        (at! rt 400 {:op :param/set :instance-id id :param :level :value 0.5 :source {:adapter :repl :session-id "r"}})
+        (is (<= 127 (dimmer (peek @packets)) 128) "later frames still render"))
+      (finally (show/stop! rt))))
+  (testing "a stored ramp that cannot be sampled is cancelled instead of failing every owner tick"
+    (let [model (-> (live-model)
+                    (assoc-in [:variables :energy] [0.0 0.0])
+                    (assoc :event-subscribers
+                           {:subscribers [] :runs [] :next-run 0 :seed 1 :dropped 0
+                            :ramps [{:event-id "stored" :destination {:target :variable :variable :energy}
+                                     :from [0.0 0.0] :to 1.0 :base [0.0 0.0] :curve :linear
+                                     :unit :beats :start 0.0 :end 4.0}]}))
+          settled (subscribers/advance-ramps model 0.0)]
+      (is (empty? (get-in settled [:event-subscribers :ramps])))
+      (is (= [["stored" :cancelled :invalid-endpoints]]
+             (mapv (juxt :event-id :status :reason) (get-in settled [:event-subscribers :recent]))))
+      (is (= {} (subscribers/frame-overlays settled 0.0))))))
+
+(deftest a-cancelled-ramp-holds-its-current-value
+  (let [{:keys [rt packets]} (harness)]
+    (try
+      (let [id (:instance-id (at! rt 0 {:op :cue/launch :cue-id :wash :launch {:mode :persistent}}))
+            _ (at! rt 250 {:op :param/ramp :event-id "up" :instance-id id :param :level :to 1.0
+                           :over {:beats 8} :source agent})
+            rising (mapv (fn [t] (show/tick! rt t) (dimmer (peek @packets))) (range 500 2250 250))
+            stopped (at! rt 2250 {:op :schedule/cancel :event-ids ["up"] :source {:adapter :web :session-id "s"}})
+            held (into [(dimmer (peek @packets))]
+                       (map (fn [t] (show/tick! rt t) (dimmer (peek @packets)))) [2500 2750 3000])
+            commits (filter #(= :param/set (get-in % [:command :op]))
+                            (vals (get-in @(:state rt) [:model :control :history])))]
+        (is (= 112 (peek rising)))
+        (is (= ["up"] (:event-ids stopped)))
+        (is (every? #(<= 127 % 128) held) (str "the output stays at the stop frame's value: " held))
+        (is (== 0.5 (level rt id)) "the stop frame's value is committed, so backups and controls agree with the output")
+        (is (= [[0.5 :agent]] (mapv (juxt (comp :value :command) (comp :adapter :source :command)) commits))
+            "one commit through the shared reducer, with the ramp's source")
+        (is (= {:event-id "up" :status :cancelled :reason :operator-cancel}
+               (select-keys (last (recent rt)) [:event-id :status :reason])))
+        (is (empty? (:ramps (show/schedule rt))))
+        (testing "a JSON caller names a variable destination as text"
+          (at! rt 3050 {:op :variable/set :variable :energy :value 0.0 :source agent})
+          (at! rt 3100 {:op :param/ramp :event-id "rise" :target :variable :variable :energy :to 1.0
+                        :over {:beats 8} :source agent})
+          (is (= :rejected (:status (at! rt 3150 {:op :schedule/cancel :destination "energy" :source agent}))))
+          (is (= ["rise"] (:event-ids (at! rt 3200 {:op :schedule/cancel :source agent
+                                                    :destination {:target "variable" :variable "energy"}})))))
+        (testing "a ramp stopped on its first frame has nothing to commit"
+          (at! rt 3250 {:op :param/ramp :event-id "again" :instance-id id :param :level :to 1.0
+                        :over {:beats 8} :source agent})
+          (let [revision (get-in @(:state rt) [:model :revision])]
+            (show/cancel-events! rt {:event-ids ["again"]})
+            (show/tick! rt 3250)
+            (is (== 0.5 (level rt id)))
+            (is (= (inc revision) (get-in @(:state rt) [:model :revision])) "only the cancel itself is committed"))))
+      (finally (show/stop! rt)))))
+
+(deftest a-rejected-scheduled-set-leaves-the-running-ramp-alone
+  (let [{:keys [rt packets]} (harness)]
+    (try
+      (let [id (:instance-id (at! rt 0 {:op :cue/launch :cue-id :wash :launch {:mode :persistent}}))
+            _ (at! rt 250 {:op :param/ramp :event-id "up" :instance-id id :param :level :to 1.0
+                           :over {:beats 8} :source agent})
+            ;; A cue selector is resolved when due, so the bad value is only caught then.
+            posted (at! rt 1250 {:op :param/set :event-id "bad-set" :cue-id :wash :param :level :value 7.0
+                                 :in {:beats 1} :source agent})
+            frames (mapv (fn [t] (show/tick! rt t) (dimmer (peek @packets))) [1500 1750 2000 2250])]
+        (is (= :accepted (:status posted)))
+        (is (= [:rejected "Invalid parameters"]
+               ((juxt :status :message) (last (filter #(= "bad-set" (:event-id %)) (recent rt))))))
+        (is (= ["up"] (mapv :event-id (:ramps (show/schedule rt)))) "the ramp keeps running")
+        (is (apply < frames) (str "the output keeps rising: " frames))
+        (testing "an accepted scheduled set replaces the ramp and its value stays"
+          (at! rt 2500 {:op :param/set :event-id "good-set" :cue-id :wash :param :level :value 0.25
+                        :in {:beats 1} :source agent})
+          (doseq [t [2750 3000 3250]] (show/tick! rt t))
+          (is (empty? (:ramps (show/schedule rt))))
+          (is (= {:event-id "up" :status :cancelled :reason :superseded :by "good-set"}
+                 (select-keys (last (filter #(= "up" (:event-id %)) (recent rt))) [:event-id :status :reason :by])))
+          (is (== 0.25 (level rt id)))
+          (is (= 64 (dimmer (peek @packets))))))
+      (finally (show/stop! rt)))))
+
+(deftest same-beat-events-fire-in-admission-order-after-a-reschedule
+  (let [{:keys [rt]} (harness)
+        operator {:adapter :repl :session-id "fod"}]
+    (try
+      (show/tick! rt 0)
+      (at! rt 100 {:op :schedule/post :source operator
+                   :events [{:id "first" :op :variable/set :variable :section :value "first" :at {:beat 8}}
+                            {:id "second" :op :variable/set :variable :section :value "second" :at {:beat 4}}]})
+      (show/tick! rt 200)                                   ; the queue is now kept in due order
+      (is (= :accepted (:status (at! rt 300 {:op :schedule/move :event-id "second" :at {:beat 8} :source operator}))))
+      (is (= ["first" "second"] (mapv :event-id (:upcoming (show/schedule rt)))))
+      (show/tick! rt 4100)
+      (is (= ["first" "second"] (mapv :event-id (take-last 2 (recent rt))))
+          "events fire in the order the projection lists them")
+      (is (= "second" (get-in @(:state rt) [:model :variables :section])))
+      (finally (show/stop! rt)))))
+
+(deftest a-requester-without-an-identity-owns-no-scheduled-work
+  (let [{:keys [rt]} (harness)
+        pending #(mapv :event-id (:upcoming (show/schedule rt)))
+        now #(inc (get-in @(:state rt) [:model :time-ms]))]
+    (try
+      (show/tick! rt 0)
+      (at! rt 100 {:op :schedule/post :source {:adapter :repl :session-id "fod"}
+                   :events [{:id "human" :op :cue/launch :cue-id :wash :in {:bars 8}}]})
+      (at! rt 200 {:op :schedule/post :source agent
+                   :events [{:id "planned" :op :cue/launch :cue-id :wash :in {:bars 8}}]})
+      (doseq [requester [{:type :patch} {:session-id "agent-run"} {:adapter :agent} {:adapter :agent :session-id "other-run"}]]
+        (let [moved (at! rt (now) {:op :schedule/move :event-id "planned" :in {:bars 1} :source requester})
+              cancelled (at! rt (now) {:op :schedule/cancel :event-ids ["human" "planned"] :source requester})]
+          (is (= :rejected (:status moved)) (pr-str requester))
+          (is (= [] (:event-ids cancelled)) (pr-str requester))))
+      (is (= ["human" "planned"] (pending)))
+      (testing "a nil criterion selects nothing, even for an operator"
+        (doseq [request [{:event-ids nil} {:label nil} {:destination nil} {:posted-by nil :label nil}]]
+          (is (= :rejected (:status (at! rt (now) (merge {:op :schedule/cancel :source {:adapter :web :session-id "s"}}
+                                                         request))))
+              (pr-str request)))
+        (is (= ["human" "planned"] (pending))))
+      (testing "a non-human requester naming another poster matches nothing, not its own events"
+        (is (= [] (:event-ids (at! rt (now) {:op :schedule/cancel :posted-by {:adapter :repl} :source agent}))))
+        (is (= ["human" "planned"] (pending))))
+      (testing "the poster still reaches its own event, and an operator surface any event"
+        (is (= ["planned"] (:event-ids (at! rt (now) {:op :schedule/cancel :event-ids ["human" "planned"] :source agent}))))
+        (is (= ["human"] (:event-ids (at! rt (now) {:op :schedule/cancel :event-ids ["human"]
+                                                    :source {:adapter :x-touch-xt :session-id "extender"}})))))
+      (finally (show/stop! rt)))))
+
+(deftest only-a-group-opacity-action-overrides-an-opacity-ramp
+  (let [{:keys [rt packets]} (harness)
+        operator {:adapter :repl :session-id "fod"}]
+    (try
+      (let [id (:instance-id (at! rt 0 {:op :cue/launch :cue-id :wash :launch {:mode :persistent :params {:level 1.0}}}))
+            group (fn [time action] (at! rt time {:op :group/apply :selector {:instance-ids [id]} :action action
+                                                  :source operator}))]
+        (at! rt 250 {:op :param/ramp :event-id "fade" :instance-id id :target :opacity :to 0.0
+                     :over {:beats 8} :source agent})
+        (show/tick! rt 1000)
+        (is (= 207 (dimmer (peek @packets))))
+        (is (= :accepted (:status (group 1250 {:op :instance/gain-set :value 1.0}))))
+        (is (= ["fade"] (mapv :event-id (:ramps (show/schedule rt)))) "a group gain change does not write opacity")
+        (is (= 191 (dimmer (peek @packets))) "the fade continues")
+        (is (= :accepted (:status (group 1500 {:op :instance/opacity-set :value 0.8}))))
+        (is (empty? (:ramps (show/schedule rt))))
+        (is (= {:event-id "fade" :status :cancelled :reason :human-override}
+               (select-keys (last (recent rt)) [:event-id :status :reason])))
+        (is (= 204 (dimmer (peek @packets))) "the operator's group opacity stays"))
+      (finally (show/stop! rt)))))
+
+(deftest a-gesture-takes-over-a-ramped-parameter-from-its-current-value
+  (let [{:keys [rt packets]} (harness)]
+    (try
+      (let [id (:instance-id (at! rt 0 {:op :cue/launch :cue-id :wash :launch {:mode :persistent}}))
+            _ (at! rt 250 {:op :param/ramp :event-id "up" :instance-id id :param :level :to 1.0
+                           :over {:beats 8} :source agent})
+            rising (mapv (fn [t] (show/tick! rt t) (dimmer (peek @packets))) (range 500 2000 250))
+            gesture {:instance-id id :param :level :control-id :encoder-1 :gesture-id :g1
+                     :source {:adapter :push-3 :session-id "push"}}
+            operator {:operator-id :front-of-house}
+            revision #(get-in @(:state rt) [:model :revision])]
+        (is (= 96 (peek rising)))
+        (testing "a gesture refused for lack of an operator leaves the ramp and the parameter alone"
+          (let [before (revision)
+                refused (at! rt 2000 (assoc gesture :op :gesture/begin))]
+            (is (= :rejected (:status refused)))
+            (is (= before (revision)))
+            (is (== 0.0 (level rt id)))
+            (is (= ["up"] (mapv :event-id (:ramps (show/schedule rt)))))
+            (is (= 112 (dimmer (peek @packets))))))
+        (let [begun (at! rt 2250 (assoc gesture :op :gesture/begin) operator)
+              touched (into [(dimmer (peek @packets))]
+                            (map (fn [t] (show/tick! rt t) (dimmer (peek @packets)))) [2500 2750])]
+          (is (= :accepted (:status begun)))
+          (is (every? #(<= 127 % 128) touched)
+              (str "touching the control does not return the output to the ramp's start value: " touched))
+          (is (== 0.5 (level rt id)) "the controller reads the value the ramp had reached")
+          (is (empty? (:ramps (show/schedule rt))))
+          (is (= [:cancelled :human-override :gesture/begin]
+                 ((juxt :status :reason (comp :op :by)) (last (recent rt)))))
+          (is (= :accepted (:status (at! rt 3000 (assoc gesture :op :gesture/sample :sequence 1 :value 0.6) operator))))
+          (is (= 153 (dimmer (peek @packets))))
+          (testing "cancelling the gesture returns to the value it took over, not the ramp's start"
+            (is (= :accepted (:status (at! rt 3250 (assoc gesture :op :gesture/cancel) operator))))
+            (is (== 0.5 (level rt id))))))
+      (finally (show/stop! rt)))))
