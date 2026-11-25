@@ -88,8 +88,8 @@
   "`:live` animates the pads; `:still` shows the steady indicator. Pads are
   still when nothing on the page animates, the transport is paused or has no
   tempo, the stream is stale, the page is hidden or motion is reduced."
-  [anchor now-ms {:keys [animate? hidden? reduced?]}]
-  (if (and animate? anchor (:playing? anchor) (:bpm anchor) (not hidden?) (not reduced?)
+  [anchor now-ms {:keys [animate? hidden? reduced? stale?]}]
+  (if (and animate? anchor (:playing? anchor) (:bpm anchor) (not hidden?) (not reduced?) (not stale?)
            (< (- now-ms (:at anchor)) max-extrapolation-ms))
     :live
     :still))
@@ -137,16 +137,30 @@
         (when (or (nil? current) (> (js/Math.abs (- current target)) sync-tolerance-ms))
           (set! (.-startTime animation) target))))))
 
+(declare refresh!)
+
+(defn- expire!
+  "The stale-stream timer for the sample `key` ran. The timer decides, not a
+  second clock comparison: the document timeline advances once per display
+  frame, so it can still read just under the limit when the timeout runs."
+  [ctl key]
+  (swap! ctl (fn [state] (cond-> (assoc state :timer nil :timer-key nil)
+                           (= key (:key (:anchor state))) (assoc :expired key))))
+  (refresh! ctl))
+
 (defn refresh!
   "Apply the current mode to the grid. Writes the grid only when its mode or
   beat duration changed. Aligns animations only when the anchor, grid or
   duration changed while live; new pad animations align on animationstart.
-  Keeps a single stale-stream timer per anchor."
+  Keeps a single stale-stream timer per anchor. A sample whose timer ran stays
+  stale until the next sample replaces it."
   [ctl]
-  (let [{:keys [host anchor animate? timer timer-key written aligned]} @ctl
+  (let [{:keys [host anchor animate? timer timer-key written aligned expired]} @ctl
         now ((:now host))
         el ((:grid host))
-        next-mode (mode anchor now {:animate? animate? :hidden? ((:hidden? host)) :reduced? ((:reduced? host))})
+        stale? (and (some? expired) (= expired (:key anchor)))
+        next-mode (mode anchor now {:animate? animate? :hidden? ((:hidden? host)) :reduced? ((:reduced? host))
+                                    :stale? stale?})
         duration (when (= :live next-mode) (beat-duration-ms anchor))
         fresh? (not= el (:el written))
         write-duration (when (and duration (or fresh? (not= duration (:duration written)))) duration)
@@ -159,10 +173,11 @@
     (when (and el (not= wanted written))
       ((:write! host) el next-mode write-duration))
     (when (and live? (not= alignment aligned)) (align! host el anchor))
-    (let [timer (cond keep-timer? timer
-                      stale-in ((:set-timeout host) #(refresh! ctl) stale-in))]
-      (swap! ctl assoc :timer timer :timer-key (when timer (:key anchor)) :mode next-mode
-             :written (when el wanted) :aligned alignment))))
+    (let [key (:key anchor)
+          timer (cond keep-timer? timer
+                      stale-in ((:set-timeout host) #(expire! ctl key) stale-in))]
+      (swap! ctl assoc :timer timer :timer-key (when timer key) :mode next-mode
+             :written (when el wanted) :aligned alignment :expired (when stale? expired)))))
 
 (defn sample!
   "Record the latest projection and refresh. Reads the clock before updating

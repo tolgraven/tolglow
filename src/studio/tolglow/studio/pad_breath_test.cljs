@@ -181,6 +181,32 @@
       (is (:unwatched? @state))
       (is (empty? (:timers @state))))))
 
+(deftest the-stale-timer-decides-when-the-frame-clock-reads-short
+  ;; The document timeline advances once per display frame. A 2000 ms timeout
+  ;; armed inside a frame runs when headless Chrome 155 reports 1999.92 ms
+  ;; elapsed (120 frames of 16.666 ms), so a second clock comparison says live.
+  (let [animation #js {:animationName "pad-breath" :startTime nil}
+        state (atom {:now 5000 :grid :grid :animations [animation] :writes [] :timers {} :walks 0})
+        ctl (breath/controller (fake-host state))]
+    (breath/attach! ctl)
+    (breath/sample! ctl playing 0 true)
+    (is (= :live (:mode @ctl)))
+    (swap! state assoc :now 6999.92)
+    (fire-timers! state)
+    (is (= :still (:mode @ctl)) "a silent stream goes still when its timer fires")
+    (is (= [:grid :still nil] (peek (:writes @state))))
+    (is (empty? (:timers @state)))
+    (testing "the same stale sample stays still through re-renders and visibility changes"
+      (breath/sample! ctl playing 0 true)
+      ((:changed (:watching @state)))
+      (is (= :still (:mode @ctl)))
+      (is (empty? (:timers @state))))
+    (testing "the next sample restarts the pads and their timer"
+      (swap! state assoc :now 7100)
+      (breath/sample! ctl (assoc playing :beat 12.45 :time-ms 3100) 0 true)
+      (is (= :live (:mode @ctl)))
+      (is (= 1 (count (:timers @state)))))))
+
 (def ^:private cues
   [{:id :ember :name "Ember"} {:id :haze :name "Haze"} {:id :strobe :name "Strobe"}
    {:id :wash :name "Wash"} {:id :gate :name "Gate"} {:id :idle :name "Idle"}])
