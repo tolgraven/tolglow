@@ -139,6 +139,10 @@ place of a top-level timing key.
   `:reason :human-override`. Other sources, such as agents, reactive actions and
   macro or automation commands, record `:reason :superseded`. `:by` holds the
   writer's op, command ID and source from the shared receipt history.
+- **Cancel.** `:schedule/cancel` stops a running ramp and commits its current
+  frame value through the shared reducer, with the ramp's source. The
+  destination holds where the ramp left it and does not return to the start
+  value. `:recent` records `{:status :cancelled :reason :operator-cancel}`.
 - A removed instance cancels its ramps with `:reason :destination-removed`.
 - A seek or loop shifts beat ramps with the clock, so their elapsed musical
   progress is preserved.
@@ -179,6 +183,7 @@ receipt.
  :curve :ease-in-out :start {:in {:bars 1}} :event-id "swell"}
 
 ;; Cancel pending events and running ramps. All supplied criteria must match.
+;; A cancelled ramp holds its current value.
 {:op :schedule/cancel :event-ids ["swell"]}
 {:op :schedule/cancel :posted-by {:adapter :agent :session-id "run-7"}}
 {:op :schedule/cancel :label "Drop"}

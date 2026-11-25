@@ -330,7 +330,8 @@ the projection that Studio shows:
 In **Perform**, the cue panel's **Scheduled** list shows **Ice in · beat …**
 with **Cancel**, and the running **Ember swell** ramp with its target, end beat,
 progress bar and **Stop**. Studio reads `[:show :schedule]` from the same
-snapshot. Select **Stop** on the ramp and read the outcome back in the REPL:
+snapshot. Select **Stop** on the ramp. The level holds where the ramp left it.
+Read the outcome back in the REPL:
 
 ```clojure
 (last (:recent (show/schedule runtime)))

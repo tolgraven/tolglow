@@ -626,18 +626,23 @@
     (control/apply-domain-command model cmd apply-operation)
     (spatial/apply-command model cmd)))
 
-(defn- commit-ramp [model ramp now]
-  (let [{:keys [target instance-id param variable]} (:destination ramp)
-        cmd (case target
-              :param {:op :param/set :instance-id instance-id :param param :value (:to ramp)}
-              :opacity {:op :instance/opacity-set :instance-id instance-id :value (:to ramp)}
-              :master {:op :master/set :value (:to ramp)}
-              :variable {:op :variable/set :variable variable :value (:to ramp)})]
-    (:model (submit-command
-             model (merge cmd {:show-id (:show-id model) :epoch (:epoch model) :time-ms now
-                               :source (:source ramp)
-                               :command-id (str "ramp/" (:epoch model) "/" (:event-id ramp) "/"
-                                                (pr-str (destination-key (:destination ramp))) "/" (:start ramp))})))))
+(defn- commit-ramp
+  "Write a ramp's value to its destination through the shared reducer: the
+  exact target when it completes, or its current frame value when it is held."
+  ([model ramp now] (commit-ramp model ramp now (:to ramp) nil))
+  ([model ramp now value suffix]
+   (let [{:keys [target instance-id param variable]} (:destination ramp)
+         cmd (case target
+               :param {:op :param/set :instance-id instance-id :param param :value value}
+               :opacity {:op :instance/opacity-set :instance-id instance-id :value value}
+               :master {:op :master/set :value value}
+               :variable {:op :variable/set :variable variable :value value})]
+     (:model (submit-command
+              model (merge cmd {:show-id (:show-id model) :epoch (:epoch model) :time-ms now
+                                :source (:source ramp)
+                                :command-id (str "ramp/" (:epoch model) "/" (:event-id ramp) "/"
+                                                 (pr-str (destination-key (:destination ramp))) "/" (:start ramp)
+                                                 suffix)}))))))
 
 (defn- writes-destination? [command {:keys [target instance-id param variable]}]
   (let [op (:op command)]
@@ -669,6 +674,18 @@
     (and (vector? a) (vector? b)) (and (= (count a) (count b)) (every? true? (map same-value? a b)))
     (and (map? a) (map? b)) (and (= (set (keys a)) (set (keys b))) (every? #(same-value? (get a %) (get b %)) (keys a)))
     :else (= a b)))
+
+(defn- hold-ramps
+  "Commit each cancelled ramp's current frame value, so the destination stays
+  where the ramp left it instead of returning to the value it started from."
+  [model ramps now]
+  (let [beat (get-in model [:transport :beat] 0)]
+    (reduce (fn [m ramp]
+              (let [value (try (second (sample-ramp m ramp beat now)) (catch Exception _ nil))]
+                (if (or (nil? value) (same-value? value (current-value m (:destination ramp))))
+                  m
+                  (commit-ramp m ramp now value "/hold"))))
+            model ramps)))
 
 (defn advance-ramps
   "Settle ramp lifecycles on the owner: a committed write to a ramp's
@@ -1076,7 +1093,8 @@
   "Cancel scheduled events and running ramps selected by every supplied
   criterion: :event-ids, :posted-by (a source submap), :label or :destination.
   A human operator surface may cancel anything; any other requester (an agent,
-  a reactive action) only what it posted itself. A ramp holds its value."
+  a reactive action) only what it posted itself. A cancelled ramp commits its
+  current frame value, so its destination holds where the ramp left it."
   [model {:keys [event-ids reason source] :as request}]
   (check (some #(contains? request %) [:event-ids :posted-by :label :destination])
          "Cancel by event IDs, source, label or destination" {})
@@ -1097,9 +1115,10 @@
         model (reduce #(remember %1 (run-entry %1 %2 :cancelled {:reason reason}))
                       (assoc-in model [:event-subscribers :runs] (vec kept)) gone)
         ramp-hit? #(selection-match? criteria (:event-id %) (:source %) (:label %) (:destination %) nil)
-        ramp-ids (keep #(when (ramp-hit? %) (:event-id %)) (get-in model [:event-subscribers :ramps]))]
-    {:model (remove-ramps model ramp-hit? :cancelled {:reason reason})
-     :event-ids (vec (distinct (concat (map run-event-id gone) ramp-ids)))}))
+        stopped (filterv ramp-hit? (get-in model [:event-subscribers :ramps]))]
+    {:model (-> (remove-ramps model ramp-hit? :cancelled {:reason reason})
+                (hold-ramps stopped (:time-ms request (:time-ms model 0))))
+     :event-ids (vec (distinct (concat (map run-event-id gone) (map :event-id stopped))))}))
 
 (defn move
   "Reschedule one pending event to new timing: {:event-id .. :at|:in|:grid ..}.

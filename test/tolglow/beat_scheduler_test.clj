@@ -596,3 +596,34 @@
       (is (= [["stored" :cancelled :invalid-endpoints]]
              (mapv (juxt :event-id :status :reason) (get-in settled [:event-subscribers :recent]))))
       (is (= {} (subscribers/frame-overlays settled 0.0))))))
+
+(deftest a-cancelled-ramp-holds-its-current-value
+  (let [{:keys [rt packets]} (harness)]
+    (try
+      (let [id (:instance-id (at! rt 0 {:op :cue/launch :cue-id :wash :launch {:mode :persistent}}))
+            _ (at! rt 250 {:op :param/ramp :event-id "up" :instance-id id :param :level :to 1.0
+                           :over {:beats 8} :source agent})
+            rising (mapv (fn [t] (show/tick! rt t) (dimmer (peek @packets))) (range 500 2250 250))
+            stopped (at! rt 2250 {:op :schedule/cancel :event-ids ["up"] :source {:adapter :web :session-id "s"}})
+            held (into [(dimmer (peek @packets))]
+                       (map (fn [t] (show/tick! rt t) (dimmer (peek @packets)))) [2500 2750 3000])
+            commits (filter #(= :param/set (get-in % [:command :op]))
+                            (vals (get-in @(:state rt) [:model :control :history])))]
+        (is (= 112 (peek rising)))
+        (is (= ["up"] (:event-ids stopped)))
+        (is (every? #(<= 127 % 128) held) (str "the output stays at the stop frame's value: " held))
+        (is (== 0.5 (level rt id)) "the stop frame's value is committed, so backups and controls agree with the output")
+        (is (= [[0.5 :agent]] (mapv (juxt (comp :value :command) (comp :adapter :source :command)) commits))
+            "one commit through the shared reducer, with the ramp's source")
+        (is (= {:event-id "up" :status :cancelled :reason :operator-cancel}
+               (select-keys (last (recent rt)) [:event-id :status :reason])))
+        (is (empty? (:ramps (show/schedule rt))))
+        (testing "a ramp stopped on its first frame has nothing to commit"
+          (at! rt 3250 {:op :param/ramp :event-id "again" :instance-id id :param :level :to 1.0
+                        :over {:beats 8} :source agent})
+          (let [revision (get-in @(:state rt) [:model :revision])]
+            (show/cancel-events! rt {:event-ids ["again"]})
+            (show/tick! rt 3250)
+            (is (== 0.5 (level rt id)))
+            (is (= (inc revision) (get-in @(:state rt) [:model :revision])) "only the cancel itself is committed"))))
+      (finally (show/stop! rt)))))
