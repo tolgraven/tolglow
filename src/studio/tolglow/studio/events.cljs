@@ -1201,8 +1201,9 @@
 (defn response-definition [db]
   (let [{:keys [id params scope attack-value decay-value sustain release-value unit curve]
          :or {decay-value 0 sustain 1}} (get-in db [:ui :response-form])
-        instance (some #(when (= (:id %) (get-in db [:ui :selected-instance])) %) (get-in db [:show :instances]))
-        params (->> (str/split (or params "") #"[,\s]+") (remove str/blank?) distinct vec)]
+        selected (get-in db [:ui :selected-instance])
+        instance (some #(when (= (:id %) selected) %) (get-in db [:server-projection :view :instances]))
+        params (->> (str/split (or params "") #"[,\s]+") (remove str/blank?) distinct (mapv keyword))]
     (when (or (str/blank? id) (empty? params)) (throw (js/Error. "Name the response and choose at least one numeric parameter.")))
     (when (and (not= scope "all") (nil? instance)) (throw (js/Error. "Select a running effect before targeting this response.")))
     (when-not (and (number? sustain) (js/Number.isFinite sustain) (<= 0 sustain 1))
@@ -1210,20 +1211,20 @@
     (let [decay (musical-duration decay-value unit)
           envelope (cond-> {:attack (musical-duration attack-value unit)
                             :release (musical-duration release-value unit)
-                            :curve curve}
+                            :curve (keyword curve)}
                      (pos? decay-value) (assoc :decay decay)
                      (not= sustain 1) (assoc :sustain sustain))]
-      (cond-> {:id id :params params :operation "multiply" :range [0 1] :envelope envelope}
+      (cond-> {:id (keyword id) :params params :operation :multiply :range [0 1] :envelope envelope}
         (= scope "instance") (assoc :select {:instance-ids [(:id instance)]})
         (= scope "effect") (assoc :select {:effect-ids [(:effect-id instance)]})))))
 (rf/reg-event-fx :studio/response-start
   (fn [{:keys [db]} _]
-    (try {:studio/http {:path "/api/response" :body (response-definition db)
+    (try {:studio/http {:path "/api/response" :typed? true :body (response-definition db)
                        :on-success [:studio/success "Response started. Release fades down; remove restores the original parameters."]}}
          (catch :default error {:dispatch [:studio/failure (error-message error)]}))))
 (rf/reg-event-fx :studio/response-action
   (fn [_ [_ action id]]
-    {:studio/http {:path (str "/api/response/" (if (= action :release) "release" "delete")) :body {:id id}
+    {:studio/http {:path (str "/api/response/" (if (= action :release) "release" "delete")) :typed? true :body {:id id}
                    :on-success [:studio/success (if (= action :release) "Response release started." "Response removed; original parameters restored.")]}}))
 (rf/reg-event-fx :studio/generate-page
   (fn [_ _] {:studio/http {:path "/api/page/generate" :body {:page-id "registry" :options {:columns 8 :rows 8}}

@@ -48,6 +48,10 @@ compare the tab with the committed page in the snapshot.
 (:recent-page (show/snapshot runtime))
 ```
 
+## Match strip pixels to a fixture
+
+Publish a fixture type with `:bounds-m` using **Fixture Library → Advanced definition · EDN**. Its patched extent appears in the rig snapshot in both Studio and the REPL. The REPL's `strip-segment-selector` produces the fixture IDs that either client can submit with a cue launch. Studio's picker still requires a resolved selection. [Strip extent example](spatial-show.md#match-a-strip-to-a-fixtures-extent)
+
 ## Select and reorder running cues
 
 In **Perform → In the mix**, open **Detail** on a running card to select that

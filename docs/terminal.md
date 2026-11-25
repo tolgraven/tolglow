@@ -105,6 +105,14 @@ separate lifetimes. The execution timeout begins only at start/attach; the
 creation wait budget defaults to 120 seconds and is configurable by the trusted
 host through `:create-timeout-ms`.
 
+An interactive open is acknowledged only after Docker reports the container
+running, so Studio's first fit/resize reaches the container's PTY. That start
+wait polls `docker inspect`, defaults to 10 seconds and is configurable through
+`:start-timeout-ms`. A timeout fails with `:start-timeout`. If the bridge exits
+first, the open fails with `:start-failed` and the error details carry Docker's
+bounded output and exit code. Closing the session or manager during the wait
+cancels the open. Every failure removes the owned container.
+
 Cancellation during creation marks the named resource for cleanup and returns
 without killing the outstanding create request. A separately owned thread waits
 for creation to settle, then removes the container without starting it.

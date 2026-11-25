@@ -23,6 +23,29 @@
 
 (defn- path [value] (.normalize (.toAbsolutePath (Paths/get (str value) (make-array String 0)))))
 
+(defn canonical-configured-path
+  "Resolve operator configuration once. The ancestors of the configured path go
+  through toRealPath at their nearest existing directory (macOS /var ->
+  /private/var, a symlinked home) and the not-yet-created remainder is appended.
+  The last `unresolved` components (default 1, the configured leaf) are never
+  followed, so a link placed there is kept literal and later refused. Later checks
+  reject any symbolic link that appears on this canonical path instead of refusing
+  the platform's own system links."
+  ([value] (canonical-configured-path value 1))
+  ([value unresolved]
+   (let [p ^Path (path value)
+         kept (min unresolved (.getNameCount p))
+         missing (map #(.getName p %) (range (- (.getNameCount p) kept) (.getNameCount p)))]
+     (loop [existing (reduce (fn [^Path q _] (.getParent q)) p (range kept)) missing missing]
+       (cond
+         (nil? existing) p
+         (Files/exists existing (make-array LinkOption 0))
+         (let [real (try (.toRealPath ^Path existing (make-array LinkOption 0))
+                         (catch java.io.IOException _
+                           (fail! :unresolvable-path "Configured path changed while it was being resolved")))]
+           (reduce (fn [^Path parent ^Path name] (.resolve parent name)) real missing))
+         :else (recur (.getParent ^Path existing) (cons (.getFileName ^Path existing) missing)))))))
+
 (defn- id? [value] (and (string? value) (boolean (re-matches #"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}" value))))
 
 (defn- now-ms [] (System/currentTimeMillis))
@@ -151,10 +174,19 @@
                    (integer? (:timeout-ms profile 60000)) (<= 1 (:timeout-ms profile 60000) 300000)
                    (integer? (:max-output-bytes profile 1048576)) (<= 1 (:max-output-bytes profile 1048576) 8388608))
       (fail! :invalid-options "Check profile needs a known repo, fixed argv and bounded timeout/output")))
-  (let [parent (path workspace-parent) repositories (into {} (map (fn [[id root]] [id (path root)]) repositories))]
-    (when-not (= (count repositories) (count (set (vals repositories))))
+  (let [parent (canonical-configured-path workspace-parent)
+        repositories (into {} (map (fn [[id root]] [id (path root)]) repositories))
+        ;; create! follows repository roots with toRealPath, so compare those.
+        real-roots (mapv (fn [^Path root]
+                           (if (Files/exists root (make-array LinkOption 0))
+                             (try (.toRealPath root (make-array LinkOption 0))
+                                  (catch java.io.IOException _
+                                    (fail! :unresolvable-path "Configured repository changed while it was being resolved")))
+                             (canonical-configured-path (str root))))
+                         (vals repositories))]
+    (when-not (= (count repositories) (count (set real-roots)))
       (fail! :invalid-options "Each paired repository must have a distinct root"))
-    (when (some (fn [[_ root]] (or (.startsWith parent ^Path root) (.startsWith ^Path root parent))) repositories)
+    (when (some (fn [^Path root] (or (.startsWith parent root) (.startsWith root parent))) real-roots)
       (fail! :invalid-parent "Workspace parent must be separate from configured repository roots"))
     {:lock (Object.) :parent parent :repositories repositories :runner runner :profiles check-profiles :now-ms now-ms :max-workspaces max-workspaces
      :fingerprint-max-file-bytes fingerprint-max-file-bytes :fingerprint-max-bytes fingerprint-max-bytes
