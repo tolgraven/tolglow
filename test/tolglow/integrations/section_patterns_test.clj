@@ -128,7 +128,7 @@
         fired (step (:state queued) 5500 nil 11.0 #{:beat})
         [event] (:events fired)
         repeated (step (:state fired) 5600 nil 11.2 #{:beat} {:causal-events [eligible]})
-        expired (step (:state queued) 6000 nil 12.0 #{:beat})
+        expired (step (:state started) 6000 nil 12.0 #{:beat} {:causal-events [eligible]})
         overridden (step (:state queued) 5500 nil 11.0 #{:beat} {:override? true})
         resumed (step (:state overridden) 5550 nil 11.1 #{:beat} {:causal-events [eligible]})
         off (step (patterns/new-planner nil {}) 5500 nil 11.0 #{:beat} {:causal-events [eligible]})]
@@ -141,6 +141,26 @@
     (is (= :stopped (:mode overridden) (:mode off)))
     (doseq [result [repeated expired overridden resumed off]]
       (is (empty? (:events result))))))
+
+(deftest causal-decision-waits-for-its-next-owner-boundary
+  (doseq [[division due-ms beat] [[:bar 8000 16.0] [:phrase 16000 32.0]]]
+    (testing (name division)
+      (let [planner (patterns/new-planner nil (assoc policy :on division))
+            started (step planner 6000 nil 12.0 #{:beat :bar})
+            queued (step (:state started) 6010 nil 12.02 #{} {:causal-events [(causal 1 12.0 6000)]})
+            waiting (step (:state queued) 7000 nil 14.0 #{:beat})
+            next-boundary (conj #{:beat :bar} division)
+            fired (step (:state waiting) due-ms nil beat next-boundary)
+            replaced (step (:state waiting) due-ms nil beat next-boundary
+                           {:causal-stream (assoc stream :session-id "capture-2")})
+            stopped (step (:state waiting) due-ms nil beat next-boundary {:causal-stream nil})
+            overridden (step (:state waiting) due-ms nil beat next-boundary {:override? true})]
+        (is (empty? (:events queued)))
+        (is (empty? (:events waiting)))
+        (is (= [:causal beat 12.0]
+               ((juxt :mode :show-beat #(get-in % [:section :start-beat])) (first (:events fired)))))
+        (doseq [result [replaced stopped overridden]]
+          (is (empty? (:events result))))))))
 
 (deftest a-local-recording-profile-drives-a-verified-reference-pattern
   (let [path (Files/createTempFile "tolglow-section-plan-" ".wav" (make-array FileAttribute 0))

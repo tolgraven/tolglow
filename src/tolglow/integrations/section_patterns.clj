@@ -118,24 +118,23 @@
   (let [{:keys [min-confidence max-causal-age-ms] :as policy} (:policy state)
         pending (:pending state)
         [source epoch session] (clock-id owner)
-        event (or (last (sort-by :sequence
-                                (filter (fn [{:keys [type boundary-beat confidence clock-source clock-epoch
-                                                     clock-session-id] :as event}]
-                                          (and (= :audio/section-change type) (= 1 (:version event))
-                                               (= [source epoch session] [clock-source clock-epoch clock-session-id])
-                                               (finite? boundary-beat) (<= (:fallback-beat state) boundary-beat (:beat owner))
-                                               (confidence? confidence) (>= confidence min-confidence)
-                                               (recent-causal? event now-ms max-causal-age-ms))) fresh)))
-                  (when (and (= :causal (:mode pending)) (= stream (:stream pending)) (= scope (:scope pending))
-                             (recent-causal? (:observation pending) now-ms max-causal-age-ms))
-                    (:observation pending)))]
-    (when event
+        event (last (sort-by :sequence
+                             (filter (fn [{:keys [type boundary-beat confidence clock-source clock-epoch
+                                                  clock-session-id] :as event}]
+                                       (and (= :audio/section-change type) (= 1 (:version event))
+                                            (= [source epoch session] [clock-source clock-epoch clock-session-id])
+                                            (finite? boundary-beat) (<= (:fallback-beat state) boundary-beat (:beat owner))
+                                            (confidence? confidence) (>= confidence min-confidence)
+                                            (recent-causal? event now-ms max-causal-age-ms))) fresh)))]
+    (if event
       (let [{:keys [boundary-beat confidence sequence]} event]
         (merge (choose-pattern policy [(:source-id stream) boundary-beat])
                {:mode :causal :scope scope :stream stream :ready? true
                 :observation (select-keys event [:time-ms :boundary-beat :confidence :sequence])
                 :section {:start-beat boundary-beat :boundary-confidence confidence}
-                :delivery-id [scope stream sequence]})))))
+                :delivery-id [scope stream sequence]}))
+      (when (and (= :causal (:mode pending)) (= stream (:stream pending)) (= scope (:scope pending)))
+        pending))))
 
 (defn advance
   "Return {:state :mode :forecast :events :unqualified}. Supply monotonic
@@ -147,9 +146,11 @@
   from the show clock. Forecast deadlines then use the reference clock.
 
   For fallback, pass :causal-stream {:source-id :session-id} and new raw
-  :causal-events from that capture run. A fallback boundary must have started
-  after fallback began. :override? suppresses output and discards pending
-  work. Callers must admit returned intents through the shared show owner."
+  :causal-events from that capture run. Admit fresh evidence that started
+  after fallback began. The accepted decision waits for the next configured
+  owner boundary while the capture and clock remain current. :override?
+  suppresses output and discards pending work. Callers must admit returned
+  intents through the shared show owner."
   [state {:keys [now-ms reference-now-ms reference-state transport causal-stream causal-events override?]
           :or {causal-events []}}]
   (let [{:keys [show-epoch beat playing? boundaries]} transport
