@@ -211,6 +211,7 @@
             :recent-page (recent-page-snapshot model)
             :auto (select-keys (:auto model) [:enabled? :config :reasons])
             :responses (vec (:responses model))
+            :effect-group-channels (group-channels/projection model)
             :effect-events (get-in model [:variables :runtime] {:event-sequence 0 :events []})
             :patch (routing/snapshot model)
             :modulation {:controllers (mapv #(select-keys % [:id :config :ticks :next-beat :owner-instance-id])
