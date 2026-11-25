@@ -352,7 +352,8 @@
       :section-patterns music
       :section-reference (when initial-position
                            {:initial initial-position
-                            :input (atom {:epoch (:epoch model) :position initial-position})})
+                            :input (atom {:epoch (:epoch model) :position initial-position
+                                          :used-sessions #{(get-in initial-position [:provenance :session-id])}})})
       :sync-input (atom {:epoch (:epoch model) :events []})
       :connections owned :devices (atom {}) :development development
       :rdm (rdm/create (merge (:rdm-options options)
@@ -381,8 +382,8 @@
   :worker-timeout-ms sets the per-frame effect worker deadline (default 500).
   An enabled :section-patterns policy publishes pattern intents from opted-in
   capture at owner boundaries. :section-reference can supply a versioned
-  :profile, a source :provenance map, and :position-options. Actions still
-  require their own event subscriber."
+  :profile, initial source :provenance and :position-options. Reconnect a
+  player with attach-section-reference!. Actions require an event subscriber."
   ([] (create-runtime {}))
   ([options]
    (let [owner (open-compute! options)]
@@ -936,42 +937,65 @@
         (seq (:events captured)) (update-in [:variables :audio :event-count] (fnil + 0) (count (:events captured)))) model)))
 
 (defn section-reference-callbacks
-  "Bind a trusted local player observer to the current show epoch. Capture
-  timestamps with :now-ms! and submit the adapter's reference-position state
-  with :publish!. The source provenance and clock must match the configured
-  reference. Discard callbacks and use fresh positioning after a restore.
-  :state! projects the reference lock for the caller. These operations avoid
-  the frame lock."
+  "Get callbacks for the attached reference session in the current show epoch.
+  Capture timestamps with :now-ms! and submit reference-position state with
+  :publish!. Construct the adapter with the returned :provenance and
+  :alignment-options. :state! projects the reference lock. After reattach,
+  restart or restore, old callbacks reject publication and return no state."
   [runtime]
-  (when-let [{:keys [input initial]} (:section-reference runtime)]
-    (let [current-epoch #(get-in @(:state runtime) [:model :epoch])
-          epoch (current-epoch)
-          current? #(and @(:running runtime) (= epoch (current-epoch)))
+  (when-let [input (get-in runtime [:section-reference :input])]
+    (let [{:keys [epoch position] :as attached} @input
+          {:keys [provenance options]} position
           now-ms! (get-in runtime [:publisher :now-ms])
-          position (fn [{stored-epoch :epoch stored :position}]
-                     (if (= epoch stored-epoch) stored initial))]
-      {:now-ms! now-ms!
-       :state! (fn []
-                 (when (current?)
-                   (let [state (position @input)]
-                     (reference-position/snapshot state (now-ms!)))))
-       :publish! (fn [candidate]
-                   (locking input
-                     (when (current?)
-                       (let [previous (position @input)
-                             candidate-time (:now-ms candidate)
-                             {:keys [occurrence generation]} candidate
-                             now (now-ms!)]
-                         (when (and (= (:provenance initial) (:provenance candidate))
-                                    (= (:options initial) (:options candidate))
-                                    (number? candidate-time) (Double/isFinite (double candidate-time))
-                                    (<= (:now-ms previous candidate-time) candidate-time now)
-                                    (integer? occurrence) (<= (:occurrence previous) occurrence)
-                                    (integer? generation) (<= (:generation previous) generation))
-                           ;; Verify the candidate without storing a projection for future frames.
-                           (reference-position/snapshot candidate now)
-                           (reset! input {:epoch epoch :position candidate})
-                           true)))))})))
+          current? (fn [stored]
+                     (and @(:running runtime)
+                          (= epoch (:epoch stored) (get-in @(:state runtime) [:model :epoch]))
+                          (= provenance (get-in stored [:position :provenance]))))]
+      (when (current? attached)
+        {:provenance provenance
+         :alignment-options options
+         :now-ms! now-ms!
+         :state! (fn []
+                   (let [stored @input]
+                     (when (current? stored)
+                       (reference-position/snapshot (:position stored) (now-ms!)))))
+         :publish! (fn [{candidate-time :now-ms :keys [occurrence generation] :as candidate}]
+                     (when (current? @input)
+                       (let [now (now-ms!)]
+                         (locking input
+                           (let [{previous :position :as stored} @input]
+                             (when (and (current? stored)
+                                        (= provenance (:provenance candidate))
+                                        (= options (:options candidate))
+                                        (number? candidate-time) (Double/isFinite (double candidate-time))
+                                        (<= (:now-ms previous candidate-time) candidate-time now)
+                                        (integer? occurrence) (<= (:occurrence previous) occurrence)
+                                        (integer? generation) (<= (:generation previous) generation))
+                               ;; Verify the candidate without storing a projection for future frames.
+                               (reference-position/snapshot candidate now)
+                               (reset! input (assoc stored :position candidate))
+                               true))))))}))))
+
+(defn attach-section-reference!
+  "Replace the attached reference session with a fresh caller-chosen ID and
+  return its callbacks. Source, clock, profile and alignment options stay bound
+  to the running show. Call after a player reconnect, show restart or restore.
+  Session IDs are unique for the lifetime of this show runtime."
+  [runtime session-id]
+  (when-let [{:keys [initial input]} (:section-reference runtime)]
+    (let [position (reference-position/new-state (assoc (:provenance initial) :session-id session-id)
+                                                 (:options initial))]
+      ;; Serialize with frame commits and restore. Old publishers also check
+      ;; the exact session again under input before storing a candidate.
+      (locking (:lock runtime)
+        (when @(:running runtime)
+          (locking input
+            (let [{:keys [used-sessions]} @input]
+              (when (contains? used-sessions session-id)
+                (throw (ex-info "Section reference session was already used" {:session-id session-id})))
+              (reset! input {:epoch (get-in @(:state runtime) [:model :epoch])
+                             :position position :used-sessions (conj used-sessions session-id)})
+              (section-reference-callbacks runtime))))))))
 
 (defn- reference-evidence [runtime show-epoch]
   (when-let [input (get-in runtime [:section-reference :input])]

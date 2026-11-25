@@ -344,29 +344,36 @@ tempo and rebuild the profile if the file changes.
                 :section-patterns {:enabled? true :on :bar :show-seed 514
                                    :patterns [:warm :pulse :slow]}
                 :section-reference {:profile profile :provenance provenance}}))
-(def callbacks (show/section-reference-callbacks runtime))
-(def player
+(defn open-player! [callbacks]
   (mpv/open! {:socket-path "/home/operator/.local/run/mpv.sock"
-              :provenance provenance
+              :provenance (:provenance callbacks)
+              :adapter-options {:alignment-options (:alignment-options callbacks)}
               :catalog {track (select-keys profile [:reference :duration-ms])}}
              callbacks))
+(def callbacks (show/section-reference-callbacks runtime))
+(def player (open-player! callbacks))
 
 ;; Inspect alignment while mpv plays the known recording in the preview runtime.
 ((:state! callbacks))
 
-;; Close and wait for the final unavailable alignment before stopping the show.
+;; Close before replacing the connection. Run the next two forms when mpv is ready again.
+(deref ((:close! player)) 2000 :still-closing)
+(def callbacks (show/attach-section-reference! runtime (random-uuid)))
+(def player (open-player! callbacks))
+
+;; Stop both owners when finished.
 (deref ((:close! player)) 2000 :still-closing)
 (show/stop! runtime)
 ```
 
 The worker uses the show's monotonic clock and sends property subscriptions and
 reads on one connection. `:done` resolves on close, EOF or error and reports
-`:reason` and whether the show accepted the final revoked alignment. Choose a
-fresh session ID for each open and use the same provenance and alignment options
-in the show configuration and player. Custom show `:position-options` belong
-under `:adapter-options {:alignment-options ...}` in the player config. Show
-restore invalidates old callbacks. The socket lifecycle is available from the
-REPL. Studio can attach to the same show runtime for event inspection.
+`:reason` and whether the show accepted the final revoked alignment. Reattach
+with a fresh session ID for each reconnect, including after a show restart or
+restore. The new connection starts unavailable and must confirm the recording
+and its position again. Earlier callbacks expire as soon as the session changes.
+The socket lifecycle is available from the REPL. Studio can attach to the same
+show runtime for event inspection.
 
 ## Explicit studio audio capture
 

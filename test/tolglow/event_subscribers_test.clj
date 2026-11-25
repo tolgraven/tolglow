@@ -405,6 +405,106 @@
     (is (= #{:ember :ice} (set (:effects healthy))))
     (is (= [:ice] (:effects sought)))))
 
+(defn- reference-observer [{:keys [publish! now-ms! provenance alignment-options]}]
+  (let [position (atom (reference-position/new-state provenance alignment-options))]
+    {:position position
+     :observe! (fn [type match]
+                 (let [now (now-ms!)
+                       observation {:type type :provenance provenance :observed-at-ms now
+                                    :occurrence (:occurrence @position) :match match}]
+                   (publish! (swap! position reference-position/advance now observation))))}))
+
+(deftest reattaching-a-section-reference-fences-old-observations-and-forecasts
+  (let [clock-ms (atom 27000)
+        clock-read (atom nil)
+        provenance {:source-id :mpv :session-id :first :clock-id :physical}
+        reference {:id :recording :version 1}
+        profile {:version 1 :reference reference :duration-ms 12000.0
+                 :sections (mapv (fn [id]
+                                   {:id id :start-position-ms (* id 4000.0) :end-position-ms (* (inc id) 4000.0)
+                                    :start-beat (* id 8.0) :boundary-confidence 1.0
+                                    :features {:signature {:bass-notes [(+ 36 id)]}}
+                                    :boundary-kind (if (zero? id) :file-start :confirmed-change)})
+                                 (range 3))}
+        runtime (show/create-runtime {:workspace-options nil
+                                      :physical-now-ms #(do (when-let [before-read @clock-read] (before-read)) @clock-ms)
+                                      :section-patterns {:enabled? true :on :bar :show-seed 514 :patterns [:warm :pulse]}
+                                      :section-reference {:profile profile :provenance provenance
+                                                          :position-options {:max-age-ms 600.0}}})
+        callback (show/section-reference-callbacks runtime)
+        {:keys [position observe!]} (reference-observer callback)
+        events (atom [])
+        at! #(reset! clock-ms (+ 27000 %))
+        tick! (fn [time-ms] (at! time-ms) (show/tick! runtime time-ms))
+        sample! (fn [observe track offset cursors]
+                  (doseq [cursor cursors]
+                    (at! (+ offset cursor))
+                    (is (observe :match {:reference track :position-ms cursor :rate 1.0 :score 1.0}))))]
+    (try
+      (show/attach-observer! runtime :reference-reattach
+        (fn [] {:events! (fn [_ emitted _ _]
+                           (swap! events into (filter #(= :music/section-pattern (:type %)) emitted)))
+                :frame! (fn [_]) :tracing? (constantly false) :close! (fn [])}))
+      (tick! 0)
+      (at! 100)
+      (is (observe! :seek nil))
+      (sample! observe! reference 0 [3700 3750 3800])
+      (tick! 3850)
+      (tick! 4000)
+      (is (= [1] (mapv #(get-in % [:data :section :id]) @events)))
+      (sample! observe! reference 0 [7700 7750 7800])
+      (tick! 7850)
+      (is (= 2 (get-in @(:state runtime) [:section-pattern-state :pending :section :id])))
+      (is (= 1 (:occurrence ((:state! callback)))))
+      (let [entered (promise)
+            release (promise)
+            stale @position]
+        (reset! clock-read (fn [] (deliver entered true) (deref release 3000 nil)))
+        (let [publishing (future ((:publish! callback) stale))
+              _ (is (true? (deref entered 3000 ::timeout)))
+              _ (reset! clock-read nil)
+              replacement (try (show/attach-section-reference! runtime :second)
+                               (finally (deliver release true)))
+              next-observer (:observe! (reference-observer replacement))]
+          (is (nil? (deref publishing 3000 ::timeout)))
+          (is (nil? ((:state! callback))))
+          (is (nil? ((:publish! replacement) stale)))
+          (is (= {:source-id :mpv :session-id :second :clock-id :physical} (:provenance replacement)))
+          (is (= (:alignment-options callback) (:alignment-options replacement)))
+          (is (= [0 0 :unavailable] ((juxt :occurrence :generation :status) ((:state! replacement)))))
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"already used"
+                                (show/attach-section-reference! runtime :first)))
+          (sample! next-observer {:id :other-recording :version 1} 4200 [3700 3750 3800])
+          (tick! 8000)
+          (is (= 1 (count @events)))
+          (is (nil? (get-in @(:state runtime) [:section-pattern-state :pending])))
+
+          ;; The fresh session can deliver the same verified section again.
+          (sample! next-observer reference 8000 [3700 3750 3800])
+          (tick! 11850)
+          (tick! 12000)
+          (is (= [[1 :first] [1 :second]]
+                 (mapv (fn [event] [(get-in event [:data :section :id])
+                                   (get-in event [:data :fence :provenance :session-id])])
+                       @events)))
+
+          (let [epoch (get-in @(:state runtime) [:model :epoch])
+                receipt (show/submit! runtime :import {:source (show/export-show-source runtime)})]
+            (tick! 12025)
+            (is (= :accepted (:status (deref receipt 2000 ::timeout))))
+            (is (< epoch (get-in @(:state runtime) [:model :epoch])))
+            (is (nil? (show/section-reference-callbacks runtime)))
+            (is (nil? ((:state! replacement))))
+            (at! 12050)
+            (is (nil? (next-observer :unavailable nil)))
+            (is (thrown-with-msg? clojure.lang.ExceptionInfo #"already used"
+                                  (show/attach-section-reference! runtime :second)))
+            (let [restored (show/attach-section-reference! runtime :third)]
+              (is (= :third (get-in restored [:provenance :session-id])))
+              (is (= :unavailable (:status ((:state! restored)))))
+              (is (nil? (next-observer :unavailable nil)))))))
+      (finally (show/stop! runtime)))))
+
 (deftest middleware-can-update-variables-and-queue-actions-without-blocking-the-owner
   (let [entered (promise) release (promise)
         middleware (fn [context event]

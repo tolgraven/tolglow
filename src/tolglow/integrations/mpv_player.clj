@@ -108,8 +108,9 @@
 (defn open!
   "Start observing an existing trusted mpv socket at an absolute :socket-path.
   :provenance, :catalog, and optional :adapter-options are passed to the adapter.
-  Supply :now-ms! and :publish! from show/section-reference-callbacks. Each open
-  requires a fresh caller-chosen session ID matching the configured reference.
+  Use the callbacks, :provenance and :alignment-options supplied by
+  show/section-reference-callbacks or show/attach-section-reference!. Each open
+  requires its own caller-chosen session ID attached to the running show.
   Call the returned :close! to request stop. The :done promise resolves once
   the socket closes and final alignment is submitted, with :reason and :revoked?."
   [{:keys [socket-path provenance catalog adapter-options]} {:keys [now-ms! publish!] :as callbacks}]
