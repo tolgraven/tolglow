@@ -61,14 +61,23 @@
   "Apply responses to the resolved look, enforce the shared budget and score
   the actual result. Only committed frames carry temporal state forward."
   [before model patch plan budget-context frame blocks time-ms calibration? hard-off? ceiling]
-  (let [same-rig? (and (= (:epoch model) (get-in before [:model :epoch]))
-                       (identical? (:rig model) (get-in before [:model :rig])))
+  (let [same-epoch? (= (:epoch model) (get-in before [:model :epoch]))
+        rig (:rig model)
+        before-rig (get-in before [:model :rig])
+        same-rig? (and same-epoch? (identical? rig before-rig))
         previous (when same-rig? (:lighting-history before))
         settings (:settings model)
         response? (get-in settings [:output-response :enabled?])
-        shaped (when response? (response/advance (:response previous) model patch frame
-                                 (or calibration? hard-off? (false? (get-in model [:transport :playing?])))
-                                 ceiling (when same-rig? (:output before)) blocks))
+        shaped (when response?
+                 ;; A link edit changes the rig map without changing the patch.
+                 ;; Preserve the envelopes of fixtures unaffected by tracking.
+                 (let [same-response-rig? (and same-epoch?
+                                               (or same-rig?
+                                                   (= (dissoc rig :edge-tracking)
+                                                      (dissoc before-rig :edge-tracking))))]
+                   (response/advance (when same-response-rig? (get-in before [:lighting-history :response]))
+                     model patch frame (or calibration? hard-off? (false? (get-in model [:transport :playing?])))
+                     ceiling (when same-response-rig? (:output before)) blocks)))
         shaped-frame (or (:frame shaped) frame)
         delivered (if budget-context (budget/apply-frame budget-context shaped-frame) shaped-frame)
         scoring? (get-in settings [:lighting-activity :enabled?])

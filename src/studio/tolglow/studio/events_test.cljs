@@ -822,12 +822,15 @@
     (is (some #{[:studio/preview [:worklight 0.4]]} (:fx mounted)))
     (is (true? (get-in mounted [:db :ui :preview-controls?])))))
 
-(deftest preview-fixture-updates-are-local-and-replay-on-remount
-  (let [change (transition base [:studio/preview-setting :lighting-mode "interpolate"])
-        mount (transition (:db change) [:studio/preview-ready true])]
-    (is (= [:lighting-mode "interpolate"] (:studio/preview change)))
+(deftest preview-fixture-updates-default-to-interpolation-and-replay-user-selection
+  (let [initial (transition base [:studio/preview-ready true])
+        change (transition base [:studio/preview-setting :lighting-mode "hold"])
+        remount (transition (:db change) [:studio/preview-ready true])]
+    (is (= "interpolate" (get-in base [:ui :preview-settings :lighting-mode])))
+    (is (some #{[:studio/preview [:lighting-mode "interpolate"]]} (:fx initial)))
+    (is (= [:lighting-mode "hold"] (:studio/preview change)))
     (is (nil? (:studio/http change)))
-    (is (some #{[:studio/preview [:lighting-mode "interpolate"]]} (:fx mount)))
+    (is (some #{[:studio/preview [:lighting-mode "hold"]]} (:fx remount)))
     (is (nil? (:db (transition base [:studio/preview-setting :lighting-mode "extrapolate"]))))))
 
 (deftest reset-camera-updates-the-selector-and-the-engine-together

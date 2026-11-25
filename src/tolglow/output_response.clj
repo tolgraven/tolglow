@@ -3,6 +3,7 @@
   allocation and metering. The show owner supplies time, previous history and
   the rendered frame; no clocks, devices or effects are invoked here."
   (:require [afterglow.render.emission :as emission]
+            [afterglow.render.frame :as frame]
             [afterglow.time :as time]
             [tolglow.output-response.scopes :as scopes]))
 
@@ -103,11 +104,19 @@
                   (aset-boolean linear-r i exact-r))))))
         [attack release linear-a linear-r]))))
 
+(defn- immediate-coefficients [coefficient size rows]
+  (let [^doubles values (if (number? coefficient) (double-array size coefficient)
+                          (aclone ^doubles coefficient))]
+    (doseq [i rows] (aset-double values (int i) 1.0))
+    values))
+
 (defn advance
   "Follow physical emitter output at the supplied show time. prior-frame is
   the previous committed output from the same patch when enabling a new scope
   mid-show. Hard blackout and the effective master take precedence over tails.
-  Retain the returned runtime history only for the same rig and epoch."
+  A rejected tracking follower goes dark immediately and resumes its attack
+  from zero when it can track again. Retain the returned runtime history only
+  for the same rig and epoch."
   ([previous model patch frame bypass?]
    (advance previous model patch frame bypass? (:master model 1.0) nil))
   ([previous model patch frame bypass? ceiling prior-frame]
@@ -133,7 +142,17 @@
                             (stage-coefficients rates layout))
              [attack release exact-a exact-r] coefficients
              ramps (when (or exact-a exact-r) {:attack exact-a :release exact-r :previous (:ramps prior)})
-             result (emission/follow-frame patch frame (:levels prior) seed attack release ceiling ramps)]
+             suppressed (when-let [reports (:edge-tracking frame)]
+                          (not-empty (into [] (keep (fn [{:keys [follower reason]}]
+                                                     (when reason (get-in patch [:by-id follower ::frame/index]))))
+                                           reports)))
+             ;; Immediate coefficients record actual zero in the history even
+             ;; for rows outside every configured scope. Keep cached rates intact.
+             size (count (:target-order patch))
+             result (emission/follow-frame patch frame (:levels prior) seed
+                      (if suppressed (immediate-coefficients attack size suppressed) attack)
+                      (if suppressed (immediate-coefficients release size suppressed) release)
+                      ceiling ramps)]
          {:frame (:frame result)
           :state {:epoch (:epoch model) :clock clock :levels (:levels result)
                   :layout layout :scoped scoped :scope-frame (when (:writers scoped) (:frame result))
