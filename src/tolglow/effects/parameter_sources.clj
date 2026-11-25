@@ -55,6 +55,7 @@
         binding (if moving?
                   (let [source (get bindings from-param)
                         waveform (get-in registry [:waveforms (get-in source [:binding :waveform])])]
+                    (require! instance "Unknown running instance or parameter")
                     (require! source "No waveform is bound to the source parameter")
                     (require! (= expected-source (source-identity source definition waveform))
                               "The source or its effect revision changed. Reopen the source and try again.")

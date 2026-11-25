@@ -380,6 +380,12 @@
           (is (= #{:hue} (set (keys (:parameter-sources (projection left))))))))
       (finally (show/stop! rt)))))
 
+(deftest moves-name-an-unknown-instance-before-checking-its-sources
+  (let [model (bind-to (fixture/model) :level saw)]
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown running instance or parameter"
+                          (sources/bind model {:instance-id "missing" :from-param :level :param :step
+                                               :expected-source nil :binding {:from 0 :to 1}})))))
+
 (deftest stale-queued-moves-reject-and-committed-receipts-survive-supersession
   (let [model (assoc-in (live-model) [:registry :effects :wash :params :step]
                         {:type :integer :bounds [1 5] :default 1})
