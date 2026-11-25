@@ -206,6 +206,7 @@
             :cue-launch-outcomes (cue-timing/outcomes model)
             :operator-history (operator-history/project (:id runtime) model)
             :history-command-outcomes (:history-command-outcomes snapshot [])
+            :parameter-source-outcomes (:parameter-source-outcomes snapshot [])
             :pages (mapv (fn [page] (update page :cells
                                            #(mapv (fn [[[x y] cue]] {:x x :y y :cue-id cue})
                                                   (sort-by key %)))) (sort-by (comp str :id) (vals (:pages model))))
@@ -813,9 +814,11 @@
                   (update :revision inc))
        :ack (assoc (select-keys result [:placements :collisions :overflow]) :status :accepted :page-id id)})
     (:modulation-bind :modulation-unbind)
-    (let [edit (if (= type :modulation-bind) parameter-sources/bind parameter-sources/unbind)]
-      {:model (update (edit model payload) :revision inc)
-       :ack {:status :accepted :instance-id (:instance-id payload) :param (:param payload)}})
+    (let [edit (if (= type :modulation-bind) parameter-sources/bind parameter-sources/unbind)
+          updated (update (edit model payload) :revision inc)]
+      {:model updated
+       :ack {:status :accepted :instance-id (:instance-id payload) :param (:param payload)
+             :revision (:revision updated)}})
     :modulation-start
     {:model (-> model (update :modulation #(modulation/start (or % (modulation/new-state)) payload
                                                             {:time-ms time-ms :transport (:transport model)}))
@@ -1868,8 +1871,12 @@
                  epoch (get-in next-state [:model :epoch])
                  previous-outcomes (if (= epoch (get-in before [:model :epoch]))
                                      (:history-command-outcomes before []) [])
+                 previous-source-outcomes (if (= epoch (get-in before [:model :epoch]))
+                                            (:parameter-source-outcomes before []) [])
                  next-state (assoc next-state :history-command-outcomes
-                                   (operator-history/committed-outcomes previous-outcomes epoch message-receipts))]
+                                   (operator-history/committed-outcomes previous-outcomes epoch message-receipts)
+                                   :parameter-source-outcomes
+                                   (parameter-sources/committed-outcomes previous-source-outcomes epoch message-receipts))]
              (when (or (seq (get-in next-state [:output :fog-demands])) @(:fog-deadlines runtime))
                (swap! (:fog-deadlines runtime) fog-deadline/remember
                       (or (:frame-id presentation-token) (get-in next-state [:model :frame-number] 0))
