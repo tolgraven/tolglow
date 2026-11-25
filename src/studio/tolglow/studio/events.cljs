@@ -120,6 +120,10 @@
 
 (defn cue [db id] (some #(when (= id (:id %)) %) (get-in db [:show :cues])))
 (defn effect [db id] (some #(when (= id (:id %)) %) (get-in db [:show :effects])))
+(defn recent-page? [db id]
+  (and (some? id) (= id (get-in db [:show :recent-page :id]))))
+(defn selected-recent-page [db]
+  (when (get-in db [:ui :recent-page?]) (get-in db [:show :recent-page])))
 (defn wire-id [value] (if (keyword? value) (subs (str value) 1) (str value)))
 (defn active [db cue-id]
   (filterv #(and (= cue-id (:cue-id %)) (not= "releasing" (:phase %)))
@@ -309,11 +313,19 @@
        :dispatch-later (when (= page :perform) [{:ms 30 :dispatch [:studio/preview-resize]}])})))
 
 (rf/reg-event-fx :studio/set-page
-  (fn [{:keys [db]} [_ id]] {:db (assoc-in db [:ui :page-id] id) :fx [[:dispatch [:studio/release-pointers]] [:dispatch [:studio/persist-ui]]]}))
+  (fn [{:keys [db]} [_ id]]
+    (let [recent? (recent-page? db id)]
+      {:db (cond-> (assoc-in db [:ui :recent-page?] recent?)
+             recent? (assoc-in [:ui :action-cell] nil)
+             (not recent?) (assoc-in [:ui :page-id] id))
+       :fx (cond-> [[:dispatch [:studio/release-pointers]]]
+             (not recent?) (conj [:dispatch [:studio/persist-ui]]))})))
 (rf/reg-event-fx :studio/set-launch
   (fn [{:keys [db]} [_ mode]] {:db (assoc-in db [:ui :launch-mode] mode) :fx [[:dispatch [:studio/release-pointers]] [:dispatch [:studio/persist-ui]]]}))
 (rf/reg-event-fx :studio/toggle-edit
-  (fn [{:keys [db]} _] {:db (update-in db [:ui :edit?] not) :dispatch [:studio/release-pointers]}))
+  (fn [{:keys [db]} _]
+    (when-not (selected-recent-page db)
+      {:db (update-in db [:ui :edit?] not) :dispatch [:studio/release-pointers]})))
 (rf/reg-event-fx :studio/command
   (fn [{:keys [db]} [_ op fields]]
     (if (:show db) {:fx [(command db op fields)]} {:dispatch [:studio/failure "Wait for the studio to connect."]})))
@@ -350,16 +362,17 @@
         (assoc-in [1 :on-failure] [:studio/held-failed]))))
 
 (rf/reg-event-fx :studio/gesture-down [(rf/inject-cofx :studio/unique)]
-  (fn [{:keys [db unique]} [_ {:keys [pointer-id cue-id] :as input}]]
-    (when-not (get-in db [:pointers pointer-id])
-      (let [mode (get-in db [:ui :launch-mode])
-            held? (and cue-id (= mode "held") (not (get-in db [:ui :edit?])))
-            pointer (merge input (select-keys (:show db) [:epoch :runtime-id])
-                           {:press-id unique :mode mode :held? held?})]
-        (cond-> {:db (assoc-in db [:pointers pointer-id] pointer)}
-          held? (assoc :fx [(launch-held db pointer)])
-          (and (not held?) (not= pointer-id "keyboard"))
-          (assoc :dispatch-later [{:ms 500 :dispatch [:studio/gesture-long pointer-id unique]}]))))))
+  (fn [{:keys [db unique]} [_ {:keys [pointer-id cue-id page-id] :as input}]]
+    (let [recent? (recent-page? db page-id)]
+      (when-not (or (get-in db [:pointers pointer-id]) (and recent? (nil? cue-id)))
+        (let [mode (get-in db [:ui :launch-mode])
+              held? (and cue-id (= mode "held") (or recent? (not (get-in db [:ui :edit?]))))
+              pointer (merge input (select-keys (:show db) [:epoch :runtime-id])
+                             {:press-id unique :mode mode :held? held? :recent-page? recent?})]
+          (cond-> {:db (assoc-in db [:pointers pointer-id] pointer)}
+            held? (assoc :fx [(launch-held db pointer)])
+            (and (not recent?) (not held?) (not= pointer-id "keyboard"))
+            (assoc :dispatch-later [{:ms 500 :dispatch [:studio/gesture-long pointer-id unique]}])))))))
 
 (rf/reg-event-fx :studio/held-failed
   (fn [{:keys [db]} [_ error]]
@@ -374,7 +387,7 @@
 (rf/reg-event-fx :studio/gesture-long
   (fn [{:keys [db]} [_ id press-id]]
     (let [pointer (get-in db [:pointers id])]
-      (when (and press-id (= press-id (:press-id pointer)) (not (:moved? pointer)))
+      (when (and press-id (= press-id (:press-id pointer)) (not-any? pointer [:moved? :recent-page?]))
         {:db (assoc-in db [:pointers id :long?] true)
          :dispatch [:studio/open-actions (select-keys pointer [:page-id :cue-id :x :y])]}))))
 
@@ -441,7 +454,8 @@
     (let [pointer (get-in db [:pointers id]) result (release-pointer db id false)]
       (cond-> result
         (and pointer (not-any? pointer [:held? :moved? :long?]))
-        (assoc :dispatch (if (or (get-in db [:ui :edit?]) (nil? (:cue-id pointer)))
+        (assoc :dispatch (if (and (not (:recent-page? pointer))
+                                  (or (get-in db [:ui :edit?]) (nil? (:cue-id pointer))))
                            [:studio/open-actions (select-keys pointer [:cue-id :x :y])]
                            [:studio/launch (:cue-id pointer) (:mode pointer)]))))))
 (rf/reg-event-fx :studio/gesture-cancel
@@ -496,8 +510,11 @@
      :dispatch [:studio/failure error]}))
 
 (rf/reg-event-db :studio/open-actions
-  (fn [db [_ cell]] (-> db (assoc-in [:ui :action-cell] (assoc cell :page-id (or (:page-id cell) (get-in db [:ui :page-id]))))
-                         (assoc-in [:ui :assign-cue] (:id (first (get-in db [:show :cues])))))))
+  (fn [db [_ cell]]
+    (let [page-id (or (:page-id cell) (:id (selected-recent-page db)) (get-in db [:ui :page-id]))]
+      (if (recent-page? db page-id) db
+        (-> db (assoc-in [:ui :action-cell] (assoc cell :page-id page-id))
+            (assoc-in [:ui :assign-cue] (:id (first (get-in db [:show :cues])))))))))
 (rf/reg-event-db :studio/close-actions (fn [db _] (assoc-in db [:ui :action-cell] nil)))
 (defn put-cell [db {:keys [page-id x y]} cue-id]
   (let [page (some #(when (= page-id (:id %)) %) (get-in db [:show :pages]))
@@ -546,7 +563,8 @@
         {:db (-> db (assoc-in [:ui :prompt] nil) (assoc-in [:ui :page-id] id))
          :fx [(command db "page/put" {:page {:id id :name title :cells []}} [:studio/page-created id])]}))))
 (rf/reg-event-fx :studio/page-created
-  (fn [{:keys [db]} [_ id _]] {:db (assoc-in db [:ui :page-id] id) :dispatch [:studio/persist-ui]}))
+  (fn [{:keys [db]} [_ id _]]
+    {:db (update db :ui assoc :page-id id :recent-page? false) :dispatch [:studio/persist-ui]}))
 
 (rf/reg-event-db :studio/composition-add
   (fn [db [_ id]]
@@ -861,7 +879,7 @@
                           :on-success [:studio/page-generated]}}))
 (rf/reg-event-fx :studio/page-generated
   (fn [{:keys [db]} [_ result]]
-    {:db (assoc-in db [:ui :page-id] (:page-id result))
+    {:db (update db :ui assoc :page-id (:page-id result) :recent-page? false)
      :fx [[:studio/navigate [:push :perform]] [:dispatch [:studio/persist-ui]]
           (notice (str "Registry page ready: " (count (:placements result)) " new cues, "
                        (count (:collisions result)) " conflicts, " (count (:overflow result)) " without room."))]}))

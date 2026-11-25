@@ -37,6 +37,17 @@ Use **Release** on the card or submit the form below. The release envelope can k
 @(show/submit! runtime {:op :instance/end :instance-id (:instance-id launched)})
 ```
 
+## View recent cues
+
+In **Perform**, the **Recent cues** tab puts the latest successful launch in
+the top-left pad. The page holds up to 64 distinct cues and updates when a cue
+launches. Launch a cue from the REPL with the same command shown above and
+compare the tab with the committed page in the snapshot.
+
+```clojure
+(:recent-page (show/snapshot runtime))
+```
+
 ## Reviewing a show feature
 
 - **Find it from either side.** Name the view, control label and public REPL entry point. Include the shared command, input units, identifiers and scope so an operator who knows one surface can recognize the other.

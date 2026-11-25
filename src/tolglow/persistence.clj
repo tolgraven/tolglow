@@ -6,6 +6,7 @@
             [clojure.string :as str]
             [tolglow.transit :as wire]
             [afterglow.control.model :as control]
+            [afterglow.control.pages :as cue-pages]
             [afterglow.control.system :as system]
             [afterglow.control.devices.expressive :as expressive]
             [afterglow.reactive.registry :as reactive-registry]
@@ -49,6 +50,9 @@
 
 (def schema-version 2)
 (def max-document-characters (* 16 1024 1024))
+(def ^:private recent-cue-capacity
+  (let [{:keys [columns rows]} (cue-pages/page {} cue-pages/recent-page-id)]
+    (* columns rows)))
 (def ^:private model-keys
   #{:show-id :epoch :revision :time-ms :registry :instances :pages :variables
     :master :blackout? :event-subscribers :transport :control :rig :compositions :composition-runs
@@ -246,6 +250,16 @@
       (check! (and (vector? bounds) (= 2 (count bounds)) (every? registry/finite-number? bounds) (apply < bounds))
               (conj path :parameters cc :bounds) "Parameter bounds must increase"))))
 
+(defn- validate-recent-cues! [control]
+  (when (contains? control :recent-cue-ids)
+    (let [ids (:recent-cue-ids control)
+          path [:control :recent-cue-ids]]
+      (check! (vector? ids) path "Recent cue history must be an ordered vector")
+      (check! (<= (count ids) recent-cue-capacity) path "Recent cue history exceeds the page capacity")
+      (doseq [[index id] (map-indexed vector ids)]
+        (check! (identifier? id) (conj path index) "Recent cue history needs a stable cue ID"))
+      (check! (= (count ids) (count (distinct ids))) path "Recent cue history must contain distinct cue IDs"))))
+
 (defn validate-model
   "Validate a complete portable model without sampling effects or publishing IO.
   Provider defaults are canonicalized. Unknown top-level keys must be explicit
@@ -256,6 +270,7 @@
   (control/new-show model)
   (doseq [key [:registry :instances :pages :variables :transport :control :rig]]
     (check! (map? (get model key)) [key] "Complete show needs this map"))
+  (validate-recent-cues! (:control model))
   (check! (map? (:extensions model {})) [:extensions] "Extensions must be an explicit map")
   (check! (map? (:settings model {})) [:settings] "Settings must be an explicit portable map")
   (when-let [s (get-in model [:settings :fog-control])] (fog-control/settings s))

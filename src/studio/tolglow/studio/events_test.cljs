@@ -139,6 +139,34 @@
     (is (nil? (:dispatch up)))
     (is (empty? (:fx up)))))
 
+(deftest recent-cues-use-performance-gestures-without-changing-the-authored-page
+  (let [id ["afterglow.control/recent-cues"]
+        recent {:id id :cells [{:x 0 :y 0 :cue-id "ember"}]}
+        original (-> base
+                     (assoc-in [:show :recent-page] recent)
+                     (assoc-in [:ui :page-id] "main")
+                     (assoc-in [:ui :edit?] true))
+        selected (transition original [:studio/set-page id])
+        db (:db selected)
+        cell {:page-id id :cue-id "ember" :x 0 :y 0 :pointer-id 1 :client-x 5 :client-y 5}
+        down (transition db [:studio/gesture-down cell])
+        reordered (assoc-in (:db down) [:show :recent-page :cells 0 :cue-id] "ice")
+        up (transition reordered [:studio/gesture-up 1])
+        returned (transition db [:studio/set-page "main"])]
+    (is (= recent (events/selected-recent-page db)))
+    (is (= "main" (get-in db [:ui :page-id])))
+    (is (= [[:dispatch [:studio/release-pointers]]] (:fx selected)))
+    (is (empty? (transition db [:studio/toggle-edit])))
+    (is (nil? (get-in (transition db [:studio/open-actions cell]) [:db :ui :action-cell])))
+    (is (empty? (transition db [:studio/gesture-down (dissoc cell :cue-id)])))
+    (is (nil? (:dispatch-later down)))
+    (is (= [:studio/launch "ember" "toggle"] (:dispatch up)))
+    (is (nil? (events/selected-recent-page (:db returned))))
+    (is (true? (get-in returned [:db :ui :edit?])))
+    (is (some #{[:dispatch [:studio/persist-ui]]} (:fx returned)))
+    (is (some? (get-in (transition (:db returned) [:studio/open-actions (assoc cell :page-id "main")])
+                       [:db :ui :action-cell])))))
+
 (deftest optimistic-parameter-persists-until-acknowledged-revision
   (let [edited (transition base [:studio/param-set "7:9" :level 1])
         drafts (get-in edited [:db :drafts])
