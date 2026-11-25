@@ -1529,7 +1529,7 @@
                           (vswap! retired conj (connections/commit-restore! (:connections runtime) candidate))
                           (vreset! restored-generation (:generation (connections/status (:connections runtime))))
                           (let [{:keys [session-id lease after-restore!]} authority]
-                            (vreset! restoring-device (when after-restore! authority))
+                            (vreset! restoring-device (when after-restore! (assoc authority :receipt reply)))
                             (reset! (:device-reconnects runtime) (if after-restore! {session-id lease} {})))
                           ;; Detach atomically; opening sessions also verify their captured epoch.
                           (vswap! retired-devices into (vals (first (swap-vals! (:devices runtime) (constantly {}))))))
@@ -1838,7 +1838,9 @@
          (effect-faults/offer! (:effect-logs runtime) @committed-fault-events)
          (finish-resource-work! runtime @retired @candidates @retired-devices
                                 @restored-generation @restarted-generation)
-         (when-let [device @restoring-device] (reopen-restoring-device! runtime device))
+         (when-let [{:keys [receipt] :as device} @restoring-device]
+           (when (and (realized? receipt) (= :accepted (:status @receipt)))
+             (reopen-restoring-device! runtime device)))
          (rdm/reconcile! (:rdm runtime)))))))
 
 (defn- prepare-rig-edit [model proposed]
