@@ -199,6 +199,7 @@
                                     :reconnect (show/reconnect-section-reference! runtime payload)))
             :waveform! #(show/waveform-action! runtime %1 %2)
             :expressive! (partial show/expressive-preview runtime)
+            :cue-variation-preview! (partial show/cue-variation-preview runtime)
             :patch! #(:patch (show/snapshot runtime))
             :repl! #(show/repl-action! runtime %1 %2)
             :repl-eval! #(show/repl-eval! runtime %1 %2 %3)

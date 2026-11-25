@@ -7,3 +7,38 @@ Press **Session** on Push 2. Each miniature shows the arrangement of cues across
 Configure the start view under `[:settings :controllers :push-display]` in the show. Use `:mode :pages`, `:page-colors :both` (or `:cue`, `:type`) and optionally `:tag-colors {:custom-tag "#d499c4"}`. Push 3 profiles can map captured controls to the same semantic actions. The offscreen Chromium worker feeds both Wayang on Push 2 and the [tethered Push 3 USB sink](push-display-packaging.md#tethered-push-3). The on-device trial checks screen ownership and physical output.
 
 [960×160 capture](https://raw.githubusercontent.com/tolgraven/tolglow/c7f1a2de26d7105b0a9f7b69ec19abc966ce8e3a/pages/pages.png) · [Watch the page and palette changes](https://raw.githubusercontent.com/tolgraven/tolglow/c7f1a2de26d7105b0a9f7b69ec19abc966ce8e3a/pages/select-and-browse.gif)
+
+## Cue variations
+
+Connect Push 2 with `:cue-variations? true` to use the overlay for the
+selected running cue. Press **Note** to cycle through full states, parameter
+rows and the regular pads. The generated pads are amber. Parameter rows follow
+the authored parameter order and Page Left and Right move through extra rows.
+Press a generated pad to apply its prospective authored state to the selected
+instance in one command.
+
+The bottom row holds eight saved states in append order. Blue pads recall a
+state. Hold **Record** and press **Note** to append current parameters, or hold
+**Record** and press an occupied bottom-row pad to overwrite that slot. Once
+all slots are full, append removes the oldest entry and shifts the others left.
+Incompatible states appear pink after a schema change and can be overwritten.
+The bank is part of the show file.
+
+**Scales** toggles Preferred and Free beat ratios while the overlay is open.
+Preferred uses the integer components 1, 2, 3, 4, 6 and 8. Free permits other
+exact ratios inside the authored bounds and component limits. The encoder and
+touch strip step through exact ratios for bounded beat-ratio parameters,
+independent of Shift fine tuning. Studio's **Cue variations** panel under a
+running cue's Detail controls also accepts numerator and denominator directly.
+
+```clojure
+(let [options {:instance-id instance-id :layout :full :seed 0}
+      preview (show/cue-variation-preview runtime options)
+      selection (select-keys preview [:basis :layout :seed :row-page :instance-id])]
+  (show/submit! runtime (assoc selection :op :cue-variation/apply :position [0 1])))
+```
+
+The REPL, Studio and Push use the same cue projection and commands. A projection
+becomes stale when its instance, authored parameters or saved bank changes.
+Refresh the preview before applying a stale selection. This workflow was
+developed against the Push 2 source-derived protocol.

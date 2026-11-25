@@ -97,6 +97,10 @@
                         (contains? data :values))
                    (update :values normalize-expressive-keys)))]
       (cond-> data
+        (and (#{"/api/command" "/api/cue-variations/preview"} uri) (string? (:layout data)))
+        (update :layout keyword)
+        (and (= uri "/api/command") (= :cue-variation/ratio-mode (:op data)) (string? (:mode data)))
+        (update :mode keyword)
         (and (= uri "/api/command") (= :cue/launch (:op data)) (= "off" (:grid data)))
         (assoc :grid :off)
         (and (= uri "/api/command") (= :cue/cancel-launch (:op data))
@@ -355,7 +359,7 @@
               (available service unavailable-message #(respond (service operation (:json-params %))))])))
 
 (defn- post-routes [{:keys [material-preview! variable-sources! spatial-search! submit! submit-history! heartbeat! provider-put! chat! chat-select!
-                             app-agent! checkpoint!
+                             app-agent! checkpoint! cue-variation-preview!
                              sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync! section-reference!]
                      :or {material-preview! materials/preview}}]
   (merge
@@ -385,7 +389,9 @@
                                       "learn-parameter" :learn-parameter "forget-parameter" :forget-parameter})
    (post-actions "/api/section-reference/" section-reference! acknowledgement {"reconnect" :reconnect})
    (post-actions "/api/" sync! ok {"live" :live})
-   {"/api/materials/preview" #(ok (material-preview! (:json-params %)))
+   {"/api/cue-variations/preview"
+    (available cue-variation-preview! "Cue variations unavailable" #(ok (cue-variation-preview! (:json-params %))))
+    "/api/materials/preview" #(ok (material-preview! (:json-params %)))
     "/api/variable-block/sources" (available variable-sources! "Show variables unavailable" #(ok (variable-sources! (:json-params %))))
     "/api/spatial/search" (available spatial-search! "Spatial search unavailable"
                                       #(ok {:results (spatial-search! (:json-params %))}))

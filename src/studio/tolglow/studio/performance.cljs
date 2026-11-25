@@ -7,6 +7,7 @@
             [reagent.core :as r]
             [tolglow.authoring.parameter-layout :as layout]
             [tolglow.studio.events :as events]
+            [tolglow.studio.cue-variations :as variations]
             [tolglow.studio.modulation :as modulation]
             [tolglow.studio.effect-inspector :as inspect]
             [tolglow.studio.spatial-picker :as spatial]
@@ -443,6 +444,8 @@
      [instance-controls instance {:compact? true}]
      (when expanded?
        [:div.live-effect-advanced
+        (when (and cue (contains? #{:running "running"} (:phase instance)) (seq (:params definition)))
+          [variations/panel instance])
         [inspect/panel show instance faults]
         (when (:cue-id instance) [spatial/cue-target-picker (:cue-id instance)])
         [envelope-controls state key target instances (empty? instances)]

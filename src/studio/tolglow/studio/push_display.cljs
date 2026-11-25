@@ -25,6 +25,10 @@
                           :cue :effect :swatch :category-colors :page-overview :display-mode :scene :audio-waveform :instance-id
                           :parameter-bank :active-effect-navigation :touched-parameter :fine?])
         (assoc :saved-show-catalog (saved-show-catalog (:saved-show-catalog view))
+               :pad-overlay (when-let [overlay (:pad-overlay view)]
+                              (assoc (select-keys overlay [:layout :ratio-mode])
+                                     :rows (vec (take 7 (:rows overlay)))
+                                     :cells (vec (take 64 (:cells overlay)))))
                :target-picker (when-let [picker (:target-picker view)]
                                  (assoc (select-keys picker [:open? :page :pages :armed])
                                         :rows (mapv #(select-keys % [:kind :label]) (take 8 (:rows picker)))))
@@ -164,6 +168,22 @@
       ^{:key i} [:article {:class (if row "available" "empty")}
                  (when row [:<> [:small (widgets/label (:kind row))] [:strong (:label row)]])])]])
 
+(defn- variation-overlay [{:keys [layout ratio-mode rows cells]}]
+  (let [layout (name layout)
+        row-labels (if (= "rows" layout) (map :param rows) ["Full states"])
+        slots (into #{} (keep (fn [{:keys [position kind stale?]}]
+                               (when (and (contains? #{:saved "saved"} kind) (not stale?)) (first position)))) cells)]
+    [:section.push-targets {:aria-label "Cue variations"}
+     [:div.push-targets-heading
+      [:strong (if (= "rows" layout) "Parameter variations" "Full cue variations")]
+      [:span (if (contains? #{:free "free"} ratio-mode) "Free ratios" "Preferred ratios")]
+      [:small "Amber · Generated / Blue · Saved"]]
+     [:div.push-target-columns
+      (for [i (range 8)]
+        ^{:key i} [:article {:class (if (contains? slots i) "available" "empty")}
+                   [:small (str "Saved " (inc i))]
+                   (when-let [row (nth row-labels i nil)] [:strong (widgets/label row)])])]]))
+
 (defn- live-display [view]
   (let [cue (:cue view) effect (:effect view) accent (widgets/color-css (or (:swatch view) (:color cue)))
         active? (:active? cue) audio? (contains? #{:audio "audio"} (:display-mode view))
@@ -187,6 +207,7 @@
       [:span.push-status {:class (cond (:blackout? view) "blackout" (:releasing? cue) "releasing" active? "active")}
        (cond (:blackout? view) "BLACKOUT" (:releasing? cue) "RELEASE" active? "PLAYING" :else (widgets/label (:status view)))]]
      (cond
+       (:pad-overlay view) [variation-overlay (:pad-overlay view)]
        (get-in view [:target-picker :open?]) [target-choices (:target-picker view)]
        (contains? #{:simulator :rig "simulator" "rig"} (:display-mode view)) [scene/view view]
        (contains? #{:pages "pages"} (:display-mode view)) [pages/view view]
