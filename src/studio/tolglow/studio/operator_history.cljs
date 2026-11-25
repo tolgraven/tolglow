@@ -293,8 +293,9 @@
           message (cond
                     (:connection-message apply-status) (:connection-message apply-status)
                     (:pending? apply-status) "Applying history…"
-                    (:message apply-status) (:message apply-status)
-                    choose-redo? "Preview a child of the current step to choose a redo branch.")]
+                    (:error? apply-status) (:message apply-status)
+                    choose-redo? "Preview a child of the current step to choose a redo branch."
+                    :else (:message apply-status))]
       (when (not= reveal-key @revealed)
         (vreset! revealed reveal-key)
         (r/after-render #(when-let [element @scroll]
