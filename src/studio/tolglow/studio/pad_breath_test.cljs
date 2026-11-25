@@ -13,10 +13,13 @@
     (is (close? 0 (breath/breath-phase anchor 5000)))
     (is (close? 0.25 (breath/breath-phase anchor 5125)) "120 bpm advances a quarter beat in 125 ms")
     (is (close? 0.5 (breath/breath-phase anchor 5250)))
-    (is (close? 1 (:breath (breath/levels 0))) "the breath peaks on the beat, as Push and Afterglow do")
-    (is (close? 0 (:breath (breath/levels 0.5))))
     (testing "a sample that has not changed keeps its anchor, so re-renders do not drift the clock"
       (is (identical? anchor (breath/next-anchor anchor {:beat 8 :bpm 120 :playing? true :time-ms 1000} 0 5400))))
+    (testing "a sample without a tempo does not invent one"
+      (let [untimed (breath/next-anchor nil {:beat 8.5 :playing? true :time-ms 1000} 0 5000)]
+        (is (nil? (:bpm untimed)))
+        (is (close? 0.5 (breath/breath-phase untimed 9000)))
+        (is (nil? (breath/start-time untimed)))))
     (testing "a silent stream holds rather than inventing progress"
       (is (= (breath/beat-at anchor 60000) (breath/beat-at anchor (+ 5000 breath/max-extrapolation-ms)))))
     (testing "a paused transport holds its phase"
@@ -45,11 +48,123 @@
         (is (not (identical? after same)))
         (is (close? 0.25 (breath/breath-phase same 900)))))))
 
-(deftest release-and-queued-blinks-keep-push-phase
-  (is (= 1 (:blink (breath/levels 0.1))) "bright through Afterglow's first 40% of the beat")
-  (is (= 1 (:blink (breath/levels 0.4))))
-  (is (= 0 (:blink (breath/levels 0.41))))
-  (is (= [1 0 1 0] (mapv #(:flash (breath/levels %)) [0 0.3 0.5 0.8])) "queued pads blink twice per beat"))
+(deftest animations-start-on-the-downbeat
+  (let [anchor (breath/next-anchor nil {:beat 8.25 :bpm 120 :playing? true :time-ms 1000} 0 5000)]
+    (is (close? 500 (breath/beat-duration-ms anchor)))
+    (is (close? 4875 (breath/start-time anchor)) "a quarter beat at 120 bpm started 125 ms earlier")
+    (testing "progress from that start equals the beat phase, for whole and half-beat animations"
+      (doseq [now [5000 5100 5333 6020]]
+        (let [elapsed (- now (breath/start-time anchor))]
+          (is (close? (breath/breath-phase anchor now) (/ (mod elapsed 500) 500)))
+          (is (close? (mod (* 2 (breath/breath-phase anchor now)) 1) (/ (mod elapsed 250) 250))))))
+    (testing "after a tempo change and a seek the start follows the new sample"
+      (let [slow (breath/next-anchor anchor {:beat 9.5 :bpm 60 :playing? true :time-ms 1200} 0 5200)
+            seek (breath/next-anchor slow {:beat 2.1 :bpm 60 :playing? true :time-ms 1300} 1 5300)]
+        (is (close? 4700 (breath/start-time slow)))
+        (is (close? 5200 (breath/start-time seek)))))))
+
+(deftest release-blink-keyframes-keep-afterglow-phase
+  (let [css (.readFileSync (js/require "fs") "resources/studio/console.css" "utf8")]
+    (is (close? 0.4 breath/release-bright-fraction))
+    (is (str/includes? css "@keyframes pad-release-blink { 0%, 40% { opacity: .3; }")
+        "bright through Afterglow's first 40% of the beat")
+    (is (str/includes? css "pad-queued-flash calc(var(--beat-duration) / 2)") "queued pads blink twice per beat")
+    (doseq [name breath/animation-names]
+      (is (str/includes? css (str "@keyframes " name " ")) name))))
+
+;; A host that records what the clock does at its boundary.
+(defn- fake-host [state]
+  {:now #(:now @state)
+   :grid #(:grid @state)
+   :hidden? #(:hidden? @state)
+   :reduced? #(:reduced? @state)
+   :set-timeout (fn [f ms] (let [id (inc (:last-timer @state 0))]
+                             (swap! state #(-> % (assoc :last-timer id) (assoc-in [:timers id] {:f f :ms ms})))
+                             id))
+   :clear-timeout (fn [id] (swap! state update :timers dissoc id))
+   :animations (fn [_] (:animations @state))
+   :write! (fn [el mode duration] (swap! state update :writes conj [el mode duration]))
+   :watch (fn [callbacks] (swap! state assoc :watching callbacks)
+            #(swap! state assoc :watching nil :unwatched? true))})
+
+(defn- fire-timers! [state]
+  (let [timers (vals (:timers @state))]
+    (swap! state assoc :timers {})
+    (doseq [{:keys [f]} timers] (f))))
+
+(def ^:private playing {:beat 8.25 :bpm 120 :playing? true :time-ms 1000})
+
+(deftest clock-driver-lifecycle
+  (let [animation #js {:animationName "pad-breath" :startTime nil}
+        state (atom {:now 5000 :grid :grid :animations [animation] :writes [] :timers {}})
+        ctl (breath/controller (fake-host state))]
+    (breath/attach! ctl)
+    (is (fn? (:changed (:watching @state))) "listens for visibility and reduced-motion changes")
+    (testing "a playing transport with a running pad starts live and aligned"
+      (breath/sample! ctl playing 0 true)
+      (is (= [[:grid :live 500]] (:writes @state)))
+      (is (close? 4875 (.-startTime animation)))
+      (is (= 1 (count (:timers @state))) "one stale-stream timer, no per-pad timers")
+      (is (close? 2000 (:ms (first (vals (:timers @state)))))))
+    (testing "an unchanged sample or one within tolerance writes nothing"
+      (swap! state assoc :now 5100)
+      (breath/sample! ctl playing 0 true)
+      (swap! state assoc :now 5120)
+      (breath/sample! ctl (assoc playing :beat 8.491 :time-ms 1120) 0 true)
+      (is (= 1 (count (:writes @state))))
+      (is (close? 4875 (.-startTime animation)))
+      (is (= 1 (count (:timers @state)))))
+    (testing "a new pad animation is aligned when it starts"
+      (let [late #js {:animationName "pad-release-blink" :startTime 9999}]
+        (swap! state update :animations conj late)
+        ((:animation-started (:watching @state)))
+        (is (close? 4874.5 (.-startTime late)) "aligned to the latest sample")))
+    (testing "a stalled stream goes still once and schedules nothing more"
+      (swap! state assoc :now 7200)
+      (fire-timers! state)
+      (is (= [:grid :still nil] (peek (:writes @state))))
+      (is (empty? (:timers @state)))
+      (testing "and the next sample restarts it"
+        (breath/sample! ctl (assoc playing :beat 12.75 :time-ms 3200) 0 true)
+        (is (= :live (second (peek (:writes @state)))))
+        (is (= 1 (count (:timers @state))))))
+    (testing "a paused transport is still with no timer"
+      (breath/sample! ctl (assoc playing :playing? false :time-ms 3300) 0 true)
+      (is (= [:grid :still nil] (peek (:writes @state))))
+      (is (empty? (:timers @state))))
+    (testing "a missing tempo is still"
+      (breath/sample! ctl (dissoc playing :bpm) 0 true)
+      (is (= :still (:mode @ctl)))
+      (is (empty? (:timers @state))))
+    (testing "a hidden page is still, and resumes when shown"
+      (breath/sample! ctl (assoc playing :time-ms 3400) 0 true)
+      (is (= :live (:mode @ctl)))
+      (swap! state assoc :hidden? true)
+      ((:changed (:watching @state)))
+      (is (= :still (:mode @ctl)))
+      (is (empty? (:timers @state)))
+      (swap! state assoc :hidden? false)
+      ((:changed (:watching @state)))
+      (is (= :live (:mode @ctl))))
+    (testing "switching on reduced motion stops the clock"
+      (let [writes (count (:writes @state))]
+        (swap! state assoc :reduced? true)
+        ((:changed (:watching @state)))
+        (is (= :still (:mode @ctl)))
+        (is (= (inc writes) (count (:writes @state))))
+        (is (empty? (:timers @state)))
+        (breath/sample! ctl (assoc playing :time-ms 3500) 0 true)
+        (is (= (inc writes) (count (:writes @state))) "no writes while motion is reduced")))
+    (testing "nothing to animate is still"
+      (swap! state assoc :reduced? false)
+      (breath/sample! ctl (assoc playing :time-ms 3600) 0 false)
+      (is (= :still (:mode @ctl))))
+    (testing "unmounting stops listening and clears the timer"
+      (breath/sample! ctl (assoc playing :time-ms 3700) 0 true)
+      (is (seq (:timers @state)))
+      (breath/detach! ctl)
+      (is (:unwatched? @state))
+      (is (empty? (:timers @state))))))
 
 (def ^:private cues
   [{:id :ember :name "Ember"} {:id :haze :name "Haze"} {:id :strobe :name "Strobe"}

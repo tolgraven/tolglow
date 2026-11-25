@@ -1,24 +1,38 @@
 (ns tolglow.studio.pad-breath
   "Running cue pads breathe with the projected transport, like playing clips
-  on a Push session view. One shared clock writes the beat phase to the cue
-  grid as CSS custom properties; each pad's breath is pure CSS layered over
-  its live preview colour. There are no per-pad timers.
+  on a Push session view. The breath, release blink and queued flash are CSS
+  animations on each pad, layered over its live preview colour. There is no
+  per-frame JavaScript and no per-pad timer.
 
-  The only musical-time arithmetic here interpolates the latest projected
-  transport sample (beat, bpm, playing?) between stream frames. A seek or
-  restart arrives as a new transport generation and re-anchors immediately."
+  One clock per page aligns those animations to the transport. When a new
+  transport sample arrives it sets each animation's start time on the
+  document timeline so that its progress equals the beat phase. The only
+  musical-time arithmetic here interpolates the latest projected sample
+  (beat, bpm, playing?). A seek or restart arrives as a new transport
+  generation and re-anchors immediately."
   (:require [reagent.core :as r]
             [tolglow.studio.events :as events]))
 
 (def max-extrapolation-ms
-  "Hold the last projected beat when the stream has been silent this long,
-  rather than inventing transport progress the server has not confirmed."
+  "Show the still indicator when the stream has been silent this long, rather
+  than inventing transport progress the server has not confirmed."
   2000)
 
 (def release-bright-fraction
   "Afterglow's Push grid blinks ending cues bright for the first 40% of each
-  beat (`snapshot-beat-phase` <= 0.4) and dim for the rest. Keep that phase."
+  beat (`snapshot-beat-phase` <= 0.4) and dim for the rest. The
+  `pad-release-blink` keyframes in console.css keep that phase."
   0.4)
+
+(def animation-names
+  "CSS animations this clock aligns. Each repeats once per beat, or twice
+  for the queued flash, so one beat-aligned start time serves them all."
+  #{"pad-breath" "pad-breath-held" "pad-release-blink" "pad-queued-flash" "pad-queued-dot"})
+
+(def sync-tolerance-ms
+  "Leave an animation alone when it is already this close to the transport,
+  so stream jitter does not nudge every pad on every sample."
+  6)
 
 (defn sample-key
   "Identity of one projected transport sample. Unrelated re-renders reuse the
@@ -26,21 +40,24 @@
   [transport generation]
   [(or generation 0) (:time-ms transport) (:beat transport) (:bpm transport) (boolean (:playing? transport))])
 
+(defn- tempo [bpm] (when (and (number? bpm) (js/Number.isFinite bpm) (pos? bpm)) bpm))
+
 (defn next-anchor
   "Anchor the clock to a newly received transport sample at local time `now-ms`.
-  Returns `previous` unchanged when the sample has not changed."
+  Returns `previous` unchanged when the sample has not changed. A sample
+  without a usable tempo keeps `:bpm` nil; the pads then stay still."
   [previous transport generation now-ms]
   (let [key (sample-key transport generation)]
     (if (and previous (= key (:key previous)))
       previous
       {:key key :generation (or generation 0)
-       :beat (or (:beat transport) 0) :bpm (or (:bpm transport) 120)
+       :beat (or (:beat transport) 0) :bpm (tempo (:bpm transport))
        :playing? (boolean (:playing? transport)) :at now-ms})))
 
 (defn beat-at
   "Interpolated transport beat at local time `now-ms`."
   [{:keys [beat bpm playing? at]} now-ms]
-  (if (and playing? (number? bpm) (pos? bpm))
+  (if (and playing? bpm)
     (+ beat (* (min max-extrapolation-ms (max 0 (- now-ms at))) (/ bpm 60000)))
     beat))
 
@@ -51,14 +68,25 @@
   (let [beat (beat-at anchor now-ms) phase (- beat (js/Math.floor beat))]
     (if (js/Number.isFinite phase) phase 0)))
 
-(defn levels
-  "Shared drive values for one phase. `breath` is a raised cosine peaking on
-  the beat; `blink` is Afterglow's ending-cue blink; `flash` is the
-  half-beat blink Push uses for clips waiting to launch."
-  [phase]
-  {:breath (* 0.5 (+ 1 (js/Math.cos (* 2 js/Math.PI phase))))
-   :blink (if (<= phase release-bright-fraction) 1 0)
-   :flash (if (< (- (* 2 phase) (js/Math.floor (* 2 phase))) 0.5) 1 0)})
+(defn beat-duration-ms [{:keys [bpm]}] (when bpm (/ 60000 bpm)))
+
+(defn start-time
+  "Document-timeline start time that makes a once-per-beat animation's
+  progress equal the beat phase: the local time of the anchor's last
+  downbeat. Half-beat animations share it."
+  [{:keys [beat at] :as anchor}]
+  (when-let [duration (beat-duration-ms anchor)]
+    (- at (* (- beat (js/Math.floor beat)) duration))))
+
+(defn mode
+  "`:live` animates the pads; `:still` shows the steady indicator. Pads are
+  still when nothing on the page animates, the transport is paused or has no
+  tempo, the stream is stale, the page is hidden or motion is reduced."
+  [anchor now-ms {:keys [animate? hidden? reduced?]}]
+  (if (and animate? anchor (:playing? anchor) (:bpm anchor) (not hidden?) (not reduced?)
+           (< (- now-ms (:at anchor)) max-extrapolation-ms))
+    :live
+    :still))
 
 (defn- phase-name [instance] (some-> (:phase instance) events/wire-id))
 
@@ -88,67 +116,109 @@
 
 (defn animated? [state] (boolean (some state [:running :releasing :queued])))
 
-;; One clock per page. Only the mounted grid drives it.
-(defonce ^:private clock (atom {:anchor nil :el nil :raf nil :animate? false}))
+;; The clock owns its boundary through a host map, so tests can supply one.
+;; Host functions: :now, :grid, :hidden?, :reduced?, :set-timeout,
+;; :clear-timeout, :animations (grid -> breath animations), :write! (grid,
+;; mode, duration-ms or nil) and :watch (callbacks -> unwatch function).
 
-(defn- reduced-motion? []
-  (and (exists? js/matchMedia) (.-matches (js/matchMedia "(prefers-reduced-motion: reduce)"))))
+(defn controller [host]
+  (atom {:host host :anchor nil :animate? false :timer nil :written nil :unwatch nil}))
 
-(defn- write! [el {:keys [breath blink flash]} phase]
-  (let [style (.-style el)]
-    (.setProperty style "--beat-phase" (.toFixed phase 4))
-    (.setProperty style "--breath" (.toFixed breath 4))
-    (.setProperty style "--release-blink" blink)
-    (.setProperty style "--queued-flash" flash)))
+(defn- align! [host el anchor]
+  (when-let [target (start-time anchor)]
+    (doseq [^js animation ((:animations host) el)]
+      (let [current (.-startTime animation)]
+        (when (or (nil? current) (> (js/Math.abs (- current target)) sync-tolerance-ms))
+          (set! (.-startTime animation) target))))))
 
-(defn- frame! [timestamp]
-  (let [{:keys [anchor el animate?]} @clock]
-    (swap! clock assoc :raf nil)
-    (when (and el anchor)
-      (let [phase (breath-phase anchor timestamp)]
-        (write! el (levels phase) phase)))
-    (when (and el animate? (:playing? anchor) (not (.-hidden js/document)))
-      (swap! clock assoc :raf (js/requestAnimationFrame frame!)))))
+(defn refresh!
+  "Apply the current mode to the grid. Writes the grid only when its mode or
+  beat duration changed, aligns animations while live and keeps a single
+  stale-stream timer."
+  [ctl]
+  (let [{:keys [host anchor animate? timer written]} @ctl
+        now ((:now host))
+        el ((:grid host))
+        next-mode (mode anchor now {:animate? animate? :hidden? ((:hidden? host)) :reduced? ((:reduced? host))})
+        duration (when (= :live next-mode) (beat-duration-ms anchor))
+        fresh? (not= el (:el written))
+        write-duration (when (and duration (or fresh? (not= duration (:duration written)))) duration)
+        wanted {:el el :mode next-mode :duration (or duration (when-not fresh? (:duration written)))}
+        stale-in (when (= :live next-mode) (max 0 (- (+ (:at anchor) max-extrapolation-ms) now)))]
+    (when timer ((:clear-timeout host) timer))
+    (when (and el (not= wanted written))
+      ((:write! host) el next-mode write-duration))
+    (when (and el (= :live next-mode)) (align! host el anchor))
+    (let [timer (when stale-in ((:set-timeout host) #(refresh! ctl) stale-in))]
+      (swap! ctl assoc :timer timer :mode next-mode :written (when el wanted)))))
 
-(defn- sync! []
-  (let [{:keys [raf el animate? anchor]} @clock
-        reduced? (reduced-motion?)
-        run? (and el animate? anchor (:playing? anchor) (not (.-hidden js/document)) (not reduced?))]
-    (cond
-      (and run? (nil? raf)) (swap! clock assoc :raf (js/requestAnimationFrame frame!))
-      (and (not run?) raf) (do (js/cancelAnimationFrame raf) (swap! clock assoc :raf nil)))
-    ;; A paused transport holds one still frame at its phase. Reduced motion
-    ;; writes nothing; its CSS shows a steady running indicator instead.
-    (when (and el anchor (not run?) (not reduced?)) (frame! (.now js/performance)))))
+(defn sample!
+  "Record the latest projection and refresh. Reads the clock before updating
+  state; the state update itself is pure."
+  [ctl transport generation animate?]
+  (let [now ((:now (:host @ctl)))]
+    (swap! ctl (fn [state] (assoc state :animate? animate?
+                                  :anchor (next-anchor (:anchor state) transport generation now))))
+    (refresh! ctl)))
 
-(defn- grid-element [] (.getElementById js/document "cue-grid"))
+(defn align-now!
+  "A pad animation just started; bring it into phase."
+  [ctl]
+  (let [{:keys [host anchor mode]} @ctl
+        el ((:grid host))]
+    (when (and el (= :live mode)) (align! host el anchor))))
 
-(defn- update-clock! [transport generation animate?]
-  (swap! clock (fn [state]
-                 (assoc state :el (grid-element) :animate? animate?
-                        :anchor (next-anchor (:anchor state) transport generation (.now js/performance))))))
+(defn attach! [ctl]
+  (let [unwatch ((:watch (:host @ctl)) {:changed #(refresh! ctl) :animation-started #(align-now! ctl)})]
+    (swap! ctl assoc :unwatch unwatch)))
 
-(defn- stop-clock! []
-  (when-let [raf (:raf @clock)] (js/cancelAnimationFrame raf))
-  (swap! clock assoc :el nil :raf nil :animate? false))
+(defn detach! [ctl]
+  (let [{:keys [host timer unwatch]} @ctl]
+    (when timer ((:clear-timeout host) timer))
+    (when unwatch (unwatch))
+    (swap! ctl assoc :timer nil :unwatch nil :mode nil :written nil :animate? false)))
+
+(defn- motion-query []
+  (when (exists? js/matchMedia) (js/matchMedia "(prefers-reduced-motion: reduce)")))
+
+(defn- listen! [^js target event f]
+  (cond (.-addEventListener target) (do (.addEventListener target event f) #(.removeEventListener target event f))
+        (.-addListener target) (do (.addListener target f) #(.removeListener target f))))
+
+(def dom-host
+  {:now #(or (some-> js/document .-timeline .-currentTime) (.now js/performance))
+   :grid #(.getElementById js/document "cue-grid")
+   :hidden? #(.-hidden js/document)
+   :reduced? #(boolean (some-> (motion-query) .-matches))
+   :set-timeout (fn [f ms] (js/setTimeout f ms))
+   :clear-timeout #(js/clearTimeout %)
+   :animations (fn [^js el]
+                 (if (.-getAnimations el)
+                   (filter #(contains? animation-names (.-animationName ^js %))
+                           (array-seq (.getAnimations el #js {:subtree true})))
+                   []))
+   :write! (fn [^js el mode duration]
+             (.setAttribute el "data-breath" (name mode))
+             (when duration (.setProperty (.-style el) "--beat-duration" (str duration "ms"))))
+   :watch (fn [{:keys [changed animation-started]}]
+            (let [started #(when (contains? animation-names (.-animationName ^js %)) (animation-started))
+                  stops (cond-> [(listen! js/document "visibilitychange" changed)
+                                 (listen! js/document "animationstart" started)]
+                          (motion-query) (conj (listen! (motion-query) "change" changed)))]
+              #(doseq [stop stops] (when stop (stop)))))})
 
 (defn clock-driver
   "Invisible sibling of the cue grid. `transport` and `generation` come from
-  the show projection; the grid element receives the CSS properties. It is
-  mounted once per grid, so the page has a single animation frame loop."
+  the show projection; `animate?` says whether the page has a pad to animate.
+  It is mounted once per grid, so the page has one clock."
   [_ _ _]
-  (let [visibility #(sync!)
+  (let [ctl (controller dom-host)
         apply! (fn [this]
                  (let [[_ transport generation animate?] (r/argv this)]
-                   (update-clock! transport generation animate?)
-                   (sync!)))]
+                   (sample! ctl transport generation animate?)))]
     (r/create-class
      {:display-name "pad-breath-clock"
-      :component-did-mount (fn [this]
-                             (.addEventListener js/document "visibilitychange" visibility)
-                             (apply! this))
+      :component-did-mount (fn [this] (attach! ctl) (apply! this))
       :component-did-update (fn [this _] (apply! this))
-      :component-will-unmount (fn [_]
-                                (.removeEventListener js/document "visibilitychange" visibility)
-                                (stop-clock!))
+      :component-will-unmount (fn [_] (detach! ctl))
       :reagent-render (fn [_ _ _] nil)})))

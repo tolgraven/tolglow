@@ -43,14 +43,19 @@ brighter floor. The preview sample and the light layer are separate, so the
 preview animation keeps playing underneath. With `prefers-reduced-motion` the
 pads show a steady running indicator instead.
 
-One shared animation frame loop drives every pad on the page. It runs only
-while the page has a running, releasing or queued pad and the transport is
-playing. It interpolates the latest projected transport sample (`:beat`,
-`:bpm`, `:playing?`) between stream frames and re-anchors on each new sample
-or transport generation, so a tempo change or seek takes effect on the next
-frame. It holds the last beat after two seconds without a sample. It writes
-`--beat-phase`, `--breath`, `--release-blink` and `--queued-flash` on
-`#cue-grid`, and each pad's CSS reads them. The phase functions live in
+Each light layer is a CSS opacity animation lasting one beat, or half a beat
+for the queued flash. No JavaScript runs per frame and there are no per-pad
+timers. One clock per page aligns the animations to the transport. On each
+new projected transport sample (`:beat`, `:bpm`, `:playing?`) or transport
+generation, it sets every pad animation's start time on the document timeline
+to the local time of the last downbeat. A tempo change or seek therefore takes
+effect with the next sample. Animations already within 6 ms are left alone, so
+stream jitter does not nudge them. The clock writes `data-breath` and
+`--beat-duration` on `#cue-grid` only when they change. Pads show the steady
+indicator when nothing on the page animates, the transport is paused or has no
+tempo, two seconds pass without a sample, the page is hidden or motion is
+reduced. The next sample, visibility change or reduced-motion change restarts
+them. The phase functions and the clock live in
 [`pad_breath.cljs`](../src/studio/tolglow/studio/pad_breath.cljs).
 
 From the REPL, the same inputs are `(:transport (show/snapshot runtime))` and
