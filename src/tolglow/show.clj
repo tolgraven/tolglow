@@ -32,6 +32,7 @@
             [tolglow.effects.prefabs :as prefabs]
             [tolglow.effects.material-design :as material-design]
             [tolglow.effects.variable-edit :as variable-edit]
+            [tolglow.effects.group-channels :as group-channels]
             [tolglow.agents.venue :as venue-tools]
             [clojure.java.io :as io]
             [tolglow.compiler :as compiler]
@@ -260,6 +261,7 @@
              (throw (ex-info "Effect log sink must be callable" {})))
          _ (lighting-scenes/validate-state! model)
          _ (lighting/validate! (:settings model))
+         _ (group-channels/validate-state! model)
          _ (variable-blocks/compile-model model)
          _ (registry/validate-public-query-ids! (get-in model [:settings :studio :public-queries]))
          _ (when-let [config (get-in model [:settings :adaptive-keyframes] (:adaptive-keyframes options))]
@@ -398,6 +400,11 @@
                                                  [id (-> source (assoc :armed-intent? false)
                                                          (update :state (fn [state] (:state (sensor-core/set-armed state false)))))])) %)))))
 
+(defn effect-group-channels
+  "Read the effect mixer projection from one committed show model."
+  [runtime]
+  (group-channels/projection (:model @(:state runtime))))
+
 (defn- command [model payload time-ms]
   (let [time-ms (or (get-in model [:control :history (:command-id payload) :command :time-ms]) time-ms)
         payload (prefabs/prepare-command model payload)
@@ -409,11 +416,13 @@
                               (assoc p field s) p))) payload
                         [[:cue-id (get-in model [:registry :cues])]
                          [:page-id (:pages model)]])]
-    (let [result (spatial/apply-command model
-                          (merge {:command-id (str (UUID/randomUUID))
-                                 :show-id (:show-id model) :epoch (:epoch model)
-                                 :source {:adapter :studio :session-id "studio"}}
-                                 payload {:time-ms time-ms}))
+    (let [request (merge {:command-id (str (UUID/randomUUID))
+                          :show-id (:show-id model) :epoch (:epoch model)
+                          :source {:adapter :studio :session-id "studio"}}
+                         payload {:time-ms time-ms})
+          result (if (group-channels/operation? (:op request))
+                   (control/apply-domain-command model request group-channels/apply-operation)
+                   (spatial/apply-command model request))
           result (if (and (= :accepted (get-in result [:ack :status]))
                           (= :show/restart (:op payload)) (not= (:epoch model) (get-in result [:model :epoch])))
                    (update result :model
@@ -710,24 +719,29 @@
         (throw (ex-info "Settings require a named scope and portable values" {})))
       (when (and (= scope :output) (contains? values :presentation))
         (output-scheduler/validate-options (:presentation values)))
-      (let [values (cond-> values (and (= scope :output) (contains? values :pause-look))
-                     (update :pause-look pause-look/normalize))
-            settings (edit-scoped-settings model scope values (:device-id payload))
-            _ (when (= scope :prefabs)
-                (prefabs/validate! settings)
-                (variable-blocks/compile-settings (get-in model [:settings :variable-blocks]) (:definitions settings)))
-            _ (when (= scope :variable-blocks)
-                (variable-blocks/compile-settings settings (prefabs/catalog model)))
-            _ (when (= scope :adaptive-keyframes) (cadence/settings settings))
-            _ (when (= scope :studio) (registry/validate-public-query-ids! (:public-queries settings)))
-            _ (when (= scope :lighting-capacity) (capacity/settings settings))
-            _ (when (= scope :audio-returns) (audio-return/validate-config model settings))
-            settings (if (= scope :expressive) (expressive-mapping/normalize-config settings) settings)
-            updated (-> (if (= scope :fog-control)
-                          (fog-control/configure model values)
-                          (assoc-in model [:settings scope] settings))
-                        (update :revision inc))]
-        {:model updated :ack {:status :accepted :revision (:revision updated)}}))
+      (if (= scope :effect-group-channels)
+        (dispatch-owner-command runtime model
+                                (assoc (select-keys payload [:command-id :show-id :epoch :expected-revision :source])
+                                       :op :effect-groups/configure :config-patch values)
+                                time-ms)
+        (let [values (cond-> values (and (= scope :output) (contains? values :pause-look))
+                       (update :pause-look pause-look/normalize))
+              settings (edit-scoped-settings model scope values (:device-id payload))
+              _ (when (= scope :prefabs)
+                  (prefabs/validate! settings)
+                  (variable-blocks/compile-settings (get-in model [:settings :variable-blocks]) (:definitions settings)))
+              _ (when (= scope :variable-blocks)
+                  (variable-blocks/compile-settings settings (prefabs/catalog model)))
+              _ (when (= scope :adaptive-keyframes) (cadence/settings settings))
+              _ (when (= scope :studio) (registry/validate-public-query-ids! (:public-queries settings)))
+              _ (when (= scope :lighting-capacity) (capacity/settings settings))
+              _ (when (= scope :audio-returns) (audio-return/validate-config model settings))
+              settings (if (= scope :expressive) (expressive-mapping/normalize-config settings) settings)
+              updated (-> (if (= scope :fog-control)
+                            (fog-control/configure model values)
+                            (assoc-in model [:settings scope] settings))
+                          (update :revision inc))]
+          {:model updated :ack {:status :accepted :revision (:revision updated)}})))
     :auto
     (let [old-state (get-in model [:auto :state])
           model (if old-state
@@ -1256,7 +1270,10 @@
                                                :keyframe-generation (:responses model) :spatial-aims (get-in space [:fields :aims])
                                                :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
                                               (:inputs sampling))
-                           frame-input (cond-> frame-input variables (assoc :resolved-variables variable-inputs))
+                           group-levels (group-channels/frame-levels model)
+                           frame-input (cond-> frame-input
+                                         variables (assoc :resolved-variables variable-inputs)
+                                         group-levels (assoc ::engine/opacity-factors group-levels))
                            response (response-middleware! runtime (:responses model []))
                            inputs (comp response modulation-middleware)
                            compile-step (fn [definition]
@@ -1308,7 +1325,7 @@
                            resolved (effect-faults/resolve-output result
                                       #(resolve-frame patch (lighting/contributions standby % extra-blocks) render-options)
                                       (if-let [groups (get-in space [:fields :groups])]
-                                        #(spatial-cues/mask-contributions % groups) identity))
+                                        #(spatial-cues/mask-contributions % groups group-levels) identity))
                            result (:result resolved)
                            finished (when (or (get-in model [:settings :output-response :enabled?])
                                               (get-in model [:settings :lighting-budget :enabled?])

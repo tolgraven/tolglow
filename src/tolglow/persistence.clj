@@ -18,6 +18,7 @@
             [tolglow.compiler :as compiler]
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
+            [tolglow.effects.group-channels :as group-channels]
             [tolglow.modulation :as modulation]
             [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.lighting-capacity :as capacity]
@@ -274,6 +275,9 @@
   (validate-recent-cues! (:control model))
   (check! (map? (:extensions model {})) [:extensions] "Extensions must be an explicit map")
   (check! (map? (:settings model {})) [:settings] "Settings must be an explicit portable map")
+  (try (group-channels/validate-state! model)
+       (catch clojure.lang.ExceptionInfo error
+         (fail! (:path (ex-data error) [:settings :effect-group-channels]) (ex-message error))))
   (when-let [s (get-in model [:settings :fog-control])] (fog-control/settings s))
   (lighting-scenes/validate-state! model)
   (lighting/validate! (:settings model))

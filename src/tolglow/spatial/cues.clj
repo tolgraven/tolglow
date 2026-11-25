@@ -349,15 +349,23 @@
                   (map (fn [[head point]] {:target-id head :attribute :aim :value point :blend :replace}))
                   aims))))))
 
-(defn- scoped-block [groups block]
-  (if-let [group (get groups (get-in block [:source :instance-id]))]
-    (let [native (:native-layer block)
-          layer (cond-> (merge native group)
-                  (and (seq (:transforms native)) (seq (:transforms group)))
-                  (assoc :transforms (into (:transforms group) (:transforms native))))]
-      (assoc block :native-layer layer))
-    block))
+(defn- scoped-block [groups opacity-factors block]
+  (let [id (get-in block [:source :instance-id])]
+    (if-let [group (get groups id)]
+      (let [native (:native-layer block)
+            factor (get opacity-factors id)
+            layer (cond-> (merge native group)
+                    (and (seq (:transforms native)) (seq (:transforms group)))
+                    (assoc :transforms (into (:transforms group) (:transforms native)))
+                    ;; An explicit spatial member opacity replaces the engine's
+                    ;; native value. Carry the frame factor into that override.
+                    (and native factor (contains? group :member-opacity))
+                    (update :member-opacity * factor))]
+        (assoc block :native-layer layer))
+      block)))
 
-(defn mask-contributions [result groups]
-  (if (empty? groups) result
-    (update result :contributions #(mapv (partial scoped-block groups) %))))
+(defn mask-contributions
+  ([result groups] (mask-contributions result groups nil))
+  ([result groups opacity-factors]
+   (if (empty? groups) result
+     (update result :contributions #(mapv (partial scoped-block groups opacity-factors) %)))))

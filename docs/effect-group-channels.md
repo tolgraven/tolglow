@@ -27,7 +27,9 @@ placement.
 When a native transform inherits targets, the fixture projection reports
 `:target-source :unresolved` unless the caller supplies its footprint. Pass
 `:target-ids-by-instance` with footprints from the same patch and frame before
-group attenuation. An empty collection is a known empty footprint.
+group attenuation. An empty collection is a known empty footprint. The live
+owner uses declared targets for the current patch. The frame after a definition
+reload uses the newly committed definition for membership.
 
 ## Render contract
 
@@ -39,6 +41,12 @@ member opacity after the member's own transforms. Subsequent members read that
 result. The authored layer opacity still mixes the final layer with its
 backdrop at the layer's original priority position. Group levels are additional
 to the existing instance alpha and release envelope. [Afterglow native layers](https://github.com/tolgraven/afterglow/blob/99f61c5bed2850daaeb87bc5b84ddf0d3c60bf64/doc/architecture/native-layers.md)
+
+The live owner captures frame factors before evaluating effects. The factors
+reach the renderer through Afterglow's `:afterglow.runtime.engine/opacity-factors`
+input, leaving authored parameters and observable instance alpha independent.
+Spatial cue masks retain the factor when they replace a leader's native member
+opacity. Output shaping, budgeting and publication continue after composition.
 
 At unity, the mixer has no render factor to apply. Its membership and display
 order are independent of render order. The renderer test places an independent
@@ -74,6 +82,16 @@ retain their identities across launches and releases. The caller owns
 expansion state. `[:instance id]` addresses the existing instance controls.
 [Domain source](../src/tolglow/effects/group_channels.clj)
 
-The domain transition and projection are available for headless use. Show-owner
-command admission, frame application, persistence qualification and shared
-Push and X-Touch routing remain separate integration steps.
+For a running headless show, submit the same commands with
+`tolglow.show/submit!`. The receipt follows the shared show epoch, expected
+revision and command ID rules. Read the committed view with
+`tolglow.show/effect-group-channels`.
+
+Full show files save the group settings and instance placements. Restore
+validates both, retains the last committed output, and rekeys instance IDs for
+the new show epoch. Removing a manual group also clears its instance placements.
+The standalone test saves a mixed frame to disk, changes its level, restores
+the saved frame and checks the next rendered frame at the restored settings.
+[Live and standalone tests](../test/tolglow/effects/group_channels_host_test.clj) · [Show files](show-files.md)
+
+Push and X-Touch routing and hardware feedback are later integration steps.

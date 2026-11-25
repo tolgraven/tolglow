@@ -156,12 +156,9 @@
   (:contributions (engine/advance model {:time-ms 0 :fixtures fixtures} compiler/compile-effect)))
 
 (defn- contributions-at-mixer-levels [model]
-  ;; Exercise the intended render boundary with a frame-only copy of the model.
-  (let [factors (:member-levels (groups/projection model))]
-    (contributions
-     (reduce-kv (fn [m id factor]
-                  (update-in m [:instances id :system :opacity] #(* (or % 1) factor)))
-                model factors))))
+  (:contributions (engine/advance model {:time-ms 0 :fixtures fixtures
+                                         ::engine/opacity-factors (:member-levels (groups/projection model))}
+                                  compiler/compile-effect)))
 
 (defn- resolved [blocks] (frame/resolve-contributions fixtures blocks))
 (defn- front-level [blocks] (get-in (resolved blocks) [:values :front :channels :dimmer]))

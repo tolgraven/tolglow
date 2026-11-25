@@ -9,6 +9,10 @@
 (def ^:private defaults {:manual [] :overlays {} :active-overlay nil})
 (def ^:private selector-keys {:fixtures :fixture-ids :categories :categories :cue-pages :page-ids})
 
+(defn operation? [op]
+  (contains? #{:effect-groups/configure :effect-groups/overlay-set
+               :effect-groups/level-set :effect-groups/assign-instance} op))
+
 (defn- reject! [code message details]
   (throw (ex-info message {:control/error code :details details})))
 
@@ -75,6 +79,23 @@
 
 (defn- configuration [model] (get-in model settings-path defaults))
 
+(defn- orphaned-placements [model config]
+  (let [group-ids (into #{} (map (comp :id :group)) (manual-entries (:manual config)))]
+    (keep (fn [[id instance]]
+            (when (and (contains? instance ::manual-group)
+                       (not (contains? group-ids (::manual-group instance))))
+              id))
+          (:instances model))))
+
+(defn validate-state!
+  "Validate portable group settings and instance placements before restoring them."
+  [model]
+  (let [config (validate-config! (configuration model))]
+    (when-let [id (first (orphaned-placements model config))]
+      (throw (ex-info "Manual placement refers to a missing group"
+                      {:path [:instances id ::manual-group]}))))
+  model)
+
 (defn- group-path [{:keys [manual overlays]} [kind id]]
   (if (= :manual kind)
     (some (fn [{:keys [group path]}] (when (= id (:id group)) path)) (manual-entries manual))
@@ -93,8 +114,15 @@
   (let [current (configuration model)]
     (case op
       :effect-groups/configure
-      (let [config (validate-config! config)]
-        (transition model (if (= current config) model (assoc-in model settings-path config))
+      (let [patch? (contains? command :config-patch)
+            patch (:config-patch command)
+            _ (when (and patch? (or (contains? command :config) (not (map? patch))))
+                (reject! :invalid-groups "Supply one group configuration or settings patch" {}))
+            config (validate-config! (if patch? (merge current patch) config))
+            next-model (if (= current config) model
+                           (reduce (fn [m id] (update-in m [:instances id] dissoc ::manual-group))
+                                   (assoc-in model settings-path config) (orphaned-placements model config)))]
+        (transition model next-model
                     :effect-groups/configured {:active-overlay (:active-overlay config)}))
 
       :effect-groups/overlay-set
@@ -237,6 +265,14 @@
                               :matching-instance-ids (into [] (comp (filter #(some #{(:id group)} (:overlay-candidates %)))
                                                                     (map :instance-id)) instances)))
                      overlay-groups)})))
+
+(defn frame-levels
+  "Freeze non-unity factors using the same membership as the mixer projection."
+  [model]
+  (when-let [{:keys [manual overlays active-overlay]} (get-in model settings-path)]
+    (when (or (some #(not (== 1 (level (:group %)))) (manual-entries manual))
+              (some #(not (== 1 (level %))) (get overlays active-overlay)))
+      (not-empty (:member-levels (projection model))))))
 
 (defn channel-rows
   "Flatten one mixer view with stable channel IDs. Expansion is local to the
