@@ -1,11 +1,14 @@
 (ns tolglow.show.recovery-test
   (:require [clojure.java.io :as io]
+            [clojure.data.json :as json]
             [clojure.test :refer [deftest is]]
             [tolglow.application :as app]
             [tolglow.demo :as demo]
             [tolglow.persistence :as persistence]
             [tolglow.show :as show]
-            [tolglow.show.recovery :as recovery])
+            [tolglow.show.recovery :as recovery]
+            [tolglow.studio :as studio]
+            [tolglow.transit :as wire])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -258,6 +261,32 @@
             (is (= 0.7 (checkpoint-master runtime :prior)))
             (finally (show/stop! runtime))))))))
 
+(deftest checkpoint-wire-format-preserves-the-current-show-id
+  (with-directory
+    (fn [directory]
+      (doseq [id ["venue/east" :venue/east]]
+        (let [runtime (show/start! {:model (assoc (demo/model) :show-id id) :workspace-options nil
+                                    :recovery {:directory directory :enabled? false}} (constantly nil))]
+          (try
+            (show/save-show! runtime (io/file directory "named.transit"))
+            (set-master! runtime 0.3)
+            (let [handler (studio/handler runtime)
+                  view (json/read-str (:body (handler {:request-method :get :uri "/api/show/checkpoints"}))
+                                      :key-fn keyword)
+                  identity (select-keys view [:runtime-id :show-id :epoch])
+                  request {:request-method :post :uri "/api/show/checkpoints/restore"}
+                  alternate (if (keyword? id) "venue/east" :venue/east)]
+              (is (= "venue/east" (:show-id identity)))
+              (is (= 400 (:status (handler (assoc request :headers {"content-type" "application/transit+json"
+                                                                    "x-tolglow-form" "studio-v1"}
+                                                          :body (java.io.StringReader.
+                                                                 (wire/encode (assoc identity :kind :named :show-id alternate))))))))
+              (is (= 200 (:status (handler (assoc request :headers {"content-type" "application/json"}
+                                                          :body (java.io.StringReader.
+                                                                 (json/write-str (assoc identity :kind "named"))))))))
+              (is (= 1.0 (:master (show/snapshot runtime)))))
+            (finally (show/stop! runtime))))))))
+
 (deftest prior-restore-read-survives-the-first-working-file-replacement
   (with-directory
     (fn [directory]
@@ -315,3 +344,44 @@
               (is (nil? (deref publication 5000 :pending)))
               (is (= 1.0 (stored-master)))
               (finally (deliver resume true) (show/stop! runtime)))))))))
+
+(deftest studio-checkpoint-actions-are-bound-to-the-show-that-listed-them
+  (with-directory
+    (fn [directory]
+      (let [options {:workspace-options nil :recovery {:directory directory :interval-ms 25}}
+            first-show (show/start! options (constantly nil))]
+        (try
+          (set-master! first-show 0.5)
+          (show/save-show! first-show (io/file directory "named.transit"))
+          (set-master! first-show 0.3)
+          (is (await-result #(= 0.3 (checkpoint-master first-show :recovery))))
+          (finally (show/stop! first-show)))
+        (let [runtime (show/start! (assoc-in options [:recovery :enabled?] false) (constantly nil))]
+          (try
+            (let [handler (studio/handler runtime)
+                  headers {"accept" "application/transit+json" "content-type" "application/transit+json"}
+                  status #(wire/decode (:body (handler {:request-method :get :uri "/api/show/checkpoints"
+                                                        :headers headers})))
+                  post (fn [route identity origin]
+                         (let [response (handler {:request-method :post
+                                                  :uri (str "/api/show/checkpoints/" route)
+                                                  :headers (cond-> headers origin (assoc "origin" origin "host" "localhost"))
+                                                  :body (java.io.StringReader. (wire/encode identity))})]
+                           [(:status response) (wire/decode (:body response))]))
+                  identity #(select-keys (status) [:runtime-id :show-id :epoch])
+                  initial (identity)]
+              (is (= #{:recovery :named :prior} (set (keys (:checkpoints (status))))))
+              (is (every? #(= #{:modified-at-ms} (set (keys %))) (vals (:checkpoints (status)))))
+              (is (= 403 (first (post "restore" (assoc initial :kind :named) "http://elsewhere.test"))))
+              (is (= 400 (first (post "restore" (assoc initial :kind :named :runtime-id "old-runtime") nil))))
+              (is (= :accepted (:status (second (post "restore" (assoc initial :kind :named) nil)))))
+              (is (= 0.5 (:master (show/snapshot runtime))))
+              (let [[http rejection] (post "restore" (assoc initial :kind :recovery) nil)]
+                (is (= 400 http))
+                (is (= :stale-checkpoint-session (get-in rejection [:details :code]))))
+              (is (= 0.5 (:master (show/snapshot runtime))))
+              (is (= :accepted (:status (second (post "restore" (assoc (identity) :kind :recovery) nil)))))
+              (is (= 0.3 (:master (show/snapshot runtime))))
+              (is (= [200 {:status :accepted}] (post "discard-prior" (identity) nil)))
+              (is (= #{:recovery :named} (set (keys (:checkpoints (status)))))))
+            (finally (show/stop! runtime))))))))

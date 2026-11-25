@@ -16,6 +16,7 @@
             [tolglow.cue-timing :as cue-timing]
             [tolglow.persistence.audio :as saved-audio]
             [tolglow.compiler :as compiler]
+            [tolglow.effects.keyframes :as effect-keyframes]
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
             [tolglow.effects.group-channels :as group-channels]
@@ -501,8 +502,18 @@
     model))
 
 (defn- make-document [model frame-output]
-  (cond-> {:schema-version schema-version :model (validate-model (prepare-edit-history (cue-timing/without-queue model)))}
-    (some? frame-output) (assoc :frame-output (validate-frame-output model frame-output))))
+  (let [{:keys [model settled]} (control/settle-temporary-gestures-for-save model)
+        model (if (:modulation model)
+                (reduce-kv (fn [model [_ id param] {:keys [actor control-id gesture-id]}]
+                             (update model :modulation modulation/settle-gesture-hold id param
+                                     [actor control-id gesture-id] false)) model settled)
+                model)
+        sampled? (some (comp pos? :last-sequence val) settled)
+        model (cond-> model sampled? effect-keyframes/without-checkpoints)]
+    ;; A sampled temporary value may already be in the captured frame or
+    ;; predictive windows. The restore path can regenerate them safely.
+    (cond-> {:schema-version schema-version :model (validate-model (prepare-edit-history (cue-timing/without-queue model)))}
+      (and (some? frame-output) (not sampled?)) (assoc :frame-output (validate-frame-output model frame-output)))))
 
 (defn freeze
   "Return a detached, size-checked snapshot including any timestamp or binary values."

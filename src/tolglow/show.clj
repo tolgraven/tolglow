@@ -128,6 +128,16 @@
 
 (defn- error-data [error] {:message (.getMessage ^Throwable error) :details (ex-data error)})
 
+(defn- checkpoint-results [before message-receipts]
+  (let [finished (keep (fn [[{::keys [checkpoint-request]} [_ ack]]]
+                         (when checkpoint-request
+                           (cond-> (merge checkpoint-request (select-keys ack [:status :epoch]))
+                             (contains? (:details ack) :received-epoch) (assoc :reason :stale-show-session))))
+                       message-receipts)]
+    (if (seq finished)
+      (vec (take-last 32 (concat (:checkpoint-results before) finished)))
+      (:checkpoint-results before))))
+
 (defn- scene-eligible-ids [runtime fixtures]
   (let [cache (:scene-eligible runtime)
         previous @cache]
@@ -552,9 +562,10 @@
   [show-id epoch (:source transport) (:source-epoch transport)
    (:source-selection-epoch transport) @(:presentation-clock runtime)])
 
-(defn- push-gesture-end? [payload {::keys [push-session-id]}]
-  (and (= :gesture/end (:op payload)) push-session-id
-       (= {:adapter :push-2 :session-id push-session-id} (:source payload))))
+(defn- push-gesture-terminal? [payload {::keys [push-source]}]
+  (and (#{:gesture/end :gesture/cancel} (:op payload))
+       (#{:push-2 :push-3} (:adapter push-source)) (:session-id push-source)
+       (= push-source (:source payload))))
 
 (defn- push-gesture-key [{:keys [instance-id param control-id gesture-id]} {:keys [operator-id]}]
   [[:instance-param instance-id param] operator-id control-id gesture-id])
@@ -577,7 +588,7 @@
     (= :cue/cancel-launch (:op payload))
     (cue-timing/cancel-owned model (cue-clock-identity runtime model) time-ms payload command)
 
-    (push-gesture-end? payload authority)
+    (and (= :gesture/end (:op payload)) (push-gesture-terminal? payload authority))
     (let [gesture (open-push-gesture model (push-gesture-key payload authority))]
       (command model (cond-> payload gesture (assoc :last-sequence (:last-sequence gesture))) time-ms authority))
 
@@ -1722,8 +1733,9 @@
                                                               (get-in message [:payload :source :adapter]))}))
                                   message-receipts)
                  ;; Confidence belongs to this live clock sample and its resource generation.
-                 next-state (assoc next-state :audio-clock-confidence
-                                   (when-not (or restored? @restarted-generation) audio-clock-confidence))
+                 next-state (assoc next-state
+                                   :checkpoint-results (checkpoint-results before message-receipts)
+                                   :audio-clock-confidence (when-not (or restored? @restarted-generation) audio-clock-confidence))
                  fired-outcomes (cue-timing/fired-outcomes (:model next-state))
                  next-state (if (seq fired-outcomes) (update next-state :model cue-timing/clear-fired-outcomes) next-state)
                  next-state (advance-section-patterns runtime before next-state (or restored? @restarted-generation))
@@ -1806,7 +1818,7 @@
 
 (defn- enqueue-push-gesture-end! [runtime {:keys [payload authority reply expected-epoch] :as message}]
   ;; Under the owner lock, each open gesture or queued begin can reserve only
-  ;; one end. Both sources are bounded and drained in the same owner cycle.
+  ;; one end or cancel. Both sources are bounded and drained in the same owner cycle.
   (let [ends (:push-gesture-ends runtime)
         key (push-gesture-key payload authority)
         queued-begin? (fn [queued]
@@ -1823,15 +1835,7 @@
 
       :else (deliver reply {:status :rejected :code :unknown-gesture :command-id (:command-id payload)}))))
 
-(defn submit!
-  "Enqueue an operation. Full restores are validated and resource-prepared off
-  the frame-owner lock, then committed atomically by the next owner cycle.
-  Use :cue-schedule and :cue-cancel for explicit musical launch timing.
-  Host adapters pass authenticated operator authority as a separate argument.
-  Serialized payloads cannot confer operator privileges."
-  ([runtime payload] (submit! runtime :command payload))
-  ([runtime type payload] (submit! runtime type payload nil))
-  ([runtime type payload authority]
+(defn- enqueue! [runtime type payload authority checkpoint-request]
    (let [reply (promise) candidate (volatile! nil)]
      (try
        (let [before (:model @(:state runtime))
@@ -1874,8 +1878,9 @@
                            (and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch]))
                                 (let [message (cond-> {:type type :payload payload :reply reply :expected-epoch epoch
                                                        :ingress-order (vswap! (:ingress-order runtime) inc)}
-                                                (and (= :command type) authority) (assoc :authority authority))]
-                                  (if (and (= :command type) (push-gesture-end? payload authority))
+                                                (and (= :command type) authority) (assoc :authority authority)
+                                                checkpoint-request (assoc ::checkpoint-request checkpoint-request))]
+                                  (if (and (= :command type) (push-gesture-terminal? payload authority))
                                     (do (enqueue-push-gesture-end! runtime message) true)
                                     (.offer ^LinkedBlockingQueue queue message)))))]
            (when-not accepted? (throw (ex-info "Show changed or command queue is full" {})))))
@@ -1884,7 +1889,17 @@
          (let [command-id (or (:command-id payload) (get-in payload [:command :command-id]))]
            (deliver reply (cond-> (merge {:status :rejected} (error-data error))
                             command-id (assoc :command-id command-id))))))
-     reply)))
+     reply))
+
+(defn submit!
+  "Enqueue an operation. Full restores are validated and resource-prepared off
+  the frame-owner lock, then committed atomically by the next owner cycle.
+  Use :cue-schedule and :cue-cancel for explicit musical launch timing.
+  Host adapters pass authenticated operator authority as a separate argument.
+  Serialized payloads cannot confer operator privileges."
+  ([runtime payload] (submit! runtime :command payload))
+  ([runtime type payload] (submit! runtime type payload nil))
+  ([runtime type payload authority] (enqueue! runtime type payload authority nil)))
 
 (defn quantized-cue-status
   "Return a queued, fired, cancelled or missed launch receipt by command ID."
@@ -2090,17 +2105,21 @@
   "Explicit REPL connection; no devices open at application startup. kind is
   :push-2/:push-3/:push-3-midi/:seaboard/:x-touch/:midi/:osc/:sensor. Options select ports,
   expression modes and bindings; imported namespaces never acquire devices.
-  Push 2 accepts :native-display? true for the Wayang parameter display and
-  :operator-gestures? true to record held scalar encoder edits. An explicit
-  :display transport takes precedence."
+  Push 2 and Push 3 accept :operator-gestures? true to record held scalar
+  encoder edits. Set :temporary-encoder-modifier to :shift, a button CC on
+  Push 2, or a captured button ID on Push 3 to restore the value on release.
+  Temporary edits cover typed cue params on Push 2 and numeric params on Push 3.
+  Push 2 accepts :native-display? true for the Wayang parameter display.
+  An explicit :display transport takes precedence."
   [runtime kind options]
   (let [id (:session-id options) epoch (get-in @(:state runtime) [:model :epoch])]
     (when-not (and (string? id) (seq id)) (throw (ex-info "Device requires session-id" {})))
     (locking (:devices runtime)
       (when-not @(:running runtime) (throw (ex-info "Show is stopped" {})))
       (when (get @(:devices runtime) id) (throw (ex-info "Device session already connected" {:session-id id})))
-      (let [operator-id (when (and (= :push-2 kind) (true? (:operator-gestures? options)))
-                          (str "push-2/" id "/" (UUID/randomUUID)))
+      (let [push-source (when (and (#{:push-2 :push-3} kind) (true? (:operator-gestures? options)))
+                          {:adapter kind :session-id id})
+            operator-id (when push-source (str (name kind) "/" id "/" (UUID/randomUUID)))
             open! (case kind :push-2 devices/open-push-2! :push-3 devices/open-push-3!
                          :push-3-midi devices/open-push-3-midi! :seaboard devices/open-seaboard! :x-touch devices/open-x-touch!
                          :midi devices/open-midi! :osc devices/open-osc! :sensor devices/open-sensor!
@@ -2119,15 +2138,16 @@
                                           :dispatch! (fn [command]
                                                        (heartbeat! runtime id)
                                                        (let [payload (assoc command :expected-epoch epoch)
-                                                             gesture? (and operator-id (#{:gesture/begin :gesture/sample :gesture/end :gesture/cancel}
-                                                                                         (:op command)))
+                                                             gesture? (and push-source (= push-source (:source command))
+                                                                           (#{:gesture/begin :gesture/sample :gesture/end :gesture/cancel}
+                                                                            (:op command)))
                                                              quantized? (or (= :cue/cancel-launch (:op command))
                                                                             (and (= :cue/launch (:op command))
                                                                                  (contains? command :grid)))
                                                              reply (if gesture?
                                                                      (submit! runtime :command
                                                                               (update payload :command-id #(str operator-id "/" %))
-                                                                              {:operator-id operator-id ::push-session-id id})
+                                                                              {:operator-id operator-id ::push-source push-source})
                                                                      (submit! runtime payload))]
                                                          (deref reply (if quantized? 0 device-command-wait-ms)
                                                                 (cond-> {:status :pending :command-id (:command-id command)}
@@ -2200,13 +2220,14 @@
   "Report available checkpoints for the current show, including after restart."
   [runtime]
   (when-let [owner (some-> (:recovery runtime) deref)]
-    (let [show-id (get-in @(:state runtime) [:model :show-id])
+    (let [{:keys [show-id] :as identity} (show-identity (:model @(:state runtime)))
           status (recovery/status owner)
           checkpoints (into {} (keep (fn [kind]
                                        (when-let [file (recovery/latest-file owner show-id kind)]
                                          [kind {:modified-at-ms (.lastModified file)}])))
                             [:recovery :named :prior])]
-      (cond-> (assoc status :show-id show-id :checkpoints checkpoints :available (set (keys checkpoints)))
+      (cond-> (assoc (merge status identity) :runtime-id (:id runtime)
+                     :checkpoints checkpoints :available (set (keys checkpoints)))
         (not= show-id (get-in status [:last-saved :show-id])) (dissoc :last-saved)))))
 
 (defn save-show!
@@ -2227,27 +2248,40 @@
   [runtime path]
   (submit! runtime :import {:source (read-checkpoint-source path)}))
 
+(defn- capture-checkpoint-identity [runtime expected]
+  (let [identity (show-identity (:model @(:state runtime)))]
+    (when (and expected (not= (assoc identity :runtime-id (:id runtime)) expected))
+      (throw (ex-info "Checkpoint operation belongs to a previous show session" {:code :stale-checkpoint-session})))
+    identity))
+
 (defn load-latest-show!
-  "Load the active show's latest :recovery, :named, or prior-session checkpoint."
-  [runtime kind]
-  (let [{:keys [show-id epoch]} (:model @(:state runtime))
-        owner (some-> (:recovery runtime) deref)
-        source (when owner
-                 (if (= :prior kind)
-                   (recovery/read-prior owner show-id read-checkpoint-source)
-                   (some-> (recovery/latest-file owner show-id kind) read-checkpoint-source)))]
-    (when-not source (throw (ex-info "Show checkpoint is unavailable" {:kind kind :show-id show-id})))
-    (submit! runtime :import {:runtime-id (:id runtime) :expected-epoch epoch
-                              :expected-source-show-id show-id :source source})))
+  "Load the active show's latest :recovery, :named, or prior-session checkpoint.
+  A remote caller can supply the exact runtime/show/epoch it received in status
+  and a receipt ID for the committed result stream."
+  ([runtime kind] (load-latest-show! runtime kind nil))
+  ([runtime kind expected] (load-latest-show! runtime kind expected nil))
+  ([runtime kind expected receipt-id]
+   (let [{:keys [show-id epoch]} (capture-checkpoint-identity runtime expected)
+         owner (some-> (:recovery runtime) deref)
+         source (when owner
+                  (if (= :prior kind)
+                    (recovery/read-prior owner show-id read-checkpoint-source)
+                    (some-> (recovery/latest-file owner show-id kind) read-checkpoint-source)))]
+     (when-not source (throw (ex-info "Show checkpoint is unavailable" {:kind kind :show-id show-id})))
+     (enqueue! runtime :import {:runtime-id (:id runtime) :expected-epoch epoch
+                                :expected-source-show-id show-id :source source}
+               nil
+               (when receipt-id {:id receipt-id :identity {:runtime-id (:id runtime) :show-id show-id :epoch epoch}})))))
 
 (defn discard-prior-recovery!
   "Dismiss the active show's prior-session checkpoint. Working and named saves
   keep their files. Returns true when the dismissal was published."
-  [runtime]
-  (let [captured (show-identity (:model @(:state runtime)))]
-    (boolean
-      (when-let [owner (some-> (:recovery runtime) deref)]
-        (recovery/discard-prior! owner (:show-id captured) (partial publish-checkpoint! runtime captured))))))
+  ([runtime] (discard-prior-recovery! runtime nil))
+  ([runtime expected]
+   (let [captured (capture-checkpoint-identity runtime expected)]
+     (boolean
+       (when-let [owner (some-> (:recovery runtime) deref)]
+         (recovery/discard-prior! owner (:show-id captured) (partial publish-checkpoint! runtime captured)))))))
 
 (defn activate-recovery!
   "Admit background checkpoints once the configured startup has settled."
