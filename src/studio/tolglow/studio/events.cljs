@@ -255,6 +255,11 @@
            epoch-changed? (conj [:dispatch [:studio/release-pointers]] [:dispatch [:chat/runtime-change]]
                                         [:dispatch [:fixtures/runtime-change]] [:dispatch [:connections/runtime-change]] [:dispatch [:sensors/runtime-change]] [:dispatch [:modulation/runtime-change]] [:dispatch [:patchbay/runtime-change]] [:dispatch [:waveform/runtime-change]] [:dispatch [:repl/runtime-change]] [:dispatch [:performance/runtime-change]] [:dispatch [:workspace/runtime-change]] [:dispatch [:subscribers/runtime-change]]
                                         (notice "Show restarted; controls follow the new epoch."))
+           (and (:show-checkpoints db)
+                (or (not (get-in db [:connection :connected?]))
+                    (not= (projection/identity-of (:view server))
+                          (projection/identity-of (get-in db [:server-projection :view])))))
+           (conj [:dispatch [:checkpoints/show-changed]])
            (and (get-in db [:connections :visible?])
                 (or epoch-changed?
                     (not (identical? (:connection-status presentation)
@@ -292,7 +297,9 @@
           :duplicate (cond-> {:db (-> db (dissoc :awaiting-full?) (assoc :connection {:connected? true}))
                               :studio/stream-reply [id {:op :ack :token (:token envelope)}]}
                        (and (:awaiting-full? db) (:recover-held? db))
-                       (assoc :fx [[:dispatch [:studio/reconcile-held]]])
+                       (update :fx (fnil conj []) [:dispatch [:studio/reconcile-held]])
+                       (and (:awaiting-full? db) (:show-checkpoints db))
+                       (update :fx (fnil conj []) [:dispatch [:checkpoints/show-changed]])
                        (and (:awaiting-full? db) (get-in db [:connections :visible?]))
                        (assoc :dispatch [:connections/pushed]))
           {:db (assoc db :awaiting-full? true)
