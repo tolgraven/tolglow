@@ -27,6 +27,7 @@
             [tolglow.studio.spatial-preview :as spatial-preview]
             [tolglow.studio.modulation :as modulation]
             [tolglow.studio.navigation :as nav]
+            [tolglow.studio.operator-history :as history]
             [tolglow.studio.page-routes :as pages]
             [tolglow.studio.parameter-widgets :as widgets]
             [tolglow.studio.numeric-display :as numeric]
@@ -133,6 +134,9 @@
       [:input#master {:type "range" :min 0 :max 1 :step 0.01 :value master
                       :aria-label "Master intensity" :on-change #(when-let [value (number-value %)] (input! [:studio/master value]))}]
       [:output#master-value (str (js/Math.round (* 100 master)) "%")]]
+     [:button#open-operator-history.button.operator-history-open
+      {:type "button" :aria-label "Open operator history" :aria-haspopup "dialog"
+       :on-click #(send! [:operator-history/open])} "History"]
      [:button#open-repl.icon-button.repl-open {:aria-label "Open Clojure REPL" :title "Clojure REPL · Ctrl+`"
                                               :on-click #(send! [:repl/toggle])} ">_"]
      [:button#blackout.blackout {:aria-pressed (boolean (:blackout? show))
@@ -875,6 +879,17 @@
    [:span.mobile-file-actions [file-actions true]]
    [:span#shortcut-hint "B blackout · Space transport · 1–8 views"]])
 
+(defn- operator-history []
+  (let [{:keys [open?] :as inspector} @(rf/subscribe [:operator-history/inspector])]
+    (when open?
+      [history/panel
+       (assoc inspector
+              :dispatch-local! #(input! [:operator-history/inspect %])
+              :command! #(send! [:operator-history/navigate %1 %2])
+              :on-close (fn [_]
+                          (send! [:operator-history/close])
+                          (some-> (.getElementById js/document "open-operator-history") .focus)))])))
+
 (defn studio []
   (let [db @(rf/subscribe [:studio/db])
         error (or (get-in db [:show :status :error :message]) (get-in db [:connection :error]))
@@ -897,6 +912,6 @@
        (when (= :develop (get-in db [:ui :view])) [workspace/panel db])
        (when (= :debug (get-in db [:ui :view])) [debug/panel])
        [footer db]]]
-     [cue-actions db] [prompt-dialog db] [repl/console-view]
+     [cue-actions db] [prompt-dialog db] [operator-history] [repl/console-view]
      (when-let [toast (get-in db [:ui :toast])]
        [:div#toast.toast {:class (when (:error? toast) "error") :role "status" :aria-live "polite"} (:message toast)])]))

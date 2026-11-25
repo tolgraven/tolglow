@@ -88,6 +88,10 @@
   {:schema-version 1 :next-order 0 :controllers [] :holds {}
    :show-id nil :epoch nil :last-beat nil})
 
+(defn- hold-record? [hold]
+  (and (map? hold) (contains? hold :until-beat)
+       (or (nil? (:until-beat hold)) (time/finite-number? (:until-beat hold)))))
+
 (defn- valid-state! [state]
   (when-not (and (map? state) (registry/data? state) (= 1 (:schema-version state))
                  (integer? (:next-order state)) (not (neg? (:next-order state)))
@@ -121,9 +125,15 @@
   (doseq [[id holds] (:holds state)]
     (when-not (and (string? id) (map? holds)) (fail! ::invalid-state "Invalid manual holds" {}))
     (doseq [[param hold] holds]
-      (when-not (and (keyword? param) (map? hold) (contains? hold :until-beat)
-                     (or (nil? (:until-beat hold)) (time/finite-number? (:until-beat hold))))
-        (fail! ::invalid-state "Invalid manual parameter hold" {:instance-id id :param param}))))
+      (when-not (and (keyword? param) (hold-record? hold))
+        (fail! ::invalid-state "Invalid manual parameter hold" {:instance-id id :param param}))
+      (when (contains? hold ::gesture-owner)
+        (let [{::keys [gesture-owner previous-hold]} hold]
+          (when-not (and (vector? gesture-owner) (= 3 (count gesture-owner)) (every? id? gesture-owner)
+                         (nil? (:until-beat hold))
+                         (or (nil? previous-hold)
+                             (and (hold-record? previous-hold) (not (contains? previous-hold ::gesture-owner)))))
+            (fail! ::invalid-state "Invalid gesture parameter hold" {:instance-id id :param param}))))))
   state)
 
 (defn validate-state
@@ -192,6 +202,45 @@
   (when-not (and (string? instance-id) (keys? parameter-keys))
     (fail! ::invalid-hold "Release needs an instance ID and parameter keys" {}))
   (update-in state [:holds instance-id] #(apply dissoc (or % {}) parameter-keys)))
+
+(defn hold-gesture-param
+  "Hold a sampled parameter until the gesture settles. A new explicit hold or
+  resume replaces this entry through the regular hold operations."
+  [state instance-id param owner]
+  (let [path [:holds instance-id param]
+        previous (get-in state path)]
+    (if (= owner (::gesture-owner previous))
+      state
+      (-> (hold state {:instance-id instance-id :params [param]})
+          (update-in path assoc ::gesture-owner owner ::previous-hold previous)))))
+
+(defn- committed-hold [hold]
+  (dissoc hold ::gesture-owner ::previous-hold))
+
+(defn settle-gesture-hold
+  "Settle only the hold the gesture still owns. Cancel restores the displaced
+  deadline, if any. Controller cells and schedules keep their current state."
+  [state instance-id param owner commit?]
+  (let [path [:holds instance-id param]
+        hold (get-in state path)]
+    (if (= owner (::gesture-owner hold))
+      (if commit?
+        (update-in state path committed-hold)
+        (if-let [previous (::previous-hold hold)]
+          (assoc-in state path previous)
+          (release-hold state instance-id [param])))
+      state)))
+
+(defn portable-holds
+  "Project the effective holds without live gesture ownership."
+  [holds]
+  (reduce-kv (fn [projected instance-id parameters]
+               (reduce-kv (fn [projected param hold]
+                            (if (contains? hold ::gesture-owner)
+                              (assoc-in projected [instance-id param] (committed-hold hold))
+                              projected))
+                          projected parameters))
+             holds holds))
 
 (defn- held? [holds id param beat]
   (when-let [hold (get-in holds [id param])]
@@ -478,6 +527,11 @@
                       (fail! ::clock-precision "Clock rebase exceeds the finite beat domain" {}))
                     shifted))
           shift-cell (fn [cell] (-> cell (update :at-beat shift) (update :until-beat shift)))
+          shift-hold (fn [hold]
+                       (cond-> hold
+                         (some? (:until-beat hold)) (update :until-beat shift)
+                         (some? (get-in hold [::previous-hold :until-beat]))
+                         (update-in [::previous-hold :until-beat] shift)))
           shifted (-> state
                       (assoc :last-beat beat)
                       (update :controllers
@@ -487,12 +541,7 @@
                                                    (fn [values]
                                                      (into {} (map (fn [[id parameters]]
                                                                      [id (into {} (map (fn [[param cell]] [param (shift-cell cell)])) parameters)])) values))))) %))
-                      (update :holds
-                              (fn [holds]
-                                (into {} (map (fn [[id parameters]]
-                                                [id (into {} (map (fn [[param hold]]
-                                                                   [param (if (some? (:until-beat hold))
-                                                                            (update hold :until-beat shift) hold)])) parameters)])) holds))))]
+                      (update :holds update-vals #(update-vals % shift-hold)))]
       (valid-state! shifted))))
 
 (defn restore-state
@@ -508,7 +557,7 @@
     (fail! ::invalid-restore "Restore needs show/epoch and an injective instance ID map" {}))
   (let [remap-values (fn [values] (into {} (keep (fn [[id value]] (when-let [next-id (get instance-ids id)]
                                                                  [next-id value]))) values))]
-    (assoc state :show-id show-id :epoch epoch :holds (remap-values (:holds state))
+    (assoc state :show-id show-id :epoch epoch :holds (remap-values (portable-holds (:holds state)))
            :controllers
            (into []
                  (keep (fn [controller]
