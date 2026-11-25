@@ -198,11 +198,11 @@
         schema (performance/xyz-schema group)
         point [(/ 32768 65535) (/ 127 255) 0.000123456789]
         [_ _ _ caption] (visual/space schema point point)
-        [_ _ [_ readings]] (visual/history-chart schema [{:beat 0 :values point}] 4)
+        [_ _ [_ _ readings]] (visual/history-chart schema [{:beat 0 :values point}] 4)
         all-fine (update group :components #(mapv (fn [[id axis]] [id (assoc axis :dmx-bits 16)]) %))]
     (is (= [:x :y :z] (mapv first (:components group))))
     (is (nil? (:dmx-bits schema)))
     (is (= 16 (:dmx-bits (performance/xyz-schema all-fine))))
     (is (= [:figcaption "0.50001 · 0.498 · 0.000123"] caption))
     (is (= ["X 0.50001" "Y 0.498" "Z 0.000123"]
-           (mapv #(apply str (drop 2 %)) readings)))))
+           (mapv (fn [[reading & args]] (apply str (drop 2 (apply reading args)))) readings)))))

@@ -24,9 +24,10 @@
     (let [schema {:type :number :bounds [0 1] :dmx-bits bits}
           point [value 0 1]
           [_ _ _ caption] (visual/space (assoc schema :type :vector :size 3) point point)
-          [_ _ [_ readings] _ axis] (visual/history-chart schema [{:beat 0 :values [value]}] 4)]
+          [_ _ [_ _ readings] _ axis] (visual/history-chart schema [{:beat 0 :values [value]}] 4)
+          [reading & args] (first readings)]
       (is (= [:figcaption (str expected " · 0 · 1")] caption))
-      (is (= expected (peek (first readings))))
+      (is (= expected (peek (apply reading args))))
       (is (= [:figcaption [:span "0 … 1"] [:span "4 beats"]] axis)))))
 
 (deftest dmx-domain-labels-distinguish-narrow-bounds
