@@ -161,6 +161,25 @@
       (is (empty? (:instances (model runtime))))
       (finally (show/stop! runtime)))))
 
+(deftest held-release-is-admitted-even-when-regular-owner-commands-fill-the-queue
+  (let [runtime (show/create-runtime {:workspace-options nil})
+        source {:adapter :push-2 :session-id "test"}
+        down {:op :cue/launch :cue-id :ember :command-id "press" :gesture-id "press"
+              :grid {:beats 1} :launch {:mode :held} :source source}
+        up {:op :cue/cancel-launch :command-id "release" :launch-command-id "press"
+            :reason :held-release :source source}]
+    (try
+      (is (= :pending (:status (apply-at! runtime :command down 100))))
+      (dotimes [i 256]
+        (show/submit! runtime {:op :master/set :value 1 :command-id (str "ordinary-" i)}))
+      (is (= :rejected (:status (deref (show/submit! runtime {:op :master/set :value 1}) 1000 nil))))
+      (let [reply (show/submit! runtime up)]
+        (is (not (realized? reply)))
+        (show/tick! runtime 500)
+        (is (= :cancelled (:status (deref reply 1000 nil))))
+        (is (empty? (:instances (model runtime)))))
+      (finally (show/stop! runtime)))))
+
 (deftest clock-selection-round-trip-invalidates-the-old-queue
   (let [runtime (show/create-runtime {:workspace-options nil})
         manager (connections/sync (:connections runtime))

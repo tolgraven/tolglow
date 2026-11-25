@@ -116,9 +116,10 @@
             {:model model :ack (cond-> (receipt model id)
                                  duplicate? (assoc :duplicate? true))}))))))
 
-(defn cancel [model identity {:keys [command-id reason]}]
-  (let [model (sync-clock model identity)]
-    (if-let [state (get-in model state-path)]
+(defn cancel [model identity {:keys [command-id reason] :as request}]
+  (let [model (sync-clock model identity)
+        target-error (wrong-target model request)]
+    (if-let [state (when-not target-error (get-in model state-path))]
       (let [status (:status (quantization/receipt state command-id))
             result (quantization/cancel state command-id (:clock-epoch state) (or reason :operator-cancel))
             receipt (:receipt result)]
@@ -126,7 +127,8 @@
                   (and (= :pending status) (= :cancelled (:status receipt)))
                   (emit :cue/launch-cancelled receipt))
          :ack receipt})
-      {:model model :ack {:command-id command-id :status :rejected :reason :unknown-intent}})))
+      {:model model :ack {:command-id command-id :status :rejected
+                          :reason (or target-error :unknown-intent)}})))
 
 (defn cancel-owned
   "Cancel a source's pending launch, or release its exact fired hold."

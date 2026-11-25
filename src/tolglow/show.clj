@@ -319,7 +319,8 @@
                     :keyframes (effect-keyframes/restored model)
                     :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?})
                     :status {}})
-      :queue (LinkedBlockingQueue. 256) :lock (Object.) :running (atom true)
+      :queue (LinkedBlockingQueue. 256) :cue-release-queue (LinkedBlockingQueue. 256)
+      :lock (Object.) :running (atom true)
       :venue-fog (atom {}) :fog-deadlines (atom nil)
       :clock clock :sink sink :pause-layer-cache (volatile! nil)
       :adaptive-keyframes (:adaptive-keyframes options) :cue-pad-previews (cue-pads/manager)
@@ -1110,6 +1111,7 @@
                  messages (java.util.ArrayList.)
                  inline-registrations (volatile! {})
                  _ (.drainTo ^LinkedBlockingQueue (:queue runtime) messages 256)
+                 _ (.drainTo ^LinkedBlockingQueue (:cue-release-queue runtime) messages 256)
                  _ (vreset! candidates (vec (keep #(get-in % [:payload :candidate]) messages)))
                  reactive-error (volatile! nil)
                  actions (try (connections/drain-actions! (:connections runtime))
@@ -1414,6 +1416,12 @@
                    (update :fixtures (partial fixture-patch/expand (get-in model [:registry :fixtures]))))]
     {:basis basis :rig (rig/prepare-edit basis proposed)}))
 
+(defn- ingress-queue [runtime type payload]
+  (if (or (= type :cue-cancel)
+          (and (= type :command) (= :cue/cancel-launch (:op payload))))
+    (:cue-release-queue runtime)
+    (:queue runtime)))
+
 (defn submit!
   "Enqueue an operation. Full restores are validated and resource-prepared off
   the frame-owner lock, then committed atomically by the next owner cycle.
@@ -1454,9 +1462,10 @@
                                         :result (calibration-session/solve scan (calibration/resolve-fixture-ids before (:verified-axis-fixture-ids payload)))))
                                (dissoc payload :runtime-id :expected-epoch)))
                            (dissoc payload :runtime-id :expected-epoch)))
+               queue (ingress-queue runtime type payload)
                accepted? (locking (:lock runtime)
                            (and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch]))
-                                (.offer ^LinkedBlockingQueue (:queue runtime)
+                                (.offer ^LinkedBlockingQueue queue
                                         {:type type :payload payload :reply reply :expected-epoch epoch})))]
            (when-not accepted? (throw (ex-info "Show changed or command queue is full" {})))))
        (catch Exception error
@@ -1509,12 +1518,13 @@
   (let [candidates (volatile! [])
         stop? (locking (:lock runtime)
                 (when (compare-and-set! (:running runtime) true false)
-                  (loop []
-                    (when-let [message (.poll ^LinkedBlockingQueue (:queue runtime))]
-                      (when-let [candidate (get-in message [:payload :candidate])]
-                        (vswap! candidates conj candidate))
-                      (deliver (:reply message) {:status :rejected :message "Show stopped"})
-                      (recur)))
+                  (doseq [queue [(:queue runtime) (:cue-release-queue runtime)]]
+                    (loop []
+                      (when-let [message (.poll ^LinkedBlockingQueue queue)]
+                        (when-let [candidate (get-in message [:payload :candidate])]
+                          (vswap! candidates conj candidate))
+                        (deliver (:reply message) {:status :rejected :message "Show stopped"})
+                        (recur))))
                   true))]
     ;; No cleanup waits while holding the owner lock: a closing device or agent
     ;; may synchronously dispatch, and must receive its stopped receipt promptly.
