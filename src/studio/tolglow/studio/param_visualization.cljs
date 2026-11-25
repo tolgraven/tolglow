@@ -111,6 +111,16 @@
       (widgets/finite? value) (str (js/Number (.toPrecision value 3)))
       :else "—")))
 
+(defn- component-reading [schema labels axis value push?]
+  (let [component (get (:component-schemas schema) axis schema)
+        exact (widgets/number-label component value)
+        label (get labels axis)
+        shown (if (and push? labels (widgets/finite? value))
+                (widgets/number-label component (js/Number (.toFixed value 3)))
+                (compact-number schema axis value))]
+    [:span {:style {:color (colors axis)} :title (str label " " exact)}
+     (when label (if push? [:b label] (str label " "))) shown]))
+
 (defn- domain-label [schema [low high]]
   (let [display (when (#{8 16} (:dmx-bits schema)) schema)]
     (str (widgets/number-label display low) " … " (widgets/number-label display high))))
@@ -121,7 +131,7 @@
     (get (or (:component-labels schema) ["X" "Y" "Z"]) component)
     component-label))
 
-(defn space [schema value plotted]
+(defn space [schema value plotted & [push?]]
   (let [actual (components schema value)
         xyz (some->> plotted (take 3) vec)
         kind (spatial-kind schema)
@@ -151,7 +161,11 @@
              [:circle {:cx px :cy py :r 4 :fill tint :stroke "#e8eee0" :stroke-width 1}]])
           (for [[i [tx ty]] (map-indexed vector [[92 36] [55 8] [14 36]])]
             ^{:key i} [:text.space-axis {:x tx :y ty :fill (colors i)} (get labels i)])]
-         [:figcaption (str/join " · " (map-indexed #(compact-number schema %1 %2) (take 3 actual)))]
+         (if push?
+           [:figcaption.push-reading
+            (for [[axis value] (map-indexed vector (take 3 actual))]
+              ^{:key axis} [component-reading schema labels axis value true])]
+           [:figcaption (str/join " · " (map-indexed #(compact-number schema %1 %2) (take 3 actual)))])
          [:small.parameter-domain caption]]))))
 
 (defn append-sample
@@ -198,16 +212,16 @@
                           ["" false] values))]
         {:bounds [low high] :paths (mapv (comp first row) (range (apply max (map #(count (:values %)) values))))}))))
 
-(defn history-chart [schema history window & [attach lead]]
-  (let [{:keys [bounds paths]} (chart-paths history window schema lead)]
+(defn history-chart [schema history window & [attach lead push?]]
+  (let [{:keys [bounds paths]} (chart-paths history window schema lead)
+        values (:values (peek history))
+        labels (when (> (count paths) 1)
+                 (or (:component-labels schema)
+                     (if (= :color (widgets/parameter-kind schema)) ["R" "G" "B" "A"] ["X" "Y" "Z" "W"])))]
     [:figure.parameter-history {:aria-label "Observed parameter history" :data-dmx-bits (:dmx-bits schema)}
-     [:div.history-reading
-      (for [[i v] (map-indexed vector (:values (peek history)))]
-        ^{:key i} [:span {:style {:color (colors i)}}
-                   (when (> (count paths) 1)
-                     (str (get (or (:component-labels schema)
-                                   (if (= :color (widgets/parameter-kind schema)) ["R" "G" "B" "A"] ["X" "Y" "Z" "W"])) i) " "))
-                   (compact-number schema i v)])]
+     [:div.history-reading {:class (when push? "push-reading") :data-components (count values)}
+      (for [[i v] (map-indexed vector values)]
+        ^{:key i} [component-reading schema labels i v push?])]
      [:svg {:view-box "0 0 100 44" :preserve-aspect-ratio "none" :role "img" :style {:overflow "hidden"}
             :aria-label (str "Last " window " beats")}
       (for [x [0 25 50 75 100]]
@@ -285,16 +299,22 @@
     (cond-> (assoc next :parameter-view preference :history-beats (:history-beats view) :visualization-clock clock)
       (seq entries) (assoc :parameter-identity identity :parameter-observations entries))))
 
-(defn push [view {:keys [schema effective-value value param id] :as parameter}]
+(defn push [view {:keys [schema effective-value value param id preview-samples] :as parameter} & [touched?]]
   (let [shown (if (some? effective-value) effective-value value)]
     (case (push-mode parameter (:parameter-view view))
       :spatial [space schema shown
                 (if-let [keyframe (get-in view [:parameter-observations (or param id)])]
                   (spatial-value schema keyframe (get-in view [:visualization-clock :time-ms]))
-                  (components schema shown))]
+                  (components schema shown)) true]
       :history [history-chart schema (get-in view [:parameter-observations (or param id)])
-                (or (some #{(:history-beats view)} zooms) 4)]
-      [widgets/typed-display parameter])))
+                (or (some #{(:history-beats view)} zooms) 4) nil nil true]
+      (if-let [trace (when (and (not touched?) (#{:number :integer :choice :enum} (widgets/parameter-kind schema)))
+                       (widgets/sparkline preview-samples))]
+        [:div.push-signal
+         trace
+         [:output.push-signal-value (widgets/value-label schema shown)
+          (when-let [unit (widgets/unit-label schema)] [:small unit])]]
+        [widgets/typed-display parameter]))))
 
 (rf/reg-sub ::clock
   (fn [db _]
