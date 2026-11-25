@@ -1,0 +1,82 @@
+{
+  "UNORM8": {
+    "8-bit wire round-trip": {
+      "samples": 256,
+      "changed": 0,
+      "max_error_codes": 0,
+      "distinct_output_codes": 256
+    },
+    "16-bit wire round-trip": {
+      "samples": 65536,
+      "changed": 65280,
+      "max_error_codes": 128,
+      "distinct_output_codes": 256
+    },
+    "8-bit after intermediate store": {
+      "samples": 16384,
+      "changed": 2510,
+      "max_error_codes": 1,
+      "distinct_output_codes": 155
+    }
+  },
+  "UNORM16": {
+    "8-bit wire round-trip": {
+      "samples": 256,
+      "changed": 0,
+      "max_error_codes": 0,
+      "distinct_output_codes": 256
+    },
+    "16-bit wire round-trip": {
+      "samples": 65536,
+      "changed": 0,
+      "max_error_codes": 0,
+      "distinct_output_codes": 65536
+    },
+    "8-bit after intermediate store": {
+      "samples": 16384,
+      "changed": 1,
+      "max_error_codes": 1,
+      "distinct_output_codes": 155
+    }
+  },
+  "FP16": {
+    "8-bit wire round-trip": {
+      "samples": 256,
+      "changed": 0,
+      "max_error_codes": 0,
+      "distinct_output_codes": 256
+    },
+    "16-bit wire round-trip": {
+      "samples": 65536,
+      "changed": 58367,
+      "max_error_codes": 16,
+      "distinct_output_codes": 7169
+    },
+    "8-bit after intermediate store": {
+      "samples": 16384,
+      "changed": 191,
+      "max_error_codes": 1,
+      "distinct_output_codes": 155
+    }
+  },
+  "FP8 E4M3": {
+    "8-bit wire round-trip": {
+      "samples": 256,
+      "changed": 207,
+      "max_error_codes": 8,
+      "distinct_output_codes": 49
+    },
+    "16-bit wire round-trip": {
+      "samples": 65536,
+      "changed": 65479,
+      "max_error_codes": 2048,
+      "distinct_output_codes": 57
+    },
+    "8-bit after intermediate store": {
+      "samples": 16384,
+      "changed": 12643,
+      "max_error_codes": 5,
+      "distinct_output_codes": 43
+    }
+  }
+}

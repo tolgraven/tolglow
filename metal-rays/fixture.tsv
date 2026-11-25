@@ -1,0 +1,51 @@
+#	tolglow-metal-rays-fixture-v1
+#	tolglow	c1fcdb9cffcf9329e736f29cd1cbe2efcce0cc8d
+#	afterglow	e1eb9ff50985a9e3e304b54ec7a97db735956c5a
+tri	floor	-6.0	0.0	5.0	6.0	0.0	5.0	6.0	0.0	-5.0
+tri	floor	-6.0	0.0	5.0	6.0	0.0	-5.0	-6.0	0.0	-5.0
+tri	back	-6.0	0.0	-5.0	6.0	0.0	-5.0	6.0	5.0	-5.0
+tri	back	-6.0	0.0	-5.0	6.0	5.0	-5.0	-6.0	5.0	-5.0
+tri	left	-6.0	0.0	5.0	-6.0	0.0	-5.0	-6.0	5.0	-5.0
+tri	left	-6.0	0.0	5.0	-6.0	5.0	-5.0	-6.0	5.0	5.0
+tri	right	6.0	0.0	-5.0	6.0	0.0	5.0	6.0	5.0	5.0
+tri	right	6.0	0.0	-5.0	6.0	5.0	5.0	6.0	5.0	-5.0
+tri	stage	-4.08	0.42	-2.54	4.08	0.42	-2.54	4.08	0.42	-4.84
+tri	stage	-4.08	0.42	-2.54	4.08	0.42	-4.84	-4.08	0.42	-4.84
+tri	screen-left	-2.0	0.0	-2.0	-1.0	0.0	-2.0	-1.0	4.0	-2.0
+tri	screen-left	-2.0	0.0	-2.0	-1.0	4.0	-2.0	-2.0	4.0	-2.0
+tri	screen-right	1.0	0.0	-2.0	2.0	0.0	-2.0	2.0	4.0	-2.0
+tri	screen-right	1.0	0.0	-2.0	2.0	4.0	-2.0	1.0	4.0	-2.0
+tri	screen-top	-1.0	3.0	-2.0	1.0	3.0	-2.0	1.0	4.0	-2.0
+tri	screen-top	-1.0	3.0	-2.0	1.0	4.0	-2.0	-1.0	4.0	-2.0
+tri	screen-bottom	-1.0	0.0	-2.0	1.0	0.0	-2.0	1.0	1.0	-2.0
+tri	screen-bottom	-1.0	0.0	-2.0	1.0	1.0	-2.0	-1.0	1.0	-2.0
+tri	overlap-first	3.0	1.0	-2.0	4.0	1.0	-2.0	4.0	3.0	-2.0
+tri	overlap-first	3.0	1.0	-2.0	4.0	3.0	-2.0	3.0	3.0	-2.0
+tri	overlap-second	3.25	1.0	-2.0	4.25	1.0	-2.0	4.25	3.0	-2.0
+tri	overlap-second	3.25	1.0	-2.0	4.25	3.0	-2.0	3.25	3.0	-2.0
+tri	almost-far	-4.0	1.0	-2.00001	-3.0	1.0	-2.00001	-3.0	3.0	-2.00001
+tri	almost-far	-4.0	1.0	-2.00001	-3.0	3.0	-2.00001	-4.0	3.0	-2.00001
+tri	almost-near	-4.0	1.0	-2.0	-3.0	1.0	-2.0	-3.0	3.0	-2.0
+tri	almost-near	-4.0	1.0	-2.0	-3.0	3.0	-2.0	-4.0	3.0	-2.0
+tri	oblique	-4.853553390593274	1.0	0.35355339059327373	-4.146446609406726	1.0	-0.35355339059327373	-4.146446609406726	3.0	-0.35355339059327373
+tri	oblique	-4.853553390593274	1.0	0.35355339059327373	-4.146446609406726	3.0	-0.35355339059327373	-4.853553390593274	3.0	0.35355339059327373
+ray	opaque-strip	1.75	2	0	0.0	0.0	-1.0	4.0	2.0	1	screen-right	screen-right
+ray	cutout-clear	0	2	0	0.0	0.0	-1.0	4.0	5.0	0	back	back
+ray	wall-behind-cutout	0	2	0	0.0	0.0	-1.0	6.0	5.0	1	back	back
+ray	inside-finite-edge	1.99	2	0	0.0	0.0	-1.0	4.0	2.0	1	screen-right	screen-right
+ray	outside-finite-edge	2.01	2	0	0.0	0.0	-1.0	4.0	5.0	0	back	back
+ray	inclusive-finite-edge	2	2	0	0.0	0.0	-1.0	4.0	2.0	1	screen-right	screen-right
+ray	cutout-jamb	1	2	0	0.0	0.0	-1.0	4.0	2.0	1	screen-right	screen-right
+ray	triangle-seam	1.5	2	0	0.0	0.0	-1.0	4.0	2.0	1	screen-right	screen-right
+ray	coplanar-overlap	3.6	2	0	0.0	0.0	-1.0	4.0	2.0	1	overlap-first	overlap-first,overlap-second
+ray	near-tie-distinct	-3.5	2	0	0.0	0.0	-1.0	4.0	2.0	1	almost-near	almost-near
+ray	wall-floor-tie	5	2	-3	0.0	-0.7071067811865476	-0.7071067811865476	4.242640687119285	2.82842712474619	1	floor	floor,back
+ray	start-on-surface	1.75	2	-2	0.0	0.0	-1.0	2.0	3.0	0	back	back
+ray	end-on-surface	1.75	2	0	0.0	0.0	-1.0	2.0	2.0	0	screen-right	screen-right
+ray	before-endpoint	1.75	2	0	0.0	0.0	-1.0	2.001	2.0	1	screen-right	screen-right
+ray	coplanar-segment	1.5	2	-2	1.0	0.0	0.0	0.25	4.5	0	right	right
+ray	two-sided-hit	1.75	2	-4	0.0	0.0	1.0	3.0	2.0	1	screen-right	screen-right
+ray	oblique-receiver	-4.5	2	2	0.0	0.0	-1.0	3.0	2.0	1	oblique	oblique
+ray	outside-room	6.125	2	0	0.0	0.0	-1.0	8.0	-	0	-	-
+ray	open-ceiling	0	4	0	0.0	1.0	0.0	3.0	-	0	-	-
+ray	stage-above-floor	0	3	-4	0.0	-1.0	0.0	4.0	2.58	1	stage	stage
