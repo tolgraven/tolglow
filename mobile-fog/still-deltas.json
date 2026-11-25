@@ -1,0 +1,38 @@
+[
+  {
+    "variant": "raster-34",
+    "pose": "audience",
+    "mean": 0.0909,
+    "p99": 1,
+    "gt8": 0.00006,
+    "gt24": 0,
+    "maxDelta": 31
+  },
+  {
+    "variant": "raster-34",
+    "pose": "overlap",
+    "mean": 0.0986,
+    "p99": 1,
+    "gt8": 0.00003,
+    "gt24": 0,
+    "maxDelta": 23
+  },
+  {
+    "variant": "raster-34",
+    "pose": "dense-plume",
+    "mean": 0.7931,
+    "p99": 3,
+    "gt8": 0.00001,
+    "gt24": 0,
+    "maxDelta": 20
+  },
+  {
+    "variant": "raster-34",
+    "pose": "foreground-edge",
+    "mean": 0.0834,
+    "p99": 1,
+    "gt8": 0.0001,
+    "gt24": 0.00001,
+    "maxDelta": 47
+  }
+]
