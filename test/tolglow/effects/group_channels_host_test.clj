@@ -8,6 +8,7 @@
             [tolglow.persistence :as persistence]
             [tolglow.show :as show]
             [tolglow.spatial.cues :as spatial]
+            [tolglow.studio :as studio]
             [tolglow.studio.web :as web]
             [tolglow.transit :as transit])
   (:import [java.io StringReader]
@@ -60,6 +61,30 @@
     (mapv #(bit-and 255 %) (take n (get-in output [:universes 1])))))
 
 (defn- dmx [runtime] (first (dmx-bytes runtime 1)))
+
+(deftest studio-projects-group-channels-from-the-same-committed-frame
+  (let [runtime (show/create-runtime {:model (model) :workspace-options nil})]
+    (try
+      (accepted! runtime 0 (configure (assoc grouping :active-overlay :cue-pages)))
+      (let [instance-id (launch! runtime 1 :last)
+            before @(:state runtime)
+            receipt (accepted! runtime 2 (level [:manual :accent] 0.4))
+            snapshot (show/snapshot runtime)
+            query {"runtime-id" (:runtime-id snapshot) "epoch" (str (:epoch snapshot))
+                   "revision" (str (:revision snapshot))}
+            current (:effect-group-channels (studio/stream-view runtime @(:state runtime)))
+            previous (:effect-group-channels (studio/stream-view runtime before))]
+        (is (= (:revision receipt) (:revision snapshot)))
+        (is (= current (show/effect-group-channels runtime)
+               (:effect-group-channels (studio/browser-snapshot runtime query))))
+        (is (= {:manual-path [:mix :accent] :overlay-candidates [:front :encore]
+                :overlay-group :front :member-level 0.2}
+               (select-keys (first (:instances current)) [:manual-path :overlay-candidates :overlay-group :member-level])))
+        (is (= [instance-id] (get-in current [:overlay 1 :matching-instance-ids])))
+        (is (= [] (get-in current [:overlay 1 :instance-ids])))
+        (is (= 1.0 (get-in previous [:manual 0 :groups 0 :level])))
+        (is (= 0.4 (get-in current [:manual 0 :groups 0 :level]))))
+      (finally (show/stop! runtime)))))
 
 (deftest fixture-overlay-follows-the-definition-rendered-on-the-reload-frame
   (doseq [policy [:preserve-state :restart], batch? [false true]]
