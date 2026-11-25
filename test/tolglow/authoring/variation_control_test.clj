@@ -267,7 +267,12 @@
                          :sink (assoc sink :render-with-receipt!
                                            (fn [handle view receipt]
                                              ((:render-with-receipt! sink) handle image receipt)
-                                             (.add staged (:pad-overlay view {}))))})
+                                             (.add staged
+                                                   (if-let [overlay (:pad-overlay view)]
+                                                     (assoc overlay :captured-level
+                                                            (some #(when (= :level (:param %)) (:value %))
+                                                                  (:parameters view)))
+                                                     {}))))})
                       :device :push-3 :input :view)
         options {:session-id "push3-variation-capture" :user-mode? true :expression-mode :poly-aftertouch
                  :cue-variation-pads? true :schedule! nil :display screen
@@ -320,7 +325,7 @@
         (packet! [0x93 13 100])
         (is (= :stale-variation (get-in (session/snapshot device) [:last-ack :code])))
         (is (= 0.77 (:level (current))))
-        (next-frame! saved?)
+        (next-frame! #(and (saved? %) (= 0.77 (:captured-level %))))
         (@transfer)
         (packet! [0x93 13 100])
         (is (= 0.77 (:level (current))) "A rejected pad remains overlay-owned until lift")
@@ -328,7 +333,7 @@
         (let [choice (some #(when (= [0 1] (:position %)) %) (:cells (projection :full)))]
           (pad! 13)
           (is (= (:params choice) (select-keys (current) (keys (:params choice))))))
-        (next-frame! saved?)
+        (next-frame! #(and (saved? %) (= (:level (current)) (:captured-level %))))
         (@transfer)
         (pad! 12)
         (is (= before (current)))
@@ -345,11 +350,12 @@
         (is (= :accepted (:status (submit! runtime {:op :param/set :instance-id id
                                                    :param :level :value 0.61}))))
         (session/refresh! device)
-        (next-frame! saved?)
+        (next-frame! #(and (saved? %) (= 0.61 (:captured-level %))))
         (@transfer)
         (cc! 29 127)
         (pad! 12)
         (cc! 29 0)
+        (is (= :accepted (get-in (session/snapshot device) [:last-ack :status])))
         (let [saved (filter #(= :saved (:kind %)) (:cells (projection :rows)))]
           (is (= [0.61] (mapv #(get-in % [:params :level]) saved))))
         (let [period (:period (current))
