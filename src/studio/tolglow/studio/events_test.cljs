@@ -102,6 +102,24 @@
       (is (= {:name "Restored venue"} (get-in effect [:db :ui :rig-draft])))
       (is (= [:checkpoints/refresh] (:dispatch effect))))))
 
+(deftest a-late-checkpoint-ack-keeps-edits-to-the-new-show
+  (let [{:keys [db]} (checkpoint-db)
+        db (update db :ui assoc :rig-dirty? true :rig-draft {:name "Old unsaved rig"})
+        chosen (:db (transition db [:checkpoints/confirm :restore :named]))
+        submitted (transition chosen [:checkpoints/submit])
+        closed (:db (transition (:db submitted) [:checkpoints/close]))
+        view (merge (:show base) checkpoint-owner {:epoch 8 :revision 4 :rig {:name "Restored rig"}})
+        installed (:db (full-frame closed view))
+        changed (:db (transition installed [:checkpoints/show-changed]))
+        edited (:db (transition changed [:studio/rig-set [:name] "Fresh edit"]))
+        ack (conj (get-in submitted [:studio/http :on-success]) {:status :accepted :epoch 8})
+        completed (transition edited ack)]
+    (is (= {:name "Restored rig"} (get-in installed [:ui :rig-draft])))
+    (is (false? (get-in installed [:ui :rig-dirty?])))
+    (is (= [:studio/toast "Restored Named save." false] (:dispatch completed)))
+    (is (= {:name "Fresh edit"} (get-in completed [:db :ui :rig-draft])))
+    (is (true? (get-in completed [:db :ui :rig-dirty?])))))
+
 (deftest checkpoint-catalog-confirmations-and-results-fence-stale-shows
   (let [{:keys [db loading]} (checkpoint-db)
         changed #(assoc-in % [:server-projection :view :epoch] 8)

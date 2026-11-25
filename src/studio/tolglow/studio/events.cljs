@@ -2,6 +2,7 @@
   "The studio application is data + re-frame transitions. I/O lives in effects."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
+            [tolglow.studio.checkpoints :as checkpoints]
             [tolglow.studio.fog-fields :as fog]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.page-routes :as pages]
@@ -232,6 +233,7 @@
                     (assoc-in [:ui :page-id] (if (some #(= page-id (:id %)) (:pages show)) page-id (:id (first (:pages show))))))
         updated (settle-connection-drafts updated (:server-presentation db) (get-in db [:server-projection :view]))
         updated (cond-> updated
+                  (checkpoints/replaces-rig-draft? db (:view server)) (assoc-in [:ui :rig-dirty?] false)
                   epoch-changed? (dissoc :ending-holds :section-pattern-request)
                   epoch-changed? (update-in [:ui :definition] dissoc :publishing? :publication)
                   epoch-changed? (update-in [:ui :auto-form] dissoc :target-activity? :activity-target))

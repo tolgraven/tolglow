@@ -22,13 +22,18 @@
     {:db (dissoc db :show-checkpoints) :dispatch [:studio/toast message error?]}))
 
 (defn- restored [db kind]
-  (-> db
-      (assoc-in [:ui :rig-dirty?] false)
-      (assoc-in [:ui :rig-draft] (get-in db [:show :rig]))
-      (finish (str "Restored " (checkpoint-name kind) ".") false)))
+  (finish db (str "Restored " (checkpoint-name kind) ".") false))
 
 (defn- same-show? [a b]
   (= (dissoc a :epoch) (dissoc b :epoch)))
+
+(defn replaces-rig-draft? [db view]
+  (let [{:keys [action identity phase epoch]} (get-in db [:show-checkpoints :operation])]
+    (when (and (= :restore action) (= identity (identity-of db)))
+      (let [next-identity (projection/identity-of view)]
+        (and (same-show? identity next-identity)
+             (< (:epoch identity) (:epoch next-identity))
+             (or (not= :awaiting-view phase) (= epoch (:epoch next-identity))))))))
 
 (rf/reg-event-fx :checkpoints/open
   (fn [{:keys [db]} _]
