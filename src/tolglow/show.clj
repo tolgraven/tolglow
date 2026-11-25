@@ -2099,7 +2099,7 @@
   Temporary edits cover typed cue params on Push 2 and numeric params on Push 3.
   Push 2 accepts :native-display? true for the Wayang parameter display.
   An explicit :display transport takes precedence. Set :cue-variations? true
-  for the Push 2 Note-button variation overlay and exact beat-ratio edits."
+  for exact beat-ratio edits on both models and the Push 2 Note-button overlay."
   [runtime kind options]
   (let [id (:session-id options) epoch (get-in @(:state runtime) [:model :epoch])]
     (when-not (and (string? id) (seq id)) (throw (ex-info "Device requires session-id" {})))
@@ -2116,8 +2116,10 @@
             options (cond-> options
                       push-source (assoc :operator-gestures? true :target-search targets/search
                                          :launch-receipt cue-timing/receipt)
+                      (and push-source (true? (:cue-variations? options)))
+                      (assoc :parameter-editor variations/edit-parameter)
                       (and (= kind :push-2) (true? (:cue-variations? options)))
-                      (assoc :pad-overlay push-variations/pad-overlay :parameter-editor variations/edit-parameter)
+                      (assoc :pad-overlay push-variations/pad-overlay)
                       (and (= kind :push-2) (:native-display? options) (not (:display options)))
                       (assoc :display (push-native-display runtime))
                       (and (= kind :push-2) (not (contains? options :feedback-source)))
