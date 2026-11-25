@@ -168,8 +168,15 @@ function advance() {
     publish();
 
     const waiting = frames.find(frame => frame.fence);
-    if (waiting) pollAgain(waiting);
-    else {
+    if (waiting) {
+      pollAgain(waiting);
+      // A saturated GPU always has a draw outstanding. Auto still has to see
+      // those samples; it only asks for a drain before replacing resources.
+      if (pendingLoad && canDraw() && !engine.resizePending) {
+        engine.measureLoad(pendingLoad.elapsed, pendingLoad.now, false);
+        pendingLoad = null;
+      }
+    } else {
       clearTimeout(pollTimer); pollTimer = null;
       // Changed projections and quality tiers can replace GPU resources. Their
       // application waits for every submitted draw, even if a bitmap is ready.

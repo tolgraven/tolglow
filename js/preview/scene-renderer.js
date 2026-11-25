@@ -374,7 +374,10 @@ export class SceneRenderer {
     this.totalFixtureCount = (rig.fixtures || []).length;
     this.lightEntries = [];
   }
-  measureLoad(elapsed, now) {
+  // `drained` is false while submitted draws are still on the GPU. A new
+  // internal scale is applied by the next draw after they complete. A tier
+  // change replaces fog and shadow resources, so it first requests that drain.
+  measureLoad(elapsed, now, drained = true) {
     // Shader compilation is a one-time cost. Use consecutive warm samples and
     // hysteresis so the targets do not resize on every display callback.
     if (this.qualityChoice !== 'auto' || this.draws < 2 || !this.visible) return;
@@ -390,6 +393,7 @@ export class SceneRenderer {
       const direction = this.overBudget >= 8 && scale === .5 ? -1 : this.underBudget >= 60 && scale === 1 ? 1 : 0;
       const next = adjacentQuality(this.quality, direction);
       if (next !== this.quality) {
+        if (!drained) {this.resizePending = true; return;}
         const sameRaster = rasterBudget(next, this.qualityChoice, this.softwareRenderer)
           === rasterBudget(this.quality, this.qualityChoice, this.softwareRenderer);
         this.renderScale = direction < 0 ? (sameRaster ? scale : .65) : .9;

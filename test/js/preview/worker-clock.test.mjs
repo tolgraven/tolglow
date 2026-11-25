@@ -401,3 +401,31 @@ test('the worker samples the display itself when the page reports a starved call
   w.update();
   assert.equal(w.engine.targetHz, 60);
 });
+
+test('Auto lowers its internal scale while a saturated GPU always has a draw outstanding', async t => {
+  const w = worker({quality: 'auto', work: 2}); t.after(() => w.dispose());
+  await w.refresh(1000 / 60);
+  surfaceFor(w);
+  // From here each draw takes fifty milliseconds to complete and a second one
+  // is always queued behind it, as on a large rig at full resolution.
+  w.fenceReady = false;
+  let time = 1000 / 60, done = 1;
+  await w.refresh(time += 1000 / 60);
+  for (let step = 0; step < 60; step++) {
+    await w.refresh(time += 50);
+    if (w.engine.renderScale < 1) break;
+    assert.equal(w.fences.size, 2, 'the queue stays full until Auto reacts');
+    w.completeThrough(++done); await w.advance(time + 3);
+  }
+  assert.ok(w.engine.renderScale < 1, 'sustained overload must reduce the scene raster');
+  assert.equal(w.engine.resizePending, true);
+  assert.equal(w.fences.size, 1, 'a draw was still outstanding when the decision was taken');
+  // The new raster waits for the submitted draws. Nothing else is submitted meanwhile.
+  const submitted = w.draws.length;
+  await w.refresh(time += 50);
+  assert.equal(w.draws.length, submitted);
+  w.fenceReady = true; await w.advance(time += 10);
+  assert.equal(w.fences.size, 0);
+  await w.refresh(time += 50);
+  assert.equal(w.draws.length, submitted + 1);
+});
