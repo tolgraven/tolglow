@@ -252,7 +252,8 @@
        (let [snapshot (snapshot!) latest (:model snapshot)
              touch (get (:touches local) (peek (:touch-order local)))
              type (get-in latest [:instances (:instance-id touch) :definition :params (:param touch) :type])]
-         (if (and (:ready? local) (not (:target-picker local)) (not (#{:color :enum} type))
+         (if (and (:ready? local) (not (:target-picker local)) (not (:pad-overlay local))
+                  (not (#{:color :enum} type))
                   (not= pages/recent-page-id (:page-id local))
                   (= [(:show-id model) (:epoch model)] [(:show-id latest) (:epoch latest)]))
            (push-grid service lease snapshot (:page-id local) (:origin local))
