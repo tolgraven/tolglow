@@ -10,6 +10,7 @@
                                :started-at-ms 4000 :started-at-beat 8}}
             :settings {:autopilot {:signals {:bass {:variable [:audio/energy]}
                                             :four {:waveform :saw :period {:beats 4}}}}}})
+
 (defn- near? [a b] (< (abs (- a b)) 1e-8))
 
 (deftest named-show-variables-cue-params-and-numeric-stacks

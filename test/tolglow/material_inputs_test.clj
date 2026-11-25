@@ -13,8 +13,11 @@
             [tolglow.persistence :as files]))
 
 (def audio {:op :variable :path [:audio :features :low-rms]})
+
 (def tint {:op :variable :path [:controller "watch" :tint] :type :vec3})
+
 (def wet {:op :variable :path [:faders 0]})
+
 (def transmission
   {:name "Bass transmission" :mode :multiply :inputs {:gain audio} :glsl "gain"})
 

@@ -8,11 +8,15 @@
 
 (def ^:private defaults {:enabled? false :version 1 :show-seed 0 :on :beat
                          :patterns [] :min-confidence 0.5 :max-causal-age-ms 750.0})
+
 (def ^:private max-causal-events 256)
 
 (defn- finite? [x] (and (number? x) (Double/isFinite (double x))))
+
 (defn- confidence? [x] (and (finite? x) (<= 0 x 1)))
+
 (defn- counter? [x] (and (integer? x) (<= 0 x)))
+
 (defn- id? [x] (or (keyword? x) (and (string? x) (seq x)) (integer? x) (uuid? x)))
 
 (defn override-settings [options]

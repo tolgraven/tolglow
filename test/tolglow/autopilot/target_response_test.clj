@@ -4,6 +4,7 @@
             [tolglow.autopilot.target-response :as response]))
 
 (defn- levels [b a] {:brightness b :activity a})
+
 (defn- tick [old clock target seed opts]
   (response/advance (:state old) clock target seed opts))
 

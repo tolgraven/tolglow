@@ -8,15 +8,23 @@
 
 (def channels
   [[:value "Value"] [:slope "Slope"] [:angular-velocity "Angular velocity"] [:jagginess "Jagginess"]])
+
 (def category-colors
   {"smooth" "#b6ce9b" "angular" "#dbbd80" "discontinuous" "#d99ca6" "composite" "#9ebfd5"})
+
 (def entry-defaults {:open? false :active? false :channel :value :settings {} :request-id 0})
+
 (defn- wire [value] (events/wire-id value))
+
 (defn- entry [db key] (merge entry-defaults (get-in db [:ui :waveform :entries key])))
+
 (defn- put-entry [db key value] (assoc-in db [:ui :waveform :entries key] value))
+
 (defn request-token [db]
   [(get-in db [:show :runtime-id]) (get-in db [:show :epoch]) (get-in db [:ui :waveform :generation] 0)])
+
 (defn picker-key [instance-id parameter] [(or (wire instance-id) "draft") (wire parameter)])
+
 (defn waveform-schema? [schema] (= "waveform-selector" (wire (:semantic/type schema))))
 
 (defn choice-index
@@ -35,6 +43,7 @@
   (let [raw (str/trim (str value)) n (js/Number raw)]
     (when (or (str/blank? raw) (not (js/Number.isFinite n)))
       (throw (js/Error. (str label " needs a finite number.")))) n))
+
 (defn- numeric-bindings [bindings]
   (when-not (map? bindings) (throw (js/Error. "Waveform preview inputs must be a map.")))
   (into {} (for [[key value] bindings]
@@ -42,6 +51,7 @@
                (when-not (widgets/finite? value)
                  (throw (js/Error. (str "Preview input " (wire key) " needs a numeric value. An effect expression needs explicit preview bindings."))))
                [(wire key) value]))))
+
 (defn- portable-input [value]
   (cond (map? value) (into {} (map (fn [[k v]] [(wire k) (portable-input v)]) value))
         (sequential? value) (mapv portable-input value)
@@ -181,6 +191,7 @@
                          "amplitude" "Amplitude" "amplitude-per-cycle" "Amplitude / cycle"
                          "degrees-per-cycle" "Degrees / cycle" "amplitude-per-cycle-squared" "Amplitude / cycle²"
                          (widgets/label unit)))
+
 (defn- svg-chart [data channel]
   (when-let [{:keys [points minimum maximum low high zero-y x-min x-max]} (chart-data (:samples data) channel)]
     (let [channel-label (second (first (filter #(= channel (first %)) channels)))
@@ -235,6 +246,7 @@
 (defn- ensure-preview! [component]
   (let [[_ key selection options settings] (r/argv component)]
     (rf/dispatch [:waveform/ensure key selection options settings])))
+
 (def preview-component
   (r/create-class
    {:display-name "Registered waveform preview"
@@ -243,6 +255,7 @@
                             (when (not= (rest old-argv) (rest (r/argv component))) (ensure-preview! component)))
     :component-will-unmount (fn [component] (rf/dispatch [:waveform/deactivate (second (r/argv component))]))
     :reagent-render preview-view}))
+
 (defn preview
   "Reusable always-mounted preview. selection is a waveform ID or
   {:selector number :choices [...]}; options are numeric server preview options."
@@ -263,6 +276,7 @@
        [:span (or (:input-error e) (:error e) "Sampling waveform…")])
      [:span.waveform-compact-status (cond (:input-error e) (:input-error e) (:error e) (:error e)
                                          (not current?) "Updating shape…" :else "Live shape")]]))
+
 (def compact-preview-component
   (r/create-class
    {:display-name "Live waveform shape"

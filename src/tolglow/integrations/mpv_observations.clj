@@ -19,8 +19,11 @@
    [:speed-after "speed"] [:seeking-after "seeking"]])
 
 (def ^:private max-line 16384)
+
 (def ^:private max-chunk (* 16 max-line))
+
 (defn- finite? [x] (and (number? x) (Double/isFinite (double x))))
+
 (defn- identity? [x] (or (keyword? x) (and (string? x) (not (str/blank? x))) (integer? x) (uuid? x)))
 
 (defn- local-path [value]

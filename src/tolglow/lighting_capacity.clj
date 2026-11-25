@@ -58,7 +58,9 @@
                          (filter channels (keys photometry/emitter-spectrum)))})))
 
 (deftype MeterAddress [^long universe ^long slot ^long fineUniverse ^long fineSlot ^double pivot ^boolean coarseRange])
+
 (deftype MeterEmitter [^MeterAddress address ^double brightness ^double watts ^double red ^double green ^double blue])
+
 (deftype MeterHead [^MeterAddress dimmer ^MeterAddress sharedDimmer ^objects emitters shutters ^double weight])
 
 (defn- address [indices {:keys [coarse fine inverted-from] :as channel}]

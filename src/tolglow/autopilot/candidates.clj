@@ -158,6 +158,7 @@
         (first (sort-by #(abs (- (double amount) (double (:score %)))) rotated))))))
 
 (def ^:private brightness-keys [:level :brightness :intensity :dimmer :gain :amount])
+
 (def ^:private activity-keys [:speed :rate :frequency :strobe-rate :flash-rate :pulse-rate :duty-cycle])
 
 (defn adjustment

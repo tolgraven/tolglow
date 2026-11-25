@@ -11,20 +11,29 @@
            [org.freedesktop.dbus.types Variant]))
 
 (def root "/org/tolglow/audience")
+
 (def service (str root "/service0"))
+
 (def advert "/org/tolglow/advertisement")
+
 (def char-paths {:identity (str service "/char0") :hello (str service "/char1") :samples (str service "/char2")})
 
 (defn now [] (/ (System/nanoTime) 1.0e9))
 
 (defn- value [m k] (some-> ^Variant (get m k) .getValue))
+
 (defn- deny [] (throw (AccessDenied. "Audience gateway rejected the request")))
+
 (defn- unsupported [] (throw (NotSupported. "Operation unavailable")))
+
 (defn- readonly [] (throw (PropertyReadOnly. "GATT properties are read-only")))
+
 (defn- props [properties iface] (get properties iface {}))
+
 (defn- prop [properties iface k] (or (get-in properties [iface k]) (throw (UnknownProperty. k))))
 
 (defn- sender [] (some-> (AbstractConnectionBase/getCallInfo) .getSource))
+
 (defn- device [owner adapter options]
   (let [path (some-> ^DBusPath (value options "device") .getPath)]
     (when-not (and (= owner (sender)) path (.startsWith path (str adapter "/dev_"))
@@ -33,6 +42,7 @@
     path))
 
 (defn- flags [values] (Variant. (into-array String values) "as"))
+
 (defn- characteristic [owner adapter host kind properties]
   (let [path (char-paths kind)]
     (reify GattCharacteristic1

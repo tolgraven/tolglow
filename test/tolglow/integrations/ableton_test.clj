@@ -4,10 +4,14 @@
             [tolglow.integrations.ableton :as live]))
 
 (def envelope {:show-id :main :epoch 0 :command-id "press" :time-ms 0})
+
 (defn bridge [] (live/new-bridge {:mappings {36 {:cue-id :red :mode :held}}
                                  :parameters {1 {:cue-id :red :instance-id "0:1" :param :level :bounds [0 10]}}}))
+
 (def note-on {:type :note-on :channel 1 :note 36 :velocity 127})
+
 (def note-off (assoc note-on :type :note-off :velocity 0))
+
 (def recording {:track-armed? true :automation-armed? true :recording? true
                 :writable? true :destination-id "clip-7" :beat 12.5})
 

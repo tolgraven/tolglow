@@ -10,6 +10,7 @@
 
 (def defaults {:id "performance" :revision 0 :routes [] :dirty? false :edit-revision 0
                :generation 0 :pending nil :error nil :notice nil :server nil :visible? false})
+
 (def route-defaults
   {:id "" :source-id "" :source-kind "midi" :cue-id "" :param ""
    :input-low "0" :input-high "127" :source-low 0 :source-high 127 :low "0" :high "1" :combine "max" :base "0"
@@ -17,24 +18,36 @@
    :envelope? false :attack "0" :decay "0" :sustain "1" :release "1/2" :unit "beats"
    :attack-unit "beats" :decay-unit "beats" :release-unit "beats"
    :smoothing "" :smoothing-unit "beats" :timeout "4" :timeout-unit "beats" :min-confidence "0"})
+
 (defn state [db] (merge defaults (:patchbay db)))
+
 (defn token [db] [(get-in db [:show :runtime-id]) (get-in db [:show :epoch]) (:generation (state db))])
+
 (defn current? [db request-token] (= request-token (token db)))
+
 (defn- wire [id] (events/wire-id id))
+
 (defn- lookup [data id] (get data id (get data (keyword (wire id)) (get data (wire id)))))
+
 (defn source-ports [remote]
   (mapv #(assoc % :source-id (or (:source-id %) (:id %))) (or (:ports remote) (:sources remote) [])))
+
 (defn- value-of [event] (.. event -target -value))
+
 (defn- changed [s] (-> s (assoc :dirty? true :notice nil) (update :edit-revision inc)))
+
 (defn- number! [value label] (modulation/number-value value label))
+
 (defn- range! [low high label]
   (let [low (number! low (str label " minimum")) high (number! high (str label " maximum"))]
     (when-not (< low high) (throw (js/Error. (str label " needs an increasing range.")))) [low high]))
+
 (defn- duration! [value unit label positive?]
   (let [n (number! value label)]
     (when-not (and (#{"beats" "bars" "phrases" "ms"} unit) (if positive? (pos? n) (not (neg? n))))
       (throw (js/Error. (str label " needs " (if positive? "a positive" "a nonnegative") " duration."))))
     {(keyword unit) n}))
+
 (defn- duration-parts [duration fallback]
   (if-let [[unit value] (first duration)] [(str value) (wire unit)] fallback))
 
@@ -198,14 +211,19 @@
     (if (current? db request-token) (update db :patchbay merge {:pending nil :error (events/error-message error)}) db)))
 
 (defn- edit! [index field value] (rf/dispatch-sync [:patchbay/edit [:routes index field] value]))
+
 (defn- input-field [index route field label]
   [:label [:span label] [:input {:type "text" :input-mode "decimal" :value (get route field "")
                                :on-change #(edit! index field (value-of %))}]])
+
 (defn- select-field [index route field label options]
   [:label [:span label] [:select {:aria-label label :value (get route field) :on-change #(edit! index field (value-of %))}
                         (for [[value label] options] ^{:key value} [:option {:value value} label])]])
+
 (def units [["beats" "Beats"] ["bars" "Bars"] ["phrases" "Phrases"] ["ms" "Milliseconds"]])
+
 (def curves [["linear" "Linear"] ["smoothstep" "Smooth"] ["sine" "Sine"] ["ease-in" "Ease in"] ["ease-out" "Ease out"] ["step" "Step"] ["power" "Power"]])
+
 (defn- route-card [show sources index route]
   (let [source (some #(when (= (:source-id route) (wire (:source-id %))) %) sources)
         options (parameter-options show (:cue-id route))]

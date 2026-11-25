@@ -23,6 +23,7 @@
   (reset! rf-db/app-db db)
   (:effects (interceptor/execute event (remove #(= :do-fx (:id %))
                                                (registrar/get-handler :event (first event))))))
+
 (def base
   (assoc (events/initial-db "browser-session")
          :connection {:connected? true}
@@ -31,6 +32,7 @@
                 :effects [{:id "ember" :version 2}]
                 :pages [{:id "main" :cells []}]
                 :instances [{:id "7:9" :cue-id "ember" :phase "running" :params {:level 0.7}}]}))
+
 (defn with-stream [db]
   (:db (transition db [:studio/stream-opening (:session db) "connected"])))
 

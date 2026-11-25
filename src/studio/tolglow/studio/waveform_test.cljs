@@ -7,21 +7,28 @@
             [tolglow.studio.waveform :as waveform]))
 
 (def base (assoc (events/initial-db "test") :show {:runtime-id "runtime-a" :epoch 4}))
+
 (def preview-key ["4:1" "waveform"])
+
 (def choices [{:value 0 :id :sine :version 1 :label "Sine" :category :smooth}
               {:value 1 :id :user/pulse :version 2 :label "Pulse" :category :discontinuous}])
+
 (def selection {:selector 0 :choices choices})
+
 (def samples {:samples [{:phase 0 :value 0 :slope 2 :angular-velocity 720 :jagginess 0}
                         {:phase 0.5 :value 1 :slope 0 :angular-velocity 0 :jagginess 16}
                         {:phase 1 :value 0 :slope -2 :angular-velocity -720 :jagginess 0}]
               :units {:value "amplitude" :slope "amplitude-per-cycle" :angular-velocity "degrees-per-cycle"
                       :jagginess "amplitude-per-cycle-squared"}})
+
 (defn transition [db event]
   (reset! rf-db/app-db db)
   (:effects (interceptor/execute event (remove #(= :do-fx (:id %))
                                                (registrar/get-handler :event (first event))))))
+
 (defn ensure-preview [db selection]
   (transition db [:waveform/ensure preview-key selection {} {}]))
+
 (defn send-preview [ensured]
   (transition (:db ensured) (get-in ensured [:dispatch-later 0 :dispatch])))
 

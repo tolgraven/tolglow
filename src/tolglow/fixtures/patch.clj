@@ -5,6 +5,7 @@
             [tolglow.rig :as rig]))
 
 (defn- fail [message data] (throw (ex-info message data)))
+
 (defn- factory? [x] (or (fn? x) (and (var? x) (fn? @x))))
 
 (defn- definition [registry factories spec]

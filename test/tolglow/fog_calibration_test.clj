@@ -10,11 +10,14 @@
             [tolglow.studio :as studio]))
 
 (def nozzle {:id :jet :universe 0 :address 1 :channels {:fog 1} :fogger {:flow-m3-min 60}})
+
 (def room {:width 2 :height 2 :depth 5 :air-changes-per-hour 12})
+
 (def model (assoc (control/new-show {:registry {:effects {:jet {:id :jet :name "Fog" :version 1
                                                                :targets [:jet] :params {} :outputs {:fog 1}}}
                                                :cues {:go {:id :go :name "Burst" :version 1 :effect-id :jet}}}})
                   :rig {:fixtures [nozzle] :room room}))
+
 (defn- camera-readings []
   (let [fixture (assoc-in nozzle [:fogger :mixing-seconds] 3)
         plan (fog/plan (assoc room :measured-fog {:reference-path-m 3 :extinction-per-m 2.1

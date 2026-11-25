@@ -16,13 +16,16 @@
 (defn request [uri data]
   {:request-method :post :uri uri :headers {"host" "localhost"}
    :body (ByteArrayInputStream. (.getBytes (json/write-str (web/json-data data)) "UTF-8"))})
+
 (defn- transit-request [uri data studio-form?]
   {:request-method :post :uri uri
    :headers (cond-> {"host" "localhost" "content-type" "application/transit+json"
                      "accept" "application/transit+json"}
               studio-form? (assoc "x-tolglow-form" "studio-v1"))
    :body (ByteArrayInputStream. (.getBytes (transit/encode data) "UTF-8"))})
+
 (defn result [response] (json/read-str (:body response) :key-fn keyword))
+
 (def config
   {:devices {"push-main" {:enabled? true :auto? true :disabled-axes #{:glide}
                          :params {:level {:axis :pressure :range [0.1 0.8]

@@ -6,7 +6,9 @@
             [tolglow.registry :as registry]))
 
 (def usage-path [:extensions ::usage])
+
 (defn- label [id] (if (keyword? id) (subs (str id) 1) (str id)))
+
 (defn- id? [x] (or (keyword? x) (and (string? x) (not (str/blank? x)))))
 
 (def selector? selection/selector?)

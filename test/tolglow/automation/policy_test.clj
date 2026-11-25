@@ -5,7 +5,9 @@
 
 (def fixture {:id :head :position [0 0 0] :universe 1 :address 1
               :channels {:red 1 :green 2 :blue 3 :dimmer 4 :pan 5 :tilt 6}})
+
 (def movement {:id :movement :version 1 :outputs {:pan 0.3 :tilt 0.6}})
+
 (def emission {:id :emission :version 1 :outputs {:color [1 0 0] :dimmer 0.5}})
 
 (defn model []

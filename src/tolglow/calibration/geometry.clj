@@ -3,16 +3,27 @@
   Matrices are row-major; AR camera looks down -Z, image pixels have +Y down.")
 
 (defn finite? [v] (and (number? v) (Double/isFinite (double v))))
+
 (defn v3? [v] (and (vector? v) (= 3 (count v)) (every? finite? v)))
+
 (defn dot [a b] (reduce + (map * a b)))
+
 (defn add [a b] (mapv + a b))
+
 (defn sub [a b] (mapv - a b))
+
 (defn scale [a n] (mapv #(* n %) a))
+
 (defn norm [v] (Math/sqrt (dot v v)))
+
 (defn unit [v] (let [n (norm v)] (when (< n 1.0e-9) (throw (ex-info "Zero direction" {}))) (scale v (/ n))))
+
 (defn cross [[a b c] [x y z]] [(- (* b z) (* c y)) (- (* c x) (* a z)) (- (* a y) (* b x))])
+
 (defn rotate [r p] (mapv #(dot % p) r))
+
 (def identity-transform [1 0 0 0, 0 1 0 0, 0 0 1 0, 0 0 0 1])
+
 (defn rigid-transform! [m]
   (when-not (and (vector? m) (= 16 (count m)) (every? finite? m)
                  (every? #(< (Math/abs (double %)) 1.0e-5) (map - (subvec m 12) [0 0 0 1])))
@@ -22,6 +33,7 @@
                    (every? #(< (Math/abs (double %)) 1.0e-4) [(dot (r 0) (r 1)) (dot (r 0) (r 2)) (dot (r 1) (r 2))])
                    (> (dot (r 0) (cross (r 1) (r 2))) 0.999))
       (throw (ex-info "Transform must be a proper rigid rotation, not a reflection or scale" {})))) m)
+
 (defn transform-point [m p]
   (mapv #(dot (subvec m % (+ % 4)) (conj p 1.0)) [0 4 8]))
 
@@ -41,9 +53,11 @@
                                        (* -1 (/ (- v cy) fy) depth-m) (- depth-m)]))))
 
 (defn- median [xs] (let [v (vec (sort xs)) n (count v)] (if (odd? n) (v (quot n 2)) (/ (+ (v (dec (quot n 2))) (v (quot n 2))) 2.0))))
+
 (defn- weighted-mean [samples]
   (scale (reduce add [0 0 0] (map #(scale (:point %) (:weight % 1.0)) samples))
          (/ (reduce + (map #(:weight % 1.0) samples)))))
+
 (defn fit-position
   "Robust lens centre, with retained/rejected observations and metric residuals.
   Beam landing spots must never be passed as lens observations."
@@ -94,6 +108,7 @@
                                   (range 4))) a))
               transpose #(apply mapv vector %)]
           (recur (mul (mul (transpose j) a) j) (mul v j) (inc iteration)))))))
+
 (defn- fit-rotation [samples]
   (let [h (mapv (fn [i] (mapv (fn [j] (reduce + (map #(* (:weight % 1.0) (nth (:local %) i) (nth (:world %) j)) samples))) (range 3))) (range 3))
         [[xx xy xz] [yx yy yz] [zx zy zz]] h
@@ -105,13 +120,16 @@
     [[(- 1 (* 2 (+ (* y y) (* z z)))) (* 2 (- (* x y) (* z w))) (* 2 (+ (* x z) (* y w)))]
      [(* 2 (+ (* x y) (* z w))) (- 1 (* 2 (+ (* x x) (* z z)))) (* 2 (- (* y z) (* x w)))]
      [(* 2 (- (* x z) (* y w))) (* 2 (+ (* y z) (* x w))) (- 1 (* 2 (+ (* x x) (* y y))))]]))
+
 (defn angular-error [a b] (Math/toDegrees (Math/acos (max -1.0 (min 1.0 (dot (unit a) (unit b)))))))
+
 (defn rotation-euler [r]
   (let [y (Math/asin (max -1.0 (min 1.0 (- (get-in r [2 0])))))
         singular? (< (Math/abs (Math/cos y)) 1.0e-7)]
     (mapv #(Math/toDegrees %)
           [(if singular? (Math/atan2 (- (get-in r [1 2])) (get-in r [1 1])) (Math/atan2 (get-in r [2 1]) (get-in r [2 2])))
            y (if singular? 0.0 (Math/atan2 (get-in r [1 0]) (get-in r [0 0])))])))
+
 (defn fit-aim
   "Fit mounting rotation against verified axis calibration. Does NOT guess axis
   direction and mounting simultaneously: those are ambiguous without a prior."

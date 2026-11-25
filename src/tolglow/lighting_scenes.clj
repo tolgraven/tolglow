@@ -12,17 +12,27 @@
   (:import [java.util Arrays]))
 
 (def ^:private location [:extensions ::control :groups])
+
 (def ^:private light-fields (conj registry/emitter-attributes :color :dimmer))
+
 (def ^:private special-tags #{:code :code-cue :utility :show-control :control :system :modulation :scene})
+
 (defn- fail [message data] (throw (ex-info message data)))
+
 (defn- identifier? [x] (or (keyword? x) (and (string? x) (not (str/blank? x)))))
+
 (defn- unit? [x] (and (number? x) (<= 0 x 1)))
+
 (defn- fixtures [model] (get-in model [:rig :fixtures]))
+
 (defn- group-path [id] (conj location id))
+
 (defn- eligible? [{:keys [channels]}]
   (or (some #(contains? channels %) (disj light-fields :color :dimmer :uv))
       (and (:dimmer channels) (not (some #(contains? channels %) [:fog :haze :pump :relay :fan :uv])))))
+
 (defn eligible-ids [rig] (into [] (comp (filter eligible?) (map :id)) rig))
+
 (defn groups [model] (get-in model location {}))
 
 (defn snapshot [model eligible]

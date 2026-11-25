@@ -13,30 +13,44 @@
    :patch {:id "" :universe "1" :address "1" :x "0" :y "3" :z "0"
            :rx "0" :ry "0" :rz "0" :rgbw-policy "none"
            :pan-min "" :pan-max "" :tilt-min "" :tilt-max ""}})
+
 (def example-definition
   {:id "rgbw-par" :version 1 :name "RGBW PAR" :manufacturer "Custom"
    :mode "RGBW + dimmer" :footprint 5
    :channels {:red 1 :green 2 :blue 3 :white 4 :dimmer 5} :rgbw-policy :none})
+
 (defn- state [db] (merge defaults (get-in db [:ui :fixture-library])))
+
 (defn- store [db value] (assoc-in db [:ui :fixture-library] value))
+
 (defn- pretty [value] (with-out-str (pprint/pprint value)))
+
 (defn- parse-definition [text] (reader/read-string text))
+
 (defn- event-value [event] (.. event -target -value))
+
 (defn- input! [path value] (rf/dispatch-sync [:fixtures/set path value]))
+
 (defn- wire [value] (events/wire-id value))
+
 (defn request-token [db]
   [(get-in db [:show :runtime-id]) (get-in db [:show :epoch])
    (:request-generation (state db))])
+
 (defn current-request? [db token] (= (request-token db) token))
+
 (defn- callback [db event] (into [(first event) (request-token db)] (rest event)))
+
 (defn- reg-response-db [id handler]
   (rf/reg-event-db id
     (fn [db [_ token & arguments]]
       (if (current-request? db token) (handler db (into [id] arguments)) db))))
+
 (defn- reg-response-fx [id handler]
   (rf/reg-event-fx id
     (fn [{:keys [db] :as coeffects} [_ token & arguments]]
       (if (current-request? db token) (handler coeffects (into [id] arguments)) {}))))
+
 (defn- request [db operation path body success]
   {:db (store db (assoc (state db) :busy operation :error nil :notice nil))
    :studio/http (cond-> {:path path :timeout-ms 20000 :on-success (callback db success)
@@ -106,6 +120,7 @@
 (defn- channel-offsets [value]
   (cond (number? value) [value] (vector? value) value
         (map? value) (remove nil? [(:offset value) (:fine-offset value)]) :else []))
+
 (defn- patch-defaults [db definition]
   (let [fixtures (get-in db [:show :rig :fixtures] [])
         end (reduce max 0
@@ -300,6 +315,7 @@
    [:input (merge {:id (str "fixture-patch-" (name key)) :type "text" :input-mode "decimal" :disabled (boolean (:busy s))
                    :value (get-in s [:patch key] "")
                    :on-change #(input! [:patch key] (event-value %))} attrs)]])
+
 (defn- diagnostics [items]
   (when (seq items)
     [:ul.fixture-diagnostics {:aria-label "Fixture import and patch diagnostics"}
@@ -308,6 +324,7 @@
                      [:strong (str/capitalize (wire (:severity item)))]
                      [:span (:message item)]
                      (when (seq (:path item)) [:small (str/join " / " (map wire (:path item)))])])]))
+
 (defn- provenance [definition]
   (when-let [source (:provenance definition)]
     [:div.fixture-provenance
@@ -374,6 +391,7 @@
             :input-mode (if numeric? "decimal" "text")
             :value (get-in s [:field-edits key] (wire (get-in s [:definition key] "")))
             :on-change #(rf/dispatch-sync [:fixtures/edit-field key (event-value %)])}]])
+
 (defn- mapping-form [s]
   (when (map? (:definition s))
     [:div.fixture-type-form

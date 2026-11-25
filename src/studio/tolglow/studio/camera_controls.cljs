@@ -3,6 +3,7 @@
   (:require [re-frame.core :as rf]))
 
 (def defaults {:mode "orbit" :speed 2 :interacting false :reduced-motion false})
+
 (defn state [db] (merge defaults (:camera-navigation db)))
 (rf/reg-sub :camera-navigation/state (fn [db _] (state db)))
 (rf/reg-event-db :camera-navigation/observed
@@ -19,6 +20,7 @@
       {:studio/preview [:navigation-move [direction pressed?]]})))
 
 (defn- move! [direction active?] (rf/dispatch-sync [:camera-navigation/move direction active?]))
+
 (defn- move-button [direction label glyph]
   [:button.camera-move.button
    {:type "button" :aria-label label :title label

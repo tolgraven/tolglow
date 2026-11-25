@@ -15,12 +15,19 @@
            [java.util HexFormat]))
 
 (def effects [:ember :merlot :orchid :indigo :ice :sage :amber :moon])
+
 (def palette [[0.85 0.12 0.24] [0.24 0.64 0.52] [0.05 0.22 0.64] [0.75 0.55 0.12]])
+
 (def durations [{:beats 1/4} {:beats 1/2} {:beats 2} {:bars 1} {:bars 3} {:phrases 1}])
+
 (defn named [prefix & parts] (keyword "tour" (str/join "-" (cons prefix (map #(if (keyword? %) (name %) %) parts)))))
+
 (defn effect-form [id options] [:registry/publish :effects id options])
+
 (defn entry [family prompt form & [setup]] {:family family :prompt prompt :form form :setup (or setup [])})
+
 (defn latest [cue] [:instance/of cue])
+
 (defn dur [d] (let [[unit amount] (first d)] (str amount " " (name unit))))
 
 (defn authoring []

@@ -28,12 +28,19 @@
 ; in devdemo: checker, canvas, obstacles, spheres, particles, trails, trails_tmp, sprite, gravity, impulse, luminance...
 
 (defonce ^{:kind processing.opengl.PGraphics2D} pg-canvas (atom nil))
+
 (defonce ^{:kind processing.opengl.PGraphics2D} pg-world (atom nil)) ;physical objexts must be rendered seperately first so particles/flow can adhere
+
 (defonce ^{:kind processing.opengl.PGraphics2D} pg-img (atom nil)) ;physical objexts must be rendered seperately first so particles/flow can adhere
+
 (defonce ^{:kind DwPixelFlow} context (atom nil))
+
 (defonce ^{:kind DwFluid2D} fluid (atom nil))
+
 (defonce ^{:kind DwFlowFieldParticles} particles (atom nil))
+
 (defonce ^{:kind DwFlowField} gravity (atom nil))
+
 (defonce ^{:kind DwLiquidFX} liquidfx (atom nil))
 
 (def obstacle-color [40 40 40 255]) ;color of texture used as solid matter
@@ -58,13 +65,16 @@
 
 (defn pp+ [ps]
  (apply + (param/auto-resolve ps)))
+
 (defn pp+ [& ps]
  (apply + (param/auto-resolve ps)))
+
 (defmacro p+ [& ps]
  `(apply + (param/auto-resolve [~@ps])))
 
 (defn p-mathf [f & ps]
  (apply f (param/auto-resolve ps)))
+
 (defmacro p-math [f & ps]
  `(apply ~f (param/auto-resolve [~@ps])))
 
@@ -471,6 +481,7 @@
 
 
 (def reset-trigger (lfo "sawtooth" 0 80 27))
+
 (def run-trigger (lfo "sawtooth" 0 80 6))
 
 (defn draw []

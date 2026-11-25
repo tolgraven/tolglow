@@ -8,11 +8,16 @@
             [tolglow.effects :as fx]))
 
 (def phase-input :signal/phase)
+
 (def units {:phase :cycles :value :amplitude :slope :amplitude-per-cycle
             :angular-velocity :degrees-per-cycle :jagginess :amplitude-per-cycle-squared})
+
 (defn- fail! [path message] (throw (ex-info message {:errors [{:path path :message message}]})))
+
 (defn- identifier? [value] (or (keyword? value) (and (string? value) (not (str/blank? value)))))
+
 (defn- nodes [expression] (tree-seq #(and (map? %) (vector? (:args %))) :args expression))
+
 (defn- portable? [value]
   (and (registry/data? value) (not-any? record? (tree-seq coll? seq value))))
 

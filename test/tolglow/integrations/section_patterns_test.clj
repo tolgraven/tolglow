@@ -10,8 +10,11 @@
            [javax.sound.sampled AudioFileFormat$Type AudioFormat AudioInputStream AudioSystem]))
 
 (def ^:private reference {:id "sha256:recording" :version "sha256:analysis"})
+
 (def ^:private provenance {:source-id :player :session-id "play-1" :clock-id :host})
+
 (def ^:private stream {:source-id :main :session-id "capture-1"})
+
 (def ^:private policy {:enabled? true :version :feel-v1 :show-seed 514
                        :patterns [:soft :pulse :bloom :sweep]})
 

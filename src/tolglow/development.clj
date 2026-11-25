@@ -65,7 +65,9 @@
             (throw error)))))))
 
 (defn- identity-string [id] (if (keyword? id) (subs (str id) 1) id))
+
 (defn- keyword-id [id] (if (string? id) (keyword id) id))
+
 (defn- integer-query [value default]
   (if (nil? value) default
       (if (integer? value) value (Long/parseLong value))))

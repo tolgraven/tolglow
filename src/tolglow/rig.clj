@@ -8,9 +8,13 @@
             [tolglow.rig.surfaces :as surfaces]))
 
 (defn- error [path code message] {:path path :code code :message message})
+
 (defn- finite? [value] (and (number? value) (Double/isFinite (double value))))
+
 (defn- positive? [value] (and (finite? value) (pos? value)))
+
 (defn- vec3? [value] (and (vector? value) (= 3 (count value)) (every? finite? value)))
+
 (defn- identifier? [value] (or (keyword? value) (and (string? value) (not (str/blank? value)))))
 
 (defn- portable-errors [value path depth]

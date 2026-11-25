@@ -7,24 +7,29 @@
             [tolglow.studio.expressive-mapping :as expressive]))
 
 (def schema {:type "number" :bounds [0 1] :default 0.5})
+
 (def preview {:device-id "stage/push" :cue-id "user/wash" :effect-id "wash" :effect-version 2
               :axes {:pressure {:range [0 1]} :glide {:range [-1 1]}}
               :schemas {:user/level schema :color {:type "color" :default [1 0 0]}}
               :mappings [{:param "user/level" :axis "pressure" :origin "automatic" :schema schema}]
               :samples [{:position 0 :values {:user/level 0}} {:position 1 :values {:user/level 1}}]})
+
 (def base
   (expressive/open-state
     (assoc (events/initial-db "test") :show
            {:runtime-id "r1" :epoch 2 :cues [{:id "user/wash" :effect-id "wash"} {:id "user/move" :effect-id "move"}]
             :settings {:expressive {:devices {:stage/push {:auto? true :params {:user/level {:axis "pressure"}}}
                                              :stage/roli {:enabled? false}}}}})))
+
 (def ready (assoc-in base [:expressive-mapping :preview] preview))
+
 (defn transition [db event]
   (reset! rf-db/app-db db)
   (let [effects (:effects (interceptor/execute event (remove #(= :do-fx (:id %))
                                                            (registrar/get-handler :event (first event)))))]
     (cond-> effects (:studio/http effects)
       (update-in [:studio/http :body] #(js->clj (clj->js %) :keywordize-keys true)))))
+
 (defn db-after [db event] (:db (transition db event)))
 
 (deftest namespaced-identities-and-device-preservation

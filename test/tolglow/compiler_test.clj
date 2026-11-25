@@ -8,6 +8,7 @@
 
 (def fixture {:id :a :position [0.25 2 3] :universe 1 :address 1
               :channels {:red 1 :green 2 :blue 3 :dimmer 4 :pan 5 :tilt 6}})
+
 (defn context [time-ms]
   {:frame {:time-ms time-ms :fixtures [fixture (assoc fixture :id :b :address 10)]}
    :instance {:id "i" :started-at-ms 100 :params {} :phase :running}

@@ -3,6 +3,7 @@
             [tolglow.perf.independent-effects :as bench]))
 
 (defn- job [id] {:program {:id id :version 1} :instance {:id id}})
+
 (defn- runs [jobs footprints]
   (mapv #(mapv (comp :id :program) %) (bench/phases jobs footprints)))
 

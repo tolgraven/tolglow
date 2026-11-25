@@ -61,6 +61,7 @@
      publish!)))
 
 (def ^:private prior-name "prior.checkpoint")
+
 (def ^:private discard-prefix "tolglow-discarded-sha256 ")
 
 (defn- checkpoint-hash [file]

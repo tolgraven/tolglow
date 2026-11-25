@@ -27,6 +27,7 @@
       (walk/postwalk #(if (string? %) (str/replace % credential "[REDACTED]") %) data)))
 
 (defn- positive-int? [x] (and (integer? x) (pos? x)))
+
 (defn- now-ms [manager]
   (try (let [value ((get-in manager [:options :now-ms]))]
          (if (and (number? value) (Double/isFinite (double value)) (<= 0 value)) value (System/currentTimeMillis)))
@@ -34,6 +35,7 @@
 
 (def ^:private config-keys #{:provider :model :endpoint :temperature :max-tokens :timeout-ms
                              :connect-timeout-ms :max-rounds :max-tool-calls :stream?})
+
 (defn- normalized-config [config]
   (when config
     (when-not (and (map? config) (every? config-keys (keys config)))
@@ -50,6 +52,7 @@
            (catch Exception _ (throw (failure :invalid-state "Persisted provider configuration is invalid")))))))
 
 (defn- bounded-id? [id] (and (string? id) (not (str/blank? id)) (<= (count id) 128)))
+
 (defn- json-value? [value depth]
   (and (< depth 64)
        (or (nil? value) (boolean? value) (string? value) (keyword? value)

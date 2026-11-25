@@ -5,7 +5,9 @@
             [tolglow.integrations.agent :as agent]))
 
 (def config {:provider :self-hosted :endpoint "http://unused.test/v1/chat/completions" :model "fixture"})
+
 (defn event [data] (str "data: " (json/write-str data) "\n\n"))
+
 (defn response
   ([text] (response text []))
   ([text calls]

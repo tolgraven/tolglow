@@ -187,6 +187,7 @@
 
 (defn or-sparkle []
  {:vars {:color (color/like :white), :chance 0.001, :fade-time 500}})
+
 ;; joe's take: eh just do brunch's ideas in actual cue or even further down (live/max)
 ;; but DO sort larger sparkles, and vary intensity for new ones, + work with lightness...
 (defn sparkle "A random sparkling effect like a particle generator over the supplied fixture heads.
@@ -392,6 +393,7 @@
   :vars {:step (build-step-param) :min-add 1 :max-add 4 :min-dur 2 :max-dur 4
          :min-sat 0.40 :max-sat 0.80 :min-hue 0.4 :max-hue 0.7}
   :opts {:aim? false :min-x -5.0 :max-x 5.0 :min-y 0.0 :max-y 2.0 :min-z 0.5 :max-z 5.0}})
+
 ;; XXX tol, flakes as bounds in space instead of heads. So could map over multiple heads, change size to osc n shit
 (defn confetti "Mod confetti so can set max saturation, and limit colors to specific range or selection"
   [fixtures & {:keys [step min-add max-add min-dur max-dur min-sat max-sat min-hue max-hue
@@ -439,6 +441,7 @@
 
 (defn or-can-can []
  {:vars {:bars 1 :cycles 1 :stagger 0 :spread 0 :pan-min -30 :pan-max 30 :tilt-min -100 :tilt-max 100}})
+
 (defn can-can "Fix something reasonable of this... then apply to xyz, color etc"
   [fixture-keys & {:keys [bars cycles stagger spread pan-min pan-max tilt-min tilt-max] :as all}]
   (let [p (param/assemble all or-can-can :resolve-vars true)
@@ -493,6 +496,7 @@
 (defn or-pinstripes "Default map for [[pinstripes]]" []
  {:vars {:colors [(color/like :royalblue) (color/like :orangered4)], :step (build-step-param)}
   :opts {:tolerance 0}})
+
 (defn pinstripes "Divides heads into alternating columns by their _x_ positions (with configurable tolerance, default
   exact equality), assigning a color to each column, rotating by `:step` parameter. Fades between colors can be achieved by passing a step parameter that fades.
                   The tolerance used when creating the stripes can be controlled by `:tolerance`, default 0,
@@ -523,6 +527,7 @@
 (defn or-stripes "Default map for [[stripes]]" []
  {:vars {:step (build-step-param), :values [(color/like :royalblue) (color/like :orangered4)]}
   :opts {:tolerance 0.05}})
+
 (defn stripes "Pinstripes for generic params" ;works already. for color anyways...
  [fixtures target-fn & {:keys [step tolerance values] :as all}] ;prob want to also have multiple target fns? like every other strobes and colors, etc
 (let [p (param/assemble all or-stripes)
@@ -541,6 +546,7 @@
 (defn or-metronome-effect []
  {:vars {:down-color (color/like :red) :other-color (color/like :purple)}
   :opts {:metronome (:metronome *show*)}})
+
 (defn metronome-effect "Flashes the supplied fixtures to the beats of the show metronome, emphasizing the down beat, and colored by `:down-color` /
  `:other-color` optional keyword arguments. If desired, a Metronome other than the default show one kan be used."
  [fixtures & {:keys [down-color other-color metronome] :as all}]
@@ -593,6 +599,7 @@
 
 (defn or-sweep []
  {:vars {:width 0.1 :level 255 :fade true :scale 1.0}})
+
 (defn sweep "Dimmer sweep for any param... and adjustable positions"
   ;; [fixtures position & {:keys [width level fade effect-fn effect-keys scale name] :as args}]
   [fixtures position & {:keys [vars effect-fn effect-keys name] #_:as #_args
@@ -664,6 +671,7 @@ Designed to be run as a high priority queue, ideally held and with aftertouch ad
 
 (defn or-crossover-chase []
  {:vars {:beats 1, :fade-fraction 0.25, :cross-color (color/like :orangered), :end-color (color/like :orange)}})
+
 (defn crossover-chase "Create a sequential chase which gradually takes over all the moving heads from whatever they were doing, changes their colors, and makes
   them cross in an interesting pattern. By default, stages of the chase advance on every beat, but you can adjust that by passing in a
   different value for with the optional keyword argument `:beats`. To add a fade between stages, pass a non-zero value (up to 1, which
@@ -682,11 +690,13 @@ Designed to be run as a high priority queue, ideally held and with aftertouch ad
                               (color-fx/color-effect "Cross End color" (:end-color p) fixtures :include-color-wheels? true))
                     (fx/blank)])
            step :beyond :loop)))
+
 ;
  ;          CIRCLE CHAIN
 (defn or-circle-chain []
  {:vars {:bars 2 :radius 1.0 :stagger 0.0}
   :opts {:right-wall -5 :left-wall 5 :rear-wall 10 :stage-wall -2 :ceiling 4}}) ;temp, shouldnt be in hurrr
+
 (defn circle-chain "Create a chase that generates a series of circles on either the floor or the ceiling, causing a single head to trace out each, and passing them along from head to head.
   The number of bars taken to trace out each circle defaults to 2 and can be adjusted by passing a different value with the optional keyword argument `:bars`. The radius of each circle defaults to one
   meter, and can be adjusted with `:radius`. If you want each head to be tracing a different position in its circle, you can pass a value between zero and one with `:stagger`."
@@ -769,6 +779,7 @@ Designed to be run as a high priority queue, ideally held and with aftertouch ad
 
 (defn or-twirl []
  {:vars {:x 0.0 :y 0.0 :z -2.0 :radius 0.25 :beats 4 :cycles 1}})
+
 (defn twirl "Direction movement effect fanning lights out from set point and then making rotations around this new direction, with phase offset by fixture x pos"
   [fixtures & {:keys [x y z radius beats cycles effect-name]
                :or {x 0.0 y 0.0 z -2.0 radius 0.25 beats 4 cycles 1 effect-name "Twirl"}}]
@@ -783,6 +794,7 @@ Designed to be run as a high priority queue, ideally held and with aftertouch ad
 ;XXX maybe flip channels and channel-type??
 (defn or-channel []
  {:vars {:htp? false, :fixtures (all-fixtures), :effect-name "Channel level"}  })
+
 (defn channel "Fixed to [level targets & effect-name] standard format... Returns an effect which assigns a dynamic value to all the supplied channels. If `level is a keyword, it will be looked up as a show variable. If `htp?` is true, applies highest-takes-precedence (i.e.  compares the value to the previous assignment for the channel, and lets the highest value remain)."
   [level channels & {:keys [htp? effect-name fixtures channel-type]
                      :or {fixtures (all-fixtures), effect-name "Channel level"}}]
@@ -799,6 +811,7 @@ Designed to be run as a high priority queue, ideally held and with aftertouch ad
 
 (defn or-function []
  {:vars {:htp? false}})
+
 (defn function "Fixed to [level target &]. Returns an effect which assigns a dynamic value to all channels of the supplied fixtures or heads which have a range that implements the specified function. (Functions are a way for fixtures to use the same DMX channel to do multiple things, allocating ranges of values to get more dense use from a smaller number of channel allocations.) The `function` argument is the keyword by which the function information will be found for the supplied `fixtures`. The actual value sent for the channel associated with `function` for each fixture will be calculated by treating `level` as a percentage of the way between the lowest and highest DMX values assigned to that named function for the fixture. The name displayed for the effect in user interfaces is determined by `effect-name`.  If `:htp?` is passed with a `true` value, applies highest-takes-precedence (i.e. compares the value to the previous assignment for the channels implementing the function, and lets the highest value remain).  If you have multiple effects trying to control different functions which use the same channel, you are unlikely to get the results you want. Hopefully the fixture designers chose how to share channels wisely, avoiding this pitfall."
   [level function-type & {:keys [effect-name htp? fixtures] :or {fixtures (all-fixtures)}}]
   {:pre [(some? *show*) (some? function-type) #_(sequential? fixtures)]}
@@ -815,6 +828,7 @@ Designed to be run as a high priority queue, ideally held and with aftertouch ad
     (Effect. effect-name fx/always-active get-assigners fx/end-immediately)))
 
 (defn or-trigger [] {:vars {} :opts {}})
+
 (defn trigger "Trigger code a la code-cue, whenever level hits 1.0 (or arbitrary threshold?). Or when level changes?"
  [level f & {:keys [args effect-name trigger-check-fn throttle-fn]
              :or {effect-name "Code trigger", trigger-check-fn #(>= % 1.0)
@@ -891,7 +905,9 @@ Designed to be run as a high priority queue, ideally held and with aftertouch ad
        now (metro-snapshot (:metronome show))]
   (apply - (map :instant [now earlier])))
   0)) ; 0 elapsed since right now if earlier is nil, makes sense
+
 (def conditions [:default :mute :solo]) ;condition for mute and that? so dont rely on alpha 0 for it would then have to store sep anyways ; nil and :default would be same...
+
 ;; :mute easy enough. but :solo another fucking thing... guess it'd iterate over all effects pre-rendering and if any has :solo collect and only run those
 (defn effect "Wraps other effect-fns in a fade to blank, and possibly other shit later. Like prio adjustment/autorestart?"
   [effect alpha & {:keys [timeout timeout-interval envelope condition] ;XXX alpha/condition should be ev integrated into Effect protocol?

@@ -12,6 +12,7 @@
             [tolglow.studio.visibility :refer [watch-visibility]]))
 
 (def shapes [[:ball "Ball"] [:sphere "Sphere"] [:box "Box"] [:cylinder "Cylinder"] [:hdr "HDR spill"]])
+
 (defn default-spec [shape]
   (case shape
     :ball {:shape :ball :position [0 2 0] :radius 0.6 :velocity [2 1 0] :restitution 0.85 :hardness 0.7}
@@ -19,10 +20,15 @@
     :cylinder {:shape :cylinder :position [0 2 0] :radius 1 :height 2}
     :box {:shape :box :min [-1 0 -1] :max [1 2 1]}
     :hdr {:shape :hdr :threshold 0.01}))
+
 (defn sorted-ids [m] (sort-by (juxt picker/label pr-str) (keys m)))
+
 (defn fresh-id [prefix ids] (first (remove (set ids) (map #(str prefix "-" %) (iterate inc 1)))))
+
 (defn view [db] (picker/show db))
+
 (defn config [db] (get-in (view db) [:settings :spatial] {}))
+
 (defn active-id [db]
   (let [id (:chosen (drafts/state db)) volumes (:volumes (config db))]
     (if (contains? volumes id) id (first (sorted-ids volumes)))))
@@ -53,6 +59,7 @@
                      :body {:scope :spatial :values values :runtime-id (:runtime-id owner) :expected-epoch (:epoch owner)}
                      :on-success [::saved owner token message draft-key (get-in (drafts/state db) draft-key) selected]
                      :on-failure [::failed owner token]}})))
+
 (defn- parse-volumes [volumes]
   (update-vals volumes (fn [spec] (if (:radius-source spec) (update spec :radius-source signal/parse-spec) spec))))
 
@@ -137,11 +144,13 @@
 
 (def actions [[:flicker "Flicker"] [:strobe "Strobe"] [:aim "Aim at centre"] [:cue "Launch cue"]
               [:effect "Run effect"] [:random-cue "Ranked random cue"] [:random-effect "Ranked random effect"]])
+
 (defn binding-label [{:keys [action]}]
   (cond (:preset action) (second (some #(when (= (:preset action) (first %)) %) actions))
         (:cue-id action) (str "Cue · " (picker/label (:cue-id action)))
         (:effect-id action) (str "Effect · " (picker/label (:effect-id action)))
         :else (str "Ranked " (picker/label (get-in action [:random :kind])))))
+
 (defn- binding-editor [id bindings disabled?]
   (r/with-let [kind (r/atom :aim) length-unit (r/atom :contact) length (r/atom 1)
                record (r/atom nil) filter-to (r/atom nil) limit (r/atom 3) category (r/atom "")]
@@ -183,6 +192,7 @@
                                                  "Contact action added."])} "Bind action"]])))
 
 (defn- visible-value [n] (if (number? n) (.toFixed n 2) "—"))
+
 (defn- telemetry [id]
   (let [body @(rf/subscribe [:studio/remote [:spatial/body id]])
         members @(rf/subscribe [:studio/remote [:spatial/members id]])]

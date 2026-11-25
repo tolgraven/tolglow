@@ -31,6 +31,7 @@
          true)))
 
 (def ^:private loopback-names #{"localhost" "127.0.0.1" "[::1]" "[0:0:0:0:0:0:0:1]"})
+
 (def ^:private wildcard-names #{"0.0.0.0" "[::]" "[0:0:0:0:0:0:0:0]"})
 
 (defn- hostname [s]

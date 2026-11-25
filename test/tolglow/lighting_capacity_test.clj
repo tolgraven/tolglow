@@ -13,7 +13,9 @@
 
 (def rgb {:id :wash :universe 1 :address 511 :channels {:red 1 :green 2 :blue 3}
           :max-watts 120 :measured-relative-brightness 2.0})
+
 (def lamp {:id :lamp :universe 2 :address 2 :channels {:dimmer {:offset 1 :fine-offset 2 :inverted-from 0}}})
+
 (def fog {:id :fogger :universe 2 :address 4 :channels {:fog 1 :fan 2 :dimmer 3} :max-watts 1200})
 
 (defn near? [expected actual] (and (number? actual) (< (abs (- expected actual)) 0.006)))

@@ -7,24 +7,34 @@
             [tolglow.rig.reflectance :as reflectance]))
 
 (def session-path [:extensions ::session])
+
 (defn current [model] (get-in model session-path))
+
 (defn disarm [model]
   (if (current model) (update model :extensions dissoc ::session) model))
 
 (def ^:private visible #{:red :green :blue :white :amber :lime :cyan :warm-white :cold-white :cool-white})
+
 (def ^:private controlled (into visible [:dimmer :uv :strobe]))
+
 (defn- can-light? [{:keys [channels]}]
   (some #(contains? channels %) (conj visible :dimmer)))
+
 (defn- type-key [fixture]
   (if-let [t (:fixture-type-id fixture)] [:type t] [:fixture (:id fixture)]))
+
 (defn fixtures [model]
   (mapv (fn [f] {:id (:id f) :name (:name f) :type (second (type-key f)) :reflectance-capable? (boolean (reflectance/eligible-lamp? f))})
         (filter can-light? (get-in model [:rig :fixtures]))))
+
 (defn- check [ok message] (when-not ok (throw (ex-info message {:component :photometry}))))
+
 (defn- valid-rig? [model session]
   (and (= (:epoch model) (:epoch session)) (= (:rig model) (:base-rig session))))
+
 (defn- usable? [model session now]
   (and session (valid-rig? model session) (< now (:lease-until session))))
+
 (defn- latest-phase? [session now]
   (when-let [t (:presented-at session)] (<= 0 (- now t) 1500)))
 
@@ -82,6 +92,7 @@
                                   :ids ids :confirmed #{} :step-index 0 :lease-until (+ now 15000)})))
 
 (defn- level? [x] (and (number? x) (Double/isFinite (double x)) (<= 0 x 1)))
+
 (defn- apply-readings [model session {:keys [distance-m readings]}]
   (let [ids (:ids session)
         fixture-ids (calibration/resolve-fixture-ids model (mapv :fixture-id readings))

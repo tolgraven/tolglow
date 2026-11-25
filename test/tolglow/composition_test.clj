@@ -28,6 +28,7 @@
 (def ms-sequence {:id :sequence :mode :sequence :loop :once
                   :slots [{:id :first :cue-id :red :duration-ms 100}
                           {:id :second :cue-id :blue :duration-ms 100}]})
+
 (def beat-sequence {:id :beats :mode :sequence :timebase :beats :loop :loop
                     :slots [{:id :first :cue-id :red :duration-beats 1}
                             {:id :second :cue-id :blue :duration-beats 2}]})
