@@ -289,7 +289,7 @@
       (is (not-any? #(= :music/section-pattern (:type %)) (:events result)))
       (is (empty? (:instances result))))))
 
-(defn- play-reference-boundary [pattern interruption]
+(defn- play-reference-boundary [pattern interruption & [{:keys [delayed?]}]]
   (let [clock-ms (atom 27000)
         provenance {:source-id :local-player :session-id "test-session" :clock-id :physical}
         reference {:id "bass-arrangement" :version "sections-v1"}
@@ -308,9 +308,14 @@
         events (atom [])
         observe (fn [type extra]
                   (let [now (now-ms!)]
-                    (publish! (swap! position reference-position/advance now
-                                     (merge {:type type :provenance provenance :occurrence 0
-                                             :observed-at-ms now} extra)))))]
+                    (publish! (swap! position (fn [state]
+                                                (reference-position/advance state now
+                                                  (merge {:type type :provenance provenance :occurrence (:occurrence state)
+                                                          :observed-at-ms now} extra)))))))
+        tick (fn [time-ms]
+               (reset! clock-ms (+ 27000 time-ms))
+               (show/tick! runtime time-ms))
+        effects #(mapv :effect-id (:instances (show/snapshot runtime)))]
     (try
       (show/attach-observer! runtime :reference-patterns
         (fn [] {:events! (fn [_ emitted _ _] (swap! events into emitted))
@@ -318,17 +323,21 @@
       (let [replies (mapv (fn [[pattern effect]]
                             (show/register-event-subscriber! runtime
                               {:id pattern :match {:type :music/section-pattern :pattern pattern}
-                               :actions [{:op :effect/launch :select {:ids [effect] :pick :first}}]}))
-                          [[:slow :ember] [:pulse :ice]])]
+                               :actions [(cond-> {:op :effect/launch :select {:ids [effect] :pick :first}}
+                                           delayed? (assoc :delay {:beats 1}))]}))
+                          [[:slow :ember] [:pulse :ice]])
+            unrelated (when delayed?
+                        (show/register-event-subscriber! runtime
+                          (listener [{:op :cue/launch :select {:ids [:ice] :pick :first} :delay {:beats 1}}])))]
         (show/tick! runtime 0)
-        (is (= [:accepted :accepted] (mapv #(:status (deref % 1000 ::timeout)) replies))))
+        (is (= [:accepted :accepted] (mapv #(:status (deref % 1000 ::timeout)) replies)))
+        (when unrelated (is (= :accepted (:status (deref unrelated 1000 ::timeout))))))
       (doseq [position-ms [3700 3750 3800]]
         (reset! clock-ms (+ 27000 position-ms))
         (is (observe :match {:match {:reference reference :position-ms position-ms
                                      :rate 1.0 :score 0.95}})))
       (is (= :locked (:status (state!))))
-      (reset! clock-ms 30850)
-      (show/tick! runtime 3850)
+      (tick 3850)
       (is (= :reference (get-in @(:state runtime) [:section-pattern-state :pending :mode])))
       (when interruption (reset! clock-ms 30950))
       (case interruption
@@ -338,16 +347,32 @@
                 (is (= :unavailable (:status (state!)))))
         :override (let [reply (show/submit! runtime :settings
                                 {:scope :section-patterns :values {:override? true}})]
-                    (show/tick! runtime 3950)
+                    (tick 3950)
                     (is (= :accepted (:status (deref reply 1000 ::timeout))))
                     (is (nil? (get-in @(:state runtime) [:section-pattern-state :pending]))))
         nil)
-      (doseq [time-ms [4000 4025 4100]]
-        (reset! clock-ms (+ 27000 time-ms))
-        (show/tick! runtime time-ms))
-      {:patterns (filterv #(= :music/section-pattern (:type %)) @events)
-       :bars (filterv #(= :clock/bar (:type %)) @events)
-       :effects (mapv :effect-id (:instances (show/snapshot runtime)))}
+      (when delayed?
+        (is (true? ((:events! (show/audio-callbacks runtime)) [{:type :audio/kick}]))))
+      (tick 4000)
+      (when delayed?
+        (is (= {:kicks 9.0 pattern 9.0}
+               (into {} (map (juxt :subscriber :due-beat))
+                     (get-in @(:state runtime) [:model :event-subscribers :runs])))))
+      (when (= :seek-after-admission interruption)
+        (reset! clock-ms 31010)
+        (is (observe :seek {}))
+        (is (= :unavailable (:status (state!))))
+        (doseq [time-ms [4050 4090 4130]]
+          (reset! clock-ms (+ 27000 time-ms))
+          (is (observe :match {:match {:reference reference :position-ms (- time-ms 3000)
+                                       :rate 1.0 :score 0.95}})))
+        (is (= [:locked 1] ((juxt :status :occurrence) (state!)))))
+      (tick (if (= :seek-after-admission interruption) 4130 4100))
+      (let [before-delay (effects)]
+        (when delayed? (tick 4500))
+        {:patterns (filterv #(= :music/section-pattern (:type %)) @events)
+         :bars (filterv #(= :clock/bar (:type %)) @events)
+         :effects-before-delay before-delay :effects (effects)})
       (finally (show/stop! runtime)))))
 
 (deftest trusted-reference-uses-its-monotonic-clock-and-revokes-a-seeked-forecast
@@ -369,6 +394,16 @@
     (doseq [suppressed [seeked overridden]]
       (is (empty? (:patterns suppressed)))
       (is (empty? (:effects suppressed))))))
+
+(deftest a-seek-revokes-an-admitted-pattern-without-affecting-other-delayed-cues
+  (let [healthy (play-reference-boundary :slow nil {:delayed? true})
+        sought (play-reference-boundary :slow :seek-after-admission {:delayed? true})]
+    (is (= 1 (count (:patterns healthy)) (count (:patterns sought))))
+    (is (empty? (:effects-before-delay healthy)))
+    (is (empty? (:effects-before-delay sought)))
+    (is (= 2 (count (:effects healthy))))
+    (is (= #{:ember :ice} (set (:effects healthy))))
+    (is (= [:ice] (:effects sought)))))
 
 (deftest middleware-can-update-variables-and-queue-actions-without-blocking-the-owner
   (let [entered (promise) release (promise)

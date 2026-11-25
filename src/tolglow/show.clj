@@ -980,14 +980,17 @@
         {:reference-state position
          :reference-now-ms ((get-in runtime [:publisher :now-ms]))}))))
 
+(defn- section-clock-session [runtime model]
+  (str (:epoch model) "/" (get-in model [:transport :source-selection-epoch]) "/" @(:presentation-clock runtime)))
+
 (defn- advance-section-patterns [runtime before next-state reset?]
   (if-let [initial (:section-patterns runtime)]
     (if reset?
       (dissoc next-state :section-pattern-state :section-clock-session)
       (let [{:keys [model audio-clock-confidence]} next-state
             previous (:model before)
-            {:keys [source source-epoch source-selection-epoch playing? beat]} (:transport model)
-            clock-session (str (:epoch model) "/" source-selection-epoch "/" @(:presentation-clock runtime))
+            {:keys [source source-epoch playing? beat]} (:transport model)
+            clock-session (section-clock-session runtime model)
             connection (:connections runtime)
             capture-status (audio/status (connections/audio connection))
             {capture-state :state :keys [run-id timing-valid? closed?]} capture-status
@@ -1017,6 +1020,39 @@
             (assoc :section-pattern-state (:state result) :section-clock-session clock-session)
             (update :model staging/collect :music {:kind :music :id :section-patterns} (:events result)))))
     next-state))
+
+(defn- section-pattern-run? [{:keys [event]}]
+  (and (= :music (:category event)) (= :music/section-pattern (:type event))))
+
+(defn- fence-section-pattern-runs [model runtime clock-confidence]
+  ;; Subscriber actions can be due well after the pattern was admitted.
+  (let [path [:event-subscribers :runs]
+        runs (get-in model path)]
+    (if-not (some section-pattern-run? runs)
+      model
+      (let [{:keys [playing? source source-epoch]} (:transport model)
+            scope {:show-epoch (:epoch model) :clock [(or source :manual) source-epoch (section-clock-session runtime model)]}
+            capture-status (audio/status (connections/audio (:connections runtime)))
+            min-confidence (get-in capture-status [:config :analyzer-options :beat-clock-confidence-min] 0.5)
+            active? (and (:section-patterns runtime) (true? playing?) (integer? source-epoch)
+                         (number? clock-confidence) (>= clock-confidence min-confidence)
+                         (not (get-in model [:settings :section-patterns :override?])))
+            projection (when active?
+                         (when-let [{:keys [reference-state reference-now-ms]} (reference-evidence runtime (:epoch model))]
+                           (reference-position/snapshot reference-state reference-now-ms)))
+            fence (select-keys projection [:provenance :occurrence :generation])]
+        (assoc-in model path
+                  (filterv (fn [{:keys [event] :as run}]
+                             (or (not (section-pattern-run? run))
+                                 (let [{:keys [mode reference] :as receipt} (:data event)]
+                                   (and active? (= scope (:scope receipt))
+                                        (case mode
+                                          :causal true
+                                          :reference (and (= :locked (:status projection))
+                                                          (= fence (:fence receipt))
+                                                          (= reference (:reference projection)))
+                                          false)))))
+                           runs))))))
 
 (declare submit!)
 
@@ -1309,6 +1345,7 @@
                       :status {:restored? true :frame-ms 0}})
                    (try
                      (let [model (-> (advance-sensors! runtime model time-ms)
+                                     (fence-section-pattern-runs runtime audio-clock-confidence)
                                      (subscribers/advance time-ms (event-callbacks/results (:event-callbacks runtime)))
                                      (composition/advance time-ms) (advance-auto time-ms runtime)
                                      (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms routing/admit-sync)
