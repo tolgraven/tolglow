@@ -201,6 +201,8 @@
 .live-source-form { display:grid; gap:8px; }
 .source-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,95px),1fr)); align-items:end; gap:6px 8px; }
 .source-fields>:first-child:has(select[aria-label="Waveform source"]) { grid-column:span 2; }
+.live-source-form .source-fields { grid-template-columns:repeat(auto-fit,minmax(min(100%,8.5rem),1fr)); }
+.live-source-form .source-fields>:first-child:has(select[aria-label="Waveform source"]) { grid-column:1/-1; }
 .source-field { display:grid; gap:4px; min-width:0; color:var(--text); font-size:12px; line-height:16px; }
 .source-field :is(input,select) { box-sizing:border-box; width:100%; min-width:0; }
 .source-components { display:flex; gap:4px; min-width:0; grid-column:1/-1; border:1px solid var(--line); }
