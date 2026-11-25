@@ -1,0 +1,8 @@
+shadow-cljs - config: /workspace/worktrees/tolglow-effect-selection-command-532/shadow-cljs.edn
+shadow-cljs - running: lein with-profile +cljs run -m shadow.cljs.devtools.cli --npm release studio compute-worker
+Picked up JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=2
+Picked up JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=2
+[:studio] Compiling ...
+[:studio] Build completed. (245 files, 39 compiled, 0 warnings, 67.91s)
+[:compute-worker] Compiling ...
+[:compute-worker] Build completed. (66 files, 0 compiled, 0 warnings, 11.08s)

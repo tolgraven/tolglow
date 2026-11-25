@@ -1,0 +1,29 @@
+{
+  "mount": "after running effects",
+  "closedPanelHeights": [
+    46,
+    46,
+    46
+  ],
+  "servedBundleSha256": "0fad0a11eac65c2d82d823358d70ca5cb951387b59cccf1c1293662dd2058a00",
+  "chromium": "156.0.8078.79",
+  "studioLevelReadFromRepl": "0.55",
+  "replReceipt": "{:command-id \"06b7eb54-3567-42aa-8db0-f4f7e1cfb3fa\", :show-id :main, :epoch 0, :revision 5, :status :accepted, :channel-id [:manual \"warm\"], :level 0.42}",
+  "beforeLight": 0.39374999999999993,
+  "afterLight": 0.11910937500000002,
+  "layouts": [
+    {
+      "name": "tablet",
+      "width": 1024,
+      "horizontalOverflow": 0
+    },
+    {
+      "name": "phone",
+      "width": 390,
+      "horizontalOverflow": 0
+    }
+  ],
+  "pageErrors": [],
+  "ownerRevision": 12,
+  "rejection": "Show epoch changed"
+}
