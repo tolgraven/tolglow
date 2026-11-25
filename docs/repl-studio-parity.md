@@ -370,6 +370,13 @@ draft and its scheduled apply.
 A retried apply returns its first receipt. An apply that reuses the command ID
 of anything else is refused with `:command-id-conflict`.
 
+To repeat the browser check on a preview-only show, build Studio with
+`npm run studio:build`, then run `lein run -m tolglow.qa.scene-audition
+target/scene-audition`. It stages a draft through `/api/command`, compares the
+Room canvas with the live values in `/api/state`, applies on the next bar from
+the banner, then makes a second draft stale with a live cue edit and discards
+it. Set `CHROMIUM_PATH`, and `CHROMIUM_ARGS` to choose the GPU backend.
+
 Open gaps, owned by [issue #531](https://github.com/tolgraven/tolglow/issues/531):
 
 - Studio cannot compose a draft yet. Stage it from the REPL or another adapter;
