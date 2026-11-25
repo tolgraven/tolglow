@@ -627,3 +627,29 @@
             (is (== 0.5 (level rt id)))
             (is (= (inc revision) (get-in @(:state rt) [:model :revision])) "only the cancel itself is committed"))))
       (finally (show/stop! rt)))))
+
+(deftest a-rejected-scheduled-set-leaves-the-running-ramp-alone
+  (let [{:keys [rt packets]} (harness)]
+    (try
+      (let [id (:instance-id (at! rt 0 {:op :cue/launch :cue-id :wash :launch {:mode :persistent}}))
+            _ (at! rt 250 {:op :param/ramp :event-id "up" :instance-id id :param :level :to 1.0
+                           :over {:beats 8} :source agent})
+            ;; A cue selector is resolved when due, so the bad value is only caught then.
+            posted (at! rt 1250 {:op :param/set :event-id "bad-set" :cue-id :wash :param :level :value 7.0
+                                 :in {:beats 1} :source agent})
+            frames (mapv (fn [t] (show/tick! rt t) (dimmer (peek @packets))) [1500 1750 2000 2250])]
+        (is (= :accepted (:status posted)))
+        (is (= [:rejected "Invalid parameters"]
+               ((juxt :status :message) (last (filter #(= "bad-set" (:event-id %)) (recent rt))))))
+        (is (= ["up"] (mapv :event-id (:ramps (show/schedule rt)))) "the ramp keeps running")
+        (is (apply < frames) (str "the output keeps rising: " frames))
+        (testing "an accepted scheduled set replaces the ramp and its value stays"
+          (at! rt 2500 {:op :param/set :event-id "good-set" :cue-id :wash :param :level :value 0.25
+                        :in {:beats 1} :source agent})
+          (doseq [t [2750 3000 3250]] (show/tick! rt t))
+          (is (empty? (:ramps (show/schedule rt))))
+          (is (= {:event-id "up" :status :cancelled :reason :superseded :by "good-set"}
+                 (select-keys (last (filter #(= "up" (:event-id %)) (recent rt))) [:event-id :status :reason :by])))
+          (is (== 0.25 (level rt id)))
+          (is (= 64 (dimmer (peek @packets))))))
+      (finally (show/stop! rt)))))

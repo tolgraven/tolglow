@@ -782,10 +782,15 @@
     (str "sched/" (:epoch model) "/" (:id run) "/" n)
     (str "sub/" (:epoch model) "/" (:id run) "/" (:index run) "/" n)))
 
-(defn- apply-step [model run base cmd-id cmd]
-  (let [result (submit-command model (merge base cmd {:command-id cmd-id}))]
-    (if (= :accepted (get-in result [:ack :status])) (:model result)
-        (report model run (get-in result [:ack :message] "Action rejected")))))
+(defn- apply-step
+  "Admit one step command. A destination names the ramp an accepted write
+  replaces; a rejected write leaves that ramp running."
+  ([model run base cmd-id cmd] (apply-step model run base cmd-id cmd nil))
+  ([model run base cmd-id cmd destination]
+   (let [result (submit-command model (merge base cmd {:command-id cmd-id}))]
+     (if (= :accepted (get-in result [:ack :status]))
+       (cond-> (:model result) destination (supersede destination (run-event-id run)))
+       (report model run (get-in result [:ack :message] "Action rejected"))))))
 
 (defn- perform-target [model run action id base cmd-id now]
   (let [destination (when (#{:param :opacity} (destination-target action))
@@ -794,8 +799,7 @@
     (if (= :param/ramp (:op action))
       (try (start-ramp model run action destination now)
            (catch clojure.lang.ExceptionInfo error (report model run (.getMessage error))))
-      (apply-step (cond-> model destination (supersede destination (run-event-id run)))
-                  run base cmd-id (command action id)))))
+      (apply-step model run base cmd-id (command action id) destination))))
 
 (defn- select-and-perform [model run action now budget]
   (let [seed (get-in model [:event-subscribers :seed])
@@ -822,7 +826,6 @@
 (defn- perform-global [model run action now]
   (let [base (command-base model run now)
         cmd-id (command-id model run 0)
-        by (run-event-id run)
         target (destination-target action)
         value (:value action)]
     (case (:op action)
@@ -833,9 +836,9 @@
                                                  (= :variable target) (assoc :variable (:variable action))) now)
       (:master/set :param/set :variable/set)
       (case target
-        :master (apply-step (supersede model {:target :master} by) run base cmd-id {:op :master/set :value value})
-        :variable (apply-step (supersede model {:target :variable :variable (:variable action)} by)
-                              run base cmd-id {:op :variable/set :variable (:variable action) :value value})))))
+        :master (apply-step model run base cmd-id {:op :master/set :value value} {:target :master})
+        :variable (apply-step model run base cmd-id {:op :variable/set :variable (:variable action) :value value}
+                              {:target :variable :variable (:variable action)})))))
 
 (defn- perform [model run action now budget]
   (cond
