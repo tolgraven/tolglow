@@ -53,14 +53,19 @@ final class ShaderQualification: NSObject, WKScriptMessageHandler {
         eventBytes += data.count
     }
 
-    func start(_ view: WKWebView) {
+    func start(_ view: WKWebView, revealRoom: Bool = false) {
         task = Task { [weak self, weak view] in
             var snapshot: [String: Any] = [:]
             var readySamples = 0
+            var roomRevealed = !revealRoom
             let deadline = ContinuousClock.now.advanced(by: .seconds(60))
             while ContinuousClock.now < deadline {
                 do { try await Task.sleep(nanoseconds: 500_000_000) } catch { return }
                 guard let self, let view else { return }
+                if !roomRevealed {
+                    roomRevealed = await Self.evaluate(view, "window.__tolglowShaderQualificationRevealRoom?.()") as? Bool == true
+                }
+                guard !Task.isCancelled else { return }
                 if let value = await Self.evaluate(view, "window.__tolglowShaderQualificationSnapshot?.()") as? [String: Any] {
                     snapshot = value
                 }
@@ -142,6 +147,6 @@ func studioWebView(origin: URL, navigation: StudioNavigation, qualification: Sha
     let view = WKWebView(frame: .zero, configuration: configuration)
     view.navigationDelegate = navigation
     view.load(URLRequest(url: origin))
-    qualification?.start(view)
+    qualification?.start(view, revealRoom: true)
     return view
 }

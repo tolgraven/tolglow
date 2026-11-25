@@ -81,5 +81,6 @@ import sys
 from pathlib import Path
 receipt = json.loads(Path(sys.argv[1]).read_text())
 # Platform debug-extension policy is separate from visible Studio correctness.
-print("Packaged Studio shader qualification:", receipt["status"], receipt["backendEvidence"])
+print("Packaged Studio shader qualification:", receipt["status"], receipt["backendEvidence"],
+      f"({receipt['reason']}; {receipt['linkedPrograms']} linked programs; {receipt['metalShaders']} MSL stages)")
 PY

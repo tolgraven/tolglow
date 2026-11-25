@@ -61,3 +61,4 @@ jobs:
             build/media/stage-invitation.png
             build/media/stage.gif
             build/media/launch.log
+            build/media/metal-qualification.json

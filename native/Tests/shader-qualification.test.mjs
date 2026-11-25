@@ -56,6 +56,22 @@ function fixture({debug = true, worker = false} = {}) {
 const program = {linked: true, shaders: [{source: '#version 300 es\nvoid main() {}',
   translated: '#include <metal_stdlib>\nusing namespace metal;', compiled: true, stage: 2}]};
 
+test('packaged qualification waits for the Room canvas and scrolls it into a visible window', () => {
+  const {globals, canvas} = fixture();
+  const scrolls = [];
+  canvas.scrollIntoView = ({block, inline}) => scrolls.push([block, inline]);
+  globals.document.getElementById = () => null;
+  const reveal = globals.__tolglowShaderQualificationRevealRoom;
+  assert.equal(reveal(), false);
+  globals.document.getElementById = id => id === 'preview' ? canvas : null;
+  globals.document.hidden = true;
+  assert.equal(reveal(), false);
+  assert.deepEqual(scrolls, []);
+  globals.document.hidden = false;
+  assert.equal(reveal(), true);
+  assert.deepEqual(scrolls, [['center', 'nearest']]);
+});
+
 test('observes real preview calls without replacing shader source, return values or telemetry', () => {
   const {globals, GL, canvas, events, timers} = fixture();
   const unrelated = new GL({});

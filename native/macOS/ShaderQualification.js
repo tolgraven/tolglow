@@ -98,6 +98,12 @@
       });
     }
   };
+  window.__tolglowShaderQualificationRevealRoom = () => {
+    const canvas = document.getElementById('preview');
+    if (document.hidden || !canvas) return false;
+    canvas.scrollIntoView({block: 'center', inline: 'nearest'});
+    return true;
+  };
   window.__tolglowShaderQualificationSnapshot = () => JSON.parse(JSON.stringify({
     url: location.href,
     previews: [...document.querySelectorAll('canvas')].filter(canvas => canvas.tolglowPreview).map(canvas => {
