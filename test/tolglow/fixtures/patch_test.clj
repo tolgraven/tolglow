@@ -1,5 +1,5 @@
 (ns tolglow.fixtures.patch-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [clojure.test :refer [deftest is testing]]
             [afterglow.control.model :as control]
             [afterglow.render.frame :as render]
             [tolglow.application :as application]
@@ -114,6 +114,33 @@
     (is (thrown? clojure.lang.ExceptionInfo
                  (patch/expand {:panel (assoc panel :bounds-m {:min [1 0 0] :max [0 0 0]})
                                 :strip strip} groups)))))
+
+(deftest strip-segment-includes-rotated-edges-without-selecting-nearby-pixels
+  (let [plane {:min [0 1 -1] :max [0 2 1]}
+        line {:min [-1 0 0] :max [1 0 0]}
+        edge-pixels (fn [lo hi] [(Math/nextUp (double hi)) hi (Math/nextDown (double lo)) lo])]
+    (doseq [[label box rotation origin positions]
+            [["A quarter turn collapses the projected interval to zero"
+              plane [0 0 90] 0 (edge-pixels 0.0 0.0)]
+             ["A wrapped quarter turn maps the projected axis to an unaffected axis"
+              plane [30 0 -270] 0 (edge-pixels 0.0 0.0)]
+             ["An oblique projection includes authored half-metre edges"
+              line [0 0 30] 0 (edge-pixels -0.5 0.5)]
+             ["Venue translation does not widen the local precision allowance"
+              line [0 0 30] 1.0e9 (edge-pixels 999999999.5 1000000000.5)]]]
+      (testing label
+        (let [panel (assoc pixel :bounds-m box)
+              strip {:id :strip :version 1
+                     :heads (mapv (fn [i y] {:x i :y y :channels {:red (inc i)}})
+                                  (range) positions)}
+              fixtures (patch/expand {:panel panel :strip strip}
+                                     {:rig {:universe 1 :list [[:panel {:id :reference :position [0 origin 0]
+                                                                      :rotation-deg rotation}]
+                                                              [:strip {:id :strip}]]}})]
+          (is (= positions (mapv (comp second :position) (rest fixtures))))
+          (is (= {:fixture-ids [:strip-head-2 :strip-head-4]}
+                 (targets/strip-segment-selector {:rig {:fixtures fixtures}}
+                                                 {:strip-id :strip :reference-id :reference :axis :y}))))))))
 
 (deftest published-fixture-extent-selects-only-the-aligned-strip-pixels
   (let [declared {:min [0 -0.2 -1] :max [0 0.2 1]}

@@ -41,7 +41,7 @@
     (when-not axis-index (throw (ex-info "Strip selection axis must be :x, :y or :z" request)))
     (when-not strip (throw (ex-info "Unknown strip or strip without heads" request)))
     (when-not box (throw (ex-info "Reference fixture or head needs declared bounds" request)))
-    (let [[lo hi] (bounds/world-span (or reference anchor) box axis-index)]
+    (let [[lo hi] (bounds/selection-span (or reference anchor) box axis-index)]
       {:fixture-ids (into [] (comp (filter #(<= lo (nth (or (:position %) [0 0 0]) axis-index) hi))
                                    (map :id)) strip)})))
 

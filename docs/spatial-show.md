@@ -28,6 +28,8 @@ Declare `:bounds-m {:min [0 -0.2 -1] :max [0 0.2 1]}` on a fixture type, a patch
 
 Resolve a strip segment from the current rig before launching a cue. The reference can be a fixture or an individual head with declared bounds. A fixture with only head channels anchors its body extent to its first patched head. The selection projects the rotated bounds onto the requested venue axis and includes the named strip's pixel centers on either boundary. Use the strip's fixture or pixel-layout ID.
 
+Quarter turns use exact rotation coefficients. For an oblique projection, the inclusive comparison allows one floating-point step outward at each projected edge before adding the fixture's venue position. Pixel centers keep their original coordinates.
+
 ```clojure
 (require '[tolglow.show :as show] '[tolglow.spatial.targets :as targets])
 
