@@ -304,7 +304,7 @@
                    dwell (if (str/blank? (str (:dwell form))) 0 (motion/number-value (:dwell form) "Minimum dwell"))]
                (when (neg? band) (throw (js/Error. "Hysteresis band cannot be negative.")))
                (when (neg? dwell) (throw (js/Error. "Minimum dwell cannot be negative.")))
-               (cond-> {:band band} (pos? dwell) (assoc :dwell {:beats dwell})))))))
+               (cond-> {:band band} (pos? dwell) (assoc :dwell {(keyword (:dwell-unit form :beats)) dwell})))))))
 
 (defn- number-field [label value change! schema]
   (let [[low high] (numeric-bounds schema (:bounds schema))]
@@ -336,7 +336,9 @@
                ;; Layer priority quantizes with hysteresis; a quarter tier is the show default.
                (priority-schema? schema)
                (assoc :band (str (get-in binding [:hysteresis :band] 0.25))
-                      :dwell (str (get-in binding [:hysteresis :dwell :beats] 0)))
+                      ;; Keep the authored musical unit; a bar dwell stays in bars.
+                      :dwell (str (or (second (first (get-in binding [:hysteresis :dwell]))) 0))
+                      :dwell-unit (keyword (or (ffirst (get-in binding [:hysteresis :dwell])) :beats)))
                ;; A whole-range sweep of every tier is rarely meant; start one tier either side.
                (and (priority-schema? schema) (nil? binding)) (assoc :from -1 :to 1))]
     (if (or binding (some #(= :sine (:id %)) catalog)) form
@@ -357,7 +359,7 @@
   (let [lfo (source-of source :lfo)]
     (r/with-let [form (r/atom (editor-draft schema base (:binding lfo) catalog))
                  move (r/atom nil) error (r/atom nil)]
-      (let [{:keys [waveform period unit phase-reference phase inputs band dwell]} @form
+      (let [{:keys [waveform period unit phase-reference phase inputs band dwell dwell-unit]} @form
             in-flight @(rf/subscribe [::request id param])
             owner @(rf/subscribe [::context])
             priority @(rf/subscribe [::priority-destination])
@@ -402,7 +404,11 @@
              (when (priority-schema? schema)
                [:<>
                 [number-field "Hysteresis band (tiers)" band #(update! :band %) {:bounds [0 8]}]
-                [number-field "Minimum dwell (beats)" dwell #(update! :dwell %) {:bounds [0 nil]}]])])
+                [number-field "Minimum dwell" dwell #(update! :dwell %) {:bounds [0 nil]}]
+                [:label.source-field [:span "Dwell unit"]
+                 [:select {:aria-label "Minimum dwell unit" :value (name (or dwell-unit :beats))
+                           :on-change #(update! :dwell-unit (keyword (.. % -target -value)))}
+                  (for [u [:beats :bars :phrases]] ^{:key u} [:option {:value (name u)} (widgets/label u)])]]])])
           (when (or destination (seq destinations))
             [:label.source-field [:span "Destination"]
              [:select {:aria-label "Destination" :value (pr-str (or destination param)) :disabled (:pending? in-flight)

@@ -521,8 +521,25 @@
   [runtime]
   (group-channels/projection (:model @(:state runtime))))
 
-(defn- hold-manual-params [model result {:keys [op source instance-id param control-id gesture-id]} authority]
-  (let [owner (when (#{:gesture/sample :gesture/end :gesture/cancel} op)
+(def ^:private manual-priority-ops
+  "Operator commands that set a running layer's priority or position."
+  #{:instance/set-priority :instance/move-after})
+
+(defn- hold-manual-priority
+  "A manual priority or reorder command takes precedence over a waveform bound
+  to that launch's layer priority, as a parameter edit does over its source.
+  The hold records why, and the operator resumes the waveform explicitly."
+  [model result {:keys [op instance-id]}]
+  (if (and (manual-priority-ops op)
+           (get-in model [:instances instance-id :parameter-bindings parameter-sources/priority-param]))
+    (update-in result [:model :modulation] (fnil modulation/hold (modulation/new-state))
+               {:instance-id instance-id :params [parameter-sources/priority-param] :until-beat nil
+                :reason :manual-priority})
+    result))
+
+(defn- hold-manual-params [model result {:keys [op source instance-id param control-id gesture-id] :as payload} authority]
+  (let [result (hold-manual-priority model result payload)
+        owner (when (#{:gesture/sample :gesture/end :gesture/cancel} op)
                 [(:operator-id authority) control-id gesture-id])]
     (cond
       (#{:gesture/end :gesture/cancel} op)

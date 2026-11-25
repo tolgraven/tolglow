@@ -735,3 +735,60 @@
                                     :body (ByteArrayInputStream. (.getBytes (transit/encode {:instance-id low :params [:layer/priority]}) "UTF-8"))}))))
           (is (= [low high] (:effective-instance-order (show/snapshot rt))))))
       (finally (show/stop! rt)))))
+
+(deftest only-the-priority-destination-accepts-hysteresis
+  (let [model (assoc-in (fixture/model) [:instances "0:1" :definition :params :rank]
+                        {:type :integer :bounds [-1000 1000] :default 0 :category :priority})]
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Only a layer priority"
+          (bind-to model :rank (assoc saw :from 0 :to 2 :hysteresis {:band 0}))))
+    (is (bind-to model :rank (assoc saw :from 0 :to 2)))))
+
+(deftest manual-priority-commands-hold-a-modulated-layer-priority
+  (let [packet (volatile! nil)
+        sink {:send! (fn [universes _] (vreset! packet (bit-and 255 (aget ^bytes (get universes 1) 0))))}
+        rt (show/create-runtime {:model (live-model) :sink sink})
+        now (atom 0)
+        submit! (fn [op body] (let [ack (show/submit! rt op body)] (show/tick! rt @now) @ack))
+        app (web/app {:submit! (fn [op body] (let [ack (show/submit! rt op body)] (show/tick! rt @now) ack))
+                      :heartbeat! (constantly nil)})
+        studio-command! (fn [command]
+                          (let [response (app {:request-method :post :uri "/api/command"
+                                               :headers {"host" "localhost" "content-type" "application/transit+json"
+                                                         "accept" "application/transit+json" "x-tolglow-form" "studio-v1"}
+                                               :body (ByteArrayInputStream. (.getBytes ^String (transit/encode command) "UTF-8"))})]
+                            [(:status response) (:status (transit/decode (:body response)))]))
+        launch (fn [level] (:instance-id (submit! :command {:op :cue/launch :cue-id :wash :launch {:params {:level level}}})))
+        source (fn [id] (get-in (some #(when (= id (:id %)) %) (:instances (show/snapshot rt)))
+                                [:parameter-sources :layer/priority :sources 0]))
+        hold (fn [id] (get-in @(:state rt) [:model :modulation :holds id :layer/priority]))
+        frame! (fn [] (show/tick! rt (swap! now + 25)) @packet)]
+    (try
+      (let [low (launch 0.2) high (launch 0.8)]
+        ;; The waveform keeps the earlier launch at tier -3, under the other layer.
+        (is (= :accepted (:status (submit! :modulation-bind {:instance-id low :param :layer/priority
+                                                             :binding (assoc saw :from -3 :to -3)}))))
+        (is (= 204 (frame!)))
+        (testing "a REPL priority edit holds the waveform with a recorded reason"
+          (is (= :accepted (:status (submit! :command {:op :instance/set-priority :instance-id low :priority 5}))))
+          (is (= {:until-beat nil :reason :manual-priority} (hold low)))
+          (is (= [true :manual-priority] ((juxt :held? :hold-reason) (source low))))
+          (is (= 51 (frame!)) "the operator's priority is lit, not the waveform's tier")
+          (is (= [high low] (:effective-instance-order (show/snapshot rt)))))
+        (testing "resuming returns the layer to the waveform"
+          (is (= :accepted (:status (submit! :modulation-resume {:instance-id low :params [:layer/priority]}))))
+          (is (nil? (hold low)))
+          (is (= 204 (frame!))))
+        (testing "a Studio move-after on the modulated launch holds it too"
+          (is (= :accepted (:status (submit! :command {:op :instance/set-priority :instance-id low :priority 0}))))
+          (is (= :accepted (:status (submit! :modulation-resume {:instance-id low :params [:layer/priority]}))))
+          (is (= 204 (frame!)))
+          (let [{:keys [revision epoch runtime-id]} (show/snapshot rt)]
+            (is (= [200 :accepted] (studio-command! {:op :instance/move-after :instance-id low :after-instance-id high
+                                                     :expected-revision revision :epoch epoch :runtime-id runtime-id
+                                                     :source {:adapter :web :session-id "priority"}}))))
+          (is (= :manual-priority (:reason (hold low))))
+          (is (= 51 (frame!))))
+        (testing "an unbound launch moved by the operator records no hold"
+          (is (= :accepted (:status (submit! :command {:op :instance/set-priority :instance-id high :priority 9}))))
+          (is (nil? (hold high)))))
+      (finally (show/stop! rt)))))

@@ -40,6 +40,16 @@
       (into [] (keep by-id) active-instance-order))
     instances))
 
+(defn effective-instances
+  "Running cards in the order the latest frame composed them. A waveform on
+  layer priority can differ from the committed order; reorder captures and
+  move targets keep using the committed order from ordered-instances."
+  [{:keys [instances effective-instance-order] :as show}]
+  (if effective-instance-order
+    (let [by-id (into {} (map (juxt :id identity)) instances)]
+      (into [] (keep by-id) effective-instance-order))
+    (ordered-instances show)))
+
 (defn- mix-capture [show instances]
   {:identity [(:runtime-id show) (:epoch show)
               (into [] (comp (filter #(= "running" (:phase %))) (map :id)) instances)]
@@ -56,6 +66,15 @@
 
 (defn- render-priority [instance]
   (get instance :render-priority (get instance :priority 0)))
+
+(defn modulated-priority
+  "The frame tier from a driving layer priority waveform when it differs from
+  the committed priority, else nil."
+  [instance destination]
+  (when-let [param (:param destination)]
+    (when (sources/driven? instance param)
+      (let [tier (:effective-value (sources/reading instance param))]
+        (when (and (number? tier) (not= tier (render-priority instance))) tier)))))
 
 (defn target-key [target] (if-let [id (:instance-id target)] [:instance (wire id)] [:group (:selector target)]))
 
@@ -552,9 +571,11 @@
     [:div.param-row.layer-priority-source {:data-param (events/wire-id param)}
      [:label title]
      [:span.live-effect-phase
-      (pr-str (if (sources/driven? instance param)
-                (:effective-value reading)
-                (render-priority instance)))]
+      (if-let [tier (modulated-priority instance {:param param})]
+        (str (pr-str tier) " · set " (pr-str (render-priority instance)))
+        (pr-str (render-priority instance)))]
+     (when (some #(= :manual-priority (keyword (:hold-reason %))) (:sources reading))
+       [:span.live-selection-state "Held after a manual priority change"])
      [sources/trigger (:id instance) param title reading]]))
 
 (defn- layer-priority-form [capture source instance title draft]
@@ -597,7 +618,10 @@
         (when-let [label (case (:suppressed-by selection-row) :mute "Muted" :solo "Excluded by Solo" nil)]
           [:span.live-selection-state {:data-suppressed-by (name (:suppressed-by selection-row))} label])
         (when duplicate? [:span.live-effect-phase (str "Launch " id)])
-        (when reorder? [:span.live-effect-phase (str "Priority " (pr-str (render-priority instance)))])
+        (if-let [tier (modulated-priority instance priority)]
+          [:span.live-effect-phase {:data-modulated-priority true}
+           (str "Priority " (pr-str tier) " · set " (pr-str (render-priority instance)))]
+          (when reorder? [:span.live-effect-phase (str "Priority " (pr-str (render-priority instance)))]))
         [widgets/category-tags (or (:categories instance) (:categories definition)) (:category-colors show)]]]
       [:div.live-effect-header-actions
        (when selection-row
@@ -633,11 +657,12 @@
 
 (defn board [db parameter-control]
   (let [show (:show db)
-        instances (ordered-instances show)
+        committed (ordered-instances show)
+        instances (effective-instances show)
         selection-view @(rf/subscribe [:effect-selection/view])
         rows (selection/by-instance (:selection selection-view))
         duplicate-counts (frequencies (map :cue-id instances))
-        capture (mix-capture show instances)
+        capture (mix-capture show committed)
         running-ids (peek (:identity capture))
         ready? (< 1 (count running-ids))
         {:keys [open? source request error message priority-draft]} (:reorder (state db))

@@ -335,7 +335,13 @@ and `:active-instance-order` stay unchanged. The snapshot adds
 `[:parameter-sources :layer/priority]` reading has the committed priority as
 `:base-value` and the current tier as `:effective-value`. Each source also
 records `:priority` and `:raw-priority`. Holding the destination restores the
-committed order for that launch. A waveform cannot target a member of a
+committed order for that launch. An accepted `:instance/set-priority` or
+`:instance/move-after` on a launch with a bound priority waveform holds that
+destination with `:reason :manual-priority` (`modulation/hold` accepts an
+optional keyword `:reason`), so the operator's priority is lit until the
+waveform is resumed. Only the `:layer/priority` destination accepts
+`:hysteresis`. A definition parameter that shares the `:priority` category
+does not. A waveform cannot target a member of a
 compound native layer, because its members share one priority. A move between
 `:layer/priority` and an effect parameter drops the hysteresis on the way out
 and uses the default band on the way in.

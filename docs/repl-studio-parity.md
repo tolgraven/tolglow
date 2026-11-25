@@ -112,11 +112,27 @@ tier from −1000 to 1000 in the `:priority` category. In **Perform → In the m
 open a card's **Detail** and select **Source** on its **Layer priority** row, or
 open the **Source** editor of an LFO already on that launch and choose
 **Layer priority** under **Destination**. Set the **From** and **To** tiers. The
-**Hysteresis band (tiers)** and **Minimum dwell (beats)** fields control how far
-past a tier boundary the waveform must go, and how long a tier is kept, before
-the layer changes order. The row shows the tier used for the current frame.
-**Use base value** holds the committed priority and **Detach LFO** removes the
-source.
+**Hysteresis band (tiers)**, **Minimum dwell** and **Dwell unit** (beats, bars
+or phrases) fields control how far past a tier boundary the waveform must go,
+and how long a tier is kept, before the layer changes order. A dwell authored in
+bars or phrases at the REPL keeps that unit in the editor. **Use base value**
+holds the committed priority and **Detach LFO** removes the source.
+
+The **In the mix** cards appear in the order the latest frame composed them,
+from `:effective-instance-order`. A card whose waveform tier differs from its
+committed priority shows both, for example **Priority 1 · set 0**, in its header
+and on the **Layer priority** row. **Reorder** captures and **Place after**
+targets still use the committed order (`:active-instance-order`), because those
+commands change committed state.
+
+A manual priority change takes precedence over the waveform. **Set priority**,
+**Place after**, `:instance/set-priority` and `:instance/move-after` on a launch
+with a bound layer priority waveform also hold that source, recorded with
+`:reason :manual-priority`. The row shows **Held after a manual priority
+change**, and the projected source has `:held? true :hold-reason
+:manual-priority`. **Resume LFO** or `:modulation-resume` with
+`:params [:layer/priority]` returns the layer to the waveform. This matches how a
+parameter edit holds a waveform on that parameter.
 
 The REPL uses the same validated `:modulation-bind`, `:modulation-hold`,
 `:modulation-resume` and `:modulation-unbind` operations. Each frame the show

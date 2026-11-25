@@ -42,7 +42,9 @@
   changes, so an oscillator resting on a boundary cannot swap layers per frame."
   {:band 1/4})
 
-(defn- priority-schema? [schema] (= :priority (:category schema)))
+(def ^:private continuous-priority-schema
+  "The priority destination sampled before quantization to integer tiers."
+  (assoc priority-schema :type :number))
 
 (defn destination-schema
   "Return the typed schema for a waveform destination on one definition."
@@ -58,10 +60,13 @@
             "Priority dwell needs positive beats, bars or phrases")
   hysteresis)
 
-(defn- checked-binding [schema waveform binding]
+(defn- checked-binding
+  "Validate a binding for one destination. Only the layer priority destination
+  itself (priority? true) accepts :hysteresis, whatever a schema's category."
+  [schema waveform binding priority?]
   (require! (and (map? binding) (every? #{:type :waveform :period :phase :phase-reference :from :to :inputs :hysteresis} (keys binding))
                  (= :lfo (:type binding))) "Expected a waveform parameter binding")
-  (require! (or (not (contains? binding :hysteresis)) (priority-schema? schema))
+  (require! (or (not (contains? binding :hysteresis)) priority?)
             "Only a layer priority destination accepts hysteresis")
   (when (contains? binding :hysteresis) (checked-hysteresis (:hysteresis binding)))
   (let [{:keys [period phase inputs from to] :as binding}
@@ -100,7 +105,7 @@
                     (require! (and (map? binding) (= #{:from :to} (set (keys binding))))
                               "Moving a waveform requires both destination endpoints")
                     (cond-> (merge (:binding source) binding)
-                      (not (priority-schema? schema)) (dissoc :hysteresis)))
+                      (not= priority-param param) (dissoc :hysteresis)))
                   binding)
         waveform (get-in registry [:waveforms (:waveform binding)])]
     (require! (and instance schema) "Unknown running instance or parameter")
@@ -108,7 +113,7 @@
               "Compound layer members share one priority. Set it with the layer priority command.")
     (assoc-in model [:instances instance-id :parameter-bindings]
               (assoc (cond-> bindings moving? (dissoc from-param)) param
-                     {:binding (checked-binding schema waveform binding)
+                     {:binding (checked-binding schema waveform binding (= priority-param param))
                       :schema schema :waveform-version (:version waveform)
                       :bound-at [(:epoch model 0) (inc (:revision model 0))]}))))
 
@@ -129,7 +134,8 @@
                        (or (nil? bound-at) (and (vector? bound-at) (= 2 (count bound-at)) (every? nat-int? bound-at)))
                        (integer? waveform-version) (pos? waveform-version))
                   "Invalid captured target schema or waveform revision")
-        (checked-binding schema (get-in (waveforms model) [:versions [(:waveform binding) waveform-version]]) binding)))))
+        (checked-binding schema (get-in (waveforms model) [:versions [(:waveform binding) waveform-version]]) binding
+                         (= priority-param param))))))
 
 (defn committed-outcomes [previous epoch message-receipts]
   (let [completed (keep (fn [[{:keys [type expected-epoch payload]} [_ ack]]]
@@ -200,9 +206,9 @@
               (if (< value 0.5) low high))
             (evaluate phase)))))))
 
-(defn- prepare [registry waveform schema binding]
+(defn- prepare [registry waveform schema binding priority?]
   (try
-    (checked-binding schema waveform binding)
+    (checked-binding schema waveform binding priority?)
     (let [[lo hi] (:range waveform)
           sample (ir/compile-expression (signals/sample registry (:id waveform)
                                           {:phase {:op :param :key signals/phase-input} :params (:inputs binding)}))
@@ -236,8 +242,6 @@
                          (>= (- beat since) (time/duration->beats dwell meter)))]
         (if (and crossed? dwelled?) {:value target :since-beat beat} previous)))))
 
-(def ^:private continuous-priority-schema (assoc priority-schema :type :number))
-
 (defn- sample-priority [instance transport-clock private-clock previous-priorities plan source result binding]
   (let [id (:id instance)
         elapsed (when (= :launch (:phase-reference binding :launch))
@@ -265,12 +269,13 @@
         cache-key [(:show-id model) (:epoch model) (:id definition) (:version definition)
                    waveform schema binding]
         plan (or (get-in previous [:plans cache-key]) (get-in result [:plans cache-key])
-                 (prepare registry waveform schema binding))
+                 (prepare registry waveform schema binding priority?))
         hold (get-in model [:modulation :holds id param])
         held? (boolean (and hold (or (nil? (:until-beat hold))
                                       (< (get-in model [:transport :beat] (:beat private-clock)) (:until-beat hold)))))
         result (assoc-in result [:plans cache-key] plan)
-        source {:type :lfo :binding binding :held? held? :identity (source-identity entry definition waveform)}
+        source (cond-> {:type :lfo :binding binding :held? held? :identity (source-identity entry definition waveform)}
+                 (and held? (:reason hold)) (assoc :hold-reason (:reason hold)))
         diagnostic (fn [result message]
                      (assoc-in result [:sources id param] (assoc source :error message)))]
     (if-let [error (:error plan)]
