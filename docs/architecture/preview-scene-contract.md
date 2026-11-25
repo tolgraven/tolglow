@@ -23,19 +23,25 @@ lights. Both Transit state pushes and Ring inspection use the same projection.
 The device-tier budgets and selection order are in `js/preview/README.md`.
 
 Where OffscreenCanvas workers are available, the one scene implementation runs
-in a worker. The main thread owns OrbitControls, visibility and bitmap display.
-Only one state message and one transferred bitmap may await acknowledgement.
-Intermediate snapshots coalesce to the latest projection. The hardware worker
-can retain two frames total, with a fence per submitted draw. It publishes in
-order after GPU completion. When the show identity, scene and controls stay
+in a worker. The main thread owns OrbitControls and visibility. Only one state
+message may await acknowledgement. Intermediate snapshots coalesce to the latest
+projection. The hardware worker can retain two frames total, with a fence per
+submitted draw. It publishes in order after GPU completion. After the first
+worker frame the proxy hands the visible canvas to the worker where the browser
+allows it. The worker then presents each completed frame itself and reports it,
+so page-thread work cannot delay the room. It refuses frames from a show the
+page has left and clears the canvas when told the identity changed. Browsers
+without a transferable canvas keep the acknowledged bitmap path, with one
+transferred bitmap awaiting acknowledgement. Both threads sample the display
+rate and the worker uses the higher value. When the show identity, scene and controls stay
 the same, new light and haze samples feed the next draw while the previous
 frame's fence is pending. Scene or control changes drain submitted work before
 applying the new state.
 Pacing includes this GPU wait, since transfer/command submission alone can still
 build a compositor backlog and starve the UI. Bitmaps from an old show/epoch are
-closed without display. The DOM canvas is never transferred, allowing startup
-failure to use the same scene implementation on the main thread before its
-presentation context is acquired. An error after rendering starts retains the
+closed without display. The DOM canvas stays with the page until a worker frame
+exists, allowing startup failure to use the same scene implementation on the
+main thread before presentation is committed. An error after rendering starts retains the
 last image and reports failure; an active worker stall never switches rendering
 onto the main thread. Worker disposal terminates its complete GPU lifetime.
 Capability fallback is not evidence of Safari support or smooth physical-device

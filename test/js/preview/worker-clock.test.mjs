@@ -52,7 +52,10 @@ function worker({hz = 60, work = 0, software = false, quality = software ? 'auto
   }};
   const host = {graphics, AbortController, console, performance: {now: () => now, timeOrigin: 0},
     requestAnimationFrame(callback) {
-      assert.equal(rafs.size, 0, 'only one display wakeup may be outstanding');
+      // The refresh sampler owns its own short burst beside the draw wakeup.
+      const sampler = callback.name === 'bound tick';
+      assert.equal([...rafs.values()].filter(pending => (pending.name === 'bound tick') === sampler).length, 0,
+        'only one display wakeup may be outstanding per owner');
       const id = ++nextId; rafs.set(id, callback); return id;
     },
     cancelAnimationFrame: id => rafs.delete(id), setTimeout: timer, clearTimeout: id => timers.delete(id),
@@ -332,4 +335,69 @@ test('Auto measures the completed display cycle through bitmap acknowledgement',
   assert.equal(w.frames().at(-1).telemetry.workerFrameMs, 2);
   assert.ok(Math.abs(w.engine.measuredFrameMs - 13) < 1e-9,
     'delivery lateness and bitmap acknowledgement must count against Auto\'s display budget');
+});
+
+// A presentation surface the worker owns after the proxy hands the canvas over.
+function surfaceFor(w, identity = '[null,null,null]') {
+  const shown = [];
+  const canvas = {width: 0, height: 0, getContext: type => type === 'bitmaprenderer'
+    ? {transferFromImageBitmap(bitmap) {shown.push(bitmap);}} : null};
+  const first = w.frames().at(-1);
+  w.send({type: 'surface', canvas, identity, frameId: first.frameId, bitmap: first.bitmap});
+  w.healthy();
+  return shown;
+}
+
+test('a handed-over surface presents every completed frame without a page acknowledgement', async t => {
+  const w = worker(); t.after(() => w.dispose());
+  await w.refresh(1000 / 60);
+  assert.equal(w.frames().length, 1); assert.ok(w.frames()[0].bitmap);
+  const shown = surfaceFor(w);
+  assert.equal(shown.length, 1, 'the first image is shown by the worker that rendered it');
+  assert.equal(w.frames().at(-1).presented, true);
+  // The page never answers again. Sixty refreshes still yield sixty images.
+  for (let frame = 2; frame <= 61; frame++) await w.refresh(frame * 1000 / 60);
+  assert.equal(w.draws.length, 61); assert.equal(shown.length, 61);
+  const reports = w.frames().slice(1);
+  assert.ok(reports.every(frame => !frame.bitmap && frame.telemetry.presentation === 'worker'));
+  assert.deepEqual(reports.map(frame => frame.frameId), Array.from({length: 61}, (_, i) => i + 1));
+  assert.ok(w.bitmaps.every(bitmap => bitmap.closed), 'each presented bitmap is released');
+  assert.equal(w.fences.size, 0);
+});
+
+test('a surface keeps GPU ownership bounded and closes images from a show the page has left', async t => {
+  const w = worker(); t.after(() => w.dispose());
+  await w.refresh(1000 / 60);
+  const shown = surfaceFor(w);
+  w.fenceReady = false;
+  for (let frame = 2; frame <= 6; frame++) await w.refresh(frame * 1000 / 60);
+  assert.equal(w.fences.size, 2, 'two submitted draws at most, with or without acknowledgements');
+  assert.equal(w.draws.length, 3);
+  // The page moved to another show while both draws were on the GPU.
+  w.send({type: 'identity', identity: '["runtime","other",2]'});
+  assert.equal(shown.at(-1), null, 'the old image is cleared at once');
+  w.fenceReady = true; await w.advance(140);
+  const late = w.frames().slice(-2);
+  assert.deepEqual(late.map(frame => frame.presented), [false, false]);
+  assert.equal(shown.filter(Boolean).length, 1);
+  assert.ok(w.bitmaps.every(bitmap => bitmap.closed));
+  w.send({type: 'identity', identity: '[null,null,null]'});
+  await w.refresh(200);
+  assert.equal(w.frames().at(-1).presented, true);
+  w.dispose();
+  assert.equal(shown.at(-1), null, 'disposal blanks the canvas only the worker can reach');
+});
+
+test('the worker samples the display itself when the page reports a starved callback rate', async t => {
+  const w = worker({hz: 15}); t.after(() => w.dispose());
+  assert.equal(w.engine.targetHz, 15);
+  for (let frame = 1; frame <= 45; frame++) {
+    await w.refresh(frame * 1000 / 60);
+    if (w.frames().at(-1)?.bitmap) w.acknowledge();
+  }
+  assert.equal(w.engine.displayHz, 60);
+  assert.equal(w.engine.targetHz, 60);
+  // A later page sample cannot lower what this thread measured on the panel.
+  w.update();
+  assert.equal(w.engine.targetHz, 60);
 });

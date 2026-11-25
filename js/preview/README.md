@@ -26,14 +26,23 @@ One state message can be in flight; the latest pending graphics projection
 replaces intermediate snapshots. Only emitted output, rig and show/frame identity
 cross that boundary. A WebGL completion fence resolves before a bitmap is
 published; the worker polls it asynchronously while holding, without applying,
-the one upstream state message. One bitmap can be outstanding; the worker waits
-for its presentation acknowledgement before scheduling another draw. Consumed, rejected
-and stale-show/epoch bitmaps are closed, and show changes clear the old image.
-`getTelemetry()` reports the execution thread, coalescing and discarded frames.
+the one upstream state message. After the first worker frame the proxy hands
+the visible canvas to the worker when the browser supports a transferable canvas
+with a bitmap context. The worker then shows each completed bitmap itself and
+posts a report without the image; `telemetry.presentation` reads `worker`. A
+blocked page thread no longer bounds presented frames. Without that support one
+bitmap can be outstanding and the worker waits for its presentation
+acknowledgement before scheduling another draw (`presentation: proxy`). Consumed,
+rejected and stale-show/epoch bitmaps are closed, and show changes clear the old
+image in both modes. Capture and observation readers of a handed-over canvas run
+on the next page animation frame, when its page-side copy holds the reported
+image. `getTelemetry()` reports the execution thread, coalescing and discarded
+frames. Pass `{surface: false}` to keep proxy presentation.
 
-The visible canvas is never transferred. A failed worker startup leaves its
-context untouched so the same SceneRenderer can acquire WebGL on it. After a
-bitmap presentation context exists or real rendering has started, errors remain
+The visible canvas is not handed over before a worker frame exists. A failed
+worker startup leaves its context untouched so the same SceneRenderer can
+acquire WebGL on it. After presentation is committed or real rendering has
+started, errors remain
 explicit and retain the last frame; the proxy does not switch an active or
 stalled renderer onto the main thread. Hidden or
 offscreen views stop render scheduling, controls remain on the UI thread, and

@@ -6,16 +6,23 @@ owns controls; committed JVM emitted output is authoritative.
 
 - `index.js` selects the lifecycle boundary. `scene-renderer.js` is the single
   scene/target/postprocessing implementation for both execution environments.
-- `worker-proxy.js` owns DOM input/camera, visibility and bitmap presentation;
-  `worker.js` owns the OffscreenCanvas and all graphics work. Keep one state
-  message and one transferred bitmap in flight; replace pending snapshots.
-  The hardware worker can retain two frames total, including a transferred
-  frame awaiting acknowledgement. Await each GPU fence before publishing its
-  bitmap. Same-show emitted output can update inputs to the next draw while
-  that fence is pending. Drain before scene, control or viewport changes.
-  Close rejected bitmaps, fence show/epoch changes and stop all worker resources
-  on disposal. Never transfer the visible canvas: startup failure must leave it
-  usable by the shared main-thread capability fallback.
+- `worker-proxy.js` owns DOM input/camera and visibility; `worker.js` owns the
+  OffscreenCanvas and all graphics work. Keep one state message in flight and
+  replace pending snapshots. The hardware worker can retain two frames total.
+  Await each GPU fence before publishing its bitmap. Same-show emitted output
+  can update inputs to the next draw while that fence is pending. Drain before
+  scene, control or viewport changes. Close rejected bitmaps, fence show/epoch
+  changes and stop all worker resources on disposal.
+- The first worker frame decides who presents. Where the browser supports it,
+  the proxy then hands the visible canvas to the worker, which shows each
+  completed bitmap itself and only reports it. No page task sits between a
+  finished frame and the display, so a busy Studio thread cannot pace the room.
+  Otherwise the proxy presents one transferred bitmap at a time and acknowledges
+  it. Never hand the canvas over before that first frame: startup failure must
+  leave it usable by the shared main-thread capability fallback. Page-side
+  readers of a handed-over canvas run one animation frame after the report.
+- The worker samples the display rate itself and uses the higher of its own and
+  the proxy's sample. Starved animation callbacks only ever under-report.
 - `render-quality.js` owns physical pixel budgets and asynchronous GPU measurements.
   `film.js` owns the display transform, image antialiasing and grain.
 - `geometry.js`, `room.js`, `materials.js` own procedural geometry/materials.

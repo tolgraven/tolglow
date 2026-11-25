@@ -72,6 +72,25 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
     assert.equal(heartbeat.telemetry.activeLights, 8);
     assert.equal(heartbeat.telemetry.programCount, first.programCount, 'A cue launch must not compile a new light-count shader');
 
+    // Block the page thread outright. A worker that waits for the page to show
+    // each bitmap stops after its bounded queue; one that owns the canvas goes on.
+    const starved = await page.evaluate(async () => {
+      const reports = [], listener = event => {if (event.data.type === 'frame') reports.push(event.data);};
+      engine.worker.addEventListener('message', listener);
+      const end = performance.now() + 1500; while (performance.now() < end);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      engine.worker.removeEventListener('message', listener);
+      const copy = document.createElement('canvas'); copy.width = copy.height = 16;
+      const context = copy.getContext('2d'); context.drawImage(engine.canvas, 0, 0, 16, 16);
+      return {surface: engine.surface, presentation: engine.getTelemetry().presentation, during: reports.length,
+        presented: reports.filter(frame => frame.presented).length, carriedBitmap: reports.some(frame => frame.bitmap),
+        lit: context.getImageData(0, 0, 16, 16).data.some((value, i) => i % 4 !== 3 && value > 0)};
+    });
+    assert.equal(starved.surface, true); assert.equal(starved.presentation, 'worker');
+    assert.ok(starved.presented >= 4, `Only ${starved.presented} frames reached the canvas while the page was blocked`);
+    assert.equal(starved.carriedBitmap, false);
+    assert.equal(starved.lit, true, 'the handed-over canvas still reads back as the presented room');
+
     const fenced = await page.evaluate(async () => {
       engine.setLightingMode('interpolate'); engine.pause(); await engine.draw();
       // Change show epoch after a real render starts, while its shader work is
@@ -143,6 +162,6 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
     assert.deepEqual(fallback.observed, fallback.navigation);
     assert.deepEqual(fallback.secondaryObserved, fallback.navigation); assert.equal(fallback.cameraShared, true);
     assert.deepEqual(errors, []);
-    t.diagnostic(JSON.stringify({scope: 'Chromium SwiftShader, not physical GPU/Safari', first, heartbeat, fenced, resized, fallback}));
+    t.diagnostic(JSON.stringify({scope: 'Chromium SwiftShader, not physical GPU/Safari', first, heartbeat, starved, fenced, resized, fallback}));
   } finally {await browser?.close(); await new Promise(resolve => server.close(resolve));}
 });

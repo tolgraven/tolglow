@@ -1,15 +1,16 @@
 // Browser-side collection uses completed, accepted bitmaps from the real proxy.
+// When the worker presents on its own surface it reports the canvas submission.
 export function beginPassSample(mode) {
   const engine = document.querySelector('#preview').tolglowPreview;
-  if (!engine.worker || !engine.bitmapPresenter) throw new Error('Pass attribution requires a worker and bitmaprenderer.');
-  const presenter = engine.presenter, original = presenter.transferFromImageBitmap, values = new Map();
+  if (!engine.worker || !(engine.bitmapPresenter || engine.surface)) throw new Error('Pass attribution requires a worker and bitmaprenderer.');
+  const presenter = engine.surface ? {} : engine.presenter, original = presenter.transferFromImageBitmap, values = new Map();
   let submitted, accepted = 0, raymarched = 0;
   const add = (name, ms) => {
     if (!Number.isFinite(ms)) return;
     if (!values.has(name)) values.set(name, []);
     values.get(name).push(ms);
   };
-  presenter.transferFromImageBitmap = function(bitmap) {
+  if (!engine.surface) presenter.transferFromImageBitmap = function(bitmap) {
     const start = performance.now(), result = original.call(this, bitmap);
     submitted = performance.now() - start;
     return result;
@@ -21,12 +22,12 @@ export function beginPassSample(mode) {
     for (const [phase, ms] of Object.entries(p.submitMs)) add(phase+'SubmitMs', ms);
     for (const [phase, ms] of Object.entries(p.gpuMs)) add(phase+'GpuMs', ms);
     add('workerFrameMs', t.workerFrameMs); add('gpuFenceWaitMs', t.gpuCompletionWaitMs);
-    add('bitmapExportMs', t.bitmapTransferMs); add('domSubmitMs', submitted);
+    add('bitmapExportMs', t.bitmapTransferMs); add('domSubmitMs', engine.surface ? t.presentSubmitMs : submitted);
     add('workerPostThroughDomMs', performance.timeOrigin + performance.now() - p.sentAt);
   };
   engine.worker.addEventListener('message', collect);
   window.finishRoomPassSample = () => {
-    presenter.transferFromImageBitmap = original;
+    if (!engine.surface) presenter.transferFromImageBitmap = original;
     engine.worker.removeEventListener('message', collect);
     delete window.finishRoomPassSample;
     const timings = Object.fromEntries([...values].map(([key, xs]) => {
