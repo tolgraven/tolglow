@@ -10,17 +10,20 @@
 (defn- bytes-copy [universes]
   (into {} (map (fn [[u data]] [u (mapv #(bit-and (int %) 255) data)])) universes))
 
-(defn- fog-capture [off & [{:keys [stall-ms include-pump?] :or {include-pump? true}}]]
+(defn- fog-capture [off & [{:keys [stall-ms include-pump? on initial-claim] :or {include-pump? true}}]]
   (let [clock (atom 0) sent (atom []) stall? (atom false) partial? (atom false)
         pump {:id :pump :universe 1 :address 2 :channels {:fog 1}
-              :fogger {:flow-m3-min 60 :dmx-range [off (if (zero? off) 255 0)]}}
+              :fogger {:flow-m3-min 60 :dmx-range [off (or on (if (zero? off) 255 0))]}}
         fixtures (conj (cond-> [{:id :light :universe 1 :address 1 :channels {:dimmer 1}}]
-                         include-pump? (conj pump))
+                         include-pump? (conj pump)
+                         initial-claim (conj initial-claim))
                        {:id :other :universe 2 :address 1 :channels {:dimmer 1}})
         runtime (show/create-runtime {:model (control/new-show {:rig {:fixtures fixtures}})
                                       :workspace-options nil :independent-output? true
                                       :physical-now-ms #(deref clock)
                                       :sink {:send! (fn [universes id]
+                                                      (when (= :before-pump @partial?)
+                                                        (throw (ex-info "Pump universe write failed" {})))
                                                       (swap! sent conj [id (subvec (get (bytes-copy universes) 1) 0 2)])
                                                       (when @partial?
                                                         (throw (ex-info "Second universe write failed" {}))))}})
@@ -295,6 +298,47 @@
         (is (not (:expired-before-send? (publish-fog! capture 125))))
         (is (= [0 (if complete-claim? 0 196)] (second (peek @sent))))
         (finally (show/stop! runtime))))))
+
+(deftest a-possible-pump-off-byte-survives-conflicting-light-off-bytes
+  (let [inverted {:id :inverted :universe 1 :address 2
+                  :channels {:dimmer {:offset 1 :inverted-from 0}}}]
+    (doseq [prior-light? [false true]]
+      (let [{:keys [runtime clock sent stall? partial? pump] :as capture}
+            (fog-capture 196 {:include-pump? false :on 255 :initial-claim (when prior-light? inverted)})
+            base (filterv #(not= :inverted (:id %)) (get-in @(:state runtime) [:model :rig :fixtures]))
+            repatch! (fn [time fixture]
+                       (let [{:keys [epoch rig]} (:model @(:state runtime))
+                             fixtures (cond-> base fixture (conj fixture))
+                             receipt (show/submit! runtime :rig (assoc rig :fixtures fixtures :expected-epoch epoch))]
+                         (reset! clock time)
+                         (show/tick! runtime time)
+                         (is (= :accepted (:status @receipt)) (str @receipt))))]
+        (try
+          (show/tick! runtime 0)
+          (publish-fog! capture 25)
+          (is (= [0 (if prior-light? 255 0)] (second (peek @sent))))
+          (repatch! 30 pump)
+          (offer-fog! capture 2 20 240 nil)
+          (reset! partial? true)
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Second universe write failed"
+                                (publish-fog! capture 50)))
+          (is (= [20 240] (second (peek @sent))))
+          (reset! partial? false)
+          (when-not prior-light?
+            (repatch! 55 inverted)
+            (reset! partial? :before-pump)
+            (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Pump universe write failed"
+                                  (publish-fog! capture 60)))
+            (is (= [20 240] (second (peek @sent))))
+            (reset! partial? false))
+          (repatch! 65 nil)
+          (reset! stall? true)
+          (is (:safety-output? (publish-fog! capture 75)))
+          (is (= [0 196] (second (peek @sent))))
+          (reset! stall? false)
+          (publish-fog! capture 125)
+          (is (= [0 196] (second (peek @sent))))
+          (finally (show/stop! runtime)))))))
 
 (deftest a-published-fog-cutoff-outlasts-the-producer-history
   (let [{:keys [runtime sent clock stall?] :as capture} (fog-capture 196)]

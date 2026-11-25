@@ -829,14 +829,21 @@
   (let [{wire-context :context wire-plan :plan :keys [possible] :as wire} @(:wire-retirement runtime)]
     (if (and (identical? context wire-context) (nil? possible))
       wire
-      {:context context
-       ;; Delivered off bytes win over possible off bytes for the same slot.
-       ;; The current patch owns every claimed slot in either case.
-       :plan (if (or wire-context possible)
-               (retirement/plan {:known (into (:known retirement) (concat (:known wire-plan) (:known possible)))
-                                 :held (merge (:held retirement) (:held possible) (:held wire-plan))}
-                                (:compiled wire-context) compiled)
-               retirement)})))
+      (let [previous (:compiled wire-context)
+            ;; A partial handoff can already drive a pump. Keep its off byte ahead
+            ;; of light off bytes for unclaimed slots. Within fog, prefer the last
+            ;; complete handoff, then the most recent possible fog encoding.
+            fog-off (merge (:fog-off-bytes possible) (:fog-off-bytes wire))
+            plan (if (or wire-context possible)
+                   (retirement/plan {:known (into (:known retirement) (concat (:known wire-plan) (:known possible)))
+                                     :held (merge (:held retirement) (:held possible) (:held wire-plan)
+                                                  (render/physical-off-bytes previous) fog-off)}
+                                    nil compiled)
+                   retirement)]
+        {:context context :plan plan
+         ;; The current patch claims slots on a complete handoff, clearing any
+         ;; old fog byte there. A retired, still unclaimed fog slot keeps its byte.
+         :fog-off-bytes (merge (select-keys fog-off (keys (:held plan))) (:fog-off-bytes compiled))}))))
 
 (defn- guard-output [runtime compiled retirement universes {:keys [safety-state stale-source?]}]
   (let [packet (retirement/include-retired retirement universes)]
@@ -898,13 +905,15 @@
       (when (:plan @(:venue-fog runtime))
         (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet))
       (catch Exception error
-        ;; A failed handoff may already have driven some universes. Keep one
-        ;; possible off byte per slot, using the latest attempt on disagreement.
-        (let [off-bytes (render/physical-off-bytes (:compiled context))]
+        ;; A failed handoff may already have driven some universes. Remember one
+        ;; possible off byte per slot and one possible fog off byte per fog slot.
+        (let [compiled (:compiled context)
+              off-bytes (render/physical-off-bytes compiled)]
           (swap! (:wire-retirement runtime) update :possible
-                 (fn [{:keys [known held]}]
+                 (fn [{:keys [known held fog-off-bytes]}]
                    {:known (into (or known #{}) (:known plan))
-                    :held (merge held (:held plan) off-bytes)})))
+                    :held (merge held (:held plan) off-bytes)
+                    :fog-off-bytes (merge fog-off-bytes (:fog-off-bytes compiled))})))
         (throw error)))
     (reset! (:wire-retirement runtime) wire)))
 
