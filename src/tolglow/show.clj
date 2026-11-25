@@ -72,6 +72,7 @@
             [tolglow.show.recovery :as recovery]
             [tolglow.show.lighting :as lighting]
             [tolglow.integrations.analysis :as analysis]
+            [tolglow.integrations.mpv-session :as mpv-session]
             [tolglow.integrations.reference-position :as reference-position]
             [tolglow.integrations.section-patterns :as section-patterns]
             [tolglow.persistence :as persistence]
@@ -270,6 +271,8 @@
                             (when-not (and music (:profile reference))
                               (throw (ex-info "A section reference requires an enabled pattern policy and track profile" {})))
                             (reference-position/new-state (:provenance reference) (:position-options reference)))
+         section-player (when (contains? reference :mpv)
+                          (mpv-session/create (:mpv reference) (:profile reference) initial-position))
          _ (lighting-scenes/validate-state! model)
          _ (lighting/validate! (:settings model))
          _ (when (contains? (:settings model) :section-patterns)
@@ -352,6 +355,7 @@
       :capacity-plan (volatile! nil) :capacity-audio (volatile! nil)
       :audio-input (atom {:epoch (:epoch model) :events [] :features nil})
       :section-patterns music
+      :section-player section-player
       :section-reference (when initial-position
                            {:initial initial-position
                             :input (atom {:epoch (:epoch model) :position initial-position
@@ -1059,6 +1063,40 @@
               (reset! input {:epoch (get-in @(:state runtime) [:model :epoch])
                              :position position :used-sessions (conj used-sessions session-id)})
               (section-reference-callbacks runtime))))))))
+
+(defn section-reference-status
+  "Project local player alignment for the given committed show."
+  ([runtime] (section-reference-status runtime @(:state runtime)))
+  ([runtime {:keys [model]}]
+   (mpv-session/status (:section-player runtime)
+                       (assoc (select-keys model [:show-id :epoch])
+                              :runtime-id (:id runtime)
+                              :override? (get-in model [:settings :section-patterns :override?] false)))))
+
+(defn reconnect-section-reference!
+  "Reconnect the configured local player through the active show's reference
+  session. The request carries the runtime identity and the expected show epoch."
+  [runtime {:keys [runtime-id expected-epoch] :as request}]
+  (let [refuse (fn [reason message] {:status :rejected :reason reason :message message})
+        result (cond
+                 (not (and (map? request) (= #{:runtime-id :expected-epoch} (set (keys request)))
+                           (string? runtime-id) (nat-int? expected-epoch)))
+                 (refuse :invalid-request "Reconnect requires only the runtime ID and expected show epoch")
+
+                 (nil? (:section-player runtime))
+                 (refuse :not-configured "No local mpv reference is configured for this show")
+
+                 :else
+                 (mpv-session/reconnect! (:section-player runtime)
+                   (fn []
+                     (locking (:lock runtime)
+                       (let [{:keys [show-id epoch]} (:model @(:state runtime))]
+                         (if (and @(:running runtime) (= runtime-id (:id runtime)) (= epoch expected-epoch))
+                           (let [session-id (str (random-uuid))]
+                             {:status :accepted :runtime-id runtime-id :show-id show-id :epoch epoch
+                              :session-id session-id :callbacks (attach-section-reference! runtime session-id)})
+                           (refuse :stale-show-session "Reconnect belongs to a previous show session")))))))]
+    (assoc result :operation :reconnect)))
 
 (defn- reference-evidence [runtime show-epoch]
   (when-let [input (get-in runtime [:section-reference :input])]
@@ -1786,6 +1824,7 @@
                               #(rdm/close! (:rdm runtime))
                               #(output-scheduler/close! (:publisher runtime))
                               #(send-output! runtime (render/idle-universes (:compiled @(:patch runtime))) 0 nil)
+                              #(mpv-session/close! (:section-player runtime))
                               #(effect-faults/close! (:effect-logs runtime))
                               #(compute/close! (:compute runtime))
                               #(duplex/stop! (:audio-returns runtime))
