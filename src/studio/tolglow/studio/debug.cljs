@@ -107,10 +107,14 @@
 (rf/reg-sub :debug/universes (fn [db _] (get-in db [:show :output :universes])))
 (def filter-fields [[:type "Event type"] [:category "Category"] [:emitter "Emitter"] [:subscribers "Subscriber"]])
 
+(defn- emitter-label [id]
+  ;; EDN keeps keyword and string IDs distinct in the select's string values.
+  (when (some? id) (pr-str id)))
+
 (defn- field-values [row k]
   (case k
     :subscribers (map label (:subscribers row))
-    :emitter (keep #(when (some? %) (label %)) [(get-in row [:emitter :id])])
+    :emitter (keep emitter-label [(get-in row [:emitter :id])])
     [(label (get row k))]))
 
 (defn matches? [filters row]
@@ -122,6 +126,11 @@
       (str (part (.getHours stamp)) ":" (part (.getMinutes stamp)) ":" (part (.getSeconds stamp))
            "." (.padStart (str (.getMilliseconds stamp)) 3 "0"))) "—"))
 
+(defn- filter-choice-label [field choice]
+  (if (= field :emitter)
+    (str choice (if (str/starts-with? choice ":") " (keyword)" " (text)"))
+    choice))
+
 (defn- filters [rows selections]
   [:div.debug-filters
    (for [[k title] filter-fields
@@ -130,7 +139,8 @@
      ^{:key k} [:label title
                 [:select {:id (str "debug-filter-" (name k)) :aria-label title :value selected :on-change #(emit! [:debug/filter k (value %)])}
                  [:option {:value ""} "All"]
-                 (for [choice (sort options)] ^{:key choice} [:option {:value choice} choice])]])])
+                 (for [choice (sort options)]
+                   ^{:key choice} [:option {:value choice} (filter-choice-label k choice)])]])])
 
 (defn- subscribers-label [v]
   (cond (nil? v) "Unobserved" (empty? v) "None" :else (str/join ", " (map label v))))
@@ -184,7 +194,8 @@
           ^{:key id} [:button.debug-row {:id (row-id id) :type "button" :data-category (label category) :aria-pressed (= (:id selected) id)
                                          :on-click #(emit! [:debug/select-row (when (not= id (:id selected)) id)])}
                       [:time {:date-time (when (instance? js/Date timestamp) (.toISOString timestamp))} (format-clock timestamp)]
-                      [:span.debug-event-name [:strong (label type)] [:small (str (label category) " · " (label (:id emitter)))]]
+                      [:span.debug-event-name [:strong (label type)]
+                       [:small (str (label category) " · " (or (emitter-label (:id emitter)) "—"))]]
                       [:span.debug-recipients {:title (str "Subscribers · " (subscribers-label subscribers))}
                        (subscribers-label subscribers)]])]
        [:p.debug-empty (if (seq rows) "No events match these filters." "Waiting for emitted events.")])
