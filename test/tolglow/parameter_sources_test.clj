@@ -313,6 +313,72 @@
           (is (empty? (:parameter-sources (instance restored-id))))))
       (finally (show/stop! rt)))))
 
+(deftest ring-moves-one-running-waveform-between-typed-destinations
+  (let [model (-> (live-model)
+                  (assoc-in [:registry :effects :wash :params :step] {:type :integer :bounds [1 5] :default 1})
+                  (assoc-in [:registry :effects :wash :params :hue] {:type :number :bounds [0 360] :default 60})
+                  (assoc-in [:registry :effects :wash :outputs :strobe]
+                            {:op :divide :args [{:op :param :key :step} 5]})
+                  (assoc-in [:rig :fixtures 0 :channels :strobe] 3)
+                  (assoc-in [:rig :fixtures 1 :channels :strobe] 3))
+        packet (atom nil)
+        rt (show/create-runtime {:model model :sink {:send! (fn [bytes _] (reset! packet (mapv #(bit-and 255 %) (take 3 (get bytes 1)))))}})
+        now (atom 0)
+        submit! (fn [op body] (let [ack (show/submit! rt op body)] (show/tick! rt @now) ack))
+        app (web/app {:submit! submit! :heartbeat! (constantly nil)})
+        post (fn [route data]
+               (:status (app {:request-method :post :uri (str "/api/modulation/" route)
+                              :headers {"host" "localhost" "content-type" "application/transit+json"}
+                              :body (ByteArrayInputStream. (.getBytes (transit/encode data) "UTF-8"))})))
+        launch (fn [target] (:instance-id @(submit! :command {:op :cue/launch :cue-id :wash :launch {:targets [target]}})))
+        projection (fn [id] (some #(when (= id (:id %)) %) (:instances (show/snapshot rt))))
+        committed (fn [id] (get-in @(:state rt) [:model :instances id]))]
+    (try
+      (let [left (launch :left) right (launch :right)
+            address {:instance-id left}
+            bind (fn [param binding] (post "bind" (assoc address :param param :binding binding)))
+            move (fn [from param lo hi]
+                   (post "bind" (assoc address :from-param from :param param :binding {:from lo :to hi})))
+            binding (assoc saw :period {:beats 2} :phase 1/8 :phase-reference :launch)]
+        (reset! now 250)
+        (is (= 200 (bind :level binding)))
+        (is (= [96 64 51] @packet))
+        (is (= 200 (bind :hue (assoc saw :from 60 :to 60))))
+        (is (= 200 (bind :hue (assoc saw :from 90 :to 90))))
+        (is (= 90.0 (get-in (projection left) [:parameter-sources :hue :effective-value])))
+        (let [before (:parameter-bindings (committed left))]
+          (is (= 422 (move :level :hue 0 360)))
+          (is (= 422 (move :level :step 0.25 5)))
+          (is (= 422 (move :step :hue 0 360)))
+          (is (= 422 (move :level :level 0 1)))
+          (is (= before (:parameter-bindings (committed left))))
+          (is (= [96 64 51] @packet)))
+        (is (= 200 (post "hold" (assoc address :params [:level :step]))))
+        (is (= [64 64 51] @packet))
+        (let [owned-keys [:id :order :params :state :phase :timing-meter :started-at-beat :started-at-ms]
+              before (select-keys (committed left) owned-keys)
+              holds (get-in @(:state rt) [:model :modulation :holds])]
+          (reset! now 375)
+          (is (= 200 (move :level :step 1 5)))
+          (is (= before (select-keys (committed left) owned-keys)))
+          (is (= holds (get-in @(:state rt) [:model :modulation :holds])))
+          (is (= [64 64 51] @packet))
+          (is (= #{:hue :step} (set (keys (:parameter-sources (projection left))))))
+          (is (true? (get-in (projection left) [:parameter-sources :step :sources 0 :held?])))
+          (is (= 200 (post "resume" (assoc address :params [:step]))))
+          (is (= [64 64 153] @packet))
+          (is (= 3 (get-in (projection left) [:parameter-sources :step :effective-value])))
+          (is (empty? (:parameter-sources (projection right))))
+          (is (= 200 (post "unbind" (assoc address :param :hue))))
+          (reset! now 500)
+          (is (= 200 (move :step :hue 0 360)))
+          (is (= [64 64 51] @packet))
+          (is (= 225.0 (get-in (projection left) [:parameter-sources :hue :effective-value])))
+          (is (= (assoc binding :from 0 :to 360 :inputs {})
+                 (get-in (projection left) [:parameter-sources :hue :sources 0 :binding])))
+          (is (= #{:hue} (set (keys (:parameter-sources (projection left))))))))
+      (finally (show/stop! rt)))))
+
 (deftest observed-source-types-and-static-projection-cost
   (let [base (fixture/model)
         older (get-in base [:instances "0:1"])

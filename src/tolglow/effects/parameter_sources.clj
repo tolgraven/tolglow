@@ -42,13 +42,26 @@
               "Both waveform endpoints must satisfy the destination parameter schema")
     binding))
 
-(defn bind [model {:keys [instance-id param binding]}]
-  (let [schema (get-in model [:instances instance-id :definition :params param])
+(defn bind [model {:keys [instance-id param binding from-param] :as payload}]
+  (let [instance (get-in model [:instances instance-id])
+        bindings (:parameter-bindings instance)
+        schema (get-in instance [:definition :params param])
+        moving? (contains? payload :from-param)
+        binding (if moving?
+                  (let [source (get-in bindings [from-param :binding])]
+                    (require! source "No waveform is bound to the source parameter")
+                    (require! (not= from-param param) "Choose another parameter for the waveform")
+                    (require! (not (contains? bindings param)) "A waveform is already bound to the destination parameter")
+                    (require! (and (map? binding) (= #{:from :to} (set (keys binding))))
+                              "Moving a waveform requires both destination endpoints")
+                    (merge source binding))
+                  binding)
         waveform (get-in (waveforms model) [:waveforms (:waveform binding)])]
     (require! schema "Unknown running instance or parameter")
-    (assoc-in model [:instances instance-id :parameter-bindings param]
-              {:binding (checked-binding schema waveform binding)
-               :schema schema :waveform-version (:version waveform)})))
+    (assoc-in model [:instances instance-id :parameter-bindings]
+              (assoc (cond-> bindings moving? (dissoc from-param)) param
+                     {:binding (checked-binding schema waveform binding)
+                      :schema schema :waveform-version (:version waveform)}))))
 
 (defn unbind [model {:keys [instance-id param]}]
   (require! (get-in model [:instances instance-id :parameter-bindings param]) "No waveform is bound here")

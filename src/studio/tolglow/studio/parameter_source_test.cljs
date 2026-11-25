@@ -55,6 +55,23 @@
     (is (seq (source/request (:db result) "unbind" "2:2" :level nil)))
     (is (seq (source/request (assoc-in (:db result) [:show :epoch] 3) "unbind" "2:1" :level nil)))))
 
+(deftest a-destination-move-sends-one-typed-binding-request
+  (let [db {:show {:runtime-id "studio" :epoch 2}}
+        endpoints {:from :step/one :to "step/two"}
+        result (source/request db "bind" "2:1" :cue/step endpoints :cue/level)]
+    (is (= "/api/modulation/bind" (get-in result [:studio/http :path])))
+    (is (true? (get-in result [:studio/http :typed?])))
+    (is (= {:runtime-id "studio" :expected-epoch 2 :instance-id "2:1"
+            :from-param :cue/level :param :cue/step :binding endpoints}
+           (get-in result [:studio/http :body])))
+    (is (empty? (source/request (:db result) "unbind" "2:1" :cue/level nil))))
+  (let [hue {:type :number :bounds [0 360]}
+        step {:type :enum :values [:step/one "step/two"]}
+        instance {:definition {:params {:cue/level {} :cue/hue hue :cue/step step :occupied {}}}
+                  :parameter-sources {:occupied {:sources [{:type :lfo :held? true}]}
+                                      :cue/step {:sources [{:type :random}]}}}]
+    (is (= [[:cue/hue hue] [:cue/step step]] (source/destination-options instance :cue/level)))))
+
 (deftest fixture-blocks-observe-real-members-of-a-restricted-rig
   (let [rig (mapv #(hash-map :id % :position [1 2 3]) [:a :b :c])]
     (is (= [{:id :b}] (source/fixture-options rig {:targets [:a :b] :outputs [{:attribute :dimmer :value 1 :targets [:b :c]}]})))
