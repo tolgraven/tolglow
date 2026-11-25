@@ -170,9 +170,13 @@
                           [:radius "Spill radius (m)" {:min 0 :max 20 :step 0.05}]
                           [:spill-white-mix "Neighbor whitening" unit-opts]]]
       ^{:key k} [bound section controls signals (conj base k) label opts])]
-   [signal/choice "Spill falloff" (get-in controls (conj base :falloff))
-    [[:linear "Linear"] [:quadratic "Quadratic"] [:smoothstep "Smoothstep"]]
-    #(edit! section (conj base :falloff) %)]])
+   (let [falloff (get-in controls (conj base :falloff))]
+     ;; An authored [[distance-fraction weight] ...] curve from the REPL or a
+     ;; show file stays selected and is kept until a preset replaces it.
+     [signal/choice "Spill falloff" falloff
+      (cond-> [[:linear "Linear"] [:quadratic "Quadratic"] [:smoothstep "Smoothstep"]]
+        (vector? falloff) (conj [falloff (str "Authored curve · " (count falloff) " points")]))
+      #(edit! section (conj base :falloff) %)])])
 
 (defn- apply-button [section label draft busy?]
   [:div.performance-actions [:button.button {:type "button" :disabled (or busy? (empty? draft))
