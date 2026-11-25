@@ -1,7 +1,8 @@
 (ns tolglow.show
   "Executable host for the shared functional lighting engine. Requiring it is inert.
   One owner advances the model; workers return data; physical output is opt-in."
-  (:require [afterglow.control.model :as control]
+  (:require [clojure.string :as str]
+            [afterglow.control.model :as control]
             [afterglow.control.instance-order :as instance-order]
             [afterglow.control.pages :as cue-pages]
             [tolglow.studio.parameter-precision :as precision]
@@ -59,6 +60,7 @@
             [afterglow.reactive.registry :as reactive-registry]
             [tolglow.spatial :as spatial]
             [tolglow.spatial.cues :as spatial-cues]
+            [tolglow.spatial.sampling :as spatial-sampling]
             [tolglow.spatial.targets :as targets]
             [tolglow.authoring.output-patch :as output-patch]
             [tolglow.authoring.variation-control :as variations]
@@ -160,6 +162,8 @@
                    (sort-by (juxt :y :x))
                    vec)))))
 
+(declare ^:private audition-projection)
+
 (defn project-snapshot [runtime {:keys [model output status modulation-view parameter-samples] :as snapshot}]
   (let [sources (parameter-sources/source-index model (assoc parameter-samples :diagnostics (:diagnostics modulation-view)))
         responses? (some #(not= false (:enabled? %)) (:responses model))
@@ -171,10 +175,8 @@
         gains (if (identical? fixtures (:fixtures patch))
                 (:brightness-gains patch)
                 (preview/brightness-gains fixtures))
-        audition (:scene-audition snapshot)
-        ;; A Room audition replaces only the preview values. Packets, fog and
-        ;; capacity readings stay those of the committed live frame.
-        preview-output (or (:output audition) output)]
+        ;; The latest completed audition frame. Live :output stays the committed frame.
+        audition (some-> (:scene-draft runtime) deref audition-projection not-empty)]
     (merge (select-keys model [:show-id :epoch :revision :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
             :section-patterns-enabled? (some? (:section-patterns runtime))
@@ -230,8 +232,11 @@
                                         :playback (get-in model [:composition-runs (:id %) :playback]))
                                 (sort-by (comp str :id) (vals (:compositions model))))
             :scene-draft (not-empty (dissoc audition :output))
-            :output {:values (reflections/with-footprints optics (preview/values preview-output fixtures gains))
-                     :draft (when (:output audition) (select-keys (:draft audition) [:id :revision]))
+            :draft-output (when-let [frame (:output audition)]
+                            {:values (reflections/with-footprints optics (preview/values frame fixtures gains))
+                             :draft (select-keys (:draft audition) [:id :revision])
+                             :time-ms (:time-ms audition)})
+            :output {:values (reflections/with-footprints optics (preview/values output fixtures gains))
                      :edge-tracking (:edge-tracking output [])
                      :atmosphere (:atmosphere output)
                      :fog-control (fog-control/view (:fog-control output))
@@ -282,10 +287,58 @@
                           (get before id)))]
     ((:close! observer))))
 
+(defn lease-response-samples!
+  "Ask the show owner to retain exact live response inputs on committed frames
+  while a display reads them. demanded? is polled once per owner tick and must
+  only read state. A throwing predicate counts as not demanded and is recorded
+  for response-sample-faults. Returns an idempotent release function."
+  ([runtime] (lease-response-samples! runtime (constantly true)))
+  ([runtime demanded?]
+   (let [lease (Object.)]
+     (swap! (:response-sample-readers runtime) assoc lease {:demanded? demanded?})
+     (fn [] (swap! (:response-sample-readers runtime) dissoc lease) nil))))
+
+(defn response-sample-faults
+  "The first failure and failure count of each current response-sample lease whose predicate threw."
+  [runtime]
+  (into [] (keep :fault) (vals @(:response-sample-readers runtime))))
+
+(defn- record-response-sample-fault! [runtime lease error]
+  ;; Bounded: one entry per live lease, keeping the first failure and a count.
+  (swap! (:response-sample-readers runtime)
+         (fn [readers]
+           (if (contains? readers lease)
+             (update-in readers [lease :fault]
+                        #(if % (update % :count inc) (assoc (error-data error) :count 1)))
+             readers))))
+
+(defn- interrupted-cause? [^Throwable error]
+  (boolean (some #(instance? InterruptedException %) (take-while some? (iterate #(.getCause ^Throwable %) error)))))
+
+(defn- response-samples-demanded? [runtime]
+  ;; Poll every lease so each failing reader is recorded. Errors such as
+  ;; StackOverflowError propagate to the tick as they would without a lease.
+  (reduce (fn [demanded? [lease {reader :demanded?}]]
+            (or (try (boolean (reader))
+                     (catch Exception error
+                       (when (interrupted-cause? error) (.interrupt (Thread/currentThread)))
+                       (record-response-sample-fault! runtime lease error)
+                       false))
+                demanded?))
+          false (some-> (:response-sample-readers runtime) deref)))
+
 (defn- compiler-context [fixtures batch? compute-owner]
   (let [options (cond-> {:enabled? batch? :bind-pure reuse/evaluator}
                   (compute/expressions-enabled? compute-owner) (assoc :prepare-group (compute/group-preparer compute-owner)))]
     {:fixtures fixtures :compiler (batch/compiler-for-rig fixtures options) :cache (atom {})}))
+
+(defn- cached-compile [compiler-context]
+  (fn [definition]
+    (let [{:keys [compiler cache]} @compiler-context]
+      (or (get @cache definition)
+          (let [compiled (compiler definition)]
+            (swap! cache #(assoc (if (>= (count %) 256) {} %) definition compiled))
+            compiled)))))
 
 (defn- open-compute! [{:keys [compute-backend movement-backend batch? frame-rate gpu-budget-ms]
                        :or {batch? true frame-rate 40} :as options}]
@@ -347,7 +400,12 @@
                                                                              (rdm/register-status! rdm-state) (spatial/register! nil)))))
          worker-pool (try (executor/create {:workers workers :queue-size 64
                                             :timeout-ms (:worker-timeout-ms options 500)})
-                          (catch Exception error (connections/close! owned) (throw error)))]
+                          (catch Exception error (connections/close! owned) (throw error)))
+         field-sampler (try (spatial-sampling/create (:spatial-sampling options))
+                            (catch Exception error
+                              (.close ^java.io.Closeable worker-pool)
+                              (connections/close! owned)
+                              (throw error)))]
      (let [development (try (development/create
                              (when-let [workspace-options (if (contains? options :workspace-options)
                                                             (:workspace-options options) (development/default-options))]
@@ -355,6 +413,7 @@
                                       (assoc (merge (:app-agent-options workspace-options) (:app-agent-options options))
                                              :credential-store (get-in owned [:options :agent-options :credential-store])))))
                             (catch Exception error
+                              (.close ^java.io.Closeable field-sampler)
                               (.close ^java.io.Closeable worker-pool)
                               (connections/close! owned)
                               (throw error)))
@@ -388,14 +447,19 @@
       :adaptive-keyframes (:adaptive-keyframes options) :cue-pad-previews (cue-pads/manager)
       :capture-effect-samples? (:capture-effect-samples? options)
       :browser-observations browser-inputs
-      :observers (atom {}) :frame-rate (get options :frame-rate 40)
+      :observers (atom {}) :response-sample-readers (atom {}) :frame-rate (get options :frame-rate 40)
       :publisher publisher :presentation-clock (volatile! 0) :wire-retirement (atom nil)
       :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
+      :spatial-sampling field-sampler
       :leases (atom {})
       :audio-returns (duplex/create) :open-audio-returns! (get options :open-audio-returns! duplex/open-java!)
       :variable-plan (volatile! nil) :scene-eligible (atom {}) :scene-plans (volatile! {})
-      :scene-draft (atom nil)
+      :scene-draft (atom nil) :audition-options (:audition options)
+      :audition-worker (delay (java.util.concurrent.Executors/newSingleThreadExecutor
+                                (reify java.util.concurrent.ThreadFactory
+                                  (newThread [_ task]
+                                    (doto (Thread. ^Runnable task "tolglow-room-audition") (.setDaemon true))))))
       :capacity-plan (volatile! nil) :capacity-audio (volatile! nil)
       :audio-input (atom {:epoch (:epoch model) :events [] :features nil})
       :section-patterns music
@@ -417,12 +481,7 @@
       :optics-plan (atom (reflections/plan (:rig model)))
       :patch (atom {:fixtures fixtures :compiled patch :retirement (retirement/plan nil nil patch)
                     :brightness-gains (preview/brightness-gains fixtures)})
-      :compile (fn [definition]
-                 (let [{:keys [compiler cache]} @compiler-context]
-                   (or (get @cache definition)
-                       (let [compiled (compiler definition)]
-                         (swap! cache #(assoc (if (>= (count %) 256) {} %) definition compiled))
-                         compiled))))}]
+      :compile (cached-compile compiler-context)}]
        (reset! runtime-ref runtime)
        runtime)))
 
@@ -430,6 +489,8 @@
   "Create an unscheduled show. The CPU backend is the default. Explicit
   :compute-backend :native-gpu acquires one session owned by this show.
   :worker-timeout-ms sets the per-frame effect worker deadline (default 500).
+  :spatial-sampling {:workers n :partitions n :min-fixtures n} bounds the
+  workers that sample volume fields on a large patch; {:workers 1} is serial.
   An enabled :section-patterns policy publishes pattern intents from opted-in
   capture at owner boundaries. :section-reference can supply a versioned
   :profile, initial source :provenance and :position-options. Reconnect a
@@ -498,6 +559,18 @@
               result (:events result))
 
       :else result)))
+
+(defn- committed-values
+  "ID -> row lookup into the last committed frame, rich or compact. Rows are
+  projected only when looked up, so ordinary launches pay nothing. tick! binds
+  it to aim-paths/*committed-values* for its owner cycle only."
+  [runtime]
+  (when-let [{:keys [values compact]} (some-> runtime :state deref :output)]
+    (let [indices (delay (when compact (zipmap (:target-order compact) (range))))]
+      (fn [id]
+        (or (get values id)
+            (when-let [index (and compact (get @indices id))]
+              (first (render/project-compact compact [index]))))))))
 
 (defn- command
   ([model payload time-ms] (command model payload time-ms nil))
@@ -583,6 +656,33 @@
   (let [updated (update model :revision inc)]
     {:model updated :ack {:status :accepted :revision (:revision updated)}}))
 
+(defn- apply-composition-append [model {:keys [macro-id cue-id command-id base-revision cell] :as request}]
+  (let [epoch (:epoch model)
+        history (get-in model [:extensions ::composition-append])
+        {:keys [floor receipts] :or {floor 0 receipts []}} (when (= epoch (:epoch history)) history)
+        intent (select-keys request [:macro-id :cue-id :base-revision :cell])
+        previous (some #(when (= command-id (:command-id %)) %) receipts)]
+    (when-not (and (string? command-id) (not (str/blank? command-id)) (<= (count command-id) 256)
+                   (integer? base-revision) (<= 0 base-revision (:revision model)))
+      (throw (ex-info "Macro append needs a command ID and a valid base revision" {})))
+    (if previous
+      (if (= intent (:intent previous))
+        {:model model :ack (:ack previous) :replayed? true}
+        (throw (ex-info "Macro append command ID was already used with different data" {:command-id command-id})))
+      (let [{:keys [page-id x y]} cell]
+        (when (< base-revision floor)
+          (throw (ex-info "Macro append is too old to confirm. Review the saved slots before starting a new append." {})))
+        (when (and (contains? request :cell) (not= cue-id (get-in model [:pages page-id :cells [x y]])))
+          (throw (ex-info "The cue cell changed. Open its actions again." {:cell cell})))
+        (let [updated (composition/append-macro-cue model macro-id cue-id)
+              ack {:status :accepted :command-id command-id :macro-id macro-id :revision (:revision updated)}
+              receipts (conj receipts {:command-id command-id :intent intent :ack ack})
+              evicted (when (> (count receipts) 128) (first receipts))]
+          {:model (assoc-in updated [:extensions ::composition-append]
+                            {:epoch epoch :floor (if evicted (get-in evicted [:ack :revision]) floor)
+                             :receipts (if evicted (subvec receipts 1) receipts)})
+           :ack ack})))))
+
 (defn- cue-clock-identity [runtime {:keys [show-id epoch transport]}]
   [show-id epoch (:source transport) (:source-epoch transport)
    (:source-selection-epoch transport) @(:presentation-clock runtime)])
@@ -618,11 +718,17 @@
    :parameter-samples :modulation-view :preview-hdr])
 
 (defn- audition-caches
-  "Private render caches. The audition never resets or reuses live caches."
-  []
-  {:patch (atom nil) :capacity-plan (volatile! nil) :pause-layer-cache (volatile! nil)
-   :response-cache (atom {:responses [] :middleware identity})
-   :variable-plan (volatile! nil) :scene-plans (volatile! {})})
+  "Private render resources. The audition compiles for the CPU in its own
+  cache and never reads or resets live caches, compute or GPU state, the
+  effect worker pool or the spatial sampling pool."
+  [runtime model]
+  (let [context (atom (compiler-context (get-in model [:rig :fixtures]) (:batch? runtime) nil))]
+    {:patch (atom nil) :capacity-plan (volatile! nil) :pause-layer-cache (volatile! nil)
+     :response-cache (atom {:responses [] :middleware identity})
+     :variable-plan (volatile! nil) :scene-plans (volatile! {})
+     :optics-plan (atom (reflections/plan (:rig model)))
+     :compiler-context context :compile (cached-compile context)
+     :compute nil :executor nil :spatial-sampling nil}))
 
 (defn- begin-audition
   "Start a private timeline from the committed frame state. Its first frame
@@ -630,7 +736,7 @@
   show would after applying the draft at the staging time."
   [runtime draft]
   (let [before @(:state runtime)]
-    {:draft draft :caches (audition-caches) :next-model (:model draft)
+    {:draft draft :caches (audition-caches runtime (:model draft)) :next-model (:model draft)
      :frame (assoc (select-keys before audition-state-keys)
                    :model (:model before)
                    ;; Response smoothing seeds from the previous packets. Copy them so the
@@ -638,6 +744,11 @@
                    :output (-> (:output before)
                                (dissoc :fog-demands :fog-control)
                                (update :universes update-vals #(aclone ^bytes %))))}))
+
+(defn- draft-state
+  "The owner's draft view for this cycle. Edits commit after the frame commits."
+  [runtime]
+  (or (::draft-view runtime) (:scene-draft runtime)))
 
 (defn- scene-draft-command
   "Owner admission for Room drafts. Stage and discard change only owner draft
@@ -648,7 +759,7 @@
                         :source {:adapter :studio :session-id "studio"}}
                        payload {:time-ms time-ms})
         {:keys [command-id draft-id op]} command
-        state (:scene-draft runtime)
+        state (draft-state runtime)
         {:keys [draft pending-apply]} @state
         reply (fn [status details]
                 {:model model
@@ -688,10 +799,11 @@
 
       (and (some? (:grid command)) (not= :off (:grid command)))
       (try
-        (let [due-beat (scene-draft/grid-boundary (:grid command) (:transport model))
+        (let [beat (get-in model [:transport :beat])
+              due-beat (scene-draft/grid-boundary (:grid command) (:transport model))
               pending {:command (dissoc command :grid :time-ms) :grid (:grid command) :due-beat due-beat
-                       :clock (cue-clock-identity runtime model)
-                       :requested-at {:time-ms time-ms :beat (get-in model [:transport :beat])}}]
+                       :clock (cue-clock-identity runtime model) :last-beat beat
+                       :requested-at {:time-ms time-ms :beat beat}}]
           (swap! state assoc :pending-apply pending)
           (reply :scheduled {:draft-id draft-id :draft-revision (:revision draft) :due-beat due-beat :grid (:grid command)}))
         (catch clojure.lang.ExceptionInfo error
@@ -847,6 +959,7 @@
       {:model (-> model (assoc-in [:rig :fixtures] fixtures) (update :revision inc))
        :ack {:status :accepted :fixture-id (:id fixture)}})
     :composition {:model (composition/save model payload) :ack {:status :accepted}}
+    :composition-append (apply-composition-append model payload)
     :composition-run {:model (composition/start model (:id payload) time-ms) :ack {:status :accepted}}
     :composition-stop {:model (composition/stop model (:id payload) time-ms) :ack {:status :accepted}}
     :response
@@ -908,8 +1021,9 @@
                 (update :revision inc)) :ack {:status :accepted}}
     :surface-aim (surface-aim/apply-operation model payload)
     :aim-path
-    (let [definition (aim-paths/definition model payload)
+    (let [definition (aim-paths/definition model payload aim-paths/*committed-values*)
           id (:id definition)
+          synchronized? (get-in definition [:editor :sync-arrival?])
           requested-cue-id (:cue-id payload id)
           wire-id (fn [v] (if (keyword? v) (subs (str v) 1) (str v)))
           previous (some #(when (= (wire-id requested-cue-id) (wire-id (:id %))) %)
@@ -922,12 +1036,17 @@
           _ (when (= :rejected (get-in published [:ack :status]))
               (throw (ex-info "Cannot publish aim path" (:ack published))))
           cue (merge previous {:id cue-id :effect-id id :name (:name definition)
-                               :version (aim-paths/next-version (:registry model) :cues cue-id) :reload-policy :preserve-state})
+                               :version (aim-paths/next-version (:registry model) :cues cue-id)
+                               :reload-policy (if synchronized? :pinned :preserve-state)})
           result (apply-message (:model published)
                                 {:type :agent-cue :payload {:page-id (:page-id payload :paths) :cue cue}} time-ms)]
       (when (= :rejected (get-in result [:ack :status]))
         (throw (ex-info "Cannot publish aim path cue" (:ack result))))
-      (update result :ack assoc :effect-id id :cue-id cue-id :version (:version definition)))
+      (update result :ack merge
+              (cond-> {:effect-id id :cue-id cue-id :version (:version definition)}
+                synchronized?
+                (assoc :arrival-duration (get-in definition [:editor :arrival-duration])
+                       :arrival-duration-ms (get-in definition [:editor :arrival-duration-ms])))))
     :modulation-cue
     (let [id (:id payload) config (:modulation payload)
           previous (get-in model [:registry :effects id])
@@ -1613,8 +1732,9 @@
   "Render one lighting frame from a model whose inputs this cycle already owns.
   The live owner and a private Room audition call this same path. Callers
   supply `before`, the previous frame state of that same timeline. With
-  :audition? the frame uses private caches and no worker pool, renders on
-  the CPU where it can, and never plans fog or keeps cadence samples.
+  :audition? the frame uses the audition's private caches and compiler,
+  renders on the CPU, samples serially, and never plans fog, polls display
+  leases or keeps cadence samples.
   Nothing here sends output, invokes callbacks or performs device IO."
   [runtime before model time-ms {:keys [started frame-start-ns photo-session sampling-session audition?]}]
   (let [parameter-samples (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)}
@@ -1625,7 +1745,9 @@
                        (:modulation-view before))
         patch (patch! runtime (get-in model [:rig :fixtures]))
         space (when (or (get-in model [:settings :spatial :enabled?]) (get-in model spatial/state-path) (spatial-cues/needed? model))
-                (spatial/advance model (assoc before :modulation-view control-view) time-ms (reactions runtime) command))
+                ;; The audition samples spatial fields serially, off the live worker pool.
+                (spatial/advance model (assoc before :modulation-view control-view) time-ms (reactions runtime) command
+                                 (when-not audition? (:spatial-sampling runtime))))
         model (or (:model space) model)
         conductor? (autopilot-config/enabled? model)
         calibrating? (or photo-session (calibration/current model) (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
@@ -1633,10 +1755,8 @@
         hard-off? (or (pause-look/blackout? model) (zero? (:master model)))
         suspended? (or bypass? hard-off?)
         meter-plan (when (or conductor? (lighting/needs-meter? (:settings model))) (capacity-plan! runtime patch))
-        ;; An audition renders on the CPU unless its compiled steps need the
-        ;; compute owner's expression fields.
-        resolve-frame (compute/frame-renderer (when (or (not audition?) (compute/expressions-enabled? (:compute runtime)))
-                                                (:compute runtime)) frame-start-ns)
+        ;; An audition has no compute owner: it always renders on the CPU.
+        resolve-frame (compute/frame-renderer (when-not audition? (:compute runtime)) frame-start-ns)
         previous-cache (when (= (:epoch model) (get-in before [:model :epoch])) (:autopilot-cache before))
         prior-output (when (and (= (:epoch model) (get-in before [:model :epoch]))
                                 (identical? (:rig model) (get-in before [:model :rig])))
@@ -1657,7 +1777,7 @@
         input-overrides (merge-with merge (:overrides modulation-result) (:overrides parameter-samples)
                                     (get-in space [:fields :overrides]))
         modulation-middleware (modulation/middleware input-overrides)
-        _ (when-not audition? (prepare-compiler! runtime (get-in model [:rig :fixtures])))
+        _ (prepare-compiler! runtime (get-in model [:rig :fixtures]))
         variable-plan (variable-blocks/prepare! (:variable-plan runtime) (get-in model [:settings :variable-blocks]) (prefabs/catalog model))
         variables (variable-blocks/sample variable-plan model time-ms (:variable-observation before))
         model (variable-blocks/collect-events model (:variable-observation before) variables)
@@ -1669,6 +1789,15 @@
                             :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
                            (connections/effect-frame-inputs (:connections runtime) (:epoch model))
                            (:inputs sampling))
+        ;; Display response leases poll external predicates; only the live owner reads them.
+        response-frame (when (and (not audition?)
+                                  (some #(not= false (:enabled? %)) (:responses model))
+                                  (response-samples-demanded? runtime))
+                         {:show-id (:show-id model) :epoch (:epoch model) :time-ms time-ms
+                          :transport-generation @(:presentation-clock runtime)
+                          :frame-number (inc (get model :frame-number 0))
+                          :responses (:responses model)
+                          :adaptive-intervals (get-in sampling [:inputs :keyframe-intervals])})
         group-levels (group-channels/frame-levels model)
         ;; Spatial membership is attached after the engine runs. Keep
         ;; those contributions intact until their native member mix.
@@ -1680,9 +1809,14 @@
                         group-levels)
         frame-input (cond-> frame-input
                       variables (assoc :resolved-variables variable-inputs)
-                      engine-levels (assoc ::engine/opacity-factors engine-levels))
+                      engine-levels (assoc ::engine/opacity-factors engine-levels)
+                      response-frame (assoc ::waveforms/response-frame response-frame))
         response (response-middleware! runtime (:responses model []))
-        inputs (comp response modulation-middleware)
+        inputs (if response-frame
+                 (fn [context]
+                   (let [dry (modulation-middleware context)]
+                     (waveforms/capture-response dry (response dry))))
+                 (comp response modulation-middleware))
         compile-step (fn [definition]
                        (let [step (spatial-cues/with-aims definition ((:compile runtime) definition))]
                          ;; Certified literals have no parameter schemas, and
@@ -1772,6 +1906,7 @@
               (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
      :output frame :variable-observation variables
      ::show-events/intent-emissions (:intent-emissions result)
+     ::waveforms/response-frame response-frame
      :preview-hdr (when (:hdr? frame-input) (or hdr-opts {}))
      :keyframes (:keyframes result) :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
      :lighting-history (:state finished) :fault-events (:fault-events result)
@@ -1782,43 +1917,70 @@
      :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}})))
 
 (defn- fire-scene-draft
-  "Apply a quantized draft once the transport reaches its boundary. Every
-  step commits at the boundary's logical time and beat, before this cycle's
-  queued input, then the sampled transport is restored."
-  [runtime model time-ms]
-  (let [state (:scene-draft runtime)
-        {:keys [draft pending-apply]} @state
-        {:keys [command due-beat clock grid]} pending-apply
-        transport (:transport model)
+  "Apply a quantized draft once the transport reaches its boundary. The owner
+  calls this where grid cue launches fire, after this cycle's queued input.
+  Steps commit at the boundary's logical time and beat when the cycle allows
+  it, otherwise at the earliest consistent time and beat after it; the
+  sampled transport is then restored. A clock change or a backward beat jump
+  misses the boundary. Edits go to the cycle's draft view."
+  [runtime state model time-ms]
+  (let [{:keys [draft pending-apply]} @state
+        {:keys [command due-beat clock grid last-beat]} pending-apply
+        {:keys [beat bpm playing?] :as transport} (:transport model)
         outcome (fn [status details]
                   (merge {:status status :command-id (:command-id command) :draft-id (:id draft)
-                          :draft-revision (:revision draft) :grid grid :due-beat due-beat} details))]
+                          :draft-revision (:revision draft) :grid grid :due-beat due-beat} details))
+        missed (fn [code]
+                 (swap! state #(-> % (dissoc :pending-apply) (assoc :last-outcome (outcome :missed {:code code}))))
+                 model)]
     (cond
       (nil? pending-apply) model
 
-      (not= clock (cue-clock-identity runtime model))
-      (do (swap! state #(-> % (dissoc :pending-apply) (assoc :last-outcome (outcome :missed {:code :clock-changed}))))
-          model)
+      (not= clock (cue-clock-identity runtime model)) (missed :clock-changed)
 
-      (or (not (:playing? transport)) (< (:beat transport) due-beat)) model
+      (and (number? last-beat) (< beat last-beat)) (missed :clock-moved-back)
+
+      (or (not playing?) (< beat due-beat))
+      (do (swap! state assoc-in [:pending-apply :last-beat] beat) model)
 
       :else
       (let [at (scene-draft/boundary-time transport time-ms due-beat (:time-ms model))
+            ms-per-beat (when (and (number? bpm) (pos? bpm)) (/ 60000.0 bpm))
+            ;; Keep time and beat on one transport line, even after a long stall.
+            at-beat (if (and ms-per-beat (not (== at (- time-ms (* (- beat due-beat) ms-per-beat)))))
+                      (- beat (/ (- time-ms at) ms-per-beat))
+                      due-beat)
             {:keys [ack] applied :model}
-            (scene-draft/apply-draft (update model :transport assoc :beat due-beat :time-ms at)
+            (scene-draft/apply-draft (update model :transport assoc :beat at-beat :time-ms at)
                                      draft (assoc command :time-ms at))]
         (if (= :accepted (:status ack))
-          (do (reset! state {:last-outcome (outcome :applied {:revision (:revision ack) :time-ms at})})
+          (do (reset! state {:last-outcome (outcome :applied {:revision (:revision ack) :time-ms at :beat at-beat})})
               (assoc applied :transport transport))
           (do (swap! state #(-> % (dissoc :pending-apply)
                                 (assoc :last-outcome (outcome :missed (select-keys ack [:code :message])))))
               model))))))
 
-(defn- audition-projection [{:keys [draft frame pending-apply last-outcome error stale]}]
+(def ^:private owner-draft-keys [:pending-apply :last-outcome])
+
+(defn- commit-draft-view!
+  "Publish the cycle's draft edits after its frame has committed. Render
+  fields written by the audition worker for the same draft are kept."
+  [runtime initial view]
+  (when-not (identical? initial view)
+    (swap! (:scene-draft runtime)
+           (fn [current]
+             (cond
+               (nil? view) nil
+               (and current (identical? (:draft view) (:draft current)))
+               (merge (apply dissoc current owner-draft-keys) (select-keys view owner-draft-keys))
+               :else view)))))
+
+(defn- audition-projection [{:keys [draft frame pending-apply last-outcome error stale skipped rendered]}]
   (cond-> {}
     draft (assoc :draft (scene-draft/summary draft) :time-ms (get-in frame [:model :time-ms])
-                 :status (cond error :error stale :stale pending-apply :scheduled :else :auditioning))
-    (and draft (not error) (not stale) (:output frame))
+                 :status (cond error :error stale :stale pending-apply :scheduled :else :auditioning)
+                 :frames {:rendered (or rendered 0) :skipped (or skipped 0)})
+    (and draft (not error) (not stale) (pos? (or rendered 0)) (:output frame))
     (assoc :output (select-keys (:output frame) [:values :compact :target-order]))
     pending-apply (assoc :pending-apply (assoc (select-keys pending-apply [:due-beat :grid :requested-at])
                                                :command-id (get-in pending-apply [:command :command-id])))
@@ -1826,15 +1988,47 @@
     error (assoc :error error)
     stale (assoc :stale stale)))
 
-(defn- advance-audition!
-  "Render one private audition frame after the live frame has been delivered.
-  The private model follows the live transport, master and blackout, while
-  its instances, keyframes, modulation and response state advance only in
-  this timeline. Output stays in the projection; no packet, fog lease, event
-  or callback leaves it. Failures mark the draft and never touch the live show."
-  [runtime live time-ms]
+(defn- render-audition-frame
+  "Render one private frame. A separate var so tests can slow the audition."
+  [runtime frame model time-ms]
+  (let [started (System/nanoTime)]
+    (render-frame runtime frame model time-ms {:audition? true :started started :frame-start-ns started})))
+
+(defn- render-audition!
+  "Worker task: render one audition frame from the staged timeline. The
+  result installs only while the same draft is staged."
+  [runtime draft inputs time-ms]
   (let [state (:scene-draft runtime)
-        {:keys [draft frame caches next-model error stale]} @state]
+        same? #(identical? draft (:draft %))]
+    (try
+      (when-let [{:keys [frame caches next-model]} (let [current @state] (when (same? current) current))]
+        (let [model (-> (or next-model (:model frame))
+                        (merge inputs)
+                        (composition/advance time-ms))
+              rendered (render-audition-frame (merge runtime caches) frame model time-ms)]
+          (swap! state #(if (same? %)
+                        (-> % (dissoc :next-model)
+                            (update :rendered (fnil inc 0))
+                            (assoc :frame (assoc (select-keys rendered audition-state-keys)
+                                                 :model (staging/finish (:model rendered))
+                                                 :output (:output rendered) :status (:status rendered))))
+                        %))))
+      (catch Exception failure
+        (swap! state #(if (same? %) (assoc % :error (error-data failure)) %)))
+      (finally
+        (swap! state #(if (same? %) (dissoc % :in-flight) %))))))
+
+(defn- schedule-audition!
+  "After the live frame is published and its owner time measured, queue one
+  audition frame on the audition worker. It runs outside the owner lock, so
+  it cannot delay a live slot. A frame is skipped, and counted, while the
+  previous one is still rendering or when the live frame used more than
+  :max-live-share (default 0.5) of its period."
+  [runtime live time-ms elapsed-ms]
+  (let [state (:scene-draft runtime)
+        {:keys [draft error stale in-flight]} @state
+        share (get-in runtime [:audition-options :max-live-share] 0.5)
+        period (/ 1000.0 (:frame-rate runtime))]
     (cond
       (nil? draft) nil
 
@@ -1842,31 +2036,33 @@
 
       (or error stale) nil
 
-      (not= (get-in (or next-model (:model frame)) [:rig :fixtures]) (:fixtures @(:compiler-context runtime)))
-      (swap! state assoc :stale :stale-patch)
+      ;; Applying would be refused as :stale-patch. Stage again to audition the new rig.
+      (not= (:rig live) (get-in draft [:base :rig])) (swap! state assoc :stale :stale-patch)
+
+      (or in-flight (> elapsed-ms (* share period))) (swap! state update :skipped (fnil inc 0))
 
       :else
-      (try
-        (let [started (System/nanoTime)
-              model (-> (or next-model (:model frame))
-                        (merge (select-keys live [:transport :master :blackout?]))
-                        (composition/advance time-ms))
-              rendered (render-frame (merge runtime caches) frame model time-ms
-                                     {:audition? true :started started :frame-start-ns started})]
-          (swap! state #(-> % (dissoc :next-model)
-                            (assoc :frame (assoc (select-keys rendered audition-state-keys)
-                                                 :model (staging/finish (:model rendered))
-                                                 :output (:output rendered) :status (:status rendered))))))
-        (catch Exception failure
-          (swap! state assoc :error (error-data failure)))))
-    (when-let [current @state]
-      (swap! (:state runtime) assoc :scene-audition (audition-projection current)))))
+      (let [inputs (select-keys live [:transport :master :blackout?])]
+        (swap! state assoc :in-flight true)
+        (try (.execute ^java.util.concurrent.ExecutorService @(:audition-worker runtime)
+                       #(render-audition! runtime draft inputs time-ms))
+             (catch java.util.concurrent.RejectedExecutionException _
+               (swap! state dissoc :in-flight)))))))
 
 (defn scene-draft
-  "Read the staged Room draft, its audition status, any scheduled apply and
-  the last apply outcome. Returns nil when no draft has been staged."
+  "Read the staged Room draft, its audition status and frame counts, any
+  scheduled apply and the last apply outcome. Returns nil without a draft."
   [runtime]
-  (not-empty (dissoc (:scene-audition @(:state runtime)) :output)))
+  (not-empty (dissoc (audition-projection @(:scene-draft runtime)) :output)))
+
+(defn await-audition
+  "Wait up to timeout-ms for an in-flight audition frame. For tests and tools."
+  [runtime timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop []
+      (cond (not (:in-flight @(:scene-draft runtime))) true
+            (> (System/currentTimeMillis) deadline) false
+            :else (do (Thread/sleep 1) (recur))))))
 
 (def ^:private ingress-order
   (reify java.util.Comparator
@@ -1885,9 +2081,14 @@
          restored-generation (volatile! nil) restarted-generation (volatile! nil)
          restoring-device (volatile! nil)
          committed-fault-events (volatile! [])
-         author-request (volatile! nil)]
+         author-request (volatile! nil)
+         committed-bound? (volatile! false)]
      (try
        (locking (:lock runtime)
+         ;; Launch checks read the last committed frame only on this owner
+         ;; thread, under the lock and before the next frame is resolved.
+         (push-thread-bindings {#'aim-paths/*committed-values* (committed-values runtime)})
+         (vreset! committed-bound? true)
          (when-let [[target output-slot] (when @(:running runtime) (capture-render-time runtime time-ms output-slot))]
            (let [before @(:state runtime)
                  time-ms (max target (get-in before [:model :time-ms]))
@@ -1912,11 +2113,15 @@
                  physical-receipts (output-scheduler/drain-receipts! (:publisher runtime))
                  physical-now ((:now-ms (:publisher runtime)))
                  [clock-model audio-clock-confidence] (source-clock-model runtime (:model before) time-ms)
+                 ;; Draft commands edit this cycle's view; it is published only after the frame commits.
+                 draft-initial @(:scene-draft runtime)
+                 draft-view (atom draft-initial)
+                 owner-runtime (assoc runtime ::draft-view draft-view)
                  [model receipts restored? restored-output]
                  (reduce
                   (fn [[model receipts restored? restored-output] {:keys [reply authority] :as message}]
                     (try
-                      (let [result (apply-message model message (if restored? (:time-ms model) time-ms) runtime)
+                      (let [result (apply-message model message (if restored? (:time-ms model) time-ms) owner-runtime)
                             command (when (= :command (:type message)) (:payload message))
                             ;; The reducer supplies the committed sample or rollback value.
                             gesture-write (when (#{:gesture/sample :gesture/cancel} (:op command))
@@ -1941,14 +2146,14 @@
                       (catch Exception error
                         [model (conj receipts [reply (merge {:status :rejected} (error-data error)) (when (= :command (:type message)) (:payload message))])
                          restored? restored-output])))
-                  [(-> (consume-sync! runtime (consume-audio! runtime (fire-scene-draft runtime (staging/collect (staging/begin clock-model)
-                                                       :reactive {:kind :runtime :id :reactive} (:pending-reactive-faults before)) time-ms) time-ms))
+                  [(-> (consume-sync! runtime (consume-audio! runtime (staging/collect (staging/begin clock-model)
+                                                       :reactive {:kind :runtime :id :reactive} (:pending-reactive-faults before)) time-ms))
                        (calibration/advance physical-receipts physical-now)
                        (photometry/advance physical-receipts physical-now)
                        (fog-scan/expire physical-now)) [] false nil] messages)
                  time-ms (if restored? (:time-ms model) time-ms)
                  _ (when (or restored? @restarted-generation)
-                     (reset! (:scene-draft runtime) nil)
+                     (reset! draft-view nil)
                      (when restored? (reset! (:clock runtime) {:origin-nanos (System/nanoTime) :time-ms time-ms}))
                      (reset! (:leases runtime) {})
                      (locking (:sync-input runtime)
@@ -1957,6 +2162,10 @@
                        (reset! (:audio-input runtime) {:epoch (:epoch model) :events [] :features nil})))
                  model (if (cue-timing/active? model)
                          (cue-timing/advance model (cue-clock-identity runtime model) time-ms @(:leases runtime) command)
+                         model)
+                 ;; A quantized Room draft fires at the same point as grid cue launches.
+                 model (if (and (not restored?) (:pending-apply @draft-view))
+                         (fire-scene-draft runtime draft-view model time-ms)
                          model)
                  model (reduce (fn [m instance]
                                  (let [session (get-in instance [:source :session-id])
@@ -2038,6 +2247,7 @@
                       (or (:frame-id presentation-token) (get-in next-state [:model :frame-number] 0))
                       (when-not restored? (get-in next-state [:output :fog-demands]))))
              (reset! (:state runtime) (dissoc next-state :autopilot-author-request :pending-reactive-faults))
+             (commit-draft-view! runtime draft-initial @draft-view)
              (vreset! author-request (:autopilot-author-request next-state))
              (event-callbacks/publish! (:event-callbacks runtime) (:model next-state) @inline-registrations)
              (vreset! committed-fault-events
@@ -2061,7 +2271,6 @@
                                   (get-in next-state [:output :fog-demands])))
                   (catch Exception error
                     (swap! (:state runtime) assoc-in [:status :output-error] (error-data error))))
-             (advance-audition! runtime (:model next-state) (get-in next-state [:model :time-ms]))
              (let [observers (vals @(:observers runtime))
                    publication (try (connections/publish! (:connections runtime) (effect-keyframes/source (block-trace/source next-state) (:keyframes next-state))
                                             (boolean (some (fn [observer] ((:tracing? observer))) observers)))
@@ -2081,8 +2290,11 @@
                    defer? (cue-pads/govern! (:cue-pad-previews runtime) elapsed (/ 1000.0 (:frame-rate runtime)))]
                (when-let [sampling @sampling-session]
                  (swap! (:state runtime) assoc :cadence
-                        (cadence/finish (assoc sampling :defer-live-slowdown? defer?) (:model next-state) elapsed)))))))
+                        (cadence/finish (assoc sampling :defer-live-slowdown? defer?) (:model next-state) elapsed)))
+               ;; Queued after the live frame's owner time is measured and published.
+               (schedule-audition! runtime (:model next-state) (get-in next-state [:model :time-ms]) elapsed)))))
        (finally
+         (when @committed-bound? (pop-thread-bindings))
          (when-let [request @author-request]
            (authoring/request! (agent-manager runtime) request #(submit! runtime :autopilot-authored %)))
          (effect-faults/offer! (:effect-logs runtime) @committed-fault-events)
@@ -2261,6 +2473,8 @@
                               #(mpv-session/close! (:section-player runtime))
                               #(effect-faults/close! (:effect-logs runtime))
                               #(compute/close! (:compute runtime))
+                              #(when (realized? (:audition-worker runtime))
+                                 (.shutdownNow ^java.util.concurrent.ExecutorService @(:audition-worker runtime)))
                               #(duplex/stop! (:audio-returns runtime))
                               #(development/close! (:development runtime))
                               #(connections/close! (:connections runtime))
@@ -2270,6 +2484,7 @@
                                        (reset! (:devices runtime) {})))
 
                               #(.close ^java.io.Closeable (:executor runtime))
+                              #(some-> ^java.io.Closeable (:spatial-sampling runtime) .close)
                               (fn [] (when-let [close! (get-in runtime [:sink :close!])] (close!)))])]
         (try (cleanup) (catch Exception error
                          (swap! (:state runtime) assoc-in [:status :cleanup-error] (error-data error)))))))
@@ -2368,6 +2583,18 @@
       (->> (waveforms/project-display cache snapshot view capture)
            (precision/push-view precision-cache (:model snapshot))))))
 
+(defn- leasing-response-samples
+  "Retain exact response inputs on committed frames only while this display is open."
+  [runtime transport]
+  (assoc transport
+         :open! (fn []
+                  (let [release (lease-response-samples! runtime)]
+                    (try (assoc ((:open! transport)) ::release-response-samples release)
+                         (catch Throwable error (release) (throw error)))))
+         :close! (fn [handle]
+                   (try ((:close! transport) handle)
+                        (finally (when-let [release (::release-response-samples handle)] (release)))))))
+
 (defn push-browser-display
   "Build a Push display transport using Studio's shared reactive components.
   Capture and waveform projection run on the display worker, not the show clock.
@@ -2377,7 +2604,8 @@
   (let [project-parameters (push-parameter-projector)
         pages (volatile! nil)
         scene-cache (push-scene/create-cache)]
-    (display/browser-display
+    (leasing-response-samples runtime
+     (display/browser-display
      (assoc options :project!
             (fn [view]
               (let [snapshot (assoc @(:state runtime) :runtime-id (:id runtime))
@@ -2398,13 +2626,14 @@
                              (#{:simulator :rig} mode) (push-scene/project-display scene-cache snapshot
                                                       (assoc view :runtime-id (:id runtime)))
                              :else view)]
-                (page-overview/project-display pages model visual)))))))
+                (page-overview/project-display pages model visual))))))))
 
 (defn- push-native-display [runtime]
   (let [project-parameters (push-parameter-projector)]
-    (display/native-display
-      {:project! (fn [view]
-                   (project-parameters @(:state runtime) view nil))})))
+    (leasing-response-samples runtime
+      (display/native-display
+        {:project! (fn [view]
+                     (project-parameters @(:state runtime) view nil))}))))
 
 (def ^:private device-command-wait-ms 5000)
 

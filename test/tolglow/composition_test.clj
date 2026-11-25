@@ -3,7 +3,11 @@
             [afterglow.control.model :as control]
             [afterglow.runtime.engine :as engine]
             [tolglow.compiler :as compiler]
-            [tolglow.composition :as composition]))
+            [clojure.data.json :as json]
+            [tolglow.composition :as composition]
+            [tolglow.composition.sequence-edit :as edit]
+            [tolglow.data :as data]
+            [tolglow.studio.web :as web]))
 
 (defn command [model id op time & fields]
   (let [result (control/apply-command model
@@ -35,6 +39,84 @@
 
 (defn running [model]
   (set (map :cue-id (filter #(= :running (:phase %)) (vals (:instances model))))))
+
+(deftest saved-empty-and-muted-steps-keep-time-and-release-only-owned-cues
+  (let [outside (command (show) "outside" :cue/launch 0 :cue-id :blue)
+        base (:model outside)
+        outside-id (get-in outside [:ack :instance-id])
+        program (-> {:id :chase :mode :sequence :slots []}
+                    (edit/add-step nil {:id :first :cue-id :red})
+                    (edit/add-empty-step :first :rest)
+                    (edit/add-step :rest {:id :muted :cue-id :blue})
+                    (edit/toggle-muted :muted)
+                    (edit/add-step :muted {:id :last :cue-id :spot}))
+        saved (composition/save base program)
+        started (-> saved (composition/start :chase 0) (composition/advance 0))
+        red-id (first (vals (:composition-tokens started)))
+        sample (fn [model beat]
+                 (-> model (assoc-in [:transport :beat] beat) (composition/advance (* 500 beat))))
+        empty-step (sample started 1)
+        muted-step (sample empty-step 2)
+        last-step (sample muted-step 3)
+        ended (sample last-step 4)
+        playback #(get-in % [:composition-runs :chase :playback])]
+    (is (= (:instances base) (:instances saved)))
+    (is (empty? (:composition-runs saved)))
+    (is (= :releasing (get-in empty-step [:instances red-id :phase])))
+    (is (= :rest (:slot-id (playback empty-step))))
+    (is (= :empty (:step-kind (playback empty-step))))
+    (is (= 1.0 (:remaining-beats (playback empty-step))))
+    (is (nil? (:cue-id (playback empty-step))))
+    (is (= :muted (:slot-id (playback muted-step))))
+    (is (true? (:muted? (playback muted-step))))
+    (is (every? (comp empty? :composition-tokens) [empty-step muted-step ended]))
+    (is (= #{:blue} (running muted-step)))
+    (is (= #{:blue :spot} (running last-step)))
+    (is (empty? (:composition-runs ended)))
+    (is (every? #(= (get-in base [:instances outside-id]) (get-in % [:instances outside-id]))
+                [started empty-step muted-step last-step ended]))
+    (is (thrown? clojure.lang.ExceptionInfo (composition/save base (assoc program :mode :macro))))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (composition/save base (assoc-in program [:slots 2 :cue-id] :unregistered))))))
+
+(deftest unidentified-slots-receive-free-ids-after-an-earlier-deletion
+  (let [saved (composition/save (show) {:id :c :mode :sequence
+                                        :slots [{:cue-id :red} {:cue-id :blue}]})
+        ;; A client removes slot-0 and appends a new cue without an ID.
+        edited (update-in saved [:compositions :c :slots] #(conj (subvec % 1) {:cue-id :spot}))
+        resaved (composition/save saved (get-in edited [:compositions :c]))]
+    (is (= ["slot-0" "slot-1"] (mapv :id (get-in saved [:compositions :c :slots]))))
+    (is (= ["slot-1" "slot-2"] (mapv :id (get-in resaved [:compositions :c :slots]))))
+    (is (= [:blue :spot] (mapv :cue-id (get-in resaved [:compositions :c :slots]))))))
+
+;; Studio sends the projected program back as JSON; textual IDs become keywords.
+(defn- through-studio-wire [definition]
+  (data/normalize-json (json/read-str (json/write-str (web/json-data definition)) :key-fn keyword)))
+
+(deftest studio-wire-saves-keep-slot-ids-unique-by-name
+  (let [saved (composition/save (show) (through-studio-wire {:id :c :mode :sequence
+                                                             :slots [{:cue-id :red} {:cue-id :blue}]}))
+        reopened (through-studio-wire (get-in saved [:compositions :c]))
+        edited (update reopened :slots #(conj (subvec % 1) {:cue-id :spot}))
+        resaved (composition/save saved (through-studio-wire edited))
+        again (composition/save resaved (through-studio-wire (get-in resaved [:compositions :c])))
+        ids #(mapv :id (get-in % [:compositions :c :slots]))]
+    (is (= [:slot-1] (mapv :id (butlast (:slots edited)))))
+    (is (= [:slot-1 "slot-2"] (ids resaved)))
+    (is (= [:slot-1 :slot-2] (ids again)))
+    (is (= [:blue :spot] (mapv :cue-id (get-in again [:compositions :c :slots]))))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (composition/save (show) {:id :d :mode :sequence
+                                           :slots [{:id :a :cue-id :red} {:id "a" :cue-id :blue}]})))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (composition/save (show) {:id :d :mode :macro
+                                           :slots [{:id :a :cue-id :red} {:id "a" :cue-id :blue}]})))))
+
+(deftest unmuted-flags-do-not-block-macros
+  (let [program {:id :m :mode :macro :slots [{:id :a :cue-id :red :muted? false}]}]
+    (is (= [:a] (mapv :id (get-in (composition/save (show) program) [:compositions :m :slots]))))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (composition/save (show) (assoc-in program [:slots 0 :muted?] true))))))
 
 (deftest canonical-musical-slots-save-and-play-with-captured-meter
   (let [definition {:id :bars :mode :sequence
@@ -90,6 +172,48 @@
         (is (= [expected] (mapv #(get-in % [:params :level]) (vals (:instances started)))))))
     (is (thrown? clojure.lang.ExceptionInfo
                  (composition/save (assoc-in model [:registry :cues :red :saved-params] {:level 2}) definition)))))
+
+(deftest appending-a-cue-uses-the-saved-macro-after-an-intervening-edit
+  (let [selected-id :opening-look
+        macro {:id selected-id :name "Opening look" :mode :macro
+               :slots [{:id :first :cue-id :red :params {:level 1/3}}]}
+        selected (-> (show)
+                     (composition/save ms-sequence)
+                     (composition/save macro)
+                     (composition/start selected-id 0))
+        ;; A REPL save lands after the operator selects the macro in Studio.
+        repl-edit (-> macro
+                      (assoc :name "Revised opening look")
+                      (update :slots conj {:id "slot-2" :cue-id :blue :params {:level 1/2}}))
+        committed (composition/save selected repl-edit)
+        appended (composition/append-macro-cue committed selected-id :spot)
+        saved (get-in committed [:compositions selected-id])
+        updated (get-in appended [:compositions selected-id])
+        slots (:slots updated)
+        playback-keys [:instances :composition-runs :composition-tokens]]
+    (is (= (dissoc saved :slots) (dissoc updated :slots)))
+    (is (= (:slots saved) (vec (butlast slots))))
+    (is (= {:cue-id :spot :params {}} (dissoc (last slots) :id)))
+    (is (= 3 (count (distinct (map :id slots)))))
+    (is (= (inc (:revision committed)) (:revision appended)))
+    (is (= (get-in committed [:compositions :sequence])
+           (get-in appended [:compositions :sequence])))
+    (is (= (select-keys committed playback-keys)
+           (select-keys appended playback-keys)))))
+
+(deftest appending-a-cue-requires-an-existing-macro-and-registered-cue
+  (let [model (-> (show)
+                  (composition/save ms-sequence)
+                  (composition/save {:id :macro :mode :macro :slots [{:cue-id :red}]}))]
+    (doseq [[macro-id cue-id path] [[:missing :red [:macro-id]]
+                                   [:sequence :red [:macro-id]]
+                                   [:macro :missing [:slots 1]]]]
+      (let [errors (try
+                     (composition/append-macro-cue model macro-id cue-id)
+                     nil
+                     (catch clojure.lang.ExceptionInfo error (:errors (ex-data error))))]
+        (is (= [path] (mapv :path errors)))
+        (is (string? (:message (first errors))))))))
 
 (deftest milliseconds-continue-to-drive-the-saved-sequence-with-owned-release
   (let [saved (composition/save (show) ms-sequence)

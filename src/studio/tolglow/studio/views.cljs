@@ -168,14 +168,19 @@
       [4 "beats"]))
 
 (defn- cue-cell [db page x y colors]
-  (let [show (:show db) ui (:ui db)
-        recent? (events/recent-page? db (:id page))
-        cue-id (:cue-id (some #(when (and (= x (:x %)) (= y (:y %))) %) (:cells page)))
-        cue (find-id (:cues show) cue-id)
-        preview (or (get colors cue-id) (when (string? cue-id) (get colors (keyword cue-id))))
-        active (filter #(= cue-id (:cue-id %)) (:instances show))
-        queued? (and cue (some #(= cue-id (:cue-id %)) (:pending-cue-launches show)))
-        cell {:cue-id cue-id :x x :y y :page-id (:id page)}
+  (let [show (get-in db [:server-projection :view]) ui (:ui db)
+        page-id (when page (projection/presentation (:id page)))
+        recent? (events/recent-page? db page-id)
+        typed-cue-id (:cue-id (some #(when (and (= x (:x %)) (= y (:y %))) %) (:cells page)))
+        cue-id (when typed-cue-id (events/wire-id typed-cue-id))
+        cue (find-id (:cues show) typed-cue-id)
+        cue-name (when cue (events/wire-id (display-name cue)))
+        preview (or (get colors typed-cue-id) (get colors cue-id))
+        active (filter #(= typed-cue-id (:cue-id %)) (:instances show))
+        queued? (and cue (some #(= typed-cue-id (:cue-id %)) (:pending-cue-launches show)))
+        cell {:cue-id cue-id :typed-cue-id typed-cue-id :cue-name cue-name
+              :x x :y y :page-id page-id :typed-page-id (:id page)
+              :owner (select-keys show [:runtime-id :epoch])}
         down (fn [event]
                (when (and (or cue (not recent?))
                           (or (= 0 (.-button event)) (= "touch" (.-pointerType event))))
@@ -184,13 +189,13 @@
                                                           :client-x (.-clientX event) :client-y (.-clientY event)})])))]
     [:button.cue-cell
      {:class (str (when-not cue "empty ") (when (seq active) "active ")
-                  (when (some #(= "releasing" (:phase %)) active) "releasing ")
+                  (when (some #(= :releasing (:phase %)) active) "releasing ")
                   (when queued? "queued ")
                   (when (and (:edit? ui) (not recent?)) "editing"))
       :style (when cue (if preview {"--cue-color" (widgets/color-css preview)} (color-style cue)))
       :data-preview (when preview "live") :data-x x :data-y y :data-cue-id (or cue-id "")
       :disabled (not (get-in db [:connection :connected?]))
-      :aria-label (str (if cue (display-name cue) "Empty cell") ", column " (inc x) ", row " (inc y)
+      :aria-label (str (or cue-name "Empty cell") ", column " (inc x) ", row " (inc y)
                        (when queued? ", queued"))
       :aria-pressed (boolean (seq active)) :on-pointer-down down
       :on-pointer-move #(send! [:studio/gesture-move {:pointer-id (.-pointerId %) :client-x (.-clientX %) :client-y (.-clientY %)}])
@@ -220,7 +225,8 @@
       :on-blur #(send! [:studio/gesture-cancel "keyboard"])}
      (if cue
        [:<> [:span.cue-index (str (inc y) "." (inc x))] [:span.cue-dot]
-        [:span.cue-name (display-name cue)] [:span.cue-category (if queued? "Queued" (or (:category cue) "CUE"))]]
+        [:span.cue-name cue-name]
+        [:span.cue-category (if queued? "Queued" (or (some-> (:category cue) events/wire-id) "CUE"))]]
        (when-not recent? "+"))]))
 
 (defn queued-cues [db]
@@ -240,19 +246,21 @@
                                    :on-click #(send! [:studio/cancel-queued-cue command-id])} "Cancel"])])]])))
 
 (defn- cue-grid [db]
-  (let [show (:show db) ui (:ui db)
-        authored-pages (:pages show)
-        recent-page (:recent-page show)
+  (let [view (get-in db [:server-projection :view]) ui (:ui db)
+        authored-pages (:pages view)
+        recent-page (:recent-page view)
         pages (cond-> (vec authored-pages) recent-page (conj recent-page))
-        selected-recent (events/selected-recent-page db)
-        page (or selected-recent (find-id authored-pages (:page-id ui)) (first authored-pages))
+        selected-recent (when (events/selected-recent-page db) recent-page)
+        matching (filter #(= (events/wire-id (:id %)) (:page-id ui)) authored-pages)
+        page (or selected-recent (find-id matching (:typed-page-id ui)) (first matching) (first authored-pages))
         rows (performance/visible-cue-rows page (or selected-recent (:edit? ui) (:full-grid? ui)))]
     [:section.cue-panel.panel {:aria-label "Cue performance grid"}
      [:div.panel-top
       [:div#page-tabs.page-tabs {:aria-label "Cue pages"}
        (for [item pages]
          ^{:key (pr-str (:id item))} [:button.page-tab {:class (when (= (:id item) (:id page)) "selected")
-                                             :on-click #(send! [:studio/set-page (:id item)])} (display-name item)])]
+                                                       :on-click #(send! [:studio/set-page (projection/presentation (:id item)) (:id item)])}
+                                     (events/wire-id (display-name item))])]
       [:button#add-page.icon-button {:title "Create cue page" :aria-label "Create cue page" :on-click #(send! [:studio/add-page])} "+"]]
      [:div.grid-toolbar [:span#cue-count.muted.small (str (count (:cells page)) " cues / 64 slots")]
       [:div#launch-modes.segmented {:role "group" :aria-label "Cue launch behavior"}
@@ -394,7 +402,7 @@
      [:button.icon-button {:type "button" :aria-label "Fullscreen preview" :title "Fullscreen preview"
                             :on-click #(input! [:studio/preview-fullscreen])} "⛶"]]]
    [scene-draft-banner db]
-   [spatial-preview/scene (or (:server-presentation db) (:show db)) (get-in db [:server-projection :view :settings :spatial]) :perform]
+   [spatial-preview/scene (events/room-show db) (get-in db [:server-projection :view :settings :spatial]) :perform]
    [camera-controls/controls]
    (when (get-in db [:ui :preview-controls?])
      [:div.preview-settings
@@ -576,13 +584,26 @@
          [:p (str (label (:mode item)) " · " (count (:slots item)) " slots" (when (:running? item) " · playing"))]]
         [button nil "Open" [:studio/composition-open item]]])]))
 
+(defn empty-slot?
+  "Sequence steps authored with :kind :empty occupy time without a cue."
+  [slot]
+  (= "empty" (some-> (:kind slot) name)))
+
+(defn sequence-only-steps?
+  "Empty and muted steps only have meaning in a step sequence."
+  [slots]
+  (boolean (some #(or (empty-slot? %) (:muted? %)) slots)))
+
 (defn- composition-settings [composition macro?]
   [:div.compose-settings
    [:label "Name" [:input#composition-name {:value (:name composition "") :max-length 80
                                             :on-change #(set-ui! [:composition :name] (input-value %))}]]
    [:label "Identifier" [:input#composition-id {:value (:id composition "") :on-change #(set-ui! [:composition :id] (input-value %))}]]
    [:label "Behavior" [:select#composition-mode {:value (:mode composition "sequence") :on-change #(set-ui! [:composition :mode] (input-value %))}
-                       [:option {:value "sequence"} "Step sequence"] [:option {:value "macro"} "Macro · together"]]]
+                       [:option {:value "sequence"} "Step sequence"] (let [blocked? (sequence-only-steps? (:slots composition))]
+                         [:option {:value "macro" :disabled blocked?
+                                   :title (when blocked? "Remove empty and muted steps to play these cues together")}
+                          (if blocked? "Macro · needs no empty or muted steps" "Macro · together")])]]
    (when-not macro?
      [:label "Playback" [:select#composition-loop {:value (:loop composition "once") :on-change #(set-ui! [:composition :loop] (input-value %))}
                          [:option {:value "once"} "Once"] [:option {:value "loop"} "Loop"] [:option {:value "ping-pong"} "Back and forth"] [:option {:value "random"} "Random"]]])
@@ -596,16 +617,23 @@
                                           :on-click #(send! (if (zero? offset) [:studio/composition-remove index]
                                                              [:studio/composition-move index offset]))} caption])])
 
+(defn slot-title
+  "Name a step from the saved program, including empty and muted steps."
+  [cues slot]
+  (str (if (empty-slot? slot) "Empty step" (display-name (find-id cues (:cue-id slot))))
+       (when (:muted? slot) " · muted")))
+
 (defn- composition-slot [db index slot macro? last?]
   (let [[duration-value duration-unit] (slot-duration slot)]
     [:li.composition-slot {:class (when macro? "macro-slot")}
      [:span.slot-number (inc index)]
-     [:strong.slot-title (display-name (find-id (get-in db [:show :cues]) (:cue-id slot)))]
+     [:strong.slot-title (slot-title (get-in db [:show :cues]) slot)]
      (when-not macro?
        [duration-control (str "slot-duration-" index) (str "Step " (inc index) " duration") duration-value duration-unit
         (fn [value unit] (input! [:studio/slot-duration index value unit]))])
      [slot-actions index last?]
-     [:div.slot-editors [slot-parameter-editor db index slot] [layers/slot-controls index slot]]]))
+     (when-not (empty-slot? slot)
+       [:div.slot-editors [slot-parameter-editor db index slot] [layers/slot-controls index slot]])]))
 
 (defn- composition-view [db]
   (let [show (:show db) composition (get-in db [:ui :composition]) slots (:slots composition [])
@@ -894,33 +922,76 @@
 (defn- dialog [attrs & children]
   (into [:dialog (assoc attrs :ref (fn [node] (when (and node (not (.-open node))) (.showModal node))))] children))
 
+(defn- cancel-macro-picker! []
+  (input! [:studio/macro-picker-back])
+  (r/after-render #(some-> (.getElementById js/document "add-to-saved-macro") .focus)))
+
+(defn- cue-macro-picker [db {:keys [macro-id request error] :as picker}]
+  (let [macros (events/saved-macros db)
+        ids (into {} (map (juxt (comp pr-str :id) :id)) macros)
+        selected? (contains? ids (pr-str macro-id))]
+    [:form {:aria-busy (boolean request)
+            :on-submit (fn [event] (.preventDefault event) (send! [:studio/macro-picker-submit]))}
+     (if (seq macros)
+       [:div.form-row
+        [:label {:html-for "cue-saved-macro"} "Saved macro"
+         [:select#cue-saved-macro {:auto-focus true :disabled (boolean request)
+                                 :value (if selected? (pr-str macro-id) "")
+                                 :on-change #(set-ui! [:macro-picker] (assoc picker :macro-id (get ids (input-value %)) :error nil))}
+          [:option {:value ""} "Choose a macro"]
+          (for [macro macros :let [id (pr-str (:id macro))]]
+            ^{:key id} [:option {:value id} (display-name macro)])]]]
+       [:p "No saved macros. Save a macro in Compose to add cues here."])
+     (when error [:p {:role "alert"} error])
+     [:div.button-row
+      [:button.button {:type "button" :auto-focus (empty? macros) :disabled (boolean request)
+                       :on-click cancel-macro-picker!} "Cancel"]
+      [:button.button.primary {:type "submit"
+                               :disabled (or (boolean request) (not selected?) (not (get-in db [:connection :connected?])))}
+       (cond request "Adding…" (events/macro-picker-retry? db picker) "Retry append" :else "Add cue")]]]))
+
 (defn- cue-actions [db]
   (when-let [cell (get-in db [:ui :action-cell])]
-    (let [cue (find-id (get-in db [:show :cues]) (:cue-id cell))
+    (let [cue (find-id (get-in db [:server-projection :view :cues]) (:typed-cue-id cell))
+          occupied? (some? (:typed-cue-id cell))
           clipboard (get-in db [:ui :clipboard])
-          assigned (or (get-in db [:ui :assign-cue]) (:id (first (get-in db [:show :cues]))))]
-      [dialog {:id "cue-actions" :class "action-dialog" :aria-labelledby "action-cue-name"
-               :on-cancel (fn [event] (.preventDefault event) (send! [:studio/close-actions]))}
-       [:div.dialog-header [:div [:span.eyebrow "CUE ACTIONS"] [:h2#action-cue-name (if cue (display-name cue) "An open space")]]
-        [:button.icon-button {:aria-label "Close actions" :on-click #(send! [:studio/close-actions])} "×"]]
-       (when-not cue
-         [:div#assign-cue-row.form-row.add-slot
-          [:select#assign-cue {:aria-label "Choose a cue for this empty cell" :value (or assigned "")
-                              :on-change #(set-ui! [:assign-cue] (input-value %))}
-           (for [item (get-in db [:show :cues])] ^{:key (:id item)} [:option {:value (:id item)} (display-name item)])]
-          [:button#assign-cue-button.button.primary {:disabled (nil? assigned)
-                                                     :on-click #(send! [:studio/cue-action :assign])} "Place cue"]])
-       (when cue [spatial/cue-target-picker (:id cue)])
-       [:div.radial-actions
-        (for [[action icon title] (cond-> [[:launch "▷" "One-shot"]]
-                                   (not= "off" (get-in db [:ui :launch-grid])) (conj [:launch-now "▷" "One-shot now"])
-                                   true (into [[:inspect "⌁" "Inspect"] [:copy "⧉" "Copy cue"]
-                                               [:paste "↙" "Paste here"] [:compose "+" "Add to composition"]
-                                               [:edit "⌘" "Edit definition"] [:remove "−" "Clear cell"]]))]
-          ^{:key action} [:button {:data-cue-action (name action)
-                                    :disabled (if (= action :paste) (or (nil? clipboard) (some? cue)) (nil? cue))
-                                    :on-click #(send! [:studio/cue-action action])} [:span icon] title])]
-       [:p.small.muted "These actions are also available with Shift + F10 on a focused cell."]])))
+          assigned (or (get-in db [:ui :assign-cue]) (:id (first (get-in db [:show :cues]))))
+          picker (get-in db [:ui :macro-picker])]
+      [dialog {:id "cue-actions" :class (if picker "action-dialog cue-macro-dialog" "action-dialog")
+               :aria-labelledby "action-cue-name"
+               :on-cancel (fn [event]
+                            (.preventDefault event)
+                            (when-not (:request picker)
+                              (if picker (cancel-macro-picker!) (send! [:studio/close-actions]))))}
+       [:div.dialog-header
+        [:div (when-not picker [:span.eyebrow "CUE ACTIONS"])
+         [:h2#action-cue-name (if picker (str "Add " (:cue-name picker) " to macro")
+                                  (or (:cue-name cell) "An open space"))]]
+        [:button.icon-button {:aria-label "Close actions" :disabled (boolean (:request picker))
+                              :on-click #(send! [:studio/close-actions])} "×"]]
+       (if picker
+         [cue-macro-picker db picker]
+         [:<>
+          (when-not occupied?
+            [:div#assign-cue-row.form-row.add-slot
+             [:select#assign-cue {:aria-label "Choose a cue for this empty cell" :value (or assigned "")
+                                 :on-change #(set-ui! [:assign-cue] (input-value %))}
+              (for [item (get-in db [:show :cues])] ^{:key (:id item)} [:option {:value (:id item)} (display-name item)])]
+             [:button#assign-cue-button.button.primary {:disabled (nil? assigned)
+                                                        :on-click #(send! [:studio/cue-action :assign])} "Place cue"]])
+          (when cue [spatial/cue-target-picker (:id cue)])
+          [:div.radial-actions
+           (for [[action icon title] (cond-> [[:launch "▷" "One-shot"]]
+                                      (not= "off" (get-in db [:ui :launch-grid])) (conj [:launch-now "▷" "One-shot now"])
+                                      true (into [[:inspect "⌁" "Inspect"] [:copy "⧉" "Copy cue"]
+                                                  [:paste "↙" "Paste here"] [:compose "+" "Add to composition"]
+                                                  [:edit "⌘" "Edit definition"] [:remove "−" "Clear cell"]]))]
+             ^{:key action} [:button {:data-cue-action (name action)
+                                      :disabled (if (= action :paste) (or (nil? clipboard) occupied?) (nil? cue))
+                                      :on-click #(send! [:studio/cue-action action])} [:span icon] title])]
+          (when occupied? [button "add-to-saved-macro" "Add to macro" [:studio/macro-picker-open]])
+          (when-let [error (:error cell)] [:p {:role "alert"} error])
+          [:p.small.muted "These actions are also available with Shift + F10 on a focused cell."]])])))
 
 (defn- prompt-dialog [db]
   (when-let [prompt (get-in db [:ui :prompt])]

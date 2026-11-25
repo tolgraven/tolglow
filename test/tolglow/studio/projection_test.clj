@@ -202,7 +202,7 @@
         panel {:instance-id "1:1" :epoch 1 :definition-version 1
                :parameters [{:param :pan :schema schema :value 0.5}]}]
     (try
-      (let [project (with-redefs [display/browser-display :project!] (show/push-browser-display host {}))]
+      (let [project (:project! (with-redefs [display/browser-display identity] (show/push-browser-display host {})))]
         (doseq [mode [:parameters :audio]]
           (let [view (project (assoc panel :display-mode mode))]
             (is (= 16 (get-in view [:parameters 0 :schema :dmx-bits])) (str mode))

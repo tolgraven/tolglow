@@ -3,6 +3,7 @@
             [clojure.test :refer [deftest is testing]]
             [tolglow.demo :as demo]
             [tolglow.output-response :as response]
+            [tolglow.events :as show-events]
             [tolglow.show :as show]
             [tolglow.show.scene-draft :as draft]))
 
@@ -93,26 +94,31 @@
   (is (thrown? clojure.lang.ExceptionInfo (draft/grid-boundary {:ms 100} {:beat 0}))))
 
 ;; Runtime evidence. Each runtime renders the same deterministic show at the
-;; same logical frame times; a sink captures every live packet.
+;; same logical frame times; a sink captures every live packet. Tests wait for
+;; each audition frame so that every live frame has a matching private one.
 
 (def ^:private frame-ms 25)
 
-(defn- runtime [model]
-  (let [sent (atom [])]
-    {:sent sent
-     :runtime (show/create-runtime (cond-> {:workspace-options nil
-                                            :sink {:send! (fn [packets frame]
-                                                            (swap! sent conj [frame (update-vals packets vec)]))}}
-                                     model (assoc :model model)))}))
+(defn- runtime
+  ([model] (runtime model {:max-live-share ##Inf}))
+  ([model audition]
+   (let [sent (atom [])]
+     {:sent sent
+      :runtime (show/create-runtime (cond-> {:workspace-options nil :audition audition
+                                             :sink {:send! (fn [packets frame]
+                                                             (swap! sent conj [frame (update-vals packets vec)]))}}
+                                      model (assoc :model model)))})))
 
 (defn- submit [{:keys [runtime]} command]
   (show/submit! runtime (assoc command :source {:adapter :repl :session-id "test"})))
 
-(defn- tick [{:keys [runtime]} time-ms] (show/tick! runtime time-ms))
+(defn- tick [{:keys [runtime]} time-ms]
+  (show/tick! runtime time-ms)
+  (is (show/await-audition runtime 5000)))
 
 (defn- receipt [reply] (deref reply 1000 :timeout))
 
-(defn- preview [{:keys [runtime]}] (:output (show/snapshot runtime)))
+(defn- view [{:keys [runtime]}] (show/snapshot runtime))
 
 (defn- model-of [{:keys [runtime]}] (:model @(:state runtime)))
 
@@ -131,7 +137,7 @@
             staged (when audition?
                      (submit rt {:op :scene-draft/stage :draft-id "scene" :operations (operations live-id)}))
             frames (doall (for [time-ms (range 50 301 frame-ms)]
-                            (do (tick rt time-ms) (preview rt))))]
+                            (do (tick rt time-ms) (view rt))))]
         {:ack (some-> staged receipt) :frames frames :sent @(:sent rt) :model (model-of rt)
          :draft (show/scene-draft (:runtime rt))})
       (finally (show/stop! (:runtime rt))))))
@@ -139,16 +145,18 @@
 (deftest an-audition-changes-room-preview-without-changing-live-packets
   (let [live (run-capture false)
         auditioned (run-capture true)
-        last-frame (last (:frames auditioned))]
+        blue? #(= [0.0 0.0 1.0] (get-in % [:values :head-1 :emitted-color]))]
     (is (= :accepted (get-in auditioned [:ack :status])))
     (is (= 12 (count (:sent live)) (count (:sent auditioned))))
     (is (= (:sent live) (:sent auditioned)) "every live packet byte is unchanged")
     (is (= (:model live) (:model auditioned)) "the committed show model is unchanged")
-    (is (every? #(= {:id "scene" :revision 0} (:draft %)) (:frames auditioned)))
-    (is (every? (comp nil? :draft) (:frames live)))
-    (is (= [0.0 0.0 1.0] (get-in last-frame [:values :head-1 :emitted-color])))
-    (is (not= [0.0 0.0 1.0] (get-in (last (:frames live)) [:values :head-1 :emitted-color])))
+    (is (= (map :output (:frames live)) (map :output (:frames auditioned))) "live preview values stay live")
+    (is (every? #(= {:id "scene" :revision 0} (get-in % [:draft-output :draft])) (:frames auditioned)))
+    (is (every? (comp nil? :draft-output) (:frames live)))
+    (is (blue? (:draft-output (last (:frames auditioned)))))
+    (is (not (blue? (:output (last (:frames auditioned))))))
     (is (= :auditioning (get-in auditioned [:draft :status])))
+    (is (= {:rendered 11 :skipped 0} (get-in auditioned [:draft :frames])))
     (is (= [:instance/end :registry/publish :cue/put :cue/launch :effect/launch]
            (mapv :op (get-in auditioned [:draft :draft :operations]))))))
 
@@ -167,36 +175,65 @@
             staged (submit audition {:op :scene-draft/stage :draft-id "scene" :operations (operations live-id)})
             _ (submit applied {:op :scene-draft/stage :draft-id "scene" :operations (operations live-id)})
             taken (submit applied {:op :scene-draft/apply :draft-id "scene" :expected-draft-revision 0
-                                  :command-id "take"})
+                                   :command-id "take"})
             frames (doall (for [time-ms (range 125 551 frame-ms)]
                             (do (tick audition time-ms) (tick applied time-ms)
-                                [(preview audition) (preview applied)])))]
+                                [(view audition) (view applied)])))]
         (is (= :accepted (:status (receipt staged))))
         (is (= :accepted (:status (receipt taken))))
         (doseq [[auditioned committed] frames]
-          (is (= {:id "scene" :revision 0} (:draft auditioned)))
-          (is (nil? (:draft committed)))
-          (is (= (:values committed) (:values auditioned))))
+          (is (= {:id "scene" :revision 0} (get-in auditioned [:draft-output :draft])))
+          (is (nil? (:draft-output committed)))
+          (is (= (get-in committed [:output :values]) (get-in auditioned [:draft-output :values]))))
         (testing "the response smoothing is still moving, so frames were not frozen"
-          (let [levels (map #(get-in (first %) [:values :head-1 :emitted-color 2]) frames)]
+          (let [levels (map #(get-in (first %) [:draft-output :values :head-1 :emitted-color 2]) frames)]
             (is (apply < (take 6 levels))))))
       (finally (show/stop! (:runtime audition)) (show/stop! (:runtime applied))))))
+
+(deftest a-slow-audition-never-delays-or-changes-live-frames
+  (let [render @#'show/render-audition-frame
+        untouched (runtime nil {}) slowed (runtime nil {})]
+    (try
+      (with-redefs [show/render-audition-frame (fn [& args] (Thread/sleep 80) (apply render args))]
+        (let [live-id (launch-live! untouched)
+              _ (launch-live! slowed)
+              staged (submit slowed {:op :scene-draft/stage :draft-id "scene" :operations (operations live-id)})
+              durations (doall (for [time-ms (range 50 551 frame-ms)]
+                                 (do (show/tick! (:runtime untouched) time-ms)
+                                     (let [started (System/nanoTime)]
+                                       (show/tick! (:runtime slowed) time-ms)
+                                       (/ (- (System/nanoTime) started) 1.0e6)))))
+              _ (show/await-audition (:runtime slowed) 5000)
+              {:keys [rendered skipped]} (:frames (show/scene-draft (:runtime slowed)))]
+          (is (= :accepted (:status (receipt staged))))
+          (is (< (apply max (drop 2 durations)) 60) "no live tick waits for an 80 ms audition frame")
+          (is (pos? rendered))
+          (is (pos? skipped) "busy audition frames are skipped and counted")
+          (is (= (+ rendered skipped) (count durations)))
+          (is (= @(:sent untouched) @(:sent slowed)) "live packets are unchanged")
+          (is (= (get-in @(:state (:runtime untouched)) [:cadence :state])
+                 (get-in @(:state (:runtime slowed)) [:cadence :state])) "live cadence state matches")))
+      (finally (show/stop! (:runtime untouched)) (show/stop! (:runtime slowed))))))
+
+(defn- schedule-on-bar! [rt]
+  (let [live-id (launch-live! rt)
+        staged (submit rt {:op :scene-draft/stage :draft-id "scene" :operations (operations live-id)})
+        _ (tick rt 630)
+        scheduled (submit rt {:op :scene-draft/apply :draft-id "scene" :expected-draft-revision 0
+                              :command-id "on-the-one" :grid {:bars 1}})]
+    (tick rt 660)
+    (is (= :accepted (:status (receipt staged))))
+    (is (= [:scheduled 4.0] ((juxt :status (comp double :due-beat)) (receipt scheduled))))
+    (doseq [time-ms (range 690 1981 30)] (tick rt time-ms))
+    live-id))
 
 (deftest a-quantized-apply-lands-on-the-bar-boundary
   (let [rt (runtime nil)]
     (try
-      (let [live-id (launch-live! rt)
-            staged (submit rt {:op :scene-draft/stage :draft-id "scene" :operations (operations live-id)})
-            _ (tick rt 630)
-            scheduled (submit rt {:op :scene-draft/apply :draft-id "scene" :expected-draft-revision 0
-                                  :command-id "on-the-one" :grid {:bars 1}})
-            before (do (tick rt 660) (model-of rt))]
-        (is (= :accepted (:status (receipt staged))))
-        (is (= [:scheduled 4.0] ((juxt :status (comp double :due-beat)) (receipt scheduled))))
+      (let [live-id (schedule-on-bar! rt)
+            before (model-of rt)]
         (is (= :scheduled (:status (show/scene-draft (:runtime rt)))))
-        (is (contains? (:instances before) live-id))
-        (doseq [time-ms (range 690 1981 30)] (tick rt time-ms))
-        (is (contains? (:instances (model-of rt)) live-id) "nothing commits before the boundary")
+        (is (contains? (:instances before) live-id) "nothing commits before the boundary")
         (tick rt 2010)
         (let [model (model-of rt)
               launched (filter #(= :blue (:effect-id %)) (vals (:instances model)))]
@@ -208,10 +245,36 @@
           (is (near? 4.02 (get-in model [:transport :beat])) "the sampled transport is restored")
           (is (= (inc (:revision before)) (:revision model)) "one revision for the whole scene")
           (is (= "on-the-one" (last (get-in model [:control :history-order]))))
-          (is (= {:status :applied :command-id "on-the-one" :due-beat 4.0}
+          (is (= {:status :applied :command-id "on-the-one" :due-beat 4.0 :beat 4.0}
                  (-> (show/scene-draft (:runtime rt)) :last-outcome
-                     (select-keys [:status :command-id :due-beat]) (update :due-beat double))))
-          (is (nil? (:draft (preview rt))))))
+                     (select-keys [:status :command-id :due-beat :beat])
+                     (update :due-beat double) (update :beat double))))
+          (is (nil? (:draft-output (view rt))))))
+      (finally (show/stop! (:runtime rt))))))
+
+(deftest queued-input-before-the-boundary-is-applied-first
+  (let [rt (runtime nil)]
+    (try
+      (schedule-on-bar! rt)
+      (let [before (model-of rt)
+            dropped (submit rt {:op :scene-draft/discard :draft-id "scene"})]
+        (tick rt 2010)
+        (is (= [:accepted "on-the-one"] ((juxt :status :cancelled-apply) (receipt dropped))))
+        (is (not-any? #(= :blue (:effect-id %)) (vals (:instances (model-of rt)))))
+        (is (= (:revision before) (:revision (model-of rt))))
+        (is (nil? (show/scene-draft (:runtime rt)))))
+      (finally (show/stop! (:runtime rt))))))
+
+(deftest a-failed-cycle-does-not-report-an-apply
+  (let [rt (runtime nil)]
+    (try
+      (schedule-on-bar! rt)
+      (let [before (model-of rt)]
+        (with-redefs [show-events/commit (fn [& _] (throw (ex-info "cycle failed" {})))]
+          (is (thrown? clojure.lang.ExceptionInfo (show/tick! (:runtime rt) 2010))))
+        (is (= :scheduled (:status (show/scene-draft (:runtime rt)))) "the draft still waits for its boundary")
+        (is (nil? (:last-outcome (show/scene-draft (:runtime rt)))))
+        (is (= before (model-of rt))))
       (finally (show/stop! (:runtime rt))))))
 
 (deftest discarding-a-draft-leaves-no-trace
@@ -232,5 +295,6 @@
         (is (= (model-of untouched) (model-of discarded)))
         (is (nil? (show/scene-draft (:runtime discarded))))
         (is (nil? @(:scene-draft (:runtime discarded))))
-        (is (= (preview untouched) (preview discarded))))
+        (is (nil? (:draft-output (view discarded))))
+        (is (= (:output (view untouched)) (:output (view discarded)))))
       (finally (show/stop! (:runtime untouched)) (show/stop! (:runtime discarded))))))

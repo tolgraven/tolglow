@@ -48,6 +48,10 @@ compare the tab with the committed page in the snapshot.
 (:recent-page (show/snapshot runtime))
 ```
 
+## Match strip pixels to a fixture
+
+Publish a fixture type with `:bounds-m` using **Fixture Library → Advanced definition · EDN**. Its patched extent appears in the rig snapshot in both Studio and the REPL. The REPL's `strip-segment-selector` produces the fixture IDs that either client can submit with a cue launch. Studio's picker still requires a resolved selection. [Strip extent example](spatial-show.md#match-a-strip-to-a-fixtures-extent)
+
 ## Select and reorder running cues
 
 In **Perform → In the mix**, open **Detail** on a running card to select that
@@ -180,6 +184,25 @@ override, which reconnect preserves.
 The REPL and Studio receive the fresh reference session ID or a refusal from
 the same show operation. For manually owned mpv connections, use the existing
 [REPL adapter flow](../src/tolglow/integrations/README.md#observe-a-known-local-recording-in-mpv).
+## Add a cue to a saved macro
+
+In **Perform**, open a cue cell’s actions and choose **Add to macro**. Select a saved macro and press **Add cue**. Studio confirms the accepted save and the new slot appears in **Compose**. If the reply is lost, **Retry append** resends the same operation. If the cell changed before the save reached the show owner, reopen actions on the cue you want.
+
+From the running REPL, use the IDs from `show/snapshot`, preserving keyword and string IDs as shown. Replace `:opening-look` with the ID of your saved macro.
+
+```clojure
+(require '[tolglow.show :as show])
+
+(def append-request
+  (let [{:keys [runtime-id epoch revision]} (show/snapshot runtime)]
+    {:runtime-id runtime-id :expected-epoch epoch :base-revision revision
+     :macro-id :opening-look :cue-id :ember :command-id (str (random-uuid))}))
+
+@(show/submit! runtime :composition-append append-request)
+(some #(when (= (:macro-id append-request) (:id %)) %) (:compositions (show/snapshot runtime)))
+```
+
+To retry an uncertain reply, resubmit `append-request` unchanged. If it has expired, inspect the committed slots before starting another append. The shared operation saves cue membership and leaves running instances in place.
 
 ## Audition a scene in the Room
 
@@ -198,7 +221,7 @@ receive the same acknowledgements and refusals.
                         :operations [{:op :cue/launch :cue-id :indigo}
                                      {:op :effect/launch :effect-id :sweep}]})
 
-(show/scene-draft runtime)   ; draft, :auditioning status, scheduled apply, last outcome
+(show/scene-draft runtime)   ; draft, status, rendered/skipped frames, scheduled apply, last outcome
 
 ;; Apply now, or on the next bar of the show transport. One command ID,
 ;; one revision and one history entry cover every staged operation.
@@ -209,18 +232,29 @@ receive the same acknowledgements and refusals.
 ```
 
 In Studio, a staged draft shows **Draft audition** above **The Room** with its
-ID, revision and number of staged operations. The Room renders the draft's
-private frames, and `:output :draft` in the snapshot names the draft they come
-from. **Apply**, **Apply on next bar** and **Discard** send the same commands
+ID, revision and number of staged operations. Only the Room renders the
+draft's private frames, published in the snapshot as `:draft-output` with the
+draft ID and revision. `:output` and every other preview stay live. **Apply**, **Apply on next bar** and **Discard** send the same commands
 with the displayed revision. A stale revision, changed rig or registry, or a
 retired instance is refused and reported in both places.
 
 The audition renders through the live frame function with its own clock,
-instance state, keyframes, modulation and response history. It never sends
-packets, plans fog, raises events or invokes callbacks. Input stages that
-belong to the live show (sensors, subscribers, automatic policy, audio returns
-and patch routing) do not run in the audition. Each audition frame costs about
-one extra show frame on the owner thread.
+instance state, keyframes, modulation and response history, on the CPU with
+its own compiler and caches. It never sends packets, plans fog, polls display
+leases, raises events or invokes callbacks. Input stages that belong to the
+live show (sensors, subscribers, automatic policy, audio returns and patch
+routing) do not run in the audition. Each frame is queued on an audition
+worker after the live frame is published and its owner time measured, so it
+never holds the owner lock or delays a live slot. A frame is skipped and
+counted while the previous one is still rendering or when the live frame used
+more than half its period. The Room can therefore lag the live frame by a
+frame or more.
+
+A quantized apply fires where grid cue launches fire, after the cycle's queued
+input, so an earlier Discard or instance end is applied first. A clock source
+change or a backward beat jump reports the apply as missed. If the rig changes
+after staging, the draft shows `:stale` and stops rendering; applying it would
+be refused. Stage it again to audition the new rig.
 
 Open gaps, owned by [issue #531](https://github.com/tolgraven/tolglow/issues/531):
 
@@ -260,3 +294,22 @@ At revision `0681a694`, Studio's effect keyframe editor offers **Sample at a fix
 ```
 
 The global toggle and ranked timing view were missing from Studio at that revision. The **Perceptual scheduling and interpolation** owner tracks this in [issue #307](https://github.com/tolgraven/tolglow/issues/307). Close the gap when an operator can find and change the global policy in Studio, inspect the same committed setting in the REPL and compare diagnostics for the same show. [Keyframe editor](../src/studio/tolglow/studio/keyframe_editor.cljs) · [Scheduler behavior tests](../test/tolglow/predictive_keyframes_test.clj) · [GitHub Issues](https://github.com/tolgraven/tolglow/issues)
+
+Studio and Push read one committed response sample instead of evaluating the response again. The owner retains that sample only while a reader holds a lease. An open Push display, a connected Studio client and an explicit REPL lease all count. A REPL can take a lease and read faults from lease predicates that threw:
+
+```clojure
+(def release (show/lease-response-samples! runtime))
+(show/response-sample-faults runtime)
+(release)
+```
+
+Studio does not display these lease faults yet. Close the gap when Studio shows the same fault records as the REPL. [Issue #533](https://github.com/tolgraven/tolglow/issues/533) · [PR #624](https://github.com/tolgraven/tolglow/pull/624)
+
+Calibrated paired aim arrival uses one host operation from both surfaces. In Studio, **Rig & space → Draw path → Arrive together using calibrated motor rates** lists, reopens, publishes and converts synchronized paths. Studio always sends `:sync-arrival?` explicitly and shows the solved arrival time or the refusal. The REPL submits the same `:aim-path` operation and reads `:arrival-duration-ms` from the acknowledgement. Launch refusals (`:stale-calibration`, `:tempo-exceeds-motor-rate`, `:start-wrap-mismatch`) come back from the shared launch command on both surfaces. [Aim paths](aim-paths.md#calibrated-paired-arrival) · [Issue #481](https://github.com/tolgraven/tolglow/issues/481)
+
+```clojure
+@(show/submit! runtime :aim-path {:id :paired :sync-arrival? true :targets [:head-a :head-b]
+                                  :points [[-1 0 0] [1 0 0]] :duration {:bars 2}})
+```
+
+The remaining gaps are tracked in issue #481. Studio has no editor for `:calibration :motor-rate-deg-per-sec`, so rates are set through the rig data or the REPL. Studio also cannot display the physical `:minimum-travel-ms` or the fingerprint behind a stale-calibration refusal. Close these gaps when an operator can enter rates in the fixture inspector and see why a launch was refused without the REPL.

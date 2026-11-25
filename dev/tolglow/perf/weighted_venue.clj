@@ -77,9 +77,12 @@
 (defn- new-show [model scalar?]
   (let [sink (bench/capture-sink)
         clock (volatile! 0.0)
+        ;; The scalar reference also samples its fields serially, so every checked
+        ;; frame compares the candidate's field sampler with the serial result.
         runtime (show/create-runtime (cond-> {:model model :workers (if scalar? 1 2)
                                                :batch? (not scalar?) :workspace-options nil :sink sink
                                                :independent-output? (not scalar?)
+                                               :spatial-sampling (if scalar? {:workers 1} (bench/spatial-sampling))
                                                :physical-now-ms #(deref clock)}
                                        scalar? (assoc :worker-timeout-ms 10000)))]
     {:runtime runtime :clock clock :sink sink}))
@@ -181,6 +184,7 @@
                   (and (> n 1) (zero? (get-in observed [:overlapping-heads :min]))))
           (throw (ex-info "Fixture coverage did not exercise this case" {:fields n :coverage observed})))
         {:scope :host :fields n :selection selection :workers 2 :output :independent
+         :spatial-sampling (select-keys (:spatial-sampling (:runtime host)) [:workers :partitions :min-fixtures])
          :coverage observed
          :result (bench/measure #(dissoc (step host %) :model) expected {:warmup warmup :samples samples})})
       (finally (show/stop! (:runtime host))))))

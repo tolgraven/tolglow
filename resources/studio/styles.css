@@ -82,3 +82,4 @@ dialog{color:var(--text);background:#1d251a;border:1px solid #536348;border-radi
 .show-checkpoint-dialog button{min-height:44px}
 .checkpoint-confirm p{margin:12px 0;line-height:1.5}
 @media(max-width:420px){.mobile-file-actions{flex-wrap:wrap;column-gap:12px;row-gap:0}}
+.cue-macro-dialog :is(select,button),#add-to-saved-macro{min-width:44px;min-height:44px}

@@ -9,7 +9,7 @@
             [tolglow.agents.credentials :as credentials]
             [tolglow.development.workspace :as workspace])
   (:import [java.nio.charset StandardCharsets]
-           [java.nio.file Files Path Paths LinkOption StandardOpenOption StandardCopyOption]
+           [java.nio.file Files Path LinkOption StandardOpenOption StandardCopyOption]
            [java.nio.file.attribute FileAttribute PosixFilePermissions]
            [java.io PushbackReader StringReader]
            [java.util UUID]
@@ -61,7 +61,9 @@
     (fail! :invalid-options "Application-agent manager requires owned workspaces and bounded execution settings"))
   (validate-providers! providers)
   {:workspaces workspaces :execute! execute! :credentials credential-store :providers (atom providers)
-   :config-path (when config-path (.normalize (.toAbsolutePath (Paths/get config-path (make-array String 0)))))
+   ;; The settings file and its directory are never followed: the default
+   ;; directory is the workspace parent, which must not be redirected.
+   :config-path (when config-path (workspace/canonical-configured-path config-path 2))
    :configuration-persisted? (atom false)
    :check-profiles check-profiles :timeout-ms timeout-ms :max-output-bytes max-output-bytes
    :max-runs max-runs :event-limit event-limit :event-byte-limit event-byte-limit :now-ms now-ms

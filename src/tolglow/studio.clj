@@ -78,12 +78,15 @@
             projections (projection/create)
             receiver (airplay/create)]
         (state-stream/publish! stream @(:state runtime))
-        {:compute-stream compute :debug-stream debug :state-stream stream :browser-projections projections :airplay receiver
-         :frame! #(state-stream/publish! stream %)
-         :tracing? #(debug-stream/observing? debug)
-         :events! #(debug-stream/commit! debug %1 %2 %3 %4)
-         :close! (fn [] (workers/close! compute) (debug-stream/close! debug) (state-stream/close! stream)
-                   (projection/clear! projections) (airplay/close! receiver))}))))
+        ;; Lease after fallible setup. Studio projections read exact response
+        ;; inputs only while a client is connected.
+        (let [release-response-samples (show/lease-response-samples! runtime #(boolean (seq @(:clients stream))))]
+          {:compute-stream compute :debug-stream debug :state-stream stream :browser-projections projections :airplay receiver
+           :frame! #(state-stream/publish! stream %)
+           :tracing? #(debug-stream/observing? debug)
+           :events! #(debug-stream/commit! debug %1 %2 %3 %4)
+           :close! (fn [] (release-response-samples) (workers/close! compute) (debug-stream/close! debug)
+                     (state-stream/close! stream) (projection/clear! projections) (airplay/close! receiver))})))))
 
 (defn browser-snapshot
   "Bound preview values. Delta clients receive versioned, exact-base envelopes;
