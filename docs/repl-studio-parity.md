@@ -180,6 +180,25 @@ override, which reconnect preserves.
 The REPL and Studio receive the fresh reference session ID or a refusal from
 the same show operation. For manually owned mpv connections, use the existing
 [REPL adapter flow](../src/tolglow/integrations/README.md#observe-a-known-local-recording-in-mpv).
+## Add a cue to a saved macro
+
+In **Perform**, open a cue cell’s actions and choose **Add to macro**. Select a saved macro and press **Add cue**. Studio confirms the accepted save and the new slot appears in **Compose**. If the reply is lost, **Retry append** resends the same operation. If the cell changed before the save reached the show owner, reopen actions on the cue you want.
+
+From the running REPL, use the IDs from `show/snapshot`, preserving keyword and string IDs as shown. Replace `:opening-look` with the ID of your saved macro.
+
+```clojure
+(require '[tolglow.show :as show])
+
+(def append-request
+  (let [{:keys [runtime-id epoch revision]} (show/snapshot runtime)]
+    {:runtime-id runtime-id :expected-epoch epoch :base-revision revision
+     :macro-id :opening-look :cue-id :ember :command-id (str (random-uuid))}))
+
+@(show/submit! runtime :composition-append append-request)
+(some #(when (= (:macro-id append-request) (:id %)) %) (:compositions (show/snapshot runtime)))
+```
+
+To retry an uncertain reply, resubmit `append-request` unchanged. If it has expired, inspect the committed slots before starting another append. The shared operation saves cue membership and leaves running instances in place.
 
 ## Reviewing a show feature
 

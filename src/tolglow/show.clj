@@ -1,7 +1,8 @@
 (ns tolglow.show
   "Executable host for the shared functional lighting engine. Requiring it is inert.
   One owner advances the model; workers return data; physical output is opt-in."
-  (:require [afterglow.control.model :as control]
+  (:require [clojure.string :as str]
+            [afterglow.control.model :as control]
             [afterglow.control.instance-order :as instance-order]
             [afterglow.control.pages :as cue-pages]
             [tolglow.studio.parameter-precision :as precision]
@@ -575,6 +576,33 @@
   (let [updated (update model :revision inc)]
     {:model updated :ack {:status :accepted :revision (:revision updated)}}))
 
+(defn- apply-composition-append [model {:keys [macro-id cue-id command-id base-revision cell] :as request}]
+  (let [epoch (:epoch model)
+        history (get-in model [:extensions ::composition-append])
+        {:keys [floor receipts] :or {floor 0 receipts []}} (when (= epoch (:epoch history)) history)
+        intent (select-keys request [:macro-id :cue-id :base-revision :cell])
+        previous (some #(when (= command-id (:command-id %)) %) receipts)]
+    (when-not (and (string? command-id) (not (str/blank? command-id)) (<= (count command-id) 256)
+                   (integer? base-revision) (<= 0 base-revision (:revision model)))
+      (throw (ex-info "Macro append needs a command ID and a valid base revision" {})))
+    (if previous
+      (if (= intent (:intent previous))
+        {:model model :ack (:ack previous) :replayed? true}
+        (throw (ex-info "Macro append command ID was already used with different data" {:command-id command-id})))
+      (let [{:keys [page-id x y]} cell]
+        (when (< base-revision floor)
+          (throw (ex-info "Macro append is too old to confirm. Review the saved slots before starting a new append." {})))
+        (when (and (contains? request :cell) (not= cue-id (get-in model [:pages page-id :cells [x y]])))
+          (throw (ex-info "The cue cell changed. Open its actions again." {:cell cell})))
+        (let [updated (composition/append-macro-cue model macro-id cue-id)
+              ack {:status :accepted :command-id command-id :macro-id macro-id :revision (:revision updated)}
+              receipts (conj receipts {:command-id command-id :intent intent :ack ack})
+              evicted (when (> (count receipts) 128) (first receipts))]
+          {:model (assoc-in updated [:extensions ::composition-append]
+                            {:epoch epoch :floor (if evicted (get-in evicted [:ack :revision]) floor)
+                             :receipts (if evicted (subvec receipts 1) receipts)})
+           :ack ack})))))
+
 (defn- cue-clock-identity [runtime {:keys [show-id epoch transport]}]
   [show-id epoch (:source transport) (:source-epoch transport)
    (:source-selection-epoch transport) @(:presentation-clock runtime)])
@@ -745,6 +773,7 @@
       {:model (-> model (assoc-in [:rig :fixtures] fixtures) (update :revision inc))
        :ack {:status :accepted :fixture-id (:id fixture)}})
     :composition {:model (composition/save model payload) :ack {:status :accepted}}
+    :composition-append (apply-composition-append model payload)
     :composition-run {:model (composition/start model (:id payload) time-ms) :ack {:status :accepted}}
     :composition-stop {:model (composition/stop model (:id payload) time-ms) :ack {:status :accepted}}
     :response
