@@ -3,7 +3,8 @@
             [afterglow.control.model :as control]
             [afterglow.runtime.engine :as engine]
             [tolglow.compiler :as compiler]
-            [tolglow.composition :as composition]))
+            [tolglow.composition :as composition]
+            [tolglow.composition.sequence-edit :as edit]))
 
 (defn command [model id op time & fields]
   (let [result (control/apply-command model
@@ -34,6 +35,45 @@
 
 (defn running [model]
   (set (map :cue-id (filter #(= :running (:phase %)) (vals (:instances model))))))
+
+(deftest saved-empty-and-muted-steps-keep-time-and-release-only-owned-cues
+  (let [outside (command (show) "outside" :cue/launch 0 :cue-id :blue)
+        base (:model outside)
+        outside-id (get-in outside [:ack :instance-id])
+        program (-> {:id :chase :mode :sequence :slots []}
+                    (edit/add-step nil {:id :first :cue-id :red})
+                    (edit/add-empty-step :first :rest)
+                    (edit/add-step :rest {:id :muted :cue-id :blue})
+                    (edit/toggle-muted :muted)
+                    (edit/add-step :muted {:id :last :cue-id :spot}))
+        saved (composition/save base program)
+        started (-> saved (composition/start :chase 0) (composition/advance 0))
+        red-id (first (vals (:composition-tokens started)))
+        sample (fn [model beat]
+                 (-> model (assoc-in [:transport :beat] beat) (composition/advance (* 500 beat))))
+        empty-step (sample started 1)
+        muted-step (sample empty-step 2)
+        last-step (sample muted-step 3)
+        ended (sample last-step 4)
+        playback #(get-in % [:composition-runs :chase :playback])]
+    (is (= (:instances base) (:instances saved)))
+    (is (empty? (:composition-runs saved)))
+    (is (= :releasing (get-in empty-step [:instances red-id :phase])))
+    (is (= :rest (:slot-id (playback empty-step))))
+    (is (= :empty (:step-kind (playback empty-step))))
+    (is (= 1.0 (:remaining-beats (playback empty-step))))
+    (is (nil? (:cue-id (playback empty-step))))
+    (is (= :muted (:slot-id (playback muted-step))))
+    (is (true? (:muted? (playback muted-step))))
+    (is (every? (comp empty? :composition-tokens) [empty-step muted-step ended]))
+    (is (= #{:blue} (running muted-step)))
+    (is (= #{:blue :spot} (running last-step)))
+    (is (empty? (:composition-runs ended)))
+    (is (every? #(= (get-in base [:instances outside-id]) (get-in % [:instances outside-id]))
+                [started empty-step muted-step last-step ended]))
+    (is (thrown? clojure.lang.ExceptionInfo (composition/save base (assoc program :mode :macro))))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (composition/save base (assoc-in program [:slots 2 :cue-id] :unregistered))))))
 
 (deftest canonical-musical-slots-save-and-play-with-captured-meter
   (let [definition {:id :bars :mode :sequence

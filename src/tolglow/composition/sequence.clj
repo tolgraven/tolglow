@@ -20,19 +20,27 @@
        (when-not (= (count steps) (count (distinct (map :id steps))))
          [{:path [:steps] :message "Slot IDs must be unique"}])
        (mapcat
-        (fn [[i step]]
-          (concat
-           (when-not (and (map? step) (some? (:id step)) (some? (:cue-id step)))
-             [{:path [:steps i] :message "Step needs stable slot and cue IDs"}])
-           (let [key (if (= timebase :beats) :duration-beats :duration-ms)
-                 other (if (= timebase :beats) :duration-ms :duration-beats)]
-             (concat
-              (when-not (and (registry/finite-number? (get step key)) (pos? (get step key)))
-                [{:path [:steps i key] :message "Step duration must be positive and finite in the sequence timebase"}])
-              (when (contains? step other)
-                [{:path [:steps i other] :message "Do not mix beat and millisecond durations in one sequence"}])))
-           (when-not (registry/data? step)
-             [{:path [:steps i] :message "Step must contain portable data"}])) )
+        (fn [[i {:keys [id cue-id muted? params] :as step}]]
+          (let [kind (:kind step :cue)
+                key (if (= timebase :beats) :duration-beats :duration-ms)
+                other (if (= timebase :beats) :duration-ms :duration-beats)]
+            (concat
+             (when-not (and (some? id) (or (= :empty kind) (some? cue-id)))
+               [{:path [:steps i] :message "Step needs a stable slot ID and cue steps need a cue ID"}])
+             (when-not (#{:cue :empty} kind)
+               [{:path [:steps i :kind] :message "Step kind must be cue or empty"}])
+             (when (and (contains? step :muted?) (not (boolean? muted?)))
+               [{:path [:steps i :muted?] :message "Step mute must be boolean"}])
+             (when (and (= :empty kind)
+                        (or (some #(contains? step %) [:cue-id :launch :targets :transforms])
+                            (and (contains? step :params) (not= {} params))))
+               [{:path [:steps i] :message "Empty steps cannot carry cue launch options or parameters"}])
+             (when-not (and (registry/finite-number? (get step key)) (pos? (get step key)))
+               [{:path [:steps i key] :message "Step duration must be positive and finite in the sequence timebase"}])
+             (when (contains? step other)
+               [{:path [:steps i other] :message "Do not mix beat and millisecond durations in one sequence"}])
+             (when-not (registry/data? step)
+               [{:path [:steps i] :message "Step must contain portable data"}]))))
         (map-indexed vector steps)))))))
 
 (defn normalize-spec
@@ -159,7 +167,8 @@
   result is returned. Repeated time with returned state emits no duplicates.
   A shell maps composition release tokens to captured instance IDs. Beat specs
   accept {:time-ms :beat :bpm}, preserving phase across tempo changes and pause
-  (constant beat). Backward beat seeks need a fresh owned execution."
+  (constant beat). Empty and muted steps keep their duration and emit no launch.
+  Backward beat seeks need a fresh owned execution."
   [spec state time]
   (let [spec (checked spec (:timing-meter state))
         {:keys [time-ms position beat bpm playing?]} (clock spec time)
@@ -185,7 +194,9 @@
                                  (set-step-window spec next start))]
                     (recur next (inc transitions))))))
           ready? (>= position (:started-position state (:started-at-ms state)))
-          token (when (and ready? (not (:done? next-state)))
+          step (when (and ready? (not (:done? next-state)))
+                 (get-in spec [:steps (:step-index next-state)]))
+          token (when (and step (not= :empty (:kind step)) (not (:muted? step)))
                   [(:owner-id state) (:visit next-state)])
           old-token (:active-token state)
           changed? (not= token old-token)
@@ -196,12 +207,12 @@
                     (conj (launch-intent spec next-state)))
           next-state (cond-> (assoc next-state :last-time-ms time-ms :last-position position :active-token token)
                        (= :beats (:timebase spec)) (assoc :last-beat beat :bpm bpm))
-          remaining (when token (- (get next-state end-key) position))
-          remaining-ms (when (and token (not (false? playing?)))
+          remaining (when step (- (get next-state end-key) position))
+          remaining-ms (when (and step (not (false? playing?)))
                          (if (= :beats (:timebase spec)) (* remaining (/ 60000.0 bpm)) remaining))]
       {:state next-state :intents intents :done? (:done? next-state)
-       :step (when token (get-in spec [:steps (:step-index next-state)]))
-       :phase (when token (/ (- position (get next-state start-key))
+       :step step
+       :phase (when step (/ (- position (get next-state start-key))
                               (- (get next-state end-key) (get next-state start-key))))
        :remaining-ms remaining-ms
        :remaining-beats (when (= :beats (:timebase spec)) remaining)})))

@@ -112,3 +112,26 @@
     (is (= :ms (:timebase state)))
     (is (:done? (sequence/advance spec state 100))))
   (is (seq (sequence/validate-sequence {:steps [{:id :x :cue-id :red :duration {:beats 0}}]}))))
+
+(deftest empty-and-muted-steps-consume-time-without-owning-launches
+  (let [spec {:steps [{:id :live :cue-id :red :duration {:beats 1}}
+                     {:id :gap :kind :empty :duration {:beats 1}}
+                     {:id :muted :cue-id :blue :muted? true :duration {:beats 2}}
+                     {:id :next :cue-id :red :duration {:beats 1}}]}
+        clock (fn [beat] {:beat beat :time-ms (* 500 beat) :bpm 120})
+        sample (fn [result beat] (sequence/advance spec (:state result) (clock beat)))
+        state (sequence/initial-state spec (clock 0) :chase)
+        live (sample {:state state} 0)
+        gap (sample live 1)
+        mid-gap (sample gap 3/2)
+        muted (sample mid-gap 2)
+        next (sample muted 4)]
+    (is (= [:composition/launch] (mapv :op (:intents live))))
+    (is (= [{:op :composition/release :owner-id :chase :token [:chase 0]}] (:intents gap)))
+    (is (= [:gap :gap :muted] (mapv #(get-in % [:step :id]) [gap mid-gap muted])))
+    (is (= [0 1/2 0] (mapv :phase [gap mid-gap muted])))
+    (is (= [1 1/2 2] (mapv :remaining-beats [gap mid-gap muted])))
+    (is (every? (comp empty? :intents) [mid-gap muted (sequence/stop (:state gap))]))
+    (is (= [:chase 3] (get-in next [:intents 0 :token])))
+    (is (= [:composition/launch] (mapv :op (:intents next))))
+    (is (= (:intents gap) (:intents (sample live 3))))))

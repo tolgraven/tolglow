@@ -88,3 +88,36 @@ and restore the identity and order of active members and release tails.
 
 The [64-head compound benchmark](performance/compound-layers.md) compares
 individual launches, an opaque macro and a translucent transformed macro.
+
+## Edit sequence steps from code
+
+`tolglow.composition.sequence-edit` takes and returns ordinary sequence definitions.
+Select, mute, copy, duplicate, paste and delete steps by their IDs. Supply a fresh
+ID whenever inserting a step. Copying retains the authored duration, cue and
+parameters. The clipboard and edited definitions are immutable values.
+
+```clojure
+(require '[tolglow.composition.sequence-edit :as edit])
+
+(def chase
+  (-> {:id :chase :mode :sequence :slots []}
+      (edit/add-step nil {:id :wash :cue-id :red-wash :duration {:bars 1}})
+      (edit/add-empty-step :wash :pause)
+      (edit/extend-duration :pause {:beats 1/2} {:beats-per-bar 4})
+      (edit/duplicate-step :wash :wash-copy)
+      (edit/toggle-muted :wash-copy)))
+```
+
+Use the existing `:composition` owner operation to save and `:composition-run`
+to start the saved program. Empty and muted steps occupy their full duration.
+On transition, the preceding sequence step releases its own cue instance through
+its configured release envelope. Current-step playback data includes the step
+ID, kind, mute state and remaining time. [#554](https://github.com/tolgraven/tolglow/issues/554)
+
+The Push overlay needs a draft session that fences page and pad selections, then
+routes the edits through these step IDs. Blackout and master scaling require
+output overrides keyed by execution owner and step visit, with cleanup on step
+end and execution truncation. They need to combine with the current live master
+at render time so a concurrent master edit survives release. Code-authored
+steps need declared typed bindings with source provenance validated through the
+cue publication path before the overlay exposes those values to performance controls.
