@@ -992,8 +992,10 @@
                            :camera (contains? #{"audience" "overview"} value) false)]
       (when valid? {:db (assoc-in db [:ui :preview-settings key] value) :studio/preview [key value]}))))
 (rf/reg-event-fx :studio/preview-expand
-  (fn [{:keys [db]} _] {:db (update-in db [:ui :preview-expanded?] not)
-                        :dispatch-later [{:ms 30 :dispatch [:studio/preview-resize]}]}))
+  (fn [{:keys [db]} _]
+    (let [expanded? (not (get-in db [:ui :preview-expanded?]))]
+      {:db (assoc-in db [:ui :preview-expanded?] expanded?)
+       :studio/preview-layout expanded?})))
 (rf/reg-event-fx :studio/preview-fullscreen
   (fn [{:keys [db]} _]
     {:db (assoc-in db [:ui :fullscreen-preview-controls?] false)

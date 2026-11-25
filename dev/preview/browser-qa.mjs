@@ -51,8 +51,13 @@ try {
     });
     await page.getByRole('button', {name: '+ Plume', exact: true}).click();
     await page.getByRole('button', {name: 'Expand', exact: true}).click();
-    await page.waitForFunction(() => document.querySelector('#preview-panel').classList.contains('expanded'));
-    await panel.scrollIntoViewIfNeeded();
+    await page.waitForFunction(() => {
+      const panel = document.querySelector('#preview-panel');
+      const rect = panel?.querySelector('#preview')?.getBoundingClientRect();
+      if (!panel?.classList.contains('expanded') || !rect?.height) return false;
+      const visibleHeight = Math.min(rect.bottom, innerHeight) - Math.max(rect.top, 0);
+      return visibleHeight >= Math.min(rect.height, innerHeight) - 1;
+    });
     const telemetry = await page.evaluate(async () => {
       const engine = document.querySelector('#preview').tolglowPreview;
       engine.pause(); await engine.draw(0); return engine.getTelemetry();
