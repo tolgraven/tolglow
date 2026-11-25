@@ -168,9 +168,15 @@ each quarter cycle.
 ((:close! weather))
 ```
 
-The oscillator's position is `phase + beat / period`, with the period measured
-in beats, bars or phrases of the committed transport and meter. A one-bar
-period in 7/8 is 7/2 beats. The source samples once when that position enters a
+The oscillator's position starts as `phase + beat / period`, with the period
+measured in beats, bars or phrases of the committed transport and meter. A
+one-bar period in 7/8 is 7/2 beats. When the meter changes, the oscillator
+continues from the position it has reached rather than recomputing from beat
+zero, so changing from 4/4 to 7/8 at beat 64 keeps a one-bar oscillator at
+bar 16 instead of jumping to about 18.3. Afterglow has no meter map: the change
+takes effect at the first frame that reports it, and seeking back past it
+extrapolates the current meter. A new show epoch starts again from
+`phase + beat / period`. The source samples once when that position enters a
 new interval. If a frame crosses several boundaries, it samples once, just as
 frame cadences skip missed frames. Tempo changes do not add samples. A seek
 inside the current interval adds none; a seek or loop into another interval
@@ -178,7 +184,9 @@ adds one. A stopped transport holds the current interval.
 
 Every reader of `::weather` shares one sampler. When the last lease closes,
 any read in progress is cancelled. Replaying the same committed frames gives
-the same samples. `reg-cofx!` rejects an unregistered oscillator name. If you
+the same samples. Registering a different definition under the same name, or
+removing and registering it again, starts the oscillator again and takes a
+fresh sample on the next frame. `reg-cofx!` rejects an unregistered oscillator name. If you
 later remove or rename the oscillator, the graph reports a fault naming the
 missing and registered oscillators, and readers keep the last value until
 the name is registered again. Oscillator and coeffect registrations are setup
