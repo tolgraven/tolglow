@@ -48,6 +48,7 @@
     tolglow.event-subscribers-test tolglow.beat-scheduler-test tolglow.studio.projection-test tolglow.studio.active-preview-test tolglow.push-scene-test
     tolglow.controllers.content-browser-test tolglow.controllers.content-browser-host-test
     tolglow.controllers.content-browser-display-test
+    tolglow.timeline-test
     tolglow.preview.airplay-test])
 
 (def suites
