@@ -1,0 +1,132 @@
+{
+  "tolglow": "ebeef160d3126c8f27d13baa57e1e5c80980e15d",
+  "afterglow": "99f61c5bed2850daaeb87bc5b84ddf0d3c60bf64",
+  "chromium": "156.0.8078.79",
+  "servedAssetSha256": {
+    "airplay.js": "b5486131f7a328c203b71586ec8f5e1c6c35a8e6e4953c0f56213eafec74427b",
+    "preview.js": "2fb525eac747dc24eaf28dedb65efc378e9c07b0dbf0c29047a796b92308c3cd",
+    "preview-worker.js": "749eb824b2622d18743881c1680c7c455315e8954fd8ddc0bdae4d2a87372554",
+    "compute/dispatcher.js": "d92dc1904b372a61899df4970177b58bfe129a73c0e7c982e76d5586473e96f7",
+    "js/main.js": "fbdbc659e341cd41f9f0a601d1d00fe85ccd6e386791c943166aa4b8379026d7",
+    "compute/runtime/transport.js": "c249b6493d7d2ea140af5d816059d562421192472a98ed3a93a5eda5ff631f17",
+    "styles.css": "45a0cd5421d8bdeb09dcf1425e5b22aed3b07c51f3955b58190d583f63d1bcea"
+  },
+  "browser": [
+    {
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "mode": "desktop",
+      "committed": [
+        {
+          "kind": "Named save",
+          "epoch": 2,
+          "master": 0.5
+        }
+      ],
+      "writes": [
+        {
+          "route": "/api/show/checkpoints/restore",
+          "wireBody": "[\"^ \",\"~:runtime-id\",\"a75e95df-7337-49f9-8094-2e493f8ef737\",\"~:show-id\",\"~:main\",\"~:epoch\",1,\"~:kind\",\"~:named\"]"
+        }
+      ],
+      "focusReturned": true,
+      "pageErrors": []
+    },
+    {
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "mode": "phone",
+      "committed": [
+        {
+          "kind": "Working autosave",
+          "epoch": 3,
+          "master": 0.3
+        },
+        {
+          "kind": "Previous session",
+          "epoch": 4,
+          "master": 0.3
+        }
+      ],
+      "writes": [
+        {
+          "route": "/api/show/checkpoints/restore",
+          "wireBody": "[\"^ \",\"~:runtime-id\",\"a75e95df-7337-49f9-8094-2e493f8ef737\",\"~:show-id\",\"~:main\",\"~:epoch\",2,\"~:kind\",\"~:recovery\"]"
+        },
+        {
+          "route": "/api/show/checkpoints/restore",
+          "wireBody": "[\"^ \",\"~:runtime-id\",\"a75e95df-7337-49f9-8094-2e493f8ef737\",\"~:show-id\",\"~:main\",\"~:epoch\",3,\"~:kind\",\"~:prior\"]"
+        },
+        {
+          "route": "/api/show/checkpoints/discard-prior",
+          "wireBody": "[\"^ \",\"~:runtime-id\",\"a75e95df-7337-49f9-8094-2e493f8ef737\",\"~:show-id\",\"~:main\",\"~:epoch\",4]"
+        }
+      ],
+      "focusReturned": true,
+      "pageErrors": [],
+      "compositorScreencastFrames": 45
+    },
+    {
+      "viewport": {
+        "width": 820,
+        "height": 1180
+      },
+      "mode": "tablet",
+      "committed": [],
+      "writes": [],
+      "focusReturned": true,
+      "pageErrors": []
+    }
+  ],
+  "api": {
+    "jsonRestore": 200,
+    "jsonMaster": 0.5,
+    "staleJson": 400,
+    "wrongTypedTransit": 400,
+    "checkpointsAfterDiscard": [
+      "named",
+      "recovery"
+    ]
+  },
+  "media": {
+    "checkpoint-desktop.png": {
+      "sha256": "0b76b35716483df5ee6844bdd9640a851d7dc5128c9cc836dcfc43dfa657d4fd",
+      "bytes": 145089,
+      "width": 1440,
+      "height": 900
+    },
+    "checkpoint-phone.mp4": {
+      "sha256": "ee22efb8e6864ef8826466a3a6561bccae5676d7b4ba1c537d7ef1bd4cd2fd2e",
+      "bytes": 212216,
+      "width": 390,
+      "height": 844,
+      "codec": "h264",
+      "durationSeconds": 23.56,
+      "frames": 589
+    },
+    "checkpoint-phone.png": {
+      "sha256": "7a42b6c8279ea6b8c234c1daad6a89f84c073f430c8e4e1d04d3fcaef1b63d57",
+      "bytes": 60640,
+      "width": 390,
+      "height": 844
+    },
+    "checkpoint-tablet.png": {
+      "sha256": "5e0bba8c2f5b8c1ebafc6e4917584890dee5b8f80180ad1d5f8bf0d2c5045b50",
+      "bytes": 107977,
+      "width": 820,
+      "height": 1180
+    }
+  },
+  "focusedStudioEvents": {
+    "namespace": "tolglow.studio.events-test",
+    "tests": 71,
+    "assertions": 387,
+    "failures": 0,
+    "errors": 0,
+    "developmentCompilerWarning": "Existing inference warning in cue_pad_preview.cljs:15"
+  }
+}
