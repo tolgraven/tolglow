@@ -323,6 +323,51 @@ FFT/YIN and rendering. Allocations were not measured. The maximum exceeds one
 10 ms block interval: this sample is not a hard realtime or end-to-end latency
 guarantee, nor a comparison with another engine.
 
+## Observe a known local recording in mpv
+
+Use the absolute path to a trusted mpv session's existing UNIX IPC socket. In
+mpv, select the recording using its canonical absolute path so the reported
+file and opened stream agree with the catalog entry. Use the recording's known
+tempo and rebuild the profile if the file changes.
+
+```clojure
+(require '[clojure.java.io :as io]
+         '[tolglow.integrations.mpv-player :as mpv]
+         '[tolglow.integrations.track-profile :as track-profile]
+         '[tolglow.show :as show])
+
+(def track (.getCanonicalPath (io/file "/home/operator/music/known-track.wav")))
+(def profile (track-profile/analyze-file track {:beat-grid {:bpm 120}}))
+(def provenance {:source-id :mpv :session-id (random-uuid) :clock-id :show-monotonic})
+(def runtime
+  (show/start! {:workspace-options nil
+                :section-patterns {:enabled? true :on :bar :show-seed 514
+                                   :patterns [:warm :pulse :slow]}
+                :section-reference {:profile profile :provenance provenance}}))
+(def callbacks (show/section-reference-callbacks runtime))
+(def player
+  (mpv/open! {:socket-path "/home/operator/.local/run/mpv.sock"
+              :provenance provenance
+              :catalog {track (select-keys profile [:reference :duration-ms])}}
+             callbacks))
+
+;; Inspect alignment while mpv plays the known recording in the preview runtime.
+((:state! callbacks))
+
+;; Close and wait for the final unavailable alignment before stopping the show.
+(deref ((:close! player)) 2000 :still-closing)
+(show/stop! runtime)
+```
+
+The worker uses the show's monotonic clock and sends property subscriptions and
+reads on one connection. `:done` resolves on close, EOF or error and reports
+`:reason` and whether the show accepted the final revoked alignment. Choose a
+fresh session ID for each open and use the same provenance and alignment options
+in the show configuration and player. Custom show `:position-options` belong
+under `:adapter-options {:alignment-options ...}` in the player config. Show
+restore invalidates old callbacks. The socket lifecycle is available from the
+REPL. Studio can attach to the same show runtime for event inspection.
+
 ## Explicit studio audio capture
 
 `tolglow.audio.capture` owns the optional JavaSound input boundary. Requiring it,
