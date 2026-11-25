@@ -155,6 +155,24 @@
                      (mapped nil 0 [(block :wash ids {:color full :dimmer 0})])
                      25 [(block :wash ids {:color full :dimmer 1})]))))))
 
+(deftest scene-meter-matches-the-full-report-across-writer-and-frame-changes
+  (let [patch (frame/compile-patch lamps)
+        meter (capacity/prepare patch)
+        targets (:target-order patch)
+        wash (block :wash targets {:color full :dimmer 1.0 :pan 0.5})
+        move (block :move targets {:color [1 0 0] :dimmer 0.7 :pan 0.6 :strobe 0.25})
+        frames [[0 [wash] {}] [25 [wash] {}] [50 [move] {}]
+                [75 [move] {}] [100 [move] {:blackout? true}]
+                [2000 [wash] {}] [2025 [(dissoc wash :source)] {}]]]
+    (reduce (fn [[full-prior scene-prior] [t blocks options]]
+              (let [output (frame/resolve-contributions patch blocks
+                             (merge {:include-values? false :compact-values? true} options))
+                    full (activity/advance-meter full-prior patch meter output blocks t)
+                    scene (activity/advance-scene-meter scene-prior patch meter output blocks t)]
+                (is (= (select-keys (:report full) [:scene]) (:report scene)))
+                [(:state full) (:state scene)]))
+            [nil nil] frames)))
+
 (deftest operator-look-replaces-a-steady-source-at-the-same-level
   (let [tick (capture [(first lamps)]) id (:id (first lamps))
         wash (block :wash [id] {:color full :dimmer 1})
