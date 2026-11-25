@@ -1,5 +1,5 @@
 (ns tolglow.waveforms-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [clojure.test :refer [deftest is testing]]
             [afterglow.runtime :as runtime]
             [clojure.data.json :as json]
             [tolglow.clock :as clock]
@@ -173,7 +173,11 @@
         model (response-show
                 #(assoc % :blocks {[:outputs :color] {:stages [{:block :optics/gel}]}}))
         runtime (show/create-runtime {:model model :workspace-options nil :worker-timeout-ms 10000})
-        project (with-redefs [display/browser-display :project!] (show/push-browser-display runtime {}))]
+        display (with-redefs [display/browser-display (fn [options] {:open! (constantly {}) :close! (fn [_])
+                                                                       :project! (:project! options)})]
+                  (show/push-browser-display runtime {}))
+        project (:project! display)
+        handle ((:open! display))]
     (try
       (with-redefs [response/compile-response (counted-response calls)]
         (let [{:keys [instance-id status]} (command-at! runtime 0 {:op :cue/launch :cue-id :ember})
@@ -205,6 +209,44 @@
           (is (near? 0.14 (:effective-value (first (filter #(= :level (:param %)) (:parameters (project view)))))))
           (is (= 0.35 (last @calls)))
           (is (= 7 (count @calls)))))
+      (finally ((:close! display) handle) (show/stop! runtime)))))
+
+(deftest response-samples-are-retained-only-while-a-display-reads-them
+  (let [model (response-show identity)
+        runtime (show/create-runtime {:model model :workspace-options nil :worker-timeout-ms 10000})
+        display (with-redefs [display/browser-display (fn [_] {:open! (constantly {:sink :open}) :close! (fn [_])})]
+                  (show/push-browser-display runtime {}))
+        sample (fn []
+                 (let [snap @(:state runtime)
+                       instance (first (vals (get-in snap [:model :instances])))]
+                   [(some? (::waveforms/response-frame snap))
+                    (some? (runtime/observe instance [::waveforms/response-inputs nil]))]))]
+    (try
+      (is (= :accepted (:status (command-at! runtime 0 {:op :cue/launch :cue-id :ember}))))
+      (show/tick! runtime 125)
+      (testing "no reader leaves the owner frame without a retained sample"
+        (is (= [false false] (sample))))
+      (let [handle ((:open! display))]
+        (is (= :open (:sink handle)))
+        (show/tick! runtime 150)
+        (testing "an open Push display leases exact response inputs"
+          (is (= [true true] (sample))))
+        ((:close! display) handle)
+        ((:close! display) handle))
+      (show/tick! runtime 175)
+      (testing "closing the display releases the lease once"
+        (is (empty? @(:response-sample-readers runtime)))
+        (is (= [false false] (sample))))
+      (let [clients (atom {})
+            release (show/lease-response-samples! runtime #(boolean (seq @clients)))]
+        (show/tick! runtime 200)
+        (is (= [false false] (sample)) "an idle Studio stream does not demand samples")
+        (swap! clients assoc :socket {})
+        (show/tick! runtime 225)
+        (is (= [true true] (sample)) "a connected Studio client demands samples")
+        (release)
+        (show/tick! runtime 250)
+        (is (= [false false] (sample))))
       (finally (show/stop! runtime)))))
 
 (deftest forecast-and-fault-observations-keep-their-own-response-semantics
@@ -214,6 +256,7 @@
     (doseq [[model fault?] [[forecast false] [fails-at-zero true]]]
       (let [runtime (show/create-runtime {:model model :workspace-options nil :worker-timeout-ms 10000
                                           :effect-log! (fn [_])})
+            _ (show/lease-response-samples! runtime)
             calls (atom [])]
         (try
           (with-redefs [response/compile-response (counted-response calls)]
@@ -425,7 +468,7 @@
       (is (= :accepted (:status (apply! :definition {:kind :effects :definition definition} 0))))
       (is (= :accepted (:status (apply! :command {:op :cue/put :cue {:id :shape :effect-id :shape}} 0))))
       (let [id (:instance-id (apply! :command {:op :cue/launch :cue-id :shape} 0))
-            project-browser (with-redefs [display/browser-display :project!] (show/push-browser-display runtime {}))
+            project-browser (:project! (with-redefs [display/browser-display identity] (show/push-browser-display runtime {})))
             browser-view (push/display-view {:selected-instance id :selected-cue :shape :page-id :main :origin [0 0]}
                                             (:model @(:state runtime)))
             browser-rows #(into {} (map (juxt :param identity))

@@ -274,6 +274,19 @@
                           (get before id)))]
     ((:close! observer))))
 
+(defn lease-response-samples!
+  "Ask the show owner to retain exact live response inputs on committed frames
+  while a display reads them. demanded? is polled once per owner tick and must
+  only read state. Returns an idempotent release function."
+  ([runtime] (lease-response-samples! runtime (constantly true)))
+  ([runtime demanded?]
+   (let [lease (Object.)]
+     (swap! (:response-sample-readers runtime) assoc lease demanded?)
+     (fn [] (swap! (:response-sample-readers runtime) dissoc lease) nil))))
+
+(defn- response-samples-demanded? [runtime]
+  (boolean (some (fn [demanded?] (demanded?)) (some-> (:response-sample-readers runtime) deref vals))))
+
 (defn- compiler-context [fixtures batch? compute-owner]
   (let [options (cond-> {:enabled? batch? :bind-pure reuse/evaluator}
                   (compute/expressions-enabled? compute-owner) (assoc :prepare-group (compute/group-preparer compute-owner)))]
@@ -380,7 +393,7 @@
       :adaptive-keyframes (:adaptive-keyframes options) :cue-pad-previews (cue-pads/manager)
       :capture-effect-samples? (:capture-effect-samples? options)
       :browser-observations browser-inputs
-      :observers (atom {}) :frame-rate (get options :frame-rate 40)
+      :observers (atom {}) :response-sample-readers (atom {}) :frame-rate (get options :frame-rate 40)
       :publisher publisher :presentation-clock (volatile! 0) :wire-retirement (atom nil)
       :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
@@ -1676,7 +1689,8 @@
                            model (variable-blocks/collect-events model (:variable-observation before) variables)
                            variable-inputs (when variables (:variables (variable-blocks/resolved model variables)))
                            sampling (vreset! sampling-session (cadence/begin runtime before model))
-                           response-frame (when (some #(not= false (:enabled? %)) (:responses model))
+                           response-frame (when (and (some #(not= false (:enabled? %)) (:responses model))
+                                                     (response-samples-demanded? runtime))
                                             {:show-id (:show-id model) :epoch (:epoch model) :time-ms time-ms
                                              :transport-generation @(:presentation-clock runtime)
                                              :frame-number (inc (get model :frame-number 0))
@@ -2163,6 +2177,18 @@
       (->> (waveforms/project-display cache snapshot view capture)
            (precision/push-view precision-cache (:model snapshot))))))
 
+(defn- leasing-response-samples
+  "Retain exact response inputs on committed frames only while this display is open."
+  [runtime transport]
+  (assoc transport
+         :open! (fn []
+                  (let [release (lease-response-samples! runtime)]
+                    (try (assoc ((:open! transport)) ::release-response-samples release)
+                         (catch Throwable error (release) (throw error)))))
+         :close! (fn [handle]
+                   (try ((:close! transport) handle)
+                        (finally (when-let [release (::release-response-samples handle)] (release)))))))
+
 (defn push-browser-display
   "Build a Push display transport using Studio's shared reactive components.
   Capture and waveform projection run on the display worker, not the show clock.
@@ -2172,7 +2198,8 @@
   (let [project-parameters (push-parameter-projector)
         pages (volatile! nil)
         scene-cache (push-scene/create-cache)]
-    (display/browser-display
+    (leasing-response-samples runtime
+     (display/browser-display
      (assoc options :project!
             (fn [view]
               (let [snapshot (assoc @(:state runtime) :runtime-id (:id runtime))
@@ -2193,13 +2220,14 @@
                              (#{:simulator :rig} mode) (push-scene/project-display scene-cache snapshot
                                                       (assoc view :runtime-id (:id runtime)))
                              :else view)]
-                (page-overview/project-display pages model visual)))))))
+                (page-overview/project-display pages model visual))))))))
 
 (defn- push-native-display [runtime]
   (let [project-parameters (push-parameter-projector)]
-    (display/native-display
-      {:project! (fn [view]
-                   (project-parameters @(:state runtime) view nil))})))
+    (leasing-response-samples runtime
+      (display/native-display
+        {:project! (fn [view]
+                     (project-parameters @(:state runtime) view nil))}))))
 
 (def ^:private device-command-wait-ms 5000)
 
