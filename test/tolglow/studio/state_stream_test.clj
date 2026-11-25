@@ -2,6 +2,7 @@
   (:require [afterglow.reactive :as rx]
             [afterglow.sync :as sync]
             [tolglow.connections :as connections]
+            [tolglow.development.observation :as observation]
             [tolglow.development.workspace :as workspace]
             [tolglow.development.workspace-test :as fixture]
             [tolglow.application :as app]
@@ -564,6 +565,85 @@
         (.stop server)
         (rx/close! graph)))))
 
+(deftest unobserved-surface-retires-while-another-client-is-projecting
+  (let [query [::surface :fixture/one]
+        model {:show-id :fixture-show :epoch 0 :revision 0 :frame-number 0}
+        observed (atom {:color :blue})
+        mounts (atom 0)
+        samples (atom [])
+        closing (LinkedBlockingQueue.)
+        finish-close (CountDownLatch. 1)
+        project! (fn [{:keys [model projection-started finish-projection]}]
+                   (when projection-started
+                     (.countDown projection-started)
+                     (.await finish-projection 10 TimeUnit/SECONDS))
+                   (assoc model :runtime-id "server"))
+        hub (stream/create project! (constantly nil)
+                           {:runtime-id "server" :get-graph (constantly nil)
+                            :surfaces {::surface
+                                       (fn [[_ fixture-id]]
+                                         (let [generation (swap! mounts inc)]
+                                           (assoc (observation/selected observed identity
+                                                    (fn [value]
+                                                      (swap! samples conj [generation (:color value)])
+                                                      (assoc value :fixture fixture-id :generation generation)))
+                                                  :close! (fn []
+                                                            (.offer closing generation)
+                                                            (when (= 1 generation)
+                                                              (.await finish-close 10 TimeUnit/SECONDS))))))}})
+        server (jetty/run-jetty (wrap-params #(stream/response hub %))
+                               {:host "127.0.0.1" :port 0 :join? false})
+        projection-started (CountDownLatch. 1)
+        finish-projection (CountDownLatch. 1)
+        next-projection-started (CountDownLatch. 1)
+        finish-next-projection (CountDownLatch. 1)
+        take! (fn [client] (let [frame (receive client)] (acknowledge client frame) frame))
+        observed-value #(get-in % [:view :subscriptions query :value])
+        watch-count #(count (.getWatches observed))]
+    (try
+      (stream/publish! hub {:model model})
+      (let [spectator (connect server "spectator")
+            a (connect server "surface-a&view=queries") b (connect server "surface-b&view=queries")]
+        (try
+          (doseq [client [a b]]
+            (take! client)
+            (send-control client {:op :queries :queries [query]})
+            (is (= {:color :blue :fixture :fixture/one :generation 1} (observed-value (take! client)))))
+          (let [spectator-base (take! spectator)]
+            (send-control a {:op :queries :queries []})
+            (is (empty? (get-in (take! a) [:view :subscriptions])))
+            (is (= 1 @mounts (watch-count)))
+            (stream/publish! hub {:model (assoc model :frame-number 1)
+                                  :projection-started projection-started :finish-projection finish-projection})
+            (is (.await projection-started 3 TimeUnit/SECONDS))
+            (send-control b {:op :queries :queries []})
+            (is (= 1 (.poll closing 3 TimeUnit/SECONDS)) "The final unsubscribe starts cleanup while projection is blocked")
+            (is (zero? (watch-count)))
+            (reset! observed {:color :green})
+            (send-control a {:op :queries :queries [query]})
+            (.countDown finish-projection)
+            (is (= 1 (:frame-number (apply-patch (:view spectator-base) (take! spectator)))))
+            (is (= 1 @mounts) "New demand waits for the retiring producer")
+            (.countDown finish-close)
+            (is (empty? (get-in (take! b) [:view :subscriptions])))
+            (let [remounted (take! a)]
+              (is (= :full (:kind remounted)))
+              (is (= {:color :green :fixture :fixture/one :generation 2} (observed-value remounted))))
+            (is (= [[1 :blue] [2 :green]] @samples) "The pre-removal delivery pass cannot sample the retired lease")
+            (is (= 1 (watch-count)))
+            (stream/publish! hub {:model (assoc model :frame-number 2)
+                                  :projection-started next-projection-started :finish-projection finish-next-projection})
+            (is (.await next-projection-started 3 TimeUnit/SECONDS))
+            (.abort ^WebSocket (:socket a))
+            (is (= 2 (.poll closing 3 TimeUnit/SECONDS)) "Disconnecting the last reader releases the replacement")
+            (is (zero? (watch-count))))
+          (finally
+            (.countDown finish-projection)
+            (.countDown finish-next-projection)
+            (.countDown finish-close)
+            (doseq [client [a b spectator]] (.abort ^WebSocket (:socket client))))))
+      (finally (stream/close! hub) (.stop server)))))
+
 (deftest subscription-baselines-wait-for-a-retiring-query
   (let [query [::mount]
         model {:show-id :fixture-show :epoch 0 :revision 0 :frame-number 0
@@ -571,7 +651,7 @@
         graph (rx/create-system model)
         mounts (atom 0)
         acquire! rx/acquire!
-        release! query-stream/release-unused-graph-leases!
+        release! query-stream/release-unused-leases!
         first-lease? (atom true)
         removals (atom 0)
         first-removal (CountDownLatch. 1)
@@ -606,7 +686,7 @@
                                                            (.await finish-close 10 TimeUnit/SECONDS)
                                                            (close!)))
                                      lease)))
-                    query-stream/release-unused-graph-leases!
+                    query-stream/release-unused-leases!
                     (fn [& args]
                       (case (swap! removals inc)
                         1 (do (.countDown first-removal)

@@ -72,7 +72,7 @@
 
 (defn- query-demand-changed! [hub client removed]
   (try
-    (queries/release-unused-graph-leases! (:query-store hub) #(wanted-queries hub) removed)
+    (queries/release-unused-leases! (:query-store hub) #(wanted-queries hub) removed)
     (finally
       (when client (swap! client update :query-releases dec))
       (wake! hub))))
