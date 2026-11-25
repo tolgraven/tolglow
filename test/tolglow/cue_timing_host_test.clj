@@ -131,6 +131,8 @@
       (is (= :cancelled (get-in (send-held "early") [1 :status])))
       (is (empty? (:pending-cue-launches (show/snapshot runtime))))
       (is (= :pending (get-in (send-held "later") [1 :status])))
+      (is (= :stale-epoch (get-in (studio-command studio "application/json"
+                                               (assoc (release "later") :epoch -1)) [1 :reason])))
       (is (= [{:command-id "later" :cue-id :ember :mode :held :due-beat 1.0 :source source}]
              (mapv #(dissoc % :requested-at) (:pending-cue-launches (show/snapshot runtime)))))
       (is (= 422 (first (studio-command studio "application/json"

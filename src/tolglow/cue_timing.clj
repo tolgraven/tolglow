@@ -61,6 +61,11 @@
                 model missed)))
     model))
 
+(defn- wrong-target [model command]
+  (cond
+    (and (contains? command :show-id) (not= (:show-id model) (:show-id command))) :wrong-show
+    (and (contains? command :epoch) (not= (:epoch model) (:epoch command))) :stale-epoch))
+
 (defn- fire [model state clock decisions apply-command]
   (reduce
    (fn [model {:keys [command command-id dispatched-at] :as decision}]
@@ -91,9 +96,12 @@
         early-key [source id]
         early? (and (= :held (get-in request [:command :launch :mode]))
                     (some #{early-key} (get-in model early-path)))
-        clock (clock model state time-ms)]
-    (if (and (get-in model [:control :history id]) (nil? (quantization/receipt state id)))
-      {:model model :ack {:status :rejected :reason :command-id-conflict :command-id id}}
+        clock (clock model state time-ms)
+        reason (or (wrong-target model (:command request))
+                   (when (and (get-in model [:control :history id]) (nil? (quantization/receipt state id)))
+                     :command-id-conflict))]
+    (if reason
+      {:model model :ack {:status :rejected :reason reason :command-id id}}
       (let [{:keys [state due duplicate?] initial :receipt}
             (quantization/admit state request clock (when early? :held-release))]
         (if (= :rejected (:status initial))
@@ -127,6 +135,7 @@
         state (get-in model state-path)
         current (receipt model launch-command-id)
         owner (source-owner source)
+        target-error (wrong-target model request)
         held-release? (= reason :held-release)
         instance (when (and held-release? (some? launch-command-id) (held-source? owner))
                    (if current
@@ -137,6 +146,9 @@
                                instance))
                            (vals (:instances model)))))]
     (cond
+      target-error
+      {:model model :ack {:command-id launch-command-id :status :rejected :reason target-error}}
+
       (and (= :held (:launch-mode instance)) (= :running (:phase instance))
            (= owner (source-owner (:source instance))))
       (apply-command model (-> request (select-keys [:source :command-id :epoch :show-id])
