@@ -425,6 +425,48 @@ test('a worker whose animation frames are unsupported renders on timers', async 
   assert.equal(w.engine.targetHz, 60);
 });
 
+test('a hidden surface shows nothing from the expired generation and resumes without an acknowledgement', async t => {
+  const w = worker(); t.after(() => w.dispose());
+  await w.refresh(1000 / 60);
+  const shown = surfaceFor(w);
+  w.fenceReady = false;
+  await w.refresh(2 * 1000 / 60);
+  await w.refresh(3 * 1000 / 60);
+  assert.equal(w.fences.size, 2);
+  // The tab is hidden while two draws are on the GPU.
+  w.send({type: 'activity', active: false, generation: 2});
+  w.fenceReady = true; await w.advance(120);
+  assert.equal(shown.length, 1, 'neither draw of the hidden generation reaches the canvas');
+  assert.equal(w.frames().length, 2, 'and neither is reported as a frame');
+  assert.ok(w.bitmaps.every(bitmap => bitmap.closed)); assert.equal(w.fences.size, 0);
+  for (let frame = 9; frame <= 12; frame++) await w.refresh(frame * 1000 / 60);
+  assert.equal(w.draws.length, 3, 'a hidden worker submits nothing');
+  // Shown again: the last image stayed on the canvas and new ones follow it.
+  w.state.generation = 3;
+  w.send({type: 'activity', active: true, generation: 3}); w.update();
+  for (let frame = 13; frame <= 16; frame++) await w.refresh(frame * 1000 / 60);
+  assert.ok(shown.length >= 4, `only ${shown.length - 1} images after becoming visible again`);
+  assert.ok(shown.every(Boolean), 'hiding and showing never blanks the surface');
+  assert.ok(w.frames().slice(2).every(frame => frame.presented && frame.generation === 3));
+});
+
+test('graphics context loss leaves a surface with its last image and presents again once restored', async t => {
+  const w = worker(); t.after(() => w.dispose());
+  await w.refresh(1000 / 60);
+  const shown = surfaceFor(w);
+  w.fenceReady = false;
+  await w.refresh(2 * 1000 / 60);
+  await w.refresh(3 * 1000 / 60);
+  w.contextEvent('webglcontextlost');
+  assert.ok(w.bitmaps.every(bitmap => bitmap.closed)); assert.equal(w.fences.size, 0);
+  assert.equal(shown.length, 1); assert.ok(shown[0], 'the surface keeps the image it had');
+  w.contextEvent('webglcontextrestored');
+  w.fenceReady = true;
+  for (let frame = 5; frame <= 7; frame++) await w.refresh(frame * 1000 / 60);
+  assert.ok(shown.length >= 3 && shown.every(Boolean));
+  assert.ok(w.frames().slice(-2).every(frame => frame.presented && !frame.bitmap));
+});
+
 test('the worker samples the display itself when the page reports a starved callback rate', async t => {
   const w = worker({hz: 15}); t.after(() => w.dispose());
   assert.equal(w.engine.targetHz, 15);
