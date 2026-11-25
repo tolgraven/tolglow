@@ -48,6 +48,9 @@
 (defn- reorder-pending? [show request]
   (and request (or (nil? (:revision request)) (< (:revision show) (:revision request)))))
 
+(defn- render-priority [instance]
+  (get instance :render-priority (get instance :priority 0)))
+
 (defn target-key [target] (if-let [id (:instance-id target)] [:instance (wire id)] [:group (:selector target)]))
 
 (defn group-selector [form]
@@ -172,6 +175,14 @@
       (if (reorder-pending? (:show db) request) db
           (store db (assoc (state db) :reorder {:open? (not open?)}))))))
 
+(defn- submit-reorder [db s capture op fields]
+  (let [serial (inc (:serial s))
+        result [:performance/reorder-result (request-token db) serial]
+        [effect command] (events/command db op (assoc fields :expected-revision (:revision capture))
+                                         (conj result true))]
+    {:db (store db (assoc s :serial serial :reorder {:open? true :request {:serial serial}}))
+     :fx [[effect (assoc command :on-failure (conj result false))]]}))
+
 (rf/reg-event-fx :performance/reorder-pick
   (fn [{:keys [db]} [_ capture id]]
     (let [show (:show db)
@@ -187,14 +198,30 @@
         (= source-id id) {:db (update-reorder {})}
         (nil? source-id) {:db (update-reorder {:source {:id id :identity identity}})}
         :else
-        (let [serial (inc (:serial s))
-              result [:performance/reorder-result (request-token db) serial]
-              [effect command] (events/command db "instance/move-after"
-                                               {:instance-id source-id :after-instance-id id
-                                                :expected-revision (:revision capture)}
-                                               (conj result true))]
-          {:db (store db (assoc s :serial serial :reorder {:open? true :request {:serial serial}}))
-           :fx [[effect (assoc command :on-failure (conj result false))]]})))))
+        (submit-reorder db s capture "instance/move-after" {:instance-id source-id :after-instance-id id})))))
+
+(rf/reg-event-db :performance/reorder-priority-edit
+  (fn [db [_ source value]]
+    (let [s (state db)]
+      (if (= source (get-in s [:reorder :source]))
+        (store db (-> s (assoc-in [:reorder :priority-draft] value) (update :reorder dissoc :error)))
+        db))))
+
+(rf/reg-event-fx :performance/reorder-priority-set
+  (fn [{:keys [db]} [_ capture id value]]
+    (let [show (:show db)
+          s (state db)
+          {:keys [open? source request]} (:reorder s)
+          identity (:identity (mix-capture show (ordered-instances show)))
+          fail #(hash-map :db (store db (assoc-in s [:reorder :error] %)))]
+      (cond
+        (or (not open?) (reorder-pending? show request)) {}
+        (not (and (= identity (:identity source) (:identity capture)) (= id (:id source))))
+        (fail "Cue order changed. Choose a cue again.")
+        :else
+        (try (submit-reorder db s capture "instance/set-priority"
+                             {:instance-id id :priority (modulation/number-value value "Layer priority")})
+             (catch :default error (fail (events/error-message error))))))))
 
 (rf/reg-event-db :performance/reorder-result
   (fn [db [_ token serial success? result]]
@@ -203,7 +230,9 @@
         (let [revision (when (and success? (contains? #{"accepted" :accepted} (:status result))) (:revision result))]
           (store db (assoc s :reorder
                            (merge {:open? true}
-                                  (cond revision {:request {:revision revision} :message "Cue order updated."}
+                                  (cond revision {:request {:revision revision}
+                                                  :message (if (contains? result :render-priority)
+                                                             "Layer priority updated." "Cue order updated.")}
                                         success? {:error "Reorder is still queued. Check the displayed order before retrying."}
                                         :else {:error (events/error-message result)})))))
         db))))
@@ -501,6 +530,18 @@
       :on-click #(rf/dispatch [:performance/reorder-pick capture id])}
      label]))
 
+(defn- layer-priority-form [capture source instance draft]
+  (let [value (or draft (pr-str (render-priority instance)))]
+    [:form.live-priority-form
+     {:on-submit (fn [event]
+                   (.preventDefault event)
+                   (let [fields (js/FormData. (.-currentTarget event))]
+                     (rf/dispatch [:performance/reorder-priority-set capture (:id source) (.get fields "priority")])))}
+     [:label "Layer priority"
+      [:input {:type "text" :name "priority" :input-mode "decimal" :value value
+               :on-change #(rf/dispatch [:performance/reorder-priority-edit source (.. % -target -value)])}]]
+     [:button.button {:type "submit"} "Set priority"]]))
+
 (defn- instance-card [show instance parameter-control
                       {:keys [duplicate? reorder? source-id selection-view selection-row] :as options}]
   (let [id (wire (:id instance)) expanded? @(rf/subscribe [:performance/card-expanded id])
@@ -528,6 +569,7 @@
         (when-let [label (case (:suppressed-by selection-row) :mute "Muted" :solo "Excluded by Solo" nil)]
           [:span.live-selection-state {:data-suppressed-by (name (:suppressed-by selection-row))} label])
         (when duplicate? [:span.live-effect-phase (str "Launch " id)])
+        (when reorder? [:span.live-effect-phase (str "Priority " (pr-str (render-priority instance)))])
         [widgets/category-tags (or (:categories instance) (:categories definition)) (:category-colors show)]]]
       [:div.live-effect-header-actions
        (when selection-row
@@ -565,16 +607,18 @@
         rows (selection/by-instance (:selection selection-view))
         duplicate-counts (frequencies (map :cue-id instances))
         capture (mix-capture show instances)
-        ready? (< 1 (count (peek (:identity capture))))
-        {:keys [open? source request error message]} (:reorder (state db))
+        running-ids (peek (:identity capture))
+        ready? (< 1 (count running-ids))
+        {:keys [open? source request error message priority-draft]} (:reorder (state db))
         pending? (reorder-pending? show request)
-        source-id (when (= (:identity capture) (:identity source)) (:id source))]
+        source-id (when (= (:identity capture) (:identity source)) (:id source))
+        selected (some #(when (= source-id (:id %)) %) instances)]
     [:section.live-board {:aria-label "Running effects"}
      [:div.live-board-heading
       [:h2 "In the mix"] [:span#active-count.count (str (count instances) " active")]
       [:div.live-board-actions
        (when (:selection selection-view) [selection/toolbar selection-view])
-       (when (or ready? open?)
+       (when (or (seq running-ids) open?)
          [:button.button.live-reorder-toggle {:type "button" :disabled (boolean pending?)
                                              :on-click #(rf/dispatch [:performance/reorder-toggle])}
           (if open? "Done" "Reorder")])]]
@@ -585,11 +629,14 @@
          [:p.live-reorder-status {:role "alert"} error]
          [:p.live-reorder-status {:role "status"}
           (cond pending? "Applying cue order…"
-                source-id "Choose where to place the selected launch."
-                (not ready?) "Reordering needs two running cues."
+                (and source-id ready?) "Choose where to place the selected launch or set its priority."
+                source-id "Set the priority of the selected launch."
+                (empty? running-ids) "Launch a cue to change its layer priority."
                 source "Cue order changed. Choose a cue again."
                 message message
                 :else "Choose a cue to move.")]))
+     (when (and open? selected (not pending?))
+       [layer-priority-form capture source selected priority-draft])
      [inspect/unassigned-faults show @(rf/subscribe [:inspect/faults])]
      (if (seq instances)
        [:<> [group-panel selection-view rows]
@@ -599,7 +646,7 @@
            ^{:key (wire (:id instance))}
            [instance-card show instance parameter-control
             {:duplicate? (< 1 (get duplicate-counts (:cue-id instance) 0)) :reorder? open?
-             :capture capture :source-id source-id :ready? (and ready? (not pending?))
+             :capture capture :source-id source-id :ready? (not pending?)
              :selection-view selection-view :selection-row (get rows (:id instance))}])]]
        [:div.live-board-empty [:span "◌"] [:strong "Your running effects appear here"]
         [:p "Launch cues to mix their parameters together."]])]))

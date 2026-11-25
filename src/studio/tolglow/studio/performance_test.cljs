@@ -228,6 +228,30 @@
     (is (= "Show revision changed" (get-in rejected [:db :ui :performance :reorder :error])))
     (is (= 8 (get-in ack [:db :ui :performance :reorder :request :revision])))))
 
+(deftest setting-layer-priority-submits-the-selected-launch-with-current-show-identity
+  (let [db (assoc-in base [:show :instances] [(get-in base [:show :instances 0])])
+        opened (:db (transition db [:performance/reorder-toggle]))
+        capture {:identity ["runtime-a" 4 ["4:1"]] :revision 7}
+        selected (:db (transition opened [:performance/reorder-pick capture "4:1"]))
+        path [:ui :performance :reorder]
+        source (get-in selected (conj path :source))
+        drafted (:db (transition selected [:performance/reorder-priority-edit source "-3.5"]))
+        invalid (transition drafted [:performance/reorder-priority-set capture "4:1" ""])
+        stale (transition drafted [:performance/reorder-priority-set (assoc-in capture [:identity 0] "old") "4:1" "-3.5"])
+        sent (transition drafted [:performance/reorder-priority-set capture "4:1" "-3.5"])
+        payload (command sent)
+        ack (transition (:db sent) (conj (:on-success payload) {:status "accepted" :revision 8 :render-priority -3.5}))]
+    (is (= "-3.5" (get-in drafted (conj path :priority-draft))))
+    (is (empty? (:fx invalid)))
+    (is (re-find #"finite number" (get-in (:db invalid) (conj path :error))))
+    (is (empty? (:fx stale)))
+    (is (= "instance/set-priority" (:op payload)))
+    (is (= {:instance-id "4:1" :priority -3.5 :expected-revision 7} (:fields payload)))
+    (is (= ["runtime-a" 4] ((juxt :runtime-id :epoch) payload)))
+    (is (= "Layer priority updated." (get-in (:db ack) (conj path :message))))
+    (is (= 8 (get-in (:db ack) (conj path :request :revision))))
+    (is (= (:show db) (get-in ack [:db :show])))))
+
 (deftest grouped-xyz-keeps-editable-base-and-plots-effective-components
   (let [components [[:x {:default 1}] [:y {:default 2}] [:z {:default 3}]]
         instance {:id "4:1" :params {"x" 0.25 :z 0.7}}
