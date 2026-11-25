@@ -699,6 +699,12 @@
           (is (= :rejected (:status moved)) (pr-str requester))
           (is (= [] (:event-ids cancelled)) (pr-str requester))))
       (is (= ["human" "planned"] (pending)))
+      (testing "a nil criterion selects nothing, even for an operator"
+        (doseq [request [{:event-ids nil} {:label nil} {:destination nil} {:posted-by nil :label nil}]]
+          (is (= :rejected (:status (at! rt (now) (merge {:op :schedule/cancel :source {:adapter :web :session-id "s"}}
+                                                         request))))
+              (pr-str request)))
+        (is (= ["human" "planned"] (pending))))
       (testing "a non-human requester naming another poster matches nothing, not its own events"
         (is (= [] (:event-ids (at! rt (now) {:op :schedule/cancel :posted-by {:adapter :repl} :source agent}))))
         (is (= ["human" "planned"] (pending))))
