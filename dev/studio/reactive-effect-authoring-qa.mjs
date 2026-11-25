@@ -31,7 +31,11 @@ const repl = async source => {
 await repl(`(do (require '[tolglow.show :as show] '[afterglow.reactive :as rx])
   (def reactions (show/reactions runtime))
   (rx/ratom reactions :studio-qa/level 0.375)
-  (rx/reg-sub! reactions :studio-qa/gain (fn [_ _] 0.625)))`);
+  (rx/ratom reactions :studio-qa/gain-value 0.625)
+  (defn browser-qa-gain [{:keys [source]} _] @(source :studio-qa/gain-value))
+  (rx/reg-sub! reactions :studio-qa/gain browser-qa-gain
+    {:kind :sub :id :studio-qa/gain
+     :implementation {:type :var :symbol (str (symbol #'browser-qa-gain))}}))`);
 
 const browser = await chromium.launch({executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
   args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']});
@@ -65,11 +69,16 @@ const validationError = async page => {
   return feedback.innerText();
 };
 const registrySource = async () => (await get(`/api/definition?kind=effects&id=${id}`)).source;
+const definitionPost = request => request.url().endsWith('/api/definition') && request.method() === 'POST';
 const publish = async page => {
-  const pending = page.waitForResponse(response => response.url().endsWith('/api/definition') && response.request().method() === 'POST');
+  const pending = page.waitForResponse(response => definitionPost(response.request()));
   await page.getByRole('button', {name: 'Validate & publish'}).click();
   return pending;
 };
+const waitForIntensity = (page, intensity) => page.waitForFunction(async expected => {
+  const response = await fetch('/api/state', {headers: {accept: 'application/json'}});
+  return (await response.json()).output.values['head-1'].intensity === expected;
+}, intensity);
 
 try {
   const desktop = await open(1440, 960, false);
@@ -80,6 +89,7 @@ try {
   assert.equal(await form(desktop).getByRole('checkbox', {name: 'Sample at a fixed interval'}).count(), 0);
   await form(desktop).getByLabel('Identifier', {exact: true}).fill(id);
   await form(desktop).getByLabel('Name', {exact: true}).fill(title);
+  await form(desktop).getByLabel('Duration value', {exact: true}).fill('512');
   await desktop.getByLabel('Target fixture 1', {exact: true}).selectOption({label: 'head-1'});
   await desktop.getByLabel('Input 1 Ratom ID').fill(':studio-qa/level');
   await desktop.getByRole('button', {name: 'Add input', exact: true}).click();
@@ -92,7 +102,7 @@ try {
   await desktop.getByLabel('Input 2 alias').fill('gain');
   await capture(desktop, '02-ready');
   assert.ok((await publish(desktop)).ok());
-  await desktop.locator('#definition-status').filter({hasText: 'Published'}).waitFor();
+  await desktop.locator('#definition-status').filter({hasText: /^Published$/}).waitFor();
   await selectedEffect(desktop, 1).waitFor();
   assert.match(await registrySource(), /:transition \{:beats 1\/3\}/);
   await capture(desktop, '03-owner-published');
@@ -122,7 +132,7 @@ try {
   await desktop.getByLabel(`Input ${level} Subscription query`).fill('[:studio-qa/gain]');
   assert.ok((await publish(desktop)).ok());
   await selectedEffect(desktop, 3).waitFor();
-  await desktop.locator('#definition-status').filter({hasText: 'Published'}).waitFor();
+  await desktop.locator('#definition-status').filter({hasText: /^Published$/}).waitFor();
   const source = await registrySource();
   assert.match(source, /:level \[:subscription \[:studio-qa\/gain\]\]/);
   assert.match(source, /:op :multiply, :args \[0.5 \{:op :reactive, :key :level\}\]/);
@@ -134,15 +144,54 @@ try {
   assert.ok(launch.ok, await launch.clone().text());
   const ack = await launch.json();
   assert.equal(ack.status, 'accepted');
-  await desktop.waitForFunction(async () => {
-    const r = await fetch('/api/state', {headers: {accept: 'application/json'}});
-    return (await r.json()).output.values['head-1'].intensity === 0.3125;
-  });
+  await waitForIntensity(desktop, 0.3125);
+
+  const downloadPending = desktop.waitForEvent('download');
+  await desktop.locator('#export-show').click();
+  const checkpoint = await downloadPending;
+  await loadEffect(desktop, 3);
+  await desktop.getByLabel('Transition (beats)').fill('1/2');
+  await repl(`(deref (show/submit! runtime {:op :master/set :value 0.8}) 2000 :timeout)`);
+  await desktop.locator('#master-value').filter({hasText: '80%'}).waitFor();
+  const importPending = desktop.waitForResponse(response =>
+    response.url().endsWith('/api/import') && response.request().method() === 'POST');
+  await desktop.locator('#import-show').setInputFiles(await checkpoint.path());
+  assert.ok((await importPending).ok());
+  await desktop.locator('#master-value').filter({hasText: '100%'}).waitFor();
+  await selectedEffect(desktop, 3).waitFor();
+  const restored = await get('/api/state');
+  assert.equal(restored.epoch, initial.epoch + 1);
+  assert.equal(restored['runtime-id'], owner['runtime-id']);
+  const restoredSource = await registrySource();
+  assert.equal(restoredSource, source);
+  let stalePosts = 0;
+  const countStalePost = request => { if (definitionPost(request)) stalePosts++; };
+  desktop.on('request', countStalePost);
+  await desktop.getByRole('button', {name: 'Validate & publish'}).click();
+  assert.match(await validationError(desktop), /The show changed\. Reload/);
+  desktop.off('request', countStalePost);
+  assert.equal(stalePosts, 0);
+  assert.equal(await registrySource(), restoredSource);
+  await capture(desktop, '06-reload-required-after-restore');
+
+  await waitForIntensity(desktop, 0.3125);
+  owner['expected-epoch'] = restored.epoch;
+  await repl(`(reset! (afterglow.reactive/source (tolglow.show/reactions runtime) :studio-qa/gain-value) 0.75)`);
+  await waitForIntensity(desktop, 0.375);
+
+  await loadEffect(desktop, 3);
+  assert.equal(await desktop.getByLabel('Transition (beats)').inputValue(), '1/3');
+  await desktop.getByLabel('Transition (beats)').fill('1/4');
+  assert.ok((await publish(desktop)).ok());
+  await selectedEffect(desktop, 4).waitFor();
+  await desktop.locator('#definition-status').filter({hasText: /^Published$/}).waitFor();
+  assert.match(await registrySource(), /:transition \{:beats 1\/4\}/);
+  await capture(desktop, '07-published-after-reload');
 
   for (const [name, width, height] of [['phone', 390, 844], ['ipad', 834, 1010]]) {
     const page = await open(width, height, true);
     await page.locator('#definition-search').fill(title);
-    await loadEffect(page, 3);
+    await loadEffect(page, 4);
     assert.equal(await optIn(page).isChecked(), true);
     await page.locator('.reactive-effect-editor').scrollIntoViewIfNeeded();
     geometry[name] = await page.evaluate(() => ({overflow: document.documentElement.scrollWidth - innerWidth,
@@ -153,7 +202,9 @@ try {
     await page.close();
   }
   assert.deepEqual(errors, []);
-  const evidence = {effect: id, versions: [1, 2, 3], previewIntensity: 0.3125, geometry, errors};
+  const evidence = {effect: id, versions: [1, 2, 3, 4], ownerConflictPreservedRevision: 2,
+    restoredEpoch: restored.epoch, stalePosts, restoredDraftRepublishedVersion: 4,
+    previewIntensity: 0.3125, reboundPreviewIntensity: 0.375, geometry, errors};
   await writeFile(join(output, 'evidence.json'), JSON.stringify(evidence, null, 2) + '\n');
   console.log(JSON.stringify(evidence));
 } finally {await browser.close();}
