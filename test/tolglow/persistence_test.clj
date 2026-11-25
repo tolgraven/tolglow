@@ -101,16 +101,18 @@
         live (-> model
                  (commit-gesture (gesture id :first-turn) 0.3)
                  (commit-gesture (gesture id :second-turn) 0.4)
-                 (operator-edit "step-back" {:op :history/undo :expected-cursor 2})
+                 (operator-edit "step-back" {:op :history/undo :expected-cursor 2 :expected-history-position 2})
                  (sample-gesture (gesture id :open-turn) 0.6))
         document (files/read-string (files/write-string live))
         saved (:model document)
         reloaded (files/thaw (assoc (demo/model) :epoch 9) document)
         new-id (first (keys (:instances reloaded)))
         new-target [:instance-param new-id :level]
-        undone (operator-edit reloaded "undo-restored" {:op :history/undo :expected-cursor 3})
-        redone (operator-edit undone "alternate-restored" {:op :history/redo :expected-cursor 1 :node-id 2})
-        selected (operator-edit redone "switch-restored" {:op :history/select :expected-cursor 2 :node-id 3})]
+        undone (operator-edit reloaded "undo-restored" {:op :history/undo :expected-cursor 3 :expected-history-position 4})
+        redone (operator-edit undone "alternate-restored" {:op :history/redo :expected-cursor 1
+                                                           :expected-history-position 5 :node-id 2})
+        selected (operator-edit redone "switch-restored" {:op :history/select :expected-cursor 2
+                                                         :expected-history-position 6 :node-id 3})]
     (is (= document (files/freeze live)))
     (is (= 1 (:cursor (history live))))
     (is (= :open-turn (get-in (history live) [:open target :gesture-id])))
@@ -119,8 +121,10 @@
     (is (= (select-keys (get-in live [:control :history]) ["launch" "step-back"])
            (get-in saved [:control :history])))
     (is (nil? (:open (history saved))))
+    (is (= [3 4 4 5 6 7] (mapv (comp :position history) [live saved reloaded undone redone selected])))
     (is (= {:parent 1 :target target :actor :front-of-house :control-id :encoder-1
-            :before 0.3 :after 0.6 :generation 0}
+            :before 0.3 :after 0.6 :generation 0
+            :target-display {:cue-id :ember :cue-label "Ember" :effect-id :ember :effect-label "Ember"}}
            (get-in (history saved) [:nodes 3])))
     (is (= 1 (get-in (history saved) [:nodes 2 :parent])))
     (is (= 3 (:cursor (history reloaded))))
@@ -146,8 +150,9 @@
         saved (files/freeze live)
         reloaded (files/thaw (demo/model) saved)
         [new-ember new-ice] (mapv :id (sort-by :order (vals (:instances reloaded))))
-        undone (operator-edit reloaded "undo-current" {:op :history/undo :expected-cursor 2})
-        rejected (operator-command undone "undo-conflicted" {:op :history/undo :expected-cursor 1})]
+        undone (operator-edit reloaded "undo-current" {:op :history/undo :expected-cursor 2 :expected-history-position 2})
+        rejected (operator-command undone "undo-conflicted" {:op :history/undo :expected-cursor 1
+                                                              :expected-history-position 3})]
     (is (= #{[:instance-param ember :level] [:instance-param ice :level]} (set (keys (:open (history live))))))
     (is (= #{0 1 2} (set (keys (:nodes (history reloaded))))))
     (is (= {[:instance-param new-ember :level] 2 [:instance-param new-ice :level] 0}
@@ -174,7 +179,8 @@
         reloaded (files/thaw (assoc (demo/model) :epoch 9) document)
         reloaded-again (files/thaw reloaded (files/read-string (files/write-string reloaded)))
         archived [:unavailable-instance-param future-id :level 10]
-        rejected (operator-command reloaded "undo-ended" {:op :history/undo :expected-cursor 1})]
+        rejected (operator-command reloaded "undo-ended" {:op :history/undo :expected-cursor 1
+                                                           :expected-history-position 1})]
     (is (= #{future-id} (set (keys (:instances reloaded)))))
     (is (= 0.4 (get-in reloaded [:instances future-id :params :level])))
     (is (= #{0 1} (set (keys (:nodes (history reloaded))))))
@@ -214,7 +220,8 @@
                 (is (not= id new-id))
                 (is (= 0.7 (level)))
                 (is (= saved-emission (emitted)))
-                (is (= 0 (:history-cursor (run-command 80 {:op :history/undo :expected-cursor 1}))))
+                (is (= 0 (:history-cursor (run-command 80 {:op :history/undo :expected-cursor 1
+                                                          :expected-history-position 1}))))
                 (is (== 0.2 (level) (emitted))))))
           (finally (show/stop! runtime))))
       (finally (Files/deleteIfExists file)))))
@@ -230,15 +237,26 @@
         doc (files/freeze model)
         path [:model :control :edit-history]]
     (is (nil? (history (files/thaw model (update-in doc [:model :control] dissoc :edit-history)))))
+    (let [legacy (-> doc
+                     (update-in path dissoc :position)
+                     (update-in (into path [:nodes]) update-vals #(dissoc % :target-display)))
+          restored (files/thaw model legacy)
+          undone (operator-edit restored "undo-legacy" {:op :history/undo :expected-cursor 2
+                                                        :expected-history-position 0})]
+      (is (= [1 1] ((juxt :cursor :position) (history undone)))))
     (doseq [[suffix value] [[[] '(:malformed)]
                             [[:limit] 129] [[:limit] 2] [[:nodes] {}]
                             [[:cursor] 77] [[:next-id] 2] [[:next-id] Long/MAX_VALUE]
+                            [[:position] -1] [[:position] 1.5] [[:position] nil] [[:position] Long/MAX_VALUE]
                             [[:nodes 0] {:parent 2}] [[:nodes 1] {:parent nil}]
                             [[:nodes 1 :parent] 2] [[:nodes 1 :parent] 1] [[:nodes 1 :parent] 77]
                             [[:nodes 1] '(:malformed)]
                             [[:nodes 1 :actor] {:session-id "opaque"}] [[:nodes 1 :control-id] ""]
                             [[:nodes 1 :before] :invalid] [[:nodes 1 :after] 0.2]
                             [[:nodes 1 :target] [:unrecognized id :level]]
+                            [[:nodes 1 :target-display] {:cue-id :ember}]
+                            [[:nodes 1 :target-display] {:effect-id :ember :effect-label 42}]
+                            [[:nodes 1 :target-display :private] "opaque"]
                             [[:nodes 1 :gesture-id] :unexpected]
                             [[:nodes 1 :generation] 1] [[:generations target] -1]
                             [[:generations] {}]

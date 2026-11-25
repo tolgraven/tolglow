@@ -60,7 +60,8 @@
                                        {:op :cue/launch :cue-id :ember :launch {:params {:level 0.2}}} 0))
             level #(get-in @(:state runtime) [:model :instances id :params :level])
             cursor #(:current-id (show/operator-history runtime))
-            undo (merge scope {:op :history/undo :expected-cursor 2 :command-id "studio-undo"})
+            undo (merge scope {:op :history/undo :expected-cursor 2 :expected-history-position 2
+                               :command-id "studio-undo"})
             forged (assoc undo :operator-id "forged" :authority {:operator-id "forged"}
                           ::access/operator-authority {:operator-id "forged"}
                           :source {:adapter :forged :session-id "forged"} :epoch 99 :show-id :forged)]
@@ -81,7 +82,7 @@
                 result (post-history! runtime signed forged {"cookie" cookie} 20)
                 entry #(get-in @(:state runtime) [:model :control :history "studio-undo"])]
             (is (= 200 (:status result)))
-            (is (= [:accepted 1] ((juxt :status :history-cursor) (:body result))))
+            (is (= [:accepted 1 3] ((juxt :status :history-cursor :history-position) (:body result))))
             (is (= [1 0.4] [(cursor) (level)]))
             (is (re-find #"^studio/" (:operator-id (entry))))
             (is (= {:adapter :studio :session-id "studio"} (get-in (entry) [:command :source])))
@@ -91,9 +92,10 @@
             (is (= [1 0.4] [(cursor) (level)]))))
         (testing "The default listener supports undo, explicit redo and alternate branch selection"
           (is (= 3 (:history-cursor (turn! runtime id "alternate" 0.5 30 push))))
-          (let [select (merge scope {:op :history/select :expected-cursor 3 :node-id 2 :command-id "studio-select"})
+          (let [select (merge scope {:op :history/select :expected-cursor 3 :expected-history-position 4
+                                     :node-id 2 :command-id "studio-select"})
                 submit #(get (post-history! runtime local % {} 40) :body)]
-            (doseq [field [:runtime-id :expected-epoch :expected-cursor :node-id]]
+            (doseq [field [:runtime-id :expected-epoch :expected-cursor :expected-history-position :node-id]]
               (is (= :invalid-history-command (get-in (history-request local :post (dissoc select field) {}) [:body :code]))))
             (doseq [stale [(assoc select :runtime-id "retired-runtime") (assoc select :expected-epoch 1)]]
               (is (= :rejected (:status (submit stale)))))
@@ -101,13 +103,18 @@
             (is (= [3 0.5] [(cursor) (level)]))
             (is (= 2 (:history-cursor (submit select))))
             (is (= [2 0.7] [(cursor) (level)]))
-            (is (= 1 (:history-cursor (submit (merge scope {:op :history/undo :expected-cursor 2})))))
-            (is (= 3 (:history-cursor (submit (merge scope {:op :history/redo :expected-cursor 1 :node-id 3})))))
+            (is (= 1 (:history-cursor (submit (merge scope {:op :history/undo :expected-cursor 2
+                                                           :expected-history-position 5})))))
+            (is (= 3 (:history-cursor (submit (merge scope {:op :history/redo :expected-cursor 1
+                                                           :expected-history-position 6 :node-id 3})))))
+            (is (= :stale-history-position
+                   (:code (submit (assoc select :command-id "stale-position")))))
             (is (= [3 0.5] [(cursor) (level)]))
             (is (= [nil 0 1 1] (mapv :parent-id (:nodes (show/operator-history runtime)))))
             (apply-at! runtime :command {:op :param/set :instance-id id :param :level :value 0.8} 45)
             (is (= :history-conflict (:code (:body (post-history! runtime local
-                                                    (merge scope {:op :history/undo :expected-cursor 3}) {} 50)))))
+                                                    (merge scope {:op :history/undo :expected-cursor 3
+                                                                  :expected-history-position 7}) {} 50)))))
             (is (= [3 0.8] [(cursor) (level)])))))
       (finally (show/stop! runtime)))))
 
@@ -123,12 +130,13 @@
                                                {:op :cue/launch :cue-id cue :launch {:params {:level 0.2}}} time)))
             ember (launch! :ember 0)
             ice (launch! :ice 1)]
-        (is (= {:identity identity :current-id nil :nodes []
+        (is (= {:identity identity :current-id nil :position 0 :nodes []
                 :retention {:limit control/edit-history-limit :retained 0 :pruned? false}}
                (:operator-history initial)))
         (is (= 1 (:history-cursor (turn! runtime ember "private-ember-turn" 0.4 5 push))))
         (is (= 2 (:history-cursor (turn! runtime ice "private-ice-turn" 0.7 10 studio))))
-        (is (= 1 (:history-cursor (apply-at! runtime :command {:op :history/undo :expected-cursor 2} 15 studio))))
+        (is (= 1 (:history-cursor (apply-at! runtime :command {:op :history/undo :expected-cursor 2
+                                                             :expected-history-position 2} 15 studio))))
         (is (= 3 (:history-cursor (turn! runtime ice "private-alternate" 0.5 20 {:operator-id :caller}))))
         (let [committed @(:state runtime)
               projection (show/operator-history runtime)
@@ -137,6 +145,7 @@
           (is (identical? committed @(:state runtime)))
           (is (= identity (:identity projection)))
           (is (= 3 (:current-id projection)))
+          (is (= 4 (:position projection)))
           (is (= {:limit control/edit-history-limit :retained 4 :pruned? false} (:retention projection)))
           (is (= {:id 0 :parent-id nil :sequence 0} root))
           (is (= {:id 1 :parent-id 0 :sequence 1 :actor "Push 2" :parameter :level :before 0.2 :after 0.4
@@ -150,11 +159,14 @@
         (let [[root first-edit second-edit alternate] (:nodes (show/operator-history runtime))]
           (is (string? (:unavailable-reason root)))
           (is (string? (:target-unavailable-reason first-edit)))
-          (is (= :level (:parameter first-edit)))
+          (is (= [:level :ember "Ember" :ember "Ember"]
+                 (mapv first-edit [:parameter :cue-id :cue-label :effect-id :effect-label])))
           (is (every? #(nil? (:unavailable-reason %)) [first-edit second-edit alternate])))
-        (is (= 1 (:history-cursor (apply-at! runtime :command {:op :history/undo :expected-cursor 3} 30 studio))))
+        (is (= 1 (:history-cursor (apply-at! runtime :command {:op :history/undo :expected-cursor 3
+                                                             :expected-history-position 4} 30 studio))))
         (is (= :target-unavailable
-               (:code (apply-at! runtime :command {:op :history/select :expected-cursor 1 :node-id 0} 35 studio))))
+               (:code (apply-at! runtime :command {:op :history/select :expected-cursor 1
+                                                 :expected-history-position 5 :node-id 0} 35 studio))))
         (let [before (show/operator-history runtime)
               source (show/export-show-source runtime)
               restored (apply-at! runtime :import {:source source} 40)
@@ -213,7 +225,8 @@
             (is (= "test-operator" (get-in (first matching) [:emitter :id])))))
         (is (= 1 (:history-cursor (apply-at! runtime :command end 180 authority))))
         (is (= 0 (:history-cursor (apply-at! runtime :command
-                                             {:op :history/undo :expected-cursor 1} 200 authority))))
+                                             {:op :history/undo :expected-cursor 1
+                                              :expected-history-position 1} 200 authority))))
         (is (== initial (level) (emitted)))
         (is (held?)))
       (finally (show/stop! runtime)))))
@@ -253,8 +266,9 @@
                 scope {:runtime-id (:id runtime) :expected-epoch (:epoch (model))}
                 submit #(get-in (history-request app :post (merge scope %) {}) [:body :history-cursor])
                 edited (level)]
-            (is (= [0 initial] [(submit {:op :history/undo :expected-cursor 1}) (level)]))
-            (is (= [1 edited] [(submit {:op :history/redo :expected-cursor 0 :node-id 1}) (level)])))
+            (is (= [0 initial] [(submit {:op :history/undo :expected-cursor 1 :expected-history-position 1}) (level)]))
+            (is (= [1 edited] [(submit {:op :history/redo :expected-cursor 0 :expected-history-position 2
+                                      :node-id 1}) (level)])))
           (is (empty? (:errors (device-session/snapshot device))))))
       (finally (show/stop! runtime)))))
 

@@ -107,18 +107,18 @@
   "Store this reducer's result in app-db. Identity should change on a show or
   runtime replacement so a reused node number cannot inherit an old preview."
   [state projection [action value]]
-  (let [{:keys [identity current-id]} projection
+  (let [{:keys [identity current-id position]} projection
         state (if (= identity (:identity state)) state {:identity identity})]
     (case action
       :focus (assoc state :focus-id value)
       :preview (assoc (dissoc state :conflict :message :error?) :focus-id value
-                      :preview {:target-id value :expected-cursor current-id})
+                      :preview {:target-id value :expected-cursor current-id :expected-history-position position})
       :clear-preview (dissoc state :preview :conflict)
       :filter (-> state (assoc :filter-key value) (dissoc :focus-id :preview :conflict))
       state)))
 
-(defn- apply-block [{:keys [identity current-id]} state {:keys [pending? connection-message conflict]} by-id]
-  (let [{:keys [target-id expected-cursor]} (:preview state)
+(defn- apply-block [{:keys [identity current-id position]} state {:keys [pending? connection-message conflict]} by-id]
+  (let [{:keys [target-id expected-cursor expected-history-position]} (:preview state)
         target (get by-id target-id)]
     (cond
       pending? "Applying history…"
@@ -128,7 +128,8 @@
       (nil? target) "This step is no longer in the retained history."
       (:unavailable-reason target) (:unavailable-reason target)
       (not= identity (:identity state)) "The show changed. Select a new step."
-      (not= current-id expected-cursor) "The current step changed. Select this step again to refresh the preview."
+      (or (not= current-id expected-cursor) (not= position expected-history-position))
+      "The live history changed. Select this step again to refresh the preview."
       (not (contains? by-id current-id)) "The current step is unavailable."
       (= current-id target-id) "This is the current step.")))
 
@@ -140,20 +141,22 @@
     (:preview state)))
 
 (defn commands
-  "Guard each action with the cursor the operator saw. A fork needs an
+  "Guard each action with the cursor and history position the operator saw. A fork needs an
   explicitly previewed direct child before Redo can choose a branch."
-  [{:keys [current-id nodes] :as projection} state status]
+  [{:keys [current-id position nodes] :as projection} state status]
   (let [by-id (into {} (map (juxt :id identity)) nodes)
         current (get by-id current-id)
         children (filterv #(= current-id (:parent-id %)) nodes)
         preview (apply-request projection state status by-id)
-        ready? (and (:identity projection) current (not (:pending? status)) (not (:connection-message status)))
+        ready? (and (:identity projection) current (some? position)
+                    (not (:pending? status)) (not (:connection-message status)))
         redo-id (if (= 1 (count children))
                   (:id (first children))
                   (some #(when (= (:target-id preview) (:id %)) (:id %)) children))
         request (fn [id]
                   (when (and ready? (contains? by-id id) (nil? (get-in by-id [id :unavailable-reason])))
-                    {:identity (:identity projection) :expected-cursor current-id :target-id id}))]
+                    {:identity (:identity projection) :expected-cursor current-id
+                     :expected-history-position position :target-id id}))]
     {:history/undo (request (:parent-id current))
      :history/redo (request redo-id)
      :history/select (request (:target-id preview))

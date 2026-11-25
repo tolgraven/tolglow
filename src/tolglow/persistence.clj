@@ -277,14 +277,25 @@
                                               (<= archived-epoch epoch))
              false)))))
 
+(defn- validate-edit-display! [display path]
+  (check! (and (map? display) (seq display)
+               (every? #{:cue-id :cue-label :effect-id :effect-label} (keys display)))
+          path "Invalid saved edit target display")
+  (doseq [[id label] [[:cue-id :cue-label] [:effect-id :effect-label]]
+          :when (or (contains? display id) (contains? display label))]
+    (check! (and (identifier? (get display id)) (string? (get display label)) (seq (get display label)))
+            path "Saved edit target display needs an ID and label")))
+
 (defn- validate-edit-history! [{:keys [epoch] :as model}]
   (let [path [:control :edit-history]
         history (get-in model path)
-        {:keys [limit nodes cursor next-id generations open]} (when (map? history) history)]
+        {:keys [limit nodes cursor next-id position generations open]} (when (map? history) history)]
     (check! (and (map? history)
-                 (every? #{:limit :nodes :cursor :next-id :generations :open} (keys history))
+                 (every? #{:limit :nodes :cursor :next-id :position :generations :open} (keys history))
                  (or (not (contains? history :open)) (= {} open)))
             path "Saved edit history must be a closed tree")
+    (when (contains? history :position)
+      (check! (edit-counter? position) (conj path :position) "Invalid saved edit history position"))
     (check! (and (integer? limit) (<= 2 limit control/edit-history-limit)
                  (map? nodes) (<= 1 (count nodes) limit)
                  (map? generations) (< (count generations) (count nodes)))
@@ -303,7 +314,8 @@
         (when-not (= {:parent nil} node)
           ;; Edits are appended and can only follow earlier nodes. With one
           ;; root this also proves each path terminates at that root.
-          (check! (and (map? node) (= #{:parent :target :actor :control-id :before :after :generation} (set (keys node)))
+          (check! (and (map? node) (= #{:parent :target :actor :control-id :before :after :generation}
+                                     (set (keys (dissoc node :target-display))))
                        (edit-counter? parent) (< parent id) (contains? nodes parent))
                   node-path "Saved edit must refer to an earlier parent")
           (check! (and (contains? generations target) (edit-counter? generation)
@@ -311,7 +323,9 @@
                   node-path "Saved edit must reference a tracked target generation")
           (check! (and (edit-label? actor) (edit-label? control-id)
                        (registry/finite-number? before) (registry/finite-number? after) (not= before after))
-                  node-path "Invalid saved edit labels or values"))))
+                  node-path "Invalid saved edit labels or values")
+          (when (contains? node :target-display)
+            (validate-edit-display! (:target-display node) (conj node-path :target-display))))))
     (check! (= (set (keys generations)) (into #{} (keep :target) (vals nodes)))
             (conj path :generations) "Saved edit generations must match retained history targets")))
 

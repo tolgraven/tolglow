@@ -5,6 +5,7 @@
 (def projection
   {:identity ["runtime-1" "show-1" 3]
    :current-id 21
+   :position 4
    :nodes [{:id 13 :parent-id 12 :sequence 3 :actor "Studio" :parameter :gain :before 0.25 :after 0.5
             :cue-id :wash :cue-label "Wash" :effect-id :effect-one :effect-label "Dimmer"}
            {:id 0 :parent-id nil :sequence 0}
@@ -29,7 +30,8 @@
 
 (deftest filtering-preserves-ancestors-and-separates-identical-effect-labels
   (let [cue (history/outline projection [:cue :beam])
-        effect (history/outline projection [:effect :effect-one])]
+        effect (history/outline projection [:effect :effect-one])
+        ended (assoc-in projection [:nodes 2 :target-unavailable-reason] "The edited instance is no longer running.")]
     (is (= [0 12 21] (:ids cue)))
     (is (= #{21} (:matches cue)))
     (is (= {0 0, 12 0, 21 1} (lanes cue)))
@@ -37,6 +39,8 @@
     (is (= #{12 13} (:matches effect)))
     (is (= #{[:effect :effect-one] [:effect :effect-two]}
            (into #{} (keep #(when (= "Dimmer" (:label %)) (:key %))) (:filters cue))))
+    (is (= #{21} (:matches (history/outline ended [:cue :beam]))))
+    (is (= #{21} (:matches (history/outline ended [:effect :effect-two]))))
     (is (= [0 12 13 21] (:ids (history/outline projection [:cue :gone]))))))
 
 (deftest keyboard-navigation-moves-focus-without-selecting-a-preview
@@ -57,11 +61,12 @@
   (let [state (history/update-interaction nil projection [:preview 13])
         by-id (:by-id (history/outline projection nil))
         request #(history/apply-request %1 %2 %3 by-id)
-        cursor-moved (assoc projection :current-id 12)]
-    (is (= {:target-id 13 :expected-cursor 21} (request projection state nil)))
+        cursor-moved (assoc projection :current-id 12 :position 5)]
+    (is (= {:target-id 13 :expected-cursor 21 :expected-history-position 4} (request projection state nil)))
     (testing "A move elsewhere disables Apply until explicitly re-previewed"
       (is (nil? (request cursor-moved state nil)))
-      (is (= {:target-id 13 :expected-cursor 12}
+      (is (nil? (request (assoc projection :position 6) state nil)))
+      (is (= {:target-id 13 :expected-cursor 12 :expected-history-position 5}
              (request cursor-moved (history/update-interaction state cursor-moved [:preview 13]) nil))))
     (testing "Requests are blocked for conflicts, pending commands and unavailable steps"
       (is (nil? (request projection state {:conflict "Automation wrote gain."})))
@@ -72,7 +77,7 @@
                                       (assoc-in by-id [13 :unavailable-reason] "The effect ended.")))))
     (testing "Viewing the current step is a no-op and step zero can be applied"
       (is (nil? (request projection (history/update-interaction state projection [:preview 21]) nil)))
-      (is (= {:target-id 0 :expected-cursor 21}
+      (is (= {:target-id 0 :expected-cursor 21 :expected-history-position 4}
              (request projection (history/update-interaction state projection [:preview 0]) nil))))
     (testing "Changing the filter, clearing preview and runtime replacement discard the old selection"
       (is (nil? (request projection (history/update-interaction state projection [:filter [:cue :beam]]) nil)))
@@ -83,7 +88,8 @@
   (let [fork (assoc projection :current-id 12)
         at-start (assoc projection :current-id 0)
         select #(history/update-interaction nil fork [:preview %])
-        request (fn [target] {:identity (:identity fork) :expected-cursor 12 :target-id target})]
+        request (fn [target] {:identity (:identity fork) :expected-cursor 12
+                              :expected-history-position (:position fork) :target-id target})]
     (is (= (request 0) (:history/undo (history/commands fork nil nil))))
     (is (= 12 (get-in (history/commands at-start nil nil) [:history/redo :target-id])))
     (is (:choose-redo? (history/commands fork nil nil)))

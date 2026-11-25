@@ -45,9 +45,9 @@
 
 (defn first-command [effects] (second (first (:fx effects))))
 
-(defn- history-frame [db runtime epoch revision cursor]
+(defn- history-frame [db runtime epoch revision cursor position]
   (let [view {:runtime-id runtime :show-id "history-show" :epoch epoch :revision revision :frame-number revision
-              :operator-history {:identity [runtime "history-show" epoch] :current-id cursor
+              :operator-history {:identity [runtime "history-show" epoch] :current-id cursor :position position
                                  :nodes [{:id 0 :parent-id nil}
                                          {:id 1 :parent-id 0 :parameter :gain :before 0.25 :after 0.8}
                                          {:id 2 :parent-id 0 :parameter :gain :before 0.25 :after 0.4}]}}]
@@ -59,21 +59,22 @@
     [:operator-history/navigate op (get (history/commands projection view-state apply-status) op)]))
 
 (deftest history-preview-is-local-and-apply-waits-for-a-committed-frame
-  (let [live (history-frame (with-stream base) "runtime" 7 3 1)
+  (let [live (history-frame (with-stream base) "runtime" 7 3 1 8)
         open (:db (transition live [:operator-history/open]))
         inspected (transition open [:operator-history/inspect [:preview 2]])
         apply-step (history-command (:db inspected) :history/select)
         submitted (transition (:db inspected) apply-step)
         pending (:db submitted)
         command (first-command submitted)
-        receipt (conj (:on-success command) {:revision 4 :history-cursor 2})
+        receipt (conj (:on-success command) {:revision 4 :history-cursor 2 :history-position 9})
         confirmed (:db (transition pending receipt))
-        state-first (history-frame pending "runtime" 7 4 2)
-        both-ways [(history-frame confirmed "runtime" 7 4 2)
+        state-first (history-frame pending "runtime" 7 4 2 9)
+        both-ways [(history-frame confirmed "runtime" 7 4 2 9)
                    (:db (transition state-first receipt))]]
     (is (empty? (:fx inspected)))
     (is (= :history/select (:op command)))
-    (is (= {:node-id 2 :expected-cursor 1 :expected-epoch 7} (dissoc (:fields command) :command-id)))
+    (is (= {:node-id 2 :expected-cursor 1 :expected-history-position 8 :expected-epoch 7}
+           (dissoc (:fields command) :command-id)))
     (is (= "runtime" (:runtime-id command)))
     (is (string? (get-in command [:fields :command-id])))
     (is (empty? (:fx (transition pending apply-step))))
@@ -87,7 +88,7 @@
         (is (= "History step applied." (:message apply-status)))))))
 
 (deftest stale-or-rejected-history-commands-preserve-the-stream-projection
-  (let [live (history-frame (with-stream base) "runtime" 7 3 1)
+  (let [live (history-frame (with-stream base) "runtime" 7 3 1 8)
         open (:db (transition live [:operator-history/open]))
         preview (:db (transition open [:operator-history/inspect [:preview 2]]))
         apply-step (history-command preview :history/select)
@@ -95,11 +96,15 @@
         pending (:db submitted)
         failure (conj (:on-failure (first-command submitted)) "The parameter changed after this edit.")
         declined (:db (transition pending failure))
-        moved (history-frame preview "runtime" 7 4 0)
+        unrelated (history-frame preview "runtime" 7 4 1 8)
+        moved (history-frame unrelated "runtime" 7 5 0 9)
+        returned (history-frame moved "runtime" 7 6 1 10)
         stale (transition moved apply-step)
-        replaced (history-frame pending "new-runtime" 8 5 1)
+        replaced (history-frame pending "new-runtime" 8 5 1 1)
         late (:db (transition replaced failure))]
     (is (empty? (:fx stale)))
+    (is (seq (:fx (transition unrelated apply-step))))
+    (is (empty? (:fx (transition returned apply-step))))
     (is (= 0 (get-in (events/history-inspector (:db stale)) [:projection :current-id])))
     (is (= 1 (get-in (events/history-inspector declined) [:projection :current-id])))
     (is (= "The parameter changed after this edit." (get-in (events/history-inspector declined) [:apply-status :message])))

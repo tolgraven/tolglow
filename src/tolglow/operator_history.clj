@@ -1,6 +1,7 @@
 (ns tolglow.operator-history
   "Read-only operator history shared by the runtime snapshot and REPL."
-  (:require [afterglow.control.model :as control]
+  (:require [afterglow.control.edit-history :as history]
+            [afterglow.control.model :as control]
             [afterglow.control.params :as params]
             [clojure.string :as str]))
 
@@ -14,9 +15,6 @@
       "repl" "REPL"
       "Operator")))
 
-(defn- identity-label [id]
-  (if (keyword? id) (subs (str id) 1) id))
-
 (defn- target-unavailability [instance parameter]
   (let [schema (get-in instance [:definition :params parameter])]
     (cond
@@ -25,19 +23,16 @@
                 (params/valid-value? schema (get-in instance [:params parameter]))))
       "The edited parameter is no longer available.")))
 
-(defn- node-view [model [id {:keys [parent target actor before after]}]]
+(defn- node-view [model [id {:keys [parent target actor before after target-display]}]]
   (let [node {:id id :parent-id parent :sequence id}]
     (if (nil? target)
       node
       (let [[target-kind instance-id parameter] target
             instance (when (= :instance-param target-kind) (get-in model [:instances instance-id]))
-            {:keys [cue-id effect-id]} instance
             target-unavailable (target-unavailability instance parameter)]
-        (cond-> (assoc node :actor (actor-label actor) :parameter parameter :before before :after after)
-          cue-id (assoc :cue-id cue-id :cue-label (or (get-in model [:registry :cues cue-id :name])
-                                                     (identity-label cue-id)))
-          effect-id (assoc :effect-id effect-id :effect-label (or (get-in instance [:definition :name])
-                                                                 (identity-label effect-id)))
+        (cond-> (merge (assoc node :actor (actor-label actor) :parameter parameter :before before :after after)
+                       (select-keys (or target-display (control/edit-target-display model target))
+                                    [:cue-id :cue-label :effect-id :effect-label]))
           target-unavailable (assoc :target-unavailable-reason target-unavailable))))))
 
 (defn- blocked-destinations [nodes cursor]
@@ -63,12 +58,13 @@
   :unavailable-reason describes a dead edge between the cursor and destination.
   Current value/generation checks still belong to the authoritative command."
   [runtime-id model]
-  (let [{:keys [nodes cursor limit next-id]} (get-in model [:control :edit-history])
+  (let [{:keys [nodes cursor limit next-id] :as history} (get-in model [:control :edit-history])
         retained (count nodes)
         rows (mapv #(node-view model %) (sort-by key nodes))
         blocked (when (some :target-unavailable-reason rows) (blocked-destinations rows cursor))]
     {:identity [runtime-id (:show-id model) (:epoch model)]
      :current-id cursor
+     :position (history/position history)
      :nodes (if (seq blocked)
               (mapv (fn [{:keys [id] :as row}]
                       (if-let [reason (get blocked id)] (assoc row :unavailable-reason reason) row)) rows)

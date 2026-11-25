@@ -194,7 +194,8 @@
         (update-in db history-path
                    #(cond-> (-> %
                                 (dissoc :pending :conflict :error?)
-                                (assoc :message (if (= current (:history-cursor receipt))
+                                (assoc :message (if (and (= current (:history-cursor receipt))
+                                                        (= (:position operator-history) (:history-position receipt)))
                                                   "History step applied."
                                                   "History applied. The current step has since changed.")))
                       (= (:preview pending) preview) (-> (dissoc :preview) (assoc :focus-id current)))))
@@ -217,9 +218,10 @@
     (let [{:keys [open? projection view-state apply-status]} (history-inspector db)]
       (when (and open? request (not (:pending? apply-status)))
         (if (= request (get (history/commands projection view-state apply-status) op))
-          (let [{[runtime-id _ epoch] :identity :keys [expected-cursor target-id]} request
+          (let [{[runtime-id _ epoch] :identity :keys [expected-cursor expected-history-position target-id]} request
                 command-id (str (random-uuid))
-                fields (cond-> {:expected-epoch epoch :expected-cursor expected-cursor :command-id command-id}
+                fields (cond-> {:expected-epoch epoch :expected-cursor expected-cursor :command-id command-id
+                                :expected-history-position expected-history-position}
                          (#{:history/redo :history/select} op) (assoc :node-id target-id))
                 [effect payload] (command db op fields [:operator-history/accepted command-id] epoch false runtime-id)]
             {:db (update-in db history-path #(-> % (dissoc :message :conflict :error?)

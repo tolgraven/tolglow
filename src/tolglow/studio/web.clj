@@ -215,7 +215,7 @@
 (defn- history-handler [submit-history!]
   (fn [{:keys [json-params] :as request}]
     (let [authority (access/operator-authority request)
-          {:keys [op command-id runtime-id expected-epoch expected-cursor node-id]} json-params
+          {:keys [op command-id runtime-id expected-epoch expected-cursor expected-history-position node-id]} json-params
           undo? (= :history/undo op)
           reject (fn [code message]
                    (acknowledgement (cond-> {:status :rejected :code code :message message}
@@ -225,11 +225,13 @@
         (reject :operator-required "Edit history requires a trusted operator")
 
         (not (and (string? runtime-id) (nat-int? expected-epoch) (nat-int? expected-cursor)
+                  (nat-int? expected-history-position)
                   (or undo? (nat-int? node-id))))
-        (reject :invalid-history-command "Edit history requires a runtime, epoch, cursor and a node for redo or select")
+        (reject :invalid-history-command "Edit history requires a runtime, epoch, cursor, position and a node for redo or select")
 
         :else
-        (let [payload (cond-> (select-keys json-params [:op :command-id :runtime-id :expected-epoch :expected-cursor])
+        (let [payload (cond-> (select-keys json-params [:op :command-id :runtime-id :expected-epoch
+                                                      :expected-cursor :expected-history-position])
                         (not undo?) (assoc :node-id node-id))]
           (await-acknowledgement (submit-history! payload authority)))))))
 
