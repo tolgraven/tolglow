@@ -411,6 +411,83 @@
         (is (= before (model-of rt))))
       (finally (show/stop! (:runtime rt))))))
 
+(defn- stage-live! [rt]
+  (let [live-id (launch-live! rt)
+        staged (submit rt {:op :scene-draft/stage :draft-id "scene" :operations (operations live-id)})]
+    (run! #(tick rt %) [50 75])
+    (is (= :accepted (:status (receipt staged))))
+    (is (some? (:draft-output (view rt))))
+    live-id))
+
+(deftest a-changed-dependency-marks-the-draft-stale
+  ;; Apply refuses a draft whose rig, definitions or materials changed. The
+  ;; audition reports the same refusal as soon as the change commits.
+  (doseq [[code change!]
+          [[:stale-patch #(show/submit! (:runtime %) :rig (update (:rig (view %)) :fixtures pop))]
+           [:stale-registry #(submit % {:op :cue/put :cue {:id :ember-again :effect-id :ember}})]
+           [:stale-prefabs #(show/submit! (:runtime %) :settings
+                                          {:scope :prefabs
+                                           :values {:definitions {:tour/copper {:name "Copper screen" :mode :multiply
+                                                                                :inputs {:factor 0.8} :glsl "factor"}}}})]]]
+    (testing code
+      (let [rt (runtime nil)]
+        (try
+          (stage-live! rt)
+          (let [scheduled (submit rt {:op :scene-draft/apply :draft-id "scene" :expected-draft-revision 0
+                                      :command-id "on-the-one" :grid {:bars 1}})
+                _ (tick rt 100)
+                changed (change! rt)
+                _ (tick rt 125)
+                rendered (get-in (show/scene-draft (:runtime rt)) [:frames :rendered])]
+            (is (= :scheduled (:status (receipt scheduled))))
+            (is (= :accepted (:status (receipt changed))))
+            (run! #(tick rt %) [150 175])
+            (is (= {:status :stale :stale code :frames {:rendered rendered :skipped 0}}
+                   (select-keys (show/scene-draft (:runtime rt)) [:status :stale :frames]))
+                "the audition stops instead of showing a draft that cannot be applied")
+            (is (nil? (:draft-output (view rt))))
+            (let [refused (submit rt {:op :scene-draft/apply :draft-id "scene" :expected-draft-revision 0
+                                      :command-id "now"})]
+              (tick rt 200)
+              (is (= :apply-pending (:code (receipt refused)))))
+            (run! #(tick rt %) (range 1975 2051 frame-ms))
+            (is (= {:status :missed :code code :command-id "on-the-one"}
+                   (select-keys (:last-outcome (show/scene-draft (:runtime rt))) [:status :code :command-id]))
+                "the scheduled apply reports the same refusal at its boundary")
+            (is (not-any? #(= :blue (:effect-id %)) (vals (:instances (model-of rt))))))
+          (finally (show/stop! (:runtime rt))))))))
+
+(deftest a-restart-or-restore-drops-the-draft-and-its-scheduled-apply
+  (doseq [[label replace!]
+          [["restart" #(submit % {:op :show/restart :command-id "restart"})]
+           ["restore" #(let [file (java.io.File/createTempFile "tolglow-draft-" ".transit")]
+                         (try (show/save-show! (:runtime %) (str file))
+                              (show/load-show! (:runtime %) (str file))
+                              (finally (.delete file))))]]]
+    (testing label
+      (let [rt (runtime nil)]
+        (try
+          (stage-live! rt)
+          (let [scheduled (submit rt {:op :scene-draft/apply :draft-id "scene" :expected-draft-revision 0
+                                      :command-id "on-the-one" :grid {:bars 1}})
+                _ (tick rt 100)
+                epoch (:epoch (model-of rt))
+                replaced (replace! rt)]
+            (tick rt 125)
+            (is (= :scheduled (:status (receipt scheduled))))
+            (is (= :accepted (:status (deref replaced 2000 :timeout))))
+            (is (= (inc epoch) (:epoch (model-of rt))))
+            (is (nil? @(:scene-draft (:runtime rt))))
+            (is (nil? (show/scene-draft (:runtime rt))))
+            (is (nil? (:draft-output (view rt))))
+            (let [late (submit rt {:op :scene-draft/apply :draft-id "scene" :expected-draft-revision 0})
+                  time-ms (:time-ms (model-of rt))]
+              (run! #(tick rt %) (range (+ time-ms 25) (+ time-ms 2101) frame-ms))
+              (is (= :no-draft (:code (receipt late))))
+              (is (nil? @(:scene-draft (:runtime rt))) "the old boundary passes without an outcome")
+              (is (not-any? #(= :blue (:effect-id %)) (vals (:instances (model-of rt)))))))
+          (finally (show/stop! (:runtime rt))))))))
+
 (deftest discarding-a-draft-leaves-no-trace
   (let [untouched (runtime nil) discarded (runtime nil)]
     (try

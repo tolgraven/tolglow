@@ -2074,7 +2074,8 @@
                             %)))
         {:keys [draft error stale in-flight]} @state
         share (get-in runtime [:audition-options :max-live-share] 0.5)
-        period (/ 1000.0 (:frame-rate runtime))]
+        period (/ 1000.0 (:frame-rate runtime))
+        changed (when (and draft (not error) (not stale)) (scene-draft/changed-dependency live draft))]
     (cond
       (nil? draft) nil
 
@@ -2082,8 +2083,8 @@
 
       (or error stale) nil
 
-      ;; Applying would be refused as :stale-patch. Stage again to audition the new rig.
-      (not= (:rig live) (get-in draft [:base :rig])) (swap! state assoc :stale :stale-patch)
+      ;; Applying would be refused with this code. Stage again to audition the changed show.
+      changed (swap! state assoc :stale changed)
 
       (or in-flight (> elapsed-ms (* share period))) (swap! state update :skipped (fnil inc 0))
 

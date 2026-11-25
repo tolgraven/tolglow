@@ -163,18 +163,27 @@
     (catch clojure.lang.ExceptionInfo error
       (rejection model error))))
 
-(defn- check-current! [live {:keys [base steps id revision]} expected-revision]
+(def ^:private fences
+  [[:show-id :wrong-show] [:epoch :stale-epoch] [:rig :stale-patch] [:registry :stale-registry]])
+
+(defn changed-dependency
+  "The refusal code of the first show dependency that changed since the draft
+  was staged, or nil while it can still be applied. Apply refuses with the
+  same code, so an audition can report it before anyone applies."
+  [live {:keys [base]}]
+  (or (some (fn [[field code]] (when-not (= (get base field) (get live field)) code)) fences)
+      (when-not (= (prefabs/catalog base) (prefabs/catalog live)) :stale-prefabs)))
+
+(defn- check-current! [live {:keys [base steps id revision] :as draft} expected-revision]
   (when-not (and base (seq steps))
     (fail! :empty-draft "Stage at least one operation before applying" {:draft-id id}))
   (when-not (= revision expected-revision)
     (fail! :stale-draft "The draft changed before application" {:draft-revision revision}))
-  (let [fences [[:show-id :wrong-show] [:epoch :stale-epoch] [:rig :stale-patch]
-                [:registry :stale-registry]]
-        changed (some (fn [[field code]] (when-not (= (get base field) (get live field)) code)) fences)]
-    (when changed
-      (fail! changed "The draft's show, rig or definition dependencies changed" {:draft-id id})))
-  (when-not (= (prefabs/catalog base) (prefabs/catalog live))
-    (fail! :stale-prefabs "The draft's material library changed" {:draft-id id})))
+  (when-let [changed (changed-dependency live draft)]
+    (fail! changed (if (= :stale-prefabs changed)
+                     "The draft's material library changed"
+                     "The draft's show, rig or definition dependencies changed")
+           {:draft-id id})))
 
 (defn- replay
   "Run every staged step on the live model at one logical time."
