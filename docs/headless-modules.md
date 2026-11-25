@@ -13,6 +13,7 @@ A show file, a MIDI surface and the web controller work with the same show model
 | Configure providers, conversations and credentials | `tolglow.agents`, `tolglow.agents.credentials` | `configure!`, `start-chat!`, `history`, `cancel-all!` |
 | Work with fixtures, patching and RDM | `tolglow.rig`, `tolglow.rig.rdm`, `tolglow.fixtures.library` | Rig transitions and explicit service managers. The optional `:rdm` module selects OLA or a direct Art-Net gateway |
 | Connect show signals, compose cues and publish DMX | `tolglow.routing`, `tolglow.composition`, `afterglow.output.scheduler` | Patchbay transitions, composition and output sinks |
+| Queue a cue at a musical boundary | `tolglow.show` | `submit!` with a launch grid, `quantized-cue-status` |
 
 For example, record a bounded waveform summary directly from a PCM source:
 
@@ -25,6 +26,21 @@ For example, record a bounded waveform summary directly from a PCM source:
 The clock supplies musical time to effects. Device reads, network publication and credential access belong to their explicit owners. Web-specific routes, browser subscriptions and display projections bind these APIs to Studio. Afterglow owns the clock reducer, renderer and controller mapping used by those APIs.
 
 The original show authoring namespaces remain available, including `tolglow.config`, `tolglow.setup`, `tolglow.fx` and `tolglow.fixtures`. See the [source-linked behavior inventory](feature-parity-inventory.md) for their configuration structures.
+
+## Quantize a live cue launch
+
+```clojure
+(require '[tolglow.show :as show])
+
+(def id (str (random-uuid)))
+(show/submit! runtime {:op :cue/launch :cue-id :ember :command-id id
+                       :grid {:beats 1/4} :source {:adapter :repl :session-id "desk"}})
+(show/quantized-cue-status runtime id)
+```
+
+Use a positive single-unit grid such as `{:beats 1/4}`, `{:beats 1}`, `{:bars 1}` or `{:phrases 1}`. A grid request at the boundary can fire in that owner cycle after pending release and cancellation requests have been processed. Tempo changes leave the due beat intact. Pausing holds the queue. A restart or discontinuous source change marks queued requests missed, and loading a show starts with an empty queue. Omit the grid or pass `:off` to launch immediately. Blackout and the ordinary end commands remain immediate.
+
+The intake promise reports `:pending` for a grid, while `quantized-cue-status` reads its latest receipt. The receipt distinguishes raw observation, request, due beat and actual admission. Supply `:raw {:time-ms ... :beat ...}` when the originating clock coordinates are known, inside the show clock domain. Without explicit raw timing, the owner observation is used. Cancelling with `{:op :cue/cancel-launch :launch-command-id id :reason :operator-cancel …}` requires the same originating source. A held release uses `:held-release` and targets the resulting instance if the cue has already fired.
 
 ## Start a calibrated performance from configuration
 
