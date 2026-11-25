@@ -68,25 +68,60 @@
                   "Invalid captured target schema or waveform version")
         (checked-binding schema (get-in (waveforms model) [:versions [(:waveform binding) waveform-version]]) binding)))))
 
+(def ^:private pulse-expression
+  (let [phase {:op :param :key signals/phase-input}
+        duty {:op :param :key :duty}
+        zero {:op :const :value 0.0}
+        one {:op :const :value 1.0}
+        fraction {:op :fract :args [phase]}
+        margin {:op :subtract :args [one {:op :clamp :args [duty zero one]}]}]
+    {:op :subtract :args [one {:op :floor :args [{:op :add :args [fraction margin]}]}]}))
+
+(defn- pulse-cycle [waveform schema binding interpolate evaluate]
+  (when (and (= :pulse (:id waveform))
+             (.equals ^Object pulse-expression (:expression waveform))
+             (.equals ^Object [0.0 1.0] (:range waveform))
+             ;; A published vector schema can be arbitrarily wide.
+             (not-any? #(and (vector? %) (> (count %) 64)) [(:from binding) (:to binding)]))
+    (try
+      (let [duty (get (:inputs binding) :duty (get-in waveform [:params :duty :default]))
+            margin (- 1.0 (min 1.0 (max 0.0 duty)))
+            low (interpolate 0.0)
+            high (interpolate 1.0)]
+        (when (and (params/valid-value? schema low) (params/valid-value? schema high))
+          (fn [phase]
+            (let [x (double phase)]
+              (if (Double/isFinite x)
+                ;; Keep the IR's wrapping and addition order at the discontinuity.
+                ;; The range clamp maps every nonpositive pulse result to low.
+                (if (< (+ (- x (Math/floor x)) margin) 1.0) high low)
+                (evaluate phase))))))
+      (catch Exception _ nil))))
+
 (defn- prepare [registry waveform schema binding]
   (try
     (checked-binding schema waveform binding)
     (let [[lo hi] (:range waveform)
           sample (ir/compile-expression (signals/sample registry (:id waveform)
-                                          {:phase {:op :param :key signals/phase-input} :params (:inputs binding)}))]
-      {:evaluate (fn [phase]
-                   (let [value (sample {:params {signals/phase-input phase}})]
-                     (require! (time/finite-number? value) "Waveform returned a non-finite value")
-                     (let [weight (if (= lo hi) 0.0 (min 1.0 (max 0.0 (/ (- value lo) (- hi lo)))))]
-                       (modulation/interpolate-value schema (:from binding) (:to binding) weight))))})
+                                          {:phase {:op :param :key signals/phase-input} :params (:inputs binding)}))
+          interpolate #(modulation/interpolate-value schema (:from binding) (:to binding) %)
+          evaluate (fn [phase]
+                     (let [value (sample {:params {signals/phase-input phase}})]
+                       (require! (time/finite-number? value) "Waveform returned a non-finite value")
+                       (interpolate (if (= lo hi) 0.0 (min 1.0 (max 0.0 (/ (- value lo) (- hi lo))))))))
+          cycle (pulse-cycle waveform schema binding interpolate evaluate)]
+      (cond-> {:evaluate (or cycle evaluate)}
+        cycle (assoc :cycle :pulse)))
     (catch Exception error {:error (.getMessage error)})))
 
 (defn- sample-one [model instance transport-clock private-clock previous result param {:keys [binding]}]
   (let [id (:id instance)
-        schema (get-in (modulation/owner-definition model instance) [:params param])
+        definition (modulation/owner-definition model instance)
+        schema (get-in definition [:params param])
         registry (waveforms model)
         waveform (get-in registry [:waveforms (:waveform binding)])
-        cache-key [waveform schema binding]
+        cache-key [(:show-id model) (:epoch model) (:id definition) (:version definition)
+                   waveform schema binding]
         plan (or (get previous cache-key) (get-in result [:plans cache-key])
                  (prepare registry waveform schema binding))
         hold (get-in model [:modulation :holds id param])
