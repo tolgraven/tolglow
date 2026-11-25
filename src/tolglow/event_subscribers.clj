@@ -910,8 +910,9 @@
 (defn- advance-runs [model now results]
   (if-not (seq (get-in model [:event-subscribers :runs])) model
     (let [meter (get-in model [:transport :meter]) beat (get-in model [:transport :beat])
-          ;; Due order, then admission order (stable sort keeps queue order on ties).
-          runs (sort-by :due-beat (get-in model [:event-subscribers :runs]))]
+          ;; Due order, then admission order. The queue is rewritten in due order each
+          ;; cycle, so ties use the admission serial, as the projection does.
+          runs (sort-by (juxt :due-beat :id) (get-in model [:event-subscribers :runs]))]
       (loop [model model pending (seq runs) keep-runs [] budget 128]
         (if-let [run (first pending)]
           (let [action (get (:steps run) (:index run))

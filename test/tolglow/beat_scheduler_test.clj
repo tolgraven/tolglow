@@ -653,3 +653,20 @@
           (is (== 0.25 (level rt id)))
           (is (= 64 (dimmer (peek @packets))))))
       (finally (show/stop! rt)))))
+
+(deftest same-beat-events-fire-in-admission-order-after-a-reschedule
+  (let [{:keys [rt]} (harness)
+        operator {:adapter :repl :session-id "fod"}]
+    (try
+      (show/tick! rt 0)
+      (at! rt 100 {:op :schedule/post :source operator
+                   :events [{:id "first" :op :variable/set :variable :section :value "first" :at {:beat 8}}
+                            {:id "second" :op :variable/set :variable :section :value "second" :at {:beat 4}}]})
+      (show/tick! rt 200)                                   ; the queue is now kept in due order
+      (is (= :accepted (:status (at! rt 300 {:op :schedule/move :event-id "second" :at {:beat 8} :source operator}))))
+      (is (= ["first" "second"] (mapv :event-id (:upcoming (show/schedule rt)))))
+      (show/tick! rt 4100)
+      (is (= ["first" "second"] (mapv :event-id (take-last 2 (recent rt))))
+          "events fire in the order the projection lists them")
+      (is (= "second" (get-in @(:state rt) [:model :variables :section])))
+      (finally (show/stop! rt)))))
