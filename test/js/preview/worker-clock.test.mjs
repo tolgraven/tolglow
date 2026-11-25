@@ -108,6 +108,7 @@ function worker({hz = 60, work = 0, software = false, quality = software ? 'auto
   send({type: 'activity', active: true, generation: 1}); update(); healthy();
   return {draws, messages, frames, healthy, update, advance, state, bitmaps, resizes, fences, send,
     get engine() {return graphics.engine;},
+    get closed() {return closed;},
     get yields() {return yields;},
     get timerWaits() {return [...timers.values()].map(entry => entry.at - now);},
     set fenceReady(value) {readyThrough = value ? Infinity : 0;},
@@ -127,6 +128,11 @@ function worker({hz = 60, work = 0, software = false, quality = software ? 'auto
     dispose() {
       if (closed) return;
       send({type: 'dispose'}); healthy();
+      // A worker that presents stays for the animation frame that commits its blank image.
+      for (let frame = 0; !closed && frame < 2; frame++) {
+        const callbacks = [...rafs.values()]; rafs.clear();
+        for (const callback of callbacks) callback(now);
+      }
       assert.ok(closed); assert.equal(fences.size, 0); assert.equal(rafs.size, 0); assert.equal(timers.size, 0);
     }
   };
@@ -390,8 +396,23 @@ test('a surface keeps GPU ownership bounded and closes images from a show the pa
   w.send({type: 'identity', identity: '[null,null,null]'});
   await w.refresh(200);
   assert.equal(w.frames().at(-1).presented, true);
-  w.dispose();
+  w.send({type: 'dispose'}); w.healthy();
   assert.equal(shown.at(-1), null, 'disposal blanks the canvas only the worker can reach');
+  assert.equal(w.fences.size, 0);
+  assert.equal(w.closed, false, 'the blank image is committed at the next display frame, so the worker outlives it');
+  w.dispose();
+});
+
+test('a presenting worker without animation frames still ends after blanking its surface', async t => {
+  const w = worker({animationFrames: false}); t.after(() => w.dispose());
+  await w.advance(1000 / 60);
+  const shown = surfaceFor(w);
+  w.send({type: 'dispose'}); w.healthy();
+  assert.equal(shown.at(-1), null);
+  assert.equal(w.closed, false);
+  await w.advance(1000);
+  assert.equal(w.closed, true);
+  assert.deepEqual(w.timerWaits, []);
 });
 
 test('a worker whose animation frames are unsupported renders on timers', async t => {

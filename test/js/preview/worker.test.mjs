@@ -152,8 +152,9 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
       engine.canvas.style.width = '480px'; engine.canvas.style.height = '300px'; engine.resize(); await engine.draw();
       const telemetry = engine.getTelemetry(); const canvas = engine.canvas;
       await new Promise(resolve => setTimeout(resolve, 250));
-      const backing = [canvas.width, canvas.height]; engine.dispose();
-      return {telemetry, disposed: engine.disposed, terminated: engine.worker === null, backing,
+      const shown = canvasLevel(canvas), backing = [canvas.width, canvas.height]; engine.dispose();
+      await new Promise(resolve => setTimeout(resolve, 500));
+      return {telemetry, disposed: engine.disposed, terminated: engine.worker === null, shown, backing, afterDispose: canvasLevel(canvas),
         channelClosed: engine.channel.closed, ownerRemoved: !canvas.tolglowPreview, drawAfterDispose: await engine.draw()};
     });
     const scale = resized.telemetry.renderScale;
@@ -163,6 +164,8 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
     assert.equal(resized.telemetry.displayRange, 'sdr');
     assert.deepEqual(resized.telemetry.pixels, [Math.round(360 * scale), Math.round(225 * scale)]);
     assert.ok(resized.disposed && resized.terminated && resized.channelClosed && resized.ownerRemoved);
+    assert.ok(resized.shown > 0, 'the room was on the canvas before disposal');
+    assert.equal(resized.afterDispose, 0, 'disposal leaves a blank canvas, not the last room image');
     assert.equal(resized.drawAfterDispose, false);
     assert.deepEqual(errors, []);
 

@@ -64,6 +64,21 @@ function stop() {
   engine?.dispose();
 }
 
+// A canvas shows what this thread gave it at the display's next frame. Ending
+// the worker before then would leave the previous image on a canvas that no
+// one else can reach.
+function afterCommit(done) {
+  let frame = null, remaining = 2;
+  const finish = () => {clearTimeout(timer); if (frame !== null) cancelAnimationFrame(frame); done();};
+  const timer = setTimeout(finish, 100);
+  const wait = () => {
+    frame = null;
+    if (!remaining--) return finish();
+    try {frame = self.requestAnimationFrame?.(wait) ?? null;} catch {/* The timer ends it. */}
+  };
+  wait();
+}
+
 function fail(error) {
   stop();
   send({type: 'error', message: String(error?.message || error)});
@@ -326,7 +341,10 @@ self.onmessage = event => {
     } else if (message.type === 'identity') {
       expectedIdentity = message.identity;
       presenter?.transferFromImageBitmap(null);
-    } else if (message.type === 'dispose') {presenter?.transferFromImageBitmap(null); stop(); close();}
+    } else if (message.type === 'dispose') {
+      presenter?.transferFromImageBitmap(null); stop();
+      if (presenter) afterCommit(() => close()); else close();
+    }
   } catch (error) {fail(error);}
 };
 send({type: 'ready'});
