@@ -14,6 +14,7 @@
     (-> (select-keys view [:title :page :origin :status :master :blackout? :bpm :selected
                           :cue :effect :swatch :category-colors :page-overview :display-mode :scene :audio-waveform :instance-id
                           :parameter-bank :active-effect-navigation :touched-parameter :fine?])
+        (assoc :touched-parameters (vec (take 8 (:touched-parameters view))))
         (assoc :target-picker (when-let [picker (:target-picker view)]
                                  (assoc (select-keys picker [:open? :page :pages :armed])
                                         :rows (mapv #(select-keys % [:kind :label]) (take 8 (:rows picker)))))
@@ -121,27 +122,83 @@
      (when-let [label (bank-label (:parameter-bank view))] [:span.push-bank label])
      (when (:fine? view) [:span.push-fine "Fine"])]))
 
+(defn- parameter-id [parameter] (or (:param parameter) (:id parameter)))
+
+(defn- encoder-slots [view]
+  (let [touches (cons (:touched-parameter view) (:touched-parameters view))]
+    (mapv (fn [index]
+            (let [parameter (get (:parameters view) index)
+                  id (parameter-id parameter)
+                  touched? (and parameter
+                                (some (fn [{:keys [encoder param instance-id]}]
+                                        (and (or (nil? instance-id) (= instance-id (:instance-id view)))
+                                             (or (nil? param) (= param id))
+                                             (if (some? encoder) (= index encoder) (and param (= param id)))))
+                                      touches))]
+              {:index index :parameter parameter :touched? touched?}))
+          (range 8))))
+
+(defn- compound-key [parameter]
+  (when (#{:color :range :vector} (widgets/parameter-kind (:schema parameter)))
+    (parameter-id parameter)))
+
+(defn- compound-areas [slots]
+  (keep (fn [group]
+          (when-let [selected (first (filter :touched? group))]
+            (let [start (:index (first group))
+                  end (inc (:index (last group)))
+                  free (take-while #(nil? (:parameter %)) (subvec slots end))
+                  width (+ (count group) (count free))]
+              (when (and (> width 1) (compound-key (:parameter selected)))
+                {:start start :width width :parameter (:parameter selected)}))))
+        (partition-by (fn [{:keys [index parameter]}]
+                        (if-let [id (compound-key parameter)] [:compound id] [:encoder index]))
+                      slots)))
+
+(defn- axis-reading [{:keys [schema component effective-value value]}]
+  (let [values (visualization/components schema (if (some? effective-value) effective-value value))]
+    (when-let [shown (get values component)]
+      [:output.push-axis-reading
+       (widgets/number-label (get (:component-schemas schema) component schema) shown)])))
+
 (defn- parameters [view compact?]
-  [:section.push-parameters {:aria-label "Eight encoder parameters" :class (when compact? "compact")}
-   (for [index (range 8) :let [parameter (get (:parameters view) index)
-                             touched? (= index (get-in view [:touched-parameter :encoder]))
-                             component (visualization/component-label parameter)]]
-     ^{:key index} [:article.push-parameter {:data-encoder index :class (cond (nil? parameter) "empty" touched? "touched")}
-                   [:div.push-parameter-name [:span.push-encoder (inc index)]
-                    [:span.push-parameter-label (or (:name parameter) (some-> (:id parameter) widgets/label) "—")]
-                    (when-let [state (:source-state parameter)]
-                      (let [text (case (keyword state)
-                                   :active (if-let [fixture (:sample-fixture parameter)]
-                                             (widgets/label (or (:name fixture) (:id fixture)))
-                                             (widgets/label (first (:source-types parameter))))
-                                   :held "Held" :pending "Waiting" :error "Error" nil)]
-                        [:span.push-source-state {:data-state (name state) :title (or (:source-error parameter) text)} text]))
-                    (when (and component (not (contains? #{:value "value"} component)))
-                      [:span.push-component {:title "Encoder component"} (widgets/label component)])]
-                   (cond
-                     (nil? parameter) (when-not compact? [:div.push-empty "·"])
-                     compact? [:div.push-compact-value (widgets/value-label (:schema parameter) (if (some? (:effective-value parameter)) (:effective-value parameter) (:value parameter)))]
-                     :else [visualization/push view parameter])])])
+  (let [slots (encoder-slots view)
+        areas (when-not compact? (compound-areas slots))
+        expanded (into #{} (mapcat (fn [{:keys [start width]}] (range start (+ start width)))) areas)]
+    [:section.push-parameters {:aria-label "Eight encoder parameters" :class (when compact? "compact")}
+     (for [{:keys [index parameter touched?]} slots
+           :let [expanded? (contains? expanded index)
+                 component (visualization/component-label parameter)]]
+       ^{:key index}
+       [:article.push-parameter {:data-encoder index
+                                 :style {:grid-column (inc index)}
+                                 :class (cond (nil? parameter) "empty" touched? "touched")}
+        (when (or parameter (not expanded?))
+          [:div.push-parameter-name [:span.push-encoder (inc index)]
+           [:span.push-parameter-label (or (:name parameter) (some-> (:id parameter) widgets/label) "—")]
+           (when-let [state (:source-state parameter)]
+             (let [text (case (keyword state)
+                          :active (if-let [fixture (:sample-fixture parameter)]
+                                    (widgets/label (or (:name fixture) (:id fixture)))
+                                    (widgets/label (first (:source-types parameter))))
+                          :held "Held" :pending "Waiting" :error "Error" nil)]
+               [:span.push-source-state {:data-state (name state) :title (or (:source-error parameter) text)} text]))
+           (when (and component (not (contains? #{:value "value"} component)))
+             [:span.push-component {:title "Encoder component"} (widgets/label component)])])
+        (cond
+          (nil? parameter) nil
+          compact? [:div.push-compact-value
+                    (widgets/value-label (:schema parameter)
+                                         (if (some? (:effective-value parameter))
+                                           (:effective-value parameter)
+                                           (:value parameter)))]
+          expanded? (when touched? [axis-reading parameter])
+          :else [:div.push-slot-content
+                 [visualization/push view parameter touched?]
+                 (when (and touched? (compound-key parameter)) [axis-reading parameter])])])
+     (for [{:keys [start width parameter]} areas]
+       ^{:key start} [:div.push-compound-area {:style {:grid-column (str (inc start) " / span " width)}}
+                      [visualization/push view parameter true]])]))
 
 (defn- target-choices [{:keys [rows page pages]}]
   [:section.push-targets {:aria-label "Cue launch targets"}
