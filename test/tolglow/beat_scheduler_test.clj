@@ -700,3 +700,24 @@
         (is (= ["human"] (:event-ids (at! rt (now) {:op :schedule/cancel :event-ids ["human"]
                                                     :source {:adapter :x-touch-xt :session-id "extender"}})))))
       (finally (show/stop! rt)))))
+
+(deftest only-a-group-opacity-action-overrides-an-opacity-ramp
+  (let [{:keys [rt packets]} (harness)
+        operator {:adapter :repl :session-id "fod"}]
+    (try
+      (let [id (:instance-id (at! rt 0 {:op :cue/launch :cue-id :wash :launch {:mode :persistent :params {:level 1.0}}}))
+            group (fn [time action] (at! rt time {:op :group/apply :selector {:instance-ids [id]} :action action
+                                                  :source operator}))]
+        (at! rt 250 {:op :param/ramp :event-id "fade" :instance-id id :target :opacity :to 0.0
+                     :over {:beats 8} :source agent})
+        (show/tick! rt 1000)
+        (is (= 207 (dimmer (peek @packets))))
+        (is (= :accepted (:status (group 1250 {:op :instance/gain-set :value 1.0}))))
+        (is (= ["fade"] (mapv :event-id (:ramps (show/schedule rt)))) "a group gain change does not write opacity")
+        (is (= 191 (dimmer (peek @packets))) "the fade continues")
+        (is (= :accepted (:status (group 1500 {:op :instance/opacity-set :value 0.8}))))
+        (is (empty? (:ramps (show/schedule rt))))
+        (is (= {:event-id "fade" :status :cancelled :reason :human-override}
+               (select-keys (last (recent rt)) [:event-id :status :reason])))
+        (is (= 204 (dimmer (peek @packets))) "the operator's group opacity stays"))
+      (finally (show/stop! rt)))))

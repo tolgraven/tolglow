@@ -573,16 +573,18 @@
   destination. Gestures and human surfaces record :human-override; other
   sources (agents, reactive actions) record :superseded. Writers that bypass
   this path are caught by subscribers/advance-ramps from the committed value."
-  [result {:keys [op source instance-id param command-id]} authority]
+  [result {:keys [op source instance-id param command-id action]} authority]
   (if-not (seq (get-in result [:model :event-subscribers :ramps]))
     result
-    (let [destinations (cond-> (vec (keep (fn [{:keys [type] :as event}]
+    (let [;; A group action reports every system change; only its opacity actions write opacity.
+          system-op (if (= :group/apply op) (:op action) op)
+          destinations (cond-> (vec (keep (fn [{:keys [type] :as event}]
                                             (case type
                                               :param/changed {:target :param :instance-id (:instance-id event) :param (:param event)}
                                               :master/changed {:target :master}
                                               :variable/changed {:target :variable :variable (:variable event)}
                                               :instance/system-changed
-                                              (when (#{:instance/opacity-set :instance/opacity-toggle :group/apply} op)
+                                              (when (#{:instance/opacity-set :instance/opacity-toggle} system-op)
                                                 {:target :opacity :instance-id (:instance-id event)})
                                               nil))
                                           (:events result)))
