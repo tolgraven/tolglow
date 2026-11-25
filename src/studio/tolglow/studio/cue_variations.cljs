@@ -60,7 +60,9 @@
         {:dispatch [::load instance-id layout row-page]}))))
 
 (defn- value-text [value]
-  (if (transit/fraction? value) (str value) (widgets/value-label {} value)))
+  (if (transit/fraction? value)
+    (str (:numerator value) "/" (:denominator value))
+    (widgets/value-label {} value)))
 
 (defn- choice-label [{:keys [param value params]}]
   (if param (value-text value)
@@ -109,7 +111,7 @@
      (when view
        [:<>
         (for [{:keys [param value] :as ratio} ratio-parameters]
-          ^{:key (str param value)} [ratio-entry ratio pending? commit!])
+          ^{:key [param (value-text value)]} [ratio-entry ratio pending? commit!])
         (when (and (= :rows layout) (< 1 row-pages))
           [:div.live-variation-actions
            [:button {:type "button" :disabled (or pending? (zero? row-page)) :on-click #(load! :rows (dec row-page))} "Previous rows"]
