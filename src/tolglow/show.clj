@@ -2369,7 +2369,8 @@
                              (#{:simulator :rig} mode) (push-scene/project-display scene-cache snapshot
                                                       (assoc view :runtime-id (:id runtime)))
                              :else view)]
-                (page-overview/project-display pages model visual))))))))
+                (cond-> (page-overview/project-display pages model visual)
+                  (personalities/active model) (assoc :personality (:push (personality-views runtime model)))))))))))
 
 (defn- push-native-display [runtime]
   (let [project-parameters (push-parameter-projector)]

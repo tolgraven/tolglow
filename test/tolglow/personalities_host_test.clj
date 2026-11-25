@@ -5,9 +5,11 @@
             [clojure.data.json :as json]
             [clojure.test :refer [deftest is testing]]
             [tolglow.personalities :as personalities]
+            [tolglow.personalities.icon :as icon]
             [tolglow.show :as show]
             [tolglow.spatial.cues :as cues]
             [tolglow.studio :as studio]
+            [tolglow.studio.display :as display]
             [tolglow.transit :as transit])
   (:import [java.io ByteArrayInputStream]))
 
@@ -150,6 +152,21 @@
           (is (= :mine (get-in seen [:active :id])))
           (is (not (re-find #"<svg" (pr-str seen))))
           (is (= (personalities/without-icons (:personalities (show/snapshot rt))) seen))))
+      (finally (show/stop! rt)))))
+
+(deftest the-push-display-page-receives-the-active-icon
+  (let [rt (runtime true)
+        project (:project! (with-redefs [display/browser-display identity] (show/push-browser-display rt {})))
+        panel {:display-mode :pages :title "Tolglow"}]
+    (try
+      (is (not (contains? (project panel) :personality)) "no feel, no change to the display view")
+      (accept! rt 0 :personality {:op :select :id :spirals})
+      (let [{:keys [id name icon]} (:personality (project panel))]
+        (is (= [:spirals "Spiralling in general"] [id name]))
+        (is (= (icon/data-uri (get-in (show/snapshot rt) [:personalities :active :icon])) icon)
+            "the device page rasterizes the same SVG Studio shows"))
+      (accept! rt 10 :personality {:op :clear})
+      (is (not (contains? (project panel) :personality)))
       (finally (show/stop! rt)))))
 
 (deftest a-saved-show-reopens-with-its-feel
