@@ -52,15 +52,22 @@ online logical CPU count minus one, with a minimum of one. This gives HotSpot a
 processor count for sizing its work. macOS still schedules those threads.
 
 ```sh
+capture=$(mktemp -d "${TMPDIR:-/tmp}/tolglow-output.XXXXXX")
 online_cpus=$(getconf _NPROCESSORS_ONLN)
 show_cpus=$((online_cpus > 1 ? online_cpus - 1 : 1))
-JVM_OPTS="-Xmx4g -XX:ActiveProcessorCount=$show_cpus -Xlog:gc+init=info" lein trampoline run
+JVM_OPTS="-Xmx4g -XX:ActiveProcessorCount=$show_cpus -Dtolglow.capture.processors=$show_cpus -Dtolglow.capture.heap.bytes=4294967296" \
+  lein trampoline run -m tolglow.qa.capture-mixed-stage-output "$capture"
 ```
 
-The running JVM reported 9 available processors and a 4,294,967,296-byte
-maximum heap. Leiningen passes `JVM_OPTS` on the show JVM's command line,
-after the agent launcher's `JAVA_TOOL_OPTIONS`. The JVM initialization log
-prints the effective values.
+The capture prints the effective settings and exits before starting the
+scheduler if they differ from the requested processor count, heap or ZGC.
+On Airie the show JVM reports 9 available processors and a 4,294,967,296-byte
+maximum heap. Leiningen passes `JVM_OPTS` on the show JVM's command line after
+the agent launcher's `JAVA_TOOL_OPTIONS`. The `Effective show JVM` line and
+`show.json` report the settings of the measured JVM. The capture writes
+`ready` after a five-second warmup and records for up to 70 seconds. A final
+argument selects another recording duration in seconds. Creating `done` in
+the capture directory ends recording early. The sink sends no network packets.
 
 ## Studio room on the Air
 
