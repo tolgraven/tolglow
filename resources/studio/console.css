@@ -49,6 +49,11 @@
 }
 .live-effect-expand::after { content:""; width:5px; height:5px; border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor; transform:translateY(-1px) rotate(45deg); }
 .live-effect-expand[aria-expanded=true]::after { transform:translateY(2px) rotate(225deg); }
+.live-reorder-toggle { margin-inline-start:auto; }
+.live-reorder-status { margin:0 0 8px; font-size:13px; color:var(--muted); }
+.live-reorder-status[role=alert] { color:var(--danger); }
+#view-perform .live-effect-card[data-reorder-source=true] { border-color:var(--instrument); }
+#view-perform .live-reorder-action { min-height:44px; min-width:44px; white-space:nowrap; }
 
 .live-effect-body { min-width:0; padding:5px 10px 6px; }
 #view-perform .live-effect-parameters.control-strip {

@@ -2,6 +2,7 @@
   "Executable host for the shared functional lighting engine. Requiring it is inert.
   One owner advances the model; workers return data; physical output is opt-in."
   (:require [afterglow.control.model :as control]
+            [afterglow.control.instance-order :as instance-order]
             [afterglow.control.pages :as cue-pages]
             [tolglow.studio.parameter-precision :as precision]
             [afterglow.control.categories :as categories]
@@ -29,6 +30,7 @@
             [tolglow.effects.block-trace :as block-trace]
             [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.controllers.page-overview :as page-overview]
+            [tolglow.controllers.push-variations :as push-variations]
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
             [tolglow.effects.material-design :as material-design]
@@ -58,6 +60,7 @@
             [tolglow.spatial.cues :as spatial-cues]
             [tolglow.spatial.targets :as targets]
             [tolglow.authoring.output-patch :as output-patch]
+            [tolglow.authoring.variation-control :as variations]
             [tolglow.waveforms :as waveforms]
             [tolglow.automation.policy :as policy]
             [tolglow.demo :as demo]
@@ -187,6 +190,7 @@
                             (sort-by (comp str :id) (vals (get-in model [:registry :effects]))))
             :cues (vec (sort-by (comp str :id) (vals (get-in model [:registry :cues]))))
             :groups (categories/group-view model)
+            :active-instance-order (mapv :id (instance-order/ordered model))
             :instances (mapv #(-> % (dissoc :state :parameter-bindings)
                                   (assoc :definition (get definitions [(:definition %) (:targets %)])
                                          :parameter-sources (parameter-sources/project % (get sources (:id %)) resolve-inputs responses?)
@@ -494,7 +498,9 @@
                           :show-id (:show-id model) :epoch (:epoch model)
                           :source {:adapter :studio :session-id "studio"}}
                          payload {:time-ms time-ms})
-         result (spatial/apply-command model envelope authority)
+         variation? (variations/operations (:op payload))
+         result (if variation? (variations/apply-command model envelope)
+                    (spatial/apply-command model envelope authority))
          accepted? (= :accepted (get-in result [:ack :status]))]
      (cond
        (and accepted? (= (:revision model) (get-in result [:model :revision])))
@@ -509,7 +515,7 @@
                                             {:kind :command :id (or (get-in payload [:source :adapter]) :studio)}
                                             (:events result))))))
 
-       accepted? (hold-manual-params model result payload authority)
+       (and accepted? (not variation?)) (hold-manual-params model result payload authority)
        :else result))))
 
 (defn- apply-sensor-result [result time-ms]
@@ -2030,6 +2036,17 @@
                          :dispatch! #(dispatch-tool! runtime %1 %2 (merge %3 admission))
                          :emit! emit! :done! done!})))
 
+(defn cue-variation-preview
+  "Read the running cue's two variation layouts and saved row from one commit.
+  Apply a selection through submit! with :cue-variation/apply and the returned
+  :basis, :instance-id, :seed, :layout, :row-page and the chosen :position."
+  [runtime {:keys [runtime-id epoch] :as request}]
+  (let [model (:model @(:state runtime))]
+    (when (or (and runtime-id (not= runtime-id (:id runtime)))
+              (and epoch (not= epoch (:epoch model))))
+      (throw (ex-info "Show session changed" {:http/status 409})))
+    (variations/project model request)))
+
 (defn- push-parameter-projector []
   (let [cache (waveforms/create-cache)
         precision-cache (atom nil)]
@@ -2050,20 +2067,22 @@
             (fn [view]
               (let [snapshot (assoc @(:state runtime) :runtime-id (:id runtime))
                     model (:model snapshot)
-                    mode (or (:display-mode view) (get-in model [:settings :controllers :push-display :mode]) :parameters)
+                    mode (if (:pad-overlay view) :parameters
+                             (or (:display-mode view) (get-in model [:settings :controllers :push-display :mode]) :parameters))
                     view (cond-> (assoc view :display-mode mode)
                            (#{:parameters :audio} mode)
                            (assoc-in [:visualization-clock :sample-period-ms]
                                      (cue-pads/sample-period-ms (:cue-pad-previews runtime))))
-                    visual (case mode
-                             (:parameters :audio)
+                    visual (cond
+                             (:pad-overlay view) (dissoc view :scene :parameters)
+                             (#{:parameters :audio} mode)
                              (let [capture (when (= mode :audio)
                                              (audio/waveform (connections/audio (:connections runtime))))]
                                (project-parameters snapshot view capture))
-                             :block-trace (block-trace/project-display (:id runtime) model view)
-                             (:simulator :rig) (push-scene/project-display scene-cache snapshot
-                                                     (assoc view :runtime-id (:id runtime)))
-                             view)]
+                             (= :block-trace mode) (block-trace/project-display (:id runtime) model view)
+                             (#{:simulator :rig} mode) (push-scene/project-display scene-cache snapshot
+                                                      (assoc view :runtime-id (:id runtime)))
+                             :else view)]
                 (page-overview/project-display pages model visual)))))))
 
 (defn- push-native-display [runtime]
@@ -2084,7 +2103,8 @@
   connection options, using a button CC on Push 2 or a button ID on Push 3.
   Temporary edits cover typed cue params on Push 2 and numeric params on Push 3.
   Push 2 accepts :native-display? true for the Wayang parameter display.
-  An explicit :display transport takes precedence."
+  An explicit :display transport takes precedence. Set :cue-variations? true
+  for the Push 2 Note-button variation overlay and exact beat-ratio edits."
   [runtime kind options]
   (let [id (:session-id options) epoch (get-in @(:state runtime) [:model :epoch])]
     (when-not (and (string? id) (seq id)) (throw (ex-info "Device requires session-id" {})))
@@ -2101,6 +2121,8 @@
             options (cond-> options
                       push-source (assoc :operator-gestures? true :target-search targets/search
                                          :launch-receipt cue-timing/receipt)
+                      (and (= kind :push-2) (true? (:cue-variations? options)))
+                      (assoc :pad-overlay push-variations/pad-overlay :parameter-editor variations/edit-parameter)
                       (and (= kind :push-2) (:native-display? options) (not (:display options)))
                       (assoc :display (push-native-display runtime))
                       (and (= kind :push-2) (not (contains? options :feedback-source)))

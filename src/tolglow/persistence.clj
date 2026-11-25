@@ -13,6 +13,7 @@
             [afterglow.render.frame :as render]
             [afterglow.time :as time]
             [tolglow.registry :as registry]
+            [tolglow.authoring.variation-control :as variations]
             [tolglow.cue-timing :as cue-timing]
             [tolglow.persistence.audio :as saved-audio]
             [tolglow.compiler :as compiler]
@@ -353,6 +354,9 @@
   (validate-recent-cues! (:control model))
   (when (contains? (:control model) :edit-history) (validate-edit-history! model))
   (check! (map? (:extensions model {})) [:extensions] "Extensions must be an explicit map")
+  (when (contains? (:extensions model) variations/state-key)
+    (check! (variations/valid-saved-state? (get-in model [:extensions variations/state-key]))
+            [:extensions variations/state-key] "Invalid cue variation banks"))
   (check! (map? (:settings model {})) [:settings] "Settings must be an explicit portable map")
   (when-let [s (get-in model [:settings :fog-control])] (fog-control/settings s))
   (lighting-scenes/validate-state! model)

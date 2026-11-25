@@ -111,3 +111,10 @@
 .axis-component>label{grid-row:1;overflow-wrap:anywhere}
 .axis-component>.parameter-rotary-control{grid-row:2;margin:auto;max-width:100%}
 .axis-component>input{grid-row:3;align-self:end}
+
+.live-variation-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem; margin-block: .4rem; }
+.live-variation-grid { overflow-x: auto; }
+.live-variation-row { display: grid; grid-template-columns: minmax(4rem, auto) repeat(8, minmax(4rem, 1fr)); gap: .25rem; align-items: center; margin-block: .25rem; }
+.live-variation-row > button { min-height: 2rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-variation-row .live-variation-actions { flex-wrap: nowrap; margin: 0; }
+.live-cue-variations input[type="number"] { width: 4rem; }
