@@ -180,9 +180,13 @@
   [^ThreadPoolExecutor executor thunks]
   (let [tasks (mapv (fn [thunk] (FutureTask. ^Callable thunk)) thunks)]
     (when executor
+      ;; A rejected task, or a failure to start a worker thread, leaves the
+      ;; remaining tasks unstarted. This thread runs them below and then waits
+      ;; for every submitted task, so nothing is still running on return.
       (try
         (run! (fn [task] (.execute executor ^Runnable task)) tasks)
-        (catch RejectedExecutionException _)))
+        (catch RejectedExecutionException _)
+        (catch OutOfMemoryError _)))
     ;; Workers take the head of the queue. This thread claims unstarted work
     ;; from the tail. A FutureTask runs once, so the other side skips it. A
     ;; full or closing pool therefore still completes the frame here.

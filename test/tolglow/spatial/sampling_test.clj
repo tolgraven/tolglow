@@ -369,3 +369,37 @@
       (is (.isTerminated pool))
       (is (zero? (.getPoolSize pool)))
       (is (nil? (get-in @(:state (:runtime split-show)) [:status :cleanup-error]))))))
+
+(defn- repatch!
+  "Replace the patch with n pixels, then tick with one field cue lit."
+  [show now n]
+  (let [model (:model @(:state (:runtime show)))]
+    (submit! show now :rig (assoc (:rig model) :fixtures (mapv pixel (range n)) :expected-epoch (:epoch model)))
+    (submit! show (+ now 25) :command {:op :master/set :value 1.0})
+    [@(:captured show)
+     (get-in @(:state (:runtime show)) [:model :variables :spatial :members])
+     (get-in @(:state (:runtime show)) [:spatial-cache :slices])]))
+
+(deftest a-patch-crossing-the-threshold-switches-path-and-rebuilds-its-slices
+  (let [serial-show (host true {:workers 1})
+        split-show (host true {:workers 3 :partitions 5 :min-fixtures 300})]
+    (try
+      (doseq [show [serial-show split-show]]
+        (submit! show 0 :command {:op :cue/launch :cue-id :blue})
+        (submit! show 25 :spatial-cue (field-cue :first [0 0] #{:position :beam} {:red 1.0} [-1.0 2.0 1.0])))
+      (let [steps [[50 360] [100 200] [150 340] [200 360]]
+            expected (mapv (fn [[now n]] (repatch! serial-show now n)) steps)
+            actual (mapv (fn [[now n]] (repatch! split-show now n)) steps)
+            slices (mapv peek actual)]
+        (doseq [[[now n] before after] (map vector steps expected actual)]
+          (is (= (first before) (first after)) (str "DMX with " n " pixels at " now))
+          (is (= (second before) (second after)) (str "members with " n " pixels at " now)))
+        (is (true? (:sliced? (slices 0))) "360 pixels split")
+        (is (nil? (slices 1)) "200 pixels stay serial and drop the slices")
+        (is (true? (:sliced? (slices 2))) "340 pixels split again")
+        (is (true? (:sliced? (slices 3))))
+        (is (not (identical? (:rig (slices 2)) (:rig (slices 3)))) "A new patch rebuilds the slices")
+        (is (= 360 (reduce + (map (comp count :fixtures) (:optical (slices 3))))) "The rebuilt slices cover the new patch"))
+      (finally
+        (show/stop! (:runtime serial-show))
+        (show/stop! (:runtime split-show))))))
