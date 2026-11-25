@@ -1,0 +1,3 @@
+The paired test on Tolglow `fa7c7c45` and Afterglow `16efb8b5` passed 27 tests and 223 assertions. The prior Tolglow source failed seven assertions in the new exact capture test. If the original reverse fog pump’s off byte was 196, a middle patch that claimed its slot and never completed output could cause the subsequent patch to emit 0 at expiry. Complete current-patch output now preserves 196. The next normal send preserves it too. A subsequent delivered patch ownership change is covered separately.
+
+The final head reproduced all 12 complete packet records in `captured-current.json`. The still and video show those same bytes and timing.
