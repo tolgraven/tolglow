@@ -1,19 +1,152 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env python3
+"""Select the audience regression lanes from the event's committed Git diff."""
 
-commit() {
-  [[ -n "$1" ]] && git rev-parse --quiet --verify --end-of-options "$1^{commit}"
+import re
+import subprocess
+import sys
+from pathlib import PurePosixPath
+
+
+PROJECT = "native/project.yml"
+STUDIO = "TolglowStudio"
+YAML_TAG = "tag:yaml.org,2002:"
+DESKTOP_TESTS = {
+    "native/Tests/capture-compiled-mac",
+    "native/Tests/capture-macos",
+    "native/Tests/check_compiled_studio.py",
+    "native/Tests/check_packaged_studio.py",
+    "native/Tests/qualify-metal",
+    "native/Tests/shader-qualification.test.mjs",
+    "native/Tests/verify-metal.swift",
+}
+SHARED_CI = {
+    ".github/workflows/tests.yml",
+    ".github/scripts/native-build-required",
+    ".github/scripts/test-native-build-required",
 }
 
-case ${1:-} in
-  pull_request) range=... ;;
-  push)         range=.. ;;
-  *)            echo true; exit 0 ;;
-esac
 
-if base=$(commit "${2:-}") && head=$(commit "${3:-}") &&
-   git diff --quiet "$base$range$head" -- native .github/workflows/tests.yml .github/scripts/native-build-required; then
-  echo false
-else
-  echo true
-fi
+def git(*args):
+    return subprocess.check_output(["git", *args])
+
+
+def event_range(event, base, head):
+    base, head = (git("rev-parse", "--verify", "--end-of-options", ref + "^{commit}").decode().strip()
+                  for ref in (base, head))
+    if event == "pull_request":
+        bases = git("merge-base", "--all", base, head).decode().splitlines()
+        if len(bases) != 1:
+            raise ValueError("Expected one pull request merge base")
+        base = bases[0]
+    return base, head
+
+
+def yaml_data(node, yaml, seen):
+    """Keep scalar spelling/types and array order. Reject ambiguous YAML."""
+    if id(node) in seen:
+        raise ValueError("YAML aliases are outside the supported project shape")
+    seen.add(id(node))
+    if isinstance(node, yaml.ScalarNode):
+        return (node.value, node.style, node.tag)
+    if isinstance(node, yaml.SequenceNode) and node.tag == YAML_TAG + "seq":
+        return [yaml_data(value, yaml, seen) for value in node.value]
+    if not isinstance(node, yaml.MappingNode) or node.tag != YAML_TAG + "map":
+        raise ValueError("Expected a YAML mapping")
+    values = {}
+    for key, value in node.value:
+        if (not isinstance(key, yaml.ScalarNode) or key.tag != YAML_TAG + "str"
+                or id(key) in seen or key.value in values):
+            raise ValueError("Expected unique literal YAML keys")
+        seen.add(id(key))
+        values[key.value] = yaml_data(value, yaml, seen)
+    return values
+
+
+def source_root(value):
+    name = value[0] if isinstance(value, tuple) and value[2] == YAML_TAG + "str" else ""
+    parts = PurePosixPath(name).parts
+    if not re.fullmatch(r"[A-Za-z0-9._/-]+", name) or not parts or name.startswith("/") or ".." in parts:
+        raise ValueError("Expected a relative, literal XcodeGen source path")
+    return parts[0]
+
+
+def paths(target):
+    return {source_root(source["path"] if isinstance(source, dict) else source) for source in target["sources"]}
+
+
+def references_desktop(node):
+    if isinstance(node, dict):
+        return STUDIO in node or any(references_desktop(value) for value in node.values())
+    if isinstance(node, list):
+        return any(references_desktop(value) for value in node)
+    return node[0] == STUDIO or node[0].startswith(("macOS/", "./macOS/"))
+
+
+def non_studio_project(revision):
+    import yaml
+
+    try:
+        project = yaml_data(yaml.compose(git("show", f"{revision}:{PROJECT}"), Loader=yaml.BaseLoader), yaml, set())
+    except yaml.YAMLError as error:
+        raise ValueError("Could not parse the XcodeGen project") from error
+    if not isinstance(project, dict) or {"include", "includes", "targetTemplates", "projectReferences"} & project.keys():
+        raise ValueError("Project imports or templates need full qualification")
+    targets = project["targets"]
+    schemes = project["schemes"]
+    if not isinstance(targets, dict) or not isinstance(schemes, dict):
+        raise ValueError("Expected XcodeGen targets and schemes")
+    studio = targets[STUDIO]
+    if studio["platform"][0] != "macOS" or paths(studio) != {"macOS"}:
+        raise ValueError("Expected the Studio target to own only macOS sources")
+    # The Studio target must be isolated from the native regression schemes.
+    packages = project.get("packages", {})
+    if not isinstance(packages, dict) or any(
+        not isinstance(package, dict) or ("path" in package and source_root(package["path"]) == "macOS")
+        for package in packages.values()
+    ):
+        raise ValueError("An XcodeGen package could use the Studio sources")
+    for name, target in targets.items():
+        if name != STUDIO and ("macOS" in paths(target) or references_desktop(target)):
+            raise ValueError("A different target uses the Studio sources or target")
+    for name, scheme in schemes.items():
+        if name != STUDIO and references_desktop(scheme):
+            raise ValueError("A different scheme uses the Studio target")
+    del studio["sources"]
+    return project
+
+
+def classify(base, head):
+    # Record both sides of moves by comparing additions and deletions separately.
+    files = set(git("diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z",
+                    base, head, "--").decode().split("\0"))
+    files.discard("")
+    desktop = {path for path in files if path.startswith("native/macOS/") or path in DESKTOP_TESTS}
+    native = {path for path in files if path == "native" or path.startswith("native/")}
+    shared_ci = bool(files & SHARED_CI)
+    audience = shared_ci or bool(native - desktop - {PROJECT})
+    if not audience and (PROJECT in files or any(path.startswith("native/macOS/") for path in desktop)):
+        # Comparison at the merge base also catches simultaneous shared manifest edits.
+        audience = non_studio_project(base) != non_studio_project(head)
+
+    # The paired Linux receiver loads its Clojure dependencies from the JVM tree.
+    linux = audience or bool(files & {".github/scripts/install-lein", "project.clj"}) or any(
+        path == "linux/audience" or path.startswith("linux/audience/")
+        or (path.startswith("src/") and not path.startswith("src/studio/"))
+        for path in files
+    )
+    return audience, linux
+
+
+def main(args):
+    audience, linux = True, True
+    if len(args) == 3 and args[0] in {"pull_request", "push"} and all(args[1:]):
+        try:
+            audience, linux = classify(*event_range(*args))
+        except (OSError, subprocess.CalledProcessError, ImportError, LookupError, TypeError, ValueError, RecursionError) as error:
+            print(f"Native scope could not be established. Running both audience lanes ({error}).", file=sys.stderr)
+    print(f"audience={str(audience).lower()}")
+    print(f"linux_audience={str(linux).lower()}")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
