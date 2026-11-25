@@ -8,9 +8,10 @@ A show file, a MIDI surface and the web controller work with the same show model
 | Encode, decode and receive the sensor wire protocol | `tolglow.sensors.osc` | `encode`, `decode`, `open!` |
 | Configure capture and process sample blocks | `tolglow.audio.capture` | `validate-config`, `create-manager`, `start!`, `stop!` |
 | Sample authored waveforms or summarize PCM | `tolglow.waveforms` | `preview`, `new-capture`, `capture-block`, `capture-view` |
-| Inspect mappings for the selected device and cue | `tolglow.expressive` | `preview` reads the cue registry and shared Afterglow mapper |
+| Inspect expressive mappings for a device and cue | `tolglow.show` | `expressive-preview` uses the active show's device profiles and cue registry |
 | Read and write complete show documents | `tolglow.persistence` | `freeze`, `write-string`, `read-string`, `thaw` |
-| Configure providers, conversations and credentials | `tolglow.agents`, `tolglow.agents.credentials` | `configure!`, `start-chat!`, `history`, `cancel-all!` |
+| Start an agent chat on the active show | `tolglow.show` | `start-chat!` binds agent tools to the current show session |
+| Configure providers, review conversation history and manage credentials | `tolglow.agents`, `tolglow.agents.credentials` | `configure!`, `history`, `cancel-all!` |
 | Work with fixtures, patching and RDM | `tolglow.rig`, `tolglow.rig.rdm`, `tolglow.fixtures.library` | Rig transitions and explicit service managers. The optional `:rdm` module selects OLA or a direct Art-Net gateway |
 | Connect show signals, compose cues and publish DMX | `tolglow.routing`, `tolglow.composition`, `afterglow.output.scheduler` | Patchbay transitions, composition and output sinks |
 | Queue a cue at a musical boundary | `tolglow.show` | `submit!` with a launch grid, `quantized-cue-status` |
@@ -21,6 +22,29 @@ For example, record a bounded waveform summary directly from a PCM source:
 (require '[tolglow.waveforms :as wave])
 
 (def capture (wave/new-capture {:max-bins 128 :bin-ms 20}))
+```
+
+Use the same expressive preview as Studio from a REPL with an active `runtime`.
+Use the device's mapping ID, or its session ID when no mapping ID is configured.
+
+```clojure
+(require '[tolglow.show :as show])
+
+(show/expressive-preview runtime {:device-id "roli-policy" :cue-id :ember})
+```
+
+A connected device supplies its axes and mapping defaults. For an offline model,
+use `tolglow.expressive/preview` with a declared device kind.
+
+With a provider configured on the active show, start a chat with the same tool
+access as Studio. The returned handle has a `:result` promise and a `:cancel!`
+function. If a restore changes the show session before the worker starts, the
+chat ends before any provider request. Tool calls from the previous show session
+are rejected.
+
+```clojure
+(show/start-chat! runtime {:message "Inspect the current lighting."}
+                  {:emit! prn :done! prn})
 ```
 
 The clock supplies musical time to effects. Device reads, network publication and credential access belong to their explicit owners. Web-specific routes, browser subscriptions and display projections bind these APIs to Studio. Afterglow owns the clock reducer, renderer and controller mapping used by those APIs.
