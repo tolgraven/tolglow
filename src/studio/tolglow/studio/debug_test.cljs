@@ -80,6 +80,28 @@
     (is (= "slow" (get-in (editor/clean-form (assoc-in form [:match :pattern] "slow")) [:match :pattern])))
     (is (= {:type :audio/kick} (:match (editor/clean-form (assoc-in form [:match :type] :audio/kick)))))))
 
+(deftest an-operator-can-enter-numeric-and-uuid-patterns-without-changing-text-ids
+  (let [form {:id :music/pattern :match {:type :music/section-pattern}
+              :actions [(editor/new-action :cue/launch)]}
+        path [:match :pattern]
+        pattern (fn [source] (-> form (assoc-in path source) editor/clean-form (get-in path)))
+        id "516049b9-ff71-4bf4-bf00-123456789abc"
+        long "9223372036854775807"
+        long-id (wire/decode (str "[\"~#'\",\"~i" long "\"]"))
+        wide "9223372036854775808"
+        wide-id (wire/decode (str "[\"~#'\",\"~n" wide "\"]"))]
+    (is (= 514 (pattern "514")))
+    (is (= -514 (pattern "-514")))
+    (is (= long-id (wire/decode (wire/encode (pattern long)))))
+    (is (= wide-id (wire/decode (wire/encode (pattern wide)))))
+    (is (= (uuid id) (wire/decode (wire/encode (pattern (str "#uuid \"" id "\""))))))
+    (is (thrown? js/Error (pattern "#uuid \"invalid\"")))
+    (doseq [stored [514 long-id wide-id (uuid id) "514" ":slow" "#uuid \"text\"" " trailing "]]
+      (let [db (:db (transition {:debug {:handle "tab"}}
+                                [:subscribers/edit (assoc-in form path stored)]))
+            reopened (get-in db [:debug :form])]
+        (is (= stored (get-in (editor/clean-form reopened) path)))))))
+
 (deftest late-subscriber-edit-cannot-target-replaced-show
   (let [db {:show {:runtime-id "new" :epoch 1}
             :debug {:handle "page" :editing-show {:runtime-id "old" :epoch 0}

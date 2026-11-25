@@ -340,7 +340,10 @@ pattern policy, for example `:section-patterns {:enabled? true :on :bar
 :show-seed 514 :patterns [:warm :pulse :slow]}`. Register a subscriber for
 `:music/section-pattern` and enter a **Pattern ID** such as `:slow` to route that
 choice to a specific cue. In the REPL use `:match {:type :music/section-pattern
-:pattern :slow}` on the same subscriber. Pattern decisions use
+:pattern :slow}` on the same subscriber. Pattern IDs can also be plain text,
+an integer such as `514`, or a UUID such as
+`#uuid "516049b9-ff71-4bf4-bf00-123456789abc"`. Use quotes for text that looks
+like a typed ID, for example `"514"`. Pattern decisions use
 the show's selected clock and wait for the configured beat, bar or phrase.
 To pause the pattern source from the REPL, submit
 `(show/submit! runtime :settings {:scope :section-patterns :values {:override? true}})`.
