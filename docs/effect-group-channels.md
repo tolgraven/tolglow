@@ -28,8 +28,9 @@ When a native transform inherits targets, the fixture projection reports
 `:target-source :unresolved` unless the caller supplies its footprint. Pass
 `:target-ids-by-instance` with footprints from the same patch and frame before
 group attenuation. An empty collection is a known empty footprint. The live
-owner uses declared targets for the current patch. The frame after a definition
-reload uses the newly committed definition for membership.
+owner uses declared targets for the current patch. A reload frame uses the
+membership of the definition that produces its output. A rejected candidate
+keeps the captured definition's membership.
 
 ## Render contract
 
@@ -42,13 +43,13 @@ result. The authored layer opacity still mixes the final layer with its
 backdrop at the layer's original priority position. Group levels are additional
 to the existing instance alpha and release envelope. [Afterglow native layers](https://github.com/tolgraven/afterglow/blob/99f61c5bed2850daaeb87bc5b84ddf0d3c60bf64/doc/architecture/native-layers.md)
 
-The live owner captures frame factors before evaluating effects. Ordinary and
-authored native effects receive them through Afterglow's
-`:afterglow.runtime.engine/opacity-factors` input. The host applies factors for
-spatial members when it attaches their layer descriptors. Their assignments and
-slot transforms blend together, and members at zero retain the layer's priority
-position. Fog arbitration skips those muted sources so automatic demand can
-resume. Authored parameters and observable instance alpha remain independent.
+The live owner captures frame factors by definition version when a reload can
+change membership. Ordinary and authored native effects receive them through
+Afterglow's `:afterglow.runtime.engine/opacity-factors` input. The host reads
+the evaluated version when applying factors to spatial layer members. Their
+assignments and slot transforms blend together, and members at zero retain the
+layer's priority position. Fog arbitration skips those muted sources so
+automatic demand can resume. Authored parameters and observable instance alpha remain independent.
 Output shaping, budgeting and publication continue after composition.
 
 At unity, the mixer has no render factor to apply. Its membership and display

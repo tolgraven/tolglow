@@ -1660,8 +1660,9 @@
                            ;; Fog arbitration checks whether a manual source is visible.
                            ;; Spatial member levels apply later, so omit muted sources here.
                            fog-blocks (cond->> (:contributions result)
-                                        (some zero? (vals spatial-levels))
-                                        (filterv #(pos? (get spatial-levels (get-in % [:source :instance-id]) 1))))
+                                        (some #(if (map? %) (some zero? (vals %)) (zero? %)) (vals spatial-levels))
+                                        (filterv (fn [{{:keys [instance-id effect-version]} :source}]
+                                                   (pos? (engine/opacity-factor spatial-levels instance-id effect-version)))))
                            setpoint (fog-control/frame model patch observation previous-control
                                       (if (get-in runtime [:sink :send!]) ((get-in runtime [:publisher :now-ms])) time-ms)
                                       fog-bypass? fog-blocks (:block fog))

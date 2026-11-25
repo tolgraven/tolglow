@@ -268,13 +268,37 @@
                                                                     (map :instance-id)) instances)))
                      overlay-groups)})))
 
+(defn- reload-candidates [model]
+  (into {} (keep (fn [[id {:keys [effect-id effect-version] :as instance}]]
+                   (let [{:keys [version] :as definition} (get-in model [:registry :effects effect-id])]
+                     (when (and (not= :pinned (:reload-policy instance :pinned))
+                                (not (get-in instance [:system :paused?]))
+                                (not= version (get-in instance [:reload-fault :effect-version]))
+                                (integer? version) (> version effect-version))
+                       [id (assoc instance :effect-version version :definition definition)]))))
+        (:instances model)))
+
 (defn frame-levels
-  "Freeze non-unity factors using the same membership as the mixer projection."
+  "Freeze non-unity factors using the same membership as the mixer projection.
+  A definition-dependent membership change carries both version levels so the
+  engine can apply the factor for whichever definition it evaluates."
   [model]
   (when-let [{:keys [manual overlays active-overlay]} (get-in model settings-path)]
-    (when (or (some #(not (== 1 (level (:group %)))) (manual-entries manual))
-              (some #(not (== 1 (level %))) (get overlays active-overlay)))
-      (not-empty (:member-levels (projection model))))))
+    (let [overlay-levels? (some #(not (== 1 (level %))) (get overlays active-overlay))]
+      (when (or overlay-levels?
+                (some #(not (== 1 (level (:group %)))) (manual-entries manual)))
+        (let [factors (:member-levels (projection model))
+              candidates (when (and overlay-levels? (#{:fixtures :categories} active-overlay))
+                           (reload-candidates model))
+              candidate-factors (when (seq candidates) (:member-levels (projection (assoc model :instances candidates))))]
+          (not-empty
+            (reduce-kv (fn [levels id candidate]
+                         (let [captured (get factors id 1)
+                               proposed (get candidate-factors id 1)]
+                           (if (== captured proposed) levels
+                             (assoc levels id {(get-in model [:instances id :effect-version]) captured
+                                               (:effect-version candidate) proposed}))))
+                       factors candidates)))))))
 
 (defn channel-rows
   "Flatten one mixer view with stable channel IDs. Expansion is local to the

@@ -355,17 +355,16 @@
                   (map (fn [[head point]] {:target-id head :attribute :aim :value point :blend :replace}))
                   aims))))))
 
-(defn- scoped-block [groups opacity-factors block]
-  (let [id (get-in block [:source :instance-id])]
-    (if-let [group (get groups id)]
-      (let [native (:native-layer block)
-            factor (get opacity-factors id)
-            layer (cond-> (merge native group)
-                    (and (seq (:transforms native)) (seq (:transforms group)))
-                    (assoc :transforms (into (:transforms group) (:transforms native)))
-                    factor (update :member-opacity (fnil * 1.0) factor))]
-        (assoc block :native-layer layer))
-      block)))
+(defn- scoped-block [groups opacity-factors {{:keys [instance-id effect-version]} :source :as block}]
+  (if-let [group (get groups instance-id)]
+    (let [native (:native-layer block)
+          factor (engine/opacity-factor opacity-factors instance-id effect-version)
+          layer (cond-> (merge native group)
+                  (and (seq (:transforms native)) (seq (:transforms group)))
+                  (assoc :transforms (into (:transforms group) (:transforms native)))
+                  (not (== 1 factor)) (update :member-opacity (fnil * 1.0) factor))]
+      (assoc block :native-layer layer))
+    block))
 
 (defn mask-contributions
   "Apply spatial layer descriptors and any group factors deferred by the host.

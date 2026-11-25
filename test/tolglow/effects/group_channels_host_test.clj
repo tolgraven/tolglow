@@ -49,10 +49,48 @@
 
 (defn- committed-model [runtime] (:model @(:state runtime)))
 
-(defn- dmx [runtime]
+(defn- dmx-bytes [runtime n]
   (let [{:keys [output status]} @(:state runtime)]
     (is (nil? (:error status)) (pr-str status))
-    (bit-and 255 (first (get-in output [:universes 1])))))
+    (mapv #(bit-and 255 %) (take n (get-in output [:universes 1])))))
+
+(defn- dmx [runtime] (first (dmx-bytes runtime 1)))
+
+(deftest fixture-overlay-follows-the-definition-rendered-on-the-reload-frame
+  (doseq [policy [:preserve-state :restart], batch? [false true]]
+    (let [definition {:id :first :version 1 :params {} :targets [:head] :outputs {:dimmer 1}}
+          rig [{:id :head :universe 1 :address 1 :channels {:dimmer 1}}
+               {:id :muted :universe 1 :address 2 :channels {:dimmer 1}}]
+          model (-> (model) (assoc-in [:rig :fixtures] rig) (assoc-in [:registry :effects :first] definition))
+          runtime (show/create-runtime {:model model :batch? batch? :workspace-options nil :workers 2
+                                        :effect-log! (fn [_])})
+          publish! (fn [time version targets overrides]
+                     (accepted! runtime time {:op :registry/publish :kind :effects
+                                              :definition (merge definition overrides {:version version :targets targets})}))]
+      (try
+        (accepted! runtime 0 (configure {:active-overlay :fixtures
+                                          :overlays {:fixtures [{:id :silent :fixture-ids [:muted] :level 0}]}}))
+        (let [id (:instance-id (accepted! runtime 10 {:op :cue/launch :cue-id :first :launch {:reload-policy policy}}))
+              instance #(get-in (committed-model runtime) [:instances id])
+              overlay #(get-in (show/effect-group-channels runtime) [:instances 0 :overlay-group])]
+          (is (= [255 0] (dmx-bytes runtime 2)))
+          (publish! 20 2 [:muted] {})
+          (is (= 2 (:effect-version (instance))))
+          (is (= :silent (overlay)))
+          (is (= [0 0] (dmx-bytes runtime 2)))
+          (is (= (if (= :restart policy) 20 10) (:started-at-ms (instance))))
+          (publish! 30 3 [:head] {:params {:divisor {:type :number :default 0}}
+                                  :outputs {:dimmer {:op :divide :args [1 {:op :param :key :divisor}]}}})
+          (is (= 2 (:effect-version (instance))))
+          (is (= {:effect-version 3 :stage :evaluate} (select-keys (:reload-fault (instance)) [:effect-version :stage])))
+          (is (= :silent (overlay)))
+          (is (= [0 0] (dmx-bytes runtime 2)))
+          (publish! 40 4 [:head] {})
+          (is (= 4 (:effect-version (instance))))
+          (is (nil? (overlay)))
+          (is (= [255 0] (dmx-bytes runtime 2)))
+          (is (= (if (= :restart policy) 40 10) (:started-at-ms (instance)))))
+        (finally (show/stop! runtime))))))
 
 (deftest group-levels-use-owner-receipts-and-preserve-interleaved-output
   (doseq [batch? [true false]]
@@ -209,6 +247,27 @@
     (show/tick! runtime time)
     (let [ack (deref receipt 1000 ::missing)]
       (is (= :accepted (:status ack)) (pr-str ack)))))
+
+(deftest fixture-overlay-uses-the-reloaded-version-of-a-spatial-child
+  (let [definition {:id :transform :version 1 :params {} :targets [:head] :outputs {:dimmer 1}}
+        rig [{:id :head :universe 1 :address 1 :position [0 1 0] :channels {:dimmer 1}}
+             {:id :muted :universe 1 :address 2 :position [0 1 0] :channels {:dimmer 1}}]
+        model (-> (model)
+                  (assoc-in [:rig :fixtures] rig)
+                  (assoc-in [:registry :effects :transform] definition)
+                  (assoc-in [:registry :cues :transform :reload-policy] :preserve-state))
+        runtime (show/create-runtime {:model model :workspace-options nil :batch? true})]
+    (try
+      (accepted! runtime 0 (configure {:active-overlay :fixtures
+                                        :overlays {:fixtures [{:id :silent :fixture-ids [:muted] :level 0}]}}))
+      (spawn-spatial! runtime 10 {:dimmer 0.2} {})
+      (is (= [255 0] (dmx-bytes runtime 2)))
+      (accepted! runtime 20 {:op :registry/publish :kind :effects
+                             :definition (assoc definition :version 2 :targets [:muted])})
+      (is (= 2 (some #(when (= :transform (:cue-id %)) (:effect-version %))
+                     (vals (:instances (committed-model runtime))))))
+      (is (= [0 0] (dmx-bytes runtime 2)))
+      (finally (show/stop! runtime)))))
 
 (deftest spatial-child-group-level-fades-its-assignment-and-transform-once
   (doseq [batch? [false true]]
