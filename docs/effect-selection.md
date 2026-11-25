@@ -27,11 +27,17 @@ model. Each command gets the normal show epoch, revision and retry receipt.
   expiry drops the flags with the instance. A new launch starts clear. Schema 2
   restores saved selections and rekeys their instance and native layer IDs.
 
-The model reports selection independently of authored parameters, opacity,
-gain, pause, clocks, and show blackout. `:included-instance-ids` is eligibility
-under this policy. The projection follows render input order and reports Solo,
-Mute, suppression reason, and native layer per instance. Layer rows include
-member IDs and `:none`, `:partial`, or `:all` for each control.
+The frame engine applies selection before composing the ordered contribution
+stream. The gate covers ordinary assignments, typed batches and native layer
+transforms. Suppressed effects continue to advance state, private clocks and
+intents. When a release expires at a frame boundary, that instance leaves the
+selection before the frame is composed.
+
+Selection is independent of authored parameters, opacity, gain, pause and show
+blackout. `:included-instance-ids` is eligibility under this policy. The
+projection follows render input order and reports Solo, Mute, suppression reason,
+and native layer per instance. Layer rows include member IDs and `:none`,
+`:partial`, or `:all` for each control.
 [Shared controls](system-controls.md) · [Native layers](native-composition.md)
 
 ## Domain API
@@ -39,7 +45,7 @@ member IDs and `:none`, `:partial`, or `:all` for each control.
 Pass these payloads to `tolglow.show/submit!`. A caller holding an immutable show
 model can pass the same payload and a command envelope to
 `afterglow.control.model/apply-command`. Inspect `:effect-selection` in
-`afterglow.control.views/snapshot` or call
+`tolglow.show/snapshot`, the Studio state endpoint, or `afterglow.control.views/snapshot`. Call
 `afterglow.control.effect-selection/projection` on the model.
 
 ```clojure
@@ -66,19 +72,20 @@ and category filtering. Solo and Mute reuse the existing category selectors.
 The JVM replay launches three simultaneous effects with levels `0.50`, `0.25`,
 and `0.75` in control order `0:2`, `0:1`, `0:3`. It captures the projection
 after each toggle and checks the same ordered parameter, system, and effect
-state at every step.
+state at every step. A show owner renders the same sequence in both CPU modes.
+The Blend fixture receives all eligible effects in priority and launch order.
 
-| Action | Included instance IDs |
-| --- | --- |
-| Initial state | `0:2`, `0:1`, `0:3` |
-| Solo `0:1` | `0:1` |
-| Add Solo `0:2` | `0:2`, `0:1` |
-| Mute `0:2` | `0:1` |
-| Add Mute `0:3` | `0:1` |
-| Solo `0:2` | None |
-| Clear Solo `0:2` | `0:1` |
-| Mute `0:3` exclusively | `0:2`, `0:1` |
-| Clear Mute `0:3` | `0:2`, `0:1`, `0:3` |
+| Action | Included instance IDs | Wash, Side, Accent, Blend DMX bytes |
+| --- | --- | --- |
+| Initial state | `0:2`, `0:1`, `0:3` | `64, 128, 191, 191` |
+| Solo `0:1` | `0:1` | `64, 0, 0, 64` |
+| Add Solo `0:2` | `0:2`, `0:1` | `64, 128, 0, 64` |
+| Mute `0:2` | `0:1` | `64, 0, 0, 64` |
+| Add Mute `0:3` | `0:1` | `64, 0, 0, 64` |
+| Solo `0:2` | None | `0, 0, 0, 0` |
+| Clear Solo `0:2` | `0:1` | `64, 0, 0, 64` |
+| Mute `0:3` exclusively | `0:2`, `0:1` | `64, 128, 0, 64` |
+| Clear Mute `0:3` | `0:2`, `0:1`, `0:3` | `64, 128, 191, 191` |
 
 The tests also start a real macro, exercise removal and release expiry, and
 round-trip a selected layer through an in-memory Transit save and restore.
@@ -88,8 +95,6 @@ restore. Commands with `:additive? false` and with the field omitted verify
 that a preceding additive action has no effect on later commands.
 [Replay and lifecycle tests](../test/tolglow/effects/selection_test.clj)
 
-Remaining work includes applying the gate to frame output, binding the shared
-commands and projection in Studio and Push, checking live modifier release and
-device disconnect, and capturing ordered output. The issue also calls for a
-Studio or Push still and clip.
+The remaining operator work covers binding Solo and Mute controls in Studio and
+Push and checking the adapter's modifier release and device disconnect.
 [REPL and Studio parity](repl-studio-parity.md) · [Issue #532](https://github.com/tolgraven/tolglow/issues/532)

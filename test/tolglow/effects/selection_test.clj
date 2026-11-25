@@ -20,16 +20,19 @@
     (when-not (= :accepted (:status ack)) (throw (ex-info "Control command failed" ack)))
     model))
 
-(defn- scene []
-  (reduce (fn [model [id priority level]]
-            (-> model
-                (command {:op :registry/publish :kind :effects
-                          :definition {:id id :version 1
-                                       :params {:level {:type :number :bounds [0 1] :default level}}
-                                       :outputs {:dimmer {:op :param :key :level}}}})
-                (command {:op :cue/put :cue {:id id :effect-id id :priority priority}})))
-          (control/new-show {:rig {:fixtures []}})
-          [[:wash 20 0.25] [:side -3 0.5] [:accent 20 0.75]]))
+(defn- scene
+  ([] (scene []))
+  ([fixtures]
+   (reduce (fn [model [id priority level]]
+             (-> model
+                 (command {:op :registry/publish :kind :effects
+                           :definition (cond-> {:id id :version 1
+                                                :params {:level {:type :number :bounds [0 1] :default level}}
+                                                :outputs {:dimmer {:op :param :key :level}}}
+                                         (seq fixtures) (assoc :targets [id :blend]))})
+                 (command {:op :cue/put :cue {:id id :effect-id id :priority priority}})))
+           (control/new-show {:rig {:fixtures fixtures}})
+           [[:wash 20 0.25] [:side -3 0.5] [:accent 20 0.75]])))
 
 (defn- launch [model cue]
   (command model {:op :cue/launch :cue-id cue :launch {:system {:opacity 0.6}}}))
@@ -44,19 +47,21 @@
 (defn- included [model]
   (:included-instance-ids (selection/projection model)))
 
+(def ^:private selection-actions
+  [(operation :solo "0:1")
+   (operation :solo "0:2" true)
+   (operation :mute "0:2")
+   (operation :mute "0:3" true)
+   (operation :solo "0:2")
+   (operation :solo "0:2")
+   (operation :mute "0:3")
+   (operation :mute "0:3")])
+
 (deftest ordered-selection-replay-preserves-effect-data
   (let [model (three-effects)
-        inputs [(operation :solo "0:1")
-                (operation :solo "0:2" true)
-                (operation :mute "0:2")
-                (operation :mute "0:3" true)
-                (operation :solo "0:2")
-                (operation :solo "0:2")
-                (operation :mute "0:3")
-                (operation :mute "0:3")]
         replay (fn []
                  (reductions (fn [{:keys [model]} payload] (submit model payload))
-                             {:model model} inputs))
+                             {:model model} selection-actions))
         captured (replay)
         models (mapv :model captured)
         base (mapv #(select-keys % [:id :params :system :state]) (views/active-instances model))]
@@ -74,6 +79,29 @@
            (mapv #(select-keys % [:id :params]) base)))
     (doseq [state models]
       (is (= base (mapv #(select-keys % [:id :params :system :state]) (views/active-instances state)))))))
+
+(deftest show-owner-composes-only-selected-effects-in-render-order
+  (let [fixtures (mapv (fn [id address] {:id id :universe 1 :address address :channels {:dimmer 1}})
+                       [:wash :side :accent :blend] (range 1 5))
+        start (reduce #(command %1 {:op :cue/launch :cue-id %2}) (scene fixtures) [:wash :side :accent])
+        expected [[64 128 191 191] [64 0 0 64] [64 128 0 64] [64 0 0 64] [64 0 0 64]
+                  [0 0 0 0] [64 0 0 64] [64 128 0 64] [64 128 191 191]]]
+    (doseq [batch? [true false]]
+      (let [runtime (show/create-runtime {:model start :workers 1 :workspace-options nil :batch? batch?})
+            captured (fn [] (let [{:keys [output status]} @(:state runtime)]
+                              (is (nil? (:error status)))
+                              (mapv #(bit-and 255 %) (take 4 (get-in output [:universes 1])))))]
+        (try
+          (show/tick! runtime 0)
+          (is (= expected
+                 (into [(captured)]
+                       (map (fn [time-ms action]
+                              (let [receipt (show/submit! runtime action)]
+                                (show/tick! runtime time-ms)
+                                (is (= :accepted (:status (deref receipt 1000 {:status :timeout}))))
+                                (captured)))
+                            (range 10 90 10) selection-actions))))
+          (finally (show/stop! runtime)))))))
 
 (deftest control-defaults-and-temporary-modifier-are-independent
   (let [model (three-effects)
@@ -196,6 +224,9 @@
         (is (= ["0:3" "0:2"] (included (model)))))
       (is (= :accepted (:status (send :command (assoc (operation :mute "0:2") :command-id :mute-member)))))
       (is (= ["0:3"] (included (model))))
+      (let [snapshot (show/snapshot runtime)]
+        (is (= (selection/projection (model)) (:effect-selection snapshot)))
+        (is (every? #(not (contains? % ::selection/selected)) (:instances snapshot))))
       (let [source (show/export-show-source runtime)]
         (is (= :accepted (:status (send :command (assoc select-layer :command-id :clear-solo)))))
         (is (= ["0:3" "0:1"] (included (model))))
