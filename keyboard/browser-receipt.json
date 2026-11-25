@@ -1,0 +1,34 @@
+{
+  "browser": "156.0.8078.79",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "bundleSha256": "6ba56235043a612360cdf277d62c1009c54a2790b4f132b76e6efeb2b5679c06",
+  "sockets": [
+    "/api/state/stream",
+    "/api/debug/events"
+  ],
+  "observations": [
+    "Override off",
+    "Override active",
+    "Override off",
+    "Override active",
+    "Override off",
+    "Override off",
+    "Override off"
+  ],
+  "narrowPanel": {
+    "x": 8,
+    "y": 163,
+    "width": 374,
+    "height": 50
+  },
+  "typedSequentially": true,
+  "rejectedStaleEpoch": 422,
+  "typedPatternIds": [
+    "#uuid \"516049b9-ff71-4bf4-bf00-123456789abc\"",
+    "9223372036854775808"
+  ],
+  "errors": []
+}
