@@ -1737,7 +1737,7 @@
                     model (:model snapshot)
                     mode (or (:display-mode view) (get-in model [:settings :controllers :push-display :mode]) :parameters)
                     view (cond-> (assoc view :display-mode mode)
-                           (#{:parameters :audio} mode)
+                           (#{:parameters :audio :mixer} mode)
                            (assoc-in [:visualization-clock :sample-period-ms]
                                      (cue-pads/sample-period-ms (:cue-pad-previews runtime))))
                     visual (case mode
@@ -1745,6 +1745,13 @@
                              (let [capture (when (= mode :audio)
                                              (audio/waveform (connections/audio (:connections runtime))))]
                                (project-parameters snapshot view capture))
+                             :mixer (if-let [expanded (get-in view [:mixer :expanded])]
+                                      (let [projected (project-parameters snapshot
+                                                        (assoc (merge view expanded) :display-mode :parameters) nil)]
+                                        (update-in view [:mixer :expanded] merge
+                                                   (select-keys projected [:parameters :parameter-view :history-beats
+                                                                           :visualization-clock :runtime-id :epoch])))
+                                      view)
                              :block-trace (block-trace/project-display (:id runtime) model view)
                              (:simulator :rig) (push-scene/project-display scene-cache snapshot
                                                      (assoc view :runtime-id (:id runtime)))

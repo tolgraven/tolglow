@@ -220,3 +220,78 @@ body.push-display-page,body.push-display-page #app{width:960px;height:160px;min-
 .push-scene-caption strong{font-size:9px;letter-spacing:.12em;color:#bbdbaa}
 .push-scene-status:not(:empty){left:auto;right:8px}
 .push-source-state{max-width:44px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#bad2b1;font:600 8px/1.2 system-ui;text-transform:uppercase;letter-spacing:.03em}.push-source-state[data-state="pending"],.push-source-state[data-state="held"]{color:#cdb48f}.push-source-state[data-state="error"]{color:#ffc1a6}
+
+.push-mixer {
+  grid-row: 1 / -1;
+  display: grid;
+  grid-template-rows: 29px minmax(0, 1fr);
+  background: #121b16;
+}
+.push-mixer.expanded {grid-template-rows: 29px minmax(0, 1fr) 34px}
+.push-mixer-heading {gap: 12px; background: #202b23}
+.push-mixer-heading .push-brand {font-size: 13px; color: #e0edda}
+.push-mixer-heading .push-selection {max-width: 270px}
+.push-mixer-page, .push-mixer-count, .push-mixer-master, .push-mixer-heading .push-bank {
+  color: #b7c7b5;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.push-mixer-master {margin-left: auto}
+.push-mixer-slots {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  min-height: 0;
+}
+.push-mixer-slot {
+  display: grid;
+  grid-template-rows: 2.5em minmax(0, 1fr) 5px;
+  min-width: 0;
+  padding: 10px 9px 12px;
+  border-right: 1px solid #384638;
+  border-top: 2px solid var(--slot-color, #384638);
+  background: color-mix(in srgb, var(--slot-color, #384638) 8%, #151f19);
+}
+.push-mixer-slot:last-child {border-right: 0}
+.push-mixer-slot.empty {background: #141c16; border-top-color: #324032}
+.push-mixer-slot[data-selected="true"] {
+  background: color-mix(in srgb, var(--slot-color) 23%, #151f19);
+  box-shadow: inset 0 0 0 1px var(--slot-color);
+}
+.push-mixer-slot[data-expanded="true"] {box-shadow: inset 0 0 0 1px #e4eccf}
+.push-mixer-name {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #f0f3e8;
+  line-height: 1.25;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.push-mixer-reading {display: flex; flex-direction: column; justify-content: center; gap: 4px}
+.push-mixer-phase {
+  color: #aecdaf;
+  font: 650 9px/1.1 system-ui, sans-serif;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.push-mixer-slot[data-phase="releasing"] .push-mixer-phase {color: #f2ca82}
+.push-mixer-slot[data-phase="paused"] .push-mixer-phase {color: #c9bbef}
+.push-mixer-alpha {
+  color: #eef2e7;
+  font-size: 27px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.push-mixer-meter {height: 5px; overflow: hidden; border-radius: 3px; background: #c0cdb72e}
+.push-mixer-meter i {display: block; height: 100%; border-radius: 3px; background: var(--slot-color)}
+.push-mixer-slots.compact .push-mixer-slot {grid-template-rows: 13px 12px; padding: 2px 6px}
+.push-mixer-slots.compact .push-mixer-name {display: block; font-size: 10px; text-overflow: ellipsis; white-space: nowrap}
+.push-mixer-slots.compact .push-mixer-reading {flex-direction: row; align-items: baseline; justify-content: space-between}
+.push-mixer-slots.compact .push-mixer-alpha {font-size: 11px}
+.push-mixer-slots.compact .push-mixer-phase {font-size: 8px}
+.push-mixer-empty-parameters {align-self: center; margin: 0; color: #b7c7b5; text-align: center}
+.push-mixer .push-slot-content .typed-choice {gap: 2px; padding: 1px 4px 0}
+.push-mixer .push-slot-content .typed-choice-options > span {padding-block: 0}
+.push-mixer .typed-choice-position {font-size: 9px; line-height: 10px}

@@ -61,6 +61,26 @@
     (is (= 1 (count (:parameters view))))
     (is (nil? (:audio-waveform (display/normalize-view {}))))))
 
+(deftest mixer-bounds-slots-and-observes-only-the-expanded-instance
+  (let [slots (mapv #(hash-map :id (str %) :name (str "Effect " %) :opacity 0.4 :private :discard) (range 12))
+        row {:id :level :schema {:type :number :bounds [0 1]} :value 0.4 :source-state :active}
+        view (fn [id beat]
+               {:display-mode "mixer" :runtime-id "one" :epoch 1 :instance-id "1"
+                :parameter-view :history :visualization-clock {:time-ms (* beat 100) :beat beat}
+                :mixer {:page 0 :pages 2 :slots slots :selected-instance-id "1"
+                        :expanded {:instance-id id :definition-version 1 :parameters (repeat 10 row)}}})
+        a (display/observe-view nil (view "2" 1))
+        b (display/observe-view a (view "2" 2))
+        c (display/observe-view b (view "3" 3))
+        restored (display/observe-view c (view "11" 4))]
+    (is (= 8 (count (get-in a [:mixer :slots]))))
+    (is (= 8 (count (get-in a [:mixer :expanded :parameters]))))
+    (is (= "1" (get-in a [:mixer :selected-instance-id])))
+    (is (nil? (get-in a [:mixer :slots 0 :private])))
+    (is (= [1 2 1] (mapv #(count (get-in % [:mixer :expanded :parameter-observations :level])) [a b c])))
+    (is (= ["one" 1 "3" 1] (get-in c [:mixer :expanded :parameter-identity])))
+    (is (nil? (get-in restored [:mixer :expanded])))))
+
 (deftest preset-projection-distinguishes-edits-saved-values-and-record-actions
   (let [view {:cue {:id "ember"} :instance-id "0:ember"}
         project #(display/preset-model (display/normalize-view (assoc view :preset %)))]

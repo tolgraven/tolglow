@@ -353,7 +353,7 @@
       (catch :default error {:db (assoc-in db [:connections :errors :output] (events/error-message error))}))))
 (rf/reg-event-fx :connections/push-mode
   (fn [{:keys [db]} [_ mode]]
-    (when (contains? #{"parameters" "audio"} mode)
+    (when (contains? #{"parameters" "mixer" "audio"} mode)
       {:db (update-in db [:connections :pending] (fnil conj #{}) :push-display)
        :fx [(req db :push-display "/api/settings"
                  {:scope "controllers" :values {:push-display (assoc (get-in db [:show :settings :controllers :push-display] {}) :mode mode)}}
@@ -434,7 +434,9 @@
        [:select#push-display-mode {:value (get-in db [:show :settings :controllers :push-display :mode] "parameters")
                                    :disabled (contains? (:pending s) :push-display)
                                    :on-change #(rf/dispatch [:connections/push-mode (text %)])}
-        [:option {:value "parameters"} "Effect parameters"] [:option {:value "audio"} "Captured audio + encoder values"]]]
+        [:option {:value "parameters"} "Effect parameters"]
+        [:option {:value "mixer"} "Effect mixer"]
+        [:option {:value "audio"} "Captured audio + encoder values"]]]
       [:label "Parameter visualization"
        [:select {:value (get-in db [:show :settings :controllers :push-display :parameter-view] "auto")
                  :disabled (contains? (:pending s) :push-display)

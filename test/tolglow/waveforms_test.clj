@@ -8,6 +8,7 @@
             [tolglow.audio.capture :as audio]
             [tolglow.audio.capture-test :as pcm]
             [tolglow.studio.display :as display]
+            [tolglow.visualization.cue-pads :as cue-pads]
             [tolglow.signals :as signals]
             [tolglow.effects :as fx]
             [tolglow.compiler :as compiler]
@@ -284,6 +285,29 @@
         (show/connect-device! runtime :push-2 (assoc options :display display))
         (is (= :pages (:display-mode (deref supplied 2000 nil)))))
       (finally (show/stop! runtime)))))
+
+(deftest browser-mixer-projects-live-readings-for-the-expanded-instance
+  (let [snapshot (fixture)
+        second-instance (-> (get-in snapshot [:model :instances "0:1"])
+                            (assoc :id "0:2")
+                            (assoc-in [:params :width] 0.77))
+        runtime {:id "mixer-test" :state (atom (assoc-in snapshot [:model :instances "0:2"] second-instance))
+                 :cue-pad-previews (cue-pads/manager)}
+        project (with-redefs [display/browser-display :project!] (show/push-browser-display runtime {}))
+        view {:display-mode :mixer :epoch 0 :instance-id "0:1" :definition-version 1
+              :parameters [{:param :width :value 0.25}]
+              :mixer {:slots [{:id "0:1" :opacity 0.7} {:id "0:2" :opacity 0.3}]
+                      :expanded {:instance-id "0:2" :definition-version 1
+                                 :parameters [{:param :width :value 0.4}]}}}
+        result (project view)]
+    (is (= (:parameters view) (:parameters result)))
+    (is (= (get-in view [:mixer :slots]) (get-in result [:mixer :slots])))
+    (is (= {:param :width :value 0.77 :effective-value 0.77 :base-value 0.77}
+           (select-keys (get-in result [:mixer :expanded :parameters 0])
+                        [:param :value :effective-value :base-value])))
+    (is (= "mixer-test" (get-in result [:mixer :expanded :runtime-id])))
+    (is (= {:sample-period-ms 100 :time-ms 250 :beat 0.5}
+           (get-in result [:mixer :expanded :visualization-clock])))))
 
 (deftest compact-push-audio-retains-extrema-energy-and-clock-identity
   (let [source {:bins (vec (repeat 256 {:min -0.8 :max 0.7 :rms 0.5 :samples 960

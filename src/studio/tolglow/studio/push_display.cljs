@@ -9,12 +9,22 @@
             [tolglow.studio.parameter-widgets :as widgets]
             [tolglow.studio.parameter-visualization :as visualization]))
 
+(defn- normalize-mixer [{:keys [slots expanded] :as mixer}]
+  (let [slots (mapv #(select-keys % [:id :name :color :phase :opacity :paused?]) (take 8 slots))]
+    (assoc (select-keys mixer [:page :pages :count :selected-instance-id])
+           :slots slots
+           :expanded (when (and (:instance-id expanded) (some #(= (:instance-id expanded) (:id %)) slots))
+                       (assoc (select-keys expanded [:instance-id :definition-version :parameter-bank :touched-parameter])
+                              :parameters (vec (take 8 (:parameters expanded)))
+                              :touched-parameters (vec (take 8 (:touched-parameters expanded))))))))
+
 (defn normalize-view [view]
   (let [view (if (map? view) view {})]
     (-> (select-keys view [:title :page :origin :status :master :blackout? :bpm :selected
                           :cue :effect :swatch :category-colors :page-overview :display-mode :scene :audio-waveform :instance-id
                           :parameter-bank :active-effect-navigation :touched-parameter :fine?])
         (assoc :touched-parameters (vec (take 8 (:touched-parameters view))))
+        (cond-> (map? (:mixer view)) (assoc :mixer (normalize-mixer (:mixer view))))
         (assoc :target-picker (when-let [picker (:target-picker view)]
                                  (assoc (select-keys picker [:open? :page :pages :armed])
                                         :rows (mapv #(select-keys % [:kind :label]) (take 8 (:rows picker)))))
@@ -25,8 +35,18 @@
         (assoc :parameters (vec (take 8 (:parameters view)))
                :active-effects (vec (take 8 (:active-effects view)))
                :cells (vec (take 8 (:cells view))) :labels (vec (take 8 (:labels view)))))))
+(defn- observe-expansion [previous next view]
+  (if-let [expanded (get-in next [:mixer :expanded])]
+    (let [parameter-view (assoc expanded :display-mode :parameters :target-picker (:target-picker next))
+          raw (merge (select-keys view [:runtime-id :epoch :parameter-view :history-beats :visualization-clock])
+                     (get-in view [:mixer :expanded]))]
+      (assoc-in next [:mixer :expanded]
+                (visualization/update-push (get-in previous [:mixer :expanded]) parameter-view raw)))
+    next))
+
 (defn observe-view [previous view]
   (let [next (visualization/update-push previous (normalize-view view) view)
+        next (observe-expansion previous next view)
         {:keys [binding-path target-id sample]} (:block-trace view)
         identity [(:runtime-id view) (:epoch view) (:instance-id view) (:definition-version view) binding-path target-id]]
     (if (and (contains? #{:block-trace "block-trace"} (:display-mode next)) (seq binding-path))
@@ -209,13 +229,63 @@
       ^{:key i} [:article {:class (if row "available" "empty")}
                  (when row [:<> [:small (widgets/label (:kind row))] [:strong (:label row)]])])]])
 
+(defn- percentage [value]
+  (when (widgets/finite? value)
+    (str (js/Math.round (* 100 (min 1 (max 0 value)))) "%")))
+
+(defn- mixer-slots [{:keys [slots selected-instance-id expanded]}]
+  [:div.push-mixer-slots {:class (when expanded "compact")}
+   (for [index (range 8)
+         :let [{:keys [id name color phase opacity paused?] :as slot} (get slots index)]]
+     ^{:key index}
+     (if slot
+       (let [phase (if paused? "paused" (widgets/label phase))
+             value (percentage opacity)]
+         [:article.push-mixer-slot {:data-instance id :data-phase phase
+                                    :data-selected (= selected-instance-id id)
+                                    :data-expanded (= (:instance-id expanded) id)
+                                    :style {"--slot-color" (widgets/color-css color)}
+                                    :aria-label (str "Encoder " (inc index) ", " name ", " phase ", opacity " value)
+                                    :title name}
+          [:strong.push-mixer-name name]
+          [:div.push-mixer-reading
+           [:span.push-mixer-phase phase]
+           [:output.push-mixer-alpha {:aria-label "Opacity"} (or value "—")]]
+          (when-not expanded [:div.push-mixer-meter [:i {:style {:width value}}]])])
+       [:article.push-mixer-slot.empty {:aria-label (str "Encoder " (inc index) ", empty")}]))])
+
+(defn- mixer-view [view global]
+  (let [{:keys [page pages count slots expanded] :as mixer} (:mixer view)
+        expanded-slot (some #(when (= (:instance-id expanded) (:id %)) %) slots)]
+    [:section.push-mixer {:aria-label "Effect mixer" :class (when expanded "expanded")
+                          :style {"--push-accent" (when expanded-slot (widgets/color-css (:color expanded-slot)))}}
+     [:header.push-heading.push-mixer-heading
+      [:strong.push-brand "Effect mixer"]
+      (when expanded-slot [:strong.push-selection (:name expanded-slot)])
+      (when-let [label (bank-label (:parameter-bank expanded))] [:span.push-bank label])
+      [:span.push-mixer-page (str "Page " (inc (or page 0)) " / " (or pages 1))]
+      [:span.push-mixer-count (if (pos? (or count 0)) (str count " active") "No active effects")]
+      (if global [global-control global]
+        [:span.push-mixer-master (str "Master " (or (percentage (:master view)) "—"))])
+      (when (:blackout? view) [:span.push-status.blackout "BLACKOUT"])]
+     (if expanded
+       [:<>
+        (if (seq (:parameters expanded))
+          [parameters expanded false]
+          [:p.push-mixer-empty-parameters "No parameters"])
+        [mixer-slots mixer]]
+       [mixer-slots mixer])]))
+
 (defn display [view]
   (let [cue (:cue view) effect (:effect view) accent (widgets/color-css (or (:swatch view) (:color cue)))
         active? (:active? cue) audio? (contains? #{:audio "audio"} (:display-mode view))
-        global (global-control-model view)]
+        global (global-control-model view)
+        mixer? (and (contains? #{:mixer "mixer"} (:display-mode view))
+                    (not (get-in view [:target-picker :open?])))]
     [:main#push-display {:style {"--push-accent" accent} :aria-label "Push lighting display"
                         :class (str (when audio? "audio-mode ") (when global "global-control-active"))}
-     [:header.push-heading
+     (when-not mixer?
+      [:header.push-heading
       [:span.push-brand (or (:title view) "Tolglow")]
       [:span.push-page (widgets/label (:page view))]
       [:strong.push-selection (or (:name cue) (:name effect) (some-> (:selected view) widgets/label) "Choose a cue")]
@@ -230,8 +300,9 @@
          [:span.push-tempo (widgets/number-label (:bpm view)) [:small " BPM"]]
          [:span.push-master (str (widgets/number-label (when (widgets/finite? (:master view)) (* 100 (:master view)))) "%")]])
       [:span.push-status {:class (cond (:blackout? view) "blackout" (:releasing? cue) "releasing" active? "active")}
-       (cond (:blackout? view) "BLACKOUT" (:releasing? cue) "RELEASE" active? "PLAYING" :else (widgets/label (:status view)))]]
+       (cond (:blackout? view) "BLACKOUT" (:releasing? cue) "RELEASE" active? "PLAYING" :else (widgets/label (:status view)))]])
      (cond
+       mixer? [mixer-view view global]
        (get-in view [:target-picker :open?]) [target-choices (:target-picker view)]
        (contains? #{:simulator :rig "simulator" "rig"} (:display-mode view)) [scene/view view]
        (contains? #{:pages "pages"} (:display-mode view)) [pages/view view]

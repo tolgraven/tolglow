@@ -349,10 +349,17 @@ parameters, row labels and cells to eight.
 The display shares pure typed presentation with the web inspector: numeric and
 choice labels, booleans, enum values, colors, vectors/ranges, category tags and
 musical envelope stage labels. Category colors are independent of cue swatches.
-Sparkline rendering requires supplied finite samples and caps them at 256; no
-fabricated animation substitutes for signal data. The display currently shows
-the selected effect's eight parameters and the first cue row, not a full grid
-overlay or a native Push 3 graphics implementation.
+Sparkline rendering uses supplied finite samples and caps them at 256. The
+Effect parameters view shows the selected effect's eight parameters and the
+first cue row.
+
+Effect mixer in Connections selects a browser-backed Push display mode. Each
+page shows up to eight active instances in show order with their cue color,
+phase and committed opacity. The selected instance has an outline. An expanded
+instance uses the same typed parameter widgets and keeps the mixer slots visible
+along the bottom. The newest held instance visible on the page supplies the
+expansion. Releasing it restores a preceding held instance or the overview.
+Physical mixer encoder bindings and on-device qualification are pending.
 
 The optimized route was browser-tested at 960×160 with every supported parameter
 type, real supplied samples and complete snapshot replacement. Its requests
