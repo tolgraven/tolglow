@@ -231,6 +231,73 @@
         (is (held?)))
       (finally (show/stop! runtime)))))
 
+(deftest cancelled-gesture-settles-only-its-own-modulation-hold
+  (doseq [[label prior-deadline [intervening-op changes] expected-hold]
+          [["active modulation resumes" nil nil nil]
+           ["the prior finite hold keeps its deadline" 1.5 nil {:until-beat 1.5}]
+           ["the prior hold expired during the gesture" 0.5 nil nil]
+           ["an explicit permanent hold supersedes the gesture" 1.5 [:modulation-hold] {:until-beat nil}]
+           ["an explicit finite hold supersedes the gesture" nil
+            [:modulation-hold {:until-beat 1.6}] {:until-beat 1.6}]
+           ["an explicit resume supersedes the gesture" 1.5 [:modulation-resume] nil]]]
+    (testing label
+      (let [runtime (show/create-runtime {:workers 1 :workspace-options nil})
+            authority {:operator-id "test-operator"}]
+        (try
+          (let [id (:instance-id (apply-at! runtime :command {:op :cue/launch :cue-id :ember} 0))
+                model #(:model @(:state runtime))
+                level #(get-in (model) [:instances id :params :level])
+                hold #(get-in (model) [:modulation :holds id :level])
+                controller #(first (get-in (model) [:modulation :controllers]))
+                emitted #(first (get-in (show/snapshot runtime) [:output :values :head-1 :emitted-color]))
+                target {:instance-id id :params [:level]}
+                gesture {:instance-id id :param :level :control-id :encoder-0 :gesture-id "cancel-turn"}
+                cancel (assoc gesture :op :gesture/cancel :command-id "cancel-turn")
+                canonical (level)]
+            (is (= :accepted (:status (apply-at! runtime :modulation-start
+                                                {:id :rhythm :seed 42 :every {:beats 1/4} :params [:level]
+                                                 :select {:instance-ids [id]} :ranges {:level [0.1 0.4]}} 100))))
+            (is (<= 0.1 (emitted) 0.4))
+            (when prior-deadline
+              (apply-at! runtime :modulation-hold (assoc target :until-beat prior-deadline) 110))
+            (is (= :accepted (:status (apply-at! runtime :command (assoc gesture :op :gesture/begin) 120 authority))))
+            (is (= :accepted (:status (apply-at! runtime :command
+                                                (assoc gesture :op :gesture/sample :sequence 1 :value 0.9) 125 authority))))
+            (is (= [0.9 0.9] [(level) (emitted)]))
+            (is (some? (hold)))
+            (is (= :unknown-gesture (:code (apply-at! runtime :command (dissoc cancel :command-id) 130
+                                                     {:operator-id "different-operator"}))))
+            (is (= [0.9 0.9] [(level) (emitted)]))
+            (is (= {:until-beat nil} (get-in (show/snapshot runtime) [:modulation :holds id :level])))
+            (is (= {:until-beat nil} (get-in (show/export-show runtime) [:model :modulation :holds id :level])))
+            (doseq [time [230 355 480]]
+              (show/tick! runtime time))
+            (is (> (:ticks (controller)) 3))
+            (when intervening-op
+              (is (= :accepted (:status (apply-at! runtime intervening-op (merge target changes) 490)))))
+            (show/tick! runtime 610)
+            (let [before-cancel (controller)
+                  ack (apply-at! runtime :command cancel 620 authority)]
+              (is (= [:accepted 0] ((juxt :status :history-cursor) ack)))
+              (is (empty? (get-in (model) [:control :edit-history :open])))
+              (is (= canonical (level)))
+              (is (= expected-hold (hold)))
+              (is (= before-cancel (controller)) "Cancel leaves schedule, RNG and existing cells alone")
+              (show/tick! runtime 735)
+              (if expected-hold
+                (is (= canonical (emitted)))
+                (is (<= 0.1 (emitted) 0.4)))
+              (show/tick! runtime 860)
+              (if (and expected-hold (nil? (:until-beat expected-hold)))
+                (is (= canonical (emitted)))
+                (is (<= 0.1 (emitted) 0.4)))
+              (apply-at! runtime :modulation-hold (assoc target :until-beat 2.5) 880)
+              (is (= ack (apply-at! runtime :command cancel 890 authority)))
+              (is (= {:until-beat 2.5} (hold)))
+              (is (= 1 (:history-cursor (turn! runtime id "committed-turn" 0.8 900 authority))))
+              (is (= {:until-beat nil} (hold)))))
+          (finally (show/stop! runtime)))))))
+
 (deftest captured-push-encoder-updates-become-one-operator-edit
   (let [runtime (show/start! {:workspace-options nil} (constantly nil))
         input (atom nil)

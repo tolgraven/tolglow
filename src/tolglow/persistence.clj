@@ -482,6 +482,7 @@
                                         (when (#{:gesture/begin :gesture/sample :gesture/end :gesture/cancel}
                                                 (get-in receipt [:command :op])) id))) receipts)]
       (cond-> (assoc-in model [:control :edit-history] history)
+        (:modulation model) (update-in [:modulation :holds] modulation/portable-holds)
         (seq gesture-ids) (update-in [:control :history] #(apply dissoc % gesture-ids))
         (seq gesture-ids) (update-in [:control :history-order] #(filterv (complement gesture-ids) %))))
     model))

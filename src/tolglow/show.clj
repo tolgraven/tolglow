@@ -191,7 +191,7 @@
             :patch (routing/snapshot model)
             :modulation {:controllers (mapv #(select-keys % [:id :config :ticks :next-beat :owner-instance-id])
                                              (get-in model [:modulation :controllers]))
-                         :holds (get-in model [:modulation :holds] {})
+                         :holds (modulation/portable-holds (get-in model [:modulation :holds] {}))
                          :overrides (:overrides modulation-view {})
                          :diagnostics (:diagnostics modulation-view [])}
             :compositions (mapv #(assoc % :running? (contains? (:composition-runs model) (:id %))
@@ -430,17 +430,30 @@
                                                  [id (-> source (assoc :armed-intent? false)
                                                          (update :state (fn [state] (:state (sensor-core/set-armed state false)))))])) %)))))
 
-(defn- hold-manual-params [model result {:keys [source]} authority]
-  (if (or authority (and (not= :patch (:type source)) (not= :live-playback (:origin source))))
-    (reduce (fn [result {:keys [type instance-id param]}]
-              (if (and (= :param/changed type)
-                       (or (seq (get-in model [:modulation :controllers]))
-                           (get-in model [:instances instance-id :parameter-bindings param])))
-                (update-in result [:model :modulation] (fnil modulation/hold (modulation/new-state))
-                           {:instance-id instance-id :params [param] :until-beat nil})
-                result))
-            result (:events result))
-    result))
+(defn- hold-manual-params [model result {:keys [op source instance-id param control-id gesture-id]} authority]
+  (let [owner (when (#{:gesture/sample :gesture/end :gesture/cancel} op)
+                [(:operator-id authority) control-id gesture-id])]
+    (cond
+      (#{:gesture/end :gesture/cancel} op)
+      (if (get-in result [:model :modulation])
+        (update-in result [:model :modulation] modulation/settle-gesture-hold instance-id param owner
+                   (= :gesture/end op))
+        result)
+
+      (or authority (and (not= :patch (:type source)) (not= :live-playback (:origin source))))
+      (reduce (fn [result {:keys [type instance-id param]}]
+                (if (and (= :param/changed type)
+                         (or (seq (get-in model [:modulation :controllers]))
+                             (get-in model [:instances instance-id :parameter-bindings param])))
+                  (if owner
+                    (update-in result [:model :modulation] (fnil modulation/hold-gesture-param (modulation/new-state))
+                               instance-id param owner)
+                    (update-in result [:model :modulation] (fnil modulation/hold (modulation/new-state))
+                               {:instance-id instance-id :params [param] :until-beat nil}))
+                  result))
+              result (:events result))
+
+      :else result)))
 
 (defn- command
   ([model payload time-ms] (command model payload time-ms nil))
