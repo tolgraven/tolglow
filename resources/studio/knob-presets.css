@@ -1,0 +1,14 @@
+/* Knob looks strip (#547): src/studio/tolglow/studio/knob_presets.cljs */
+.knob-looks-panel{margin-top:20px}
+.knob-looks{list-style:none;margin:0;padding:14px 16px 16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.knob-look{border:1px solid var(--line);border-radius:10px;background:var(--raised);padding:10px 12px;display:grid;gap:4px;min-width:0}
+.knob-look[data-state=empty]{border-style:dashed;background:transparent}
+.knob-look[data-state=stored]{border-color:rgb(30 190 110 / .6)}
+.knob-look[data-state=selected]{border-color:var(--text);box-shadow:inset 0 0 0 1px var(--text)}
+.knob-look[data-moved=true]{border-color:rgb(120 150 255);box-shadow:inset 0 0 0 1px rgb(120 150 255)}
+.knob-look-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:12px}
+.knob-look-state{font-size:10px;color:var(--muted);white-space:nowrap}
+.knob-look[data-state=selected] .knob-look-state{color:var(--text)}
+.knob-look-summary{margin:0;color:var(--muted);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.knob-look-actions{display:flex;flex-wrap:wrap;gap:4px}
+@media(pointer:coarse){.knob-looks-panel .text-button{min-height:44px;min-width:44px}}

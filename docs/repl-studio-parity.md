@@ -584,6 +584,30 @@ display data are ready ([Push](linked-knobs.md#push),
 when Studio can set non-numeric endpoints and a Push encoder turns the same knob
 and shows the same resolved values.
 
+## Save and recall knob looks
+
+Studio, Push and the REPL read `:knob-presets` in the show snapshot and send
+`:knob-preset/capture`, `:knob-preset/recall` and `:knob-preset/clear` with a
+`:slot` from 0 to 7. [Knob looks](linked-knobs.md#knob-looks)
+
+```clojure
+(show/submit! runtime :command {:op :knob-preset/capture :slot 0})
+(:links @(show/submit! runtime :command {:op :knob-preset/recall :slot 0}))
+(map :state (:slots (:knob-presets (show/snapshot runtime))))
+;; => (:selected :empty :empty :empty :empty :empty :empty :empty)
+```
+
+In Studio, **Perform → Live → Knobs → Knob looks** lists the same eight slots.
+**Save**, **Recall**, **Overwrite** and **Clear** send those commands with the
+shown slot as `:expected`. A REPL save or recall changes the strip on the next
+snapshot, and a Studio recall moves the knobs the REPL reads. Saving into a
+saved slot without `:overwrite? true` returns `:code :knob-preset-occupied` and
+Studio shows the reason. On Push, the top pad row of the knob-look overlay
+sends the same commands.
+
+**Tracked gaps.** Slots have numbers, not names. Physical Push 2 and Push 3
+evidence is pending in [issue #547](https://github.com/tolgraven/tolglow/issues/547).
+
 ## Reviewing a show feature
 
 - **Find it from either side.** Name the view, control label and public REPL entry point. Include the shared command, input units, identifiers and scope so an operator who knows one surface can recognize the other.

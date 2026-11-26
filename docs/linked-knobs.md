@@ -300,3 +300,67 @@ as for any other live parameter edit. Applying the draft replays its steps on
 the live show, which keeps the knob and the values it last wrote.
 `tolglow.knob-sweep-test/a-room-audition-never-commits-knob-or-destination-state`
 checks this.
+
+## Knob looks
+
+A knob look (#547) saves the current position of every knob in one of eight
+slots, so a performer can return to a whole look in one press. A slot stores
+knob positions only, never destination values: recall moves the knobs and each
+link resolves through its current range, curve, direction and steps, exactly
+as a turn does. The bank lives in `src/tolglow/knob_presets.clj` and is saved
+under the show's `:extensions`, so show saves and full backups keep it.
+
+| Command | Fields | Effect |
+| --- | --- | --- |
+| `:knob-preset/capture` | `:slot` 0–7, optional `:overwrite? true` | Store every knob's position. A saved slot is refused unless `:overwrite?` is set. |
+| `:knob-preset/recall` | `:slot` | Move every stored knob that still exists, then fan out its links. |
+| `:knob-preset/clear` | `:slot` | Empty the slot. |
+
+Each command accepts `:expected`, the slot contents the surface showed (`nil`
+for an empty slot). A slot changed elsewhere since is refused with
+`:stale-knob-preset` instead of being recalled or replaced. Push and Studio
+always send it.
+
+Recall commits every stored knob value and waveform-field link in one owner
+command, then sends the parameter and variable writes through the shared
+reducer in the same turn (the `knobs/set-value` path), so the next frame shows
+every destination together and ramps, open gestures and manual holds behave as
+for a knob turn. The receipt lists every link as `[knob-id link-id]`. Knobs
+created after the look was saved, and parameters no knob links to, are not
+written. A knob removed since is skipped and listed under `:missing`; when none
+of a look's knobs remain, recall is refused with `:knob-preset-unavailable`.
+
+The `:knob-presets` projection in the show snapshot gives eight slots. Each has
+`:state` `:empty`, `:stored` or `:selected` (the look last saved or recalled),
+`:matches?` (every stored knob still sits at its saved position) and `:knobs`
+with each stored position, the knob's current position and `:missing?` for a
+removed knob.
+
+```clojure
+(show/submit! runtime :command {:op :knob-preset/capture :slot 0})
+(show/submit! runtime :command {:op :knob/set :knob-id :look :value 0.9})
+(:links @(show/submit! runtime :command {:op :knob-preset/recall :slot 0}))
+(get-in (show/snapshot runtime) [:knob-presets :slots 0 :state]) ;; => :selected
+```
+
+**Studio.** Under **Perform → Live → Knobs**, **Knob looks** shows the eight
+slots with each stored knob position. An empty slot offers **Save**; a saved
+one **Recall**, **Overwrite** and **Clear**. The selected look is outlined, and
+outlined in blue once its knobs have moved. A refusal shows its reason.
+
+**Push.** With the variation overlay enabled (`:cue-variations? true` on Push 2,
+`:cue-variation-pads? true` on Push 3 with a captured `:variation/cycle`
+button), the cycle button opens knob looks after a selected cue's full states and
+parameter rows, or first when no cue is selected. The top pad row holds the
+eight slots: an empty pad saves the knobs into it, a saved pad recalls it, and
+Record (Push 2) or the captured `:variation/record` button (Push 3) held with a
+saved pad overwrites it. Cycle closes the overlay. Pads are dim when empty,
+green when saved, white when selected and blue when selected but moved; the
+display names each slot and its knob positions. As for cue variations, a press
+counts only once the pads (Push 2 LED acknowledgement) or the display frame
+(Push 3 presentation receipt) showing that slot have arrived. On Push 3 only the
+top-row pads in the captured layout are shown.
+
+`tolglow.knob-presets-test` covers capture, recall and refusals on captured
+ArtDmx, Studio's command route and `/api/state`, a virtual Push 2 and a captured
+Push 3 layout, command replay and save/restore.
