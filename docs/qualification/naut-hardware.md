@@ -121,6 +121,28 @@ input (counts per status byte and a sample).
   05:36:11 UTC (`x-touch-rest-…053611Z`, `x-touch-ext-rest-…053611Z`); both units
   answered the firmware query afterwards.
 
+### X-Touch target: the operator's custom remote script, not plain MCU
+
+Product direction (operator, 2026-11-26): X-Touch functionality should follow
+the operator's fork of the custom Live X-Touch remote script
+(`Behringer-X-Touch-for-ableton`, upstream cited in [X-Touch](../xtouch.md)),
+not the basic MCU feature set. These runs use MCU-mode wire messages only
+because that is the transport both the script and the hardware speak; they
+qualify the transport, not a feature set. What the run touched, mapped to the
+script's behaviours:
+
+| Script behaviour | Exercised here | How |
+| --- | --- | --- |
+| Coloured scribble strips (8 native colours, black only on purpose) | Wire only | `lcd`: all 8 indices on all strips, then one per strip (`F0 00 00 66 dd 72 …`) |
+| Colour mix mode (rapid colour cycling, flicker warning, 2 s bursts) | Rate only | `rate`: 5 s red/blue every 20 ms, 50 Hz achieved; flicker not yet judged |
+| Two-row 56-character display text | Wire only | `lcd`, `rate`: rows 0 and 1 (`… 12 …`) |
+| Encoder rings (pan/send modes) | Single mode only | `lcd`: positions 0–11 in single mode; boost-cut/wrap/spread not run |
+| Faders at 0 dB with calibrated zero point | No | Raw positions only; the script's dB mapping is not in the kit |
+| Clipping level meters, metronome blink, settings menu, chains-as-groups, single-send mode | No | Not in the kit |
+
+A separate lane is writing the feature-map issue. Nothing in this kit assumes
+plain MCU is the product target.
+
 ### Push 3 tethered display
 
 - **Operator-observed (2026-11-26, 06:16:17–06:17:14 CET):** during the
