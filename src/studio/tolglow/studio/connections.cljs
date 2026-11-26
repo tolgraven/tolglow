@@ -282,12 +282,15 @@
     {:db (-> db (update-in [:connections :pending] (fnil conj #{}) :live-runs)
              (update-in [:connections :errors] dissoc :live-runs))
      :fx [(req db :live-runs "/api/live-runs" nil :connections/live-runs-loaded)]}))
+
 (rf/reg-event-fx :connections/live-runs-loaded
   (fn [{:keys [db]} [_ request-token _ result]]
     (when (current? db request-token)
       {:db (-> db (update-in [:connections :pending] disj :live-runs)
                (assoc-in [:connections :live-runs] result))})))
+
 (defn- plural [n one many] (str n " " (if (= 1 n) one many)))
+
 (defn live-runs-text
   "One line summarizing the run record (the same projection as show/live-runs
   at the REPL)."
@@ -299,7 +302,9 @@
       (str (plural (count channels) "launched cue" "launched cues") " · " (plural takes "take" "takes")
            (when (pos? (or running 0)) (str " (" running " running)"))
            " · " (if mirror (str in-live " of " (count clips) " in Live") "not synced with Live")))))
+
 (defn- beat-text [b] (if (number? b) (.toFixed b 2) "—"))
+
 (defn take-text
   "One take: run number, start beat, held beats and where its clip is."
   [{:keys [run start-beat length-beats phase clip]}]
@@ -310,6 +315,7 @@
                "recording" "recording"
                "not-in-live" "not in Live yet"
                (some-> clip :status name))))
+
 (rf/reg-event-fx :connections/action-complete
   (fn [{:keys [db]} [_ request-token operation result]]
     (when (current? db request-token)
