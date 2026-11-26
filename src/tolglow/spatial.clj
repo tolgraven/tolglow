@@ -10,7 +10,9 @@
             [afterglow.spatial.field :as field]
             [afterglow.time :as time]
             [tolglow.autopilot.signal :as signal]
+            [tolglow.compiler :as compiler]
             [tolglow.compiler.capability :as capability]
+            [tolglow.effects.prefabs :as prefabs]
             [tolglow.rig.surfaces :as surfaces]
             [tolglow.spatial.actions :as actions]
             [tolglow.spatial.cues :as cues]
@@ -98,18 +100,54 @@
                 saved (when body {:bodies {id body}})]
             (:members (physics/advance (physics/rebase saved clock) config clock (get-in model [:rig :fixtures]) {}))))))))
 
+(defn- captured [model effect]
+  (if (contains? effect :imported-prefabs) effect (prefabs/capture (prefabs/catalog model) effect)))
+
+(defn- pinned-effect-errors
+  "A show from an older owner may keep a superseded effect revision that does
+  not compile (#703). A cue that pins it could launch it, and `persistence`
+  refuses such a show, so the pin is an error at the cue's :effect-version."
+  [model {:keys [effect-id effect-version]}]
+  (let [effect (get-in model [:registry :versions [:effects effect-id effect-version]])]
+    (when (and effect (not= effect-version (get-in model [:registry :effects effect-id :version])))
+      (when-let [errors (not-empty (compiler/definition-errors :effects (captured model effect)))]
+        [{:path [:effect-version] :effect-errors errors
+          :message (str "Pinned effect revision " effect-version " does not compile: " (:message (first errors)))}]))))
+
+(defn- publication-errors
+  "Tolglow's definition checks for a new :registry/publish or :cue/put, which
+  Afterglow's structural publish does not run: the definition must validate, an
+  effect must compile and a cue may not pin a revision that does not, so no
+  saved show can hold a definition `persistence` refuses (#703). Replays of a
+  recorded command keep their original receipt."
+  [model {:keys [op kind definition cue command-id]}]
+  (when (nil? (get-in model [:control :history command-id]))
+    (let [[kind definition] (case op :registry/publish [kind definition] :cue/put [:cues cue] nil)]
+      (when (map? definition)
+        (not-empty (or (not-empty (compiler/definition-errors
+                                   kind (cond->> definition (= :effects kind) (captured model))))
+                       (when (= :cues kind) (pinned-effect-errors model definition))))))))
+
 (defn apply-command
   "Resolve a cue's selected fixture scope on every Tolglow control surface,
   including subscriber callbacks, composition steps and simulated admissions.
   Every such launch also passes the synchronized aim path launch checks and
   stretches a musical arrival the current tempo makes too fast for the heads.
   Explicit targets that name a head lacking a written attribute are refused,
-  and heads the capability filter skips are reported (#688)."
+  and heads the capability filter skips are reported (#688).
+  A :registry/publish or :cue/put whose definition fails Tolglow validation or
+  compilation, or a cue pinning an effect revision that does not compile, is
+  rejected with code :invalid-definition and the errors' definition paths."
   ([model command] (apply-command model command nil))
   ([model command authority]
    (if-not (#{:cue/launch :effect/launch} (:op command))
-     (if authority (control/apply-command model command authority)
-         (control/apply-command model command))
+     (if-let [errors (publication-errors model command)]
+       (control/apply-domain-command
+        model command
+        (fn [_ _] (throw (ex-info (:message (first errors))
+                                  {:control/error :invalid-definition :details {:errors errors}}))))
+       (if authority (control/apply-command model command authority)
+           (control/apply-command model command)))
      (let [refusal (when-not (get-in model [:control :history (:command-id command)])
                      (aim-paths/launch-problem model command aim-paths/*committed-values*))
            prepared (if-let [[code message] refusal]
