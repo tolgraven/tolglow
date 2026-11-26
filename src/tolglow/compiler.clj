@@ -273,6 +273,21 @@
         block-plan (vary-meta blocks/step-info block-plan)
         (predictable-outputs? definition) keyframes/predictable)))))
 
+(defn definition-errors
+  "Path/message errors that keep a registry definition from being published or
+  saved, relative to the definition. Effects must also compile against their
+  own parameters, so an output still reading a parameter the revision removed
+  is reported at its expression path (#703). Empty when the definition is valid."
+  [kind definition]
+  (let [errors (registry/validate-definition kind definition)]
+    (cond
+      (seq errors) errors
+      (not= :effects kind) []
+      :else (try (compile-effect definition) []
+                 (catch clojure.lang.ExceptionInfo cause
+                   (or (not-empty (:errors (ex-data cause)))
+                       [{:path [] :message (ex-message cause)}]))))))
+
 (defn demo-definitions
   "Portable example effects for the studio, REPL, and deterministic tests."
   []

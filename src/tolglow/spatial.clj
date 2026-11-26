@@ -10,6 +10,8 @@
             [afterglow.spatial.field :as field]
             [afterglow.time :as time]
             [tolglow.autopilot.signal :as signal]
+            [tolglow.compiler :as compiler]
+            [tolglow.effects.prefabs :as prefabs]
             [tolglow.rig.surfaces :as surfaces]
             [tolglow.spatial.actions :as actions]
             [tolglow.spatial.cues :as cues]
@@ -97,16 +99,36 @@
                 saved (when body {:bodies {id body}})]
             (:members (physics/advance (physics/rebase saved clock) config clock (get-in model [:rig :fixtures]) {}))))))))
 
+(defn- publication-errors
+  "Tolglow's definition checks for a new :registry/publish, which Afterglow's
+  structural publish does not run: the definition must validate and an effect
+  must compile, so no saved show can hold a revision `persistence` refuses (#703).
+  Replays of a recorded command keep their original receipt."
+  [model {:keys [op kind definition command-id]}]
+  (when (and (= :registry/publish op) (map? definition)
+             (nil? (get-in model [:control :history command-id])))
+    (let [definition (if (and (= :effects kind) (not (contains? definition :imported-prefabs)))
+                       (prefabs/capture (prefabs/catalog model) definition)
+                       definition)]
+      (not-empty (compiler/definition-errors kind definition)))))
+
 (defn apply-command
   "Resolve a cue's selected fixture scope on every Tolglow control surface,
   including subscriber callbacks, composition steps and simulated admissions.
   Every such launch also passes the synchronized aim path launch checks and
-  stretches a musical arrival the current tempo makes too fast for the heads."
+  stretches a musical arrival the current tempo makes too fast for the heads.
+  A :registry/publish whose definition fails Tolglow validation or compilation
+  is rejected with code :invalid-definition and the errors' definition paths."
   ([model command] (apply-command model command nil))
   ([model command authority]
    (if-not (#{:cue/launch :effect/launch} (:op command))
-     (if authority (control/apply-command model command authority)
-         (control/apply-command model command))
+     (if-let [errors (publication-errors model command)]
+       (control/apply-domain-command
+        model command
+        (fn [_ _] (throw (ex-info (:message (first errors))
+                                  {:control/error :invalid-definition :details {:errors errors}}))))
+       (if authority (control/apply-command model command authority)
+           (control/apply-command model command)))
      (let [refusal (when-not (get-in model [:control :history (:command-id command)])
                      (aim-paths/launch-problem model command aim-paths/*committed-values*))
            prepared (if-let [[code message] refusal]

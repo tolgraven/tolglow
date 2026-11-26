@@ -678,3 +678,70 @@
                                  [(last wash) (first wash)]))]
       (is (thrown? clojure.lang.ExceptionInfo (files/thaw base document))
           "an out-of-order saved gradient is rejected on open"))))
+
+(def ^:private dangling-v1
+  "An effect whose dimmer reads parameter :p (#703)."
+  {:id :dangling :version 1 :name "Dangling"
+   :params {:p {:type :number :default 0.5 :bounds [0 1]}}
+   :outputs {:color {:op :const :value [1 0.5 0.2]} :dimmer {:op :param :key :p}}})
+
+(def ^:private dangling-v2
+  "A revision that drops :p while the dimmer still reads it."
+  (assoc dangling-v1 :version 2 :params {:q {:type :number :default 0.1 :bounds [0 1]}}))
+
+(def ^:private dangling-reference
+  {:path [:outputs 1 :value :key] :message "Expression references an unknown parameter"})
+
+(deftest owner-refuses-a-revision-that-drops-a-referenced-parameter
+  (let [runtime (show/create-runtime {:workers 1 :workspace-options nil})
+        model #(:model @(:state runtime))
+        request (fn [time type payload]
+                  (let [receipt (show/submit! runtime type payload)]
+                    (show/tick! runtime time)
+                    (deref receipt 1000 ::missing)))]
+    (try
+      (is (= :accepted (:status (request 0 :command {:op :registry/publish :kind :effects
+                                                     :definition dangling-v1}))))
+      (testing "a raw owner command (REPL, subscribers, compositions) is refused with the dangling path"
+        (let [ack (request 20 :command {:op :registry/publish :kind :effects :definition dangling-v2})]
+          (is (= :rejected (:status ack)) (pr-str ack))
+          (is (= :invalid-definition (:code ack)))
+          (is (= "Expression references an unknown parameter" (:message ack)))
+          (is (= [dangling-reference] (get-in ack [:details :errors])))))
+      (testing "the Studio editor and agent publish_effect route is refused the same way"
+        (let [ack (request 40 :definition {:kind :effects :definition dangling-v2})]
+          (is (= :rejected (:status ack)) (pr-str ack))
+          (is (= [dangling-reference] (get-in ack [:details :errors])))))
+      (is (= dangling-v1 (dissoc (get-in (model) [:registry :effects :dangling]) :imported-prefabs)))
+      (is (nil? (get-in (model) [:registry :versions [:effects :dangling 2]])))
+      (testing "the show still backs up and restores"
+        (let [restored (files/thaw (model) (files/freeze (model)))]
+          (is (= 1 (get-in restored [:registry :effects :dangling :version])))))
+      (finally (show/stop! runtime)))))
+
+(deftest a-show-already-holding-a-dangling-revision-names-it-and-recovers
+  ;; Older owners admitted the revision through Afterglow's publish alone. The
+  ;; control model below takes that same route to recreate such a show.
+  (let [base (:model (command (demo/model) :v1 {:op :registry/publish :kind :effects :definition dangling-v1}))
+        broken (:model (command base :v2 {:op :registry/publish :kind :effects :definition dangling-v2}))]
+    (testing "the backup names the broken definition and the dangling reference"
+      (let [error (try (files/freeze broken) nil (catch clojure.lang.ExceptionInfo e e))]
+        (is (some? error))
+        (is (= :invalid-show (:persistence/error (ex-data error))))
+        (is (= [(update dangling-reference :path (partial into [:registry :effects :dangling]))]
+               (:errors (ex-data error))))))
+    (testing "publishing a corrected revision makes the show back up again, history intact"
+      (let [fixed (assoc dangling-v1 :version 3)
+            repaired (:model (command broken :v3 {:op :registry/publish :kind :effects :definition fixed}))
+            document (files/freeze repaired)
+            restored (files/thaw base document)]
+        (is (= dangling-v2 (get-in document [:model :registry :versions [:effects :dangling 2]]))
+            "the superseded revision is kept verbatim")
+        (is (= fixed (get-in restored [:registry :effects :dangling])))
+        (is (= dangling-v2 (get-in restored [:registry :versions [:effects :dangling 2]])))
+        (testing "a cue pinned to the broken revision could launch it, so the backup names that revision"
+          (let [cue {:id :pinned :version 1 :effect-id :dangling :effect-version 2 :params {}}
+                pinned (:model (command repaired :pin {:op :cue/put :cue cue}))
+                error (try (files/freeze pinned) nil (catch clojure.lang.ExceptionInfo e e))]
+            (is (= [(update dangling-reference :path (partial into [:registry :versions [:effects :dangling 2]]))]
+                   (:errors (ex-data error))))))))))
