@@ -124,6 +124,8 @@
     (is (= (pr-str (array-map :a (range) :b [1 [2 [3]]]))
            (str/replace (pretty/edn (array-map :a (range) :b [1 [2 [3]]]) {:length 3 :level 2}) " :b" ", :b")))))
 
+(defrecord Holder [xs])
+
 (defn- guarded
   "A counter of realized lazy elements that throws past `limit`, so a lost
   bound fails the test instead of exhausting the heap."
@@ -154,6 +156,14 @@
           (is (<= (count text) max-chars))
           (is (every? #{\( \space \newline} text))))
       (is (<= @realized (* 64 1025)))))
+  (testing "a record holding an infinite seq is cut by the budget too"
+    (let [{:keys [text truncated?]} (pretty/edn-within [(->Holder (range))] {:max-chars 200})]
+      (is truncated?)
+      (is (= 200 (count text)))))
+  (testing "a stack overflow from user code is not passed off as truncation"
+    (let [runaway (fn runaway [n] (inc (runaway n)))]
+      (is (thrown? StackOverflowError
+                   (pretty/edn-within [(lazy-seq [(runaway 0)])] {:max-chars 100})))))
   (testing "counted collections print exactly as the unbounded layout"
     (doseq [[value max-chars] [[(set (range 1000)) 100]
                                [(conj (vec (range 1000)) {:a 1}) 100]

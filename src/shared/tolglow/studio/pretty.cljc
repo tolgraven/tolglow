@@ -110,6 +110,14 @@
   ;; may still realize, or nil without a budget.
   nil)
 
+(def ^:private ^:dynamic *deepest*
+  ;; Under a character budget, a volatile of the deepest layout level reached,
+  ;; so a stack overflow counts as truncation only when the layout itself was
+  ;; that deep, not when user code inside the value recursed.
+  nil)
+
+(def ^:private deep-layout 256)
+
 (defn- budget-reached! []
   (throw (ex-info "Pretty-print budget reached" {::budget true})))
 
@@ -275,7 +283,9 @@
   [x tail width depth]
   ;; Every nesting level prints at least one character, so a budget also
   ;; bounds the depth (and the stack) of the layout.
-  (when (and *max-chars* (> depth *max-chars*)) (budget-reached!))
+  (when *max-chars*
+    (when (> depth *max-chars*) (budget-reached!))
+    (when (> depth @*deepest*) (vreset! *deepest* depth)))
   (if-let [text (flat x depth (- width @*column* tail))]
     (emit! text)
     (if-let [kind (collection-kind x)]
@@ -293,8 +303,10 @@
   realizing far more than it shows stops earlier, with shorter text and
   `:truncated? true`. Counted collections print exactly as `edn` would."
   [value {:keys [width column tail length level max-chars] :or {width default-width column 0 tail 0}}]
-  ;; Values printed by pr-str (records, Java objects) inside get the same limits.
-  (binding [*print-length* length *print-level* level *print-meta* false
+  ;; Values printed by pr-str (records, Java objects) inside get the same
+  ;; limits, and under a budget a lazy seq inside one is cut to what could be
+  ;; shown; the visible text is the same.
+  (binding [*print-length* (or length (some-> max-chars inc)) *print-level* level *print-meta* false
             *limits* (when (or length level) {:length length :level level})
             *buffer* (new-buffer) *column* (volatile! column) *newlines* (volatile! 0)
             *max-chars* max-chars
@@ -302,7 +314,8 @@
             ;; lazy sequence is never realized past that, and the whole call
             ;; realizes a bounded multiple of it however deep the value nests.
             *lazy-length* (when max-chars (inc max-chars))
-            *lazy-allowance* (when max-chars (volatile! (* 64 (inc max-chars))))]
+            *lazy-allowance* (when max-chars (volatile! (* 64 (inc max-chars))))
+            *deepest* (volatile! 0)]
     (try
       (layout! (shown value 0) tail width 0)
       {:text (str *buffer*) :truncated? false}
@@ -311,8 +324,10 @@
         ;; like one that reached the character budget.
         (if (and max-chars
                  (or (::budget (ex-data error))
-                     #?(:clj (instance? StackOverflowError error)
-                        :cljs (instance? js/RangeError error))))
+                     (and (> @*deepest* deep-layout)
+                          #?(:clj (instance? StackOverflowError error)
+                             :cljs (boolean (re-find #"call stack|too much recursion"
+                                                     (str (.-message error))))))))
           (let [text (str *buffer*)]
             {:text (subs text 0 (min max-chars (count text))) :truncated? true})
           (throw error))))))
