@@ -26,11 +26,6 @@
 (defn frame-url [feed width token]
   (str "/api/video/frame?source=" (js/encodeURIComponent (str feed)) "&width=" width "&v=" token))
 
-(defn edited-definition
-  "The next version of effect with GLSL source replaced."
-  [effect glsl]
-  (-> effect (dissoc :categories) (assoc-in [:shader :glsl] glsl) (update :version (fnil inc 0))))
-
 (defn- ui [db] (:shader-cues-ui db {}))
 
 (rf/reg-sub ::ui (fn [db _] (ui db)))
@@ -50,7 +45,7 @@
     (let [token (str (random-uuid))]
       {:db (assoc-in db [:shader-cues-ui :editor (:id effect) :audition] {:busy? true :token token})
        :studio/http {:path "/api/video/shader/audition" :typed? true :timeout-ms 15000
-                     :body {:shader (assoc (:shader effect) :glsl glsl) :params (:params effect {})}
+                     :body {:effect-id (:id effect) :glsl glsl}
                      :on-success [::auditioned (:id effect) token]
                      :on-failure [::auditioned (:id effect) token]}})))
 
@@ -64,15 +59,15 @@
 (rf/reg-event-fx ::save
   (fn [{:keys [db]} [_ effect glsl]]
     {:db (assoc-in db [:shader-cues-ui :editor (:id effect) :saving?] true)
-     :studio/http {:path "/api/definition" :typed? true
-                   :body {:kind :effects :definition (edited-definition effect glsl) :expected-version (:version effect)}
+     :studio/http {:path "/api/video/shader/save" :typed? true
+                   :body {:effect-id (:id effect) :glsl glsl :expected-version (:version effect)}
                    :on-success [::saved (:id effect)]
                    :on-failure [::save-failed (:id effect)]}}))
 
 (rf/reg-event-fx ::saved
   (fn [{:keys [db]} [_ id _]]
     {:db (update-in db [:shader-cues-ui :editor id] dissoc :saving? :error)
-     :fx [(events/notice "Shader saved. Running instances reload it; a version that does not compile keeps the last working one.")]}))
+     :fx [(events/notice "Shader saved. Instances whose cue reloads pick it up; a version that does not compile keeps the last working one.")]}))
 
 (rf/reg-event-db ::save-failed
   (fn [db [_ id error]] (update-in db [:shader-cues-ui :editor id] #(-> % (dissoc :saving?) (assoc :error (str error))))))
@@ -93,8 +88,10 @@
     (if (events/cue db (:id definition))
       {:fx [(events/notice "Shader example updated.")]}
       {:fx [[:studio/http {:path "/api/definition" :typed? true
+                           ;; A saved GLSL edit reloads running instances of this cue.
                            :body {:kind :cues :definition {:id (:id definition) :effect-id (:id definition)
-                                                           :name (:name definition) :priority 10}}
+                                                           :name (:name definition) :priority 10
+                                                           :reload-policy :preserve-state}}
                            :on-success [::ui [:added] (:id definition)]}]
             (events/notice "Shader example and cue added.")]})))
 
@@ -153,7 +150,8 @@
       [:span.small.muted (str (wire-id feed) " · v" (:version effect) " · " (name (get-in effect [:shader :kind] :2d)))]]
      [:button.shader-preview {:type "button" :aria-label (str "Enlarge " (wire-id feed))
                               :on-click #(rf/dispatch [::ui [:enlarged] feed])}
-      [live-image feed 320 sequence "shader-frame"]]
+      ;; A strip target (200 × 1) is stretched so its pixels stay visible.
+      [live-image feed 320 sequence (if (some #(< (:height % 8) 8) rows) "shader-frame thin" "shader-frame")]]
      [:p.small.muted (or (stats-line rows) (if (seq running) "Waiting for the first frame…" "Stopped"))]
      (when error
        [:div.shader-log {:role "alert"}

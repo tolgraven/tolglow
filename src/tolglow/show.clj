@@ -3696,9 +3696,14 @@
   :frame        the latched frame record of {:source id}, or nil
   :shaders      shader producer status (#673): per instance cadence, frames,
                 drops, timings and compile errors
-  :audition     compile {:shader {:glsl … :uniforms …}} on the GPU worker
-                without publishing; returns {:compiled? …} with the log.
-                Blocks the caller, never the lighting frame"
+  :audition     compile {:effect-id id :glsl text} (or a whole {:shader …}
+                with {:params …}) on the GPU worker without publishing;
+                returns {:compiled? …} with the driver log. Blocks the
+                caller, never the lighting frame
+  :save-glsl    publish {:effect-id :glsl :expected-version} as the effect's
+                next version through the definition command; returns its
+                receipt. Running instances reload it, and a version that
+                does not compile keeps rendering the last working one"
   [runtime operation payload]
   (case operation
     :status (let [state @(:state runtime)]
@@ -3706,13 +3711,30 @@
                                      (:video-preview-plans runtime) (shader-producer/status (:shader-video runtime))))
     :frame (get-in @(:state runtime) [:video-latch :frames (:source payload)])
     :shaders (shader-producer/status (:shader-video runtime))
-    :audition (let [shader (:shader payload)
-                    ;; The cue's own parameters type the uniform expressions.
+    :audition (let [{:keys [effect-id shader]} payload
+                    ;; Studio's projection carries ids as text.
+                    effect-id (cond-> effect-id (string? effect-id) keyword)
+                    effect (when effect-id (get-in @(:state runtime) [:model :registry :effects effect-id]))
+                    shader (or shader (:shader effect))
+                    ;; The cue's own parameters type the uniform expressions:
+                    ;; the registered effect's when it names one.
                     errors (compiler/definition-errors :effects {:id :shader/audition :version 1
-                                                                 :params (:params payload {}) :shader shader})]
+                                                                 :params (if effect (:params effect) (:params payload {}))
+                                                                 :shader (cond-> shader (:glsl payload) (assoc :glsl (:glsl payload)))})]
                 (if (seq errors)
                   {:compiled? false :message (:message (first errors)) :errors errors}
-                  (shader-producer/audition! (:shader-video runtime) (video-shader/afterglow-shader shader))))
+                  (shader-producer/audition! (:shader-video runtime)
+                                             (video-shader/afterglow-shader (cond-> shader (:glsl payload) (assoc :glsl (:glsl payload)))))))
+    :save-glsl (let [{:keys [effect-id glsl expected-version]} payload
+                     effect-id (cond-> effect-id (string? effect-id) keyword)
+                     effect (get-in @(:state runtime) [:model :registry :effects effect-id])]
+                 (if-not (video-shader/shader? effect)
+                   (doto (promise) (deliver {:status :rejected :message "No shader effect with that id"}))
+                   ;; The next version through the ordinary definition command.
+                   (submit! runtime :definition (cond-> {:kind :effects
+                                                         :definition (-> effect (assoc-in [:shader :glsl] glsl) (update :version inc))}
+                                                  expected-version (assoc :expected-version expected-version)
+                                                  (:source payload) (assoc :source (:source payload))))))
     :edit (let [receipt (submit! runtime :video-mapping (dissoc payload :runtime-id :expected-epoch))]
             receipt)
     :syphon (video-hub/list-syphon (:video runtime))

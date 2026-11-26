@@ -362,7 +362,7 @@
                              :query-string (str "source=:shader/index-strip&wait=50&after=" %)})
             frame (next! -1)
             sequence (parse-long (get-in frame [:headers "X-Frame-Sequence"]))
-            bytes (.readAllBytes ^java.io.InputStream (:body frame))]
+            bytes ^bytes (:body frame)]
         (is (= 200 (:status frame)))
         (is (= ["200" "1"] (mapv #(get-in frame [:headers %]) ["X-Frame-Width" "X-Frame-Height"])))
         (is (= 800 (alength bytes)))
@@ -373,7 +373,7 @@
         (testing "a new committed value arrives as the next frame"
           (command! runtime {:op :param/set :instance-id id :param :level :value 1.0} (+ t 25))
           (tick-until runtime (+ t 50) #(= 255 (second (source/rgb-at (get-in @(:state runtime) [:video-latch :frames :shader/index-strip]) 0 0))))
-          (let [frame (next! sequence) bytes (.readAllBytes ^java.io.InputStream (:body frame))]
+          (let [frame (next! sequence) bytes ^bytes (:body frame)]
             (is (= 200 (:status frame)))
             (is (= 255 (bit-and 0xff (aget bytes 1)))))))
       (is (= 204 (:status (handler {:request-method :get :uri "/api/video/next" :headers {"host" "localhost"}
@@ -388,7 +388,22 @@
           (let [[_ body] (audition (assoc-in (:shader strip-effect) [:uniforms :u_level :value :key] :gone))]
             (is (= [:shader :uniforms :u_level :value :key] (get-in body [:errors 0 :path]))
                 "Uniform expressions are checked against the cue's parameters first"))
-          (is (= revision (get-in @(:state runtime) [:model :registry :revision])))))
+          (is (= revision (get-in @(:state runtime) [:model :registry :revision])))
+          (testing "Studio auditions a registered cue's edit by id, typed by its own parameters"
+            (is (= {:compiled? true} (show/video-action! runtime :audition {:effect-id "index-strip" :glsl gradient-glsl}))))))
+      (testing "saving GLSL publishes the next version through the definition command"
+        (let [save! #(let [request (future (handler {:request-method :post :uri "/api/video/shader/save" :headers transit-headers
+                                                     :body (ByteArrayInputStream. (.getBytes (transit/encode %) "UTF-8"))}))
+                           ;; The route waits for the commit; the show commits on its next tick.
+                           response (loop [t 100000]
+                                      (if (realized? request) @request
+                                          (do (show/tick! runtime t) (Thread/sleep 2) (recur (+ t 25)))))]
+                       [(:status response) (transit/decode (:body response))])
+              [status body] (save! {:effect-id :index-strip :glsl gradient-glsl :expected-version 1})]
+          (is (= [200 :accepted] [status (:status body)]) (pr-str body))
+          (is (= [2 gradient-glsl] ((juxt :version (comp :glsl :shader)) (get-in @(:state runtime) [:model :registry :effects :index-strip]))))
+          (is (= 422 (first (save! {:effect-id :index-strip :glsl index-glsl :expected-version 1}))) "A stale version is refused")
+          (is (= 422 (first (save! {:effect-id :solid-red :glsl index-glsl}))) "Only a shader effect takes GLSL")))
       (testing "the projector page is a static Studio asset"
         (let [page (handler {:request-method :get :uri "/studio/video-output.html" :headers {"host" "localhost"}})]
           (is (= 200 (:status page)))
@@ -413,4 +428,33 @@
         (show/tick! runtime 0)
         (accepted! reply)
         (is (= :shader/agent-glow (shader/feed-id (get-in @(:state runtime) [:model :registry :effects :agent-glow])))))
+      (finally (show/stop! runtime)))))
+
+(deftest a-saved-version-reloads-the-running-cue-and-a-broken-one-keeps-the-last-working
+  (let [r (test-renderer programs)
+        runtime (start-show r)
+        save! (fn [glsl t]
+                (let [reply (show/video-action! runtime :save-glsl {:effect-id :index-strip :glsl glsl})]
+                  (show/tick! runtime t)
+                  (accepted! reply)))
+        row #(first (:instances (producer/status (:shader-video runtime))))]
+    (try
+      (let [effect (show/submit! runtime :definition {:kind :effects :definition strip-effect})
+            cue (show/submit! runtime :definition {:kind :cues :definition {:id :index-strip :effect-id :index-strip :priority 10
+                                                                            :reload-policy :preserve-state}})]
+        (show/tick! runtime 0)
+        (run! accepted! [effect cue]))
+      (let [id (launch! runtime :index-strip 25)
+            t (tick-until runtime 50 #(get-in @(:state runtime) [:video-latch :instance-frames id]))]
+        (save! "void main() { fragColor = vec4(oops); }" (+ t 25))
+        (let [t (tick-until runtime (+ t 50) #(get-in (row) [:error :log]))]
+          (is (:last-working? (row)))
+          (is (= 2 (get-in @(:state runtime) [:model :instances id :effect-version])) "The instance runs version 2")
+          (let [rendered (:rendered (row))]
+            (tick-until runtime (+ t 25) #(> (:rendered (row)) (+ rendered 3)))
+            (is (= index-glsl (first (last (:renders (log-of r))))) "Frames keep coming from the last working program"))
+          (save! gradient-glsl (+ t 1000))
+          (tick-until runtime (+ t 1025) #(and (nil? (:error (row))) (= gradient-glsl (first (last (:renders (log-of r)))))))
+          (is (= 3 (get-in @(:state runtime) [:model :instances id :effect-version])))
+          (is (false? (:last-working? (row))))))
       (finally (show/stop! runtime)))))

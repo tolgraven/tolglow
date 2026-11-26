@@ -66,7 +66,7 @@
     (try
       (doseq [d (workload n fps)]
         (reply! :definition {:kind :effects :definition d})
-        (reply! :definition {:kind :cues :definition {:id (:id d) :effect-id (:id d) :priority 10}})
+        (reply! :definition {:kind :cues :definition {:id (:id d) :effect-id (:id d) :priority 10 :reload-policy :preserve-state}})
         (reply! {:op :cue/launch :cue-id (:id d)}))
       (Thread/sleep 2000)
       (reset! sends [])

@@ -406,8 +406,11 @@
                                :headers {"Content-Type" "application/octet-stream" "Cache-Control" "no-store"
                                          "X-Frame-Width" (str (:width frame)) "X-Frame-Height" (str (:height frame))
                                          "X-Frame-Sequence" (str (:sequence frame))
+                                         "Content-Length" (str (alength ^bytes (:pixels frame)))
                                          "Access-Control-Expose-Headers" "X-Frame-Width, X-Frame-Height, X-Frame-Sequence"}
-                               :body (java.io.ByteArrayInputStream. ^bytes (:pixels frame))}
+                               ;; One write of the frame's immutable array; a stream body
+                               ;; is copied in small chunks (about 35 ms for 640 × 360).
+                               :body (:pixels frame)}
                               {:status 204 :headers {"Cache-Control" "no-store"} :body ""}))))
     "/api/video/frame" (available video! "Video mapping unavailable"
                          (fn [request]
@@ -464,6 +467,10 @@
    (post-actions "/api/repl/" repl! ok {"session" :session "scratch" :scratch "interrupt" :interrupt})
    (post-actions "/api/waveforms/" waveform! ok {"preview" :preview})
    (post-actions "/api/video/shader/" video! ok {"audition" :audition} "Video mapping unavailable")
+   {"/api/video/shader/save"
+    (available video! "Video mapping unavailable"
+               #(let [receipt (video! :save-glsl (:json-params %))]
+                  (acknowledgement (deref receipt 5000 {:status :rejected :message "The show did not acknowledge the change"}))))}
    (post-actions "/api/fixtures/" fixture! acknowledgement
                  {"search" :search "refresh" :refresh "fetch" :fetch "import" :import "publish" :publish "patch" :patch})
    (post-actions "/api/rdm/" rdm! acknowledgement
