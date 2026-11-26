@@ -79,3 +79,9 @@
   (is (not= (random/derive-seed 42 :cue :level) (random/derive-seed 42 :cue :hue)))
   (is (= [1013904223 :b] (random/choose-weighted 0 [:a :b :c] {:a 0 :b 1 :c 0})))
   (is (thrown? clojure.lang.ExceptionInfo (random/choose-weighted 0 [:a] {:a 0}))))
+
+(deftest derived-seeds-ignore-the-callers-printer-settings
+  (let [plain [(random/derive-seed 1 0 :cue :a) (random/derive-seed 1 0 :cue :b)]]
+    (binding [*print-length* 3 *print-level* 1]
+      (is (= plain [(random/derive-seed 1 0 :cue :a) (random/derive-seed 1 0 :cue :b)])))
+    (is (apply not= plain))))
