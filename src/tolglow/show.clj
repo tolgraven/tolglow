@@ -85,6 +85,7 @@
             [tolglow.integrations.reference-position :as reference-position]
             [tolglow.integrations.section-patterns :as section-patterns]
             [tolglow.persistence :as persistence]
+            [tolglow.personalities :as personalities]
             [tolglow.operator-history :as operator-history]
             [tolglow.connections :as connections]
             [tolglow.repl.sessions :as repl-manager]
@@ -153,6 +154,16 @@
       (let [ids (lighting-scenes/eligible-ids fixtures)]
         (reset! cache {:fixtures fixtures :ids ids}) ids))))
 
+(defn- personality-views
+  "The library and device projections, redrawn only when the saved state changes."
+  [runtime model]
+  (let [cache (:personality-views runtime)
+        saved (personalities/state model)
+        previous @cache]
+    (if (and previous (identical? saved (:state previous))) previous
+      (reset! cache {:state saved :projection (personalities/projection model)
+                     :push (personalities/push-view model)}))))
+
 (defn- recent-page-snapshot [model]
   (let [{:keys [rows] :as page} (cue-pages/page model cue-pages/recent-page-id)]
     ;; The native pads count from the bottom. Studio counts from the top.
@@ -189,6 +200,7 @@
             :autopilot (get-in model [:variables :lighting/autopilot] {:enabled? false})
             :audio/energy (get-in model [:variables :audio/energy])
             :lighting-scenes (lighting-scenes/snapshot model (scene-eligible-ids runtime fixtures))
+            :personalities (:projection (personality-views runtime model))
             :receiver-surfaces (:receivers optics)
             :surface-aim (get-in model [:variables :surface-aim] {})
             :event-subscribers (select-keys (:event-subscribers model {:subscribers []}) [:subscribers :last-error :dropped])
@@ -374,6 +386,7 @@
          section-player (when (contains? reference :mpv)
                           (mpv-session/create (:mpv reference) (:profile reference) initial-position))
          _ (lighting-scenes/validate-state! model)
+         _ (personalities/validate-state! model)
          _ (lighting/validate! (:settings model))
          _ (group-channels/validate-state! model)
          _ (when (contains? (:settings model) :section-patterns)
@@ -461,6 +474,7 @@
       :leases (atom {})
       :audio-returns (duplex/create) :open-audio-returns! (get options :open-audio-returns! duplex/open-java!)
       :variable-plan (volatile! nil) :scene-eligible (atom {}) :scene-plans (volatile! {})
+      :personality-views (atom nil)
       :scene-draft (atom nil) :audition-options (:audition options)
       :audition-worker (delay (java.util.concurrent.Executors/newSingleThreadExecutor
                                 (reify java.util.concurrent.ThreadFactory
@@ -936,6 +950,7 @@
     :spatial-cue (spatial-cues/spawn model payload time-ms command)
     :autopilot-authored (autopilot/accept-authored model payload time-ms command)
     :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
+    :personality (personalities/apply-operation model payload)
     :event-subscriber (let [inline-registration (::inline-registration payload)]
                         (when (and inline-registration (nil? (get-in runtime [:event-callbacks :inline-handlers])))
                           (throw (ex-info "Restart the runtime to enable process-local callback registrations" {})))
@@ -2109,7 +2124,7 @@
   result installs only while the same draft is staged. Pending clock rebases
   are applied first, in the order the live show took them. `live` is the
   committed model of the frame that queued this one: its transport, master,
-  blackout and master ramp reach the private timeline."
+  blackout, master ramp and track feel reach the private timeline."
   [runtime draft live time-ms]
   (let [state (:scene-draft runtime)
         same? #(identical? draft (:draft %))]
@@ -2118,6 +2133,9 @@
         (let [;; Shift the private musical anchors by each offset the live model took.
               model (-> (reduce show-clock/rebase (or next-model (:model frame)) rebases)
                         (merge (select-keys live [:transport :master :blackout?]))
+                        ;; A draft cannot stage a feel and applying replays it on the live
+                        ;; model, so the Room shows the live track feel.
+                        (personalities/adopt-state live)
                         (composition/advance time-ms))
               rendered (render-audition-frame (merge runtime caches) frame model time-ms
                                               (audition-ramps live time-ms))]
@@ -2667,6 +2685,11 @@
       (require-show-identity! identity (:model @(:state runtime))))
     result))
 
+(defn- agent-snapshot
+  "The Studio projection without the pictures a text agent cannot use."
+  [runtime state]
+  (update (project-snapshot runtime state) :personalities personalities/without-icons))
+
 (defn dispatch-tool!
   "Agent and REPL tool boundary; all mutation uses the same owner queue as UI."
   [runtime tool arguments metadata]
@@ -2703,7 +2726,7 @@
           "configure_auto" [:auto (merge (:configuration arguments) (select-keys envelope [:expected-epoch]))]
           (throw (ex-info "Unknown studio tool" {:tool tool})))]
     (case type
-      :inspect (agent-inspection runtime state #(project-snapshot runtime state))
+      :inspect (agent-inspection runtime state #(agent-snapshot runtime state))
       :inspect-schedule (agent-inspection runtime state #(subscribers/compact-view model))
       :inspect-lighting (agent-inspection runtime state
                           (fn [] (venue-tools/inspect state payload #(measure-sources runtime state %))))
@@ -2721,7 +2744,7 @@
                         {:snapshot! (fn []
                                       (let [state @(:state runtime)]
                                         (require-show-identity! identity (:model state))
-                                        (agent-inspection runtime state #(project-snapshot runtime state))))
+                                        (agent-inspection runtime state #(agent-snapshot runtime state))))
                          :dispatch! #(dispatch-tool! runtime %1 %2 (merge %3 admission))
                          :emit! emit! :done! done!})))
 
@@ -2786,7 +2809,8 @@
                              (#{:simulator :rig} mode) (push-scene/project-display scene-cache snapshot
                                                       (assoc view :runtime-id (:id runtime)))
                              :else view)]
-                (page-overview/project-display pages model visual))))))))
+                (cond-> (page-overview/project-display pages model visual)
+                  (personalities/active model) (assoc :personality (:push (personality-views runtime model)))))))))))
 
 (defn- push-native-display [runtime]
   (let [project-parameters (push-parameter-projector)]

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96" role="img" aria-label="Squares and rectangles">
+<title>Squares and rectangles</title>
+<defs><linearGradient id="p65c8d6-1" gradientUnits="userSpaceOnUse" x1="52.8" y1="70.7" x2="82.8" y2="70.7"><stop offset="0%" stop-color="#ffd11a"/><stop offset="50%" stop-color="#ffd11a"/><stop offset="50%" stop-color="#1a4de6"/><stop offset="100%" stop-color="#1a4de6"/></linearGradient></defs>
+<rect x="2" y="2" width="92" height="92" rx="20" fill="#101418"/>
+<rect x="22.9" y="9.5" width="46.6" height="46.6" fill="#ff3326"/>
+<rect x="52.8" y="61.4" width="30" height="18.6" fill="url(#p65c8d6-1)"/>
+<rect x="15.2" y="69.3" width="28.8" height="6.9" fill="#f5f5eb"/>
+</svg>
