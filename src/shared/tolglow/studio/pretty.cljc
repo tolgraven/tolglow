@@ -100,6 +100,9 @@
   (let [level (:level *limits*)]
     (if (and level (>= depth level) (collection-kind x)) too-deep x)))
 
+(defn- budget-reached! []
+  (throw (ex-info "Pretty-print budget reached" {::budget true})))
+
 (def ^:private ^:dynamic *lazy-length*
   ;; Under a character budget, the most elements of a lazy (uncounted)
   ;; sequence that could be shown, or nil without a budget.
@@ -110,6 +113,51 @@
   ;; may still realize, or nil without a budget.
   nil)
 
+(def ^:private ^:dynamic *charged*
+  ;; Under a character budget, a mutable identity map from each lazy sequence
+  ;; walked so far to how many of its elements the allowance has paid for
+  ;; (whole chunks for a chunked sequence), so a walk over elements already
+  ;; realized costs nothing. Owned by one call; holds no more sequences than
+  ;; the allowance has paid elements for.
+  nil)
+
+(defn- new-charges [] #?(:clj (java.util.IdentityHashMap.) :cljs (js/Map.)))
+
+(defn- paid
+  "Elements of lazy sequence `coll` the allowance has already paid for."
+  [coll]
+  (or #?(:clj (.get ^java.util.IdentityHashMap *charged* coll) :cljs (.get ^js *charged* coll)) 0))
+
+(defn- realized-count
+  "Elements realized to take the first `n` of `items`: a chunked sequence (such
+  as a map over a range) realizes whole chunks."
+  [items n]
+  (loop [s items counted 0]
+    (if (and s (< counted n) (chunked-seq? s))
+      (let [counted (+ counted (count (chunk-first s)))]
+        (recur (when (< counted n) (seq (chunk-rest s))) counted))
+      (max counted n))))
+
+(defn- realize!
+  "The first `want` elements of lazy sequence `coll` (its seq is `items`),
+  charging only those this call has not realized before. Never takes more
+  than the allowance can pay for (a chunked sequence may realize the rest of
+  its last chunk): when the rest of the allowance cannot tell whether more
+  elements follow, or a chunk overdraws it, the budget is reached."
+  [coll items want]
+  (let [before (paid coll)
+        room (+ before @*lazy-allowance*)
+        head (doall (take (min want room) items))
+        n (count head)
+        realized (realized-count items n)]
+    (when (> realized before)
+      #?(:clj (.put ^java.util.IdentityHashMap *charged* coll realized) :cljs (.set ^js *charged* coll realized))
+      (when (neg? (vswap! *lazy-allowance* - (- realized before)))
+        (budget-reached!)))
+    (when (and (< n want) (>= n room))
+      (budget-reached!))
+    head))
+
 (def ^:private ^:dynamic *deepest*
   ;; Under a character budget, a volatile of the deepest layout level reached,
   ;; so a stack overflow counts as truncation only when the layout itself was
@@ -118,47 +166,47 @@
 
 (def ^:private deep-layout 256)
 
-(defn- budget-reached! []
-  (throw (ex-info "Pretty-print budget reached" {::budget true})))
-
 (defn- limited
-  "`items` cut to the length limit, with the ellipsis after the last shown
-  item. A lazy sequence under a character budget is also cut to what the
-  budget could show, and its realized elements count against the call's
-  allowance, so an infinite or deeply nested lazy value stops early. Counted
-  collections keep their exact elision, so their text does not change."
-  [items lazy?]
-  (let [n (:length *limits*)
-        n (if (and lazy? *lazy-length*) (if n (min n *lazy-length*) *lazy-length*) n)]
+  "`items` of collection `x` cut to the length limit, with the ellipsis after
+  the last shown item. A lazy sequence under a character budget is also cut to
+  what the budget could show, or to `cap` items when given, and the elements
+  it realizes for the first time count against the call's allowance, so an
+  infinite or deeply nested lazy value stops early. Counted collections keep
+  their exact elision, so their text does not change."
+  [x items lazy? cap]
+  (let [budgeted? (and lazy? *lazy-length*)
+        n (:length *limits*)
+        n (if budgeted? (min (or n *lazy-length*) *lazy-length* (or cap *lazy-length*)) n)]
     (if n
-      (let [head (doall (take (inc n) items))]
-        (when (and lazy? *lazy-allowance*
-                   (neg? (vswap! *lazy-allowance* - (count head))))
-          (budget-reached!))
+      (let [head (if budgeted? (realize! x items (inc n)) (doall (take (inc n) items)))]
         (if (> (count head) n) (concat (take n head) [ellipsis]) head))
       items)))
 
 (defn- entries
   "What a collection at `depth` prints, in order: [key value] pairs for a map,
   elements otherwise, each already elided for its own depth, plus the
-  ellipsis past the length limit."
-  [kind x depth]
-  (let [child (inc depth)]
-    (map (fn [item]
-           (cond
-             (identical? item ellipsis) item
-             (= kind :map) [(shown (key item) child) (shown (val item) child)]
-             :else (shown item child)))
-         (limited (case kind
-                    :map (map-entries x)
-                    :set (sort-shown identity x (:length *limits*))
-                    (seq x))
-                  (and (= kind :list) (not (counted? x)))))))
+  ellipsis past the length limit. `cap`, when given, is the most items of a
+  lazy sequence the caller could use."
+  ([kind x depth] (entries kind x depth nil))
+  ([kind x depth cap]
+   (let [child (inc depth)]
+     (map (fn [item]
+            (cond
+              (identical? item ellipsis) item
+              (= kind :map) [(shown (key item) child) (shown (val item) child)]
+              :else (shown item child)))
+          (limited x
+                   (case kind
+                     :map (map-entries x)
+                     :set (sort-shown identity x (:length *limits*))
+                     (seq x))
+                   (and (= kind :list) (not (counted? x)))
+                   cap)))))
 
 (defn- items
   "Entries with each map pair spread into its key and value."
-  [kind x depth]
-  (cond->> (entries kind x depth)
+  [kind x depth cap]
+  (cond->> (entries kind x depth cap)
     (= kind :map) (mapcat #(if (identical? % ellipsis) [%] %))))
 
 (defn- flat
@@ -166,17 +214,22 @@
   characters."
   [x depth budget]
   (if-let [kind (collection-kind x)]
-    (let [[open close] (delimiters kind)]
-      (loop [remaining (items kind x depth)
-             parts [open]
-             used (+ (count open) (count close))
-             first? true]
-        (cond
-          (> used budget) nil
-          (empty? remaining) (apply str (conj parts close))
-          :else (when-let [text (flat (first remaining) (inc depth) (- budget used (if first? 0 1)))]
-                  (recur (rest remaining) (cond-> parts (not first?) (conj " ") true (conj text))
-                         (+ used (count text) (if first? 0 1)) false)))))
+    (let [[open close] (delimiters kind)
+          used (+ (count open) (count close))]
+      (when (<= used budget)
+        ;; Every item takes a character and a space, so no more than about half
+        ;; the budget in items fits on the line; a lazy sequence is not realized
+        ;; past that here.
+        (loop [remaining (items kind x depth (+ 2 (quot budget 2)))
+               parts [open]
+               used used
+               first? true]
+          (cond
+            (> used budget) nil
+            (empty? remaining) (apply str (conj parts close))
+            :else (when-let [text (flat (first remaining) (inc depth) (- budget used (if first? 0 1)))]
+                    (recur (rest remaining) (cond-> parts (not first?) (conj " ") true (conj text))
+                           (+ used (count text) (if first? 0 1)) false))))))
     (let [text (scalar-text x)]
       (when (<= (count text) budget) text))))
 
@@ -315,6 +368,7 @@
             ;; realizes a bounded multiple of it however deep the value nests.
             *lazy-length* (when max-chars (inc max-chars))
             *lazy-allowance* (when max-chars (volatile! (* 64 (inc max-chars))))
+            *charged* (when max-chars (new-charges))
             *deepest* (volatile! 0)]
     (try
       (layout! (shown value 0) tail width 0)

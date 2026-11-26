@@ -156,6 +156,17 @@
           (is (<= (count text) max-chars))
           (is (every? #{\( \space \newline} text))))
       (is (<= @realized (* 64 1025)))))
+  (testing "a deep but finite lazy value prints the whole budget (#760)"
+    ;; Elements already realized are not charged again by each ancestor's
+    ;; one-line probe, so depth no longer eats into the allowance.
+    (doseq [depth [1 8 12 16]]
+      (let [{:keys [realized tick!]} (guarded (* 64 8193))
+            nest (fn nest [d] (if (zero? d) 0 (map (fn [_] (tick!) (nest (dec d))) (range 20000))))
+            {:keys [text truncated?]} (pretty/edn-within (nest depth) {:max-chars 8192})]
+        (is truncated? (str "depth " depth))
+        (is (= 8192 (count text)) (str "depth " depth))
+        (is (= (str (apply str (repeat depth "(")) "0 0") (subs text 0 (+ depth 3))))
+        (is (<= @realized (* 64 8193)) (str "depth " depth " realized " @realized)))))
   (testing "a record holding an infinite seq is cut by the budget too"
     (let [{:keys [text truncated?]} (pretty/edn-within [(->Holder (range))] {:max-chars 200})]
       (is truncated?)
