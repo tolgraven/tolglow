@@ -334,6 +334,9 @@
 (defn- storage []
   (try (.-localStorage js/window) (catch :default _ nil)))
 
+(defn- stored-text []
+  (try (some-> (storage) (.getItem storage-key)) (catch :default _ nil)))
+
 (defn media-class []
   (if (fn? (aget js/window "matchMedia"))
     (size-class (.-matches (js/matchMedia (:phone media-queries)))
@@ -344,7 +347,7 @@
   (fn [cofx _]
     (assoc cofx :panel-layout/environment
            {:class (media-class)
-            :saved (if-let [text (some-> (storage) (.getItem storage-key))] (decode text) {})})))
+            :saved (if-let [text (stored-text)] (decode text) {})})))
 
 (rf/reg-fx :panel-layout/store
   (fn [saved]
@@ -382,6 +385,16 @@
     (r/after-render
      #(some-> (.querySelector js/document (str "#view-perform [data-panel=\"" (name id) "\"] " selector)) (.focus)))))
 
+;; Entering or leaving edit mode replaces the focused toolbar button, so put
+;; focus on the first panel's title, or back on Edit layout.
+(rf/reg-fx :panel-layout/focus-control
+  (fn [selector]
+    (r/after-render #(some-> (.querySelector js/document (str "#view-perform " selector)) (.focus)))))
+
+(def ^:private first-handle ".layout-handle")
+
+(def ^:private edit-button "#edit-layout")
+
 ;; ---------------------------------------------------------------------------
 ;; Events
 
@@ -400,11 +413,13 @@
                                                         (get-in classes [class :label]) " size. Nothing was saved.")])))))))
 
 (defn- store-fx
-  "Persist saved layouts, and redock windows of panels the new layout lacks."
-  [db]
+  "Persist saved layouts, and redock windows of panels the new layout lacks.
+  Leaving edit mode puts focus back on Edit layout."
+  [db & [left-editing?]]
   (let [present (set (map :id (active-layout db)))
         orphans (remove #(or (some #{%} panel-ids) (present %)) (panel-window/detached-ids db))]
     (cond-> {:db db :panel-layout/store (:saved (state db))}
+      left-editing? (assoc :panel-layout/focus-control edit-button)
       (seq orphans) (assoc :dispatch-n (mapv (fn [id] [:panel-window/redock id]) orphans)))))
 
 (defn- label [class] (get-in classes [class :label]))
@@ -416,18 +431,19 @@
             name (active-name saved class)]
         (if-let [layout (active-layout db)]
           {:db (assoc-in db [:ui :panel-layout :edit] {:class class :layout layout :name name :original name
-                                                       :announce (str "Editing " name ".")})}
+                                                       :announce (str "Editing " name ".")})
+           :panel-layout/focus-control first-handle}
           {:panel-layout/measure true})))))
 
-(rf/reg-event-db :panel-layout/began
-  (fn [db [_ measured]]
-    (if (:edit (state db))
-      db
+(rf/reg-event-fx :panel-layout/began
+  (fn [{:keys [db]} [_ measured]]
+    (when-not (:edit (state db))
       (let [class (current-class db)]
-        (assoc-in db [:ui :panel-layout :edit]
-                  {:class class :layout (if measured (seed class measured) (default-layout class))
-                   :name (next-name (:saved (state db)) class) :original nil
-                   :announce "Editing a new layout."})))))
+        {:db (assoc-in db [:ui :panel-layout :edit]
+                       {:class class :layout (if measured (seed class measured) (default-layout class))
+                        :name (next-name (:saved (state db)) class) :original nil
+                        :announce "Editing a new layout."})
+         :panel-layout/focus-control first-handle}))))
 
 (rf/reg-event-db :panel-layout/name
   (fn [db [_ value]]
@@ -440,7 +456,7 @@
         name (unique-name saved class wanted (when-not as-new? original))
         db (update-in db [:ui :panel-layout] assoc :edit nil
                       :saved (save-named saved class (when-not as-new? original) name layout))]
-    (assoc (store-fx db) :dispatch [:studio/toast (str "Saved “" name "” for this " (label class) " screen.")])))
+    (assoc (store-fx db true) :dispatch [:studio/toast (str "Saved “" name "” for this " (label class) " screen.")])))
 
 (rf/reg-event-fx :panel-layout/done
   (fn [{:keys [db]} _] (when (:edit (state db)) (finish db false))))
@@ -449,14 +465,14 @@
   (fn [{:keys [db]} _] (when (:edit (state db)) (finish db true))))
 
 (rf/reg-event-fx :panel-layout/cancel
-  (fn [{:keys [db]} _] (store-fx (assoc-in db [:ui :panel-layout :edit] nil))))
+  (fn [{:keys [db]} _] (store-fx (assoc-in db [:ui :panel-layout :edit] nil) true)))
 
 (rf/reg-event-fx :panel-layout/delete
   (fn [{:keys [db]} _]
     (when-let [{:keys [class original]} (:edit (state db))]
       (let [db (cond-> (assoc-in db [:ui :panel-layout :edit] nil)
                  original (update-in [:ui :panel-layout :saved] drop-named class original))]
-        (cond-> (store-fx db)
+        (cond-> (store-fx db true)
           original (assoc :dispatch [:studio/toast (str "Deleted “" original "”. This screen uses the built-in layout.")]))))))
 
 (rf/reg-event-fx :panel-layout/reset
@@ -464,7 +480,7 @@
     (let [class (or (:class (:edit (state db))) (current-class db))
           db (-> db (assoc-in [:ui :panel-layout :edit] nil)
                  (assoc-in [:ui :panel-layout :saved class :active] nil))]
-      (assoc (store-fx db) :dispatch
+      (assoc (store-fx db true) :dispatch
              [:studio/toast (str "Built-in layout restored for this " (label class) " screen."
                                  (when (seq (named (:saved (state db)) class)) " Saved layouts stay in the menu."))]))))
 
@@ -559,7 +575,7 @@
   (fn [{:keys [db]} _]
     (if (get-in db [:ui :panel-layout :edit :gesture])
       {:db (cancel-gesture db nil)}
-      (store-fx (assoc-in db [:ui :panel-layout :edit] nil)))))
+      (store-fx (assoc-in db [:ui :panel-layout :edit] nil) true))))
 
 ;; ---------------------------------------------------------------------------
 ;; Views

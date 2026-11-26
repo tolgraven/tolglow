@@ -239,6 +239,17 @@
                         [:panel-layout/gesture-end 7])]
         (is (= (layout/default-layout :desktop) (layout/active-layout tapped)))))))
 
+(deftest focus-follows-the-toolbar-in-and-out-of-edit-mode
+  (let [editing (run desktop [:panel-layout/began nil])]
+    (is (= ".layout-handle" (:panel-layout/focus-control (transition desktop [:panel-layout/began nil])))
+        "entering edit mode focuses the first panel's title")
+    (doseq [event [[:panel-layout/done] [:panel-layout/cancel] [:panel-layout/reset] [:panel-layout/escape]]]
+      (is (= "#edit-layout" (:panel-layout/focus-control (transition editing event)))
+          (str (first event) " returns focus to Edit layout")))
+    (testing "escape during a drag keeps focus where it is"
+      (let [dragging (run editing [:panel-layout/gesture-start {:kind :move :id :room :pointer-id 1 :x 0 :y 0}])]
+        (is (nil? (:panel-layout/focus-control (transition dragging [:panel-layout/escape]))))))))
+
 (deftest changing-size-class-ends-editing-without-saving
   (let [editing (run desktop [:panel-layout/began nil] [:panel-layout/move :room -1])
         effects (transition editing [:panel-layout/class :tablet])]
