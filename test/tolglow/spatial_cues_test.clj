@@ -1,5 +1,6 @@
 (ns tolglow.spatial-cues-test
-  (:require [afterglow.render.frame :as frame]
+  (:require [afterglow.control.model :as control]
+            [afterglow.render.frame :as frame]
             [afterglow.spatial.field :as field]
             [clojure.test :refer [deftest is]]
             [tolglow.composition :as composition]
@@ -365,3 +366,58 @@
         (host/tick rt 50)
         (is (= [0 255 0 0 0 0 255 0 0] (host/output rt))))
       (finally (show/stop! rt)))))
+
+(defn- mixed-rig-spawn
+  "Spawn the orb with paint on an RGB head at its centre plus extra heads, and
+  capture channels 1-7 of universe 1 before and after the launch (#712)."
+  [batch? extra paint]
+  (let [captured (atom nil)
+        rig (into [{:id :left :position [0 1 0] :universe 1 :address 1 :channels {:red 1 :green 2 :blue 3}}] extra)
+        rt (show/create-runtime {:model (assoc (control/new-show {:show-id :mixed}) :rig {:fixtures rig})
+                                 :batch? batch? :worker-timeout-ms 10000
+                                 :sink {:send! (fn [universes _] (reset! captured (mapv #(bit-and 255 %) (take 7 (get universes 1)))))}})]
+    (try
+      (host/tick rt 0)
+      (let [before @captured
+            ack (host/submit rt 10 :spatial-cue (assoc request :paint paint))]
+        (host/tick rt 100)
+        {:before before :after @captured :skipped (get-in ack [:target-resolution :skipped])
+         :members (vals (get-in (state rt) [:variables :spatial :members]))
+         :faults (keep :fault (vals (:instances (state rt))))})
+      (finally (show/stop! rt)))))
+
+(deftest a-spatial-cue-lights-its-volume-whatever-else-the-rig-holds
+  ;; Before #688 the cue's untargeted :red write reached a dimmer-only head
+  ;; outside the volume, the frame refused it and the whole instance faulted,
+  ;; so the RGB head at the centre went dark.
+  (doseq [batch? [true false]]
+    (let [outside [3 1 0]
+          dimmer-only {:id :w :position outside :universe 1 :address 4 :channels {:dimmer 1}}
+          rgb {:id :w :position outside :universe 1 :address 4 :channels {:red 1 :green 2 :blue 3}}
+          rgb-dimmer {:id :w :position outside :universe 1 :address 4 :channels {:dimmer 1 :red 2 :green 3 :blue 4}}
+          run (partial mixed-rig-spawn batch?)]
+      (doseq [[extra expected] [[[] [255 0 0 0 0 0 0]]
+                                [[dimmer-only] [255 0 0 0 0 0 0]]
+                                [[rgb] [255 0 0 0 0 0 0]]
+                                [[(assoc dimmer-only :position [9 9 9])] [255 0 0 0 0 0 0]]]]
+        (let [{:keys [after members faults]} (run extra {:red 1.0})]
+          (is (= expected after) (pr-str batch? extra))
+          (is (= [#{:left}] members))
+          (is (empty? faults))))
+      (let [{:keys [skipped after]} (run [dimmer-only] {:red 1.0})]
+        (is (= [{:attribute :red :heads [:w] :requires [:red]}] skipped))
+        (is (= [255 0 0 0] (take 4 after))))
+      ;; A head with colour and a dimmer channel rests with its dimmer open and
+      ;; its colour at zero, so it emits nothing. The cue outside its volume
+      ;; leaves all four of its channels at that resting value.
+      (let [{:keys [before after faults]} (run [rgb-dimmer] {:red 1.0})]
+        (is (= [0 0 0 255 0 0 0] before))
+        (is (= [255 0 0] (take 3 after)))
+        (is (= (drop 3 before) (drop 3 after)))
+        (is (empty? faults)))
+      ;; Inside the edge feather a dimmer-only head takes the painted dimmer at
+      ;; its field weight and skips the red it cannot show.
+      (let [{:keys [after members faults]} (run [(assoc dimmer-only :position [0 1 0.2])] {:red 1.0 :dimmer 1.0})]
+        (is (= [255 0 0 204] (take 4 after)))
+        (is (= [#{:left :w}] members))
+        (is (empty? faults))))))
