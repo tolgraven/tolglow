@@ -385,3 +385,11 @@
     (is (= arrive-together (pan-arrivals frames)))
     (is (= {:far-travel 32767 :slow-motor 29127} (update-vals (:words (nth frames 80)) :pan))
         "The midpoint frame keeps the words master captured before the launch-tempo hold")))
+
+(deftest stopping-the-transport-during-a-held-move-continues-on-its-launch-interval
+  (let [unchanged (:frames (commanded-move {}))
+        {:keys [frames]} (commanded-move {2000 {:playing? false}})]
+    (is (= [] (rate-violations frames)))
+    (is (= arrive-together (pan-arrivals frames))
+        "A stateless sample cannot freeze and resume without a jump, so the held move keeps going")
+    (is (= [] (frames-apart unchanged frames 1)))))

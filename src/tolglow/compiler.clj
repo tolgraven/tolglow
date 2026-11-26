@@ -161,6 +161,25 @@
   (let [outputs (registry/output-entries (:outputs definition))]
     (and (seq outputs) (every? (comp keyframe-values/continuous :attribute) outputs))))
 
+(def ^:private launch-tempo-tolerance-beats
+  "Beat-clock rounding below this still counts as the launch tempo."
+  1.0e-6)
+
+(defn- instance-beats
+  "Elapsed instance beats. Instance state may hold ::launch-tempo
+  {:beats b :ms t}: b beats took t milliseconds when the instance launched.
+  While the transport beat still matches that tempo it is returned unchanged.
+  Once it differs, elapsed milliseconds are read at the held tempo, so a later
+  tempo change or stop neither speeds up nor slows what the instance schedules."
+  [clock instance state elapsed-ms]
+  (when (and (number? (:beat clock)) (number? (:started-at-beat instance)))
+    (let [beats (max 0 (- (:beat clock) (:started-at-beat instance)))
+          {held-beats :beats held-ms :ms} (::launch-tempo state)]
+      (if (and (registry/finite-number? held-beats) (registry/finite-number? held-ms) (pos? held-ms))
+        (let [held (* (/ elapsed-ms held-ms) held-beats)]
+          (if (<= (abs (- beats held)) launch-tempo-tolerance-beats) beats held))
+        beats))))
+
 (defn- compile-reactive-effect [definition outputs rig]
   (let [{:keys [inputs transition]} (:reactive definition)
         definition-targets (:targets definition)
@@ -217,10 +236,10 @@
                                (if envelope-fn (:done? envelope-result) releasing?)))
             frame-fixtures (:fixtures frame [])
             fixtures (select-fixtures frame-fixtures)
-            env {:time-ms now :elapsed-ms (max 0 (- now start)) :params params :state state
+            elapsed-ms (max 0 (- now start))
+            env {:time-ms now :elapsed-ms elapsed-ms :params params :state state
                  :beat (:beat clock)
-                 :elapsed-beats (when (and (number? (:beat clock)) (number? (:started-at-beat instance)))
-                                  (max 0 (- (:beat clock) (:started-at-beat instance))))
+                 :elapsed-beats (instance-beats clock instance state elapsed-ms)
                  :meter (time/normalize-meter (:timing-meter instance))}
             env (if (and block-plan (not done?))
                   (blocks/sample-inputs block-plan env (or (:transport-clock frame) clock)) env)

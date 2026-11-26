@@ -4,6 +4,7 @@
   (:require [clojure.string :as str]
             [afterglow.render.frame :as frame]
             [afterglow.time :as time]
+            [tolglow.compiler :as compiler]
             [tolglow.registry :as registry]
             [tolglow.composition.tween :as tween]))
 
@@ -149,6 +150,26 @@
                         (- minimum-travel-ms 1.0e-6)))
             [:tempo-exceeds-motor-rate "At the current tempo this musical arrival is faster than the calibrated motor rates; republish it"])
           (some (partial wrap-problem fixtures committed) (:outputs effect))))))
+
+(defn hold-launch-tempo
+  "Pin each freshly launched musical synchronized move to the interval its
+  arrival took at launch. Takes and returns an apply-command result. The
+  interval comes from the instance's captured meter and the transport tempo of
+  that launch, and is kept as the instance's ::compiler/launch-tempo state, so
+  a later tempo change cannot command the heads faster than the launch check
+  admitted. Replayed commands launch nothing and are left alone."
+  [result]
+  (reduce (fn [result {:keys [type instance]}]
+            (let [{:keys [arrival-duration] :as editor} (get-in instance [:definition :editor])
+                  bpm (get-in result [:model :transport :bpm])]
+              (if (and (= :instance/launched type) (= :synchronized-aim-path (:type editor))
+                       (map? arrival-duration) (not (contains? arrival-duration :ms))
+                       (registry/finite-number? bpm) (pos? bpm))
+                (let [interval (time/normalize-duration arrival-duration (:timing-meter instance))]
+                  (assoc-in result [:model :instances (:id instance) :state ::compiler/launch-tempo]
+                            {:beats (:value interval) :ms (time/estimate-ms interval bpm)}))
+                result)))
+          result (:events result)))
 
 (defn definition
   "Create a revision of an aim-only effect for selected moving heads.

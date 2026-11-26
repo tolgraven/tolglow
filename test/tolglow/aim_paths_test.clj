@@ -253,3 +253,62 @@
         advanced (sub/advance (:model admitted) 0 {})]
     (is (empty? (:instances advanced)))
     (is (re-find #"calibration changed" (str (get-in advanced [:event-subscribers :last-error :message]))))))
+
+(defn- musical-show
+  "A real control model with a published two-bar synchronized cue and, for
+  comparison, an unsynchronized aim path and a millisecond synchronized cue."
+  []
+  (let [rig (control/new-show {:rig {:fixtures paired-heads}})
+        bars (paths/definition rig (assoc synchronized-spec :duration {:bars 2}))
+        timed (paths/definition rig (assoc synchronized-spec :id :timed))
+        plain (paths/definition rig (assoc path-spec :id :plain :targets [:far-travel] :duration {:bars 2} :mode :once))]
+    (reduce (fn [model effect]
+              (-> model
+                  (assoc-in [:registry :effects (:id effect)] effect)
+                  (assoc-in [:registry :cues (:id effect)] {:id (:id effect) :effect-id (:id effect) :version 1})))
+            rig [bars timed plain])))
+
+(defn- launch-at [model cue-id command-id]
+  (spatial/apply-command model {:op :cue/launch :cue-id cue-id :command-id command-id
+                                :show-id (:show-id model) :epoch (:epoch model) :time-ms 0
+                                :source {:adapter :test}}))
+
+(defn- held-interval [result]
+  (let [id (get-in result [:ack :instance-id])]
+    (get-in result [:model :instances id :state ::compiler/launch-tempo])))
+
+(deftest musical-synchronized-launch-holds-the-interval-of-its-launch-tempo
+  (let [model (musical-show)
+        launched (launch-at model :paired "first")]
+    (is (= :accepted (get-in launched [:ack :status])))
+    (is (= {:beats 8 :ms 4000.0} (held-interval launched)))
+    (is (= {:beats 8 :ms 8000.0} (held-interval (launch-at (assoc-in model [:transport :bpm] 60) :paired "slow")))
+        "Launched at 60 BPM, the same two bars hold their 8 s interval")
+    (is (= {:beats 6 :ms 3000.0}
+           (held-interval (launch-at (assoc-in model [:transport :meter] {:beats-per-bar 3 :bars-per-phrase 4}) :paired "waltz")))
+        "The launch meter decides how many beats two bars hold")
+    (is (nil? (held-interval (launch-at model :timed "timed"))) "A millisecond arrival has no tempo to hold")
+    (is (nil? (held-interval (launch-at model :plain "plain"))) "An ordinary aim path keeps following the beat clock")
+    (let [replayed (launch-at (assoc-in (:model launched) [:transport :bpm] 240) :paired "first")]
+      (is (empty? (:events replayed)) "A replayed command id launches nothing")
+      (is (= {:beats 8 :ms 4000.0} (held-interval replayed)) "and does not re-pin the move at the later tempo"))))
+
+(deftest held-interval-reads-elapsed-time-once-the-beat-clock-leaves-the-launch-tempo
+  (let [effect (paths/definition (control/new-show {:rig {:fixtures paired-heads}}) (assoc synchronized-spec :duration {:bars 2}))
+        step (compiler/compile-effect effect)
+        sample (fn [time-ms beat state]
+                 (:assignments (step {:frame {:time-ms time-ms :beat beat :fixtures paired-heads}
+                                      :instance {:started-at-ms 0 :started-at-beat 0 :params {}
+                                                 :timing-meter {:beats-per-bar 4 :bars-per-phrase 4}}
+                                      :state state :assignments [] :intents []})))
+        held {::compiler/launch-tempo {:beats 8 :ms 4000.0}}
+        drift (- 4 1.0e-9)]
+    (is (= (sample 2000 drift {}) (sample 2000 drift held))
+        "Beat-clock rounding at the launch tempo keeps the beat-clock sample exactly")
+    (is (not= (sample 2000 4 {}) (sample 2000 drift {})) "The rounding case is distinguishable")
+    (doseq [beat [2 6 7.99]]
+      (is (= (sample 2000 4 {}) (sample 2000 beat held))
+          (str "At beat " beat " after 2 s the held move is halfway through its 4 s interval")))
+    (is (= (sample 4000 8 {}) (sample 4000 20 held) (sample 4000 5 held))
+        "The interval's last frame commands the published endpoint")
+    (is (= (sample 6000 8 {}) (sample 6000 0.5 held)) "Past the interval the move stays at its endpoint")))

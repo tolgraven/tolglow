@@ -62,8 +62,8 @@ heads and both axes; a move in which no head travels is refused. Pan and tilt
 interpolate linearly in their mechanical coordinates for one common interval:
 
 - When a musical minimum, estimated through the show transport's tempo and
-  meter, is at least the physical minimum, the keyframes stay musical and
-  follow the transport like other aim paths.
+  meter, is at least the physical minimum, the keyframes stay musical. A
+  launched move then holds its launch-tempo interval (see below).
 - Otherwise the keyframes use the physical interval in milliseconds, the
   calibrated rates being a device boundary.
 
@@ -98,8 +98,35 @@ actions. A refused slot is appended to `:composition-faults` and the run keeps
 playing. A refused subscriber action becomes a handler fault. Lighting scenes
 launch only the generated cues they own, which are never synchronized paths.
 
-A tempo change while the move is running is not rechecked. The timing
-describes scheduled pan/tilt commands. Physical arrival depends on the heads'
+### Tempo changes during a musical move
+
+A launched musical move holds the interval its arrival took at launch, so the
+heads keep the pace the launch check admitted. When `apply-command` accepts the
+launch it records the arrival in beats (through the instance's captured meter)
+and in milliseconds (at that launch's transport tempo) as the instance state
+`:tolglow.compiler/launch-tempo`, for example `{:beats 8 :ms 4000.0}` for two
+bars at 120 BPM. While the transport beat matches that tempo the move samples
+the beat clock exactly as before, byte for byte. Once the beat departs from it,
+the move samples elapsed milliseconds over the held interval instead:
+
+- A tempo rise neither speeds the heads up nor ends the move early. Raising
+  120 BPM to 480 BPM halfway keeps the slow head at its 11.25°/s launch pace
+  (calibrated 22.5°/s) and arrival at 4 s; before the hold it commanded
+  45°/s and arrived at 2.5 s.
+- A tempo fall does not stretch the move; it still arrives at 4 s.
+- A meter change has no effect, because the meter is captured at launch.
+- Stopping the transport no longer freezes the move: it continues in
+  milliseconds and arrives on schedule. A stateless sample cannot freeze and
+  later resume without a jump.
+
+Limits: a timed or one-shot slot keeps its own musical duration, so after a
+tempo rise the slot can end before the held move arrives. A replayed command
+id launches nothing and keeps the original hold; a new launch holds its own
+tempo. Millisecond arrivals and ordinary aim paths have no hold. Studio's
+instance view does not show the hold; read it from the REPL at
+`[:model :instances <id> :state :tolglow.compiler/launch-tempo]`.
+
+The timing describes scheduled pan/tilt commands. Physical arrival depends on the heads'
 acceleration, internal position control and DMX delivery, and requires a
 hardware measurement. Fixture-specific speed channels need their own
 calibration.
