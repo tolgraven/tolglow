@@ -97,20 +97,41 @@
 
 (defn classify
   "How a change behaved across the stop: :keeps-running when any held frame
-  differs from the stop frame, :jumps when the first frame after play moves by
-  more than two and a half frames of the normal progress just before the stop
-  (and at least three steps), else :frozen."
+  differs from the stop frame, :jumps when the stop frame or the first frame
+  after play moves by more than two and a half frames of the normal progress
+  just before the stop (and at least three steps), else :frozen."
   [frames]
   (let [stopped (value-at frames stop-at)
-        ;; Normal progress per frame shortly before the stop.
+        ;; Normal progress per frame shortly before the stop, excluding the
+        ;; stop frame itself so a jump on that edge cannot hide in it.
         rate (apply max (map (fn [t] (Math/abs (double (- (value-at frames t) (value-at frames (- t frame-ms))))))
-                             (range (- stop-at 400) (inc stop-at) frame-ms)))
+                             (range (- stop-at 400) stop-at frame-ms)))
+        limit (max 3.0 (* 2.5 rate))
         held (keep (fn [[t v]] (when (< stop-at t play-at) v)) frames)
         resumed (value-at frames (+ play-at frame-ms))]
     (cond
+      (> (Math/abs (double (- stopped (value-at frames (- stop-at frame-ms))))) limit) :jumps
       (some #(not= stopped %) held) :keeps-running
-      (> (Math/abs (double (- resumed stopped))) (max 3.0 (* 2.5 rate))) :jumps
+      (> (Math/abs (double (- resumed stopped))) limit) :jumps
       :else :frozen)))
+
+(defn run-continuous
+  "The same frames as run-scenario for a show that never stops."
+  [rt {:keys [setup! at sample] :or {sample dmx at {}}}]
+  (setup! rt)
+  (into [[0 (sample rt)]]
+        (for [t (range frame-ms (inc end-at) frame-ms)]
+          (do (if (contains? at t) ((get at t) rt t) (tick! rt t))
+              [t (sample rt)]))))
+
+(defn resumes-exactly?
+  "Every frame after play equals the frame of a never-stopping twin that many
+  milliseconds after the stop, and every frame up to the stop matches too: the
+  stop removed exactly the held interval."
+  [frames twin]
+  (let [held (- play-at stop-at)]
+    (and (every? (fn [[t v]] (= v (value-at twin t))) (filter #(<= (first %) stop-at) frames))
+         (every? (fn [[t v]] (= v (value-at twin (- t held)))) (filter #(>= (first %) play-at) frames)))))
 
 (defn- launch! [rt t cue & [launch]]
   (:instance-id (command! rt t (cond-> {:op :cue/launch :cue-id cue} launch (assoc :launch launch)))))
@@ -757,3 +778,48 @@
       (let [{:keys [frames class]} (conductor-scenario bpm {:interval {:beats 1}} decisions)]
         (is (= :frozen class) (pr-str bpm frames))
         (is (rising-after-play? frames) (pr-str bpm))))))
+
+;; The fixture output response (attack/release of delivered light) follows show
+;; time: a stop freezes it on both edges and play resumes it exactly.
+
+(defn- response-run [bpm envelope continuous? & [release-at]]
+  (let [rt (runtime bpm) id (atom nil)
+        at (if release-at {release-at (fn [rt t] (command! rt t {:op :instance/remove :instance-id @id}))} {})
+        setup {:setup! (fn [rt] (submit! rt 0 :settings {:scope :output-response :values {:enabled? true :global envelope}})
+                         (reset! id (launch! rt 0 :wash)))
+               :at at}]
+    (try ((if continuous? run-continuous run-scenario) rt setup)
+         (finally (show/stop! rt)))))
+
+(deftest the-output-response-attack-pauses-with-the-transport
+  (doseq [bpm tempos
+          attack [{:ms 6000} {:ms 6000 :mode :linear} {:beats 12} {:blend 0.02}]]
+    (let [frames (response-run bpm {:attack attack} false)
+          twin (response-run bpm {:attack attack} true)]
+      (is (< 0 (value-at frames stop-at) 255) (pr-str bpm attack frames))
+      (is (= :frozen (classify frames)) (pr-str bpm attack frames))
+      (is (rising-after-play? frames) (pr-str bpm attack))
+      (is (resumes-exactly? frames twin) (pr-str bpm attack frames twin)))))
+
+(deftest the-output-response-release-pauses-with-the-transport
+  (doseq [bpm tempos
+          release [{:ms 6000} {:ms 6000 :mode :linear} {:beats 12}]]
+    (let [envelope {:attack {:ms 0} :release release}
+          frames (response-run bpm envelope false 1000)
+          twin (response-run bpm envelope true 1000)]
+      (is (< 0 (value-at frames stop-at) 255) (pr-str bpm release frames))
+      (is (= :frozen (classify frames)) (pr-str bpm release frames))
+      (is (falling-after-play? frames) (pr-str bpm release))
+      (is (resumes-exactly? frames twin) (pr-str bpm release frames twin)))))
+
+(deftest the-ambient-pause-look-still-bypasses-the-output-response
+  (let [rt (runtime)]
+    (try
+      (submit! rt 0 :settings {:scope :output :values {:pause-look {:mode :ambient :level 0.0}}})
+      (submit! rt 0 :settings {:scope :output-response :values {:enabled? true :global {:attack {:ms 6000}}}})
+      (launch! rt 0 :wash)
+      (tick! rt 1900)
+      (is (< 0 (dmx rt) 255))
+      (set-playing! rt 2000 false)
+      (is (= 0 (dmx rt)) "the ambient look (level zero here) replaces the shaped output; nothing is frozen")
+      (finally (show/stop! rt)))))
