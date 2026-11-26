@@ -173,6 +173,14 @@
             "inspect_schedule lists it for the agent")
         (is (= ["run-1/auto/0"] (:event-ids (dispatch! rt 0.0 "cancel_scheduled" {:mine? true} "run-1" "undo"))))
         (is (empty? (get-in (show/snapshot rt) [:auto :pending]))))
+      (testing "an agent's immediate stop withdraws only its own pending changes"
+        (let [human (submit! rt 0.0 :auto (assoc (mood :accent) :at {:bar 8}))
+              own (dispatch! rt 0.0 "configure_auto" {:configuration {:enabled? true :scope {:cue-ids ["accent"]}} :at {:bar 6}}
+                             "run-5" "auto")
+              stop (dispatch! rt 0.0 "configure_auto" {:configuration {:enabled? false}} "run-5" "stop")]
+          (is (= (:event-ids own) (:withdrawn-event-ids stop)))
+          (is (= (:event-ids human) (mapv :event-id (get-in (show/snapshot rt) [:auto :pending]))) "the REPL's change still waits")
+          (submit! rt 0.0 :command {:op :schedule/cancel :event-ids (:event-ids human) :source {:adapter :repl :session-id "t"}})))
       (testing "a change for a line already passed is refused with its reason"
         (is (re-find #"nonnegative"
                      (str (:message (dispatch! rt 0.0 "configure_auto" {:configuration {:enabled? true} :at {:beat -1}} "run-2" "auto")))))

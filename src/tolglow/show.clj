@@ -1600,7 +1600,8 @@
             {:keys [model config enabled? state]} (configure-auto model request time-ms (str (UUID/randomUUID)))
             ;; Stop auto means stop: a change still waiting on its line would start it again.
             {model :model withdrawn :event-ids} (if enabled? {:model model}
-                                                  (subscribers/withdraw model #{:auto/configure} :auto-stopped))]
+                                                  (subscribers/withdraw model #{:auto/configure} :auto-stopped
+                                                                        (:source payload)))]
         (when enabled?
           (let [fixtures (get-in model [:rig :fixtures])
                 ;; An earlier queued rig edit may still be provisional. Validation

@@ -86,9 +86,11 @@ from the new position. It is saved with the show, listed by `show/schedule`,
 Studio's timeline and `inspect_schedule`, and cancelled by event ID (an agent
 cancels only its own). Its auto session takes the scheduled step's command ID,
 so a replay is deterministic. Several changes due on the same frame apply in
-the order they were posted. An immediate **Stop auto** withdraws every pending
-auto change and lists them in its receipt's `:withdrawn-event-ids`, so nothing
-waiting on a line starts auto again; an immediate start leaves them waiting.
+the order they were posted. An immediate **Stop auto** withdraws the pending
+auto changes its sender may cancel (from Studio or the REPL, all of them; from
+an agent, its own) and lists them in its receipt's `:withdrawn-event-ids`, so
+nothing waiting on a line starts auto again; an immediate start leaves them
+waiting.
 
 In Studio, **Start or stop** chooses **Now**, **Next bar**, **Next phrase** or
 **Next section line** (offered while a plan section plays; the projection gives

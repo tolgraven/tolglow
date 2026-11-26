@@ -1176,10 +1176,14 @@
      :event-ids (vec (distinct (concat (map run-event-id gone) (map :event-id stopped))))}))
 
 (defn withdraw
-  "Cancel every pending scheduled event whose action is one of ops, recording
-  reason, whoever posted it. Returns {:model .. :event-ids [..]}."
-  [model ops reason]
-  (let [hit? #(and (:scheduled %) (contains? ops (:op (get (:steps %) (:index %)))))
+  "Cancel the pending scheduled events whose action is one of ops, recording
+  reason. A human operator surface, or a requester with no source (the show's
+  own REPL call), withdraws them all; any other requester only those it
+  posted, as cancel allows. Returns {:model .. :event-ids [..]}."
+  [model ops reason source]
+  (let [may? (if (or (nil? source) (human-source? source)) (constantly true) #(owner? source %))
+        hit? #(and (:scheduled %) (contains? ops (:op (get (:steps %) (:index %))))
+                   (may? (get-in % [:scheduled :source])))
         {gone true kept false} (group-by (comp boolean hit?) (get-in model [:event-subscribers :runs] []))]
     {:model (reduce #(remember %1 (run-entry %1 %2 :cancelled {:reason reason}))
                     (cond-> model (seq gone) (assoc-in [:event-subscribers :runs] (vec kept))) gone)

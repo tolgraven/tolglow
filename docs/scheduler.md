@@ -185,8 +185,9 @@ These are operator defaults:
   an immediate auto request; this namespace only carries it, so without the
   owner's handler it is rejected. A request the show refuses when due is
   recorded as `:rejected` with its message and auto mode stays as it was. An
-  immediate **Stop auto** withdraws pending auto changes (`:reason
-  :auto-stopped`), so a change waiting on its line cannot start auto again.
+  immediate **Stop auto** withdraws the pending auto changes its sender may
+  cancel (`:reason :auto-stopped`), so a change waiting on its line cannot
+  start auto again.
 
 ## Commands
 
