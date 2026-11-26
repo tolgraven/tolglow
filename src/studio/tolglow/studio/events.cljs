@@ -1249,8 +1249,13 @@
       (and (= engine :neovim) (not (and (.-crossOriginIsolated js/window) (exists? js/SharedArrayBuffer))))
       {:dispatch [:studio/editor-error "Neovim requires localhost or HTTPS with COOP/COEP. The accessible editor remains available."]}
       :else {:db (assoc-in db [:ui :definition :engine] engine)})))
-(rf/reg-event-db :studio/editor-to-text
-  (fn [db [_ source]] (update-in db [:ui :definition] merge {:source source :engine :textarea})))
+;; Neovim may hold an edit it has not delivered yet; reading it is that delivery.
+(rf/reg-event-fx :studio/editor-to-text
+  (fn [{:keys [db]} [_ source]]
+    (let [db (assoc-in db [:ui :definition :engine] :textarea)]
+      (if (= source (get-in db [:ui :definition :source]))
+        {:db db}
+        (edit-definition-source db source)))))
 (rf/reg-event-db :studio/editor-status
   (fn [db [_ status]] (assoc-in db [:ui :definition :editor-status] status)))
 (rf/reg-event-db :studio/editor-error
@@ -1320,18 +1325,50 @@
   (fn [{:keys [db]} _]
     (try
       (let [source (builder-source db)]
-        {:db (update-in db [:ui :definition] merge {:source source :kind "effects" :mode :source :status "Generated EDN"})
-         :studio/nvim-source source})
+        ;; Generated text takes its status from the published baseline, like an edit,
+        ;; but Generate only produces text: it never queues Publish valid edits.
+        (-> (edit-definition-source db source)
+            (dissoc :dispatch-later)
+            (update :db update-in [:ui :definition] merge {:kind "effects" :mode :source
+                                                           :result "Generated EDN from the builder."})
+            (assoc :studio/nvim-source source)))
       (catch :default error {:dispatch [:studio/editor-error (error-message error)]}))))
 (defn- publication-current? [db token]
   (and (some? token) (= token (get-in db [:ui :definition :publication]))
        (= (:epoch token) (get-in db [:show :epoch])) (= (:runtime-id token) (get-in db [:show :runtime-id]))))
 
+(defn- publication-failed
+  "The show refused the text that was sent, or it could not be sent. An edit made
+  while the request was in flight was never sent: like a reply to a publication
+  (:studio/published), the failure leaves it unpublished and, with auto-publish
+  on, queues it after the usual quiet time, because its own debounce fired during
+  the request and was dropped. `sent` is nil when nothing was sent."
+  [db token sent error]
+  (when (publication-current? db token)
+    (let [definition (get-in db [:ui :definition])
+          newer? (and (some? sent) (not= sent (:source definition)))
+          ;; Edited back to the text the show runs: nothing is unpublished.
+          clean? (and newer? (published-source? definition (:source definition)))]
+      (cond-> {:db (update-in db [:ui :definition] merge
+                              (cond
+                                clean? {:publishing? false :error? false
+                                        :status (get-in definition [:baseline :status])
+                                        :result (str "The text sent earlier was not published: " (error-message error)
+                                                     " The editor holds the text the show runs.")}
+                                newer? {:publishing? false :error? true :status "Unpublished changes"
+                                        :result (str "The text sent earlier was not published: " (error-message error)
+                                                     " Your newer edits are not published yet.")}
+                                :else {:publishing? false :error? true :status "Publication failed"
+                                       :result (error-message error)}))}
+        (and newer? (not clean?) (:auto? definition))
+        (assoc :dispatch-later [{:ms auto-publish-delay-ms
+                                 :dispatch [:studio/auto-publish (:edit-revision definition)]}])))))
+
 (rf/reg-event-fx :studio/publication-error
-  (fn [{:keys [db]} [_ token error]]
-    (when (publication-current? db token)
-      {:db (update-in db [:ui :definition] merge {:publishing? false :error? true :status "Publication failed"
-                                                  :result (error-message error)})})))
+  (fn [{:keys [db]} [_ token error]] (publication-failed db token nil error)))
+
+(rf/reg-event-fx :studio/publication-refused
+  (fn [{:keys [db]} [_ token sent error]] (publication-failed db token sent error)))
 
 (rf/reg-event-fx :studio/definition-publish
   (fn [{:keys [db]} [_ automatic?]]
@@ -1367,7 +1404,7 @@
                        :body (cond-> {:kind kind :source source :expected-epoch (:epoch token) :runtime-id (:runtime-id token)}
                                expected (assoc :expected-version expected))
                        :on-success [:studio/published token automatic? built kind expected source]
-                       :on-failure [:studio/publication-error token]}}))))
+                       :on-failure [:studio/publication-refused token source]}}))))
 
 (rf/reg-event-fx :studio/published
   ;; The show now runs the source that was sent. An edit that arrived while the

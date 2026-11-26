@@ -109,6 +109,19 @@
   ;; The packaged Mac app hosts popped-out windows natively (native/macOS).
   (some-> js/globalThis (aget "webkit") (aget "messageHandlers") (aget "tolglowRoomWindow")))
 
+(defn identify-window!
+  "Tell the packaged Mac app which window `popup` is: the Room's (`role` \"room\")
+  or panel `id`'s (\"panel\"). It hosts every window Studio opens, places only
+  the Room's and names the role and panel when one closes. Posted from the new
+  window's own document when it has the app's handler, which names that window
+  exactly, else from Studio's, which names the window opened last. Nothing
+  outside the app."
+  [^js popup role & [id]]
+  (when-let [^js host (or (some-> popup (aget "webkit") (aget "messageHandlers") (aget "tolglowRoomWindow"))
+                          (native-host))]
+    (try (.postMessage host (clj->js (cond-> {:action "identify" :role role} id (assoc :id id))))
+         (catch :default _ nil))))
+
 (defn- release! []
   (when-let [{:keys [abort timer frame ^js window]} @owner]
     (reset! owner nil)
@@ -158,10 +171,11 @@
     (swap! owner assoc :frame (.requestAnimationFrame popup tick))))
 
 (defn- native-reply! [generation ^js event]
-  ;; The packaged Mac app answers placement requests with a window event.
+  ;; The packaged Mac app answers placement requests with a window event. Its
+  ;; other windows' events (detached panels) carry another role.
   (let [^js detail (.-detail event)
         status (some-> detail .-status keyword)]
-    (when (current? generation)
+    (when (and (current? generation) (= "room" (some-> detail .-role)))
       (case status
         :placed (rf/dispatch [:room-window/placed generation (.-label detail)])
         (:single :manual) (rf/dispatch [:room-window/place-failed generation status])
@@ -189,8 +203,12 @@
               loader (.createElement (.-document popup) "script")]
           (reset! owner {:generation generation :window popup :root root :abort abort
                          :timer (js/setInterval #(when (.-closed popup) (closed!)) 500)})
+          (identify-window! popup "room")
           (socket/present-preview! :room-window true)
           (.addEventListener popup "pagehide" closed! options)
+          (let [size! #(rf/dispatch [:panel-layout/window-size :room (.-innerWidth popup) (.-innerHeight popup)])]
+            (size!)
+            (.addEventListener popup "resize" size! options))
           ;; The Room window never outlives the Studio page that owns its engine.
           (.addEventListener js/window "pagehide" #(.close popup) options)
           (.addEventListener js/window "tolglow-room-window" (partial native-reply! generation) options)
@@ -386,7 +404,12 @@
 
 (defn- portal [db panel]
   (when-let [root (:root @owner)]
-    (react-dom/createPortal (r/as-element [:<> [panel db] [notice-line db]]) root)))
+    ;; The Room follows its window's size, as other panels do (panel-window).
+    (react-dom/createPortal
+     (r/as-element [:div.panel-window-content {:data-panel "room"
+                                               :data-tier (name (get-in db [:ui :window-tiers :room] :full))}
+                    [panel db] [notice-line db]])
+     root)))
 
 (defn room
   "The Room panel, docked in Studio or portalled into its own window."

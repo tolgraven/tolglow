@@ -3,6 +3,7 @@
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
             [tolglow.rig.pixel-layout :as layout]
+            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.rig-fields :as fields]))
 
 (defn layout-index [rig id]
@@ -164,8 +165,8 @@
            [:select {:aria-label "Path anchor" :value index :on-change #(emit! :select-anchor (parse-long (input-value %)))}
           (for [i (range (count points))] ^{:key i} [:option {:value i} (str "Anchor " (inc i))])]])
         (when anchor [vector-fields "Anchor" anchor [:points index]])])
-     [:label.rig-checkbox [:input {:type "checkbox" :checked (boolean (:closed? spec))
-                                   :on-change #(emit! :set [:closed?] (.. % -target -checked))}] "Close the path"]]))
+     [:label.rig-checkbox [checkbox/input {:checked (boolean (:closed? spec))
+                                           :on-change #(emit! :set [:closed?] (.. % -target -checked))}] "Close the path"]]))
 
 (defn- shape-fields [spec state]
   (let [shape (keyword (:shape spec :path))]
@@ -178,8 +179,8 @@
                    [numeric "Columns" (:columns spec) [:columns] {:min 1 :step 1}]]
               [vector-fields "Row step" (:row-step spec) [:row-step]]
               [vector-fields "Column step" (:column-step spec) [:column-step]]
-              [:label.rig-checkbox [:input {:type "checkbox" :checked (:serpentine? spec true)
-                                            :on-change #(emit! :set [:serpentine?] (.. % -target -checked))}]
+              [:label.rig-checkbox [checkbox/input {:checked (:serpentine? spec true)
+                                                    :on-change #(emit! :set [:serpentine?] (.. % -target -checked))}]
                "Alternate row direction"]]
        :helix [:div.rig-form-grid
                (for [[k label] [[:radius "Radius · m"] [:height "Height · m"] [:turns "Turns"] [:phase-deg "Phase · °"]]]

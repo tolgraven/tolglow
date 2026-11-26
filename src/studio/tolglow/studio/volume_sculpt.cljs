@@ -3,6 +3,7 @@
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
             [tolglow.studio.autopilot-signal :as signal]
+            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.spatial-drafts :as drafts]
             [tolglow.studio.spatial-picker :as picker]
             [tolglow.studio.spatial-fields :refer [number-input xyz]]
@@ -162,8 +163,8 @@
         options (mapv (fn [[p s]] [p (str (if (empty? p) "Whole volume" (if (= :geometry (peek p)) "Ball geometry" (str "Part " (str/join "." (map inc (filter number? p))))))
                                         " · " (name (:shape s)))]) (geo/nodes volume))]
     [:<>
-     [:label.spatial-check [:input {:type "checkbox" :checked (= :ball (:shape volume))
-                                    :on-change #(dispatch! [::moving (.. % -target -checked)])}] "Carry shape on a bouncing ball"]
+     [:label.spatial-check [checkbox/input {:checked (= :ball (:shape volume))
+                                            :on-change #(dispatch! [::moving (.. % -target -checked)])}] "Carry shape on a bouncing ball"]
      (when (= :ball (:shape volume))
        [:<> [xyz "Initial velocity · m/s" (:velocity volume [0 0 0]) #(assign! [:volume :velocity] %)]
         [number-input "Bounciness" (:restitution volume 0.85) #(assign! [:volume :restitution] %) {:min 0 :max 1 :step 0.05}]])
@@ -188,9 +189,9 @@
   [:fieldset [:legend "Affected heads"]
    (for [[k caption] [[:position "Head inside"] [:beam "Beam intersects"] [:aimable "Can aim into volume"]]
          :let [selection (set (:selection volume #{:position}))]]
-     ^{:key k} [:label.spatial-check [:input {:type "checkbox" :checked (contains? selection k)
-                                              :on-change #(assign! [:volume :selection]
-                                                                   ((if (.. % -target -checked) conj disj) selection k))}] caption])
+     ^{:key k} [:label.spatial-check [checkbox/input {:checked (contains? selection k)
+                                                      :on-change #(assign! [:volume :selection]
+                                                                           ((if (.. % -target -checked) conj disj) selection k))}] caption])
    [number-input "Strength" (:strength volume 1) #(assign! [:volume :strength] %) {:min 0 :max 1 :step 0.05}]
    [number-input "Inside falloff · m" (get-in volume [:falloff :inner-m] 0)
     #(assign! [:volume :falloff :inner-m] %) {:min 0}]
@@ -229,9 +230,9 @@
         options {:min lo :max hi :step 0.01}]
     [:details [:summary "Parameter modulation"]
      [choices "Modulate" (mapv #(subvec % 0 2) rows) k #(assign! [:source-target] %)]
-     [:label.spatial-check [:input {:type "checkbox" :checked active?
-                                    :on-change #(if (.. % -target -checked) (save! baseline)
-                                                  (assign! [:sources] (dissoc sources source-key)))}] "Use source"]
+     [:label.spatial-check [checkbox/input {:checked active?
+                                            :on-change #(if (.. % -target -checked) (save! baseline)
+                                                          (assign! [:sources] (dissoc sources source-key)))}] "Use source"]
      (when active?
        (if (vector? source)
          (let [letters (case k :color ["Red" "Green" "Blue"] :hsl ["Hue" "Saturation" "Lightness"] ["X" "Y" "Z"])]
@@ -243,9 +244,9 @@
   [:fieldset [:legend "Cue"]
    [:label "Cue ID" [:input {:value (:cue-id draft "") :placeholder "Generate automatically"
                              :on-change #(assign! [:cue-id] (value %))}]]
-   [:label.spatial-check [:input {:type "checkbox" :checked (contains? paint :color)
-                                   :on-change #(assign! [:paint] (if (.. % -target -checked)
-                                                                  (assoc paint :color [1 0.35 0.1]) (dissoc paint :color)))}] "Paint color"]
+   [:label.spatial-check [checkbox/input {:checked (contains? paint :color)
+                                           :on-change #(assign! [:paint] (if (.. % -target -checked)
+                                                                          (assoc paint :color [1 0.35 0.1]) (dissoc paint :color)))}] "Paint color"]
    (when (:color paint)
      [:label "Field color" [:input {:type "color" :value (hex-color (:color paint))
                                   :on-change #(assign! [:paint :color] (rgb-color (value %)))}]])

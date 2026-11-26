@@ -1,6 +1,7 @@
 (ns tolglow.studio.audience
   "Operate the enrolled audience zones. The existing Connections stream owns all telemetry."
   (:require [re-frame.core :as rf]
+            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.events :as events]))
 
 (rf/reg-sub ::mix
@@ -44,7 +45,8 @@
       db)))
 
 (defn- select! [id included?]
-  (rf/dispatch [::change id "/api/sensors/audience-zone" {:included? included?}]))
+  ;; Synchronous: the checkbox shows the pending inclusion at once (tolglow.studio.checkbox).
+  (rf/dispatch-sync [::change id "/api/sensors/audience-zone" {:included? included?}]))
 
 (defn- arm! [id session-id armed?]
   (rf/dispatch [::change id "/api/sensors/arm" {:session-id session-id :armed? armed?}]))
@@ -71,9 +73,9 @@
         checked? (if (and pending? (contains? operation :included?)) (:included? operation) selected?)]
     [:li.audience-zone {:data-zone id :data-status (name status)}
      [:label.audience-inclusion
-      [:input {:type "checkbox" :checked checked? :disabled (or pending? (and (= :unavailable status) (not selected?)))
-               :aria-label (str "Include " label " in audience mix")
-               :on-change #(select! id (not checked?))}]
+      [checkbox/input {:checked checked? :disabled (or pending? (and (= :unavailable status) (not selected?)))
+                       :aria-label (str "Include " label " in audience mix")
+                       :on-change #(select! id (not checked?))}]
       [:span [:strong label] [:small (get status-label status)]]]
      (when (#{:armed :ready} status)
        [:button.button {:type "button" :disabled pending? :on-click #(arm! id session-id (= :ready status))

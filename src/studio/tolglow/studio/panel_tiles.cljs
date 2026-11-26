@@ -82,6 +82,11 @@
 (defn- readout [schema value]
   [:output.tile-readout (if (some? value) (widgets/value-label schema value) "—")])
 
+(defn source-mount
+  "The scope of a tile's Source trigger and editor."
+  [id]
+  (str "tile-" (name id)))
+
 (defn param-tile
   "A tile showing one chosen parameter at its tier."
   [db parameter-control {:keys [id binding] :as entry} tier]
@@ -110,13 +115,17 @@
        (= :single tier)
        [:div.tile-single [readout schema value]]
 
+       ;; The tile's Source trigger opens an editor in the tile, not the Live card's,
+       ;; which may be in another window; its DOM IDs are the tile's own.
        (= :compact tier)
        [:div.tile-compact [readout schema value]
-        [parameter-control instance key schema nil {:compact? true}]]
+        [parameter-control instance key schema nil {:compact? true :source-mount (source-mount id)}]
+        [sources/mounted-editor instance key schema (source-mount id)]]
 
        :else
        [:div.tile-full
-        [parameter-control instance key schema]
+        [parameter-control instance key schema nil {:source-mount (source-mount id)}]
+        [sources/mounted-editor instance key schema (source-mount id)]
         (when (and (viewable? schema) (not (sources/driven? instance key)))
           [visualization/studio schema #(current-value instance key schema)])])]))
 

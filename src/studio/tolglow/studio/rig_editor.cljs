@@ -2,6 +2,7 @@
   "Re-frame authoring drafts; the shared scene owns only picking and drawing."
   (:require [re-frame.core :as rf]
             [reagent.core :as r]
+            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.pixel-editor :as pixels]
             [tolglow.studio.rig-fields :as fields]
             [tolglow.studio.camera-controls :as camera]
@@ -318,7 +319,7 @@
   (let [fixtures (filter #(and (get-in % [:channels :pan]) (get-in % [:channels :tilt])) (get-in db [:ui :rig-draft :fixtures]))]
     [:fieldset.rig-targets [:legend "Moving heads to aim"]
       (if (seq fixtures)
-        (for [fixture fixtures] ^{:key (:id fixture)} [:label.rig-checkbox [:input {:type "checkbox" :checked (boolean (some #{(:id fixture)} (:targets state)))
+        (for [fixture fixtures] ^{:key (:id fixture)} [:label.rig-checkbox [checkbox/input {:checked (boolean (some #{(:id fixture)} (:targets state)))
                                                                                  :on-change #(dispatch! [:rig-editor/target (:id fixture) (.. % -target -checked)])}] (or (:name fixture) (:id fixture))])
         [:p.small.muted "Patch a fixture with pan and tilt below to add a target."])]))
 
@@ -366,12 +367,12 @@
         [:<>
          [choice "Playback" (:mode path) [["loop" "Loop"] ["ping-pong" "Back and forth"] ["once" "Once"]] [:path :mode]]
          [choice "Curve" (:curve path) [["linear" "Linear"] ["smoothstep" "Smooth"] ["sine" "Sine"] ["ease-in" "Ease in"] ["ease-out" "Ease out"]] [:path :curve]]])]
-     [:label.rig-checkbox [:input {:type "checkbox" :checked (true? (:sync-arrival? path))
-                                   :on-change #(dispatch! [:rig-editor/sync-arrival (.. % -target -checked)])}]
+     [:label.rig-checkbox [checkbox/input {:checked (true? (:sync-arrival? path))
+                                           :on-change #(dispatch! [:rig-editor/sync-arrival (.. % -target -checked)])}]
       "Arrive together using calibrated motor rates"]
      (if (:sync-arrival? path)
        [:p.small.muted "Two points, played once. Every selected head needs pan and tilt motor rates in its calibration. The slowest head sets the travel time; the duration is a lower bound."]
-       [:label.rig-checkbox [:input {:type "checkbox" :checked (:closed? path) :on-change #(dispatch! [:rig-editor/set [:path :closed?] (.. % -target -checked)])}] "Close the path"])
+       [:label.rig-checkbox [checkbox/input {:checked (:closed? path) :on-change #(dispatch! [:rig-editor/set [:path :closed?] (.. % -target -checked)])}] "Close the path"])
      [target-fields db state]
      [:div.rig-editor-actions
       [:button.button {:on-click #(dispatch! [:rig-editor/add-point]) :disabled (>= (count (:points state)) 256)} "Add point"]

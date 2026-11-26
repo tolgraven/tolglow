@@ -2,6 +2,7 @@
   "Live performance controls for groups of light-emitting fixtures."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
+            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.events :as events]
             [tolglow.studio.projection :as projection]))
 
@@ -127,8 +128,8 @@
      [:fieldset [:legend (str (count picked) " fixtures selected")]
       (for [{:keys [id name]} (take 40 matches)]
         ^{:key (events/wire-id id)}
-        [:label [:input {:type "checkbox" :checked (contains? picked id)
-                         :on-change #(rf/dispatch-sync [::pick id (.. % -target -checked)])}]
+        [:label [checkbox/input {:checked (contains? picked id)
+                                 :on-change #(rf/dispatch-sync [::pick id (.. % -target -checked)])}]
          (or name (label id))])
       (when (seq (drop 40 matches)) [:p.small.muted "Search to narrow the fixture list."])]]))
 

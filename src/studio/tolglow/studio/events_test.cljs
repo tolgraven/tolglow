@@ -946,6 +946,84 @@
       (let [current (transition (:db publish) (conj (get-in publish [:studio/http :on-success]) {:id "ember" :version 3}))]
         (is (not-any? #(#{:dispatch :dispatch-later} (first %)) (:fx current)))))))
 
+(deftest a-failed-publication-keeps-an-edit-made-during-the-request
+  (let [source "{:id :ember :version 2}"
+        typed (str source " ;x")
+        newer (str typed "y")
+        request (transition base [:studio/definition-load "effects" "ember"])
+        loaded (-> (:db (transition (:db request) (conj (get-in request [:studio/http :on-success]) {:source source})))
+                   (assoc-in [:ui :definition :auto?] true))
+        edited (:db (transition loaded [:studio/definition-source typed]))
+        opened (transition edited (:dispatch (transition edited [:studio/auto-publish 1])))
+        publish (transition (:db opened) (:dispatch opened))
+        failure (get-in publish [:studio/http :on-failure])
+        in-flight (:db (transition (:db publish) [:studio/definition-source newer]))
+        ;; The newer edit's own debounce fires during the request and is dropped.
+        dropped (transition in-flight (:dispatch (transition in-flight [:studio/auto-publish 2])))
+        refused (transition in-flight (conj failure "EOF while reading"))
+        status #(select-keys (get-in % [:ui :definition]) [:status :error? :publishing?])]
+    (is (= [:studio/publication-refused (get-in publish [:db :ui :definition :publication]) typed] failure))
+    (is (empty? dropped))
+    (testing "the newer text was never sent, so it stays unpublished and goes out after the quiet time"
+      (is (= {:status "Unpublished changes" :error? true :publishing? false} (status (:db refused))))
+      (is (re-find #"EOF while reading.*newer edits are not published" (get-in refused [:db :ui :definition :result])))
+      (is (= [{:ms 850 :dispatch [:studio/auto-publish 2]}] (:dispatch-later refused)))
+      (is (= [:studio/definition-publish true] (:dispatch (transition (:db refused) [:studio/auto-publish 2])))))
+    (testing "an edit typed before the follow-up fires supersedes it"
+      (is (empty? (transition (:db (transition (:db refused) [:studio/definition-source (str newer "z")]))
+                              [:studio/auto-publish 2]))))
+    (testing "without auto-publish the newer text waits for Publish"
+      (let [manual (transition (assoc-in in-flight [:ui :definition :auto?] false) (conj failure "EOF while reading"))]
+        (is (= "Unpublished changes" (get-in manual [:db :ui :definition :status])))
+        (is (nil? (:dispatch-later manual)))))
+    (testing "a refusal of the text Studio still holds is a failure, with nothing queued"
+      (let [same (transition (:db publish) (conj failure "EOF while reading"))]
+        (is (= {:status "Publication failed" :error? true :publishing? false} (status (:db same))))
+        (is (= "EOF while reading" (get-in same [:db :ui :definition :result])))
+        (is (nil? (:dispatch-later same)))))
+    (testing "an edit back to the published baseline during the request reads as that baseline, with no follow-up"
+      (let [back (:db (transition (:db publish) [:studio/definition-source source]))
+            reply (transition back (conj failure "EOF while reading"))]
+        (is (= {:status "ember · v2" :error? false :publishing? false} (status (:db reply))))
+        (is (re-find #"EOF while reading.*holds the text the show runs" (get-in reply [:db :ui :definition :result])))
+        (is (nil? (:dispatch-later reply)))))
+    (testing "a stale failure changes nothing"
+      (is (empty? (transition (assoc-in in-flight [:show :epoch] 999) (conj failure "late")))))))
+
+(deftest every-source-change-derives-the-status-from-the-baseline
+  (let [source "{:id :ember :version 2}"
+        request (transition base [:studio/definition-load "effects" "ember"])
+        loaded (:db (transition (:db request) (conj (get-in request [:studio/http :on-success]) {:source source})))
+        neovim (assoc-in loaded [:ui :definition :engine] :neovim)
+        status #(select-keys (get-in % [:ui :definition]) [:status :engine])]
+    (testing "switching to the text editor installs an undelivered Neovim edit as an edit"
+      (let [switched (transition neovim [:studio/editor-to-text (str source " ;x")])]
+        (is (= {:status "Unpublished changes" :engine :textarea} (status (:db switched))))
+        (is (= (str source " ;x") (get-in switched [:db :ui :definition :source])))))
+    (testing "switching back with the text Studio holds keeps its status"
+      (is (= {:status "ember · v2" :engine :textarea} (status (:db (transition neovim [:studio/editor-to-text source])))))
+      (let [edited (:db (transition neovim [:studio/definition-source (str source " ;x")]))]
+        (is (= {:status "Unpublished changes" :engine :textarea}
+               (status (:db (transition edited [:studio/editor-to-text (str source " ;x")])))))
+        (is (= {:status "ember · v2" :engine :textarea}
+               (status (:db (transition edited [:studio/editor-to-text source])))))))
+    (testing "generated EDN equal to the baseline reads as the baseline, other text as unpublished"
+      (let [generated (transition base [:studio/builder-generate])
+            text (get-in generated [:db :ui :definition :source])
+            ;; The show now runs exactly the text the builder generates.
+            request (transition (:db generated) [:studio/definition-load "effects" "after-hours"])
+            running (:db (transition (:db request) (conj (get-in request [:studio/http :on-success]) {:source text})))
+            again (transition running [:studio/builder-generate])]
+        (is (= {:status "Unpublished changes" :kind "effects" :mode :source :result "Generated EDN from the builder."}
+               (select-keys (get-in generated [:db :ui :definition]) [:status :kind :mode :result])))
+        (is (= text (:studio/nvim-source generated)))
+        (is (nil? (:dispatch-later (transition (assoc-in (:db generated) [:ui :definition :auto?] true)
+                                               [:studio/builder-generate])))
+            "Generate never publishes, even with Publish valid edits on")
+        (is (= "after-hours · v1" (get-in running [:ui :definition :status])))
+        (is (= text (get-in again [:db :ui :definition :source])))
+        (is (= "after-hours · v1" (get-in again [:db :ui :definition :status])))))))
+
 (deftest duration-field-edits-keep-the-other-current-field
   (let [added (transition base [:studio/composition-add "ember"])
         unit (transition (:db added) [:studio/slot-duration 0 nil "bars"])
