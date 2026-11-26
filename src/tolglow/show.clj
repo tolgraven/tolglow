@@ -45,6 +45,8 @@
             [tolglow.compiler.batch :as batch]
             [tolglow.registry :as registry]
             [tolglow.integrations.ableton :as ableton]
+            [tolglow.integrations.phrase-capture :as phrase-capture]
+            [tolglow.integrations.phrase-clip :as phrase-clip]
             [tolglow.aim-paths :as aim-paths]
             [tolglow.rig.pixel-layout :as pixel-layout]
             [tolglow.rig.reflections :as reflections]
@@ -384,6 +386,15 @@
      (or (contains? #{:native-gpu :distributed} compute-backend) (= :native-gpu movement-backend))
      (assoc :budget-ms (or gpu-budget-ms (max 1 (long (/ 500.0 frame-rate))))))))
 
+(defn- new-phrase-capture
+  "Owner state for retrospective Capture (#671). options is false to disable,
+  or phrase-capture/new-buffer options such as {:bars 8 :grid {:beats 1/4}}."
+  [options]
+  (if (false? options)
+    {:enabled? false}
+    {:enabled? true :buffer (phrase-capture/new-buffer options) :layout {}
+     :cost {:samples 0 :total-ns 0 :max-ns 0 :last-ns 0} :captures 0 :last nil}))
+
 (defn- configure-runtime
   [compute-owner {:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
    (let [model (-> (or model (demo/model))
@@ -508,6 +519,7 @@
                             :input (atom {:epoch (:epoch model) :position initial-position
                                           :used-sessions #{(get-in initial-position [:provenance :session-id])}})})
       :sync-input (atom {:epoch (:epoch model) :events []})
+      :phrase-capture (atom (new-phrase-capture (get options :phrase-capture {})))
       :connections owned :devices (atom {}) :device-reconnects (atom {}) :surface-refusals (atom {}) :development development
       :rdm (rdm/create (merge (:rdm-options options)
                              {:state rdm-state :model! #(get @(:state @runtime-ref) :model)
@@ -1830,6 +1842,22 @@
           (assoc-in [:variables :sync :events] (:events captured))
           (routing/admit-sync (:events captured))) model)))
 
+(defn- observe-phrase-capture!
+  "Fold the committed model into the capture buffer and record what it cost.
+  The fold is pure; a failure is reported in status and never stops a frame."
+  [runtime model]
+  (when-let [state (:phrase-capture runtime)]
+    (when (:enabled? @state)
+      (let [start (System/nanoTime)]
+        (try
+          (let [buffer (phrase-capture/observe-model (:buffer @state) model)
+                ns (- (System/nanoTime) start)]
+            (swap! state (fn [s] (-> s (assoc :buffer buffer)
+                                     (update :cost #(-> % (update :samples inc) (update :total-ns + ns)
+                                                        (update :max-ns max ns) (assoc :last-ns ns)))))))
+          (catch Exception error
+            (swap! (:state runtime) assoc-in [:status :phrase-capture-error] (error-data error))))))))
+
 (defn- observe-sync-commands! [runtime before after receipts events fired-outcomes]
   (let [manager (connections/sync (:connections runtime))
         old-ids (if (= (:epoch before) (:epoch after))
@@ -2574,6 +2602,8 @@
                                   (get-in next-state [:output :fog-demands])))
                   (catch Exception error
                     (swap! (:state runtime) assoc-in [:status :output-error] (error-data error))))
+             ;; After the frame is handed to output, so the fold never delays it.
+             (when-not restored? (observe-phrase-capture! runtime (:model next-state)))
              (let [observers (vals @(:observers runtime))
                    publication (try (connections/publish! (:connections runtime) (effect-keyframes/source (block-trace/source next-state) (:keyframes next-state))
                                             (boolean (some (fn [observer] ((:tracing? observer))) observers)))
@@ -3421,6 +3451,69 @@
                              (fn [_] (connections/admit-audio-stop! (:connections runtime))))]
             (shutdown!))
     (throw (ex-info "Unknown audio operation" {:operation operation}))))
+
+(defn- capture-summary [{:keys [id phrase layout]}]
+  (let [bpb (get-in phrase [:meter :beats-per-bar] 4)]
+    {:capture-id id :length-beats (double (:length-beats phrase)) :bars (long (/ (:length-beats phrase) bpb))
+     :start-beat (some-> (get-in phrase [:source :start-beat]) double)
+     :notes (count (:notes phrase)) :cues (vec (distinct (map :cue-id (:notes phrase))))
+     :lane-points (reduce + 0 (map (comp count :points) (:lanes phrase)))
+     :unassigned (:unassigned layout)}))
+
+(defn capture-action!
+  "Retrospective Capture (#671) for the REPL and Studio. The runtime folds
+  every committed owner cycle into a bounded buffer (create-runtime option
+  :phrase-capture, default 8 bars; false disables).
+    :status  -> buffer size, running activations, per-cycle cost and last capture
+    :capture -> capture the last bars ({:bars n :end-beat b} optional) as a
+                phrase, extend the saved MIDI layout and keep it as the last capture
+    :smf     -> {:filename :bytes} Standard MIDI File of the last capture on the
+                layout's cue channel (cue notes and lanes share it by default)
+  The layout is kept for the runtime's lifetime, so later captures address
+  the same pitches and controllers; it is not yet saved with the show."
+  [runtime operation payload]
+  (let [state (:phrase-capture runtime)]
+    (when-not (and state (:enabled? @state))
+      (throw (ex-info "Phrase capture is disabled for this show" {:operation operation})))
+    (case operation
+      :status (let [{:keys [buffer cost captures last]} @state
+                    n (max 1 (:samples cost))]
+                {:enabled? true :bars (:bars buffer) :grid-beats (double (:grid-beats buffer))
+                 :retained-events (count (:events buffer)) :running (count (:open buffer))
+                 :latest-beat (:last-beat buffer)
+                 :cost {:cycles (:samples cost) :mean-us (/ (:total-ns cost) n 1000.0)
+                        :max-us (/ (:max-ns cost) 1000.0) :last-us (/ (:last-ns cost) 1000.0)}
+                 :captures captures :last (some-> last capture-summary)})
+      :capture (let [{:keys [buffer layout captures]} @state
+                     {:keys [bars end-beat] :as options} (select-keys payload [:bars :end-beat])
+                     _ (when-not (and (or (nil? bars) (and (pos-int? bars) (<= bars (:bars buffer))))
+                                      (or (nil? end-beat) (and (number? end-beat) (Double/isFinite (double end-beat))
+                                                               (not (neg? end-beat)))))
+                         (throw (ex-info (str "Capture takes 1-" (:bars buffer) " bars and a non-negative end beat")
+                                         {:bars bars :end-beat end-beat})))
+                     phrase (phrase-capture/capture buffer options)
+                     registry (:registry (:model @(:state runtime)))
+                     layout (phrase-clip/allocate-layout layout registry (phrase-clip/phrase-targets phrase))
+                     entry {:id (inc captures) :phrase phrase :layout layout}]
+                 (if (empty? (:notes phrase))
+                   {:status :empty :message "Nothing ran in the captured bars"}
+                   (do (swap! state assoc :layout layout :captures (inc captures) :last entry)
+                       (assoc (capture-summary entry) :status :captured :phrase phrase))))
+      :smf (let [{:keys [last]} @state]
+             (when-not last (throw (ex-info "Capture a phrase first" {})))
+             (let [{:keys [id phrase layout]} last
+                   clips (phrase-clip/phrase->clips phrase layout)
+                   channel (:channel layout)]
+               {:filename (str "tolglow-capture-" id ".mid")
+                :bytes (phrase-clip/clip->smf (get clips channel) channel
+                                              {:bpm (or (get-in phrase [:source :bpm]) 120)})}))
+      (throw (ex-info "Unknown capture operation" {:operation operation})))))
+
+(defn capture-phrase!
+  "Capture the last bars from the REPL; returns the summary with :phrase.
+  Studio's Capture button runs the same operation."
+  ([runtime] (capture-phrase! runtime {}))
+  ([runtime options] (capture-action! runtime :capture options)))
 
 (defn sync-action!
   "Explicit synchronization and Live ownership operations for Ring/REPL."
