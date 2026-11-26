@@ -3196,7 +3196,12 @@
             push-3-variation-pads? (and (= kind :push-3) (true? (:cue-variation-pads? options)))
             x-touch? (= :x-touch kind)
             ;; Validates the cue channel bindings before any port opens.
-            _ (when x-touch? (x-touch/validate-channels! (vec (:channels options []))))
+            _ (when x-touch?
+                (x-touch/validate-channels! (vec (:channels options [])))
+                ;; A fresh connection only: a reconnect or restore keeps its session,
+                ;; and a strip that lost its range shows !range instead.
+                (when-not (or restore-lease reconnect-lease)
+                  (x-touch/validate-channel-ranges! (:model @(:state runtime)) (vec (:channels options [])))))
             surface-content (when x-touch?
                               {:type :mixer-strips :effect-group-view effect-group-view
                                :cue-strips (vec (:channels options []))})
