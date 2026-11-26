@@ -35,8 +35,9 @@
 
 (defn- runtime
   ([output show-model] (runtime output show-model {}))
-  ([output show-model {:keys [workers failing-compile] :or {workers 2}}]
+  ([output show-model {:keys [workers failing-compile audition] :or {workers 2}}]
    (cond-> (show/create-runtime {:model show-model :workspace-options nil :effect-log! (fn [_]) :workers workers
+                                 :audition audition
                                  :sink {:send! (fn [universes _]
                                                 (swap! output conj (mapv #(bit-and 255 %) (get universes 1))))}})
      ;; The compiler stage is driven at its owned boundary, as the renderer
@@ -473,3 +474,50 @@
           (is (empty? (get-in @(:state rt) [:model :event-subscribers :ramps])) "The ramp ends with its destination")
           (is (nil? (get-in @(:state rt) [:status :error])))
           (finally (show/stop! rt)))))))
+
+(deftest a-room-audition-of-a-rejected-reload-renders-the-live-show-and-commits-nothing-live
+  ;; The audition renders through the same frame function on its private
+  ;; timeline. A draft that publishes a revision the engine rejects must
+  ;; audition exactly the live frames, keep its own controller on the live
+  ;; one's seed and schedule, and leave the live show untouched.
+  (let [show-model (model {:modulator :preserve-state} [wash owner])
+        publish (assoc (rejected-revision owner :evaluate) :modulation changed-modulation)
+        options {:audition {:max-live-share ##Inf}}
+        plain-output (atom []) staged-output (atom [])
+        plain (runtime plain-output show-model options)
+        staged (runtime staged-output show-model options)
+        tick! (fn [rt t] (show/tick! rt t) (is (show/await-audition rt 5000)))
+        private #(get-in @(:scene-draft staged) [:frame :model])]
+    (try
+      (doseq [rt [plain staged] cue [:wash :modulator]] (apply! rt {:op :cue/launch :cue-id cue} 0))
+      (let [stage (show/submit! staged {:op :scene-draft/stage :draft-id "reload" :source {:adapter :repl :session-id "test"}
+                                        :operations [{:op :registry/publish :kind :effects :definition publish}]})
+            _ (doseq [rt [plain staged]] (tick! rt 25))
+            frames (mapv (fn [t]
+                           (tick! plain t) (tick! staged t)
+                           {:time-ms t
+                            :live (peek @plain-output) :staged (peek @staged-output)
+                            :live-values (get-in (show/snapshot plain) [:output :values])
+                            :auditioned (get-in (show/snapshot staged) [:draft-output :values])
+                            :live-controllers (get-in @(:state plain) [:model :modulation :controllers])
+                            :staged-controllers (get-in @(:state staged) [:model :modulation :controllers])
+                            :private-controllers (get-in (private) [:modulation :controllers])})
+                         times)
+            mismatches (fn [a b] (vec (keep #(when (not= (a %) (b %)) (:time-ms %)) frames)))
+            owner-of (fn [model] (some #(when (= :modulator (:cue-id %)) %) (vals (:instances model))))]
+        (is (= :accepted (:status (deref stage 2000 ::timeout))))
+        (is (< 4 (count (distinct (map #(nth (:live %) head-2-dimmer) frames)))) "The owned glide moves the wash")
+        (is (= [] (mismatches :live :staged)) "Live packets differ at these frame times")
+        (is (= [] (mismatches :live-controllers :staged-controllers)) "Live controllers differ at these frame times")
+        (is (= [] (mismatches :live-values :auditioned)) "The audition differs from the live frame at these times")
+        (is (= [] (mismatches :live-controllers :private-controllers))
+            "The private controller differs from the live one at these frame times")
+        ;; Only the random IDs of the two launch commands differ in :control.
+        (is (= (dissoc (:model @(:state plain)) :control) (dissoc (:model @(:state staged)) :control))
+            "The committed live model is unchanged")
+        (is (= [1 :evaluate 2] ((juxt :effect-version #(get-in % [:reload-fault :stage]) #(get-in % [:reload-fault :effect-version]))
+                                (owner-of (private))))
+            "The private timeline recorded the rejection")
+        (is (= [1 nil] ((juxt :effect-version :reload-fault) (owner-of (:model @(:state staged))))))
+        (is (= {:rendered (inc (count times)) :skipped 0} (:frames (show/scene-draft staged)))))
+      (finally (show/stop! plain) (show/stop! staged)))))

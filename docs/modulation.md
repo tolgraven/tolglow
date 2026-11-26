@@ -193,6 +193,14 @@ candidate's schemas accept, while the last-good revision reads them unchanged.
 After a renderer rejection the owner removes the ramp overlay from the rebuilt
 engine result, so the rejected frame does not commit a ramp's frame value.
 
+A [Room audition](repl-studio-parity.md#audition-a-scene-in-the-room) renders
+through the same frame function on its private timeline. A draft that publishes
+a revision of a running cue meets a pending reload there, and samples both
+outcomes the same way. The private timeline keeps the reload fault and the
+controller state behind the inputs the engine read; the live show's model,
+controllers and packets are not touched. A draft whose revision the engine
+rejects therefore auditions exactly the live frames.
+
 Controllers sample in priority/activation order. Within one controller, instance
 IDs and parameter keys have stable ordering (`:all` sorts keys; an explicit key
 vector keeps its order). A late frame samples every missed boundary with the
