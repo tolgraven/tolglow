@@ -275,27 +275,48 @@
   different edges let the same attack through a few milliseconds apart."
   (* 3 hop-ms))
 
+(defn- unwrap!
+  "Copy ring samples [from, from+n) (absolute indices) into out."
+  [^doubles ring ^long ring-size ^long from ^doubles out]
+  (let [n (alength out)]
+    (loop [k 0]
+      (when (< k n)
+        (aset out k (aget ring (int (Math/floorMod (+ from k) ring-size))))
+        (recur (inc k))))
+    out))
+
 (defn- correlation
   "Largest normalized correlation between record's raw window on its own
   channel and other's raw channel delayed by 0..bleed-lag-ms. Near 1 means
   the candidate is mostly the other stem's sound; an independent instrument
-  stays near 0 whatever its level."
+  stays near 0 whatever its level. Runs on the capture thread for each
+  coincident candidate pair, so both windows are unwrapped once into plain
+  arrays and every loop is primitive (no boxed sample reads)."
   [rings ring-size window-samples lag-samples record other]
-  (let [^doubles a (rings (:index record)) ^doubles b (rings (:index other))
-        r (long ring-size) start (long (:start-index record)) w (long window-samples)
-        at (fn ^double [^doubles x ^long i] (aget x (int (Math/floorMod i r))))
-        energy-a (loop [k 0 acc 0.0] (if (= k w) acc (let [v (at a (+ start k))] (recur (inc k) (+ acc (* v v))))))]
+  (let [r (long ring-size) start (long (:start-index record)) w (long window-samples) lag (long lag-samples)
+        ^doubles a (unwrap! (rings (:index record)) r start (double-array w))
+        ;; b[j] is other's sample at start - lag + j, so delay d reads b[lag - d + k].
+        ^doubles b (unwrap! (rings (:index other)) r (- start lag) (double-array (+ w lag)))
+        energy-a (areduce a k acc 0.0 (+ acc (* (aget a k) (aget a k))))]
     (if (< energy-a 1.0e-18)
       0.0
-      (loop [d 0 best 0.0]
-        (if (> d (long lag-samples))
+      (loop [d 0 best 0.0
+             ;; Energy of b's window for delay 0, slid one sample per delay.
+             energy-b (let [o lag] (loop [k 0 acc 0.0] (if (= k w) acc (recur (inc k) (+ acc (let [y (aget b (+ o k))] (* y y)))))))]
+        (if (> d lag)
           best
-          (let [[dot energy-b] (loop [k 0 dot 0.0 eb 0.0]
-                                 (if (= k w) [dot eb]
-                                     (let [x (at a (+ start k)) y (at b (- (+ start k) d))]
-                                       (recur (inc k) (+ dot (* x y)) (+ eb (* y y))))))
-                c (if (< energy-b 1.0e-18) 0.0 (Math/abs (/ dot (Math/sqrt (* energy-a energy-b)))))]
-            (recur (inc d) (max best c))))))))
+          (let [o (- lag d)
+                dot (loop [k 0 acc 0.0] (if (= k w) acc (recur (inc k) (+ acc (* (aget a k) (aget b (+ o k)))))))
+                c (if (< energy-b 1.0e-18) 0.0 (Math/abs (/ dot (Math/sqrt (* energy-a energy-b)))))
+                next-energy (if (pos? o)
+                              (let [in (aget b (dec o)) out (aget b (+ o (dec w)))] (+ energy-b (- (* in in) (* out out))))
+                              energy-b)]
+            (recur (inc d) (max best c) (max 0.0 next-energy))))))))
+
+(def ^:private max-correlated-sources
+  "A candidate is correlated against at most this many of the loudest
+  coincident stems, so a downbeat on every stem stays a bounded cost."
+  2)
 
 (defn- bleed?
   "A candidate is bleed when another stem, on another channel, had a louder
@@ -306,13 +327,15 @@
   loud hit lands elsewhere."
   [record spec typical-db window correlate]
   (when-let [isolation-db (:isolation-db spec)]
-    (some (fn [other]
-            (and (not= (:stem other) (:stem record)) (not= (:channel other) (:channel record))
-                 (<= (Math/abs (double (- (:time-ms other) (:time-ms record)))) (+ bleed-window-ms 1.0e-6))
-                 (> (:peak-db other) (:peak-db record))
-                 (or (and typical-db (<= (:peak-db record) (- typical-db isolation-db)))
-                     (>= (correlate record other) bleed-correlation))))
-          window)))
+    (let [louder (filterv (fn [other]
+                            (and (not= (:stem other) (:stem record)) (not= (:channel other) (:channel record))
+                                 (<= (Math/abs (double (- (:time-ms other) (:time-ms record)))) (+ bleed-window-ms 1.0e-6))
+                                 (> (:peak-db other) (:peak-db record))))
+                          window)]
+      (and (seq louder)
+           (or (and typical-db (<= (:peak-db record) (- typical-db isolation-db)))
+               (some #(>= (correlate record %) bleed-correlation)
+                     (take max-correlated-sources (sort-by (comp - :peak-db) louder))))))))
 
 (defn- close-hop
   "Decide every stem for one hop, confirm candidates old enough to judge,
