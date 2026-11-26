@@ -468,6 +468,9 @@
   (fn [db [_ message]] (if (= message (get-in db [:ui :toast :message])) (assoc-in db [:ui :toast] nil) db)))
 (rf/reg-event-fx :studio/failure (fn [_ [_ error]] {:dispatch [:studio/toast (str error) true]}))
 (rf/reg-event-db :studio/ui-set (fn [db [_ path value]] (assoc-in db (into [:ui] path) value)))
+
+(rf/reg-event-db :studio/ui-update (fn [db [_ path f]] (update-in db (into [:ui] path) f)))
+
 (rf/reg-event-db :studio/numeric-edit
   (fn [db [_ field-id text]] (assoc-in db [:ui :numeric-edits field-id] text)))
 (rf/reg-event-db :studio/numeric-blur

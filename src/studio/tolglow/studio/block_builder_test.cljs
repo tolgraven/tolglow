@@ -35,3 +35,16 @@
     (is (= {:optics/gel :touring-gel :show/water {:source :show} :tour/glass :unpublished}
            (builder/draft-catalog shared definition)))
     (is (= :new-water (:show/water (builder/draft-catalog shared {:prefabs {:show/water :new-water}}))))))
+
+(deftest stage-edits-made-before-a-render-compose
+  ;; A wet amount committed on blur and the tap on "Move later" that caused the blur both
+  ;; run against the stages that were rendered; each must apply to the latest stages.
+  (let [rendered [{:block :optics/through-water} {:block :optics/gel}]
+        amount #(builder/update-stage % 1 assoc :amount 0.4)
+        move #(builder/move-stage % 0 1)
+        coordinates #(builder/update-stage % 0 assoc :coordinates :surface-uv)]
+    (is (= [{:block :optics/gel :amount 0.4 :coordinates :surface-uv} {:block :optics/through-water}]
+           (-> rendered amount move coordinates)))
+    (is (= rendered (builder/update-stage rendered 2 assoc :amount 1)))
+    (is (= [{:block :optics/gel}] (builder/remove-stage rendered 0)))
+    (is (= rendered (builder/remove-stage rendered 5)))))

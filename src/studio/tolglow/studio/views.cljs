@@ -904,7 +904,7 @@
            (when (and (= :library (get-in db [:ui :view])) (= :form (get-in db [:ui :definition :mode])))
              [block-builder/field {:id (some-> builder :id not-empty keyword) :params {:level {}}
                                    :outputs {:color nil :dimmer nil}}
-              (or (:blocks builder) {}) #(set-ui! [:builder :blocks] %)])])
+              (or (:blocks builder) {}) (fn [f] (input! [:studio/ui-update [:builder :blocks] #(f (or % {}))]))])])
         [:label.checkbox-label [:input#builder-cue {:type "checkbox" :checked (boolean (:cue? builder)) :on-change #(set-ui! [:builder :cue?] (checked? %))}]
          "Create matching cue"]])
      [button "builder-preview" "Generate EDN ↗" [:studio/builder-generate]]]))
