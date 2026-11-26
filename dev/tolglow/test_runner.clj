@@ -48,7 +48,7 @@
     tolglow.studio.sensor-host-test tolglow.output.scheduler-test tolglow.perf.output-deadlines-test
     tolglow.waveforms-test tolglow.development.agents-test tolglow.studio.application-agent-host-test
     tolglow.render.workers-test tolglow.request-archive-test
-    tolglow.event-subscribers-test tolglow.studio.projection-test tolglow.studio.active-preview-test tolglow.push-scene-test
+    tolglow.event-subscribers-test tolglow.beat-scheduler-test tolglow.studio.projection-test tolglow.studio.active-preview-test tolglow.push-scene-test
     tolglow.controllers.content-browser-test tolglow.controllers.content-browser-host-test
     tolglow.controllers.content-browser-display-test
     tolglow.preview.airplay-test])
