@@ -10,7 +10,10 @@
             [tolglow.lighting-capacity :as capacity]
             [tolglow.lighting-activity :as activity]
             [tolglow.registry :as registry]
-            [tolglow.automation.random :as random]))
+            [tolglow.autopilot.signal :as signal]
+            [tolglow.automation.launch-params :as launch-params]
+            [tolglow.automation.random :as random]
+            [tolglow.automation.sections :as sections]))
 
 (defn initial-state
   "Create one auto-mode session. owner-id must be unique per start so command
@@ -19,24 +22,65 @@
   (random/next-random seed)
   (when-not (and (registry/finite-number? time-ms) (some? owner-id))
     (throw (ex-info "Auto mode requires explicit time and owner ID" {})))
-  {:seed seed :next-at-ms time-ms :owner-id owner-id :tick 0
+  {:seed seed :base-seed seed :next-at-ms time-ms :owner-id owner-id :tick 0
    :epoch nil :owned-instance-ids []})
 
+(defn- manual-controls
+  "Operator-set controls on an instance; progress fields are excluded."
+  [instance]
+  (cond-> (select-keys (:system instance) [:opacity :paused? :attack :release])
+    (not (== 1.0 (get-in instance [:system :gain] 1.0))) (assoc :gain (get-in instance [:system :gain]))))
+
 (defn record-launch
-  "The command shell records successful launch instance IDs for exact cleanup."
-  [state instance-id]
-  (update state :owned-instance-ids #(vec (distinct (conj % instance-id)))))
+  "The command shell records successful launch instance IDs for exact cleanup.
+  With the launched instance, also record its parameters and manual controls:
+  a later change by anyone else hands that instance to the performer, and auto
+  mode never ends it again."
+  ([state instance-id]
+   (update state :owned-instance-ids #(vec (distinct (conj % instance-id)))))
+  ([state instance-id instance]
+   (cond-> (record-launch state instance-id)
+     instance (update :owned-launches
+                      (fn [launches]
+                        (conj (vec (remove #(= instance-id (:instance-id %)) launches))
+                              {:instance-id instance-id :params (:params instance)
+                               :controls (manual-controls instance)}))))))
+
+(defn- taken-over?
+  "True when a recorded launch no longer matches its instance: a performer (or
+  another writer) changed a parameter or a manual control since auto launched it."
+  [model state id]
+  (when-let [launch (some #(when (= id (:instance-id %)) %) (:owned-launches state))]
+    (when-let [instance (get-in model [:instances id])]
+      (or (not= (:params launch) (:params instance))
+          (not= (:controls launch) (manual-controls instance))))))
+
+(defn- hand-over
+  "Drop instances a performer has taken over, or that have ended, from auto
+  ownership. Returns [state taken-over-ids]."
+  [model state]
+  (let [ids (:owned-instance-ids state)
+        taken (filterv #(taken-over? model state %) ids)
+        kept (filterv #(and (contains? (:instances model) %) (not (some #{%} taken))) ids)]
+    [(cond-> (assoc state :owned-instance-ids kept)
+       (contains? state :owned-launches)
+       (update :owned-launches (fn [launches] (filterv #(some #{(:instance-id %)} kept) launches))))
+     taken]))
 
 (defn- command [model state op payload index time-ms]
   (merge {:op op :command-id (str "auto:" (:owner-id state) ":" (:tick state) ":" index)
           :source {:adapter :auto :session-id (:owner-id state)}
           :show-id (:show-id model) :epoch (:epoch model) :time-ms time-ms} payload))
 
-(defn stop-plan [model state time-ms]
-  {:state (assoc state :owned-instance-ids [] :tick (inc (:tick state)))
-   :commands (if (= (:epoch state) (:epoch model))
-               (mapv (fn [i id] (command model state :instance/end {:instance-id id} i time-ms))
-                     (range) (:owned-instance-ids state)) [])})
+(defn stop-plan
+  "End the instances this session still owns. Instances a performer took over
+  stay running."
+  [model state time-ms]
+  (let [[owned-state _] (if (= (:epoch state) (:epoch model)) (hand-over model state) [state []])]
+    {:state (assoc state :owned-instance-ids [] :owned-launches [] :tick (inc (:tick state)))
+     :commands (if (= (:epoch state) (:epoch model))
+                 (mapv (fn [i id] (command model state :instance/end {:instance-id id} i time-ms))
+                       (range) (:owned-instance-ids owned-state)) [])}))
 
 (defn- interval-duration [config]
   (or (:interval config) (when (contains? config :interval-ms) {:ms (:interval-ms config)}) {:beats 1}))
@@ -47,7 +91,40 @@
         {:mode :timed :duration-ms (:interval-ms config)}
         {:mode :timed :duration (interval-duration config)})))
 
-(defn- candidates [model config]
+(defn- cue-categories [model cue]
+  (launch-params/cue-categories (registry/cue-effect (:registry model) cue) cue))
+
+(defn- category-match? [model config cue]
+  (let [{:keys [include exclude]} (:categories config)
+        categories (cue-categories model cue)]
+    (and (or (empty? include) (some categories include))
+         (not (some categories exclude)))))
+
+(defn- performer-cue-ids
+  "Cues someone other than this auto session is running. Auto mode yields
+  them rather than stacking a second copy over a performer's look."
+  [model state]
+  (into #{} (keep (fn [instance]
+                    (when (and (= :running (:phase instance))
+                               (not= {:adapter :auto :session-id (:owner-id state)} (:source instance)))
+                      (:cue-id instance))))
+        (vals (:instances model))))
+
+(defn- with-launch-params
+  "Attach this decision's seeded parameter choices. The cue's :params become
+  the full launch values so emission prediction sees exactly what will run."
+  [model config state cue]
+  (let [effect (registry/cue-effect (:registry model) cue)
+        fixed (get-in config [:launch :params] {})
+        chosen (when (and effect (:randomize config))
+                 (launch-params/choose effect cue (:randomize config)
+                                       (:base-seed state (:seed state)) (:tick state) fixed))]
+    (-> cue
+        (assoc :params (merge (:params cue) (:saved-params cue) fixed (:params chosen)))
+        (assoc ::launch-params (merge fixed (:params chosen)))
+        (cond-> chosen (assoc ::randomized chosen)))))
+
+(defn- candidates [model config state]
   (let [scope (:scope config :all)
         ids (cond
               (= scope :all) nil
@@ -56,14 +133,16 @@
               (let [page (get-in model [:pages (:page-id scope)])]
                 (set (if (map? page)
                        (or (:cue-ids page) (vals (:cells page))) page)))
-              :else (throw (ex-info "Auto scope must be all, cue IDs, or an explicit page ID" {:scope scope})))]
+              :else (throw (ex-info "Auto scope must be all, cue IDs, or an explicit page ID" {:scope scope})))
+        yielded (if (false? (:yield-to-performers? config)) #{} (performer-cue-ids model state))]
     (->> (get-in model [:registry :cues]) vals
          (filter #(and (or (nil? ids) (ids (:id %)))
                        (not (false? (:auto? %))) (not (:show-control? %))
-                       (not (:show-control? (registry/cue-effect (:registry model) %)))))
+                       (not (:show-control? (registry/cue-effect (:registry model) %)))
+                       (not (yielded (:id %)))
+                       (category-match? model config %)))
          (sort-by (comp str :id))
-         (mapv #(-> %
-                    (update :params (fn [params] (merge params (get-in config [:launch :params]))))
+         (mapv #(-> (with-launch-params model config state %)
                     (assoc :prediction-launch (launch-options config)))))))
 
 (defn- definition [model cue] (get-in model [:registry :effects (:effect-id cue)]))
@@ -221,6 +300,133 @@
       (make-room model ctx (assoc next-look :unmet-watts Double/POSITIVE_INFINITY) owned time-ms)
       (make-room model ctx selected owned time-ms))))
 
+(defn- lit-plan
+  "Choose up to :count cues (with any emission companions) while the predicted
+  number of emitting fixtures, existing light included, stays within :max-lit.
+  A quiet section never extinguishes a performer's light; it adds nothing when
+  that light already fills the limit."
+  [model pool ordered config time-ms]
+  (let [limit (:max-lit config) wanted (:count config 1)]
+    (loop [chosen [] picks 0 remaining ordered best nil]
+      (if (or (empty? remaining) (>= picks wanted))
+        (if (seq chosen) (assoc best :cues chosen) {:cues [] :reason :lit-limit :max-lit limit})
+        (let [candidate (first remaining)]
+          (if (some #{candidate} chosen)
+            (recur chosen picks (rest remaining) best)
+            (let [trial (complete-selection model pool (conj chosen candidate) config time-ms)
+                  cues (:cues trial)
+                  lit (when (seq cues) (count (:emitting (light-forecast model cues time-ms))))]
+              (if (and lit (<= lit limit))
+                (recur cues (inc picks) (rest remaining) (assoc trial :lit lit))
+                (recur chosen picks (rest remaining) best)))))))))
+
+(defn- activity-target
+  "A fixed target in [0,1] or a signal binding (an LFO, audio energy or a
+  variable) sampled at this decision and clamped to [0,1]."
+  [model config time-ms]
+  (let [target (:activity-target config)]
+    (cond
+      (nil? target) nil
+      (number? target) target
+      :else (max 0.0 (min 1.0 (double (signal/value (assoc model :time-ms time-ms) target)))))))
+
+(def ^:private config-keys
+  #{:interval :interval-ms :count :scope :intent :launch :activity-target
+    :randomize :categories :max-lit :yield-to-performers? :sections})
+
+(defn validate-config
+  "Path/message errors for an auto-mode config, [] when valid."
+  [config]
+  (if-not (and (map? config) (registry/data? config))
+    [{:path [] :message "Auto config must be portable map data"}]
+    (vec
+     (concat
+      (when-not (every? config-keys (keys config))
+        [{:path [] :message "Unknown auto setting" :keys (vec (remove config-keys (keys config)))}])
+      (when-let [duration (or (:interval config) (when (contains? config :interval-ms) {:ms (:interval-ms config)}))]
+        (when-not (and (empty? (time/validate-duration duration)) (pos? (val (first duration))))
+          [{:path [:interval] :message "Interval needs one positive beats, bars, phrases or ms value"}]))
+      (when-not (and (integer? (:count config 1)) (<= 1 (:count config 1) 64))
+        [{:path [:count] :message "Count must be an integer from 1 to 64"}])
+      (when-not (contains? #{nil :darkness} (:intent config))
+        [{:path [:intent] :message "Intent is :darkness or absent"}])
+      (let [target (:activity-target config)]
+        (when-not (or (nil? target)
+                      (and (registry/finite-number? target) (<= 0 target 1))
+                      (and (map? target) (signal/valid? target)))
+          [{:path [:activity-target] :message "Activity target is a number in [0,1] or a signal binding"}]))
+      (when (contains? config :randomize)
+        (map #(update % :path (fn [p] (into [:randomize] p))) (launch-params/validate (:randomize config))))
+      (when (contains? config :categories)
+        (let [{:keys [include exclude] :as filters} (:categories config)]
+          (when-not (and (map? filters) (every? #{:include :exclude} (keys filters))
+                         (every? #(or (nil? %) (and (vector? %) (every? keyword? %))) [include exclude]))
+            [{:path [:categories] :message "Category filters are {:include [..] :exclude [..]} keyword vectors"}])))
+      (when-not (or (nil? (:max-lit config)) (nat-int? (:max-lit config)))
+        [{:path [:max-lit] :message "Lit-fixture limit must be a nonnegative integer"}])
+      (when-not (contains? #{nil true false} (:yield-to-performers? config))
+        [{:path [:yield-to-performers?] :message "Yield to performers must be boolean"}])
+      (when (contains? config :sections)
+        (map #(update % :path (fn [p] (into [:sections] p)))
+             (sections/validate (:sections config) validate-config)))))))
+
+(defn- plan-without-refusals
+  "Run plan over the pool. A cue whose launch the show would refuse (a head
+  that cannot take one of its attributes, a stale aim path) is dropped with
+  its refusal and the plan runs again, so one unlaunchable cue cannot stall
+  auto mode. Returns [result refusals]."
+  [plan pool ordered]
+  (loop [pool pool ordered ordered refused []]
+    (let [outcome (try {:result (plan pool ordered)}
+                       (catch clojure.lang.ExceptionInfo e
+                         (let [{:keys [cue-id ack]} (ex-data e)]
+                           (if (and cue-id ack (some #(= cue-id (:id %)) pool)
+                                    (<= (count refused) (count pool)))
+                             {:refused {:cue-id cue-id :code (:code ack) :message (:message ack)}}
+                             (throw e)))))]
+      (if-let [r (:refused outcome)]
+        (let [keep? #(not= (:cue-id r) (:id %))]
+          (recur (filterv keep? pool) (filterv keep? ordered) (conj refused r)))
+        [(:result outcome) refused]))))
+
+(defn normalize-config
+  "Turn the textual choices a JSON client sends into the planner's keywords:
+  section transitions, category filters and randomize selections. Other
+  values pass through for validate-config to judge."
+  [config]
+  (let [words (fn [xs] (if (vector? xs) (mapv #(if (string? %) (keyword %) %) xs) xs))
+        categories (fn [filters] (cond-> filters (map? filters)
+                                   (-> (cond-> (contains? filters :include) (update :include words))
+                                       (cond-> (contains? filters :exclude) (update :exclude words)))))
+        one (fn one [config]
+              (cond-> config
+                (map? (:categories config)) (update :categories categories)
+                (map? (:randomize config)) (update :randomize #(-> (launch-params/normalize %)
+                                                                   (cond-> (vector? (:categories %)) (update :categories words))))
+                (vector? (:sections config))
+                (update :sections (fn [sections]
+                                    (mapv #(cond-> %
+                                             (string? (:transition %)) (update :transition keyword)
+                                             (map? (:config %)) (update :config one))
+                                          sections)))))]
+    (if (map? config) (one config) config)))
+
+(defn keep-plan
+  "Carry the authored plan of a previous config into a new one: its sections,
+  category filters, lit limit and performer policy, and its palette and ranges
+  when the new config randomizes. New settings win where both are given."
+  [previous config]
+  (let [plan (cond-> (select-keys previous [:sections :categories :max-lit :yield-to-performers?])
+               ;; A signal-bound target (an LFO or audio energy) is part of the plan.
+               (map? (:activity-target previous)) (assoc :activity-target (:activity-target previous)))
+        kept-random (select-keys (:randomize previous) [:palette :ranges :max-change :categories :saved])]
+    (cond-> (merge plan config)
+      (:randomize config) (update :randomize #(merge kept-random %)))))
+
+(defn- end-commands [model state ids force? time-ms]
+  (mapv (fn [i id] (command model state :instance/end (cond-> {:instance-id id} force? (assoc :force? true)) i time-ms))
+        (range) ids))
+
 (defn advance
   "Select cues when the interval expires. Model supplies :registry, canonical
   patched :fixtures. Live :instances are evaluated for exact priority/lifecycle;
@@ -232,65 +438,117 @@
   :cue-ids accepted as a compact alias. The caller dispatches commands and feeds
   accepted IDs to record-launch. A host can supply its :patch and :meter as
   values or delays and the :previous-budget from its last committed frame.
-  Delayed plans are realized only when a selection is due."
+  Delayed plans are realized only when a selection is due.
+
+  #217 settings: :randomize chooses launch parameters within each schema's
+  domain (see tolglow.automation.launch-params); :categories filters cues by
+  category; :max-lit caps emitting fixtures; :yield-to-performers? (default
+  true) skips cues someone else is running; :activity-target may be a signal
+  binding; :sections plays a weighted seeded plan of musical sections whose
+  :config overrides these settings. A stopped transport makes no decision and
+  holds every timer. An instance a performer changes leaves auto ownership."
   [model config state time-ms & [plans]]
-  (let [duration (interval-duration config)
+  (let [errors (validate-config config)
+        _ (when (seq errors)
+            (let [{:keys [path message]} (first errors)]
+              (throw (ex-info (str "Invalid auto config: " message (when (seq path) (str " at " (pr-str path))))
+                              {:errors errors :config config}))))
         clock (time/frame-clock (assoc model :time-ms time-ms))
-        normalized (time/normalize-duration duration (:meter clock))
-        count (:count config 1)
-        timer (:interval-timer state)
-        unit (:unit normalized)]
-    (when-not (and (registry/finite-number? time-ms) (pos? (:value normalized))
-                   (integer? count) (<= 1 count 64)
-                   (or (nil? (:activity-target config))
-                       (and (registry/finite-number? (:activity-target config)) (<= 0 (:activity-target config) 1))))
-      (throw (ex-info "Invalid auto-mode time, interval or count" {:config config :time-ms time-ms})))
-    (time/coordinate clock unit)
+        _ (when-not (registry/finite-number? time-ms)
+            (throw (ex-info "Invalid auto-mode time, interval or count" {:config config :time-ms time-ms})))]
     (cond
       (and (some? (:epoch state)) (not= (:epoch state) (:epoch model)))
       {:state (-> state (assoc :epoch (:epoch model) :owned-instance-ids [] :next-at-ms time-ms)
-                  (dissoc :interval-timer :next-at-beat))
+                  (dissoc :interval-timer :next-at-beat :section :owned-launches))
        :commands [] :reasons [{:reason :show-restarted}]}
-      (and (= unit :beats) (false? (:playing? clock)))
+
+      (false? (:playing? clock))
       {:state state :commands [] :reasons []}
-      (and timer (not= duration (get-in timer [:duration :source])))
-      {:state (assoc state :interval-timer (time/start duration clock)) :commands [] :reasons []}
-      (and timer (not (:done? (time/sample timer clock))))
-      {:state state :commands [] :reasons []}
-      (and (nil? timer) (= :ms unit) (< time-ms (:next-at-ms state)))
-      {:state state :commands [] :reasons []}
+
       :else
-      (let [plans (force plans)
-            patch (or (force (:patch plans)) (render/compile-patch (:fixtures model [])))
-            meter (or (:meter plans) (delay (capacity/prepare patch)))
-            ctx (when (budget/enabled? model)
-                  (budget/prepare-frame-context (:previous-budget plans) model patch (force meter)))
-            model (assoc model ::patch patch ::budget ctx ::meter meter)
-            pool (candidates model config)
-            [seed ordered] (random/shuffle-values (:seed state) pool)
-            ordered (activity-order model (:activity-target config) ordered)
-            owned (filterv (fn [id]
-                             (let [instance (get-in model [:instances id])]
-                               (and (= :running (:phase instance))
-                                    (= {:adapter :auto :session-id (:owner-id state)} (:source instance)))))
-                           (:owned-instance-ids state))
-            result (cond
-                     (empty? ordered) {:cues [] :reason :empty-scope}
-                     ctx (budget-plan model ctx ordered config owned time-ms)
-                     :else (complete-selection model pool (vec (take count ordered)) config time-ms))
-            ended (:retired result)
-            releases (mapv (fn [i id] (command model state :instance/end {:instance-id id} i time-ms)) (range) ended)
-            launch (launch-options config)
-            commands (into releases
-                           (map-indexed (fn [i cue]
-                                          (command model state :cue/launch {:cue-id (:id cue) :launch launch}
-                                                   (+ (clojure.core/count releases) i) time-ms)))
-                           (:cues result))
-            timer (time/start duration clock)
-            next-at (+ (:started-at timer) (get-in timer [:duration :value]))]
-        {:state (cond-> (assoc state :seed seed :epoch (:epoch model) :interval-timer timer
-                               :tick (inc (:tick state)))
-                  ctx (assoc :owned-instance-ids (into [] (remove (set ended)) owned))
-                  (= :ms unit) (assoc :next-at-ms next-at)
-                  (= :beats unit) (assoc :next-at-beat next-at))
-         :commands commands :reasons [(dissoc result :cues ::required)]}))))
+      (let [[state taken] (hand-over model state)
+            handed (when (seq taken) [{:reason :performer-took-over :instance-ids taken}])
+            plan (:sections config)
+            step (when plan (sections/step plan (:section state) (:base-seed state (:seed state)) clock))
+            section (when plan (sections/current plan (:state step)))
+            entered (:entered step)
+            transition (when (:changed? step) (:transition entered :overlap))
+            state (cond-> state
+                    step (assoc :section (:state step))
+                    entered (-> (dissoc :interval-timer) (assoc :next-at-ms time-ms)))
+            config (if section (sections/effective-config config section) config)
+            duration (interval-duration config)
+            normalized (time/normalize-duration duration (:meter clock))
+            count (:count config 1)
+            timer (:interval-timer state)
+            unit (:unit normalized)
+            tag (fn [reason] (cond-> reason section (assoc :section (:id section))))]
+        (time/coordinate clock unit)
+        (cond
+          (and timer (not= duration (get-in timer [:duration :source])))
+          {:state (assoc state :interval-timer (time/start duration clock)) :commands [] :reasons (vec handed)}
+          (and timer (not (:done? (time/sample timer clock))))
+          {:state state :commands [] :reasons (vec handed)}
+          (and (nil? timer) (= :ms unit) (< time-ms (:next-at-ms state)))
+          {:state state :commands [] :reasons (vec handed)}
+          :else
+          (let [plans (force plans)
+                patch (or (force (:patch plans)) (render/compile-patch (:fixtures model [])))
+                meter (or (:meter plans) (delay (capacity/prepare patch)))
+                ctx (when (budget/enabled? model)
+                      (budget/prepare-frame-context (:previous-budget plans) model patch (force meter)))
+                ;; A cut or release transition ends this session's instances
+                ;; before the new section chooses, so the prediction sees the
+                ;; room the new section starts from.
+                cut-ids (when (#{:cut :release} transition)
+                          (filterv #(= :running (get-in model [:instances % :phase])) (:owned-instance-ids state)))
+                cuts (end-commands model state cut-ids (= :cut transition) time-ms)
+                model (cond-> model (seq cut-ids) (update :instances #(apply dissoc % cut-ids)))
+                state (cond-> state (seq cut-ids)
+                        (-> (update :owned-instance-ids #(filterv (complement (set cut-ids)) %))
+                            (update :owned-launches #(filterv (fn [l] (not (some #{(:instance-id l)} cut-ids))) %))))
+                model (assoc model ::patch patch ::budget ctx ::meter meter)
+                pool (candidates model config state)
+                [seed ordered] (random/shuffle-values (:seed state) pool)
+                ordered (activity-order model (activity-target model config time-ms) ordered)
+                owned (filterv (fn [id]
+                                 (let [instance (get-in model [:instances id])]
+                                   (and (= :running (:phase instance))
+                                        (= {:adapter :auto :session-id (:owner-id state)} (:source instance)))))
+                               (:owned-instance-ids state))
+                [result refused] (plan-without-refusals
+                                  (fn [pool ordered]
+                                    (cond
+                                      (empty? ordered) {:cues [] :reason :empty-scope}
+                                      (:max-lit config) (lit-plan model pool ordered config time-ms)
+                                      ctx (budget-plan model ctx ordered config owned time-ms)
+                                      :else (complete-selection model pool (vec (take count ordered)) config time-ms)))
+                                  pool ordered)
+                ended (:retired result)
+                releases (mapv (fn [i id] (command model state :instance/end {:instance-id id} (+ (clojure.core/count cuts) i) time-ms))
+                               (range) ended)
+                launch (launch-options config)
+                commands (into (into cuts releases)
+                               (map-indexed (fn [i cue]
+                                              (command model state :cue/launch
+                                                       {:cue-id (:id cue)
+                                                        :launch (cond-> launch (seq (::launch-params cue))
+                                                                  (assoc :params (::launch-params cue)))}
+                                                       (+ (clojure.core/count cuts) (clojure.core/count releases) i) time-ms)))
+                               (:cues result))
+                randomized (into (sorted-map-by #(compare (str %1) (str %2)))
+                                 (keep (fn [cue] (when-let [r (::randomized cue)] [(:id cue) r])))
+                                 (:cues result))
+                timer (time/start duration clock)
+                next-at (+ (:started-at timer) (get-in timer [:duration :value]))]
+            {:state (cond-> (assoc state :seed seed :epoch (:epoch model) :interval-timer timer
+                                   :tick (inc (:tick state)))
+                      ctx (assoc :owned-instance-ids (into [] (remove (set ended)) owned))
+                      (= :ms unit) (assoc :next-at-ms next-at)
+                      (= :beats unit) (assoc :next-at-beat next-at))
+             :commands commands
+             :reasons (cond-> (vec handed)
+                        (seq refused) (conj (tag {:reason :launch-refused :refused refused}))
+                        (seq cut-ids) (conj (tag {:reason transition :instance-ids cut-ids}))
+                        true (conj (tag (cond-> (dissoc result :cues ::required)
+                                          (seq randomized) (assoc :randomized randomized)))))}))))))
