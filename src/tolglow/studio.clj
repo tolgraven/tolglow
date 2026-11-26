@@ -224,6 +224,7 @@
                         (throw (ex-info "Replay a recording from the REPL (tolglow.stems/replay-file!), not from Studio"
                                         {:audio/error :invalid-config})))
                       (show/audio-action! runtime op payload))
+            :video! #(show/video-action! runtime %1 %2)
             :sensor! (fn [op payload]
                        (show/sensor-action! runtime op
                          (if (= op :sample) (sensor-osc/decode-json (json/write-str (web/json-data (dissoc payload :runtime-id :expected-epoch)))) payload)))

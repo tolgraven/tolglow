@@ -185,7 +185,8 @@
          reasons (cond-> (:reasons numeric)
                    (matching/active? definition) (conj :matched-chroma)
                    (not enabled?) (conj :disabled)
-                   (some :frame-only? outputs) (conj :tween))]
+                   (some :frame-only? outputs) (conj :tween)
+                   (some :video outputs) (conj :video))]
      (if (seq reasons)
        (vary-meta (compiler/compile-effect definition bind-pure
                     (when (matching/active? definition) (matching/prepare fixtures selected))
