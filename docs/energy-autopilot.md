@@ -47,7 +47,7 @@ To ease into a new target, set `:target-response {:attack {:beats 2} :release {:
 
 ## Drive the targets
 
-A numeric setting accepts a constant or a signal wherever Studio presents a binding editor. Use the existing `:audio/energy` signal to follow music. Set `:phase-reference :transport` to follow the shared beat and current meter, or `:phase-reference :launch` to measure from the cue or policy activation using its captured meter. Named oscillators can share a transport phase. Older `:phase :global` and `:phase :local` settings remain valid, including periods in milliseconds. A cue can expose its numeric controls to other bindings via `{:cue-id :wash :param :level :default 0.3}`.
+A numeric setting accepts a constant or a signal wherever Studio presents a binding editor. Use the existing `:audio/energy` signal to follow music. Set `:phase-reference :transport` to follow the shared beat and current meter, or `:phase-reference :launch` to measure from the cue or policy activation using its captured meter. Named oscillators can share a transport phase. Older `:phase :global` and `:phase :local` settings remain valid, including periods in milliseconds; a millisecond period stands still while the transport is stopped ([transport stop](clock-domains.md#transport-stop)). A cue can expose its numeric controls to other bindings via `{:cue-id :wash :param :level :default 0.3}`.
 
 ```clojure
 (show/submit! runtime :settings

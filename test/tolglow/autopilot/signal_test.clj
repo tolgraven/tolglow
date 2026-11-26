@@ -1,5 +1,5 @@
 (ns tolglow.autopilot.signal-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [clojure.test :refer [deftest is testing]]
             [tolglow.autopilot.signal :as signal]
             [tolglow.signals :as waves]))
 
@@ -9,7 +9,8 @@
                         "two" {:id "two" :phase :running :order 3 :cue-id :wash :params {:boost 1.5}
                                :started-at-ms 4000 :started-at-beat 8}}
             :settings {:autopilot {:signals {:bass {:variable [:audio/energy]}
-                                            :four {:waveform :saw :period {:beats 4}}}}}})
+                                            :four {:waveform :saw :period {:beats 4}}
+                                            :ms {:waveform :saw :period {:ms 8000} :phase :local}}}}})
 
 (defn- near? [a b] (< (abs (- a b)) 1e-8))
 
@@ -81,3 +82,25 @@
     (is (not= (read-at 2.5) (read-at 2.25)))
     (is (every? #(<= 1.0 (read-at %) 5.0) (range 48)))
     (is (= (map read-at [1 2 9]) (map #(nth (mapv read-at (range 10)) %) [1 2 9])))))
+
+(deftest millisecond-phases-read-the-held-show-clock
+  ;; tolglow.clock/hold counts stopped time in [:transport :held-ms]; phases
+  ;; without an activation subtract it, activations already hold privately.
+  (let [wave {:waveform :saw :period {:ms 8000}}
+        held (assoc-in model [:transport :held-ms] 2500)
+        origin (signal/origin (assoc-in model [:transport :held-ms] 500) {:time-ms 1000 :beat 2})]
+    (is (near? (/ 4500 8000.0) (signal/value model wave)) "a show that never stopped reads host time")
+    (is (near? (/ 2000 8000.0) (signal/value held wave)))
+    (is (near? (/ 2000 8000.0) (signal/value held {:signal :ms} {}))
+        "named signals use the same show clock")
+    (testing "a local phase from a captured start clock leaves out what was held before and after the start"
+      (is (= {:time-ms 1000 :beat 2 :held-ms 500} origin))
+      (is (= {:time-ms 1000 :beat 2} (signal/origin model {:time-ms 1000 :beat 2})) "nothing to record before a stop")
+      (is (near? (/ (- 4500 1000 (- 2500 500)) 8000.0)
+                 (signal/value held (assoc wave :phase :local) {:start-clock origin}))))
+    (testing "an activation's private clock already holds"
+      (let [private (assoc-in held [:instances "two" :system] {:clock-offset-ms 200 :transport-held-ms 200})]
+        (is (near? (/ (- 4500 200 4000) 8000.0)
+                   (signal/value private (assoc wave :phase :local) {:instance-id "two"})))))
+    (is (near? (signal/value model {:waveform :saw :period {:beats 3}})
+               (signal/value held {:waveform :saw :period {:beats 3}})) "beat phases are untouched")))

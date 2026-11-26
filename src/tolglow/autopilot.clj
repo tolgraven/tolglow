@@ -101,7 +101,7 @@
             model (if changed? (stop-run model prior time-ms command) model)
             prior (when-not changed? prior)
             clock (assoc (time/frame-clock (assoc model :time-ms time-ms)) :epoch (:epoch model))
-            context {:start-clock (or (:start-clock prior) clock) :modulation-view modulation-view
+            context {:start-clock (or (:start-clock prior) (signal/origin model clock)) :modulation-view modulation-view
                      :prepared (signal/prepare (:signals previous-cache) (:waveforms model))}
             model (assoc model :time-ms time-ms)
             requested (config/targets model opts context)
@@ -144,7 +144,7 @@
 (defn start-hdr-clock [model time-ms]
   (if (get-in model [:settings :hdr :enabled?])
     (if (get-in model [:extensions ::hdr-clock]) model
-      (assoc-in model [:extensions ::hdr-clock] (time/frame-clock (assoc model :time-ms time-ms))))
+      (assoc-in model [:extensions ::hdr-clock] (signal/origin model (time/frame-clock (assoc model :time-ms time-ms)))))
     (if (get-in model [:extensions ::hdr-clock]) (update model :extensions dissoc ::hdr-clock) model)))
 
 (defn render-options [model prepared blocked? modulation-view standalone-scope]

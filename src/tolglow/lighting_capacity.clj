@@ -358,7 +358,9 @@
 (defn fog-policy
   "One simulated or presented pulse per upward crossing of 80% audio energy.
   Rearm below 55%; each 0.4 s pulse is followed by at least 6 s rest. Missing
-  audio, operator blackout/master zero, pause or calibration cancels demand."
+  audio, operator blackout/master zero, pause or calibration cancels demand.
+  A transport stop cancels rather than pauses a pulse: the fogger's duty limits
+  are physical time (docs/clock-domains.md, Transport stop)."
   [{:keys [fog? fog-fixture-ids]} {:keys [foggers]} previous now-ms limit bypass? reference-rms]
   (let [targets (filterv foggers (distinct fog-fixture-ids))
         energy (:audio/energy limit)
