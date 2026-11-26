@@ -59,16 +59,22 @@
 
 (defn- same-contents?
   "Whether shown slot contents match the stored ones. A browser may return knob
-  IDs as keywords or text and whole positions as integers."
+  IDs as keywords or text and whole positions as integers. Text comparison
+  applies only when it keeps every ID distinct, so a knob :a and a knob \"a\"
+  cannot stand in for each other."
   [expected stored]
-  (if (or (nil? expected) (nil? stored))
-    (and (nil? expected) (nil? stored))
-    (and (map? expected) (= (count expected) (count stored))
-         (let [shown (update-keys expected wire-key)]
+  (cond
+    (or (nil? expected) (nil? stored)) (and (nil? expected) (nil? stored))
+    (not (map? expected)) false
+    (= expected stored) true
+    :else
+    (let [shown (update-keys expected wire-key)
+          saved (update-keys stored wire-key)]
+      (and (= (count expected) (count shown) (count stored) (count saved))
            (every? (fn [[id value]]
-                     (let [v (get shown (wire-key id))]
+                     (let [v (get shown id)]
                        (and (number? v) (== v value))))
-                   stored)))))
+                   saved)))))
 
 (defn- check-expected!
   "A surface that presented a slot sends what it showed as :expected (nil for

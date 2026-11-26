@@ -11,6 +11,7 @@
             [clojure.test :refer [deftest is testing]]
             [tolglow.controllers.push-variations :as push-variations]
             [tolglow.knob-presets :as presets]
+            [tolglow.knobs :as knobs]
             [tolglow.persistence :as files]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
@@ -198,6 +199,26 @@
       (is (= :accepted (:status (submit! rt 30 {:op :knob/remove :knob-id :solo}))))
       (is (= :knob-preset-unavailable (:code (submit! rt 40 {:op :knob-preset/recall :slot 3}))))
       (finally (show/stop! rt)))))
+
+(deftest the-stale-check-compares-by-text-only-when-ids-stay-distinct
+  (let [create (fn [model id value]
+                 (:model (knobs/apply-operation model {:op :knob/create :knob-id id :name (str id) :value value})))
+        model (-> (live-model) (create :look 0.2) (create "look" 0.2))
+        saved (:model (presets/apply-operation model {:op :knob-preset/capture :slot 0}))
+        recall (fn [expected]
+                 (try (presets/apply-operation saved {:op :knob-preset/recall :slot 0 :expected expected})
+                      :accepted
+                      (catch clojure.lang.ExceptionInfo e (:control/error (ex-data e)))))]
+    (is (= {:look 0.2 "look" 0.2} (get-in (presets/bank saved) [:slots 0 :values])))
+    (is (= :accepted (recall {:look 0.2 "look" 0.2})) "the exact shown contents")
+    (is (= :stale-knob-preset (recall {:look 0.2 :other 0.2}))
+        "a knob the slot does not hold cannot pass by colliding as text")
+    (is (= :stale-knob-preset (recall {"look" 0.2 :other 0.2})))
+    (let [single (-> (live-model) (create :look 1.0)
+                     (as-> m (:model (presets/apply-operation m {:op :knob-preset/capture :slot 0}))))]
+      (is (= 0 (:slot (:result (presets/apply-operation single {:op :knob-preset/recall :slot 0
+                                                                 :expected {"look" 1}}))))
+          "text IDs and whole numbers from a browser still match"))))
 
 (deftest replaying-a-recall-command-id-replays-its-receipt
   (let [{:keys [rt]} (harness)]
