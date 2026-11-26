@@ -31,7 +31,11 @@
   added or removed. Parts must print stably: keywords, strings and numbers."
   [seed & parts]
   (seed-word seed)
-  (let [^bytes data (.getBytes ^String (pr-str (into [seed] parts)) "UTF-8")
+  (let [;; A caller's printer settings must never change a seed.
+        text (binding [*print-length* nil *print-level* nil *print-meta* false
+                       *print-dup* false *print-namespace-maps* false]
+               (pr-str (into [seed] parts)))
+        ^bytes data (.getBytes ^String text "UTF-8")
         h (loop [i 0 h 2166136261]
             (if (= i (alength data)) h
                 (recur (inc i) (bit-and 0xffffffff (* (bit-xor h (bit-and 0xff (aget data i))) 16777619)))))

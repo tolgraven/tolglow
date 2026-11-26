@@ -116,13 +116,38 @@
   [model config state cue]
   (let [effect (registry/cue-effect (:registry model) cue)
         fixed (get-in config [:launch :params] {})
-        chosen (when (and effect (:randomize config))
+        chosen (when (and effect (:randomize config)
+                          (not= :none (:params (launch-params/normalize (:randomize config)))))
                  (launch-params/choose effect cue (:randomize config)
                                        (:base-seed state (:seed state)) (:tick state) fixed))]
     (-> cue
         (assoc :params (merge (:params cue) (:saved-params cue) fixed (:params chosen)))
         (assoc ::launch-params (merge fixed (:params chosen)))
         (cond-> chosen (assoc ::randomized chosen)))))
+
+(defn- refusal-key
+  "What a remembered refusal depends on: the cue and effect versions and the
+  patched rig. A change to any of them lets the cue be tried again."
+  [model cue]
+  {:cue-version (:version cue)
+   :effect-version (:version (registry/cue-effect (:registry model) cue))
+   :rig (hash (:fixtures model))})
+
+(defn- refused-cue? [model state]
+  (let [remembered (:refusals state {})]
+    (if (empty? remembered)
+      (constantly false)
+      (fn [cue] (when-let [entry (get remembered (:id cue))]
+                  (= (:key entry) (refusal-key model cue)))))))
+
+(defn record-refusal
+  "The command shell reports a launch the show rejected at dispatch. Remember
+  it like a refusal met while planning, so later decisions skip that cue until
+  its definition or the rig changes."
+  [state model cue-id ack]
+  (if-let [cue (get-in model [:registry :cues cue-id])]
+    (assoc-in state [:refusals cue-id] {:code (:code ack) :key (refusal-key model cue)})
+    state))
 
 (defn- candidates [model config state]
   (let [scope (:scope config :all)
@@ -134,12 +159,14 @@
                 (set (if (map? page)
                        (or (:cue-ids page) (vals (:cells page))) page)))
               :else (throw (ex-info "Auto scope must be all, cue IDs, or an explicit page ID" {:scope scope})))
-        yielded (if (false? (:yield-to-performers? config)) #{} (performer-cue-ids model state))]
+        yielded (if (false? (:yield-to-performers? config)) #{} (performer-cue-ids model state))
+        refused (refused-cue? model state)]
     (->> (get-in model [:registry :cues]) vals
          (filter #(and (or (nil? ids) (ids (:id %)))
                        (not (false? (:auto? %))) (not (:show-control? %))
                        (not (:show-control? (registry/cue-effect (:registry model) %)))
                        (not (yielded (:id %)))
+                       (not (refused %))
                        (category-match? model config %)))
          (sort-by (comp str :id))
          (mapv #(-> (with-launch-params model config state %)
@@ -330,6 +357,8 @@
       (number? target) target
       :else (max 0.0 (min 1.0 (double (signal/value (assoc model :time-ms time-ms) target)))))))
 
+(defn- identifier? [x] (or (keyword? x) (and (string? x) (seq x))))
+
 (def ^:private config-keys
   #{:interval :interval-ms :count :scope :intent :launch :activity-target
     :randomize :categories :max-lit :yield-to-performers? :sections})
@@ -348,6 +377,25 @@
           [{:path [:interval] :message "Interval needs one positive beats, bars, phrases or ms value"}]))
       (when-not (and (integer? (:count config 1)) (<= 1 (:count config 1) 64))
         [{:path [:count] :message "Count must be an integer from 1 to 64"}])
+      (let [scope (:scope config :all)]
+        (when-not (or (= :all scope)
+                      (and (map? scope) (= [:page-id] (keys scope)) (identifier? (:page-id scope)))
+                      (and (map? scope) (= [:cue-ids] (keys scope)) (vector? (:cue-ids scope))
+                           (every? identifier? (:cue-ids scope))))
+          [{:path [:scope] :message "Scope is :all, {:page-id id} or {:cue-ids [ids]}"}]))
+      (when (contains? config :launch)
+        (let [{:keys [mode duration duration-ms params] :as launch} (:launch config)]
+          (cond
+            (not (and (map? launch) (every? #{:mode :duration :duration-ms :params :priority :release-duration} (keys launch))))
+            [{:path [:launch] :message "Launch takes :mode, :duration or :duration-ms, :params, :priority and :release-duration"}]
+            (not (#{:persistent :timed :one-shot} (or mode :persistent)))
+            [{:path [:launch :mode] :message "Launch mode is :persistent, :timed or :one-shot"}]
+            (and (some? duration) (not (and (empty? (time/validate-duration duration)) (pos? (val (first duration))))))
+            [{:path [:launch :duration] :message "Launch duration needs one positive beats, bars, phrases or ms value"}]
+            (and (some? duration-ms) (not (and (registry/finite-number? duration-ms) (pos? duration-ms))))
+            [{:path [:launch :duration-ms] :message "Launch duration must be positive milliseconds"}]
+            (not (or (nil? params) (map? params)))
+            [{:path [:launch :params] :message "Launch params must be a map"}])))
       (when-not (contains? #{nil :darkness} (:intent config))
         [{:path [:intent] :message "Intent is :darkness or absent"}])
       (let [target (:activity-target config)]
@@ -370,6 +418,40 @@
         (map #(update % :path (fn [p] (into [:sections] p)))
              (sections/validate (:sections config) validate-config)))))))
 
+(defn validate-references
+  "Errors for scopes (top level and in each section) that name a page or cue
+  the show does not have. validate-config checks shape; this checks the show."
+  [model config]
+  (let [check (fn [path scope]
+                (cond
+                  (and (map? scope) (contains? scope :page-id) (not (get-in model [:pages (:page-id scope)])))
+                  [{:path (conj path :scope) :message (str "No saved page " (pr-str (:page-id scope)))}]
+                  (and (map? scope) (vector? (:cue-ids scope)))
+                  (when-let [missing (seq (remove #(get-in model [:registry :cues %]) (:cue-ids scope)))]
+                    [{:path (conj path :scope) :message (str "No saved cue " (pr-str (first missing)))}])))]
+    (vec (concat (check [] (:scope config))
+                 (mapcat (fn [i section] (check [:sections i :config] (get-in section [:config :scope])))
+                         (range) (:sections config))))))
+
+(defn sanitize-config
+  "For a saved show: drop settings this planner does not know (top level and in
+  section configs) instead of refusing the whole show. Returns
+  {:config .. :dropped [paths]}. New configure commands stay strict."
+  [config]
+  (if-not (map? config) {:config config :dropped []}
+    (let [unknown (vec (remove config-keys (keys config)))
+          config (apply dissoc config unknown)
+          sections (when (vector? (:sections config))
+                     (map-indexed (fn [i section]
+                                    (if (map? (:config section))
+                                      (let [{c :config d :dropped} (sanitize-config (:config section))]
+                                        {:section (assoc section :config c)
+                                         :dropped (mapv #(into [:sections i :config] %) d)})
+                                      {:section section :dropped []}))
+                                  (:sections config)))]
+      {:config (cond-> config sections (assoc :sections (mapv :section sections)))
+       :dropped (into (mapv vector unknown) (mapcat :dropped sections))})))
+
 (defn- plan-without-refusals
   "Run plan over the pool. A cue whose launch the show would refuse (a head
   that cannot take one of its attributes, a stale aim path) is dropped with
@@ -380,8 +462,8 @@
     (let [outcome (try {:result (plan pool ordered)}
                        (catch clojure.lang.ExceptionInfo e
                          (let [{:keys [cue-id ack]} (ex-data e)]
-                           (if (and cue-id ack (some #(= cue-id (:id %)) pool)
-                                    (<= (count refused) (count pool)))
+                           ;; The pool shrinks by one per refusal, so this ends.
+                           (if (and cue-id ack (some #(= cue-id (:id %)) pool))
                              {:refused {:cue-id cue-id :code (:code ack) :message (:message ack)}}
                              (throw e)))))]
       (if-let [r (:refused outcome)]
@@ -413,15 +495,23 @@
 
 (defn keep-plan
   "Carry the authored plan of a previous config into a new one: its sections,
-  category filters, lit limit and performer policy, and its palette and ranges
-  when the new config randomizes. New settings win where both are given."
-  [previous config]
-  (let [plan (cond-> (select-keys previous [:sections :categories :max-lit :yield-to-performers?])
-               ;; A signal-bound target (an LFO or audio energy) is part of the plan.
-               (map? (:activity-target previous)) (assoc :activity-target (:activity-target previous)))
-        kept-random (select-keys (:randomize previous) [:palette :ranges :max-change :categories :saved])]
-    (cond-> (merge plan config)
-      (:randomize config) (update :randomize #(merge kept-random %)))))
+  category filters, lit limit, performer policy, a signal-bound activity target
+  and its randomize domains (palette, ranges, maximum change, categories, saved
+  policy). Domains are kept even when the new config does not randomize: a
+  stop keeps the previous selection; a start without randomize keeps the
+  domains with :params :none, so a later start can vary them again. New
+  settings win where both are given."
+  ([previous config] (keep-plan previous config true))
+  ([previous config enabled?]
+   (let [plan (cond-> (select-keys previous [:sections :categories :max-lit :yield-to-performers?])
+                ;; A signal-bound target (an LFO or audio energy) is part of the plan.
+                (map? (:activity-target previous)) (assoc :activity-target (:activity-target previous)))
+         previous-random (:randomize previous)
+         domains (select-keys previous-random [:palette :ranges :max-change :categories :saved])]
+     (cond-> (merge plan config)
+       (:randomize config) (update :randomize #(merge domains %))
+       (and (nil? (:randomize config)) previous-random (not enabled?)) (assoc :randomize previous-random)
+       (and (nil? (:randomize config)) (seq domains) enabled?) (assoc :randomize (assoc domains :params :none))))))
 
 (defn- end-commands [model state ids force? time-ms]
   (mapv (fn [i id] (command model state :instance/end (cond-> {:instance-id id} force? (assoc :force? true)) i time-ms))
@@ -459,7 +549,7 @@
     (cond
       (and (some? (:epoch state)) (not= (:epoch state) (:epoch model)))
       {:state (-> state (assoc :epoch (:epoch model) :owned-instance-ids [] :next-at-ms time-ms)
-                  (dissoc :interval-timer :next-at-beat :section :owned-launches))
+                  (dissoc :interval-timer :next-at-beat :section :owned-launches :refusals))
        :commands [] :reasons [{:reason :show-restarted}]}
 
       (false? (:playing? clock))
@@ -543,6 +633,12 @@
                 next-at (+ (:started-at timer) (get-in timer [:duration :value]))]
             {:state (cond-> (assoc state :seed seed :epoch (:epoch model) :interval-timer timer
                                    :tick (inc (:tick state)))
+                      (seq refused)
+                      (update :refusals (fnil into {})
+                              (map (fn [{:keys [cue-id code]}]
+                                     [cue-id {:code code
+                                              :key (refusal-key model (get-in model [:registry :cues cue-id]))}])
+                                   refused))
                       ctx (assoc :owned-instance-ids (into [] (remove (set ended)) owned))
                       (= :ms unit) (assoc :next-at-ms next-at)
                       (= :beats unit) (assoc :next-at-beat next-at))

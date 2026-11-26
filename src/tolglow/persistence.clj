@@ -268,7 +268,7 @@
                    (every? #(and (map? %) (string? (:instance-id %))) (:owned-launches state)))
               [:auto :state :owned-launches] "Auto launch records need instance IDs"))
     (when (and enabled? (map? config))
-      (let [errors (policy/validate-config config)]
+      (let [errors (into (policy/validate-config config) (policy/validate-references model config))]
         (check! (empty? errors) [:auto :config] (str "Invalid auto config: " (pr-str (vec (take 3 errors)))))))
     (doseq [key [:next-at-ms :next-at-beat] :when (contains? state key)]
       (check! (registry/finite-number? (get state key)) [:auto :state key] "Auto boundary must be finite"))))
@@ -497,12 +497,31 @@
               [:frame-output :universes universe] "Each universe needs 512 signed or unsigned channel bytes")))
   output)
 
+(defn- restore-auto
+  "Saved shows predate the strict auto config (#217). Drop settings the planner
+  does not know and record them in the reasons; if the rest still cannot run,
+  restore auto mode switched off with the problem, instead of refusing the
+  whole show. Configure commands stay strict."
+  [model]
+  (let [{:keys [enabled? config]} (:auto model)]
+    (if-not (and (map? (:auto model)) (map? config)) model
+      (let [{config :config dropped :dropped} (policy/sanitize-config config)
+            errors (when enabled? (into (policy/validate-config config) (policy/validate-references model config)))
+            notes (cond-> []
+                    (seq dropped) (conj {:reason :restored-without-settings :paths dropped})
+                    (seq errors) (conj {:reason :restored-disabled :errors (vec (take 3 errors))}))]
+        (if (empty? notes) model
+          (-> model
+              (assoc-in [:auto :config] config)
+              (cond-> (seq errors) (update :auto assoc :enabled? false :state nil))
+              (update-in [:auto :reasons] #(into (vec %) notes))))))))
+
 (defn- validate-document! [document]
   (check! (and (map? document) (= schema-version (:schema-version document))
                (contains? document :model)
                (every? #{:schema-version :model :frame-output} (keys document)))
           [] "Expected a schema-2 show document")
-  (let [document (update document :model validate-model)]
+  (let [document (update document :model (comp validate-model restore-auto))]
     (when (contains? document :frame-output)
       (validate-frame-output (:model document) (:frame-output document)))
     document))
@@ -614,11 +633,11 @@
   command receipts, external held-note leases and session sources are not revived.
   No schema-1/legacy compatibility path is provided. Failure leaves inputs intact."
   [current-model document]
-  (validate-document! document)
   (check! (and (natural? (:epoch current-model)) (natural? (:revision current-model)))
           [:current-model] "Current model needs valid epoch/revision")
   ;; Device sessions never survive a restore, so every surface loads detached.
-  (let [saved (-> (:model document) cue-timing/without-queue saved-audio/restore validate-model audio-return/disarm
+  ;; Document validation also repairs an older saved auto config (restore-auto).
+  (let [saved (-> (:model (validate-document! document)) cue-timing/without-queue saved-audio/restore validate-model audio-return/disarm
                   surface/detach-all)
         epoch (inc (max (:epoch current-model) (:epoch saved)))
         ordered (sort-by (juxt :order :id) (vals (:instances saved)))

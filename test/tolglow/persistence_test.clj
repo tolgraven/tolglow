@@ -793,3 +793,27 @@
       (is (= 3 (get-in (files/thaw base (files/freeze (model))) [:registry :effects :dangling :version]))
           "every command the owner accepted leaves a show that saves and restores")
       (finally (show/stop! runtime)))))
+
+(deftest shows-saved-before-strict-auto-configs-still-load
+  ;; Master stored the auto request verbatim, so a REPL or agent call could save
+  ;; settings this planner does not know (#217). Such a show restores; unknown
+  ;; settings are dropped with a recorded reason, and a config that still
+  ;; cannot run restores switched off. Configure commands stay strict.
+  (let [model (rich-model)
+        legacy (fn [config]
+                 (-> (files/freeze model)
+                     (assoc-in [:model :auto :config] config)
+                     (update-in [:model :auto :state] dissoc :base-seed :owned-launches :section)))
+        extra (files/thaw (assoc (demo/model) :epoch 9 :revision 200 :time-ms 9000)
+                          (legacy {:interval {:bars 2} :count 1 :scope :all :note "from an agent" :mood :calm}))
+        broken (files/thaw (assoc (demo/model) :epoch 9 :revision 200 :time-ms 9000)
+                           (legacy {:interval {:bars 2} :count 1 :scope :all :intent :bright}))]
+    (is (true? (get-in extra [:auto :enabled?])))
+    (is (= {:interval {:bars 2} :count 1 :scope :all} (get-in extra [:auto :config])))
+    (is (= [{:reason :restored-without-settings :paths [[:mood] [:note]]}]
+           (update-in (get-in extra [:auto :reasons]) [0 :paths] #(vec (sort %)))))
+    (is (map? (files/freeze extra)) "the restored show saves again")
+    (is (false? (get-in broken [:auto :enabled?])))
+    (is (nil? (get-in broken [:auto :state])))
+    (is (= :restored-disabled (get-in broken [:auto :reasons 0 :reason])))
+    (is (thrown? Exception (files/freeze (assoc-in extra [:auto :config :note] "new"))) "writing stays strict")))

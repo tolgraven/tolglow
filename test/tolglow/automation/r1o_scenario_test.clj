@@ -8,8 +8,9 @@
   (:require [afterglow.render.frame :as render]
             [clojure.test :refer [deftest is testing]]
             [tolglow.lighting-capacity :as capacity]
+            [tolglow.automation.policy :as policy]
             [tolglow.registry :as registry]
-            [tolglow.automation.red-show :refer [red deep-red muted-purple movers model auto-config]]
+            [tolglow.automation.red-show :as red-show :refer [red deep-red muted-purple movers model auto-config]]
             [tolglow.show :as show]
             [tolglow.venues.gig-2023 :as gig]))
 
@@ -41,6 +42,14 @@
                       (when (#{:cameo-thunder-wash-600-rgbw :cameo-thunder-wash-600-rgb} fixture-type-id)
                         (when (<= 11 (bit-and 0xff (aget dmx (+ address 0))) 250) id))))
           (gig/fixtures))))
+
+(defn- pan-bytes
+  "Coarse pan bytes of the sweeping heads."
+  [universes]
+  (let [^bytes dmx (get universes 1)]
+    (mapv (fn [{:keys [address channels]}]
+            (bit-and 0xff (aget dmx (+ address (dec (first (:pan channels))) -1))))
+          (filter #(some #{(:id %)} movers) (gig/fixtures)))))
 
 (defn run
   "Tick the real show owner and return one record per frame."
@@ -80,6 +89,7 @@
                                  :spot spot
                                  :lit (lit meter universes)
                                  :strobing (strobing-washes universes)
+                                 :pan (pan-bytes universes)
                                  :dmx (vec (get universes 1))})
                    spot))))
       (finally (show/stop! rt)))))
@@ -139,7 +149,10 @@
       (let [quiet (mapcat :frames (filter #(= :quiet (:section %)) (section-runs frames)))]
         (is (seq quiet))
         (is (every? #(<= (count (:lit %)) 1) quiet) (pr-str (distinct (map :lit quiet))))
-        (is (some #(= :sweep (:cue-id %)) (filter #(= :quiet (:section %)) all)) "heads still move in the dark")))
+        (is (some #(= :sweep (:cue-id %)) (filter #(= :quiet (:section %)) all)) "heads still move in the dark")
+        (let [swept (filter (fn [f] (some #(and (= :sweep (:cue-id %)) (= :running (:phase %))) (vals (:instances f)))) quiet)]
+          (is (seq swept))
+          (is (< 3 (count (distinct (map :pan swept)))) "pan DMX of the dark heads keeps changing"))))
 
     (testing "strobe contrast is abrupt: entering cuts every auto look and the washes strobe"
       (doseq [[before after] (partition 2 1 (section-runs frames))
@@ -147,7 +160,7 @@
               :let [entry (first (:frames after))
                     prior (into #{} (keep (fn [[id i]] (when (auto? i) id))) (:instances (last (:frames before))))]]
         (is (not-any? prior (keys (:instances entry))) (str "cut into " (:section after))))
-      (is (some #(seq (:strobing %)) (filter #(= :strobe (:section %)) frames)))
+      (is (every? #(seq (:strobing %)) (filter #(= :strobe (:section %)) frames)) "every strobe-section frame strobes")
       (is (not-any? #(seq (:strobing %)) (filter #(#{:red :purple :quiet} (:section %)) frames))))
 
     (testing "Push performance stays available: the performer's spotlight survives every cut"
@@ -167,28 +180,134 @@
         (is (every? #(and (= (:tick at-stop) (:tick %)) (= (:section at-stop) (:section %))) held))
         (is (<= (- (:tick (last resumed)) (:tick at-stop)) 1) "at most one decision in the first resumed beat")))))
 
-(deftest an-unlaunchable-cue-is-dropped-instead-of-stalling-the-show
+(defn- runtime [model] (show/create-runtime {:model model :workspace-options nil}))
+
+(defn- submit!! [rt t type payload]
+  (let [reply (show/submit! rt type payload)]
+    (show/tick! rt t)
+    (deref reply 2000 ::missing)))
+
+(defn- auto-of [rt] (get-in @(:state rt) [:model :auto]))
+
+(def bad-ids (mapv #(keyword (str "bad-" %)) (range 10)))
+
+(defn- with-bad-cues
+  "Ten cues that write a shutter to heads without one: the show refuses each."
+  [model]
+  (reduce (fn [m id]
+            (-> m (update :registry registry/publish :effects {:id id :version 1 :targets movers
+                                                              :outputs {:shutter 1.0 :dimmer 1.0 :color red}})
+                (update :registry registry/publish :cues {:id id :effect-id id})))
+          model bad-ids))
+
+(deftest unlaunchable-cues-are-dropped-instead-of-stalling-the-show
   ;; Before #217 a refusal met while predicting emission for movement escaped
-  ;; the planner and failed every following show tick.
-  (let [bad {:id :closed-shutters :version 1 :targets movers :outputs {:shutter 1.0 :dimmer 1.0 :color red}}
-        rt (show/create-runtime {:model (-> (model) (update :registry registry/publish :effects bad)
-                                            (update :registry registry/publish :cues {:id :bad :effect-id :closed-shutters}))
-                                 :workspace-options nil})]
+  ;; the planner and failed every following show tick; a first fix still gave
+  ;; up once half the pool was refused. Here ten of twelve cues are refused.
+  (let [met (atom [])]
+   (doseq [seed [3 5 11 17 23]]
+    (let [rt (runtime (with-bad-cues (model)))]
+      (try
+        (show/tick! rt 0)
+        (is (= :accepted (:status (submit!! rt 0 :auto {:enabled? true :seed seed
+                                                        :scope {:cue-ids (into [:sweep :head-glow] bad-ids)}}))))
+        (let [seen (atom #{})
+              ;; The first decision runs on the configure tick.
+              refusals (atom (mapv :cue-id (mapcat :refused (:reasons (auto-of rt)))))]
+          (doseq [t (range 125 8000 125)]
+            (let [tick (get-in (auto-of rt) [:state :tick])]
+              (show/tick! rt t)
+              (swap! seen into (map :cue-id) (vals (get-in @(:state rt) [:model :instances])))
+              ;; Reasons stay visible between decisions; read them once per decision.
+              (when (not= tick (get-in (auto-of rt) [:state :tick]))
+                (swap! refusals into (map :cue-id) (mapcat :refused (:reasons (auto-of rt)))))))
+          (is (nil? (get-in @(:state rt) [:status :error])))
+          (is (true? (:enabled? (auto-of rt))) (pr-str (:reasons (auto-of rt))))
+          (is (seq @seen))
+          (is (every? #{:sweep :head-glow} @seen) "only launchable cues run")
+          (swap! met conj (count @refusals))
+          (is (every? (set bad-ids) @refusals))
+          (is (= (count @refusals) (count (distinct @refusals))) "each refusal is met once, then remembered")
+          (is (= (set @refusals) (set (keys (get-in (auto-of rt) [:state :refusals]))))))
+        (finally (show/stop! rt)))))
+   (is (some #(>= % 6) @met) (str "most of the pool was refused in some run " @met))))
+
+(deftest a-performer-takes-over-an-auto-look-through-the-show-owner
+  (let [rt (runtime (model))]
     (try
       (show/tick! rt 0)
-      (let [reply (show/submit! rt :auto {:enabled? true :seed 3 :scope {:cue-ids [:sweep :bad :head-glow]}})]
-        (show/tick! rt 0)
-        (is (= :accepted (:status (deref reply 2000 nil)))))
-      (let [seen (atom #{})
-            refusals (into #{} (mapcat (fn [t]
-                                         (show/tick! rt t)
-                                         (swap! seen into (map :cue-id) (vals (get-in @(:state rt) [:model :instances])))
-                                         (map #(select-keys % [:cue-id :code])
-                                              (mapcat :refused (get-in @(:state rt) [:model :auto :reasons])))))
-                           (range 125 4000 125))
-            m (:model @(:state rt))]
-        (is (= #{{:cue-id :bad :code :incapable-target}} refusals) "the refusal is reported, not thrown")
-        (is (nil? (get-in @(:state rt) [:status :error])))
-        (is (true? (get-in m [:auto :enabled?])))
-        (is (= #{:sweep :head-glow} @seen) "movement still gets its light from the launchable companion"))
+      (submit!! rt 0 :auto {:enabled? true :seed 1 :scope {:cue-ids [:wash-color]} :interval {:bars 1}
+                            :launch {:mode :persistent}})
+      (doseq [t (range 125 2000 125)] (show/tick! rt t))
+      (let [owned (get-in (auto-of rt) [:state :owned-instance-ids])
+            id (first owned)]
+        (is (= 1 (count owned)))
+        (is (= :accepted (:status (submit!! rt 2000 :command {:op :param/set :instance-id id :param :level :value 0.3
+                                                             :source {:adapter :push :session-id "push-3"}}))))
+        (doseq [t (range 2125 4500 125)] (show/tick! rt t))
+        (is (not-any? #{id} (get-in (auto-of rt) [:state :owned-instance-ids])))
+        (let [others (get-in (auto-of rt) [:state :owned-instance-ids])]
+          (is (seq others) "auto keeps launching its own looks")
+          (is (= :accepted (:status (submit!! rt 4500 :auto {:enabled? false}))))
+          (let [instances (get-in @(:state rt) [:model :instances])]
+            (is (= :running (get-in instances [id :phase])) "Stop auto leaves the performer's look")
+            (is (= 0.3 (get-in instances [id :params :level])))
+            (is (every? #(not= :running (get-in instances [% :phase])) others) "auto's own looks end"))))
+      (finally (show/stop! rt)))))
+
+(deftest studio-stop-and-start-keep-the-repl-palette
+  (let [rt (runtime (model))]
+    (try
+      (show/tick! rt 0)
+      (submit!! rt 0 :auto (auto-config 217))
+      ;; Studio's Stop, then Start with Vary ticked; Studio has no palette editor.
+      (submit!! rt 125 :auto {:enabled? false :keep-plan? true})
+      (is (= red-show/red-palette (get-in (auto-of rt) [:config :randomize :palette])))
+      (submit!! rt 250 :auto {:enabled? true :seed 42 :interval {:beats 8} :count 1 :scope {:page-id red-show/page-id}
+                              :launch {:mode :timed :duration {:beats 4}} :randomize {:params "marked"} :keep-plan? true})
+      (let [config (:config (auto-of rt))]
+        (is (true? (:enabled? (auto-of rt))))
+        (is (= [:red :purple :quiet :strobe] (mapv :id (:sections config))))
+        (is (= {:params :marked :palette red-show/red-palette} (:randomize config))))
+      ;; Start with Vary unticked keeps the palette for later, varying nothing.
+      (submit!! rt 375 :auto {:enabled? true :seed 42 :scope :all :keep-plan? true})
+      (is (= {:params :none :palette red-show/red-palette} (get-in (auto-of rt) [:config :randomize])))
+      (finally (show/stop! rt)))))
+
+(deftest section-scopes-are-refused-when-configured
+  (let [rt (runtime (model))]
+    (try
+      (show/tick! rt 0)
+      (doseq [[scope message] [[:nope "Scope is :all, {:page-id id} or {:cue-ids [ids]}"]
+                               [{:page-id :gone} "No saved page :gone"]]]
+        (let [ack (submit!! rt 0 :auto {:enabled? true :seed 1 :launch {:mode :persistent}
+                                        :sections [{:id :a :length {:bars 1} :config {:scope {:cue-ids [:wash-color]}}}
+                                                   {:id :b :weight 3 :length {:bars 1} :config {:scope scope}}]})]
+          (is (= :rejected (:status ack)))
+          (is (re-find (re-pattern (java.util.regex.Pattern/quote message)) (str (:message ack))) (:message ack))
+          (is (re-find #"\[:sections 1 :config :scope\]" (str (:message ack))))))
+      (is (nil? (:auto (:model @(:state rt)))) "nothing was committed")
+      (finally (show/stop! rt)))))
+
+(deftest a-planner-failure-ends-auto-looks-and-keeps-the-show-running
+  (let [rt (runtime (model))]
+    (try
+      (show/tick! rt 0)
+      (submit!! rt 0 :auto {:enabled? true :seed 1 :scope {:cue-ids [:wash-color]} :interval {:beats 1}
+                            :launch {:mode :persistent}})
+      (doseq [t (range 125 2000 125)] (show/tick! rt t))
+      (let [owned (get-in (auto-of rt) [:state :owned-instance-ids])
+            advance policy/advance]
+        (is (<= 3 (count owned)))
+        ;; Fault injection at the planner boundary: a non-ExceptionInfo error.
+        (with-redefs [policy/advance (fn [& args] (if (>= (nth args 3) 2500) (throw (NullPointerException.)) (apply advance args)))]
+          (doseq [t (range 2125 3500 125)] (show/tick! rt t)))
+        (let [m (:model @(:state rt)) auto (:auto m)]
+          (is (nil? (get-in @(:state rt) [:status :error])))
+          (is (false? (:enabled? auto)))
+          (is (= :planner-failed (get-in auto [:reasons 0 :reason])))
+          (is (<= (count owned) (get-in auto [:reasons 0 :released])))
+          (is (not-any? #(and (= :auto (get-in % [:source :adapter])) (= :running (:phase %))) (vals (:instances m)))
+              "no auto look keeps running while the panel reads off")
+          (is (> (:time-ms (:transport m)) 3000) "the show kept ticking")))
       (finally (show/stop! rt)))))

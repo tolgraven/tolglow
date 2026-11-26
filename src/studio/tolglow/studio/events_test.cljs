@@ -739,7 +739,13 @@
     (is (true? (get-in (transition planned [:studio/auto-stop]) [:studio/http :body :keep-plan?])) "stopping keeps the plan for the next start")
     (is (= {:enabled? false :expected-epoch 7} (get-in (transition base [:studio/auto-stop]) [:studio/http :body])))
     (is (= "Section quiet · Moving in darkness · handed 1 to a performer" (events/auto-summary planned)))
-    (is (= "" (events/auto-summary base)))))
+    (is (= "" (events/auto-summary base)))
+    (testing "Vary follows a saved randomizing config until the form chooses"
+      (let [varied (assoc-in planned [:show :auto :config :randomize] {:params :marked :palette [{:color [1 0 0]}]})
+            kept (assoc-in planned [:show :auto :config :randomize] {:params :none :palette [{:color [1 0 0]}]})]
+        (is (= {:params "marked"} (:randomize (start varied))))
+        (is (not (contains? (start kept) :randomize)))
+        (is (not (contains? (start (assoc-in varied [:ui :auto-form :randomize?] false)) :randomize)))))))
 
 (deftest musical-authoring-remains-data
   (let [definition (events/builder-definition (get-in base [:ui :builder]) 3)

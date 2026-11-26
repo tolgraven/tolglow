@@ -550,7 +550,7 @@
          [:input {:type "range" :min 0 :max 100 :step 1 :value percent
                   :aria-label "Target visual activity" :aria-valuetext (str percent "%")
                   :on-change #(set-ui! [:auto-form :activity-target] (/ (js/Number (input-value %)) 100))}]])
-      [:label.policy-toggle [:input#auto-randomize {:type "checkbox" :checked (boolean (:randomize? form))
+      [:label.policy-toggle [:input#auto-randomize {:type "checkbox" :checked (events/auto-varies? db)
                                                     :on-change #(set-ui! [:auto-form :randomize?] (checked? %))}]
        "Vary marked parameters within their ranges"]
       (when-let [plan (events/auto-plan db)]

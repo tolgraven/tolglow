@@ -43,7 +43,10 @@
     :outputs {:color {:op :param :key :color} :dimmer 1.0}}
    {:id :sweep :version 1 :targets movers
     :params {:span {:type :number :default 0.3 :bounds [0 1] :random {:enabled? true :range [0.1 0.4]}}}
-    :outputs {:pan {:op :param :key :span} :tilt 0.6}}
+    ;; Pan swings around centre by :span, one cycle per bar of elapsed beats.
+    :outputs {:pan {:op :add :args [0.5 {:op :multiply :args [{:op :param :key :span}
+                                                             {:op :sin :args [{:op :multiply :args [{:op :beat} (/ Math/PI 2)]}]}]}]}
+              :tilt 0.6}}
    {:id :head-glow :version 1 :targets movers :params {:color color-param}
     :outputs {:color {:op :param :key :color} :dimmer 0.9}}
    {:id :spot :version 1 :targets [:moving-2] :outputs {:color [1.0 0.9 0.8] :dimmer 0.7 :shutter 1.0}}

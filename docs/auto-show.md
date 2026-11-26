@@ -27,6 +27,10 @@ tool. A config the planner refuses comes back as `:status :rejected` with the
 first problem in the message, for example `Invalid auto config: Count must be
 an integer from 1 to 64 at [:count]`; the committed config is left as it was.
 
+The request is checked before anything is committed: settings, scope shapes
+(`:all`, `{:page-id id}`, `{:cue-ids [...]}`), launch modes and durations, and
+that every scope (including each section's) names a saved page or cue.
+
 Intervals and durations are beats, bars or phrases read from the transport.
 Milliseconds are accepted as an explicit physical option. A stopped transport
 makes no decision and holds every timer, so play resumes where the plan was,
@@ -43,7 +47,7 @@ without a burst of catch-up launches.
 | `:intent` | `:darkness` lets movement run unlit (repositioning, a dark passage). |
 | `:randomize` | Seeded launch parameters; see below. |
 | `:categories` | `{:include [..] :exclude [..]}` over each cue's output-derived and declared categories (`:color`, `:intensity`, `:movement`, `:beam-shape`, `:strobe`, `:atmosphere`, `:modulation`). |
-| `:max-lit` | At most this many fixtures emit after the decision, counting light already on stage. |
+| `:max-lit` | At most this many fixtures emit after the decision, counting light already on stage. See the note on the power budget below. |
 | `:yield-to-performers?` | Default `true`: a cue someone else is running is not launched again on top of it. |
 | `:activity-target` | A number in [0,1], or a signal binding (a waveform LFO, an audio-energy variable, nested arithmetic) sampled at each decision. Cues whose predicted visual activity is closest go first. |
 | `:sections` | A musical section plan; see below. |
@@ -87,10 +91,17 @@ cannot pass for light under a moving head.
 
 ## Section plans
 
-A plan alternates moods on the bar grid. Each section has a musical `:length`
+A plan alternates moods on the bar grid. The first section plays from the
+start until the first grid line at least one section length away (a bar line
+for bar lengths, a phrase line for phrase lengths), so it can run up to one
+grid step longer; every later boundary is on the grid. Each section has a musical `:length`
 (beats, bars or phrases, never milliseconds), a `:weight`, an optional
 `:max-run` (how many times in a row it may repeat) and a `:config` that
-overrides the settings above while it plays. `:transition` says what happens to
+overrides the settings above while it plays. `:randomize` and `:launch` merge
+one level deep: a section palette keeps the base ranges, and a section launch
+keeps the base launch `:params` (merged), taking its duration from the section
+when it gives one. A section `:interval` or `:interval-ms` replaces both base
+forms. `:transition` says what happens to
 auto's own looks when the section changes: `:overlap` (default) lets them
 finish, `:release` ends them through their release envelopes, `:cut` removes
 them at once for an abrupt contrast. A performer's looks are never ended.
@@ -111,8 +122,11 @@ Studio shows the plan's section names next to **Keep the section plan** and the
 current section and last decision under the buttons. With the box ticked,
 **Start auto** and **Stop auto** send `:keep-plan? true`, which keeps the
 saved sections, category filters, lit limit, a signal-bound activity target
-and, when **Vary marked parameters within their ranges** is ticked, the
-palette and ranges. The REPL can send `:keep-plan? true` too.
+and the randomize domains (palette, ranges, maximum change, categories). Stop
+keeps the whole randomize selection. **Vary marked parameters within their
+ranges** starts out ticked when the saved config varies parameters; a start
+with it unticked keeps the domains with `:params :none`, so ticking it later
+brings the palette back. The REPL can send `:keep-plan? true` too.
 
 ## Playing alongside it
 
@@ -124,15 +138,34 @@ and neither a section cut nor **Stop auto** ends it. A cue the performer is
 running is not stacked again. Quiet sections count the performer's light
 toward `:max-lit` instead of darkening it.
 
-A cue the show would refuse (for example a shutter write to heads without a
-shutter) is dropped from that decision and reported as `:launch-refused`; the
-rest of the plan continues. If the planner itself fails, auto mode switches off
-with a `:planner-failed` reason and the show keeps rendering.
+A cue the show refuses (for example a shutter write to heads without a
+shutter), whether while predicting light or when the launch is dispatched, is
+dropped and reported once as `:launch-refused`. It is remembered in
+`[:auto :state :refusals]` and skipped until its cue or effect version or the
+patched rig changes, so it is not tried again on every decision. On the red
+show with ten refused cues, remembering them brought decision ticks from p95
+2.4 ms / max 3.0 ms to p95 0.6 ms / max 1.2 ms (captured output, 125 ms ticks,
+this M4 Pro under load from other work), and auto actually launched its two
+valid cues instead of picking refused ones. If the planner itself fails, auto
+mode switches off with a `:planner-failed` reason, ends the looks it still owns
+(`:released` counts them) and the show keeps rendering.
+
+**Power budget.** With `:max-lit` set, the lit-limit planner chooses instead of
+the budget planner: it does not rank cues by unmet watts or release older auto
+looks to make room. The budget still caps delivered output, and the emission
+forecast is taken under that cap, so a cue the budget would dim to darkness
+does not count as lit. Use `:max-lit` for quiet sections and leave it out where
+the budget should choose.
 
 ## Saving and restart
 
 Auto config and state (seed, decision count, section, owned instances and their
-launch records) are saved with the show and rekeyed on restore. A show restart
+launch records, remembered refusals) are saved with the show and rekeyed on
+restore. A show saved before this planner was strict may carry settings it does
+not know; they are dropped on load and listed in the reasons as
+`:restored-without-settings`. If what remains still cannot run, the show loads
+with auto mode off and a `:restored-disabled` reason instead of refusing the
+whole file. Saving and configuring stay strict. A show restart
 discards ownership and the section, and the next decision starts a new one.
 
 ## Verification and limits

@@ -1404,6 +1404,13 @@
   (let [config (get-in db [:show :auto :config])]
     (when (or (seq (:sections config)) (:categories config) (:max-lit config)) config)))
 
+(defn auto-varies?
+  "Vary marked parameters: the form's choice, else whether the saved config varies."
+  [db]
+  (let [saved (get-in db [:show :auto :config :randomize])]
+    (get-in db [:ui :auto-form :randomize?]
+            (boolean (and (map? saved) (not (#{:none "none"} (:params saved))))))))
+
 (defn auto-keeps-plan? [db]
   (and (some? (auto-plan db)) (get-in db [:ui :auto-form :keep-plan?] true)))
 
@@ -1431,7 +1438,8 @@
 
 (rf/reg-event-fx :studio/auto-start
   (fn [{:keys [db]} _]
-    (let [{:keys [interval-value interval-unit count scope mode duration-value duration-unit seed randomize?]} (get-in db [:ui :auto-form])
+    (let [{:keys [interval-value interval-unit count scope mode duration-value duration-unit seed]} (get-in db [:ui :auto-form])
+          randomize? (auto-varies? db)
           {:keys [enabled? target]} (auto-activity db)]
       {:studio/http {:path "/api/auto"
                      :body (cond-> {:enabled? true :interval (musical-duration interval-value interval-unit) :count count

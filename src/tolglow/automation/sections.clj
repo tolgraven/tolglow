@@ -63,14 +63,25 @@
         eligible (or (seq (remove #(= blocked (:id %)) sections)) sections)]
     (second (random/choose-weighted (random/derive-seed seed :section index) eligible #(:weight % 1)))))
 
+(defn- grid
+  "Beats between grid lines for a section length: one beat, bar or phrase."
+  [length meter]
+  (time/duration->beats {(ffirst length) 1} meter))
+
 (defn- start-timer [section clock boundary]
   (let [timer (time/start (:length section) clock)
-        length (get-in timer [:duration :value])]
-    ;; Stay on the bar grid unless a whole section was skipped (a long gap
-    ;; between ticks); then start from now rather than catching up.
-    (if (and boundary (< (- (:started-at timer) boundary) length))
-      (assoc timer :started-at boundary)
-      timer)))
+        length (get-in timer [:duration :value])
+        now (:started-at timer)
+        step (grid (:length section) (get-in timer [:duration :meter]))]
+    (cond
+      ;; The next section follows the previous boundary, which is on the grid.
+      (and boundary (< (- now boundary) length)) (assoc timer :started-at boundary)
+      ;; A first section, or one after a long gap between ticks: play from now
+      ;; and end on the first grid line at least one length away, so every
+      ;; later boundary lands on the bar (or beat, or phrase) grid. Starting
+      ;; in the future only delays the timer's end.
+      :else (let [end (* step (Math/ceil (/ (+ now length) step)))]
+              (assoc timer :started-at (- end length))))))
 
 (defn current
   "The section definition a section state refers to, or nil."
@@ -102,6 +113,23 @@
          :entered chosen :changed? (not same?)}))))
 
 (defn effective-config
-  "Planner settings while section plays: its :config over the base settings."
+  "Planner settings while section plays: its :config over the base settings.
+  :randomize and :launch merge one level deep (a section palette keeps the
+  base ranges; a section launch keeps base launch :params, merged); a section
+  :interval or :interval-ms replaces both base interval forms."
   [config section]
-  (merge (dissoc config :sections) (:config section)))
+  (let [base (dissoc config :sections)
+        own (:config section)
+        base (cond-> base (or (contains? own :interval) (contains? own :interval-ms)) (dissoc :interval :interval-ms))
+        deep (fn [a b] (if (and (map? a) (map? b)) (merge a b) (if (some? b) b a)))]
+    (cond-> (merge base own)
+      (contains? own :randomize) (assoc :randomize (deep (:randomize base) (:randomize own)))
+      (contains? own :launch)
+      (assoc :launch (let [own-launch (:launch own)
+                           base-launch (cond-> (:launch base)
+                                         (and (map? own-launch) (or (contains? own-launch :duration) (contains? own-launch :duration-ms)))
+                                         (dissoc :duration :duration-ms))
+                           launch (deep base-launch own-launch)]
+                       (cond-> launch
+                         (and (map? launch) (or (get-in base [:launch :params]) (get-in own [:launch :params])))
+                         (assoc :params (merge (get-in base [:launch :params]) (get-in own [:launch :params])))))))))

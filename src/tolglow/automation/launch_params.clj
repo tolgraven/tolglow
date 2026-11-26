@@ -18,7 +18,9 @@
             [tolglow.knob-candidates.generate :as generate]
             [tolglow.registry :as registry]))
 
-(def selections #{:marked :all})
+(def selections
+  "Which parameters to vary. :none keeps the domains but varies nothing."
+  #{:marked :all :none})
 
 (def musical-units #{:beats :bars :phrases})
 
@@ -40,7 +42,7 @@
   "Accept Studio's textual selection and return the config unchanged otherwise."
   [config]
   (cond-> config
-    (#{"marked" "all"} (:params config)) (update :params keyword)
+    (#{"marked" "all" "none"} (:params config)) (update :params keyword)
     (= "randomize" (:saved config)) (assoc :saved :randomize)))
 
 (defn validate
@@ -57,7 +59,7 @@
         (let [params (:params config :marked)]
           (when-not (or (selections params)
                         (and (vector? params) (every? keyword? params) (= (count params) (count (distinct params)))))
-            [{:path [:params] :message "Choose :marked, :all or distinct parameter keys"}]))
+            [{:path [:params] :message "Choose :marked, :all, :none or distinct parameter keys"}]))
         (when-not (and (map? (:ranges config {})) (every? keyword? (keys (:ranges config {})))
                        (every? pair? (vals (:ranges config {}))))
           [{:path [:ranges] :message "Ranges must be ordered finite pairs keyed by parameter"}])
@@ -105,7 +107,7 @@
   (let [selection (:params config :marked)
         role (generate/param-role k schema)]
     (cond
-      (and (vector? selection) (not (some #{k} selection))) :not-selected
+      (or (= :none selection) (and (vector? selection) (not (some #{k} selection)))) :not-selected
       (contains? launch-params k) :fixed-by-launch
       (and (not= :randomize (:saved config :keep)) (contains? (:saved-params cue) k)) :performer-saved
       (or (false? (get-in schema [:random :enabled?])) (true? (get-in schema [:random :locked?]))) :locked

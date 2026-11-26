@@ -230,3 +230,60 @@
       (is (thrown? clojure.lang.ExceptionInfo (policy/advance (model) bad state 0)) (pr-str bad)))
     (is (empty? (policy/validate-config {:activity-target {:waveform :sine :period {:bars 4}}})))
     (is (seq (:commands (policy/advance (model) {:activity-target {:waveform :sine :period {:bars 4}}} state 0))))))
+
+(deftest most-of-the-pool-refused-still-plans-and-is-remembered
+  ;; Eight cues write a shutter the head does not have; prediction refuses
+  ;; each. The planner drops them one by one and still lights the movement.
+  (let [bad-ids (mapv #(keyword (str "bad-" %)) (range 8))
+        show (reduce (fn [m id]
+                       (-> m (update :registry registry/publish :effects {:id id :version 1 :targets [:head]
+                                                                         :outputs {:shutter 1.0 :dimmer 1.0}})
+                           (update :registry registry/publish :cues {:id id :effect-id id})))
+                     ;; The show checks written attributes against the patched rig.
+                     (assoc (model) :rig {:fixtures [fixture]}) bad-ids)
+        config {:scope {:cue-ids (into [:motion :red] bad-ids)} :interval {:beats 1}}]
+    (is (some #(>= % 5)
+              (map #(count (some :refused (:reasons (policy/advance show config (policy/initial-state % 0 :auto) 0))))
+                   (range 40)))
+        "some seed meets most of the bad cues before finding light")
+    (doseq [seed (range 12)]
+      (let [first-plan (policy/advance show config (policy/initial-state seed 0 :auto) 0)
+            refused (set (map :cue-id (some :refused (:reasons first-plan))))
+            remembered (set (keys (get-in first-plan [:state :refusals])))
+            second-plan (policy/advance (assoc-in show [:transport :beat] 1) config (:state first-plan) 500)]
+        (is (seq (:commands first-plan)) (str "seed " seed))
+        (is (every? (set bad-ids) refused))
+        (is (= refused remembered) "every refusal is remembered for this rig and these versions")
+        (is (not-any? #(remembered (:cue-id %)) (:commands second-plan)))
+        (is (empty? (filter #(remembered %) (map :cue-id (some :refused (:reasons second-plan)))))
+            "a remembered refusal is not tried again")))
+    (testing "a new effect version is tried again"
+      (let [plan (some #(let [p (policy/advance show config (policy/initial-state % 0 :auto) 0)]
+                          (when (seq (get-in p [:state :refusals])) p))
+                       (range 50))
+            id (first (keys (get-in plan [:state :refusals])))
+            edited (update show :registry registry/publish :effects {:id id :version 2 :targets [:head] :outputs {:dimmer 1.0 :color [1 0 0]}})]
+        (is (keyword? id))
+        (is (not-any? #(= id (:id %)) (#'policy/candidates show config (:state plan))))
+        (is (some #(= id (:id %)) (#'policy/candidates edited config (:state plan))))))))
+
+(deftest scopes-launches-and-section-scopes-are-validated-up-front
+  (doseq [bad [{:scope :nope} {:scope {:page-id :p :cue-ids [:a]}} {:launch {:mode :held}}
+               {:launch {:mode :timed :duration {:bars 0}}} {:launch {:params 3}}
+               {:sections [{:id :a :length {:bars 1}} {:id :b :length {:bars 1} :config {:scope :nope}}]}]]
+    (is (seq (policy/validate-config bad)) (pr-str bad)))
+  (is (= [[:sections 1 :config :scope]]
+         (mapv :path (policy/validate-references (model) {:sections [{:id :a :length {:bars 1}}
+                                                                     {:id :b :length {:bars 1} :config {:scope {:page-id :gone}}}]}))))
+  (is (= [{:config {:count 2 :sections [{:id :a :length {:bars 1} :config {:count 1}}]}
+           :dropped [[:note] [:sections 0 :config :legacy]]}]
+         [(policy/sanitize-config {:count 2 :note "x" :sections [{:id :a :length {:bars 1} :config {:count 1 :legacy true}}]})])))
+
+(deftest keep-plan-keeps-randomize-domains-across-stop-and-start
+  (let [repl {:sections [{:id :a :length {:bars 1}}] :randomize {:params :marked :palette [{:color [1 0 0]}] :ranges {:level [0 1]}}}
+        stopped (policy/keep-plan repl {} false)
+        unvaried (policy/keep-plan stopped {:count 1} true)
+        varied (policy/keep-plan unvaried {:randomize {:params "marked"}} true)]
+    (is (= (:randomize repl) (:randomize stopped)) "a stop keeps the whole selection")
+    (is (= {:params :none :palette [{:color [1 0 0]}] :ranges {:level [0 1]}} (:randomize unvaried)))
+    (is (= {:params "marked" :palette [{:color [1 0 0]}] :ranges {:level [0 1]}} (:randomize varied)))))
