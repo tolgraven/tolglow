@@ -3,6 +3,7 @@
             [reagent.dom.client :as rdom]
             [tolglow.studio.events]
             [tolglow.studio.navigation :as nav]
+            [tolglow.studio.panel-layout :as panel-layout]
             [tolglow.studio.page-routes :as pages]
             [tolglow.studio.subs]
             [tolglow.studio.interop]
@@ -31,6 +32,9 @@
   (doseq [[target event handler] @listeners] (.removeEventListener target event handler))
   (reset! listeners [])
   (listen! js/window "blur" #(rf/dispatch [:studio/release-pointers]))
+  (when (fn? (aget js/window "matchMedia"))
+    (doseq [query (vals panel-layout/media-queries)]
+      (listen! (js/matchMedia query) "change" #(rf/dispatch [:panel-layout/class (panel-layout/media-class)]))))
   (listen! js/window "pagehide" #(do (rf/dispatch-sync [:studio/release-pointers true]) (rf/dispatch-sync [:chat/cancel]) (rf/dispatch-sync [:repl/close])))
   (listen! js/document "visibilitychange" #(when (.-hidden js/document) (rf/dispatch [:studio/release-pointers true])))
   (listen! js/window "keyup" (fn [event]
@@ -60,6 +64,7 @@
       :repl (let [session (get-in match [:query-params :session-id])]
               (rf/dispatch-sync [:repl/open true (if (string? session) session "main")]))
       :studio (do (rf/dispatch-sync [:studio/initialize (str (random-uuid))])
+                  (rf/dispatch-sync [:panel-layout/initialize])
                   (nav/start!)
                   (install-listeners!))
       nil))
