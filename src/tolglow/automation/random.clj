@@ -24,6 +24,50 @@
   (when-not (seq values) (throw (ex-info "Cannot choose from an empty collection" {})))
   (let [[seed value] (next-random seed)] [seed (nth (vec values) (int (* value (count values))))]))
 
+(defn derive-seed
+  "Stable 32-bit substream seed from a parent seed and identity parts, using
+  FNV-1a over the printed parts. A choice keyed by its own identity (a cue, a
+  parameter, a section boundary) stays the same when unrelated choices are
+  added or removed. Parts must print stably: keywords, strings and numbers."
+  [seed & parts]
+  (seed-word seed)
+  (let [;; A caller's printer settings must never change a seed.
+        text (binding [*print-length* nil *print-level* nil *print-meta* false
+                       *print-dup* false *print-namespace-maps* false]
+               (pr-str (into [seed] parts)))
+        ^bytes data (.getBytes ^String text "UTF-8")
+        h (loop [i 0 h 2166136261]
+            (if (= i (alength data)) h
+                (recur (inc i) (bit-and 0xffffffff (* (bit-xor h (bit-and 0xff (aget data i))) 16777619)))))
+        ;; FNV-1a alone leaves neighbouring IDs (index 1, 2, 3...) on a lattice
+        ;; that the LCG's first draw preserves. The MurmurHash3 finalizer
+        ;; spreads every input bit over the whole word.
+        h (bit-xor h (unsigned-bit-shift-right h 16))
+        h (bit-and 0xffffffff (unchecked-multiply h 0x85ebca6b))
+        h (bit-xor h (unsigned-bit-shift-right h 13))
+        h (bit-and 0xffffffff (unchecked-multiply h 0xc2b2ae35))]
+    (bit-xor h (unsigned-bit-shift-right h 16))))
+
+(defn choose-weighted
+  "Choose one entry with probability proportional to (weight entry). Weights
+  are finite and nonnegative with a positive total. Returns [next-seed entry]
+  and consumes exactly one draw."
+  [seed entries weight]
+  (let [entries (vec entries)
+        weights (mapv weight entries)]
+    (when-not (and (seq entries) (every? #(and (registry/finite-number? %) (not (neg? %))) weights)
+                   (pos? (reduce + weights)))
+      (throw (ex-info "Weighted choice needs finite nonnegative weights with a positive total" {:weights weights})))
+    (let [[seed x] (next-random seed)
+          target (* x (reduce + weights))
+          ;; Rounding can leave target at the total; never pick a zero weight.
+          last-positive (last (keep-indexed (fn [i w] (when (pos? w) i)) weights))]
+      (loop [i 0 total 0.0]
+        (let [total (+ total (nth weights i))]
+          (if (or (and (pos? (nth weights i)) (< target total)) (= i last-positive))
+            [seed (nth entries i)]
+            (recur (inc i) total)))))))
+
 (defn shuffle-values
   "Fisher-Yates using only supplied seed. Returns [next-seed vector]."
   [seed values]
