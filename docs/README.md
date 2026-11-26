@@ -96,6 +96,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Live waveform projections](waveform-projections.md) | Current signal parameters, captured PCM history and bounded Push data |
 | [Dependency upgrades](dependency-upgrades.md) | Registry-verified versions, migrations and updated build/test evidence |
 | [X-Touch](xtouch.md) | Verified MCU/extender protocol, adapter and color research |
+| [Naut hardware qualification](qualification/naut-hardware.md) | Push 3 and X-Touch/XT inventory, operator-attended checks and receipts |
 | [Sync](sync-progress.md) | Selected clock and explicit MIDI, Pro DJ Link and Live bridge sessions |
 | [Ableton Link and paused lighting](ableton-link.md) | Follow transport, match tempo and phase, set a pause look and restore the pairing |
 | [Runtime replay](runtime-replay.md) | Checked-in command/frame recording and deterministic output gate |
