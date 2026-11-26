@@ -23,7 +23,7 @@ test ! -e "$phone/AppClips/TolglowAudienceClip.app/audience-compute.js"
 "$native_root/AudienceCompute/check_mac.sh"
 test -d "$native_root/DerivedData/Build/Products/Debug-iphonesimulator/TolglowPhone.app/AppClips/TolglowAudienceClip.app"
 xcrun --sdk macosx swiftc Core/Sources/TolglowSensorCore/AudienceGATTWrite.swift Audience/AudienceRadio.swift Tests/AudienceRadio/main.swift -o DerivedData/audience-radio-check
-xcrun --sdk macosx swiftc macOS/ShowRegistry.swift Tests/ShowWindows/main.swift -o DerivedData/show-windows-check
+xcrun --sdk macosx swiftc macOS/ShowRegistry.swift macOS/FolderStore.swift Tests/ShowWindows/main.swift -o DerivedData/show-windows-check
 DerivedData/show-windows-check
 DerivedData/audience-radio-check
 core_bin="$(swift build --package-path Core --show-bin-path)"

@@ -1,5 +1,6 @@
-// Show windows on one Mac (#669): one window per folder, one device owner.
-//   xcrun --sdk macosx swiftc native/macOS/ShowRegistry.swift native/Tests/ShowWindows/main.swift -o /tmp/show-windows && /tmp/show-windows
+// Show windows on one Mac (#669): one window per folder, one device owner,
+// and the tabs and panel layouts each folder's page hands the app.
+//   xcrun --sdk macosx swiftc native/macOS/ShowRegistry.swift native/macOS/FolderStore.swift native/Tests/ShowWindows/main.swift -o /tmp/show-windows && /tmp/show-windows
 import Foundation
 
 enum Check: Error { case failed(String) }
@@ -50,4 +51,21 @@ try expect(registry.claim(one, folder: showA) == .duplicate(window: three), "reo
 registry.release(two)
 registry.release(three)
 try expect(registry.entries.isEmpty && registry.deviceOwner == nil, "registry empty after every window closes")
+// Per-folder page state: tabs and panel layouts are kept apart, per folder,
+// and an oversized value leaves the stored copy alone.
+let suite = "show-windows-\(UUID().uuidString)"
+let defaults = UserDefaults(suiteName: suite)!
+defer { defaults.removePersistentDomain(forName: suite) }
+let tabs = FolderStore(defaults: defaults, key: "tabs", limit: FolderStore.tabs.limit)
+let layouts = FolderStore(defaults: defaults, key: "layouts", limit: FolderStore.layouts.limit)
+try expect(tabs.value(for: showA.path) == nil, "nothing stored yet")
+try expect(tabs.save("{\"version\":1}", for: showA.path), "tabs saved")
+let bigLayouts = String(repeating: "x", count: 40_000)
+try expect(layouts.save(bigLayouts, for: showA.path), "layouts larger than the tabs limit are kept")
+try expect(layouts.save("{}", for: showB.path), "another folder's layouts")
+try expect(tabs.value(for: showA.path) == "{\"version\":1}" && layouts.value(for: showA.path) == bigLayouts, "kinds kept apart")
+try expect(layouts.value(for: showB.path) == "{}", "folders kept apart")
+try expect(!tabs.save(String(repeating: "x", count: 4097), for: showA.path), "oversized tabs refused")
+try expect(!layouts.save(String(repeating: "x", count: 65537), for: showA.path), "oversized layouts refused")
+try expect(tabs.value(for: showA.path) == "{\"version\":1}" && layouts.value(for: showA.path) == bigLayouts, "refusal keeps the stored copy")
 print("show windows: ok")

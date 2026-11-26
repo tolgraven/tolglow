@@ -372,9 +372,11 @@ The app turns off automatic window tabbing, and its menus drive Studio's tabs:
 **New Tab** ⌘T, **Reopen Closed Tab** ⇧⌘T, **Close Tab** ⌥⌘W (⌘W still closes
 the window and stops its show), **Show Next/Previous Tab** ⌃Tab/⌃⇧Tab. Because
 the loopback port, and with it the page's storage, changes on every launch, the
-app keeps each folder's tabs itself and passes them back to the page. (The
-Perform panel layouts of #668 are kept in page storage and do not yet survive a
-relaunch of the packaged app.)
+app keeps each folder's tabs itself and passes them back to the page
+(`FolderStore.swift`, at most 4 KB per folder). It keeps the Perform panel
+layouts of #668 the same way: it passes the folder's saved `layouts` string in
+`window.tolglowStudioWindow` and stores each `{type: "layouts", layouts}`
+message the page posts on save (at most 64 KB per folder).
 
 `dev/studio/view-tabs-qa.mjs` exercises tabs and two bound windows in headless
 Chrome against two runtimes from a production build; the Mac menus and binding
