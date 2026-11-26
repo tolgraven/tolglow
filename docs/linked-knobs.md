@@ -354,9 +354,11 @@ button), the cycle button opens knob looks after a selected cue's full states an
 parameter rows, or first when no cue is selected. The top pad row holds the
 eight slots: an empty pad saves the knobs into it, a saved pad recalls it, and
 Record (Push 2) or the captured `:variation/record` button (Push 3) held with a
-saved pad overwrites it. Cycle closes the overlay. Pads are dim when empty,
-green when saved, white when selected and blue when selected but moved; the
-display names each slot and its knob positions. As for cue variations, a press
+saved pad overwrites it. Cycle closes the overlay. On Push 2 the pads are dim
+when empty, green when saved, white when selected and blue when selected but
+moved. The display, on both models, names each slot, its state and its knob
+positions. The Push 3 User Mode adapter sends no pad LED colours, so on Push 3
+the display columns carry the empty, saved, selected and moved states. As for cue variations, a press
 counts only once the pads (Push 2 LED acknowledgement) or the display frame
 (Push 3 presentation receipt) showing that slot have arrived. On Push 3 only the
 top-row pads in the captured layout are shown.
