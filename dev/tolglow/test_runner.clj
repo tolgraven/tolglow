@@ -55,11 +55,13 @@
     tolglow.controllers.content-browser-display-test
     tolglow.timeline-test
     tolglow.preview.airplay-test
-    tolglow.personalities-test tolglow.personalities.icon-test tolglow.personalities-host-test])
+    tolglow.personalities-test tolglow.personalities.icon-test tolglow.personalities-host-test
+    tolglow.showcase-test])
 
 (def suites
   {"pure" pure-tests
-   "parity" (into pure-tests '[tolglow.fixtures.patch-parity-test tolglow.fixtures-test tolglow.parity-test])})
+   "parity" (into pure-tests '[tolglow.fixtures.patch-parity-test tolglow.fixtures-test tolglow.parity-test
+                             tolglow.showcase-parity-test])})
 
 (defn -main [& [suite & extra]]
   (let [namespaces (get suites (or suite "pure"))]
