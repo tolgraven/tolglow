@@ -107,8 +107,20 @@ Text equal to it shows that baseline's status (`ember · v2` or Published); any
 other text shows Unpublished changes. A publication reply marks Published only
 when the editor still holds the text that was sent, so an edit (or a late Neovim
 delivery) that arrives while the request is in flight stays unpublished and, with
-Publish valid edits on, is published next. Neovim echoes of the text Studio
-already holds change nothing.
+Publish valid edits on, is published next. A refused publication follows the same
+rule: Publication failed describes the text Studio still holds, while newer text
+stays Unpublished changes (the result names the refusal of the earlier text) and,
+with Publish valid edits on, goes out after the usual 850 ms quiet time. Switching
+from Neovim to the text editor and **Generate EDN** are edits too: their status
+follows the baseline. Neovim echoes of the text Studio already holds change
+nothing.
+
+Every controlled checkbox in Studio uses one component
+(`tolglow.studio.checkbox/input`). React restores a controlled checkbox to its
+rendered state when the change event ends, before Reagent's next frame renders
+the new state; the component renders pending updates first, so the box never
+shows its old state for a frame. A checkbox whose handler only sends a request
+shows the committed state until the reply arrives.
 
 The default editor is a labeled accessible textarea with Tab indentation and
 Ctrl/Cmd+Enter publication. Selecting Neovim loads the actual pinned WASM runtime
@@ -148,7 +160,10 @@ Choose a parameter or output under **Block binding**, pick a material or wavefor
 then select **Add stage**. The catalog includes the effect’s own prefab definitions.
 Choose **Inputs** to change a constant, reference another parameter, or use the
 beat, bar, phrase or time clock. **Coordinates** selects world XYZ or surface UV.
-The arrow buttons change stage order. **Wet amount** controls how much of that
+The arrow buttons change stage order. Each control addresses its stage by a
+stable ID (metadata on the stage map, never written to the EDN), not by the
+index it was rendered at, so edits that land before the next render, such as two
+quick taps on Remove, reach the stage they were made for. **Wet amount** controls how much of that
 stage reaches the next one. **Add private or variable binding** accepts a private
 varying name or a space-separated show variable path such as `weather density`.
 
@@ -335,7 +350,9 @@ their plots) and *single*, the 1×1 tile (one reading; the Room keeps only its
 3D view). A tile is single at up to a sixth of the columns (two on desktop,
 one on tablet or phone) or at most 8 rows, and compact at up to a third of the
 columns or at most 14 rows. Growing a tile back restores its full controls and
-keeps its chosen parameter.
+keeps its chosen parameter. A tile's **Source** opens the source editor inside
+the tile, with its own element IDs, not in the Live card (which may be in another
+window).
 
 **Any panel in its own window.** Every frame has **Detach**/**Redock**. The Room
 uses its pop-out window above. Other panels use `tolglow.studio.panel-window`,
@@ -348,7 +365,12 @@ Show window and Redock, and its content exists in that window only. Closing
 the window, pressing Redock, closing Studio, or switching to a layout without
 that panel (including the layout of another screen size class) brings it back.
 Plots in a panel window follow that window's visibility, not Studio's, so they
-keep drawing while Studio is hidden.
+keep drawing while Studio is hidden, and the cue pad previews in a Cues window
+follow that window's focus. Content in a window takes its tier from the window,
+not from the tile it left: the full width of the window's size class and its
+height in rows (single up to 179 px, compact up to 299 px, else full), for the
+Room as for other panels. Removing a detached tile in edit mode closes its
+window at once; Cancel brings the tile back docked.
 
 Layouts are kept per screen size class, matching the built-in breakpoints:
 phone (up to 600 px, 2 columns), tablet (601–1199 px, 6 columns) and desktop
@@ -360,10 +382,14 @@ In the packaged Mac app the loopback port, and with it the page's storage,
 changes on every launch. When the app's window binding (#669,
 `window.tolglowStudioWindow`) carries a `layouts` copy, Studio uses whichever
 of that copy and local storage was saved last (each records `savedAt`), and
-every save also posts `{type: "layouts", layouts}` to the app's
+every save also posts `{type: "layouts", layouts, request}` to the app's
 `tolglowStudioWindow` message handler so the app can keep it per show folder.
-A save counts as kept when either copy was accepted. Until the app provides
-and stores that copy, the Mac app keeps layouts only for one launch.
+The app answers with a `tolglow-studio-window` event whose detail is
+`{type: "layouts", request, kept}`; it refuses a copy over 64 KB. Inside the app
+a save is confirmed only once the app says it kept its copy, because only that
+copy survives a relaunch; a refusal, or no answer within 3 s, warns that the
+layout will be gone after the app relaunches. In a browser local storage
+decides, as above.
 Editing a new layout starts from a measurement of the built-in layout on
 screen. A saved layout is repaired on load: unknown panels are dropped, missing
 Perform panels come back at a default size, invalid tile bindings are cleared
@@ -386,13 +412,36 @@ Chrome, with CDP touch events at the two touch sizes. It also names, switches
 and deletes layouts, adds a tile, picks its parameter, shrinks it to 1×1 and
 grows it back, adds the visualization panel, and (desktop and tablet) detaches
 the Live panel and a tile, acts in the Live window, then redocks by closing
-the window and by Redock. Throughout it checks that the running cue keeps its
-instance ID, that the card and Room canvas stay the same DOM nodes where no
-panel was detached, and that there is one socket and one preview worker. It
-is not evidence for iPad Safari, a physical touch screen or the packaged Mac
-app. The app answers every blank `window.open` with its single Room window
-(`native/macOS/RoomWindows.swift`), so there Detach keeps panels other than the
-Room docked and says it is unsupported until the app hosts panel windows.
+the window and by Redock. It shrinks the Room and Live windows and checks
+that their content turns compact, opens the tile's own source editor in the
+tile window, removes a detached tile in edit mode, holds a second finger on
+another handle during a tablet auto-scroll and lifts it, and (desktop) checks
+that a Cues window samples its pads while Studio lacks focus (Studio's focus is
+faked; headless Chrome reports focus for every page). Throughout it checks that
+the running cue keeps its instance ID, that the card and Room canvas stay the
+same DOM nodes where no panel was detached, and that there is one socket and
+one preview worker. It simulates the Mac app's bindings with stand-in message
+handlers: the layouts answer (kept, refused, none) and the window host's
+identify and close messages. It is not evidence for iPad Safari, a physical
+touch screen or the packaged Mac app.
+
+In the packaged Mac app `native/macOS/RoomWindows.swift` hosts every blank
+same-origin `window.open` from Studio's main frame in its own native window,
+cascaded and titled from the page's `document.title`. Studio identifies each
+window right after opening it (`{action: "identify", role: "room" | "panel",
+id}` on the `tolglowRoomWindow` handler, posted from the new window's own
+document when it has the handler, else from Studio's, which names the window
+opened last). Only the Room's window is placed on another display. Closing a
+window sends `{status: "closed", role, id}` on the `tolglow-room-window` event,
+so the Room and each panel redock only for their own window.
+`native/Tests/RoomWindows` checks the roles, close replies and display choice;
+the window lifetime itself has not been exercised in the running app.
+
+`dev/studio/definition-controls-qa.mjs` uses Playwright `check()` and `uncheck()`
+on Publish valid edits, Create matching cue, Evaluate when inputs change and the
+auto-launch visual activity box; holds a refused publication while a newer edit
+is typed and checks the follow-up; checks the status after Generate EDN; and
+taps one stage's Remove twice in one task. Headless Chrome only.
 
 ## API and lifecycle
 
