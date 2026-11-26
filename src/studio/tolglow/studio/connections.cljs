@@ -28,7 +28,7 @@
    :beat-link {:enabled? false :status? false :align-bars? false :peer nil}
    :live {:enabled? false :endpoint "http://127.0.0.1:8750/live" :bridge-id "tolglow-m4l" :record-route "bridge"
           :mode "lighting" :channel 1 :automap? true :observed-parameters {} :poll-ms 500 :timeout-ms 2000 :pairing nil
-          :mappings {} :parameters {}}})
+          :mappings {} :parameters {} :pad-layout "push-64-pads"}})
 
 (def audio-defaults {:input "" :sample-rate "48000" :channels "1" :input-channel ""
                      :block-frames "480" :buffer-blocks "8" :big-endian? false :analyzer-options {} :stems []})
@@ -291,7 +291,57 @@
       {:db (-> db (update-in [:connections :pending] disj :live-runs)
                (assoc-in [:connections :live-runs] result))})))
 
+(rf/reg-event-fx :connections/launcher-refresh
+  (fn [{:keys [db]} _]
+    (let [page-id (get-in db [:ui :page-id])]
+      {:db (-> db (update-in [:connections :pending] (fnil conj #{}) :launcher)
+               (update-in [:connections :errors] dissoc :launcher))
+       :fx [(req db :launcher (str "/api/live-launcher" (when page-id (str "?page-id=" (js/encodeURIComponent (str page-id)))))
+                 nil :connections/launcher-loaded)]})))
+
+(rf/reg-event-fx :connections/launcher-loaded
+  (fn [{:keys [db]} [_ request-token _ result]]
+    (when (current? db request-token)
+      {:db (-> db (update-in [:connections :pending] disj :launcher)
+               (assoc-in [:connections :launcher] result))})))
+
 (defn- plural [n one many] (str n " " (if (= 1 n) one many)))
+
+(defn- id-text [x] (if (keyword? x) (name x) (str x)))
+
+(defn launcher-text
+  "One line summarizing the cue launcher (the same projection as
+  show/live-launcher at the REPL)."
+  [{:keys [layout pads setup clip elsewhere unmapped]}]
+  (let [playing (count (filter :cue-id pads))
+        loose (+ (count elsewhere) (count unmapped))]
+    (str (if (= "rows" (id-text layout)) "Rows of eight" "Push 64 Pads") " · "
+         playing " of " (count pads) " pads play cues"
+         (when (pos? loose) (str " · " (plural loose "cue is" "cues are") " not under its pad"))
+         " · " (cond (nil? setup) "not set up in Live"
+                     (:ready? setup) (str "set up in Live as " (:name setup))
+                     :else (str (plural (count (:problems setup)) "setup problem" "setup problems") " in Live"))
+         (when (and clip (= "executed" (some-> (:status clip) id-text)))
+           (str " · last pad clip " (plural (:notes clip) "hit" "hits"))))))
+
+(defn launcher-problems
+  "Setup problems as lines, one per kind: pad problems list their notes."
+  [problems]
+  (for [[code group] (sort-by (comp id-text key) (group-by (comp id-text :code) problems))
+        :let [notes (keep :note group)]]
+    (if (seq notes)
+      (str code " · " (if (= 1 (count notes)) "note " "notes ") (str/join ", " notes)
+           (when (= 1 (count group)) (some->> (:expected (first group)) (str " · "))))
+      (str/join " · " (cons code (keep #(some-> (:expected %) str) group))))))
+
+(defn pad-rows
+  "The launcher's 64 pads as eight rows of eight, top row first, as Push's
+  64 Pads layout shows them."
+  [pads]
+  (mapv vec (partition-all 8 (sort-by (fn [{[x y] :cell}] [y x]) pads))))
+
+(defn- color-css [n]
+  (when (number? n) (str "#" (.padStart (.toString (js/Math.round n) 16) 6 "0"))))
 
 (defn live-runs-text
   "One line summarizing the run record (the same projection as show/live-runs
@@ -710,6 +760,12 @@
          [:div.form-row
           [field s [:sync-form :live :pairing :expected-track-name] "Expected track name · optional" {:disabled disabled?}]
           [field s [:sync-form :live :pairing :expected-clip-name] "Expected clip name · optional" {:disabled disabled?}]]])
+      [:label "Pad layout"
+       [:select#live-pad-layout {:value (id-text (or (:pad-layout live) "push-64-pads")) :disabled disabled?
+                                 :on-change #(edit! [:sync-form :live :pad-layout] (text %))}
+        [:option {:value "push-64-pads"} "Push 64 Pads · cells match Push's drum grid"]
+        [:option {:value "rows"} "Rows of eight · earlier shows"]]]
+      [:p.small.muted "New pad assignments follow this layout. Existing assignments keep their notes, so recorded clips still address the same cues."]
       [:div.button-row
        (for [[mode title] [["lighting" "Lighting mode"] ["live" "Live mode"]]]
          ^{:key mode} [:button.button {:type "button" :disabled (not active?) :aria-pressed (= mode (get-in s [:sync :config :live :mode]))
@@ -814,6 +870,35 @@
          [:a#capture-download.button {:href "/api/capture/last.mid" :download true} "Download MIDI clip"])]
       (when result [:p.small {:role "status"} (capture-text result)])]]))
 
+(defn- launcher-panel [s]
+  (let [{:keys [pads setup clip] :as launcher} (:launcher s)]
+    [:section.panel {:aria-label "Cue launcher"}
+     [:div.panel-top [:span.section-label "CUE LAUNCHER"]]
+     [:div.form-body
+      [:p.small.muted "The selected cue page on one Drum Rack track in Live. Each pad is the cell its cue sits in, as Push's 64 Pads layout shows it. Hitting a pad launches its cue; a clip of pad hits replays them without recording them again."]
+      [:div.button-row
+       [:button#launcher-refresh.button {:type "button" :disabled (contains? (:pending s) :launcher)
+                                         :on-click #(rf/dispatch [:connections/launcher-refresh])} "Show pads"]]
+      (when launcher
+        [:<>
+         [:p.small {:role "status"} (launcher-text launcher)]
+         (into [:div.launcher-pads {:role "grid" :aria-label "Launcher pads"}]
+               (for [row (pad-rows pads)]
+                 (into [:div.launcher-row {:role "row"}]
+                       (for [{:keys [note cue-id label live-color]} row]
+                         ^{:key note}
+                         [:div.launcher-pad {:role "gridcell" :class (when-not cue-id "empty")
+                                             :title (str "Note " note (when cue-id (str " · " (or label (id-text cue-id)))))
+                                             :style (when cue-id {:border-color (color-css live-color)})}
+                          [:span.launcher-note note]
+                          (when cue-id [:span.launcher-label (or label (id-text cue-id))])]))))
+         (for [line (launcher-problems (:problems setup))]
+           ^{:key line} [:p.connection-error.small line])
+         (when (and clip (not= "executed" (some-> (:status clip) id-text)))
+           [:p.connection-error.small (str "Pad clip " (id-text (:status clip)))])
+         (when-not setup
+           [:p.small.muted "Set the launcher up in Live from the REPL with show/setup-live-launcher!; this panel then shows the read-back."])])]]))
+
 (defn- live-runs-panel [s]
   (let [{:keys [channels mirror] :as runs} (:live-runs s)]
     [:section.panel {:aria-label "Live runs"}
@@ -864,7 +949,7 @@
                                           @(rf/subscribe [:show-window/preview-only])) "Connect enabled adapters"]
        [:button#sync-stop.button {:type "button" :disabled (or (not active?) pending?) :on-click #(rf/dispatch [:connections/action :stop])} "Disconnect"]]]
      [:div.connections-layout [midi-panel s disabled?] [beat-link-panel s disabled?] [link-panel s disabled?]
-      [live-panel s (get-in db [:show :cues]) disabled?] [capture-panel s] [live-runs-panel s] [audio-panel s] [section-reference-panel s]
+      [live-panel s (get-in db [:show :cues]) disabled?] [launcher-panel s] [capture-panel s] [live-runs-panel s] [audio-panel s] [section-reference-panel s]
       [capacity/panel (contains? (:pending s) :lighting-capacity)] [fog-control/panel (contains? (:pending s) :fog-control)] [output-panel db s] [pause-panel (contains? (:pending s) :pause)]]
      [audio-lfo/panel]
      [compute-client/panel]

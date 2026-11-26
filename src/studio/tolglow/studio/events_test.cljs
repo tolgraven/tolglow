@@ -2016,6 +2016,48 @@
     (is (str/includes? html "not-in-group · Tolglow run b"))
     (is (not (str/includes? (renderToStaticMarkup (r/as-element [connections/connection-view base (connections/state base)])) "Amber sweep")))))
 
+(deftest the-cue-launcher-panel-reads-the-launcher-projection
+  (let [db (assoc-in base [:ui :page-id] "pads")
+        requested (transition db [:connections/launcher-refresh])
+        [effect request] (first (:fx requested))
+        token (connections/token (:db requested))
+        pad (fn [x y note & [cue label color]] (cond-> {:cell [x y] :note note} cue (assoc :cue-id cue :label label :live-color color)))
+        pads (vec (for [y (range 8) x (range 8)]
+                    (case [x y]
+                      [0 7] (pad 0 7 36 "red" "Red" 0xff0000)
+                      [4 7] (pad 4 7 68 "blue" "Blue" 0x0000ff)
+                      (pad x y (+ 100 x (* 8 y))))))
+        projection {:page-id "pads" :layout "push-64-pads" :scroll-row 9 :pads pads :elsewhere [] :unmapped [] :off-grid []
+                    :setup {:ready? false :name "Tolglow launcher pads"
+                            :problems [{:code "empty-pad" :note 68 :expected "Blue"}]}}
+        done (transition (:db requested) [:connections/launcher-loaded token :launcher projection])
+        stale (transition (:db requested) [:connections/launcher-loaded [:other] :launcher projection])
+        html (renderToStaticMarkup (r/as-element [connections/connection-view (:db done) (connections/state (:db done))]))]
+    (is (= :studio/http effect))
+    (is (= ["/api/live-launcher?page-id=pads" nil] [(:path request) (:body request)]) "the page selected in Studio")
+    (is (= projection (get-in done [:db :connections :launcher])))
+    (is (nil? stale) "a reply for another show session is ignored")
+    (is (= "Push 64 Pads · 2 of 64 pads play cues · 1 setup problem in Live" (connections/launcher-text projection)))
+    (is (= "Rows of eight · 2 of 64 pads play cues · 1 cue is not under its pad · set up in Live as Tolglow launcher pads · last pad clip 4 hits"
+           (connections/launcher-text (assoc projection :layout "rows" :elsewhere [{:cue-id "amber"}]
+                                             :setup {:ready? true :name "Tolglow launcher pads" :problems []}
+                                             :clip {:status "executed" :notes 4}))))
+    (is (= "Push 64 Pads · 2 of 64 pads play cues · not set up in Live" (connections/launcher-text (dissoc projection :setup))))
+    (testing "the grid is eight rows of eight with the bottom row last, as Push shows it"
+      (let [rows (connections/pad-rows (shuffle pads))]
+        (is (= 8 (count rows)))
+        (is (every? #(= 8 (count %)) rows))
+        (is (= (mapv #(vector % 7) (range 8)) (mapv :cell (last rows))))
+        (is (= [36 68] (keep #(when (:cue-id %) (:note %)) (last rows))))))
+    (is (str/includes? html "Red"))
+    (is (str/includes? html "empty-pad · note 68 · Blue"))
+    (is (= ["empty-pad · notes 64, 68" "no-drum-rack" "scroll-row · 9"]
+           (connections/launcher-problems [{:code "empty-pad" :note 64 :expected "Amber"} {:code "scroll-row" :expected 9}
+                                           {:code "no-drum-rack"} {:code "empty-pad" :note 68 :expected "Blue"}]))
+        "pad problems of one kind share a line")
+    (is (str/includes? html "Push 64 Pads · cells match Push"))
+    (is (= "push-64-pads" (get-in (connections/sync-payload base) [:live :pad-layout])) "Studio always saves an explicit layout")))
+
 (deftest an-edit-after-new-is-what-publishes
   ;; Studio dispatches New synchronously, so an edit typed straight after it lands on the
   ;; new source rather than being replaced by it.
