@@ -3,7 +3,7 @@
 // The JVM owns this helper like the audience bridge: it starts one process per
 // selected source and closes stdin to stop it. The helper never sends lighting
 // output. Frames cross into the JVM through a memory-mapped "TGVF" file whose
-// layout `tolglow.video.feed` reads:
+// layout `tolglow.video.source/read-feed` reads:
 //
 //   0   "TGVF"          4 bytes
 //   4   version         u32 (1)
@@ -153,6 +153,8 @@ final class Downloader {
     let device: MTLDevice
     private let queue: MTLCommandQueue
     private var target: MTLTexture?
+    /// One scaler for every frame; MPS kernels are reusable across encodes.
+    private lazy var scaler = MPSImageBilinearScale(device: device)
 
     init(device: MTLDevice) {
         self.device = device
@@ -179,7 +181,7 @@ final class Downloader {
                       destinationLevel: 0, destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
             blit.endEncoding()
         } else {
-            MPSImageBilinearScale(device: device).encode(commandBuffer: buffer, sourceTexture: texture, destinationTexture: target)
+            scaler.encode(commandBuffer: buffer, sourceTexture: texture, destinationTexture: target)
         }
         buffer.commit()
         buffer.waitUntilCompleted()

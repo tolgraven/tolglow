@@ -19,6 +19,14 @@
 
 (def max-strips 512)
 
+(def max-sources
+  "Configured video sources per show."
+  8)
+
+(def max-syphon-sources
+  "Syphon sources, each a helper process, per show."
+  4)
+
 (def max-points 256)
 
 (defn- finite? [v]
@@ -88,8 +96,16 @@
                  [(error (conj path :width) "Width is 1–4096 pixels")])
                (when-not (or (nil? height) (and (integer? height) (<= 1 height 4096)))
                  [(error (conj path :height) "Height is 1–4096 pixels")])))
-            (when (and (#{:image :feed} kind) (not (and (string? file) (not (str/blank? file)))))
-              [(error (conj path :file) "Name the file to read")])
+            (cond
+              (and (= :image kind) (contains? source :resource))
+              (concat (when (contains? source :file) [(error path "Choose either a show file or a bundled resource")])
+                      (when-not (and (string? (:resource source)) (not (str/blank? (:resource source))))
+                        [(error (conj path :resource) "Name the bundled still")]))
+              (and (#{:image :feed} kind) (not (and (string? file) (not (str/blank? file)))))
+              [(error (conj path :file) "Name the file to read")]
+              ;; The runtime also resolves symlinks against the show directory.
+              (and (#{:image :feed} kind) (some #{".."} (str/split file #"[/\\]")))
+              [(error (conj path :file) "Video files may not use .. path segments")])
             (when (and (= :syphon kind) (not (and (string? app) (string? name))))
               [(error path "A Syphon source names its application and server")])
             ;; The helper sizes its feed file from these, so they stay bounded.
@@ -106,6 +122,10 @@
     (let [{:keys [sources mappings]} settings]
       (vec (concat
             (when-not (or (nil? sources) (map? sources)) [(error [:sources] "Sources are a map by id")])
+            (when (and (map? sources) (> (count sources) max-sources))
+              [(error [:sources] (str "A show uses at most " max-sources " video sources"))])
+            (when (and (map? sources) (> (count (filter #(= :syphon (:kind %)) (vals sources))) max-syphon-sources))
+              [(error [:sources] (str "A show receives at most " max-syphon-sources " Syphon sources at once"))])
             (when (map? sources)
               (mapcat (fn [[id source]]
                         (concat (when-not (identifier? id) [(error [:sources] "Source ids are keywords or strings")])

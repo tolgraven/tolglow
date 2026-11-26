@@ -12,7 +12,8 @@
   - image: a still read once from a PNG or JPEG file.
   - feed: the memory-mapped TGVF file written by the native video bridge.
   - pushed: frames supplied by the caller, for tests and future shader feeds."
-  (:require [clojure.java.io :as io])
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str])
   (:import [java.lang.invoke VarHandle]
            [java.nio ByteBuffer ByteOrder MappedByteBuffer]
            [java.nio.channels FileChannel FileChannel$MapMode]
@@ -108,12 +109,67 @@
 
 ;; Still images --------------------------------------------------------------
 
-(defn image-frame
-  "Read a PNG/JPEG into a frame. ImageIO runs headless."
-  [id file captured-at-ms]
-  (let [^BufferedImage image (or (ImageIO/read (io/file file))
-                                 (throw (ex-info "Not a readable image" {:file file})))
-        w (.getWidth image) h (.getHeight image)
+(def max-image-dimension
+  "Largest still width or height decoded (pixels)."
+  8192)
+
+(def max-image-bytes
+  "Largest still file read, checked before decoding."
+  (* 64 1024 1024))
+
+(def resource-prefix
+  "Bundled stills live on the classpath under this prefix."
+  "video/")
+
+(defn- refuse! [code message data]
+  (throw (ex-info message (assoc data :code code :errors [{:path [:file] :message message}]))))
+
+(defn- inside? [^java.io.File root ^java.io.File file]
+  (let [r (.getCanonicalPath root) f (.getCanonicalPath file)]
+    (or (= r f) (.startsWith f (str r java.io.File/separator)))))
+
+(defn resolve-file
+  "Resolve a source file against the allowed roots and return the canonical
+  java.io.File, or throw ex-info with a :code. Relative paths resolve against
+  the first root (the show directory). A path with a `..` segment, or one
+  whose canonical form (symlinks followed) leaves every root, is refused, so
+  a source can never read and re-serve an arbitrary file the server can read."
+  ^java.io.File [file roots]
+  (let [text (str file)
+        segments (str/split text #"[/\\]")]
+    (when (or (str/blank? text) (some #{".."} segments))
+      (refuse! :video/path-traversal "Video files may not use .. path segments" {:file text}))
+    (when (empty? roots)
+      (refuse! :video/no-file-roots "No show directory is configured for video files" {:file text}))
+    (let [candidate (io/file text)
+          resolved (if (.isAbsolute candidate) candidate (io/file (first roots) text))
+          canonical (.getCanonicalFile resolved)]
+      (when-not (some #(inside? (io/file %) canonical) roots)
+        (refuse! :video/path-outside-show "Video files must be inside the show directory" {:file text}))
+      canonical)))
+
+(defn- decoded-size
+  "Width and height from the image header, without decoding the pixels."
+  [input]
+  (with-open [stream (ImageIO/createImageInputStream input)]
+    (let [readers (when stream (ImageIO/getImageReaders stream))]
+      (when-not (and readers (.hasNext readers))
+        (refuse! :video/unreadable-image "Not a readable PNG or JPEG image" {}))
+      (let [^javax.imageio.ImageReader reader (.next readers)]
+        (try (.setInput reader stream true true)
+             [(.getWidth reader 0) (.getHeight reader 0)]
+             (finally (.dispose reader)))))))
+
+(defn- check-image! [bytes-count [w h] {:keys [max-bytes max-dimension]
+                                         :or {max-bytes max-image-bytes max-dimension max-image-dimension}}]
+  (when (> bytes-count max-bytes)
+    (refuse! :video/image-too-large (str "Video stills are limited to " max-bytes " bytes") {:bytes bytes-count}))
+  (when (or (> w max-dimension) (> h max-dimension))
+    (refuse! :video/image-too-large (str "Video stills are limited to " max-dimension " × " max-dimension " pixels")
+             {:width w :height h})))
+
+(defn- image->frame [id ^BufferedImage image captured-at-ms label]
+  (let [w (.getWidth image) h (.getHeight image)
         argb (.getRGB image 0 0 w h nil 0 w)
         px (byte-array (* 4 w h))]
     (dotimes [i (* w h)]
@@ -123,16 +179,56 @@
         (aset px (+ o 2) (unchecked-byte (bit-shift-right c 16)))
         (aset px (+ o 3) (unchecked-byte (bit-shift-right c 24)))))
     (frame {:source-id id :width w :height h :pixels px :sequence 1
-            :captured-at-ms captured-at-ms :label (.getName (io/file file))})))
+            :captured-at-ms captured-at-ms :label label})))
 
-(defn image [id {:keys [file]}]
-  (let [result (try {:frame (image-frame id file (System/currentTimeMillis))}
-                    (catch Exception e {:error (or (ex-message e) (str (class e)))}))]
-    (reify VideoSource
-      (latest [_] (:frame result))
-      (describe [_] {:kind :image :label (str (.getName (io/file file))) :connected? (some? (:frame result))
-                     :error (:error result)})
-      (close! [_] nil))))
+(defn image-frame
+  "Read a PNG/JPEG file into a frame after checking its byte size and header
+  dimensions. ImageIO runs headless. `limits` may override :max-bytes and
+  :max-dimension."
+  ([id file captured-at-ms] (image-frame id file captured-at-ms {}))
+  ([id file captured-at-ms limits]
+   (let [f (io/file file)]
+     (check-image! (.length f) (decoded-size f) limits)
+     (image->frame id (or (ImageIO/read f) (refuse! :video/unreadable-image "Not a readable PNG or JPEG image" {}))
+                   captured-at-ms (.getName f)))))
+
+(defn resource-frame
+  "Read a still bundled with the application, from the classpath under
+  `resource-prefix`."
+  ([id path captured-at-ms] (resource-frame id path captured-at-ms {}))
+  ([id path captured-at-ms limits]
+   (let [text (str path)]
+     (when (or (str/blank? text) (str/starts-with? text "/") (some #{".."} (str/split text #"[/\\]")))
+       (refuse! :video/path-traversal "Bundled video stills are named relative to the video resources" {:resource text}))
+     (let [url (or (io/resource (str resource-prefix text))
+                   (refuse! :video/missing-resource "No bundled video still has that name" {:resource text}))
+           data (with-open [in (io/input-stream url) out (java.io.ByteArrayOutputStream.)]
+                  (let [buffer (byte-array 65536)
+                        limit (:max-bytes limits max-image-bytes)]
+                    (loop [total 0]
+                      (let [n (.read in buffer)]
+                        (when (pos? n)
+                          (when (> (+ total n) limit)
+                            (refuse! :video/image-too-large (str "Video stills are limited to " limit " bytes") {}))
+                          (.write out buffer 0 n)
+                          (recur (+ total n)))))
+                    (.toByteArray out)))]
+       (check-image! (alength ^bytes data) (decoded-size (java.io.ByteArrayInputStream. data)) limits)
+       (image->frame id (or (ImageIO/read (java.io.ByteArrayInputStream. data))
+                            (refuse! :video/unreadable-image "Not a readable PNG or JPEG image" {}))
+                     captured-at-ms (last (str/split text #"/")))))))
+
+(defn image
+  "A still from :file (inside `roots`) or a bundled :resource."
+  ([id config] (image id config nil))
+  ([id {:keys [file resource]} roots]
+   (let [frame (if resource
+                 (resource-frame id resource (System/currentTimeMillis))
+                 (image-frame id (resolve-file file roots) (System/currentTimeMillis)))]
+     (reify VideoSource
+       (latest [_] frame)
+       (describe [_] {:kind :image :label (:label frame) :connected? true})
+       (close! [_] nil)))))
 
 ;; TGVF memory-mapped feed ---------------------------------------------------
 
@@ -263,11 +359,13 @@
     file))
 
 (defn open
-  "Construct a source from portable settings. Syphon sources are opened by the
-  hub, which owns the helper process."
-  [id {:keys [kind] :as config}]
-  (case kind
-    :test-pattern (test-pattern id config)
-    :image (image id config)
-    :feed (feed id config)
-    (throw (ex-info "Unsupported video source kind" {:kind kind}))))
+  "Construct a source from portable settings. :image and :feed files must
+  resolve inside `roots` (see `resolve-file`). Syphon sources are opened by
+  the hub, which owns the helper process."
+  ([id config] (open id config nil))
+  ([id {:keys [kind] :as config} roots]
+   (case kind
+     :test-pattern (test-pattern id config)
+     :image (image id config roots)
+     :feed (feed id (assoc config :file (str (resolve-file (:file config) roots))))
+     (throw (ex-info "Unsupported video source kind" {:kind kind})))))

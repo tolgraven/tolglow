@@ -49,12 +49,23 @@
    :frozen? (boolean (:frozen? latch))
    :mappings (mapping-samples latch fixtures cache)})
 
+(def max-jpeg-dimension
+  "Largest served preview width or height, whatever the caller asks for."
+  1920)
+
+(def max-jpeg-bytes
+  "Largest served preview JPEG; a larger encoding is refused."
+  (* 4 1024 1024))
+
 (defn frame-jpeg
-  "JPEG bytes of a latched frame scaled to at most max-width, or nil."
+  "JPEG bytes of a latched frame scaled to at most max-width (and never more
+  than `max-jpeg-dimension` on either side), or nil without a frame. Throws
+  ex-info with :code :video/preview-too-large past `max-jpeg-bytes`."
   ^bytes [latch source-id max-width]
   (when-let [f (get-in latch [:frames source-id])]
     (let [w (:width f) h (:height f)
-          step (max 1 (long (Math/ceil (/ (double w) max-width))))
+          bound (max 1 (min (long max-width) max-jpeg-dimension))
+          step (max 1 (long (Math/ceil (/ (double w) bound))) (long (Math/ceil (/ (double h) max-jpeg-dimension))))
           ;; A thin frame (a 1-row strip render target) still yields an image.
           ow (max 1 (quot w step)) oh (max 1 (quot h step))
           image (BufferedImage. ow oh BufferedImage/TYPE_INT_RGB)
@@ -67,4 +78,6 @@
                                        (bit-and 0xff (aget px i)))))))
       (let [out (ByteArrayOutputStream.)]
         (ImageIO/write image "jpg" out)
+        (when (> (.size out) max-jpeg-bytes)
+          (throw (ex-info "The preview frame is too large to serve" {:code :video/preview-too-large :bytes (.size out)})))
         (.toByteArray out)))))

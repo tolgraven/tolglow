@@ -379,13 +379,17 @@
     "/api/video/frame" (available video! "Video mapping unavailable"
                          (fn [request]
                            (let [{:keys [source width]} (query-fields request {:source nil :width "640"})
-                                 jpeg (when source
-                                        (video! :frame-jpeg {:source (if (str/starts-with? source ":") (keyword (subs source 1)) source)
-                                                             :max-width (max 16 (min 1920 (or (parse-long width) 640)))}))]
-                             (if jpeg
-                               {:status 200 :headers {"Content-Type" "image/jpeg" "Cache-Control" "no-store"}
-                                :body (java.io.ByteArrayInputStream. ^bytes jpeg)}
-                               (data-response 404 {:message "No latched frame for that source"})))))
+                                 jpeg (try (when source
+                                             (video! :frame-jpeg {:source (if (str/starts-with? source ":") (keyword (subs source 1)) source)
+                                                                  :max-width (max 16 (min 1920 (or (parse-long width) 640)))}))
+                                           (catch clojure.lang.ExceptionInfo e
+                                             (if (= :video/preview-too-large (:code (ex-data e))) ::too-large (throw e))))]
+                             (cond
+                               (= ::too-large jpeg) (data-response 413 {:message "The preview frame is too large to serve"
+                                                                        :code :video/preview-too-large})
+                               jpeg {:status 200 :headers {"Content-Type" "image/jpeg" "Cache-Control" "no-store"}
+                                     :body (java.io.ByteArrayInputStream. ^bytes jpeg)}
+                               :else (data-response 404 {:message "No latched frame for that source"})))))
     "/api/repl" (read-action repl! :snapshot "REPL unavailable" #(query-fields % {:session-id "main"}))
     "/api/repl/complete" (read-action repl! :complete "REPL unavailable" #(query-fields % {:session-id "main" :prefix ""}))
     "/api/repl/doc" (read-action repl! :doc "REPL unavailable" #(query-fields % {:session-id "main" :symbol ""}))

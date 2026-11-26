@@ -9,13 +9,15 @@ Run Resolume or another Syphon sender on the same Mac, pick its feed, and lay pi
 | Kind | Settings | Use |
 | --- | --- | --- |
 | `:test-pattern` | `:width`, `:height`, `:pattern` (`:grid` or `:gradient`) | The labelled 8 × 4 colour grid for checking endpoint order, crop and isolation. |
-| `:image` | `:file` | A PNG or JPEG still. |
-| `:feed` | `:file` | A TGVF file written by the native video bridge or a test. |
+| `:image` | `:file` (inside the show directory) or `:resource` (bundled under `video/`) | A PNG or JPEG still, at most 8192 × 8192 pixels and 64 MiB. |
+| `:feed` | `:file` (inside the show directory) | A TGVF file written by the native video bridge or a test. |
 | `:syphon` | `:app`, `:name`, optional `:max-width`/`:max-height` (16–4096, default 1024) | A Syphon server, selected by application and server name. |
 
 A Syphon selection follows the sender by name. When Resolume quits and returns, the strips pick it up again without reselecting. Status shows the source as **stale** after a second without a new frame or when the sender has gone. The strips keep the last frame meanwhile, so a sender restart does not black out the rig. A sender that changes resolution keeps its mapping, because strip coordinates are fractions of the frame.
 
 The show opens sources on its own thread after a settings change commits, never inside the lighting frame.
+
+**Limits.** A show uses at most 8 video sources, and at most 4 of them can be Syphon sources. Each Syphon source runs one helper process. Edits beyond these limits are refused, and so is loading a show that exceeds them. File sources resolve against the show directory: the working directory, which the Mac app sets to the show folder, or `:video-options {:show-directory …}`. A path with a `..` segment is refused with `:video/path-traversal`. A path outside that directory, including one reached through a symlink, is refused with `:video/path-outside-show`. Studio's edit is rejected with that code. A saved show carrying such a path lists the source as unavailable with the code and never reads the file. A still's byte size and header dimensions are checked before it is decoded (`:video/image-too-large`). The preview JPEG is never larger than 1920 pixels on either side. An encoding over 4 MiB is refused with HTTP 413.
 
 ## Mapping strips
 

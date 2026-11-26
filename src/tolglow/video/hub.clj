@@ -24,15 +24,29 @@
   "A source with no new frame for this long reads as stale in status."
   1000)
 
+(def max-helpers
+  "Syphon helper processes one hub runs at once."
+  4)
+
+(defn- start-process [command]
+  (-> (ProcessBuilder. ^java.util.List (vec command)) (.redirectErrorStream true) (.start)))
+
 (defn create
   "An empty hub. :bridge is the helper executable (default TOLGLOW_VIDEO_BRIDGE)
-  and :feed-dir the directory for TGVF files (default a private temp dir)."
+  and :feed-dir the directory for TGVF files (default a private temp dir,
+  removed again by `stop!`). :show-directory (default the working directory,
+  which the Mac app sets to the show folder) is the only place :image and
+  :feed files may come from; :roots replaces the whole list. :spawn starts a
+  helper from its argument vector (tests)."
   ([] (create {}))
-  ([{:keys [bridge feed-dir now-ms]
+  ([{:keys [bridge feed-dir now-ms show-directory roots spawn]
      :or {bridge (System/getenv "TOLGLOW_VIDEO_BRIDGE")
-          now-ms #(System/currentTimeMillis)}}]
-   {:bridge bridge :feed-dir feed-dir :now-ms now-ms
-    :lock (Object.) :list-lock (Object.) :sources (atom {})
+          now-ms #(System/currentTimeMillis)
+          spawn start-process}}]
+   {:bridge bridge :feed-dir feed-dir :now-ms now-ms :spawn spawn
+    :roots (vec (or roots [(.getCanonicalFile (io/file (or show-directory (System/getProperty "user.dir"))))]))
+    :created-dir (atom nil)
+    :lock (Object.) :reconcile-lock (Object.) :list-lock (Object.) :sources (atom {})
     :requested (atom ::none)
     :worker (delay (java.util.concurrent.Executors/newSingleThreadExecutor
                     (reify java.util.concurrent.ThreadFactory
@@ -42,16 +56,20 @@
   (or (some-> (:feed-dir hub) io/file (doto .mkdirs))
       (let [dir (File. (System/getProperty "java.io.tmpdir") (str "tolglow-video-" (.pid (java.lang.ProcessHandle/current))))]
         (.mkdirs dir)
+        (reset! (:created-dir hub) dir)
         dir)))
 
 (defn- safe-name [id]
   (str/replace (str (if (keyword? id) (subs (str id) 1) id)) #"[^A-Za-z0-9._-]" "_"))
 
-(defn- unavailable [message config]
-  (reify source/VideoSource
-    (latest [_] nil)
-    (describe [_] {:kind (:kind config) :label (str (:app config) " · " (:name config)) :connected? false :error message})
-    (close! [_] nil)))
+(defn- unavailable
+  ([message config] (unavailable message config nil))
+  ([message config code]
+   (reify source/VideoSource
+     (latest [_] nil)
+     (describe [_] {:kind (:kind config) :connected? false :error message :code code
+                    :label (or (:file config) (:resource config) (str (:app config) " · " (:name config)))})
+     (close! [_] nil))))
 
 (defn- start-syphon [hub id {:keys [app name max-width max-height] :as config}]
   (let [bridge (:bridge hub)]
@@ -61,9 +79,7 @@
             command (cond-> [bridge "feed" "--app" app "--name" name "--out" (str file)]
                       max-width (into ["--max-width" (str max-width)])
                       max-height (into ["--max-height" (str max-height)]))
-            process (-> (ProcessBuilder. ^java.util.List (vec command))
-                        (.redirectErrorStream true)
-                        (.start))
+            ^Process process ((:spawn hub) command)
             events (atom [])
             reader (doto (Thread. ^Runnable
                                   (fn []
@@ -82,12 +98,19 @@
                                          :last-event (last @events)}))
                    (close! [_] (source/close! feed)))}))))
 
-(defn- open-entry [hub id config]
+(defn- open-entry
+  "Open one source. A refused file or a failed decode leaves the source
+  listed as unavailable with the reason and its :code. A helper that fails to
+  start throws, so the pass can stop the helpers it already started."
+  [hub id config helpers]
   (if (= :syphon (:kind config))
-    (assoc (start-syphon hub id config) :config config)
+    (if (>= helpers max-helpers)
+      {:config config :source (unavailable (str "At most " max-helpers " Syphon sources run at once") config :video/too-many-helpers)}
+      (assoc (start-syphon hub id config) :config config))
     {:config config
-     :source (try (source/open id config)
-                  (catch Exception e (unavailable (or (ex-message e) (str (class e))) config)))}))
+     :source (try (source/open id config (:roots hub))
+                  (catch Exception e
+                    (unavailable (or (ex-message e) (str (class e))) config (:code (ex-data e)))))}))
 
 (defn- close-entry! [{:keys [source ^Process process ^File file]}]
   (try (source/close! source) (catch Exception _ nil))
@@ -103,21 +126,35 @@
 
 (defn reconcile!
   "Open, replace and close sources to match settings (an id → config map).
-  Runs outside the lighting frame; process start and stop happen outside the
-  source map update. Returns the ids now open."
+  Runs outside the lighting frame. Passes are serialized, but helper
+  processes start and stop outside the hub's state lock, which only guards
+  reading and replacing the source map. If a helper fails to start, the
+  helpers this pass already started are stopped and the pass's new sources
+  are listed as unavailable with the reason. Returns the ids now listed."
   [hub configs]
-  (let [configs (or configs {})
-        [retired opened]
-        (locking (:lock hub)
-          (let [current @(:sources hub)
-                retired (keep (fn [[id entry]] (when (not= (:config entry) (get configs id)) entry)) current)
-                kept (into {} (filter (fn [[id entry]] (= (:config entry) (get configs id)))) current)
-                opened (into kept (for [[id config] configs :when (not (contains? kept id))]
-                                    [id (open-entry hub id config)]))]
-            (reset! (:sources hub) opened)
-            [retired opened]))]
-    (run! close-entry! retired)
-    (set (keys opened))))
+  (locking (:reconcile-lock hub)
+    (let [configs (or configs {})
+          current (locking (:lock hub) @(:sources hub))
+          keep? (fn [[id entry]] (= (:config entry) (get configs id)))
+          retired (map val (remove keep? current))
+          kept (into {} (filter keep?) current)
+          _ (locking (:lock hub) (reset! (:sources hub) kept))
+          _ (run! close-entry! retired)
+          pending (sort-by (comp str key) (remove (fn [[id _]] (contains? kept id)) configs))
+          running (count (filter :process (vals kept)))
+          opened (reduce (fn [opened [id config]]
+                           (try
+                             (assoc opened id (open-entry hub id config (+ running (count (filter :process (vals opened))))))
+                             (catch Exception e
+                               (run! close-entry! (vals opened))
+                               (reduced (into {} (for [[id config] pending]
+                                                   [id {:config config
+                                                        :source (unavailable (str "The video bridge did not start: "
+                                                                                  (or (ex-message e) (str (class e))))
+                                                                             config :video/helper-start-failed)}]))))))
+                         {} pending)]
+      (locking (:lock hub) (reset! (:sources hub) (merge kept opened)))
+      (set (keys (merge kept opened))))))
 
 (defn request-reconcile!
   "Queue a reconcile on the hub's own thread when the configured sources
@@ -142,7 +179,11 @@
   (when (realized? (:worker hub))
     (.shutdown ^java.util.concurrent.ExecutorService @(:worker hub))
     (.awaitTermination ^java.util.concurrent.ExecutorService @(:worker hub) 5 TimeUnit/SECONDS))
-  (reconcile! hub {}))
+  (reconcile! hub {})
+  ;; Remove the per-process feed directory this hub created, once empty.
+  (when-let [^File dir @(:created-dir hub)]
+    (when (empty? (.list dir)) (.delete dir))
+    (reset! (:created-dir hub) nil)))
 
 (defn source-of [hub id] (get-in @(:sources hub) [id :source]))
 
@@ -177,7 +218,7 @@
                  live? (contains? #{:feed :syphon} (:kind d))
                  age (when-let [t (when live? (:captured-at-ms f))] (max 0 (- now t)))]
              (merge {:id id :config config}
-                    (select-keys d [:kind :label :connected? :error :running? :last-event])
+                    (select-keys d [:kind :label :connected? :error :code :running? :last-event])
                     (when f {:width (:width f) :height (:height f) :sequence (:sequence f)})
                     {:age-ms age
                      :frozen? (boolean (:frozen? latch))

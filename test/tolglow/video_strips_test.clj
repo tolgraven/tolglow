@@ -151,7 +151,7 @@
 (deftest image-files-and-sources-stay-isolated-in-the-hub
   (let [file (File/createTempFile "tolglow-video" ".png")
         image (BufferedImage. 4 2 BufferedImage/TYPE_INT_RGB)
-        video (hub/create {:now-ms (constantly 0)})]
+        video (hub/create {:now-ms (constantly 0) :show-directory (.getParent file)})]
     (try
       (.setRGB image 3 1 0x102030)
       (ImageIO/write image "png" file)
@@ -183,7 +183,7 @@
       (Thread/sleep 50)
       (is (= {} @(:sources video)))))
   (let [file (File/createTempFile "tolglow-video" ".png")
-        video (hub/create {:now-ms #(+ 60000 (System/currentTimeMillis))})]
+        video (hub/create {:now-ms #(+ 60000 (System/currentTimeMillis)) :show-directory (.getParent file)})]
     (try
       (ImageIO/write (BufferedImage. 4 2 BufferedImage/TYPE_INT_RGB) "png" file)
       (hub/reconcile! video {:still {:kind :image :file (str file)}})
@@ -259,3 +259,139 @@
     ;; 60 Hz leaves 16.7 ms per frame; the sampler measures well under 1 ms
     ;; on the M4 Pro. Allow a loaded CI runner a wide margin.
     (is (< median 8.0) (str "median sample " median " ms"))))
+
+(defn- temp-dir ^File [prefix]
+  (.toFile (java.nio.file.Files/createTempDirectory prefix (make-array java.nio.file.attribute.FileAttribute 0))))
+
+(defn- png! [^File file w h]
+  (ImageIO/write (BufferedImage. w h BufferedImage/TYPE_INT_RGB) "png" file)
+  file)
+
+(defn- code-of [f]
+  (try (f) nil (catch clojure.lang.ExceptionInfo e (:code (ex-data e)))))
+
+(deftest file-sources-stay-inside-the-show-directory
+  (let [show (temp-dir "tolglow-show") outside (temp-dir "tolglow-outside")
+        secret (png! (File. outside "secret.png") 2 2)
+        inside (png! (File. show "still.png") 2 2)
+        roots [show]]
+    (try
+      (java.nio.file.Files/createSymbolicLink (.toPath (File. show "escape.png")) (.toPath secret)
+                                              (make-array java.nio.file.attribute.FileAttribute 0))
+      (java.nio.file.Files/createSymbolicLink (.toPath (File. show "linked-dir")) (.toPath outside)
+                                              (make-array java.nio.file.attribute.FileAttribute 0))
+      (is (= (.getCanonicalFile inside) (source/resolve-file "still.png" roots)) "relative to the show directory")
+      (is (= (.getCanonicalFile inside) (source/resolve-file (str inside) roots)) "absolute inside is fine")
+      (is (= :video/path-traversal (code-of #(source/resolve-file "../tolglow-outside/secret.png" roots))))
+      (is (= :video/path-traversal (code-of #(source/resolve-file (str show "/sub/../still.png") roots))))
+      (is (= :video/path-outside-show (code-of #(source/resolve-file (str secret) roots))))
+      (is (= :video/path-outside-show (code-of #(source/resolve-file "/etc/hosts" roots))))
+      (is (= :video/path-outside-show (code-of #(source/resolve-file "escape.png" roots))) "a symlink cannot escape")
+      (is (= :video/path-outside-show (code-of #(source/resolve-file "linked-dir/secret.png" roots))))
+      (is (= :video/no-file-roots (code-of #(source/resolve-file "still.png" []))))
+      (testing "the hub lists a refused file as unavailable with its code, and never latches it"
+        (let [video (hub/create {:show-directory show})]
+          (try
+            (hub/reconcile! video {:in {:kind :image :file "still.png"}
+                                   :out {:kind :image :file (str secret)}
+                                   :link {:kind :image :file "escape.png"}
+                                   :feed {:kind :feed :file "../tolglow-outside/secret.png"}})
+            (let [latch (hub/latch video {:transport {:playing? true}} nil)
+                  status (into {} (map (juxt :id identity)) (hub/status video latch))]
+              (is (= #{:in} (set (keys (:frames latch)))))
+              (is (= :video/path-outside-show (get-in status [:out :code])))
+              (is (= :video/path-outside-show (get-in status [:link :code])))
+              (is (= :video/path-traversal (get-in status [:feed :code]))))
+            (finally (hub/stop! video)))))
+      (testing "bundled stills are named under the video resources only"
+        (is (= :video/path-traversal (code-of #(source/resource-frame :r "../studio/index.html" 0))))
+        (is (= :video/path-traversal (code-of #(source/resource-frame :r "/etc/hosts" 0))))
+        (is (= :video/missing-resource (code-of #(source/resource-frame :r "none.png" 0)))))
+      (testing "settings refuse .. before the runtime sees them"
+        (is (seq (mapping/settings-errors {:sources {:s {:kind :image :file "../x.png"}}}))))
+      (finally
+        (doseq [d [show outside]] (run! #(.delete ^File %) (reverse (file-seq d))))))))
+
+(deftest stills-are-size-checked-before-decoding
+  (let [show (temp-dir "tolglow-show")
+        wide (png! (File. show "wide.png") (inc source/max-image-dimension) 1)
+        small (png! (File. show "small.png") 4 4)]
+    (try
+      (is (= :video/image-too-large (code-of #(source/image-frame :w wide 0))) "dimensions come from the header")
+      (is (= :video/image-too-large (code-of #(source/image-frame :s small 0 {:max-bytes 10}))) "bytes are checked first")
+      (is (= [4 4] ((juxt :width :height) (source/image-frame :s small 0))))
+      (is (= :video/unreadable-image (code-of #(source/image-frame :t (doto (File. show "text.png") (spit "not an image")) 0))))
+      (finally (run! #(.delete ^File %) (reverse (file-seq show)))))))
+
+(deftest served-previews-are-bounded
+  (let [tall {:frames {:t (source/test-pattern-frame {:width 4 :height 4000})}}
+        jpeg (preview/frame-jpeg tall :t 640)
+        image (ImageIO/read (java.io.ByteArrayInputStream. jpeg))]
+    (is (<= (.getHeight image) preview/max-jpeg-dimension) "height is bounded as well as width")
+    (is (<= (.getWidth image) 640))
+    (is (<= (alength jpeg) preview/max-jpeg-bytes))))
+
+(deftest source-and-helper-counts-are-limited
+  (let [sources (fn [n kind] (into {} (for [i (range n)]
+                                        [(keyword (str "s" i)) (if (= kind :syphon) {:kind :syphon :app "A" :name (str i)}
+                                                                   {:kind :test-pattern})])))]
+    (is (= [] (mapping/settings-errors {:sources (sources mapping/max-sources :grid)})))
+    (is (seq (mapping/settings-errors {:sources (sources (inc mapping/max-sources) :grid)})))
+    (is (= [] (mapping/settings-errors {:sources (sources mapping/max-syphon-sources :syphon)})))
+    (is (seq (mapping/settings-errors {:sources (sources (inc mapping/max-syphon-sources) :syphon)})))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (reduce (fn [s [id source]] (mapping/apply-operation s {:op :put-source :id id :source source}))
+                         {} (sources (inc mapping/max-sources) :grid)))
+        "the edit that adds a ninth source is refused")
+    (testing "the hub runs at most max-helpers helpers even from unvalidated settings"
+      (let [started (atom [])
+            video (hub/create {:bridge "/bin/cat"
+                               :spawn (fn [_] (let [p (.start (ProcessBuilder. ^java.util.List ["/bin/cat"]))]
+                                                (swap! started conj p) p))})]
+        (try
+          (hub/reconcile! video (sources (+ 2 hub/max-helpers) :syphon))
+          (let [status (hub/status video {})]
+            (is (= hub/max-helpers (count @started)))
+            (is (= 2 (count (filter #(= :video/too-many-helpers (:code %)) status)))))
+          (finally (hub/stop! video)))
+        (is (every? #(not (.isAlive ^Process %)) @started) "stop closes every helper")))))
+
+(deftest a-failed-helper-start-stops-the-helpers-started-in-that-pass
+  (let [started (atom [])
+        calls (atom 0)
+        video (hub/create {:bridge "/bin/cat"
+                           :spawn (fn [_]
+                                    (if (= 2 (swap! calls inc))
+                                      (throw (java.io.IOException. "spawn refused"))
+                                      (let [p (.start (ProcessBuilder. ^java.util.List ["/bin/cat"]))]
+                                        (swap! started conj p) p)))})]
+    (try
+      (hub/reconcile! video {:a {:kind :syphon :app "A" :name "1"} :b {:kind :syphon :app "A" :name "2"}
+                             :c {:kind :syphon :app "A" :name "3"}})
+      (is (= 1 (count @started)))
+      (.waitFor ^Process (first @started) 3 java.util.concurrent.TimeUnit/SECONDS)
+      (is (not (.isAlive ^Process (first @started))) "the helper started before the failure is stopped")
+      (is (every? #(= :video/helper-start-failed (:code %)) (hub/status video {})))
+      (testing "the hub lock stays free while helpers start"
+        (let [entered (promise)
+              blocking (hub/create {:bridge "/bin/cat"
+                                    :spawn (fn [_] (deliver entered true) (Thread/sleep 300)
+                                             (.start (ProcessBuilder. ^java.util.List ["/bin/cat"])))})
+              pass (future (hub/reconcile! blocking {:a {:kind :syphon :app "A" :name "1"}}))]
+          (try
+            (deref entered 2000 nil)
+            (let [t0 (System/nanoTime)]
+              (locking (:lock blocking) nil)
+              (is (< (/ (- (System/nanoTime) t0) 1e6) 100.0) "status and latch readers are not blocked by a start"))
+            @pass
+            (finally (hub/stop! blocking)))))
+      (finally (hub/stop! video)))))
+
+(deftest stop-removes-the-feed-directory-it-created
+  (let [video (hub/create {:bridge "/bin/cat"
+                           :spawn (fn [_] (.start (ProcessBuilder. ^java.util.List ["/bin/cat"])))})]
+    (hub/reconcile! video {:a {:kind :syphon :app "A" :name "1"}})
+    (let [dir @(:created-dir video)]
+      (is (.isDirectory ^File dir))
+      (hub/stop! video)
+      (is (not (.exists ^File dir)) "the per-process temp directory is gone after stop"))))

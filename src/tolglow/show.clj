@@ -131,7 +131,8 @@
             [tolglow.video.hub :as video-hub]
             [tolglow.video.mapping :as video-mapping]
             [tolglow.video.preview :as video-preview]
-            [tolglow.video.sampler :as video-sampler])
+            [tolglow.video.sampler :as video-sampler]
+            [tolglow.video.source :as video-source])
   (:import [java.util Arrays UUID]
            [java.util.concurrent LinkedBlockingQueue]))
 
@@ -990,8 +991,14 @@
     :spatial-cue (spatial-cues/spawn model payload time-ms command)
     :autopilot-authored (autopilot/accept-authored model payload time-ms command)
     :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
-    :video-mapping {:model (update-in model [:settings :video] video-mapping/apply-operation payload)
-                    :ack {:status :accepted}}
+    :video-mapping (do
+                     ;; Refuse a file source outside the show directory here,
+                     ;; with its code, rather than saving it and listing it unavailable.
+                     (when (and (= :put-source (:op payload)) (#{:image :feed} (get-in payload [:source :kind]))
+                                (contains? (:source payload) :file))
+                       (video-source/resolve-file (get-in payload [:source :file]) (:roots (:video runtime))))
+                     {:model (update-in model [:settings :video] video-mapping/apply-operation payload)
+                      :ack {:status :accepted}})
     :personality (personalities/apply-operation model payload)
     :event-subscriber (let [inline-registration (::inline-registration payload)]
                         (when (and inline-registration (nil? (get-in runtime [:event-callbacks :inline-handlers])))

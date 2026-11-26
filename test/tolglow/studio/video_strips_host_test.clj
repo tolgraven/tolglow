@@ -48,7 +48,9 @@
 (defn- near? [expected actual] (every? #(<= (Math/abs (double %)) 1.01) (map - expected actual)))
 
 (defn- start [source]
-  (let [runtime (show/create-runtime {:model (model source) :workspace-options nil})]
+  (let [runtime (show/create-runtime {:model (model source) :workspace-options nil
+                                      ;; Feed files in these tests live in the temp directory.
+                                      :video-options {:show-directory (System/getProperty "java.io.tmpdir")}})]
     ;; Sources normally open on the hub's own thread after a commit; open them
     ;; here directly so the first frame is deterministic.
     (video-hub/reconcile! (:video runtime) {:grid source})
@@ -145,6 +147,14 @@
         (show/tick! runtime 0)
         (accepted! moved)
         (is (= :rejected (:status @invalid))))
+      (testing "a file source outside the show directory is refused with its code"
+        (let [outside (show/submit! runtime :video-mapping {:op :put-source :id :leak :source {:kind :image :file "/etc/hosts"}})
+              traversal (show/submit! runtime :video-mapping {:op :put-source :id :leak :source {:kind :feed :file "a/../../x"}})]
+          (show/tick! runtime 5)
+          (is (= :rejected (:status @outside)))
+          (is (= :video/path-outside-show (get-in @outside [:details :code])))
+          (is (= :rejected (:status @traversal)))
+          (is (nil? (get-in @(:state runtime) [:model :settings :video :sources :leak])))))
       (let [saved (persistence/read-string (show/export-show-source runtime))
             thawed (persistence/thaw (demo/model) saved)]
         (is (= (get-in @(:state runtime) [:model :settings :video]) (get-in thawed [:settings :video])))
