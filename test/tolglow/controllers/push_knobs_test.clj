@@ -181,3 +181,97 @@
     (is (= [{:knob-id :gone :missing? true}] (get-in projected [:knob-page :knobs])))
     (is (= {:title "Tolglow"} (push-knobs/project-display (live-model) {:title "Tolglow"}))
         "a view without knobs is unchanged")))
+
+(deftest push-3-shift-turns-are-ten-times-finer-and-a-binding-can-set-its-step
+  (let [rt (show/create-runtime {:model (live-model) :workspace-options nil})
+        receive (atom nil)
+        options {:session-id "push3-knob-shift" :user-mode? true :expression-mode :poly-aftertouch :schedule! nil
+                 :layout {:pads {[0 0] {:channel 3 :note 12}}
+                          :encoders {:look {:channel 2 :controller 21} :coarse {:channel 2 :controller 22}}
+                          :buttons {:shift {:channel 4 :controller 24}}}
+                 :encoder-bindings {:look {:target :knob :knob-id :look}
+                                    :coarse {:target :knob :knob-id :look :step 1/4}}
+                 :button-bindings {:shift :shift}
+                 :midi {:open! (fn [callback] (reset! receive callback) :capture)
+                        :send! (fn [_ _] (throw (ex-info "Unexpected Push 3 MIDI output" {})))
+                        :close! (fn [_])}}]
+    (try
+      (setup! rt)
+      (let [device (show/connect-device! rt :push-3 options)
+            input! (fn [time bytes] (while-ticking rt time #(@receive bytes)) (show/tick! rt time))
+            value #(:value (studio-knob rt))]
+        (input! 100 [0xb2 21 10])
+        (is (< (Math/abs (- 0.1 (value))) 1e-9) "ten coarse detents are a tenth of the range")
+        (input! 110 [0xb4 24 127])
+        (input! 120 [0xb2 21 10])
+        (is (< (Math/abs (- 0.11 (value))) 1e-9) "with Shift held ten detents are a hundredth")
+        (input! 130 [0xb2 22 1])
+        (is (< (Math/abs (- 0.135 (value))) 1e-9) "a binding's own step, a tenth of it with Shift")
+        (input! 140 [0xb4 24 0])
+        (input! 150 [0xb2 22 2])
+        (is (< (Math/abs (- 0.635 (value))) 1e-9))
+        (is (empty? (:errors (session/snapshot device)))))
+      (finally (show/stop! rt)))))
+
+(deftest push-3-knob-bindings-are-validated-before-connecting
+  (doseq [binding [{:target :knob} {:target :knob :knob-id ""} {:target :knob :knob-id :a :step 0}
+                   {:target :knob :knob-id :a :param :level}]]
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Knob encoder bindings"
+                          (push-knobs/push-3-options {:encoder-bindings {:e binding}}))
+        (pr-str binding)))
+  (is (= {:encoder-bindings {:p {:param :level}}} (push-knobs/push-3-options {:encoder-bindings {:p {:param :level}}}))
+      "options without knob bindings are unchanged"))
+
+(deftest the-push-2-knob-page-options-are-validated
+  (doseq [[page options] [[{:button 49 :knob-ids [:a]} {}] [{:button 75 :knob-ids [:a]} {}]
+                          [{:button 57 :knob-ids [:a]} {}] [{:button 52 :knob-ids [:a]} {:temporary-encoder-modifier 52}]
+                          [{:button 52 :knob-ids []} {}] [{:button 52 :knob-ids (vec (range 9))} {}]
+                          [{:button 52 :knob-ids [:a] :step 0} {}] [{:button 52 :knob-ids [""]} {}]
+                          [{:button 128 :knob-ids [:a]} {}] [{:button 52 :knob-ids [:a] :extra 1} {}]
+                          [{:button 52 :knob-ids '(:a)} {}]]]
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Knob page" (push-knobs/push-2-encoder-overlay page options))
+        (pr-str page options)))
+  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"knob page button"
+                        (push-knobs/push-2-encoder-overlay {:button 58 :knob-ids [:a]} {:cue-variations? true})))
+  (is (map? (push-knobs/push-2-encoder-overlay {:button 50 :knob-ids [:a "b"] :step 1/20} {}))))
+
+(deftest the-push-2-knob-page-waits-for-every-track-encoder-touch-to-lift
+  ;; A touch on a slot with no parameter records only its touch mode in
+  ;; Afterglow. Switching the page under it would swallow the next parameter
+  ;; touch on that slot; a held knob touch would be left behind.
+  (let [rt (show/create-runtime {:model (live-model) :workspace-options nil})
+        input (atom nil)
+        views (atom [])]
+    (try
+      (setup! rt)
+      (let [device (show/connect-device! rt :push-2 {:session-id "push2-knob-wait" :led-batch-size 16 :schedule! nil
+                                                     :midi {:open! (fn [receive!] (reset! input receive!) :capture)
+                                                            :send! (fn [_ _]) :close! (fn [_])}
+                                                     :display {:open! (constantly :capture-display)
+                                                               :render! (fn [_ view] (swap! views conj view))
+                                                               :close! (fn [_])}
+                                                     :knob-page {:button 52 :knob-ids [:look]}})
+            input! (fn [time bytes] (while-ticking rt time #(@input bytes)) (show/tick! rt time))
+            page? #(some? (:knob-page (peek @views)))]
+        (doseq [index (range 128)]
+          (@input (assoc (codec/palette-write 0 index [0 0 0 0]) 6 4)))
+        (input! 100 [0xb0 57 127])
+        (input! 101 [0x90 5 127])
+        (input! 102 [0xb0 57 0])
+        (input! 103 [0xb0 52 127])
+        (input! 104 [0xb0 52 0])
+        (is (not (page?)) "the page stays off while an empty slot is held with Accent")
+        (input! 105 [0x80 5 0])
+        (is (empty? (get-in (session/snapshot device) [:local :encoder-touch-modes])))
+        (input! 106 [0xb0 52 127])
+        (input! 107 [0xb0 52 0])
+        (is (page?))
+        (input! 110 [0x90 0 127])
+        (input! 111 [0xb0 52 127])
+        (input! 112 [0xb0 52 0])
+        (is (page?) "the page stays on while a knob touch is held")
+        (input! 113 [0x80 0 0])
+        (input! 114 [0xb0 52 127])
+        (is (not (page?)))
+        (is (empty? (:errors (session/snapshot device)))))
+      (finally (show/stop! rt)))))

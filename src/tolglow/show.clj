@@ -3011,10 +3011,10 @@
       (let [effect-group-view (when (= :x-touch kind) (:effect-group-view options))
             _ (when (and (some? effect-group-view) (not (#{:manual :overlay} effect-group-view)))
                 (throw (ex-info "X-Touch effect-group view must be :manual or :overlay" {:view effect-group-view})))
-            _ (when (and (= :push-2 kind) (true? (:cue-variations? options))
-                         (#{50 58} (get-in options [:knob-page :button])))
-                (throw (ex-info "The knob page button is taken by cue variations (Note and Scale)"
-                                {:button (get-in options [:knob-page :button])})))
+            ;; Linked knobs (#666): validated before any port opens.
+            knob-page (when (and (= :push-2 kind) (contains? options :knob-page))
+                        (push-knobs/push-2-encoder-overlay (:knob-page options) options))
+            options (cond-> options (= :push-3 kind) push-knobs/push-3-options)
             push-source (when (#{:push-2 :push-3} kind)
                           {:adapter kind :session-id id})
             operator-id (when push-source (str (name kind) "/" id "/" (UUID/randomUUID)))
@@ -3029,7 +3029,8 @@
             surface-content (when x-touch?
                               {:type :mixer-strips :effect-group-view effect-group-view
                                :cue-strips (vec (:channels options []))})
-            options (cond-> (dissoc options ::restore-lease ::reconnect-lease)
+            options (cond-> (dissoc options ::restore-lease ::reconnect-lease :knob-page)
+                      knob-page (assoc :encoder-overlay knob-page)
                       x-touch?
                       (assoc :channels []
                              :group-channels #(surface/strip-channels % id surface-content)

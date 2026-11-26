@@ -248,8 +248,11 @@ CHROMIUM_PATH=... lein with-profile +dev run -m tolglow.qa.knobs-browser target/
 A Push encoder turns a knob with `:knob/nudge`: 1/100 of the range per detent,
 or 1/1000 with Shift, the same steps as the master encoder. Push is an operator
 surface, so a turn takes over a ramped destination with `:reason
-:human-override`. The adapters live in the Afterglow fork and send the command;
-Tolglow resolves it and supplies the display data.
+:human-override`. The Afterglow adapters only route input to Tolglow through
+generic hooks: Push 3 host encoder bindings and the Push 2 `:encoder-overlay`.
+`tolglow.controllers.push-knobs` owns the knob page, its button, the step
+policy (`knobs/encoder-command`) and the display data, and `connect-device!`
+validates the options before any port opens.
 
 **Push 3** (User Mode, captured layout): bind a captured encoder to a knob.
 
@@ -259,7 +262,9 @@ Tolglow resolves it and supplies the display data.
                           :fine {:target :knob :knob-id :warmth :step 1/200}}})
 ```
 
-An optional `:step` replaces 1/100. Touching the encoder starts no parameter
+An optional `:step` replaces 1/100 (a tenth of it with Shift). Tolglow turns
+each knob binding into an Afterglow `{:target :host :control c}` binding whose
+turns call back into `push-knobs`. Touching the encoder starts no parameter
 gesture and reports `:touched-control {:target :knob :knob-id :look}` in the
 display view.
 
@@ -271,12 +276,16 @@ parameter bank, so knobs live on a page that a free button toggles.
   {... :knob-page {:button 52 :knob-ids [:look :warmth]}})
 ```
 
-`:button` is any button CC the adapter does not already use (52 is Add Device);
+Tolglow installs the page as the adapter's `:encoder-overlay`, which receives
+the button, the track encoders and their touches, plus Shift and the encoders
+the adapter itself holds a touch for. `:button` is any button CC the adapter
+does not already use (52 is Add Device);
 the cue-variation overlay's Note (50) and Scale (58) are refused when
 `:cue-variations? true`. Up to eight knobs, in encoder order; a slot without a
 knob does nothing. While the page is shown, a touch reports the knob as
 `:touched-control` and the view carries `:knob-page {:knob-ids [...]}`. The page
-does not change while a track encoder is touched, so an open parameter gesture
+does not change while any track encoder is touched (a knob touch, a parameter
+touch, or a touch mode such as Accent on an empty slot), so an open gesture
 always ends where it started. Master, tempo, the touch strip and the pads are
 unchanged (the strip does not drive a knob).
 
@@ -289,9 +298,10 @@ encoder area. The native Push 2 display (`:native-display? true`) receives the
 same data but does not draw it yet.
 
 `tolglow.controllers.push-knobs-test` proves both with captured MIDI through
-`show/connect-device!`: a Push 3 encoder touch and turns, and a Push 2 page
-toggle, touch, coarse and Shift turns and an empty slot, each compared with the
-`:knobs` projection Studio reads. Physical Push hardware is not verified.
+`show/connect-device!`: a Push 3 encoder touch and turns (coarse, Shift and a
+binding's own step), and a Push 2 page toggle, touch, coarse and Shift turns,
+an empty slot and the touch-held toggle rule, each compared with the `:knobs`
+projection Studio reads. Option validation is tested before connecting. Physical Push hardware is not verified.
 
 ## Verification
 
