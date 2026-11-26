@@ -123,6 +123,7 @@
             [tolglow.agents :as agents]
             [afterglow.control.devices.repl :as devices]
             [afterglow.control.devices.x-touch :as x-touch]
+            [taoensso.timbre :as timbre]
             [tolglow.composition.response :as response]
             [tolglow.composition.envelope :as envelope])
   (:import [java.util Arrays UUID]
@@ -2935,9 +2936,23 @@
 
 (defn- surface-command!
   "Enqueue a host surface command without waiting: the owner may be ticked by
-  the caller, and a device reads a missing surface as strip 0."
+  the caller, and a device reads a missing surface as strip 0. A watcher off
+  the owner thread logs a refusal and records it as :surface-command-error."
   [runtime epoch surface-id command]
-  (submit! runtime (merge {:source {:adapter :surface :session-id surface-id} :expected-epoch epoch} command)))
+  (let [receipt (submit! runtime (merge {:source {:adapter :surface :session-id surface-id} :expected-epoch epoch}
+                                        command))]
+    (.start (doto (Thread. (fn []
+                             (let [{:keys [status] :as ack} (deref receipt 30000 {:status :timeout})]
+                               (when (and (not= :accepted status) @(:running runtime))
+                                 (timbre/warn "Control surface command refused" surface-id (:op command)
+                                              (select-keys ack [:status :code :message]))
+                                 (locking (:lock runtime)
+                                   (swap! (:state runtime) assoc-in [:status :surface-command-error]
+                                          (merge {:surface-id surface-id :op (:op command)}
+                                                 (select-keys ack [:status :code :message])))))))
+                           "tolglow-surface-command")
+              (.setDaemon true)))
+    receipt))
 
 (defn connect-device!
   "Explicit REPL connection; no devices open at application startup. kind is
@@ -3060,21 +3075,22 @@
                           {:op :control-surface/detach :surface-id id})))))
 
 (defn link-surfaces!
-  "Join attached surfaces into one logical surface with one window over one
-  viewport (default: the first surface's first viewport, :strips on an
-  X-Touch). {:mode :extend :direction :right} (the default) places each next
-  surface one bank or page further right; :left, :down and :up work the same
-  way. :mirror shows the same window on every member; add :offset {:x 1 :y 0}
-  to keep the others one page to the right. Returns the receipt promise.
+  "Join attached surfaces into one logical surface with one window. Members
+  are surface IDs or {:surface-id :viewport :offset} maps; each uses its first
+  viewport unless :viewport is given. Modes:
+  {:mode :extend :direction :right} (the default) packs each next surface
+  beside the previous one by its actual width (:left, :down, :up too);
+  {:mode :mirror} shows the leader's window on every member;
+  {:mode :follow :offset {:x 1}} keeps each follower that many pages after the
+  leader, which still pages by its own width. Returns the receipt promise.
 
     @(link-surfaces! runtime \"desk\" [\"xt-main\" \"xt-ext\"])
     @(link-surfaces! runtime \"twins\" [\"xt-main\" \"xt-ext\"] {:mode :mirror})"
   ([runtime link-id surface-ids] (link-surfaces! runtime link-id surface-ids {}))
   ([runtime link-id surface-ids options]
-   (submit! runtime (cond-> {:op :control-surface/link :link-id link-id
-                             :members (surface/link-members surface-ids options)
-                             :source {:adapter :repl :session-id "repl"}}
-                      (:viewport options) (assoc :viewport (:viewport options))))))
+   (submit! runtime (merge {:op :control-surface/link :link-id link-id
+                            :source {:adapter :repl :session-id "repl"}}
+                           (surface/link-command surface-ids options)))))
 
 (defn unlink-surfaces!
   "Dissolve a link; each member keeps the window it was showing."

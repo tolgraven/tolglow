@@ -47,6 +47,7 @@
   {:id :behringer/x-touch :name "X-Touch (MCU mode)" :protocol :mcu :device-id (mcu/device-id false)
    :groups (mcu-groups false)
    :viewports {:strips [8 1]}
+   :viewport-axes {:strips :channels}
    :viewport-groups {:strips #{:faders :encoders :rings :scribble :strip-buttons}}
    :verification {:protocol :source-derived :hardware "#693 identity, firmware 1.22 and feedback rate"}})
 
@@ -62,6 +63,7 @@
             :touch-strip {:kind :touch-strip :geometry [1 1] :capabilities {:leds true}}
             :display {:kind :display :geometry [1 1] :capabilities {:image [960 160]}}}
    :viewports {:grid [8 8] :encoders [8 1]}
+   :viewport-axes {:grid :cue-grid :encoders :channels}
    :viewport-groups {:grid #{:pads} :encoders #{:encoders}}
    :verification {:protocol :source-derived :hardware :not-on-this-mac}})
 
@@ -69,6 +71,7 @@
   {:id :tolglow/studio-grid :name "Studio cue grid"
    :groups {:pads {:kind :pads :geometry [8 8] :capabilities {:velocity false :pressure :none}}}
    :viewports {:grid [8 8]}
+   :viewport-axes {:grid :cue-grid}
    :viewport-groups {:grid #{:pads}}
    :verification {:protocol :studio-state-stream}})
 
@@ -90,30 +93,38 @@
                                               :capabilities {:names (vec (sort (keys buttons)))}})
                touch-strip (assoc :touch-strip {:kind :touch-strip :geometry [1 1] :capabilities {}}))
      :viewports (cond-> {} (seq pads) (assoc :grid [columns rows]) (seq encoders) (assoc :encoders [(count encoders) 1]))
+     :viewport-axes (cond-> {} (seq pads) (assoc :grid :cue-grid) (seq encoders) (assoc :encoders :channels))
      :viewport-groups (cond-> {} (seq pads) (assoc :grid #{:pads}) (seq encoders) (assoc :encoders #{:encoders}))
      :verification {:protocol :official-manual :addresses :caller-capture}}))
 
-(def ^:private registry
-  {:behringer/x-touch x-touch :behringer/x-touch-ext x-touch-ext :ableton/push-2 push-2
-   :tolglow/studio-grid studio-grid})
+(defmulti descriptor
+  "A registered descriptor by ID; nil when unknown. Add a method to register
+  another device. Push 3 descriptors depend on a captured layout (push-3) and
+  are registered with their surface in a later #706 slice."
+  identity)
 
-(defn descriptor
-  "A registered static descriptor by ID. Push 3 descriptors depend on a
-  captured layout (push-3) and are not attachable until slice 3."
-  [id]
-  (get registry id))
+(defmethod descriptor :default [_] nil)
+
+(defmethod descriptor :behringer/x-touch [_] x-touch)
+
+(defmethod descriptor :behringer/x-touch-ext [_] x-touch-ext)
+
+(defmethod descriptor :ableton/push-2 [_] push-2)
+
+(defmethod descriptor :tolglow/studio-grid [_] studio-grid)
 
 (defn valid?
-  "Every group has a known kind and positive geometry; every viewport lists
-  existing groups of the viewport's geometry width."
-  [{:keys [id groups viewports viewport-groups]}]
+  "Every group has a known kind and positive geometry; every viewport has a
+  content axis and lists existing groups of the viewport's geometry width."
+  [{:keys [id groups viewports viewport-groups viewport-axes]}]
   (boolean
    (and (keyword? id) (map? groups) (seq groups)
         (every? (fn [[_ {:keys [kind geometry capabilities]}]]
                   (and (contains? kinds kind) (vector? geometry) (= 2 (count geometry))
                        (every? pos-int? geometry) (map? capabilities)))
                 groups)
-        (= (set (keys viewports)) (set (keys viewport-groups)))
+        (= (set (keys viewports)) (set (keys viewport-groups)) (set (keys viewport-axes)))
+        (every? keyword? (vals viewport-axes))
         (every? (fn [[viewport members]]
                   (every? #(and (contains? groups %)
                                 (= (first (get viewports viewport)) (first (get-in groups [% :geometry]))))

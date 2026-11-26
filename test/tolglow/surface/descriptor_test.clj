@@ -90,7 +90,7 @@
                                                   :viewports {:strips {:type :mixer-strips}}})))
         model (-> {} (attach "main" :behringer/x-touch) (attach "ext" :behringer/x-touch-ext)
                   (as-> m (:model (link/apply-operation m {:op :control-surface/link :link-id "desk"
-                                                           :members (link/link-members ["main" "ext"] {})}))))
+                                                           :mode :extend :members [{:surface-id "main"} {:surface-id "ext"}]}))))
         touches (map #(descriptor/x-touch-event % (mcu/decode [0x90 104 127])) ["main" "ext"])]
     (is (= [[0 0] [8 0]] (mapv #(:at (link/logical-position model (:surface %) :strips (:at %))) touches)))
     (is (= [[:touch 0] [:touch 0]] (mapv :identity touches)))
