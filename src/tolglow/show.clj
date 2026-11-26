@@ -85,6 +85,7 @@
             [tolglow.integrations.mpv-session :as mpv-session]
             [tolglow.integrations.reference-position :as reference-position]
             [tolglow.integrations.section-patterns :as section-patterns]
+            [tolglow.timeline :as timeline]
             [tolglow.persistence :as persistence]
             [tolglow.personalities :as personalities]
             [tolglow.operator-history :as operator-history]
@@ -1447,6 +1448,7 @@
             (fn [acc event] (staging/collect acc :audio {:kind :audio :id (or (get-in event [:source :id]) :analysis)} [event]))
             m (:events captured)))
         (seq (:events captured)) (assoc-in [:variables :audio :events] (:events captured))
+        (seq (:events captured)) (timeline/remember-sections (:events captured))
         (seq (:events captured)) (update-in [:variables :audio :event-count] (fnil + 0) (count (:events captured)))) model)))
 
 (defn section-reference-callbacks
@@ -2622,6 +2624,32 @@
    (case form
      :compact (subscribers/compact-view (:model @(:state runtime)))
      :full (schedule runtime))))
+
+(defn- timeline-reference
+  "The matched recording's sections and the current reference lock, when a
+  section reference is attached to this show."
+  [runtime committed]
+  (when-let [profile (:profile (or (:section-pattern-state committed) (:section-patterns runtime)))]
+    (when-let [{:keys [reference-state reference-now-ms]} (reference-evidence runtime (get-in committed [:model :epoch]))]
+      {:profile profile
+       :lock (try (reference-position/snapshot reference-state reference-now-ms)
+                  (catch clojure.lang.ExceptionInfo _ nil))})))
+
+(defn timeline
+  "Read the musical timeline Studio draws around now: scheduled and fired
+  events, ramps, sections, the beat grid, the captured-audio lane and the
+  level meters. Pass {:bars n} for n bars either side (default 8). The
+  three-argument form projects a given committed state. See docs/timeline.md."
+  ([runtime] (timeline runtime {}))
+  ([runtime options] (timeline runtime @(:state runtime) options))
+  ([runtime {:keys [model output] :as committed} options]
+   (timeline/view {:model model :output output
+                   :waveform (audio/history-waveform (connections/audio (:connections runtime)))
+                   :reference (timeline-reference runtime committed)
+                   ;; The active track-feel personality (#647), from the same
+                   ;; cached projection the snapshot carries as :personalities.
+                   :feel (get-in (personality-views runtime model) [:projection :active])}
+                  options)))
 
 (defn post-events!
   "Validate and enqueue a batch of beat-clock events atomically. Returns the

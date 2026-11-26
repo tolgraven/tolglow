@@ -47,6 +47,7 @@
             [tolglow.studio.lighting-policy :as lighting-policy]
             [tolglow.studio.personality :as personality]
             [tolglow.studio.autopilot :as autopilot]
+            [tolglow.studio.timeline :as timeline]
             [tolglow.studio.workspace :as workspace]))
 
 (defn- send! [event] (rf/dispatch event))
@@ -615,6 +616,7 @@
        (for [[id title] [["cues" "Cues"] ["live" (str "Live · " count-active)] ["room" "Room"]]]
          ^{:key id} [:button {:type "button" :aria-pressed (= id section)
                               :on-click #(set-ui! [:performance-section] id)} title])]]
+     [timeline/panel]
      [:div.performance-layout {:class (when (get-in db [:ui :preview-expanded?]) "preview-expanded")}
       [:div.performance-launch [cue-grid db]]
       [:div.performance-live [section-pattern-panel db] [personality/panel] [performance/board db parameter-control]

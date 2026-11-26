@@ -27,6 +27,7 @@
             [tolglow.studio.projection :as projection]
             [tolglow.sensors.osc :as sensor-osc]
             [tolglow.studio.state-stream :as state-stream]
+            [tolglow.timeline :as timeline]
             [tolglow.render.workers :as workers]
             [tolglow.observations :as observations]
             [tolglow.studio.web :as web])
@@ -60,6 +61,11 @@
                                  (fn [[_ id & extra]]
                                    (workspace/status-source (get-in runtime [:development :workspaces])
                                                             (when (empty? extra) id)))
+                                 ;; Sampled on the stream worker from each committed state.
+                                 timeline/query-id
+                                 (fn [[_ request]]
+                                   (let [request (timeline/options request)]
+                                     {:sample! #(show/timeline runtime % request)}))
                                  cue-pads/query-id
                                  (fn [query]
                                    (let [lease (Object.) service (:cue-pad-previews runtime)]
