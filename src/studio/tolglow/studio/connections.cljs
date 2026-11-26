@@ -14,6 +14,8 @@
             [tolglow.studio.lighting-capacity :as capacity]
             [tolglow.studio.fog-control :as fog-control]
             [tolglow.studio.audio-scope :as audio-scope]
+            [tolglow.studio.audio-lfo :as audio-lfo]
+            [tolglow.studio.stems :as stems]
             [tolglow.studio.events :as events]
             [tolglow.studio.projection :as projection]))
 
@@ -27,7 +29,7 @@
           :mappings {} :parameters {}}})
 
 (def audio-defaults {:input "" :sample-rate "48000" :channels "1" :input-channel ""
-                     :block-frames "480" :buffer-blocks "8" :big-endian? false :analyzer-options {}})
+                     :block-frames "480" :buffer-blocks "8" :big-endian? false :analyzer-options {} :stems []})
 
 (def defaults {:visible? false :generation 0 :pending #{} :errors {} :sync nil :audio nil :section-reference nil
                :ports [] :inputs [] :sync-form sync-defaults :audio-form audio-defaults
@@ -152,11 +154,13 @@
                        :buffer-blocks (integer! (:buffer-blocks form) "Buffer blocks" 2 64)
                        :big-endian? (:big-endian? form false) :analyzer-options (:analyzer-options form {})}
                       (if mixer {:mixer-index (:mixer-index mixer) :mixer-name (:name mixer)} {:default? true}))
-        input-channel (assoc :input-channel input-channel)))))
+        input-channel (assoc :input-channel input-channel)
+        (seq (:stems form)) (assoc :stems (stems/payload (:stems form) channels))))))
 
 (defn- audio-form [config]
   (merge audio-defaults (select-keys config [:sample-rate :channels :input-channel :block-frames :buffer-blocks :big-endian? :analyzer-options])
-         {:expected-name (:mixer-name config) :input (cond (:default? config) "system" (some? (:mixer-index config)) (str (:mixer-index config)) :else "")}))
+         {:expected-name (:mixer-name config) :stems (stems/form-rows config)
+          :input (cond (:default? config) "system" (some? (:mixer-index config)) (str (:mixer-index config)) :else "")}))
 
 (rf/reg-sub :connections/state (fn [db _] (state db)))
 (rf/reg-event-fx :connections/open
@@ -254,6 +258,25 @@
                 (cond-> (= operation :source) (assoc-in [:connections :sync-form :selected-source] value))
                 (update-in [:connections :errors] dissoc operation))
        :fx [(req db operation path body :connections/action-complete)]})))
+(rf/reg-event-fx :connections/capture
+  (fn [{:keys [db]} _]
+    {:db (-> db (update-in [:connections :pending] (fnil conj #{}) :capture)
+             (update-in [:connections :errors] dissoc :capture))
+     :fx [(req db :capture "/api/capture/capture" {} :connections/captured)]}))
+(rf/reg-event-fx :connections/captured
+  (fn [{:keys [db]} [_ request-token _ result]]
+    (when (current? db request-token)
+      {:db (-> db (update-in [:connections :pending] disj :capture)
+               (assoc-in [:connections :capture] result))})))
+(defn capture-text
+  "One line describing the server's capture summary (the same operation as
+  show/capture-phrase! at the REPL)."
+  [{:keys [status bars notes cues lane-points capture-id message]}]
+  (if (= "captured" (some-> status name))
+    (str "Capture " capture-id " · " bars (if (= 1 bars) " bar · " " bars · ") notes
+         (if (= 1 notes) " activation of " " activations of ") (str/join ", " (map #(if (keyword? %) (name %) (str %)) cues))
+         " · " lane-points (if (= 1 lane-points) " parameter move" " parameter moves"))
+    (or message "Nothing ran in the captured bars")))
 (rf/reg-event-fx :connections/action-complete
   (fn [{:keys [db]} [_ request-token operation result]]
     (when (current? db request-token)
@@ -721,6 +744,7 @@
                                   :on-click #(rf/dispatch [:connections/action :audio-stop])} "Stop capture"]]
       [:div.audio-level [:label {:html-for "audio-level"} "Signal energy · RMS"] [:meter#audio-level {:min 0 :max 1 :value (max 0 (min 1 (:rms features 0)))}]]
       [audio-scope/panel]
+      [stems/panel s]
       [:div.connection-metrics
        [:div [:span "Level"] [:strong (value-text (:energy-dbfs features) 1) [:small " dBFS"]]]
        [:div [:span "Confidence"] [:strong (if (number? (:confidence features)) (str (js/Math.round (* 100 (:confidence features))) "%") "—")]]
@@ -730,6 +754,19 @@
                                         " · input age " (value-text (:input-age-ms features)) " ms")])
       (when-let [error (or (:error audio) (:last-callback-error audio))] [:p.connection-error (:message error)])
       [:p.small.muted "Capture continues when you change views."]]]))
+
+(defn- capture-panel [s]
+  (let [result (:capture s) captured? (= "captured" (some-> (:status result) name))]
+    [:section.panel {:aria-label "Capture"}
+     [:div.panel-top [:span.section-label "CAPTURE"]]
+     [:div.form-body
+      [:p.small.muted "Keep the last bars that ran as an editable phrase: one note per cue run, paired 14-bit controller lanes for parameter moves."]
+      [:div.button-row
+       [:button#capture-phrase.button.primary {:type "button" :disabled (contains? (:pending s) :capture)
+                                               :on-click #(rf/dispatch [:connections/capture])} "Capture last bars"]
+       (when captured?
+         [:a#capture-download.button {:href "/api/capture/last.mid" :download true} "Download MIDI clip"])]
+      (when result [:p.small {:role "status"} (capture-text result)])]]))
 
 (defn connection-view [db s]
   (let [active? (boolean (get-in s [:sync :active?])) pending? (boolean (seq (:pending s))) disabled? (or (nil? (:sync s)) active? pending?)]
@@ -752,8 +789,9 @@
                                           :on-click #(rf/dispatch [:connections/configure true])} "Connect enabled adapters"]
        [:button#sync-stop.button {:type "button" :disabled (or (not active?) pending?) :on-click #(rf/dispatch [:connections/action :stop])} "Disconnect"]]]
      [:div.connections-layout [midi-panel s disabled?] [beat-link-panel s disabled?] [link-panel s disabled?]
-      [live-panel s (get-in db [:show :cues]) disabled?] [audio-panel s] [section-reference-panel s]
+      [live-panel s (get-in db [:show :cues]) disabled?] [capture-panel s] [audio-panel s] [section-reference-panel s]
       [capacity/panel (contains? (:pending s) :lighting-capacity)] [fog-control/panel (contains? (:pending s) :fog-control)] [output-panel db s] [pause-panel (contains? (:pending s) :pause)]]
+     [audio-lfo/panel]
      [compute-client/panel]
      [sensors/panel db]
      [patchbay/panel db]]))

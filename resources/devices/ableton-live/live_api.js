@@ -23,6 +23,9 @@
     if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
     return "{" + Object.keys(value).sort().map(function (key) { return JSON.stringify(key) + ":" + canonical(value[key]); }).join(",") + "}";
   }
+  var SESSION_OPERATIONS = ["inspect-set", "ensure-track", "configure-track", "write-clip", "extend-clip", "capture-midi",
+    "read-clip", "show-clip", "fire-clip", "stop-clips"];
+  function sessionOperation(op) { return SESSION_OPERATIONS.indexOf(op) >= 0; }
   function recordingKey(intent) {
     return canonical([intent["destination-id"], intent["show-id"] || null, intent.epoch, intent["command-id"]]);
   }
@@ -30,6 +33,7 @@
     if (!options || typeof options.api !== "function" || typeof options.dictionaryCall !== "function" || typeof options.readDictionary !== "function")
       fault("adapter-options", "LiveAPI, dictionary-call and dictionary-reader boundaries are required");
     this.api = options.api; this.parameters = options.parameters; this.dictionaryCall = options.dictionaryCall; this.readDictionary = options.readDictionary;
+    this.session = options.session || null;
     this.mode = "live"; this.destination = null; this.pendingNotes = {}; this.history = {}; this.order = [];
     this.historyLimit = options.historyLimit || 2048;
     this.provisionalDuration = options.provisionalDuration === undefined ? 1 / 16 : options.provisionalDuration;
@@ -207,8 +211,13 @@
       if (!integer(event.controller, 0, 127) || !integer(event.value, 0, 127)) fault("midi-value", "Invalid MIDI controller event");
     } else if ((event.type !== "note-on" && event.type !== "note-off") || !integer(event.note, 0, 127) || !integer(event.velocity, 0, 127))
       fault("midi-value", "Invalid MIDI note event");
+    if (this.session) { event = this.session.route(event); if (!event) return null; }
     event.origin = "live-playback";
     return event;
+  };
+  Adapter.prototype.lane = function (lane, value) {
+    if (this.mode !== "lighting" || !this.session) return [];
+    return this.session.laneEvents(lane, value);
   };
   Adapter.prototype.handle = function (request) {
     this.mutated = false;
@@ -233,7 +242,11 @@
           this.mode = payload.mode;
           if (this.parameters) this.parameters.setActive(this.mode === "lighting");
           result = {mode: this.mode, "midi-thru?": this.mode === "live"}; break;
-        default: fault("operation", "Unknown Live bridge operation");
+        default:
+          if (!sessionOperation(request.op)) fault("operation", "Unknown Live bridge operation");
+          if (!this.session) fault("session-unavailable", "Load live_session.js in the companion for setup and Capture");
+          var self = this;
+          result = this.session.run(request.op, payload, function () { self.mutated = true; });
       }
       return {id: request.id, "protocol-version": 1, status: "executed", result: result};
     } catch (error) {

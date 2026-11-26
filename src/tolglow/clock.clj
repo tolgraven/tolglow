@@ -5,6 +5,7 @@
   clocks, subscriptions, devices, commands or random generators are owned here."
   (:require [afterglow.time :as time]
             [afterglow.control.sensors :as sensors]
+            [tolglow.audio-lfo :as audio-lfo]
             [tolglow.event-subscribers :as subscribers]
             [tolglow.modulation :as modulation]
             [tolglow.integrations.patch :as patch]))
@@ -130,7 +131,7 @@
   Shift active instance beat anchors and beat timers, frame beat bookkeeping,
   responses, beat sequence positions/windows, relative subscriber and scheduled waits, beat
   ramps, auto beat schedules, signal routing and modulation
-  schedules/glides/holds. Absolute :at/:grid events behind the new beat are reported
+  schedules/glides/holds and audio-shaped LFO morphs. Absolute :at/:grid events behind the new beat are reported
   missed. Private system clock anchors and beat gate timers shift;
   elapsed pause offsets do not. Millisecond anchors/timers, durations, IDs/tokens,
   canonical parameters, captured definitions and arbitrary effect state stay as
@@ -179,6 +180,7 @@
             (or (seq (get-in model [:event-subscribers :runs])) (seq (get-in model [:event-subscribers :ramps])))
             (subscribers/rebase-clock offset beat)
             (:auto model) (update :auto shift-auto offset)
+            (get-in model [:audio-lfos :lfos]) (update :audio-lfos audio-lfo/rebase-clock offset)
             (:modulation model)
             (update :modulation
                     (fn [state]

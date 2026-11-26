@@ -707,6 +707,61 @@ strip or page the encoders itself (the REPL and the unit can). A Studio page com
 own (#706 slice 5). Close these gaps when Studio can place a member anywhere and
 a Studio grid can mirror or follow a Push page.
 
+## Shape an LFO from a band of the input
+
+Both surfaces read `:audio-lfos` in the show snapshot and send the same owner
+commands, `:audio-lfo/configure` and `:audio-lfo/remove`. The LFO's waveform,
+`:audio/<id>`, is in the same picker catalog as every other waveform, and a
+parameter LFO bound to it is the ordinary `:modulation-bind`.
+[Audio-shaped LFOs](audio-shaped-lfo.md)
+
+```clojure
+@(show/submit! runtime :command {:op :audio-lfo/configure :lfo-id :bass :name "Bass"
+                                 :config {:band :bass :extract :envelope :morph {:bars 2}}})
+(select-keys (tolglow.audio-lfo/lfo-view (:model @(:state runtime)) :bass)
+             [:status :band-label :progress :last])
+```
+
+In Studio, **Connections → Audio LFOs** shows the same LFO: status, level,
+confidence, pitch and lateness, the source band's last window and the morph
+from the previous shape to the target. **Apply**, **Remove** and **Add audio
+LFO** send the commands above; an invalid setting from either side is refused
+with the reason and the previous configuration stays. A REPL configure
+appears in the open panel on the next snapshot.
+
+**Tracked gaps.** Linked knobs reach a bound LFO's period and endpoints, not
+the audio LFO's band or morph time. Physical input and recorded material are
+open on [issue #676](https://github.com/tolgraven/tolglow/issues/676).
+
+## Route instrument stems to cues
+
+Both surfaces read the capture status (`:features :stems`, `:config :stems`)
+and change ordinary show data: an event subscriber matching
+`{:type :audio/onset :emitter-id :stem/<id>}` for onsets, and a signal patch
+route from `stem/<id>/level` for levels. `tolglow.audio.stem-routes` builds and
+reads both for the REPL and Studio. [Instrument stems](stems.md)
+
+```clojure
+(require '[tolglow.stems :as stems])
+@(:receipt (stems/route-onset! runtime :kick :flash))
+@(:enabled (stems/route-level! runtime :guitar :breathe :level))
+(stems/view runtime)
+```
+
+In Studio, **Connections → Audio input → Instrument stems** shows a card per
+stem with its level, onset lamp, onset and bleed counts, gate and routes.
+**Launch on onset** and **Drive with level** save the same subscriber and
+patch route; a route added from the REPL appears on the card, and a route
+added on the card appears in `(stems/view runtime)` and in the patch bay. An
+unknown cue or a parameter outside its bounds is refused by the subscriber or
+patch save with its reason, and the previous routing stays.
+
+**Tracked gaps.** Studio cannot choose a recording for the `:file` input or
+edit a stem's detector settings beyond its preset (it keeps any set from the REPL); the REPL can. Linked knobs
+are not yet a patch destination, so a stem level reaches a knob's targets only
+by routing each target. Physical interfaces and latency stay open on
+[issue #675](https://github.com/tolgraven/tolglow/issues/675).
+
 ## Generate a knob and keep it
 
 Both surfaces read `:knob-candidates` in the show snapshot and send the same
@@ -788,4 +843,6 @@ Calibrated paired aim arrival uses one host operation from both surfaces. In Stu
 
 The remaining gaps are tracked in issue #481. Studio has no editor for `:calibration :motor-rate-deg-per-sec`, so rates are set through the rig data or the REPL. Studio also cannot display the physical `:minimum-travel-ms` or the fingerprint behind a stale-calibration refusal. Close these gaps when an operator can enter rates in the fixture inspector and see why a launch was refused without the REPL.
 
-Retrospective Capture into Live has a REPL path only. `capture/observe-model` folds each committed model into a capture buffer, `capture/capture` returns the last bars as a phrase, and `live-connection/setup!` and `live-connection/capture!` write it to a Live Set over the companion transport. Studio has no Capture action, the Push mode has no Capture button, and the show runtime does not own a capture buffer yet. Close the gap when one Capture press in Studio or on Push captures the same phrase the REPL would, and the REPL can inspect the resulting clip identities. The Live-side operations also need a licensed Live run. [Capture into Live](live-routing.md#capture-the-last-phrase-into-live) · [Issue #671](https://github.com/tolgraven/tolglow/issues/671) · [Issue #680](https://github.com/tolgraven/tolglow/issues/680)
+Retrospective Capture has a shared operation. The runtime owns the capture buffer. `show/capture-phrase!` at the REPL and **Connections → Capture** in Studio both call `show/capture-action!` with `:capture`. The REPL receives the phrase; Studio receives its summary and a MIDI clip download of the same capture (`:smf`). `(show/capture-action! rt :status {})` reads the buffer and the last capture that both surfaces show. Two gaps remain. Writing the capture into Live from Studio (`live-connection/capture!` over the configured bridge) is REPL-only, and Push has no Capture button: the uniform surface layer lives with the Push controllers, outside this change. Close them when Studio and Push both send the last capture to Live and the REPL can read the resulting clip identities. [Capture into Live](live-routing.md#capture-the-last-phrase-into-live) · [Issue #671](https://github.com/tolgraven/tolglow/issues/671) · [Issue #680](https://github.com/tolgraven/tolglow/issues/680)
+
+Video strip mapping uses one message from both surfaces. In Studio, **Rig & space → Video strips** sends `:video-mapping` edits through `POST /api/video-mapping`. The REPL sends the same edits with `show/video-action! runtime :edit`, using the geometry helpers in `tolglow.video.mapping`. Both read source status and sampled strip colours from the snapshot's `:video` key. A REPL edit redraws the open editor through the state stream. Studio has no control for a video cue's `:placement` parameters beyond the ordinary parameter controls on its card. [Video on LED strips](video-strips.md) · [Issue #672](https://github.com/tolgraven/tolglow/issues/672)

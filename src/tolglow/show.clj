@@ -46,6 +46,8 @@
             [tolglow.compiler.batch :as batch]
             [tolglow.registry :as registry]
             [tolglow.integrations.ableton :as ableton]
+            [tolglow.integrations.phrase-capture :as phrase-capture]
+            [tolglow.integrations.phrase-clip :as phrase-clip]
             [tolglow.aim-paths :as aim-paths]
             [tolglow.rig.pixel-layout :as pixel-layout]
             [tolglow.rig.reflections :as reflections]
@@ -53,6 +55,7 @@
             [tolglow.modulation :as modulation]
             [tolglow.knob-candidates :as knob-candidates]
             [tolglow.knobs :as knobs]
+            [tolglow.audio-lfo :as audio-lfo]
             [tolglow.knob-presets :as knob-presets]
             [tolglow.lighting-capacity :as capacity]
             [tolglow.lighting-scenes :as lighting-scenes]
@@ -128,7 +131,13 @@
             [afterglow.control.devices.repl :as devices]
             [taoensso.timbre :as timbre]
             [tolglow.composition.response :as response]
-            [tolglow.composition.envelope :as envelope])
+            [tolglow.composition.envelope :as envelope]
+            [tolglow.compiler.video :as video-output]
+            [tolglow.video.hub :as video-hub]
+            [tolglow.video.mapping :as video-mapping]
+            [tolglow.video.preview :as video-preview]
+            [tolglow.video.sampler :as video-sampler]
+            [tolglow.video.source :as video-source])
   (:import [java.util Arrays UUID]
            [java.util.concurrent LinkedBlockingQueue]))
 
@@ -209,6 +218,8 @@
             :autopilot (get-in model [:variables :lighting/autopilot] {:enabled? false})
             :audio/energy (get-in model [:variables :audio/energy])
             :lighting-scenes (lighting-scenes/snapshot model (scene-eligible-ids runtime fixtures))
+            :video (when (or (seq (get-in model [:settings :video :sources])) (seq (get-in model [:settings :video :mappings])))
+                     (video-preview/project (:video runtime) (:video-latch snapshot) fixtures (:video-preview-plans runtime)))
             :personalities (:projection (personality-views runtime model))
             :receiver-surfaces (:receivers optics)
             :surface-aim (get-in model [:variables :surface-aim] {})
@@ -239,6 +250,7 @@
             :cue-launch-outcomes (cue-timing/outcomes model)
             :schedule (subscribers/schedule-view model)
             :knobs (knobs/projection model) ; linked knobs (#666)
+            :audio-lfos (audio-lfo/projection model) ; audio-shaped LFOs (#676)
             ;; Generated knob candidates (#667) and their Room audition.
             :knob-candidates (knob-candidates/projection
                               model (when-let [preview (get-in audition [:draft :preview])]
@@ -385,6 +397,15 @@
      (or (contains? #{:native-gpu :distributed} compute-backend) (= :native-gpu movement-backend))
      (assoc :budget-ms (or gpu-budget-ms (max 1 (long (/ 500.0 frame-rate))))))))
 
+(defn- new-phrase-capture
+  "Owner state for retrospective Capture (#671). options is false to disable,
+  or phrase-capture/new-buffer options such as {:bars 8 :grid {:beats 1/4}}."
+  [options]
+  (if (false? options)
+    {:enabled? false}
+    {:enabled? true :buffer (phrase-capture/new-buffer options) :layout {}
+     :cost {:samples 0 :total-ns 0 :max-ns 0 :last-ns 0} :captures 0 :last nil}))
+
 (defn- configure-runtime
   [compute-owner {:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
    (let [model (-> (or model (demo/model))
@@ -501,7 +522,7 @@
                                   (newThread [_ task]
                                     (doto (Thread. ^Runnable task "tolglow-room-audition") (.setDaemon true))))))
       :capacity-plan (volatile! nil) :capacity-audio (volatile! nil)
-      :audio-input (atom {:epoch (:epoch model) :events [] :features nil})
+      :audio-input (atom {:epoch (:epoch model) :events [] :features nil :shapes {}})
       :section-patterns music
       :section-player section-player
       :section-reference (when initial-position
@@ -509,6 +530,7 @@
                             :input (atom {:epoch (:epoch model) :position initial-position
                                           :used-sessions #{(get-in initial-position [:provenance :session-id])}})})
       :sync-input (atom {:epoch (:epoch model) :events []})
+      :phrase-capture (atom (new-phrase-capture (get options :phrase-capture {})))
       :connections owned :devices (atom {}) :device-reconnects (atom {}) :surface-refusals (atom {}) :development development
       :rdm (rdm/create (merge (:rdm-options options)
                              {:state rdm-state :model! #(get @(:state @runtime-ref) :model)
@@ -522,7 +544,10 @@
       :optics-plan (atom (reflections/plan (:rig model)))
       :patch (atom {:fixtures fixtures :compiled patch :retirement (retirement/plan nil nil patch)
                     :brightness-gains (preview/brightness-gains fixtures)})
-      :compile (cached-compile compiler-context)}]
+      :compile (cached-compile compiler-context)
+      ;; Video sources open on their own thread, outside the lighting frame (#672).
+      :video (video-hub/create (:video-options options {}))
+      :video-preview-plans (video-sampler/plan-cache 16)}]
        (reset! runtime-ref runtime)
        runtime)))
 
@@ -695,6 +720,9 @@
                    ;; Linked knobs (#666).
                    (knobs/operations operation)
                    (control/apply-domain-command model envelope knobs/apply-operation)
+                   ;; Audio-shaped LFOs (#676).
+                   (audio-lfo/operations operation)
+                   (control/apply-domain-command model envelope audio-lfo/apply-operation)
                    ;; Generated knob candidates (#667).
                    (knob-candidates/operations operation)
                    (control/apply-domain-command model envelope knob-candidates/apply-operation)
@@ -1047,6 +1075,14 @@
     :spatial-cue (spatial-cues/spawn model payload time-ms command)
     :autopilot-authored (autopilot/accept-authored model payload time-ms command)
     :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
+    :video-mapping (do
+                     ;; Refuse a file source outside the show directory here,
+                     ;; with its code, rather than saving it and listing it unavailable.
+                     (when (and (= :put-source (:op payload)) (#{:image :feed} (get-in payload [:source :kind]))
+                                (contains? (:source payload) :file))
+                       (video-source/resolve-file (get-in payload [:source :file]) (:roots (:video runtime))))
+                     {:model (update-in model [:settings :video] video-mapping/apply-operation payload)
+                      :ack {:status :accepted}})
     :personality (personalities/apply-operation model payload)
     :event-subscriber (let [inline-registration (::inline-registration payload)]
                         (when (and inline-registration (nil? (get-in runtime [:event-callbacks :inline-handlers])))
@@ -1513,6 +1549,17 @@
                       (when (= epoch (:epoch @(:audio-input runtime)))
                         (swap! (:audio-input runtime) assoc :features features
                                :arrived-at-ms ((get-in runtime [:publisher :now-ms])))))))
+     ;; Audio-shaped LFOs (#676): the worker reads the specs and returns the
+     ;; newest extraction per LFO. The mailbox keeps the newest per LFO.
+     :shape-specs! (fn []
+                     (let [model (get-in @(:state runtime) [:model])]
+                       (when (and @(:running runtime) (= epoch (:epoch model)))
+                         (audio-lfo/extractor-specs model))))
+     :shapes! (fn [shapes]
+                (when (current?)
+                  (locking (:audio-input runtime)
+                    (when (= epoch (:epoch @(:audio-input runtime)))
+                      (swap! (:audio-input runtime) update :shapes merge shapes)))))
      :done! (fn [result]
               (when (current?)
                 (swap! (:state runtime)
@@ -1522,14 +1569,25 @@
 (defn- consume-audio! [runtime model time-ms]
   (let [captured (locking (:audio-input runtime)
                    (let [before @(:audio-input runtime)]
-                     (reset! (:audio-input runtime) {:epoch (:epoch model) :events [] :features nil})
+                     (reset! (:audio-input runtime) {:epoch (:epoch model) :events [] :features nil :shapes {}})
                      before))]
     (when (and (:features captured) (= (:epoch model) (:epoch captured)))
       (let [age (max 0 (- ((get-in runtime [:publisher :now-ms])) (:arrived-at-ms captured)))]
         (vreset! (:capacity-audio runtime) {:epoch (:epoch model) :received-ms (- time-ms age)
                                            :audio/energy (get-in captured [:features :audio/energy])})))
     (if (= (:epoch model) (:epoch captured))
+      (let [;; Stems drive show progress (#675): while the transport is stopped
+            ;; their onsets launch nothing and their levels stop feeding routes,
+            ;; and play resumes from fresh audio with no backlog.
+            stopped? (false? (get-in model [:transport :playing?]))
+            onset? #(= :audio/onset (:type %))
+            suppressed (if stopped? (count (filter onset? (:events captured))) 0)
+            captured (cond-> captured
+                       stopped? (update :events #(vec (remove onset? %)))
+                       (and stopped? (:features captured)) (update :features assoc :stems-held? true))]
       (cond-> model
+        (pos? suppressed) (update-in [:variables :audio :suppressed-onsets] (fnil + 0) suppressed)
+        (seq (:shapes captured)) (audio-lfo/admit (:shapes captured))
         (:features captured) (routing/admit-audio (:features captured))
         (:features captured) (analysis/publish-features (:features captured))
         (seq (:events captured)) (as-> m (reduce
@@ -1537,7 +1595,7 @@
             m (:events captured)))
         (seq (:events captured)) (assoc-in [:variables :audio :events] (:events captured))
         (seq (:events captured)) (timeline/remember-sections (:events captured))
-        (seq (:events captured)) (update-in [:variables :audio :event-count] (fnil + 0) (count (:events captured)))) model)))
+        (seq (:events captured)) (update-in [:variables :audio :event-count] (fnil + 0) (count (:events captured))))) model)))
 
 (defn section-reference-callbacks
   "Get callbacks for the attached reference session in the current show epoch.
@@ -1831,6 +1889,22 @@
           (assoc-in [:variables :sync :events] (:events captured))
           (routing/admit-sync (:events captured))) model)))
 
+(defn- observe-phrase-capture!
+  "Fold the committed model into the capture buffer and record what it cost.
+  The fold is pure; a failure is reported in status and never stops a frame."
+  [runtime model]
+  (when-let [state (:phrase-capture runtime)]
+    (when (:enabled? @state)
+      (let [start (System/nanoTime)]
+        (try
+          (let [buffer (phrase-capture/observe-model (:buffer @state) model)
+                ns (- (System/nanoTime) start)]
+            (swap! state (fn [s] (-> s (assoc :buffer buffer)
+                                     (update :cost #(-> % (update :samples inc) (update :total-ns + ns)
+                                                        (update :max-ns max ns) (assoc :last-ns ns)))))))
+          (catch Exception error
+            (swap! (:state runtime) assoc-in [:status :phrase-capture-error] (error-data error))))))))
+
 (defn- observe-sync-commands! [runtime before after receipts events fired-outcomes]
   (let [manager (connections/sync (:connections runtime))
         old-ids (if (= (:epoch before) (:epoch after))
@@ -2026,7 +2100,10 @@
                           :frame-number (inc (get model :frame-number 0))
                           :responses (:responses model)
                           :adaptive-intervals (get-in sampling [:inputs :keyframe-intervals])})
+        ;; Video frames latch once per lighting frame and hold while stopped (#672).
+        video-latch (video-hub/latch (:video runtime) model (:video-latch before))
         frame-input (merge {:time-ms time-ms :epoch (:epoch model) :show-id (:show-id model)
+                            video-output/input-key video-latch
                             :keyframes (:keyframes before) :keyframe-params input-overrides
                             :keyframe-generation (:responses model) :spatial-aims (get-in space [:fields :aims])
                             :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
@@ -2164,7 +2241,7 @@
                              setpoint (fog-control/publish previous-control (:status setpoint)))
                   updated (advance-light-scenes runtime (lighting/publish with-fog frame) patch frame time-ms bypass?)]
               (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
-     :output frame :variable-observation variables
+     :output frame :variable-observation variables :video-latch video-latch
      ::waveforms/response-frame response-frame
      ::show-events/intent-emissions (:intent-emissions result)
      :preview-hdr (when (:hdr? frame-input) (or hdr-opts {}))
@@ -2575,6 +2652,8 @@
                                   (get-in next-state [:output :fog-demands])))
                   (catch Exception error
                     (swap! (:state runtime) assoc-in [:status :output-error] (error-data error))))
+             ;; After the frame is handed to output, so the fold never delays it.
+             (when-not restored? (observe-phrase-capture! runtime (:model next-state)))
              (let [observers (vals @(:observers runtime))
                    publication (try (connections/publish! (:connections runtime) (effect-keyframes/source (block-trace/source next-state) (:keyframes next-state))
                                             (boolean (some (fn [observer] ((:tracing? observer))) observers)))
@@ -2615,7 +2694,9 @@
          (when-let [{:keys [receipt] :as device} @restoring-device]
            (when (and (realized? receipt) (= :accepted (:status @receipt)))
              (reopen-restoring-device! runtime device)))
-         (rdm/reconcile! (:rdm runtime)))))))
+         (rdm/reconcile! (:rdm runtime))
+         (when @(:running runtime)
+           (video-hub/request-reconcile! (:video runtime) (get-in @(:state runtime) [:model :settings :video :sources]))))))))
 
 (defn- prepare-rig-edit [model proposed]
   (let [basis (:rig model)
@@ -2838,6 +2919,7 @@
                               #(when (realized? (:audition-worker runtime))
                                  (.shutdownNow ^java.util.concurrent.ExecutorService @(:audition-worker runtime)))
                               #(duplex/stop! (:audio-returns runtime))
+                              #(video-hub/stop! (:video runtime))
                               #(development/close! (:development runtime))
                               #(connections/close! (:connections runtime))
                               (fn [] (locking (:devices runtime)
@@ -3433,6 +3515,69 @@
             (shutdown!))
     (throw (ex-info "Unknown audio operation" {:operation operation}))))
 
+(defn- capture-summary [{:keys [id phrase layout]}]
+  (let [bpb (get-in phrase [:meter :beats-per-bar] 4)]
+    {:capture-id id :length-beats (double (:length-beats phrase)) :bars (long (/ (:length-beats phrase) bpb))
+     :start-beat (some-> (get-in phrase [:source :start-beat]) double)
+     :notes (count (:notes phrase)) :cues (vec (distinct (map :cue-id (:notes phrase))))
+     :lane-points (reduce + 0 (map (comp count :points) (:lanes phrase)))
+     :unassigned (:unassigned layout)}))
+
+(defn capture-action!
+  "Retrospective Capture (#671) for the REPL and Studio. The runtime folds
+  every committed owner cycle into a bounded buffer (create-runtime option
+  :phrase-capture, default 8 bars; false disables).
+    :status  -> buffer size, running activations, per-cycle cost and last capture
+    :capture -> capture the last bars ({:bars n :end-beat b} optional) as a
+                phrase, extend the saved MIDI layout and keep it as the last capture
+    :smf     -> {:filename :bytes} Standard MIDI File of the last capture on the
+                layout's cue channel (cue notes and lanes share it by default)
+  The layout is kept for the runtime's lifetime, so later captures address
+  the same pitches and controllers; it is not yet saved with the show."
+  [runtime operation payload]
+  (let [state (:phrase-capture runtime)]
+    (when-not (and state (:enabled? @state))
+      (throw (ex-info "Phrase capture is disabled for this show" {:operation operation})))
+    (case operation
+      :status (let [{:keys [buffer cost captures last]} @state
+                    n (max 1 (:samples cost))]
+                {:enabled? true :bars (:bars buffer) :grid-beats (double (:grid-beats buffer))
+                 :retained-events (count (:events buffer)) :running (count (:open buffer))
+                 :latest-beat (:last-beat buffer)
+                 :cost {:cycles (:samples cost) :mean-us (/ (:total-ns cost) n 1000.0)
+                        :max-us (/ (:max-ns cost) 1000.0) :last-us (/ (:last-ns cost) 1000.0)}
+                 :captures captures :last (some-> last capture-summary)})
+      :capture (let [{:keys [buffer layout captures]} @state
+                     {:keys [bars end-beat] :as options} (select-keys payload [:bars :end-beat])
+                     _ (when-not (and (or (nil? bars) (and (pos-int? bars) (<= bars (:bars buffer))))
+                                      (or (nil? end-beat) (and (number? end-beat) (Double/isFinite (double end-beat))
+                                                               (not (neg? end-beat)))))
+                         (throw (ex-info (str "Capture takes 1-" (:bars buffer) " bars and a non-negative end beat")
+                                         {:bars bars :end-beat end-beat})))
+                     phrase (phrase-capture/capture buffer options)
+                     registry (:registry (:model @(:state runtime)))
+                     layout (phrase-clip/allocate-layout layout registry (phrase-clip/phrase-targets phrase))
+                     entry {:id (inc captures) :phrase phrase :layout layout}]
+                 (if (empty? (:notes phrase))
+                   {:status :empty :message "Nothing ran in the captured bars"}
+                   (do (swap! state assoc :layout layout :captures (inc captures) :last entry)
+                       (assoc (capture-summary entry) :status :captured :phrase phrase))))
+      :smf (let [{:keys [last]} @state]
+             (when-not last (throw (ex-info "Capture a phrase first" {})))
+             (let [{:keys [id phrase layout]} last
+                   clips (phrase-clip/phrase->clips phrase layout)
+                   channel (:channel layout)]
+               {:filename (str "tolglow-capture-" id ".mid")
+                :bytes (phrase-clip/clip->smf (get clips channel) channel
+                                              {:bpm (or (get-in phrase [:source :bpm]) 120)})}))
+      (throw (ex-info "Unknown capture operation" {:operation operation})))))
+
+(defn capture-phrase!
+  "Capture the last bars from the REPL; returns the summary with :phrase.
+  Studio's Capture button runs the same operation."
+  ([runtime] (capture-phrase! runtime {}))
+  ([runtime options] (capture-action! runtime :capture options)))
+
 (defn sync-action!
   "Explicit synchronization and Live ownership operations for Ring/REPL."
   [runtime operation payload]
@@ -3528,6 +3673,24 @@
       (let [manager (session-operation! runtime payload (fn [_] (connections/sensors (:connections runtime))))]
         (sensors/stop-osc! manager))
       (throw (ex-info "Unknown sensor operation" {:operation operation})))))
+
+(defn video-action!
+  "Video sources and strip mappings (#672) for Ring and the REPL.
+  :status       source status and sampled strip colours from the latched frame
+  :edit         apply one `tolglow.video.mapping/apply-operation` edit through
+                the show queue; sources reconcile after it commits
+  :syphon       list Syphon servers through the native helper
+  :frame-jpeg   bytes of a latched frame, {:source id :max-width px}"
+  [runtime operation payload]
+  (case operation
+    :status (let [state @(:state runtime)]
+              (video-preview/project (:video runtime) (:video-latch state) (get-in state [:model :rig :fixtures])
+                                     (:video-preview-plans runtime)))
+    :edit (let [receipt (submit! runtime :video-mapping (dissoc payload :runtime-id :expected-epoch))]
+            receipt)
+    :syphon (video-hub/list-syphon (:video runtime))
+    :frame-jpeg (video-preview/frame-jpeg (:video-latch @(:state runtime)) (:source payload) (:max-width payload 640))
+    (throw (ex-info "Unknown video operation" {:operation operation}))))
 
 (defn repl-action!
   "Session operations for the explicit development REPL. Restoring history never

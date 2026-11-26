@@ -1,0 +1,38 @@
+/* Audio-shaped LFOs (#676): src/studio/tolglow/studio/audio_lfo.cljs */
+.audio-lfo-panel{margin-top:22px}
+.audio-lfo-body{display:grid;gap:14px;padding:14px 16px 16px}
+.audio-lfo-card{border:1px solid var(--line);border-radius:10px;background:var(--raised);padding:12px 14px;display:grid;gap:10px;min-width:0}
+.audio-lfo-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px}
+.audio-lfo-head strong{font-size:13px;font-weight:500}
+.audio-lfo-band{font-size:11px;color:var(--muted);margin-right:auto}
+.audio-lfo-status{font-size:10px;padding:3px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.audio-lfo-status[data-status=ok]{color:#cadfb8;border-color:#566b46}
+.audio-lfo-status[data-status=silent],.audio-lfo-status[data-status=low-confidence]{color:#e2c48f;border-color:#6d5a3a}
+.audio-lfo-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:8px}
+.audio-lfo-metric{display:grid;gap:3px;min-width:0}
+.audio-lfo-metric small{font-size:9px;color:var(--muted)}
+.audio-lfo-metric strong{font-size:13px;font-weight:400;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.audio-lfo-charts{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+.audio-lfo-chart{margin:0;display:grid;gap:6px;min-width:0}
+.audio-lfo-chart figcaption{display:flex;justify-content:space-between;gap:8px;font-size:10px;color:var(--muted)}
+.audio-lfo-chart figcaption span{color:#bbc6b5}
+.audio-lfo-chart svg{width:100%;height:110px;background:#0d120c;border:1px solid var(--line);border-radius:6px}
+.audio-lfo-chart polyline{fill:none;stroke-linejoin:round}
+.audio-lfo-chart .zero{stroke:#3a4634;stroke-width:1}
+.audio-lfo-chart .source-trace{stroke:#8fb7d8;stroke-width:1.6}
+.audio-lfo-chart .history{stroke:#3e4a39;stroke-width:1}
+.audio-lfo-chart .from{stroke:#7c8574;stroke-width:1;stroke-dasharray:2 3}
+.audio-lfo-chart .target{stroke:#e2c48f;stroke-width:1.2;stroke-dasharray:5 3}
+.audio-lfo-chart .current{stroke:#b7d79b;stroke-width:2.2}
+.audio-lfo-chart .musical-grid line{stroke:#2a3326;stroke-width:1}
+.audio-lfo-chart .musical-grid line.bar,.audio-lfo-chart .musical-grid line.phrase{stroke:#45543d}
+.audio-lfo-empty{display:grid;place-items:center;height:110px;border:1px dashed var(--line);border-radius:6px;font-size:11px;color:var(--muted);text-align:center;padding:0 10px}
+.audio-lfo-progress{height:4px;border-radius:2px;background:#1b2318;overflow:hidden}
+.audio-lfo-progress i{display:block;height:100%;background:#b7d79b}
+.audio-lfo-form{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;align-items:end}
+.audio-lfo-form label{display:grid;gap:4px;font-size:10px;color:var(--muted);min-width:0}
+.audio-lfo-form select,.audio-lfo-form input{width:100%;font-size:11px;padding:6px 7px;min-height:36px}
+.audio-lfo-create{display:flex;gap:8px}
+.audio-lfo-create input{flex:1;min-width:0}
+@media(max-width:700px){.audio-lfo-charts{grid-template-columns:1fr}}
+@media(pointer:coarse){.audio-lfo-form select,.audio-lfo-form input,.audio-lfo-create input{min-height:44px;font-size:16px}.audio-lfo-panel .text-button,.audio-lfo-panel .button{min-height:44px;min-width:44px}}

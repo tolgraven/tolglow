@@ -37,6 +37,7 @@
             [tolglow.agents :as agents]
             [tolglow.autopilot.actions :as conductor-actions]
             [tolglow.spatial :as spatial]
+            [tolglow.video.mapping :as video-mapping]
             [tolglow.spatial.actions :as spatial-actions]
             [tolglow.spatial.cues :as spatial-cues]
             [tolglow.fixtures.library :as fixture-service]
@@ -51,6 +52,7 @@
             [tolglow.output.pause-look :as pause-look]
             [tolglow.routing :as routing]
             [tolglow.knobs :as knobs]
+            [tolglow.audio-lfo :as audio-lfo]
             [tolglow.knob-presets :as knob-presets]
             [tolglow.integrations.audio-return :as audio-return]
             [tolglow.integrations.section-patterns :as section-patterns]
@@ -71,7 +73,7 @@
     :master :blackout? :event-subscribers :transport :control :rig :compositions :composition-runs
     :composition-tokens :auto :responses :integrations :extensions :frame-number
     :last-frame-time-ms :last-frame-beat :macros :sequences :reactive :settings :modulation :waveforms :routing :sensors
-    :knobs})
+    :knobs :audio-lfos})
 
 (def ^:private secret-keys
   #{"api-key" "api_key" "apikey" "authorization" "password" "secret"
@@ -395,6 +397,7 @@
   (variable-blocks/compile-model model)
   (registry/validate-public-query-ids! (get-in model [:settings :studio :public-queries]))
   (when-let [s (get-in model [:settings :spatial])] (spatial/settings s))
+  (when-let [s (get-in model [:settings :video])] (video-mapping/validate! s))
   (when (contains? (:settings model) :lighting-capacity)
     (capacity/settings (get-in model [:settings :lighting-capacity])))
   (when (contains? (:settings model) :expressive)
@@ -445,6 +448,9 @@
   (when (contains? model :knobs)
     (try (knobs/validate-state (:knobs model))
          (catch clojure.lang.ExceptionInfo error (fail! (:path (ex-data error) [:knobs]) (ex-message error)))))
+  (when (contains? model :audio-lfos)
+    (try (audio-lfo/validate-state (:audio-lfos model))
+         (catch clojure.lang.ExceptionInfo error (fail! (:path (ex-data error) [:audio-lfos]) (ex-message error)))))
   (when-let [integrations (:integrations model)]
     (check! (map? integrations) [:integrations] "Integration configuration must be a map")
     (when-let [bridge (:ableton integrations)] (validate-ableton! bridge [:integrations :ableton])))
@@ -648,6 +654,7 @@
                 (:event-subscribers saved) (update :event-subscribers event-subscribers/restore ids)
                 (:routing saved) (update :routing routing/restore-state {:epoch epoch :instance-ids ids})
                 (:knobs saved) (update :knobs knobs/restore ids epoch)
+                (:audio-lfos saved) (update :audio-lfos audio-lfo/restore)
                 (:sensors saved) (update :sensors #(remap-references % ids owners))
                 (:reactive saved) (update :reactive #(remap-references % ids owners)))
         ;; Historical chat/tool results are evidence, not live references.

@@ -240,7 +240,8 @@
    "/api/modulation/hold" :modulation-hold "/api/modulation/resume" :modulation-resume
    "/api/materials" :material-edit
    "/api/modulation/cue" :modulation-cue "/api/waveforms/publish" :waveform
-   "/api/patch/save" :patch-save "/api/patch/enabled" :patch-enabled})
+   "/api/patch/save" :patch-save "/api/patch/enabled" :patch-enabled
+   "/api/video-mapping" :video-mapping})
 
 (defn- not-found [_] (data-response 404 {:message "Route not found"}))
 
@@ -327,7 +328,8 @@
 
 (defn- get-routes
   [{:keys [snapshot! materials! definition! export! heartbeat! provider-get! chat-history! patch! checkpoint!
-           app-agent! fixture! rdm! audio! sync! section-reference! waveform! workspace! terminal! sensor! repl! calibration! photometry! fog-calibration! event-subscribers!]}]
+           app-agent! fixture! rdm! audio! video! sync! section-reference! waveform! workspace! terminal! sensor! repl! calibration! photometry! fog-calibration! event-subscribers!
+           capture!]}]
   (merge
    {"/api/event-subscribers" (available event-subscribers! "Event subscribers unavailable" (fn [_] (ok (event-subscribers!))))
     "/api/fog-calibration" (available fog-calibration! "Venue calibration unavailable" (fn [_] (ok (fog-calibration!))))
@@ -363,6 +365,13 @@
     "/api/audio/returns/mixers" (read-action audio! :return-mixers "Audio service unavailable")
     "/api/audio/returns" (read-action audio! :return-status "Audio service unavailable")
     "/api/sync" (read-action sync! :status "Synchronization unavailable")
+    "/api/capture" (read-action capture! :status "Phrase capture unavailable")
+    "/api/capture/last.mid" (available capture! "Phrase capture unavailable"
+                                       (fn [_]
+                                         (let [{:keys [filename bytes]} (capture! :smf {})]
+                                           {:status 200 :body bytes
+                                            :headers {"Content-Type" "audio/midi" "Cache-Control" "no-store"
+                                                      "Content-Disposition" (str "attachment; filename=\"" filename "\"")}})))
     "/api/section-reference" (read-action section-reference! :status "Section reference unavailable")
     "/api/sync/ports" (read-action sync! :ports "Synchronization unavailable")
     "/api/waveforms" (read-action waveform! :registry "Waveform registry unavailable")
@@ -373,6 +382,22 @@
                                   :body (java.io.ByteArrayInputStream. ^bytes png)}
                                  (not-found request))))
     "/api/sensors" (read-action sensor! :status "Sensor inputs unavailable")
+    "/api/video" (read-action video! :status "Video mapping unavailable")
+    "/api/video/syphon" (read-action video! :syphon "Video mapping unavailable")
+    "/api/video/frame" (available video! "Video mapping unavailable"
+                         (fn [request]
+                           (let [{:keys [source width]} (query-fields request {:source nil :width "640"})
+                                 jpeg (try (when source
+                                             (video! :frame-jpeg {:source (if (str/starts-with? source ":") (keyword (subs source 1)) source)
+                                                                  :max-width (max 16 (min 1920 (or (parse-long width) 640)))}))
+                                           (catch clojure.lang.ExceptionInfo e
+                                             (if (= :video/preview-too-large (:code (ex-data e))) ::too-large (throw e))))]
+                             (cond
+                               (= ::too-large jpeg) (data-response 413 {:message "The preview frame is too large to serve"
+                                                                        :code :video/preview-too-large})
+                               jpeg {:status 200 :headers {"Content-Type" "image/jpeg" "Cache-Control" "no-store"}
+                                     :body (java.io.ByteArrayInputStream. ^bytes jpeg)}
+                               :else (data-response 404 {:message "No latched frame for that source"})))))
     "/api/repl" (read-action repl! :snapshot "REPL unavailable" #(query-fields % {:session-id "main"}))
     "/api/repl/complete" (read-action repl! :complete "REPL unavailable" #(query-fields % {:session-id "main" :prefix ""}))
     "/api/repl/doc" (read-action repl! :doc "REPL unavailable" #(query-fields % {:session-id "main" :symbol ""}))
@@ -394,7 +419,8 @@
 
 (defn- post-routes [{:keys [material-preview! variable-sources! spatial-search! submit! submit-history! heartbeat! provider-put! chat! chat-select!
                              app-agent! checkpoint! cue-variation-preview!
-                             sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync! section-reference!]
+                             sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync! section-reference!
+                             capture!]
                      :or {material-preview! materials/preview}}]
   (merge
    (into {} (for [[path op] operations]
@@ -422,6 +448,9 @@
    (post-actions "/api/sync/" sync! ok {"configure" :configure "start" :start "stop" :stop "source" :source "handoff" :handoff "arrange" :arrange
                                       "learn-parameter" :learn-parameter "forget-parameter" :forget-parameter})
    (post-actions "/api/section-reference/" section-reference! acknowledgement {"reconnect" :reconnect})
+   ;; The browser receives the capture summary; the phrase itself stays on the host.
+   (post-actions "/api/capture/" (when capture! (fn [op payload] (dissoc (capture! op payload) :phrase))) ok
+                 {"capture" :capture} "Phrase capture unavailable")
    (post-actions "/api/" sync! ok {"live" :live})
    {"/api/cue-variations/preview"
     (available cue-variation-preview! "Cue variations unavailable" #(ok (cue-variation-preview! (:json-params %))))

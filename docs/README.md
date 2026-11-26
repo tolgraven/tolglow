@@ -38,6 +38,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Starting a show](application-startup.md) | Config module order, headless and Studio entry points, REPL and shutdown |
 | [Fog machine and venue controls](studio-atmosphere.md) | Configure rated fog output, DMX response, nozzle direction, ventilation and decay |
 | [Spatial cue actions](spatial-show.md) | Select live fixture targets, observe volume contacts and run owned cues |
+| [Video on LED strips](video-strips.md) | Receive Syphon video, map strips over it in 2D and run it as an ordinary cue |
 | [Track-feel personalities](personalities.md) | Choose or blend a palette, concurrency, shape vocabulary and motion character, read its icon and projection, and let a volume cue follow it |
 | [Headless show modules](headless-modules.md) | Use the show APIs from code and controllers |
 | [Feature parity inventory](feature-parity-inventory.md) | Source-linked operator and authoring behaviors from Afterglow, Tolglow effects and tolglow-web, with acceptance cases |
@@ -100,6 +101,8 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Registered signals](signals.md) | Waveform versions, selectors and derivative units |
 | [Push page overview](push-page-overview.md) | Browse cue layouts, authored swatches and type colors |
 | [Live waveform projections](waveform-projections.md) | Current signal parameters, captured PCM history and bounded Push data |
+| [Audio-shaped LFOs](audio-shaped-lfo.md) | A band of the captured input shaped once per window into a live registered waveform that morphs slowly; REPL, Studio and two-tempo measurements |
+| [Instrument stems](stems.md) | Named channels of a multichannel input or recording: per-stem levels and tempo-gated onsets that launch cues and drive parameters through event subscribers and the signal patch |
 | [Dependency upgrades](dependency-upgrades.md) | Registry-verified versions, migrations and updated build/test evidence |
 | [X-Touch](xtouch.md) | Verified MCU/extender protocol, adapter and color research |
 | [Sync](sync-progress.md) | Selected clock and explicit MIDI, Pro DJ Link and Live bridge sessions |

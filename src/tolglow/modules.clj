@@ -71,9 +71,10 @@
                                 (let [[stops _] (swap-vals! cleanups (constantly []))
                                       errors (into (unwind! stops :before-stop!) (unwind! stops :stop!))]
                                   (when (seq errors)
-                                    (let [cause (ex-info "Module shutdown failed" {:failures (count errors)})]
-                                      (doseq [e errors] (.addSuppressed cause e))
+                                    (let [^Throwable cause (ex-info "Module shutdown failed" {:failures (count errors)
+                                                                                              :messages (mapv ex-message errors)})]
+                                      (doseq [^Throwable e errors] (.addSuppressed cause e))
                                       (throw cause)))))))
       (catch Throwable failure
-        (doseq [error (unwind! @cleanups :abort!)] (.addSuppressed failure error))
+        (doseq [^Throwable error (unwind! @cleanups :abort!)] (.addSuppressed failure error))
         (throw failure)))))

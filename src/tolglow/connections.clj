@@ -288,7 +288,7 @@
 
 (defn- guard-callbacks [connections generation callbacks]
   (when-not (and (map? callbacks) (ifn? (:events! callbacks))
-                 (every? #(or (nil? %) (ifn? %)) ((juxt :features! :done! :clock!) callbacks)))
+                 (every? #(or (nil? %) (ifn? %)) ((juxt :features! :done! :clock! :shape-specs! :shapes!) callbacks)))
     (fail! :invalid-callbacks "Capture requires callable events! and optional feature/done/clock callbacks"))
   (let [current? #(let [state @(:state connections)]
                    (and (not (:closed? state)) (not (:restoring? state))
@@ -298,7 +298,7 @@
     (reduce (fn [result key]
               (if-let [callback (get callbacks key)]
                 (assoc result key (fn [& args] (if (current?) (apply callback args) false))) result))
-            callbacks [:events! :features! :done! :clock!])))
+            callbacks [:events! :features! :done! :clock! :shape-specs! :shapes!])))
 
 (defn start-audio!
   "Explicitly start capture after the host has rebased logical time. Callback

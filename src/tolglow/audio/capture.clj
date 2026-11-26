@@ -3,9 +3,13 @@
   bounded worker owns each manager's stream and analyzer state. Requiring this
   namespace, creating a manager and listing inputs never open a device."
   (:require [tolglow.audio.pcm :as pcm]
+            [tolglow.audio.shape :as shape]
+            [tolglow.audio.stems :as stems]
+            [tolglow.audio.shape-worker :as shape-worker]
             [tolglow.integrations.analysis :as analysis]
             [tolglow.waveforms :as waveforms])
-  (:import [javax.sound.sampled AudioSystem AudioFormat DataLine$Info TargetDataLine]
+  (:import [javax.sound.sampled AudioSystem AudioFormat AudioFormat$Encoding AudioInputStream DataLine$Info TargetDataLine]
+           [java.io File]
            [java.util UUID]))
 
 (defn- failure [code message] (ex-info message {:audio/error code}))
@@ -34,7 +38,7 @@
   (when-not (map? config) (throw (failure :invalid-config "Audio configuration must be an object")))
   (let [opts (merge {:sample-rate 48000.0 :channels 1 :block-frames 480 :buffer-blocks 8
                     :big-endian? false :analyzer-options {}} config)
-        {:keys [channels input-channel mixer-index]} opts]
+        {:keys [channels input-channel mixer-index file]} opts]
     (when-not (and (pcm/valid-layout? channels input-channel)
                    (or (nil? input-channel) (contains? config :channels)))
       (throw (failure :invalid-config "Use mono or stereo, or specify 1–64 PCM channels and an input channel within that range")))
@@ -42,28 +46,114 @@
                    (integer? (:block-frames opts)) (<= 1 (:block-frames opts) 16384)
                    (integer? (:buffer-blocks opts)) (<= 2 (:buffer-blocks opts) 64)
                    (boolean? (:big-endian? opts))
-                   (or (and (integer? mixer-index) (<= 0 mixer-index Integer/MAX_VALUE) (not (:default? opts)))
-                       (and (nil? mixer-index) (true? (:default? opts))))
+                   (or (and (integer? mixer-index) (<= 0 mixer-index Integer/MAX_VALUE) (not (:default? opts)) (nil? file))
+                       (and (nil? mixer-index) (true? (:default? opts)) (nil? file))
+                       ;; A recorded file replays like an input (#675).
+                       (and (nil? mixer-index) (not (:default? opts)) (string? file) (<= 1 (count file) 4096)))
+                   (or (nil? (:file-paced? opts)) (boolean? (:file-paced? opts)))
                    (or (nil? (:mixer-name opts)) (string? (:mixer-name opts))))
       (throw (failure :invalid-config "Choose an input and valid signed-16 PCM settings")))
     (analysis/new-analyzer (:analyzer-options opts))
     (cond-> (select-keys opts [:sample-rate :channels :block-frames :buffer-blocks :big-endian?
-                               :analyzer-options :mixer-index :mixer-name :default?])
-      (some? input-channel) (assoc :input-channel input-channel))))
+                               :analyzer-options :mixer-index :mixer-name :default? :file :file-paced?])
+      (some? input-channel) (assoc :input-channel input-channel)
+      (some? (:stems opts)) (assoc :stems (try (stems/validate-config (:stems opts) channels)
+                                               (catch clojure.lang.ExceptionInfo error
+                                                 (throw (failure :invalid-config (.getMessage error)))))))))
 
 (defn validate-config
   "Pure capture configuration validation/normalization. Does not enumerate or
   open a device; safe for validating a portable connections document."
   [config] (settings config))
 
+(defn- recording-file
+  "The recording a :file input names, refused unless it is an existing regular
+  WAV or AIFF file. A FIFO or device would block the capture worker forever,
+  and JavaSound would otherwise also render MIDI and other formats."
+  ^File [path]
+  (let [file (.getAbsoluteFile (File. (str path)))]
+    (when-not (re-find #"(?i)\.(wav|wave|aif|aiff|aifc)$" (.getName file))
+      (throw (failure :file-format "A replayed recording must be a .wav or .aiff file")))
+    (when-not (.isFile file)
+      (throw (failure :file-format "The recording is not an existing regular file")))
+    file))
+
+(defn file-format
+  "Read a recording's sample rate, channel count and length without opening a
+  device. Use it to fill a :file capture configuration."
+  [path]
+  (let [file-format (AudioSystem/getAudioFileFormat (recording-file path))
+        format (.getFormat file-format)
+        frames (.getFrameLength file-format)]
+    {:sample-rate (double (.getSampleRate format)) :channels (.getChannels format)
+     :frames (when (pos? frames) frames)}))
+
+(defn file-config
+  "A :file capture configuration for a recording, with its own sample rate and
+  channel count. overrides may add :input-channel, :stems and the rest."
+  ([path] (file-config path {}))
+  ([path overrides]
+   (let [{:keys [sample-rate channels]} (file-format path)]
+     (settings (merge {:file (str path) :sample-rate sample-rate :channels channels}
+                      (when (> channels 2) {:input-channel 1})
+                      overrides)))))
+
+(defn- open-file!
+  "Replay a recording through the capture contract, converted to signed-16
+  PCM. Paced by default, so the show hears it in real time; :file-paced? false
+  reads as fast as the worker can (offline analysis)."
+  [{:keys [file sample-rate channels big-endian? file-paced?]} now-ms]
+  (let [source (AudioSystem/getAudioInputStream (recording-file file))
+        format (.getFormat source)
+        _ (when-not (and (== (double sample-rate) (double (.getSampleRate format))) (= channels (.getChannels format)))
+            (.close source)
+            (throw (failure :file-format (str "The recording is " (.getSampleRate format) " Hz with " (.getChannels format)
+                                              " channels; configure the same rate and channel count"))))
+        target (AudioFormat. (float sample-rate) 16 (int channels) true (boolean big-endian?))
+        ^AudioInputStream stream (if (= target format) source
+                                     (try (AudioSystem/getAudioInputStream target source)
+                                          (catch IllegalArgumentException _
+                                            (.close source)
+                                            (throw (failure :file-format "The recording cannot be converted to signed 16-bit PCM")))))
+        frame-size (* 2 channels) read-frames (atom 0)
+        paced? (not (false? file-paced?))
+        frames (.getFrameLength stream)
+        ;; An unpaced replay is analysis of audio that has already happened:
+        ;; place its first sample one recording length in the past, so every
+        ;; block has arrived by the time it is read.
+        started-at-ms (if paced? (now-ms)
+                          (if (pos? frames) (- (now-ms) (* 1000.0 (/ frames (double sample-rate))))
+                              (do (.close stream)
+                                  (throw (failure :file-format "An unpaced replay needs a recording of known length")))))]
+    {:started-at-ms started-at-ms
+     :description {:name (.getName (File. ^String file)) :format :signed-16-pcm :timestamp-method :file-sample-counter}
+     :read! (fn [^bytes bytes offset length]
+              (when paced?
+                ;; Deliver a block once its last sample would have been heard.
+                (let [due (+ started-at-ms (* 1000.0 (/ (+ @read-frames (quot length frame-size)) (double sample-rate))))
+                      wait (long (Math/ceil (- due (now-ms))))]
+                  (when (pos? wait) (Thread/sleep wait))))
+              (let [n (.read stream bytes (int offset) (int (* frame-size (quot length frame-size))))]
+                (when (pos? n) (swap! read-frames + (quot n frame-size)))
+                n))
+     :close! (fn [] (.close stream))}))
+
+(declare open-line!)
+
 (defn open-java-sound!
   "Explicitly open the selected signed-16 PCM input. Called only by start!.
+  A :file configuration replays a recording instead and opens no device.
   Injectable sources use the same {:read! [bytes offset length] :close! []}
   contract. A read may return byte count, -1 EOF, or {:bytes n :dropped-frames n
   :possible-overflow? bool}. Report exact dropped frames only when known."
   ([config] (open-java-sound! config monotonic-ms))
   ([config now-ms]
-   (let [{:keys [sample-rate channels block-frames buffer-blocks big-endian? mixer-index mixer-name]} (settings config)
+   (if (:file config)
+     (open-file! (settings config) now-ms)
+     (open-line! (settings config) now-ms))))
+
+(defn- open-line! [config now-ms]
+  (let [{:keys [sample-rate channels block-frames buffer-blocks big-endian? mixer-index mixer-name]} config
          format (AudioFormat. (float sample-rate) 16 (int channels) true big-endian?)
          info (DataLine$Info. TargetDataLine format)
          mixer-info (when (some? mixer-index)
@@ -90,7 +180,7 @@
                       ;; count. A full buffer is only a possible-overflow signal.
                       :possible-overflow? (>= available (- capacity frame-size))}))
           :close! (fn [] (try (.stop line) (finally (.close line))))})
-       (catch Throwable error (.close line) (throw error))))))
+       (catch Throwable error (.close line) (throw error)))))
 
 (defn- pcm16-sample ^double [^bytes bytes ^long at big-endian?]
   (let [a (aget bytes at) b (aget bytes (inc at))
@@ -232,10 +322,30 @@
              (swap! (:state manager) #(if (identical? run (:run %)) (assoc % :run nil) %)))
            (deliver (:result run) result)))))
 
+(defn advance-shapes
+  "The capture thread's share of audio-shaped LFOs (#676): feed one block to
+  the extractor bank for the requested specs ({lfo-id spec-with-:digest}; a
+  spec that fails validation is skipped). Returns [bank jobs]. Window-end
+  analysis is not done here; hand the jobs to a `shape-worker`."
+  [bank specs block]
+  (let [specs (into {} (filter (fn [[_ spec]] (empty? (shape/validate-spec (dissoc spec :digest)))))
+                    (when (map? specs) specs))
+        {:keys [bank jobs]} (shape/advance-bank (or bank (shape/new-bank (:sample-rate block))) specs block)]
+    [bank jobs]))
+
 (defn- capture! [manager run config]
   (let [last-analyzer (volatile! (analysis/new-analyzer (:analyzer-options config)))
         capture-state (volatile! (waveforms/new-capture))
         history-state (volatile! (waveforms/new-capture history-options))
+        stem-state (volatile! (some-> (:stems config) stems/new-state))
+        shape-state (volatile! nil)
+        ;; Window-end analysis runs here, never on the capture thread.
+        shapes (shape-worker/start!
+                (fn [result]
+                  (when-not @(:cancelled? run)
+                    (callback! manager run :shapes! (:shapes! @(:callbacks run))
+                               (update-vals result #(assoc % :run-id (:run-id run))))))
+                (fn [error] (update-public! manager run update-in [:metrics :callback-errors] (fnil inc 0))))
         result
         (try
           (if @(:cancelled? run)
@@ -288,6 +398,9 @@
                                    :source-id (:run-id run)
                                    :started-at-ms started :clock clock :timing-valid? timing-valid?
                                    :discontinuity? (or possible-overflow? (pos? lost) (pos? discarded))}
+                            specs (when-let [specs! (:shape-specs! callbacks)]
+                                    (try (specs!) (catch Exception _ nil)))
+                            [bank jobs] (advance-shapes @shape-state specs block)
                             captured (waveforms/capture-block @capture-state block)
                             history (waveforms/capture-block @history-state block)
                             waveform (waveforms/capture-view captured)
@@ -295,18 +408,30 @@
                                                               :sample-rate (:sample-rate config) :started-at-ms started
                                                               :received-at-ms arrived :clock clock})
                             state (:state analyzed)
+                            ;; Each named stem reads its own channel (#675).
+                            stemmed (when-let [stem-analyzer @stem-state]
+                                      (stems/analyze stem-analyzer
+                                                     {:blocks (into {} (map (fn [{:keys [id channel]}]
+                                                                              [id (decode-pcm16 buffer 0 byte-count (:channels config)
+                                                                                                (:big-endian? config) channel)]))
+                                                                    (:stems config))
+                                                      :sample-rate (:sample-rate config) :started-at-ms started
+                                                      :received-at-ms arrived :clock clock}))
                             features (when-let [features (:features analyzed)]
-                                       (assoc features :capture {:run-id (:run-id run) :timing-valid? timing-valid?
-                                                                 :sample-counter (+ cursor n) :received-at-ms arrived}))
+                                       (cond-> (assoc features :capture {:run-id (:run-id run) :timing-valid? timing-valid?
+                                                                         :sample-counter (+ cursor n) :received-at-ms arrived})
+                                         stemmed (assoc :stems (:features stemmed))))
                             events (mapv (fn [event]
                                            (cond-> (update event :timing assoc :capture-clock-valid? timing-valid?
                                                            :timestamp-method :sample-counter-start-estimate)
                                              (= :audio/section-change (:type event))
                                              (assoc :capture-run-id (:run-id run))))
-                                         (:events analyzed))]
+                                         (into (:events analyzed) (:events stemmed)))]
                         (vreset! last-analyzer state)
+                        (when stemmed (vreset! stem-state (:state stemmed)))
                         (vreset! capture-state captured)
                         (vreset! history-state history)
+                        (vreset! shape-state bank)
                         (swap! (:state manager)
                                (fn [state]
                                  (if (identical? run (:run state))
@@ -320,6 +445,7 @@
                         (when-not @(:cancelled? run)
                           (when (seq events) (callback! manager run :events! (:events! callbacks) events))
                           (when features (callback! manager run :features! (:features! callbacks) features))
+                          ((:submit! shapes) jobs)
                           (when-let [subscriptions (:subscriptions callbacks)]
                             (let [published (analysis/publish! subscriptions events)]
                               (update-public! manager run update-in [:metrics :subscriber-errors] + (count (:errors published))))))
@@ -328,11 +454,13 @@
           (catch Throwable error
             {:status (if @(:cancelled? run) :stopped :error)
              :error (when-not @(:cancelled? run) (error-data error)) :analyzer-state @last-analyzer}))]
+    ;; Shapes of windows the input completed are still published; a stop drops them.
+    ((:stop! shapes) (= :completed (:status result)) 2000)
     (finish! manager run result @(:callbacks run))))
 
 (defn- validate-callbacks! [callbacks]
   (when-not (and (map? callbacks) (ifn? (:events! callbacks))
-                 (every? #(or (nil? %) (ifn? %)) ((juxt :clock! :features! :done!) callbacks))
+                 (every? #(or (nil? %) (ifn? %)) ((juxt :clock! :features! :done! :shape-specs! :shapes!) callbacks))
                  (or (nil? (:subscriptions callbacks)) (map? (:subscriptions callbacks))))
     (throw (failure :invalid-callbacks "Capture requires an event handler and optional callable callbacks")))
   callbacks)
@@ -355,6 +483,8 @@
   :events! receives an event vector and must enqueue quickly (false means queue
   rejection, counted as dropped events). Optional :clock! [] returns canonical
   transport, :features! receives latest features, :done! receives final result,
+  :shape-specs! [] returns audio-shape extractor specs and :shapes! receives the
+  newest extraction per LFO when a window completes (#676),
   :subscriptions is a fixed caller-owned analysis subscription map.
 
   Returns {:run-id :stop! :result promise}. Busy/closed/config errors are immediate;

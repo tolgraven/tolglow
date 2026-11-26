@@ -79,6 +79,7 @@ before commands and advancement:
 | Auto planner with a millisecond interval | Interval timer and `:next-at-ms` shift. Beat intervals already wait for play. |
 | Millisecond sequences | Unchanged: their logical clock accumulates only intervals that began playing. |
 | Spatial physics | Unchanged: the simulation reads `:playing?` and advances no physical time while stopped. |
+| Instrument stems | Stem onsets are dropped, not queued, and stem level ports are not fed, so their routes hold; the onset port only advances its count. Play resumes from fresh audio with no backlog ([stems](stems.md)). |
 
 The show clock is host `:time-ms` less `[:transport :held-ms]`
 (`autopilot.signal/show-clock`). It is continuous and nondecreasing, and equals
@@ -119,7 +120,8 @@ These keep the wall clock on purpose, because they are not show progress:
 - **Inputs and their shaping.** Sensor envelopes, routing gates, smoothing and
   observation timeouts follow live input, which keeps arriving during a stop,
   like a fader the operator moves. A routing gate still opens and closes during
-  a stop; only its ADSR envelope holds. Beat-unit smoothing and timeouts stand
+  a stop; only its ADSR envelope holds. Instrument stems are the music
+  itself, not an operator input, so they pause instead (table above). Beat-unit smoothing and timeouts stand
   still with the beat, as before.
 - **The audio fog pulse.** The audio-reactive fog request
   (`lighting-capacity/fog-policy`) is cancelled on stop, not paused. While the
