@@ -185,6 +185,14 @@ the fallback only when the two outcomes differ, so an ordinary hot reload keeps
 the engine's single pass. See Afterglow's
 [effect failure isolation](../../afterglow/doc/architecture/effect-fault-isolation.md#frame-inputs-that-follow-a-candidate).
 
+Beat-clock [ramp overlays](scheduler.md#ramp-semantics) do not follow a
+candidate. Both outcomes rest on the same ramp overlays, under the modulation
+and waveform overrides as usual. `candidate-overrides [model overrides]`
+restricts them for an instance with a pending candidate to the parameters the
+candidate's schemas accept, while the last-good revision reads them unchanged.
+After a renderer rejection the owner removes the ramp overlay from the rebuilt
+engine result, so the rejected frame does not commit a ramp's frame value.
+
 Controllers sample in priority/activation order. Within one controller, instance
 IDs and parameter keys have stable ordering (`:all` sorts keys; an explicit key
 vector keeps its order). A late frame samples every missed boundary with the

@@ -49,8 +49,12 @@ A candidate rejected at preparation, compilation, migration, evaluation or
 renderer output then leaves the frame, the controller's seed and schedule and
 a held layer priority exactly as they are in a show that never published it.
 The owner supplies the fallback only when the outcomes differ; other rejected
-reloads keep the per-instance recovery in the table. See
-[modulation](modulation.md#a-frame-with-a-pending-hot-reload).
+reloads keep the per-instance recovery in the table. A running beat-clock
+ramp keeps running through a rejected reload: its frame value is not committed
+by the rejection, and a candidate reads only the ramped parameters its schemas
+accept. See
+[modulation](modulation.md#a-frame-with-a-pending-hot-reload) and
+[scheduler](scheduler.md#ramp-semantics).
 
 Full backups preserve faults and event history. Restore remaps active diagnostic
 instance IDs/epochs; historical events remain historical evidence. Restore does
