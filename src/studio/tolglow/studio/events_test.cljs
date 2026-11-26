@@ -813,6 +813,33 @@
     (is (= {:source "{:id :wash}" :edit-revision 4 :status "Unpublished changes" :error? false :result ""}
            (select-keys (get-in edited [:ui :definition]) [:source :edit-revision :status :error? :result])))))
 
+(deftest neovim-deliveries-of-the-text-studio-holds-keep-the-status
+  (let [source "{:id :ember :version 2}"
+        request (transition base [:studio/definition-load "effects" "ember"])
+        loaded (:db (transition (:db request) (conj (get-in request [:studio/http :on-success]) {:source source})))
+        neovim (assoc-in loaded [:ui :definition :engine] :neovim)
+        typed (str source " ;x")
+        edited (:db (transition neovim [:studio/definition-source typed]))
+        ;; Publish inside the change debounce: Neovim is read directly and its delivery comes later.
+        sent (transition edited [:studio/definition-publish false])
+        read (transition (:db sent) (conj (get-in sent [:studio/nvim-read :on-success]) typed))
+        published (:db (transition (:db read) (conj (get-in read [:studio/http :on-success]) {:id "ember" :version 3})))
+        rejected (:db (transition (:db read) (conj (get-in read [:studio/http :on-failure]) "EOF while reading")))
+        status #(select-keys (get-in % [:ui :definition]) [:status :result :error?])]
+    (testing "the echo of the initial load when Neovim is selected"
+      (is (= "ember · v2" (get-in loaded [:ui :definition :status])))
+      (is (empty? (transition neovim [:studio/definition-source source]))))
+    (testing "a delivery of the published text after the publication reply"
+      (is (= "Unpublished changes" (get-in edited [:ui :definition :status])))
+      (is (= {:status "Published" :error? false} (dissoc (status published) :result)))
+      (is (empty? (transition published [:studio/definition-source typed])))
+      (is (= {:status "Publication failed" :result "EOF while reading" :error? true} (status rejected)))
+      (is (empty? (transition rejected [:studio/definition-source typed]))))
+    (testing "a genuinely different delivery still marks the definition unpublished"
+      (is (= {:status "Unpublished changes" :result "" :error? false}
+             (status (:db (transition published [:studio/definition-source (str typed "y")])))
+             (status (:db (transition rejected [:studio/definition-source source]))))))))
+
 (deftest duration-field-edits-keep-the-other-current-field
   (let [added (transition base [:studio/composition-add "ember"])
         unit (transition (:db added) [:studio/slot-duration 0 nil "bars"])
