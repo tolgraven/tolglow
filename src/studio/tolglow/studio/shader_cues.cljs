@@ -40,6 +40,11 @@
 
 (rf/reg-event-db ::ui (fn [db [_ path value]] (assoc-in db (into [:shader-cues-ui] path) value)))
 
+(rf/reg-event-db ::edit-text
+  ;; An audition result describes the text it compiled, so an edit clears it.
+  (fn [db [_ id glsl]]
+    (update-in db [:shader-cues-ui :editor id] #(-> % (assoc :glsl glsl) (dissoc :audition)))))
+
 (rf/reg-event-fx ::audition
   (fn [{:keys [db]} [_ effect glsl]]
     (let [token (str (random-uuid))]
@@ -117,7 +122,7 @@
 (defn- editor [effect state]
   (let [glsl (or (:glsl state) (get-in effect [:shader :glsl]))
         audition (:audition state)
-        edit! #(rf/dispatch-sync [::ui [:editor (:id effect) :glsl] %])]
+        edit! #(rf/dispatch-sync [::edit-text (:id effect) %])]
     [:div.shader-editor
      [:label.shader-source "GLSL fragment body"
       [:textarea {:value glsl :spell-check false :rows 14 :aria-label (str "GLSL for " (wire-id (:id effect)))
