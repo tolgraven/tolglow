@@ -3,6 +3,7 @@
   Afterglow numeric IR. Compilation and evaluation never start output."
   (:require [afterglow.render.ir :as ir]
             [tolglow.compiler.blocks :as blocks]
+            [tolglow.compiler.capability :as capability]
             [tolglow.effects.reactive :as reactive]
             [afterglow.runtime.keyframes :as keyframes]
             [afterglow.runtime.keyframes.values :as keyframe-values]
@@ -184,7 +185,7 @@
   attribute->expression map or ordered output descriptors. Numeric expressions
   use afterglow.render.ir; {:op :tween :spec ...} is an output-level time tween.
   Definition/output :targets select stable fixture IDs, intersected when both
-  are present. Optional :envelope scales :attributes (default [:dimmer]).
+  are present. Each output skips patched heads that lack its attribute (#688). Optional :envelope scales :attributes (default [:dimmer]).
   A captured rig lets targeted scalar effects reuse their selection while the
   show presents that same immutable fixture vector.
   Scalar outputs and linear RGB components are normalized to [0,1], while
@@ -242,7 +243,8 @@
                      (fn [fixture]
                        (let [rows (keep-indexed
                           (fn [i {:keys [attribute blend targets evaluate frame-only? sampled-value]}]
-                            (when (or (nil? targets) (some #{(:id fixture)} targets))
+                            (when (and (or (nil? targets) (some #{(:id fixture)} targets))
+                                       (capability/capable? fixture attribute))
                               (let [value (try
                                             (if frame-only? sampled-value
                                                 (evaluate (assoc env :fixture fixture :position (:position fixture [0 0 0])
