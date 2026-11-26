@@ -15,6 +15,7 @@
 //   --size WxH         raster size (default 1920x1080)
 //   --drift metres     slow sideways camera travel across the clip (default 0)
 //   --work-light n     preview work light, 0 to 1 (default 0.04)
+//   --exposure n       Room film exposure, 0 to 3 (default the Room's own 0.85)
 //   --software         render with SwiftShader instead of the machine's GPU
 //
 // CHROMIUM_PATH selects the browser. The GPU that drew the frames is recorded
@@ -41,6 +42,7 @@ const stillBars = (option('--stills', '') || '').split(',').filter(Boolean).map(
 const [width, height] = (option('--size', '1920x1080') || '1920x1080').split('x').map(Number);
 const drift = Number(option('--drift', '0') || 0);
 const workLight = Number(option('--work-light', '0.04') ?? 0.04);
+const exposure = option('--exposure') === undefined ? null : Number(option('--exposure'));
 const software = args.includes('--software');
 assert.ok(Number.isInteger(width) && Number.isInteger(height) && width >= 320 && height >= 180, 'Give --size as WxH');
 assert.ok(stillBars.every(Number.isFinite), 'Give --stills as comma-separated bars');
@@ -71,7 +73,7 @@ try {
   await page.route('http://preview.test/scene', r => r.fulfill({contentType: 'text/html', body: ''}));
   await page.route('http://preview.test/preview.js', r => r.fulfill({contentType: 'text/javascript', body: bundle}));
   await page.goto('http://preview.test/scene');
-  const renderer = await page.evaluate(async ({rig, workLight}) => {
+  const renderer = await page.evaluate(async ({rig, workLight, exposure}) => {
     const {SceneRenderer} = await import('/preview.js');
     document.documentElement.style.margin = document.body.style.margin = '0';
     document.documentElement.style.background = '#000';
@@ -85,12 +87,14 @@ try {
     engine.pause();
     engine.setQuality('high');
     engine.setWorkLight(workLight);
+    if (exposure != null) engine.setFilm({exposure});
     engine.controls.enableDamping = false;
     engine.setCamera('audience');
     window.home = {position: engine.camera.position.toArray(), target: engine.controls.target.toArray()};
     const t = engine.getTelemetry();
-    return {renderer: t.renderer, gpu: t.deviceRenderer, software: t.softwareRenderer, userAgent: navigator.userAgent};
-  }, {rig, workLight});
+    return {renderer: t.renderer, gpu: t.deviceRenderer, software: t.softwareRenderer, film: engine.filmSettings,
+      userAgent: navigator.userAgent};
+  }, {rig, workLight, exposure});
   console.log('Room renderer:', renderer.gpu || renderer.renderer);
   assert.equal(Boolean(renderer.software), software, 'The Room is not drawing on the requested renderer');
 
