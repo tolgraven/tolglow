@@ -19,7 +19,7 @@
 
 (defn -main [& [port-file stop-file]]
   (let [runtime (app/start! {:init {:components [:show] :modules [:web-server]}
-                             :show {:model (model) :workspace-options nil}
+                             :show {:model (model) :workspace-options nil :recovery false}
                              :web-server {:host "127.0.0.1" :port 0}})]
     (try
       (spit port-file (get-in runtime [:application :modules :web-server :port]))

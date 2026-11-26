@@ -84,7 +84,7 @@
                                                         :version 1 :swatch "#89b9e0"})
                   (assoc-in [:pages :main :cells [1 2]] :selector))
         host (app/start! {:init {:components [:show] :modules [:web-server]}
-                          :show {:model model :workspace-options nil}
+                          :show {:model model :workspace-options nil :recovery false}
                           :web-server {:host "127.0.0.1" :port port}})]
     (try
       (.mkdirs dir)

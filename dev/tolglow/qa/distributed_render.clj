@@ -220,7 +220,7 @@
         config {:model (fixture/model) :frame-rate rate :adaptive-keyframes {:enabled? false} :workers 2}
         capture (listen-dmx) cpu (show/create-runtime config)]
     (try
-      (let [runtime (show/start! (assoc config :compute-backend :distributed :gpu-budget-ms budget
+      (let [runtime (show/start! (assoc config :recovery false :compute-backend :distributed :gpu-budget-ms budget
                                         :artnet {:host "127.0.0.1" :port (:port capture)}))]
         (try
           (let [result (run-clients! runtime cpu capture dir target)]

@@ -63,7 +63,7 @@
                   (assoc-in [:registry :cues :orbital] {:id :orbital :name "Orbital wash" :effect-id :orbital
                                                         :version 1 :swatch "#b6df91"})
                   (assoc-in [:pages :main :cells [0 2]] :orbital))
-        host (app/start! {:init {:components [:show] :modules [:web-server]} :show {:model model :workspace-options nil}
+        host (app/start! {:init {:components [:show] :modules [:web-server]} :show {:model model :workspace-options nil :recovery false}
                           :web-server {:host "127.0.0.1" :port 0}})]
     (try
       (.mkdirs dir)

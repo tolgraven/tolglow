@@ -80,7 +80,7 @@
         bpm (double (get-in model [:transport :bpm] 120.0))
         passage (fixtures/passage :delay-synth {:bpm bpm :bars 16})
         runtime (app/start! {:init {:components [:show] :modules [:web-server]}
-                             :show {:model model :workspace-options nil
+                             :show {:model model :workspace-options nil :recovery false
                                     :audio-options {:open-source! (open-source runtime-ref passage bpm
                                                                                #(.exists (File. directory "silence")))}}
                              :web-server {:host "127.0.0.1" :port (Long/parseLong (str port))}})]

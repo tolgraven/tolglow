@@ -219,7 +219,7 @@
         runtime-ref (atom nil)
         running? (atom true)
         runtime (app/start! {:init {:components [:show] :modules [:web-server]}
-                             :show {:model (demo/model) :workspace-options nil
+                             :show {:model (demo/model) :workspace-options nil :recovery false
                                     :audio-options {:open-source! (open-source runtime-ref)}
                                     :section-patterns {:enabled? true :patterns [:qa/a :qa/b] :on :bar}
                                     :section-reference {:profile profile

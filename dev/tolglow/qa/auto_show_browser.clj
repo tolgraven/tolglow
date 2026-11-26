@@ -23,7 +23,7 @@
 (defn -main [& [directory port]]
   (let [port (Long/parseLong (or port "18620"))
         host (app/start! {:init {:components [:show] :modules [:web-server]}
-                          :show {:model (red-show/model) :workspace-options nil}
+                          :show {:model (red-show/model) :workspace-options nil :recovery false}
                           :web-server {:host "127.0.0.1" :port port}})
         origin (str "http://127.0.0.1:" port)
         directory (or directory "target/auto-show-browser")]

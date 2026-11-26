@@ -203,7 +203,7 @@
   (let [{:keys [model volume-ids]} (scene/build pixels)
         origin (System/nanoTime) clock #(now-since origin)
         wire (atom []) sink (transport/sink pixels clock wire)
-        options {:model model :frame-rate 40 :workers 2 :workspace-options nil
+        options {:model model :frame-rate 40 :workers 2 :workspace-options nil :recovery false
                  :spatial-sampling (bench/spatial-sampling)
                  :physical-now-ms clock :capture-effect-samples? true}
         runtime (show/start! options (constantly sink))]

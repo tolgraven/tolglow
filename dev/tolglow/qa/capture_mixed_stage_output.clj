@@ -65,7 +65,7 @@
         missed (atom [])
         output (atom [])
         recording-path (.toPath (file "timing.jfr"))
-        host (show/start! {:model (mixed/model) :workspace-options nil :workers 2 :batch? true
+        host (show/start! {:model (mixed/model) :workspace-options nil :recovery false :workers 2 :batch? true
                            :frame-rate 40 :adaptive-keyframes {:enabled? true} :physical-now-ms clock}
                (fn [_]
                  {:description {:type :capture :network false}
