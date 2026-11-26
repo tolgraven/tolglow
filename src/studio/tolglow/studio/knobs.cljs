@@ -117,17 +117,12 @@
 
 (defn- send [db op fields]
   (let [knob (events/wire-id (:knob-id fields))
-        [effect request] (events/command db op fields [::accepted knob] nil)]
+        [effect request] (events/command db op fields nil nil)]
     {:db (update-in db ui-path dissoc :error)
      :fx [[effect (assoc request :on-failure [::failed knob])]]}))
 
-;; A slider draft only covers the round trip; afterwards the projection wins,
-;; including values set from the REPL or Push.
-(rf/reg-event-db ::accepted (fn [db [_ knob]] (update-in db (conj ui-path :drafts) dissoc knob)))
-
 (rf/reg-event-db ::failed
-  (fn [db [_ knob message]]
-    (-> db (update-in (conj ui-path :drafts) dissoc knob) (assoc-in (conj ui-path :error) (str message)))))
+  (fn [db [_ _ message]] (assoc-in db (conj ui-path :error) (str message))))
 
 (rf/reg-event-db ::edit (fn [db [_ path value]] (assoc-in db (into ui-path path) value)))
 
@@ -141,11 +136,66 @@
         (-> (send db :knob/create {:knob-id id :name name})
             (assoc-in [:db :ui :knobs :new-name] ""))))))
 
+;; Slider turns: at most one :knob/set per knob is in flight, so the owner
+;; admits them in the order they were made and the last position wins. Turns
+;; made while one is in flight collapse into the latest value, sent when the
+;; receipt arrives. The draft stays on screen until a snapshot at or past the
+;; receipt's revision arrives; afterwards the projection wins, including
+;; values set from the REPL or Push.
+
+(defn- send-value [db knob-id value]
+  (let [key (events/wire-id knob-id)
+        [effect request] (events/command db :knob/set {:knob-id knob-id :value value} [::value-acked knob-id value] nil)]
+    {:db (-> db (update-in ui-path dissoc :error) (assoc-in (into ui-path [:in-flight key]) value))
+     :fx [[effect (assoc request :on-failure [::value-failed knob-id value])]]}))
+
+(defn- after-value-receipt
+  "Send the newest unsent turn of a knob, if any, after a receipt for sent."
+  [db knob-id sent]
+  (let [key (events/wire-id knob-id)
+        db (update-in db (conj ui-path :in-flight) dissoc key)
+        draft (get-in db (into ui-path [:drafts key]))]
+    (if (and draft (not= sent (:value draft)))
+      (send-value db knob-id (:value draft))
+      {:db db})))
+
+(defn draft-value
+  "The slider position to show for a knob: an unconfirmed local turn, or nil
+  once the projection has caught up with it."
+  [db knob]
+  (let [{:keys [value revision epoch runtime-id]} (get-in db (into ui-path [:drafts (events/wire-id (:id knob))]))
+        show (:show db)]
+    (when (and (number? value) (= epoch (:epoch show)) (= runtime-id (:runtime-id show))
+               (or (nil? revision) (< (:revision show 0) revision)))
+      value)))
+
 (rf/reg-event-fx ::set-value
   (fn [{:keys [db]} [_ knob-id value]]
     (when (and (number? value) (<= 0 value 1))
-      (-> (send db :knob/set {:knob-id knob-id :value value})
-          (assoc-in [:db :ui :knobs :drafts (events/wire-id knob-id)] value)))))
+      (let [key (events/wire-id knob-id)
+            db (assoc-in db (into ui-path [:drafts key])
+                         {:value value :epoch (get-in db [:show :epoch]) :runtime-id (get-in db [:show :runtime-id])})]
+        (if (contains? (get-in db (conj ui-path :in-flight)) key)
+          {:db db}
+          (send-value db knob-id value))))))
+
+(rf/reg-event-fx ::value-acked
+  (fn [{:keys [db]} [_ knob-id value ack]]
+    (let [key (events/wire-id knob-id)
+          db (cond-> db
+               (= value (get-in db (into ui-path [:drafts key :value])))
+               (assoc-in (into ui-path [:drafts key :revision]) (:revision ack)))]
+      (after-value-receipt db knob-id value))))
+
+(rf/reg-event-fx ::value-failed
+  (fn [{:keys [db]} [_ knob-id value message]]
+    (let [key (events/wire-id knob-id)
+          db (cond-> (assoc-in db (conj ui-path :error) (str message))
+               (= value (get-in db (into ui-path [:drafts key :value])))
+               (update-in (conj ui-path :drafts) dissoc key))
+          next-step (after-value-receipt db knob-id value)]
+      ;; A newer turn that is sent keeps the refusal visible until its own receipt.
+      (update next-step :db assoc-in (conj ui-path :error) (str message)))))
 
 (rf/reg-event-fx ::add-link
   (fn [{:keys [db]} [_ knob]]
@@ -256,8 +306,7 @@
 
 (defn- knob-card [db knob connected?]
   (let [key (events/wire-id (:id knob))
-        draft (get-in db (into ui-path [:drafts key]))
-        value (if (number? draft) draft (:value knob))]
+        value (or (draft-value db knob) (:value knob))]
     [:article.knob-card {:data-knob-id key}
      [:div.knob-head
       [:strong (:name knob)]
