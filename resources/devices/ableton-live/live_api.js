@@ -25,7 +25,7 @@
   }
   var SESSION_OPERATIONS = ["inspect-set", "ensure-track", "ensure-group", "configure-track", "write-clip", "extend-clip", "capture-midi",
     "read-clip", "show-clip", "fire-clip", "stop-clips", "watch-run-tracks", "place-clip",
-    "ensure-launcher", "write-pads", "inspect-launcher"];
+    "ensure-launcher", "write-pads", "inspect-launcher", "configure-parameter-device", "set-parameter-values"];
   function sessionOperation(op) { return SESSION_OPERATIONS.indexOf(op) >= 0; }
   function recordingKey(intent) {
     return canonical([intent["destination-id"], intent["show-id"] || null, intent.epoch, intent["command-id"]]);

@@ -12,6 +12,16 @@
  * Run-track playback is watched through the injected `observe(id, property,
  * changed)` boundary and reported through `emit(event)`.
  *
+ * Parameter devices (#625): a run track can hold "Tolglow parameters"
+ * devices (parameter_device.js), each with SLOTS automatable parameters
+ * after Live's "Device On". DeviceParameter.name, min and max are read-only
+ * in the LOM, so configure-parameter-device hands the slot layout to the
+ * device itself through the injected `relay(deviceId, spec)` boundary (Max's
+ * global messnamed); the next inspect-set reads back what it applied.
+ * DeviceParameter.value is documented as settable, so set-parameter-values
+ * writes values directly, and watch-run-tracks observes value and
+ * automation_state of every slot on the watched tracks.
+ *
  * Group Tracks: the LOM documents Track.group_track, is_foldable and
  * is_grouped for reading membership, and no call that creates a Group Track or
  * moves a track into one. ensure-group therefore only finds a Group Track by
@@ -33,7 +43,11 @@
   var CAPTURE_DESTINATION = {auto: 0, session: 1, arrangement: 2};
   var OPERATIONS = ["inspect-set", "ensure-track", "ensure-group", "configure-track", "write-clip", "extend-clip", "capture-midi",
     "read-clip", "show-clip", "fire-clip", "stop-clips", "watch-run-tracks", "place-clip",
-    "ensure-launcher", "write-pads", "inspect-launcher"];
+    "ensure-launcher", "write-pads", "inspect-launcher", "configure-parameter-device", "set-parameter-values"];
+  // Parameter devices (#625). Keep in step with parameter_device.js SLOTS and
+  // tolglow.integrations.live-devices/slots-per-device.
+  var SLOTS = 32;
+  var PARAMETER_DEVICE = /^Tolglow parameters(?: (\d+))?$/;
   // Envelope read-back: scan at this step, then bisect each change to one
   // Standard MIDI File tick (1/960 beat).
   var TICK = 1 / 960;
@@ -82,6 +96,9 @@
     // carry this session's ID with their serial, so a reloaded companion that
     // counts from 1 again is not taken for a repeat.
     this.watches = {};
+    // Parameter-device slot watches on run tracks: {parameterId: {close, ..}}.
+    this.slotWatches = {};
+    this.relay = options.relay || null;
     this.watchSerial = 0;
     this.watchSession = options.watchSession || (String(new Date().getTime()) + "-" + Math.floor(Math.random() * 1e9));
     // What the companion's own track is playing, for origin marking:
@@ -194,6 +211,7 @@
     var self = this;
     Object.keys(this.watches).forEach(function (id) { self.watches[id].close(); });
     this.watches = {};
+    this.closeSlotWatches();
     if (this.hostWatch) this.hostWatch.closers.forEach(function (close) { close(); });
     this.hostWatch = null;
   };
@@ -242,7 +260,7 @@
       if (!self.read(clipSlot, "has_clip")) return;
       var clip = self.object(self.slotPathByIndex(index, slot) + " clip");
       clips.push({"clip-id": "clip:" + Number(clip.id), "slot-index": slot, name: String(self.read(clip, "name")),
-        "length-beats": Number(self.read(clip, "length"))});
+        "length-beats": Number(self.read(clip, "length")), "envelopes?": !!self.read(clip, "has_envelopes")});
     });
     var result = {"track-id": "track:" + id, index: index, name: String(this.read(track, "name")),
       kind: midi ? "midi" : "audio", "arm?": armable && !!this.read(track, "arm"),
@@ -253,7 +271,100 @@
         return {name: String(self.read(c, "name")), "start-beat": Number(self.read(c, "start_time")), "end-beat": Number(self.read(c, "end_time"))};
       })};
     if (id === this.hostTrackId()) { result["companion?"] = true; this.feed = {host: id, channel: feedOf(result.input.channel)}; }
+    // Only Tolglow's own tracks are searched for parameter devices (#625).
+    if (TOLGLOW_NAME.test(result.name)) result["parameter-devices"] = this.parameterDevices(track);
     return result;
+  };
+
+  // ---------------------------------------------------------------------
+  // Parameter devices (#625). A Max for Live device lists "Device On" as its
+  // first DeviceParameter; the SLOTS slot dials follow in their declared
+  // order (to confirm in licensed Live: the patcher sets _parameter_order).
+  Session.prototype.slotParameters = function (device) {
+    var self = this, list = ids(device.get("parameters"));
+    if (list.length && String(this.read(this.object({id: list[0]}), "name")) === "Device On") list = list.slice(1);
+    return list.slice(0, SLOTS).map(function (id) { return self.object({id: id}); });
+  };
+  Session.prototype.parameterDevices = function (track) {
+    var self = this, out = [];
+    ids(track.get("devices")).forEach(function (id, index) {
+      var device = self.api({id: id});
+      if (!device || !Number(device.id)) return;
+      var name = String(self.read(device, "name")), m = PARAMETER_DEVICE.exec(name);
+      if (!m) return;
+      out.push({"device-id": "device:" + id, "device-index": index, name: name, ordinal: m[1] ? Number(m[1]) - 1 : 0,
+        parameters: self.slotParameters(device).map(function (p, i) {
+          return {index: i, name: String(self.read(p, "name")), min: Number(self.read(p, "min")), max: Number(self.read(p, "max")),
+            "quantized?": !!self.read(p, "is_quantized"), value: Number(self.read(p, "value")),
+            "automation-state": Number(self.read(p, "automation_state"))};
+        })});
+    });
+    return out;
+  };
+  // The parameter device with this id on this track, by its expected ordinal.
+  Session.prototype.parameterDevice = function (track, deviceId, ordinal) {
+    var id = idOf(deviceId, "device");
+    if (ids(track.get("devices")).indexOf(id) < 0) fault("stale-device", "That parameter device is no longer on the named track");
+    var device = this.object({id: id}), m = PARAMETER_DEVICE.exec(String(this.read(device, "name")));
+    if (!m) fault("not-parameter-device", "That device is not a Tolglow parameters device");
+    if (ordinal !== undefined && ordinal !== null && (m[1] ? Number(m[1]) - 1 : 0) !== ordinal)
+      fault("device-renamed", "The parameter device's number changed; run the mirror again");
+    return device;
+  };
+  function validSlot(slot) {
+    return slot && integer(slot.index, 0, SLOTS - 1) && typeof slot.name === "string" && slot.name.length > 0 && slot.name.length <= 64 &&
+      ["float", "int", "enum"].indexOf(slot.type) >= 0 && finite(slot.min) && finite(slot.max) && slot.min < slot.max &&
+      (slot.type !== "enum" || (Array.isArray(slot.choices) && slot.choices.length >= 2 && slot.choices.length <= 128));
+  }
+  // Hand a slot layout to the device: names, ranges, units, choices and banks
+  // are parameter attributes only the device's own patcher can change.
+  Session.prototype.configureParameterDevice = function (payload, mark) {
+    var track = this.track(payload["track-id"], payload["expected-name"]);
+    var device = this.parameterDevice(track, payload["device-id"], payload.ordinal), slots = payload.slots;
+    if (!Array.isArray(slots) || slots.length > SLOTS || !slots.every(validSlot)) fault("slots", "Name up to " + SLOTS + " valid parameter slots");
+    if (!this.relay) fault("relay-unavailable", "This companion cannot reach parameter devices");
+    mark();
+    this.relay(Number(device.id), {slots: slots, banks: Array.isArray(payload.banks) ? payload.banks : []});
+    return {"device-id": "device:" + Number(device.id), relayed: slots.length};
+  };
+  // Tolglow's values on the device's dials, clamped to each parameter's range.
+  Session.prototype.setParameterValues = function (payload, mark) {
+    var track = this.track(payload["track-id"], payload["expected-name"]), self = this, values = payload.values;
+    if (!Array.isArray(values) || values.length > SLOTS * 8) fault("values", "Name up to " + (SLOTS * 8) + " slot values");
+    var devices = {};
+    this.parameterDevices(track).forEach(function (d) { devices[d.ordinal] = d; });
+    var targets = values.map(function (v) {
+      if (!v || !integer(v.device, 0, 7) || !integer(v.index, 0, SLOTS - 1) || !finite(v.value)) fault("value", "A slot value needs a device, an index and a number");
+      var d = devices[v.device];
+      if (!d) fault("parameter-device-missing", "No Tolglow parameters device " + (v.device + 1) + " on that track");
+      var p = d.parameters[v.index];
+      if (!p) fault("slot-missing", "The parameter device has no slot " + (v.index + 1));
+      return {id: Number(idOf(d["device-id"], "device")), index: v.index, value: Math.max(p.min, Math.min(p.max, v.value))};
+    });
+    targets.forEach(function (t, i) {
+      var parameter = self.slotParameters(self.object({id: t.id}))[t.index];
+      if (i === 0) mark();
+      parameter.set("value", t.value);
+    });
+    return {written: targets.length};
+  };
+  // Envelope targets of a run clip: the slots of parameter devices on its track.
+  Session.prototype.envelopeTargets = function (track, list, length) {
+    var self = this;
+    if (!Array.isArray(list) || list.length > SLOTS * 8) fault("parameter-envelopes", "Name up to " + (SLOTS * 8) + " slot envelopes");
+    return list.map(function (e) {
+      if (!e || !integer(e.index, 0, SLOTS - 1) || !Array.isArray(e.points) || !e.points.length || e.points.length > 4096)
+        fault("parameter-envelope", "A slot envelope needs a slot index and points");
+      var device = self.parameterDevice(track, e["device-id"]), parameter = self.slotParameters(device)[e.index];
+      if (!parameter) fault("slot-missing", "The parameter device has no slot " + (e.index + 1));
+      var lo = Number(self.read(parameter, "min")), hi = Number(self.read(parameter, "max")), last = -1;
+      var points = e.points.map(function (p) {
+        if (!Array.isArray(p) || !finite(p[0]) || !finite(p[1]) || p[0] < 0 || p[0] >= length || p[0] <= last) fault("envelope-point", "Envelope points need increasing beats inside the clip");
+        last = p[0];
+        return {beat: p[0], value: Math.max(lo, Math.min(hi, p[1]))};
+      });
+      return {parameter: Number(parameter.id), points: points};
+    });
   };
   Session.prototype.slotPathByIndex = function (index, slot) { return "live_set tracks " + index + " clip_slots " + slot; };
 
@@ -493,6 +604,7 @@
     var length = clip["length-beats"];
     if (!finite(length) || length <= 0 || length > 4096) fault("clip-length", "A clip needs a positive length in beats");
     var content = this.clipContent(track, payload, length);
+    var envelopes = payload["parameter-envelopes"] ? this.envelopeTargets(track, payload["parameter-envelopes"], length) : [];
     var slotIds = ids(track.get("clip_slots")), slot = payload["slot-index"], newScene = false;
     if (slot === undefined || slot === null) {
       slot = -1;
@@ -514,8 +626,17 @@
     if (payload.name) created.set("name", String(payload.name).slice(0, 128));
     // Run clips play once (Clip.looping); Capture clips keep Live's default.
     if (payload["looping?"] === false) created.set("looping", 0);
-    var filled = this.fill(created, content, length, mark);
-    return {"clip-id": "clip:" + Number(created.id), "slot-index": slot, notes: filled.notes, "envelope-steps": filled["envelope-steps"],
+    var filled = this.fill(created, content, length, mark), steps = filled["envelope-steps"];
+    envelopes.forEach(function (e) {
+      var envelope = self.envelope(created, e.parameter, true, mark);
+      e.points.forEach(function (p, i) {
+        var end = i + 1 < e.points.length ? e.points[i + 1].beat : length;
+        mark();
+        envelope.call("insert_step", p.beat, end - p.beat, p.value);
+        steps++;
+      });
+    });
+    return {"clip-id": "clip:" + Number(created.id), "slot-index": slot, notes: filled.notes, "envelope-steps": steps,
       "scene-created?": newScene};
   };
 
@@ -641,7 +762,45 @@
       entry.close = self.observe(id, "playing_slot_index", function (value) { self.playingChanged(id, value); }, null);
       self.watches[id] = entry;
     });
-    return {watching: tracks.length};
+    return {watching: tracks.length, "watching-slots": this.watchSlots(tracks)};
+  };
+  Session.prototype.closeSlotWatches = function () {
+    var self = this;
+    Object.keys(this.slotWatches).forEach(function (id) { self.slotWatches[id].closers.forEach(function (close) { close(); }); });
+    this.slotWatches = {};
+  };
+  // Observe value and automation_state of every slot of the parameter devices
+  // on these tracks. Each change is read in the deferred callback and emitted
+  // once, with automation_state: 1 is Live automation playing back.
+  Session.prototype.watchSlots = function (tracks) {
+    var self = this, count = 0;
+    this.closeSlotWatches();
+    tracks.forEach(function (track) {
+      var trackId = Number(track.id);
+      self.parameterDevices(track).forEach(function (d) {
+        var device = self.object({id: idOf(d["device-id"], "device")});
+        self.slotParameters(device).forEach(function (parameter, index) {
+          var id = Number(parameter.id), entry = {track: trackId, slot: d.ordinal * SLOTS + index, value: null, state: null, closers: []};
+          var changed = function () { self.slotChanged(id); };
+          entry.closers.push(self.observe(id, "value", changed, null));
+          entry.closers.push(self.observe(id, "automation_state", changed, null));
+          self.slotWatches[id] = entry;
+          count++;
+        });
+      });
+    });
+    return count;
+  };
+  Session.prototype.slotChanged = function (parameterId) {
+    var entry = this.slotWatches[parameterId];
+    if (!entry) return;
+    var parameter = this.api({id: parameterId});
+    if (!parameter || !Number(parameter.id)) return;
+    var value = Number(this.read(parameter, "value")), state = Number(this.read(parameter, "automation_state"));
+    if (!finite(value) || !integer(state, 0, 2) || (value === entry.value && state === entry.state)) return;
+    entry.value = value; entry.state = state;
+    this.emit({type: "parameter-device-value", "track-id": "track:" + entry.track, slot: entry.slot, value: value,
+      "automation-state": state, "watch-session": this.watchSession, serial: ++this.watchSerial});
   };
   Session.prototype.playingChanged = function (trackId, value) {
     var entry = this.watches[trackId], slot = Number(scalar(value)), event;
@@ -801,6 +960,8 @@
       case "ensure-launcher": return this.ensureLauncher(payload, mark);
       case "write-pads": return this.writePads(payload, mark);
       case "inspect-launcher": return this.inspectLauncher();
+      case "configure-parameter-device": return this.configureParameterDevice(payload, mark);
+      case "set-parameter-values": return this.setParameterValues(payload, mark);
       case "ensure-track": return this.ensureTrack(payload, mark);
       case "ensure-group": return this.ensureGroup(payload);
       case "watch-run-tracks": return this.watchRunTracks(payload);
@@ -853,5 +1014,5 @@
     return out;
   };
 
-  return {Session: Session, OPERATIONS: OPERATIONS, COARSE: COARSE, lanePoints: lanePoints};
+  return {Session: Session, OPERATIONS: OPERATIONS, COARSE: COARSE, SLOTS: SLOTS, lanePoints: lanePoints};
 }));

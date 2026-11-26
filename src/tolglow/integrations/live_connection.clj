@@ -14,8 +14,12 @@
                             :can-capture-midi? bool :live-version text}
                      track = {:track-id :index :name :kind :arm? :monitor :input
                               :group-track-id (nil when ungrouped)
-                              :clips [{:clip-id :slot-index :name :length-beats}]
-                              :arrangement-clips [{:name :start-beat :end-beat}]}
+                              :clips [{:clip-id :slot-index :name :length-beats :envelopes?}]
+                              :arrangement-clips [{:name :start-beat :end-beat}]
+                              :parameter-devices [{:device-id :device-index :name :ordinal
+                                                   :parameters [{:index :name :min :max :quantized?
+                                                                 :value :automation-state}]}]}
+                     :parameter-devices is read on Tolglow tracks only (#625).
                      :kind is :midi, :audio or :group (a Group Track, whose arm,
                      monitor and input are not read).
     :ensure-track    {:name :kind :midi :group-track-id g} -> {:track-id :created? bool
@@ -34,6 +38,9 @@
                      The clip's notes travel in :clip; controllers as :lanes.
                      :create-scene? true adds a scene when every slot is full;
                      :looping? false creates the clip without looping.
+                     :parameter-envelopes [{:device-id :index :points [[beat v] ..]}]
+                     writes each point as an envelope step of that slot of a
+                     parameter device on the same track, in its native units (#625).
     :place-clip      {:track-id :expected-name :clip-id :arrangement-beat b}
                      -> {:arrangement-beat b}: copies a Session clip into the
                      track's Arrangement at song beat b. An overlap with a clip
@@ -45,10 +52,20 @@
     :show-clip       {:clip-id} -> {:clip-id :view \"Detail/Clip\"}
     :fire-clip       {:clip-id} -> {:clip-id}
     :stop-clips      {:track-ids [..]} -> {}
-    :watch-run-tracks {:track-ids [..]} -> {:watching n}
+    :watch-run-tracks {:track-ids [..]} -> {:watching n :watching-slots m}
                      Report Session clip starts and stops on these tracks as
                      {:type :clip-started|:clip-stopped :track-id :clip-id :serial}
-                     events (live-runs/player decodes them).
+                     events (live-runs/player decodes them), and every slot
+                     value of their parameter devices as
+                     {:type :parameter-device-value :track-id :slot :value
+                      :automation-state :serial} (live-devices/ingest).
+    :configure-parameter-device {:track-id :expected-name :device-id :ordinal
+                                 :slots [slot] :banks [[index ..] ..]}
+                     -> {:device-id :relayed n}: hands a slot layout to one
+                     Tolglow parameters device (#625); the next inspect
+                     reads back what it applied.
+    :set-parameter-values {:track-id :expected-name
+                           :values [{:device :index :value}]} -> {:written n}
     :ensure-launcher {:name :scroll-row} -> {:track-id :device-index :rack-created? :renamed?}
                      The cue launcher (#228): adopts the companion's own track
                      (empty, a Tolglow launcher track, or holding only a Drum
@@ -77,7 +94,7 @@
 (def operations
   #{:inspect-set :ensure-track :ensure-group :configure-track :write-clip :extend-clip :capture-midi
     :read-clip :show-clip :fire-clip :stop-clips :watch-run-tracks :place-clip
-    :ensure-launcher :write-pads :inspect-launcher})
+    :ensure-launcher :write-pads :inspect-launcher :configure-parameter-device :set-parameter-values})
 
 (def request-budget-chars
   "JSON characters of notes and lanes per request. The companion's loopback

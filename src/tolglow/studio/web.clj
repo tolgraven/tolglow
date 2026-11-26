@@ -371,6 +371,8 @@
     "/api/sync" (read-action sync! :status "Synchronization unavailable")
     "/api/capture" (read-action capture! :status "Phrase capture unavailable")
     "/api/live-runs" (read-action live-runs! :status "Run record unavailable" #(query-fields % {:limit nil}))
+    ;; Parameter devices on run tracks (#625): the same projection as show/live-parameter-devices.
+    "/api/live-parameter-devices" (read-action live-runs! :parameter-devices "Run record unavailable")
     ;; The cue launcher's 64 pads (#228): the same projection as show/live-launcher.
     "/api/live-launcher" (read-action live-launcher! :status "Cue launcher unavailable" #(query-fields % {:page-id nil}))
     "/api/capture/last.mid" (available capture! "Phrase capture unavailable"
@@ -458,7 +460,7 @@
 (defn- post-routes [{:keys [material-preview! variable-sources! spatial-search! submit! submit-history! heartbeat! provider-put! chat! chat-select!
                              app-agent! checkpoint! cue-variation-preview!
                              sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync! section-reference!
-                             capture! video! live-launcher!]
+                             capture! video! live-launcher! live-runs!]
                      :or {material-preview! materials/preview}}]
   (merge
    (into {} (for [[path op] operations]
@@ -497,6 +499,9 @@
    ;; The cue launcher's Live setup and pad-clip write go through the running
    ;; Live bridge, as show/setup-live-launcher! does at the REPL (#228).
    (post-actions "/api/live-launcher/" live-launcher! ok {"setup" :setup "write-clip" :write-clip} "Cue launcher unavailable")
+   ;; Mirror the run record into Live over the running bridge, configuring each
+   ;; run track's parameter devices (#625), as show/sync-live-runs! does.
+   (post-actions "/api/live-runs/" live-runs! ok {"sync" :sync} "Run record unavailable")
    {"/api/cue-variations/preview"
     (available cue-variation-preview! "Cue variations unavailable" #(ok (cue-variation-preview! (:json-params %))))
     "/api/materials/preview" #(ok (material-preview! (:json-params %)))

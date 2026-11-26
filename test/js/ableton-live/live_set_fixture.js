@@ -3,7 +3,8 @@
 // setup, Capture and clip operations. Only the Live objects are simulated;
 // Adapter and Session are production code.
 const { Adapter } = require("../../../resources/devices/ableton-live/live_api.js");
-const { Session, COARSE } = require("../../../resources/devices/ableton-live/live_session.js");
+const { Session, COARSE, SLOTS } = require("../../../resources/devices/ableton-live/live_session.js");
+const { Device: ParameterDevice } = require("../../../resources/devices/ableton-live/parameter_device.js");
 
 const PORTS = [{ display_name: "All Ins", identifier: 1 }, { display_name: "Tolglow", identifier: 2 }, { display_name: "Keystep", identifier: 3 }];
 const CHANNELS = [{ display_name: "All Channels", identifier: 100 }].concat(
@@ -25,8 +26,16 @@ const CHANNELS = [{ display_name: "All Channels", identifier: 100 }].concat(
 // a chain with in_note -1 ("All Notes"), which belongs to no pad until set:
 // an assumption about Live to verify on a real Set. palette: [0xrrggbb, ..]
 // makes Chain.color store the nearest entry, as Live does; null keeps it exact.
+// Parameter devices (#625): { parameterDevices: 1 } on a track appends that
+// many "Tolglow parameters" devices, each with "Device On" and SLOTS slot
+// parameters. The companion's relay reaches the production
+// parameter_device.js, whose attribute messages are applied to the slot as
+// Live is assumed to apply them (long name, range, quantization): to verify
+// in licensed Live. relay: false leaves the Session without a relay.
+// Setting a slot's value notifies "value" observers; automate(param, v)
+// models automation playback (automation_state 1).
 function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGroup = true, notify = "sync", now,
-  launcher = false, version = [12, 4, 5], palette = null } = {}) {
+  launcher = false, version = [12, 4, 5], palette = null, relay = true } = {}) {
   const entities = {}, writes = [], calls = [], observers = [], emitted = []; let next = 10;
   const add = (o) => { o.id = o.id || ++next; entities[o.id] = o; return o; };
   function makeClip(length) {
@@ -63,9 +72,29 @@ function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGro
       rack.chains.push(add({ kind: "chain", props: { name, color: 0x777777, is_auto_colored: 1, in_note: Number(note) } }));
     return rack;
   }
+  function makeParameterDevice(ordinal) {
+    const slot = (i) => add({ kind: "param", props: { name: "slot " + (i + 1), min: 0, max: 1, value: 0, automation_state: 0, is_quantized: 0 } });
+    const pd = add({ kind: "device", props: { name: ordinal ? "Tolglow parameters " + (ordinal + 1) : "Tolglow parameters", can_have_drum_pads: 0 },
+      params: [add({ kind: "param", props: { name: "Device On", min: 0, max: 1, value: 1, automation_state: 0, is_quantized: 1 } })]
+        .concat(Array.from({ length: SLOTS }, (_, i) => slot(i))) });
+    pd.applied = [];
+    pd.runtime = new ParameterDevice({ deviceId: () => pd.id, setAttr: (index, attribute, args) => {
+      const p = pd.params[index + 1].props;
+      pd.applied.push([index, attribute].concat(args));
+      if (attribute === "_parameter_longname") p.name = args[0];
+      if (attribute === "_parameter_mmin") p.min = args[0];
+      if (attribute === "_parameter_mmax") p.max = args[0];
+      if (attribute === "_parameter_type") p.is_quantized = args[0] === 0 ? 0 : 1;
+      if (attribute === "_parameter_range") { p.min = 0; p.max = args.length - 1; }
+      p.value = Math.max(p.min, Math.min(p.max, p.value));
+    } });
+    return pd;
+  }
   tracks.forEach((t, i) => {
     if (launcher && i === host) song.tracks[i].props.devices = ["id", device.id];
     if (t.drumRack) song.tracks[i].props.devices = song.tracks[i].props.devices.concat(["id", makeRack(t.drumRack).id]);
+    for (let d = 0; d < (t.parameterDevices || 0); d++)
+      song.tracks[i].props.devices = song.tracks[i].props.devices.concat(["id", makeParameterDevice(d).id]);
   });
   let hostIndex = host;
   const hostTrack = () => song.tracks[hostIndex];
@@ -81,6 +110,7 @@ function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGro
           throw new Error("Group Tracks have no " + key);
         if (o.kind === "track" && key === "clip_slots") return o.slots.flatMap(s => ["id", s.id]);
         if (o.kind === "slot" && key === "has_clip") return [o.clip ? 1 : 0];
+        if (o.kind === "clip" && key === "has_envelopes") return [Object.keys(o.envelopes).length ? 1 : 0];
         if (o.kind === "device" && key === "parameters") return o.params.flatMap(p => ["id", p.id]);
         if (o.kind === "rack" && key === "drum_pads") return o.pads.flatMap(p => ["id", p.id]);
         if (o.kind === "rack" && key === "chains") return o.chains.flatMap(c => ["id", c.id]);
@@ -97,6 +127,7 @@ function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGro
           value = palette.reduce((best, c) => (dist(c, value) < dist(best, value) ? c : best), palette[0]);
         }
         o.props[key] = value;
+        if (o.kind === "param" && key === "value") { o.props.automation_state = o.props.automation_state === 1 ? 2 : o.props.automation_state; notifyAll(o.id, "value", value); }
       },
       call(method, ...args) {
         calls.push({ id: o.id, method, args });
@@ -212,14 +243,37 @@ function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGro
     track.props.fired_slot_index = slot;
     notifyAll(track.id, "fired_slot_index", slot);
   };
+  // Like max_adapter.js: messnamed reaches every parameter device; only the
+  // addressed one applies the spec.
+  const relayed = [];
+  const relayTo = (deviceId, spec) => {
+    relayed.push({ deviceId, spec });
+    Object.values(entities).forEach(e => { if (e.runtime) e.runtime.configure(deviceId, JSON.parse(JSON.stringify(spec))); });
+  };
+  // Automation playback moves a slot: Live sets automation_state 1 and the value.
+  const automate = (paramId, value) => {
+    const p = entities[paramId];
+    p.props.automation_state = 1; p.props.value = value;
+    notifyAll(paramId, "automation_state", 1);
+    notifyAll(paramId, "value", value);
+  };
+  // A performer turns a slot's dial in Live: an automated slot becomes overridden (2).
+  const turn = (paramId, value) => {
+    const p = entities[paramId];
+    if (p.props.automation_state === 1) { p.props.automation_state = 2; notifyAll(paramId, "automation_state", 2); }
+    p.props.value = value;
+    notifyAll(paramId, "value", value);
+  };
   const session = new Session({ api, setDictionary, dictionaryCall: (o, m, d) => o.call(m, d), readDictionary: v => (typeof v === "string" ? JSON.parse(v) : v),
-    observe, emit: (event) => emitted.push(event), now });
+    observe, emit: (event) => emitted.push(event), now, relay: relay ? relayTo : null });
   const adapter = new Adapter({ api, session, dictionaryCall: (o, m, d) => o.call(m, d), readDictionary: JSON.parse });
   let n = 0;
   const request = (op, payload = {}) => adapter.handle({ id: "r" + (++n), op, payload });
   const rackOf = (index) => song.tracks[index].props.devices.filter((x, i) => i % 2 === 1).map(id => entities[id]).find(e => e && e.kind === "rack");
+  const parameterDevicesOf = (index) => song.tracks[index].props.devices.filter((x, i) => i % 2 === 1).map(id => entities[id])
+    .filter(e => e && e.runtime);
   return { song, device, view, appView, entities, writes, calls, request, adapter, session, api, setDictionary, moveCompanion, rackOf,
-    observers, emitted, play, fire, inGroup };
+    observers, emitted, play, fire, inGroup, relayed, relayTo, automate, turn, parameterDevicesOf };
 }
 
 module.exports = { liveSet, PORTS, CHANNELS };
@@ -234,7 +288,9 @@ if (require.main === module) {
     const { createBridge } = require("../../../resources/devices/ableton-live/node_bridge.js");
     // argv[3] "groups" adds two placed Group Tracks for the run mirror (#683).
     const groups = process.argv[3] === "groups"
-      ? [{ name: "Tolglow group stage", group: true }, { name: "Tolglow group warm", group: true, parent: "Tolglow group stage" }] : [];
+      ? [{ name: "Tolglow group stage", group: true }, { name: "Tolglow group warm", group: true, parent: "Tolglow group stage" }]
+      // "parameters" adds a run track for cue :a holding one parameter device (#625).
+      : process.argv[3] === "parameters" ? [{ name: "Tolglow run a", parameterDevices: 1 }] : [];
     // The companion is in its track's device chain, so the cue launcher (#228)
     // can insert a Drum Rack after it.
     const live = liveSet({ tracks: [{ name: "Bass", arm: true, port: PORTS[2], channel: CHANNELS[1] }, { name: "MIDI" }].concat(groups), host: 1,
@@ -245,6 +301,7 @@ if (require.main === module) {
       TolglowParameters: require("../../../resources/devices/ableton-live/parameter_observers"),
       Task: function (fn) { let t; return { schedule(d) { t = setTimeout(fn, d); }, cancel() { clearTimeout(t); } }; },
       Dict: function () { throw new Error("Dict is not used by the simulated Set"); },
+      messnamed(name, verb, deviceId, json) { if (name === "tolglow-parameter-device" && verb === "configure") live.relayTo(deviceId, JSON.parse(json)); },
       LiveAPI: function (_notify, p) {
         let target = live.api(p === undefined || p === null ? "" : p);
         return { get id() { return target.id; }, set id(v) { target = live.api({ id: v }); },

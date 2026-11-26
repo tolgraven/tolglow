@@ -45,6 +45,7 @@
             [tolglow.studio.operator-history :as history]
             [tolglow.studio.page-routes :as pages]
             [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.authoring.parameter-controls :as controls]
             [tolglow.studio.numeric-display :as numeric]
             [tolglow.studio.parameter-source :as sources]
             [tolglow.studio.param-visualization :as visualization]
@@ -369,14 +370,16 @@
 (defn- parameter-control [instance parameter schema & [handlers options]]
   (let [value (get-in instance [:params parameter] (:default schema))
         choices (:choices schema)
-        shapes (when-not (waveform/waveform-schema? schema) (waveform/shape-choices schema))
-        type (cond (waveform/waveform-schema? schema) "waveform" shapes "shape" (seq choices) "choice" :else (:type schema "number"))
+        ;; The shared control projection names the control family, as the
+        ;; Live parameter device reads it (#625).
+        type (name (controls/control-type schema @(rf/subscribe [:waveform/catalog])))
+        shapes (when (= "shape" type) (waveform/shape-choices schema))
         change! (or (:change handlers) #(input! [:studio/param-set (:id instance) parameter %]))
         component! (or (:component handlers) #(input! [:studio/param-component (:id instance) parameter %1 %2]))
         source (when-not handlers (sources/reading instance parameter))
         overlay (if (and source (some? (:effective-value source))) (:effective-value source)
                   (when-not handlers @(rf/subscribe [:performance/parameter-overlay (:id instance) parameter])))
-        bounds (:bounds schema) title (or (:name schema) (label parameter))
+        bounds (:bounds schema) title (controls/title parameter schema)
         fader? (and (:strip? options) (#{:fader "fader"} (:ui/widget schema)))]
     [:div.param-row {:data-param (name parameter) :class (when (:strip? options) "strip-control")}
      [:label [:span title] [:output (if (vector? value) (str/join ", " (map #(numeric/number-label schema %) value)) (widgets/value-label schema value))]]
@@ -414,7 +417,7 @@
           [:div.parameter-number-fields
            [numeric/number-input {:type "range" :aria-label title :value (or value 0)
                           :min (first bounds) :max (second bounds)
-                          :step (if (= "integer" type) 1 (or (numeric/channel-step schema) (/ (- (second bounds) (first bounds)) 1000)))
+                          :step (controls/input-step schema)
                           :on-change #(when-let [n (number-value %)] (change! n))}]
            (when fader?
              [:span.strip-fader-bounds

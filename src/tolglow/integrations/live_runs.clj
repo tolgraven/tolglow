@@ -37,8 +37,10 @@
 
   Nothing here reads a clock or performs IO apart from `sync!`, which sends
   operations on the connection it is given."
-  (:require [clojure.string :as str]
-            [tolglow.integrations.live-connection :as live]))
+  (:require [clojure.data.json :as json]
+            [clojure.string :as str]
+            [tolglow.integrations.live-connection :as live]
+            [tolglow.integrations.live-devices :as live-devices]))
 
 (def record-version 1)
 
@@ -414,8 +416,8 @@
 
 (defn take-clip
   "The clip description for a released take: one note held for the run, no
-  controllers. Launch values and parameter moves stay in the record until the
-  run track carries a parameter rack (#625) whose envelopes can hold them."
+  controllers. Launch values and parameter moves travel separately, as
+  envelopes of the run track's parameter devices (#625), when it has them."
   [take]
   (when-let [length (clip-beats take)]
     {:clip/version 1 :length-beats length
@@ -443,7 +445,7 @@
   [set-snapshot]
   (into {} (for [track (:tracks set-snapshot), c (:clips track)
                  :let [id (take-id-of (:name c))] :when id]
-             [id (assoc (select-keys c [:clip-id :slot-index :name]) :track-id (:track-id track))])))
+             [id (assoc (select-keys c [:clip-id :slot-index :name :envelopes?]) :track-id (:track-id track))])))
 
 (defn- arrangement-index
   "Run clips already in the Arrangement, by take ID, and the occupied
@@ -454,6 +456,8 @@
                       [id (assoc (select-keys c [:start-beat :end-beat]) :track-id (:track-id track))]))
    :ranges (into {} (for [track (:tracks set-snapshot)]
                       [(:track-id track) (mapv (juxt :start-beat :end-beat) (:arrangement-clips track))]))})
+
+(declare plan-parameter-devices)
 
 (defn mirror-plan
   "Compare an inspected Set with the record. Returns
@@ -467,9 +471,18 @@
   its start beat plus the offset (omitted: Session only). Placement is its own
   step, keyed by take ID: a take already in the Arrangement is not placed
   again, and a range another clip holds is reported as :placement-overlap for
-  that take without holding back its Session clip or the rest of the sync."
+  that take without holding back its Session clip or the rest of the sync.
+  :parameter-devices {:specs {cue-id spec} :envelopes (fn [take spec] ..)}
+  (#625, live-devices) checks each bound lane track for its channel's
+  parameter devices and keeps what it found under :devices (a missing device
+  is not a problem: the performer drops one on the track when they want it,
+  because Live cannot insert a Max for Live device), one whose read-back differs
+  from the spec gets a :configure-parameter-device step, and a new run clip
+  on a track with every device present carries the take's values as
+  :parameter-envelopes. Envelopes over the request budget are left out and
+  reported as :envelopes-too-large; the take then replays its moves itself."
   ([set-snapshot record] (mirror-plan set-snapshot record {}))
-  ([set-snapshot record {:keys [groups? arrangement-offset-beats] :or {groups? true}}]
+  ([set-snapshot record {:keys [groups? arrangement-offset-beats parameter-devices] :or {groups? true}}]
    (let [tracks (:tracks set-snapshot)
          named (fn [name kind-ok?] (filter #(and (= name (:name %)) (kind-ok? (:kind %))) tracks))
          group? #(= :group %)
@@ -519,7 +532,9 @@
                                (update :problems conj {:code (if gid :not-in-group :unexpected-group)
                                                        :cue-id cue-id :lane lane :name name :group-id gid
                                                        :expected-group-track-id group-id
-                                                       :actual-group-track-id (:group-track-id t)})))
+                                                       :actual-group-track-id (:group-track-id t)})
+                               (get-in parameter-devices [:specs cue-id])
+                               (plan-parameter-devices t (get-in parameter-devices [:specs cue-id]) cue-id lane)))
                            :else
                            (-> acc
                                (update :steps conj [:ensure-track (cond-> {:name name :kind :midi}
@@ -534,14 +549,24 @@
          ;; Run clips do not loop: a played clip steers its run once.
          acc (reduce (fn [acc {:keys [take-id cue-id lane] :as take}]
                        (let [track (get-in acc [:bindings [:lane cue-id lane]])
-                             clip (take-clip take)]
+                             clip (take-clip take)
+                             status (get-in acc [:devices [cue-id lane]])
+                             spec (get-in parameter-devices [:specs cue-id])
+                             envelopes (when (and status spec (empty? (:missing status)) (:envelopes parameter-devices))
+                                         (vec (for [{:keys [device index points]} ((:envelopes parameter-devices) take spec)
+                                                    :let [device-id (get-in status [:devices device :device-id])]
+                                                    :when device-id]
+                                                {:device-id device-id :index index :points points})))
+                             too-large? (and (seq envelopes) (> (count (json/write-str envelopes)) live/request-budget-chars))]
                          (if (or (nil? clip) (nil? track) (contains? (:clips acc) take-id))
                            acc
-                           (update acc :steps conj
-                                   [:write-clip {:track-id track :expected-name (lane-track-name cue-id lane)
-                                                 :slot-index nil :create-scene? true :looping? false
-                                                 :name (clip-name record take) :clip clip}
-                                    {:take-id take-id :binds [:clip take-id] :bind-field :clip-id}]))))
+                           (cond-> (update acc :steps conj
+                                           [:write-clip (cond-> {:track-id track :expected-name (lane-track-name cue-id lane)
+                                                                 :slot-index nil :create-scene? true :looping? false
+                                                                 :name (clip-name record take) :clip clip}
+                                                          (and (seq envelopes) (not too-large?)) (assoc :parameter-envelopes envelopes))
+                                            {:take-id take-id :binds [:clip take-id] :bind-field :clip-id}])
+                             too-large? (update :problems conj {:code :envelopes-too-large :take-id take-id :cue-id cue-id :lane lane})))))
                      acc (takes record))
          ;; Arrangement copies, each its own step.
          {:keys [placed ranges]} (arrangement-index set-snapshot)
@@ -570,6 +595,21 @@
                                  (update-in [:ranges track] (fnil conj []) [start end])))))
                        (assoc acc :ranges ranges) (takes record)))]
      (-> acc (dissoc :ranges) (assoc :placed placed)))))
+
+(defn- plan-parameter-devices
+  "Check a bound lane track's parameter devices against its channel's spec."
+  [acc track spec cue-id lane]
+  (let [status (live-devices/device-status track spec)
+        name (:name track)]
+    (-> (assoc-in acc [:devices [cue-id lane]] status)
+      (update :steps into (for [o (:stale status)]
+                            [:configure-parameter-device
+                             {:track-id (:track-id track) :expected-name name
+                              :device-id (get-in status [:devices o :device-id]) :ordinal o
+                              :slots (mapv #(select-keys % [:index :name :short-name :type :min :max :steps :choices :places :unit])
+                                           (live-devices/device-slots spec o))
+                              :banks (mapv (partial mapv #(mod % live-devices/slots-per-device)) (get-in spec [:banks o]))}
+                             {:cue-id cue-id :lane lane :device o :parameter-device? true}])))))
 
 (defn- inspect! [conn]
   (let [r (live/request! conn :inspect-set {})]
@@ -626,7 +666,7 @@
          after (inspect! conn)
          verdict (mirror-plan after record options)
          failures (vec (for [{:keys [status error] :as a} (:applied run) :when (#{:rejected :indeterminate} status)]
-                         (merge (select-keys a [:op :take-id :cue-id :lane :binds :placement?]) {:code (or (:code error) status) :status status})))]
+                         (merge (select-keys a [:op :take-id :cue-id :lane :binds :placement? :device]) {:code (or (:code error) status) :status status})))]
      {:complete? (and (empty? (:steps verdict)) (not (:stopped? run)))
       :applied (:applied run)
       :pending (mapv (fn [[op _ meta]] (assoc meta :op op)) (:steps verdict))
@@ -634,6 +674,9 @@
       :groups (into {} (filter (comp #{:group} first key)) (:bindings verdict))
       :clips (select-keys (:clips verdict) (:take-order record))
       :arranged (select-keys (:placed verdict) (:take-order record))
+      ;; {[cue-id lane] {:present :missing :stale :devices}} for each bound
+      ;; lane track whose channel has a parameter-device spec (#625).
+      :parameter-devices (:devices verdict {})
       :problems (into (:problems verdict) failures)
       :set after})))
 
@@ -670,7 +713,7 @@
                                :end-beat (beat-number end-beat) :length-beats (beat-number (held-beats take))
                                :params params :moves (count moves) :mode (:mode launch) :effect-version effect-version
                                :clip (cond
-                                       clip (assoc (select-keys clip [:clip-id :track-id :slot-index]) :status :in-live)
+                                       clip (assoc (select-keys clip [:clip-id :track-id :slot-index :envelopes?]) :status :in-live)
                                        (nil? release-beat) {:status :recording}
                                        (get failed take-id) {:status (get failed take-id)}
                                        :else {:status :not-in-live})}
@@ -704,7 +747,7 @@
                        {:instance-id instance-id :take-id take-id :cue-id cue-id :start-beat (beat-number start-beat)}))
       :mirror (when mirror
                 {:complete? (:complete? mirror) :pending (count (:pending mirror))
-                 :problems (mapv #(select-keys % [:code :name :cue-id :lane :group-id :take-id :status]) (:problems mirror))})})))
+                 :problems (mapv #(select-keys % [:code :name :cue-id :lane :group-id :take-id :status :devices :device]) (:problems mirror))})})))
 
 (defn describe
   "One line per lane and take, for the REPL."
@@ -723,6 +766,12 @@
 
 (def ^:private ignored-kept 16)
 
+(defn- enveloped-clips
+  "Clip IDs whose clip carries parameter-device envelopes (#625): Live plays
+  their moves, so the player does not replay them."
+  [mirror]
+  (into #{} (keep (fn [[_ {:keys [clip-id envelopes?]}]] (when envelopes? clip-id))) (:clips mirror)))
+
 (defn player
   "A decoder for run-clip playback reported by the companion. mirror is a
   sync! result: it maps clip IDs to takes. source is merged into each
@@ -738,6 +787,7 @@
   ([mirror] (player mirror {}))
   ([mirror source]
    {:clips (into {} (map (fn [[take-id {:keys [clip-id]}]] [clip-id take-id])) (:clips mirror))
+    :enveloped (enveloped-clips mirror)
     :source (merge {:type :ableton :adapter :live-run-clip} source {:origin :live-playback})
     :playing {} :stopping #{} :serials #{} :serial-order [] :ignored [] :ignored-count 0}))
 
@@ -745,7 +795,8 @@
   "The player after a new sync: its clip map follows the mirror, and what is
   playing keeps playing."
   [player mirror]
-  (assoc player :clips (into {} (map (fn [[take-id {:keys [clip-id]}]] [clip-id take-id])) (:clips mirror))))
+  (assoc player :clips (into {} (map (fn [[take-id {:keys [clip-id]}]] [clip-id take-id])) (:clips mirror))
+         :enveloped (enveloped-clips mirror)))
 
 (defn- seen-serial [player key]
   (let [order (conj (:serial-order player) key)]
@@ -809,7 +860,10 @@
                                 (update :source assoc :live/take-id take-id :live/clip-id clip-id
                                         :live/effect-version (:effect-version take)))
                     held (or (clip-beats take) 0)
-                    due (vec (concat (for [{move-beat :beat :keys [param value at]} (:moves take)
+                    ;; A clip carrying parameter-device envelopes (#625) plays its
+                    ;; moves through Live automation, edits included.
+                    enveloped? (contains? (:enveloped player) clip-id)
+                    due (vec (concat (for [{move-beat :beat :keys [param value at]} (when-not enveloped? (:moves take))
                                            :let [rel (or at (- move-beat (:start-beat take)))]
                                            :when (< rel held)]
                                        [(max 0 rel) {:op :param/set :param param :value value}])

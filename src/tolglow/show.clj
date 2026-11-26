@@ -47,6 +47,7 @@
             [tolglow.registry :as registry]
             [tolglow.integrations.ableton :as ableton]
             [tolglow.integrations.live-runs :as live-runs]
+            [tolglow.integrations.live-devices :as live-devices]
             [tolglow.integrations.live-launcher :as live-launcher]
             [tolglow.integrations.live-connection :as live-connection]
             [tolglow.integrations.phrase-capture :as phrase-capture]
@@ -480,7 +481,14 @@
        ;; Run-clip playback decoder, made by the first sync; its lock orders
        ;; playback events with the owner's acknowledgements and moves.
        :player nil :player-lock (Object.) :inbox [] :inbox-dropped 0 :replies {} :end-replies {}
-       :cost {:samples 0 :total-ns 0 :max-ns 0 :last-ns 0}})))
+       :cost {:samples 0 :total-ns 0 :max-ns 0 :last-ns 0}
+       ;; Parameter devices on run tracks (#625): slot layouts, ownership,
+       ;; values reported by the companion and Tolglow writes waiting to be
+       ;; sent. :device-send! replaces the bridge sender (tests capture it).
+       :devices (live-devices/new-state) :device-inbox [] :device-inbox-dropped 0
+       :device-outbox {} :device-flush? false :device-send! (:device-send! options)
+       :device-sends {:requests 0 :executed 0 :failed 0 :not-connected 0}
+       :device-cost {:samples 0 :total-ns 0 :max-ns 0}})))
 
 (defn- configure-runtime
   [compute-owner {:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
@@ -1986,7 +1994,7 @@
       (live-sync/acknowledge! manager (get-in command [:source :note])
                          (assoc ack :sync-run-id (get-in command [:source :sync-run-id])) envelope))))
 
-(declare live-run-clip!)
+(declare live-run-clip! live-parameter-device-value!)
 
 (defn sync-callbacks
   "Bounded external transport callbacks. Commands enter the same owner queue;
@@ -2003,6 +2011,7 @@
                                  (filter #(and (= cue-id (:cue-id %)) (= :running (:phase %))))
                                  (sort-by :order) last :id)))
      :run-clip! (fn [event] (when (current?) (live-run-clip! runtime event)))
+     :parameter-device! (fn [event] (when (current?) (live-parameter-device-value! runtime event)))
      :events! (fn [event]
                 (when (current?)
                   (locking (:sync-input runtime)
@@ -2157,6 +2166,109 @@
                                  {:reply reply :instance-id (:instance-id c) :attempt (get c ::attempt 1)})
             nil))))))
 
+(def ^:private device-inbox-limit 1024)
+
+(defn- device-catalog [model] (parameter-sources/waveform-options model))
+
+(defn- device-layouts
+  "Slot layouts follow the record's channels and the registry. They are
+  refreshed only when either changed, not on every owner cycle."
+  [s model]
+  (let [registry (:registry model) channels (:channel-order (:record s))
+        [r c] (:device-layout-key s)]
+    (if (and (identical? r registry) (= c channels))
+      s
+      (-> s (update :devices live-devices/ensure-layouts model (:record s) (device-catalog model))
+          (assoc :device-layout-key [registry channels])))))
+
+(declare live-bridge-connection)
+
+(defn- flush-device-writes!
+  "Off the owner: send the waiting Tolglow writes, one request per run track.
+  A write that did not execute forgets the echo it expected, so a later Live
+  value equal to it is not mistaken for an echo."
+  [runtime state]
+  (let [[old _] (swap-vals! state assoc :device-outbox {} :device-flush? false)
+        outbox (:device-outbox old)
+        send! (or (:device-send! old)
+                  (fn [payload]
+                    (if (live-sync/bridge-connected? (connections/sync (:connections runtime)))
+                      (live-connection/request! (live-bridge-connection runtime) :set-parameter-values payload)
+                      {:status :rejected :code :not-connected})))]
+    (doseq [[track-id {:keys [cue-id lane values]}] (sort-by key outbox)]
+      (let [payload {:track-id track-id :expected-name (live-runs/lane-track-name cue-id lane)
+                     :values (mapv (fn [[_ v]] (dissoc v :slot)) (sort-by key values))}
+            receipt (try (send! payload) (catch Exception error {:status :indeterminate :message (.getMessage error)}))
+            status (:status receipt)]
+        (locking (:player-lock @state)
+          (swap! state (fn [s]
+                         (cond-> (update-in s [:device-sends :requests] inc)
+                           (= :executed status) (update-in [:device-sends :executed] inc)
+                           (= :not-connected (:code receipt)) (update-in [:device-sends :not-connected] inc)
+                           (not= :executed status)
+                           (-> (update-in [:device-sends :failed] inc)
+                               (assoc-in [:device-sends :last-failure] (select-keys receipt [:status :code :message]))
+                               (update-in [:devices :echo] #(apply dissoc % (map (fn [slot] [track-id slot]) (keys values)))))))))))))
+
+(defn- advance-live-devices!
+  "Owner-thread step for parameter devices (#625): decode slot values Live
+  reported into commands, and collect Tolglow's accepted writes for Live. Only
+  pure work happens here; requests to the companion leave on a separate
+  thread and commands go through submit!, so the owner never waits."
+  [runtime state model]
+  (let [start (System/nanoTime)
+        catalog (device-catalog model)
+        lock (:player-lock @state)
+        [commands writes]
+        (locking lock
+          (let [[old _] (swap-vals! state assoc :device-inbox [])
+                events (:device-inbox old)
+                s (device-layouts @state model)
+                ctx {:model model :record (:record s) :mirror (:mirror s) :player (:player s) :catalog catalog
+                     :envelope-fn #(run-clip-envelope runtime model)}
+                in (if (seq events) (live-devices/ingest (:devices s) ctx events) {:state (:devices s) :commands []})
+                out (live-devices/mirror-writes (:state in) ctx)]
+            (swap! state assoc :devices (:state out) :device-layout-key (:device-layout-key s))
+            [(:commands in) (:writes out)]))]
+    (doseq [c commands]
+      (submit! runtime (assoc c :expected-epoch (:epoch model))))
+    (when (seq writes)
+      (let [[old _] (swap-vals! state (fn [s]
+                                        (-> (reduce (fn [s {:keys [track-id cue-id lane values]}]
+                                                      (-> s
+                                                          (update-in [:device-outbox track-id] merge {:cue-id cue-id :lane lane})
+                                                          (update-in [:device-outbox track-id :values]
+                                                                     (fnil into {}) (map (juxt :slot identity)) values)))
+                                                    s writes)
+                                            (assoc :device-flush? true))))]
+        (when-not (:device-flush? old)
+          (.start (doto (Thread. #(flush-device-writes! runtime state) "tolglow-live-parameter-devices")
+                    (.setDaemon true))))))
+    (let [ns (- (System/nanoTime) start)]
+      (swap! state update :device-cost #(-> % (update :samples inc) (update :total-ns + ns) (update :max-ns max ns))))))
+
+(defn live-parameter-device-value!
+  "Queue one slot value a Tolglow parameters device reported through the
+  companion (#625) for the owner, which decodes it at its next cycle
+  (live-devices/ingest): automation playback steers the run its clip
+  launched, a performer's turn in Live is a performance the run record keeps.
+  The Live bridge calls this for `parameter-device` callbacks; the REPL can
+  call it with the same event:
+    {:type :parameter-device-value :track-id t :slot n :value v
+     :automation-state 0|1|2 :watch-session w :serial k}
+  At most 1024 events wait; more are counted and dropped."
+  [runtime event]
+  (let [state (:live-runs runtime)]
+    (if-not (and state (:enabled? @state))
+      {:status :ignored :reason :disabled}
+      (let [event (update event :type #(if (string? %) (keyword %) %))
+            [old _] (swap-vals! state (fn [s] (if (< (count (:device-inbox s)) device-inbox-limit)
+                                                (update s :device-inbox conj event)
+                                                (update s :device-inbox-dropped inc))))]
+        (if (< (count (:device-inbox old)) device-inbox-limit)
+          {:status :queued}
+          {:status :dropped :reason :inbox-full})))))
+
 (defn- observe-live-runs!
   "Fold the committed model into the run record. Pure fold; a failure is
   reported in status and never stops a frame."
@@ -2170,7 +2282,8 @@
             (swap! state (fn [s] (-> s (assoc :record record)
                                      (update :cost #(-> % (update :samples inc) (update :total-ns + ns)
                                                         (update :max-ns max ns) (assoc :last-ns ns))))))
-            (advance-run-player! runtime state model))
+            (advance-run-player! runtime state model)
+            (advance-live-devices! runtime state model))
           (catch Exception error
             (swap! (:state runtime) assoc-in [:status :live-runs-error] (error-data error))))))))
 
@@ -2196,6 +2309,9 @@
             [old _] (swap-vals! state (fn [s] (if (< (count (:inbox s [])) run-clip-inbox-limit)
                                                 (update s :inbox (fnil conj []) event)
                                                 (update s :inbox-dropped (fnil inc 0)))))]
+        ;; A clip start hands its track's slots back to Live playback (#625).
+        (when (= :clip-started (:type event))
+          (swap! state update :device-inbox conj {:type :clip-started :track-id (:track-id event)}))
         (if (< (count (:inbox old [])) run-clip-inbox-limit)
           {:status :queued}
           {:status :dropped :reason :inbox-full})))))
@@ -3974,6 +4090,8 @@
       (throw (ex-info "The run record is disabled for this show" {:operation operation})))
     state))
 
+(declare sync-live-runs! live-parameter-devices)
+
 (defn live-runs-action!
   "The run record (#683) for the REPL and Studio. The runtime folds every
   committed owner cycle into it (create-runtime option :live-runs; false
@@ -3981,8 +4099,10 @@
   overlapping runs and the manual effect-group tree.
     :status -> live-runs/projection with the last Live sync, plus fold cost;
                payload {:limit n} lists the newest n takes (default 256)
-  Mirroring into Live needs a companion connection, which the runtime does not
-  own yet; run sync-live-runs! from the REPL. Studio shows its result."
+    :parameter-devices -> live-parameter-devices (#625)
+    :sync   -> sync-live-runs! over the running Live bridge, as Studio's
+               Sync to Live runs it; payload {:groups? false} skips groups
+  From the REPL, sync-live-runs! also takes any companion connection."
   [runtime operation payload]
   (let [state (live-runs-state runtime operation)]
     (case operation
@@ -3995,6 +4115,13 @@
                        :playback-events {:queued (count (:inbox @state)) :dropped (:inbox-dropped @state 0)}
                        :cost {:cycles (:samples cost) :mean-us (/ (:total-ns cost) n 1000.0)
                               :max-us (/ (:max-ns cost) 1000.0)}))
+      :parameter-devices (live-parameter-devices runtime)
+      ;; Studio's Sync to Live: the same sync-live-runs! over the Live bridge.
+      :sync (-> (sync-live-runs! runtime (live-bridge-connection runtime) (select-keys payload [:groups?]))
+                (dissoc :set)
+                (update :tracks #(mapv (fn [[[_ cue-id lane] track-id]] {:cue-id cue-id :lane lane :track-id track-id}) %))
+                (update :groups #(mapv (fn [[[_ group-id] track-id]] {:group-id group-id :track-id track-id}) %))
+                (update :parameter-devices #(mapv (fn [[[cue-id lane] st]] (assoc (dissoc st :devices) :cue-id cue-id :lane lane)) %)))
       (throw (ex-info "Unknown run record operation" {:operation operation})))))
 
 (defn live-runs
@@ -4019,12 +4146,62 @@
   ([runtime conn] (sync-live-runs! runtime conn {}))
   ([runtime conn options]
    (let [state (live-runs-state runtime :sync)
-         result (live-runs/sync! conn (:record @state) options)
-         mirror (dissoc result :set)]
+         model (:model @(:state runtime))
+         catalog (device-catalog model)
+         ;; Parameter devices (#625): each channel's slot layout and spec.
+         devices (locking (:player-lock @state)
+                   (let [s (device-layouts @state model)]
+                     (swap! state assoc :devices (:devices s) :device-layout-key (:device-layout-key s))
+                     (:devices s)))
+         specs (live-devices/specs devices model catalog)
+         envelopes (fn [take spec]
+                     (live-devices/take-envelopes model spec (get-in devices [:layouts (:cue-id take)]) take
+                                                  (live-runs/held-beats take) catalog))
+         result (live-runs/sync! conn (:record @state)
+                                 (merge {:parameter-devices {:specs specs :envelopes envelopes}} (dissoc options :watch?)))
+         ;; Watch the bound run tracks: clip starts and stops, and every
+         ;; parameter-device slot on them. Off with {:watch? false}.
+         track-ids (vec (sort (distinct (vals (:tracks result)))))
+         watch (when (and (not (false? (:watch? options))) (seq track-ids))
+                 (let [r (live-connection/request! conn :watch-run-tracks {:track-ids track-ids})]
+                   (cond-> (select-keys r [:status :result]) (:code r) (assoc :code (:code r)))))
+         mirror (cond-> (dissoc result :set) watch (assoc :watch watch))]
      (locking (:player-lock @state)
-       (swap! state (fn [s] (assoc s :mirror mirror
+       (swap! state (fn [s] (assoc s :mirror mirror :device-specs specs
                                    :player (if-let [p (:player s)] (live-runs/with-mirror p mirror) (live-runs/player mirror))))))
-     result)))
+     (cond-> result watch (assoc :watch watch)))))
+
+(defn live-parameter-devices
+  "Each run channel's parameter-device spec (#625): slot names, ranges,
+  units, choices, Push banks and unsupported parameters, where the devices
+  are on the last synced Live tracks, and the ownership counters (applied,
+  echo, held, no-instance; Tolglow writes mirrored and sent). Studio's
+  Connections -> Live runs panel shows the same data
+  (GET /api/live-parameter-devices). sync-live-runs! configures the devices
+  and writes run clips with envelopes."
+  [runtime]
+  (let [state (live-runs-state runtime :parameter-devices)
+        model (:model @(:state runtime))
+        s (locking (:player-lock @state)
+            (let [s (device-layouts @state model)]
+              (swap! state assoc :devices (:devices s) :device-layout-key (:device-layout-key s))
+              s))
+        specs (live-devices/specs (:devices s) model (device-catalog model))
+        status (get-in s [:mirror :parameter-devices] {})
+        tracks (get-in s [:mirror :tracks] {})
+        by-cue (reduce-kv (fn [m [cue-id lane] st]
+                            (update m cue-id (fnil conj [])
+                                    (merge {:lane lane :track-id (get tracks [:lane cue-id lane])
+                                            :track-name (live-runs/lane-track-name cue-id lane)}
+                                           (select-keys st [:present :missing :stale]))))
+                          {} status)
+        n (max 1 (get-in s [:device-cost :samples]))]
+    (assoc (live-devices/projection (:devices s) specs by-cue)
+           :inbox {:queued (count (:device-inbox s)) :dropped (:device-inbox-dropped s)}
+           :sends (:device-sends s)
+           :watch (get-in s [:mirror :watch])
+           :cost {:cycles (get-in s [:device-cost :samples]) :mean-us (/ (get-in s [:device-cost :total-ns]) n 1000.0)
+                  :max-us (/ (get-in s [:device-cost :max-ns]) 1000.0)})))
 
 (defn- wire-name [x] (if (keyword? x) (subs (str x) 1) (str x)))
 

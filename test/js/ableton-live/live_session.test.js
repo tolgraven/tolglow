@@ -11,8 +11,8 @@ const { COARSE, OPERATIONS } = require("../../../resources/devices/ableton-live/
 const { liveSet, PORTS, CHANNELS } = require("./live_set_fixture.js");
 
 test("operation list matches tolglow.integrations.live-connection/operations", () => {
-  assert.deepEqual([...OPERATIONS].sort(), ["capture-midi", "configure-track", "ensure-group", "ensure-launcher", "ensure-track", "extend-clip", "fire-clip",
-    "inspect-launcher", "inspect-set", "place-clip", "read-clip", "show-clip", "stop-clips", "watch-run-tracks", "write-clip", "write-pads"]);
+  assert.deepEqual([...OPERATIONS].sort(), ["capture-midi", "configure-parameter-device", "configure-track", "ensure-group", "ensure-launcher", "ensure-track", "extend-clip", "fire-clip",
+    "inspect-launcher", "inspect-set", "place-clip", "read-clip", "set-parameter-values", "show-clip", "stop-clips", "watch-run-tracks", "write-clip", "write-pads"]);
   assert.deepEqual(COARSE, Array.from({ length: 31 }, (_, i) => i + 1).filter(c => c !== 6), "same as phrase-clip/coarse-controllers");
 });
 
@@ -415,7 +415,7 @@ test("watch-run-tracks reports each clip start and stop once, with the clip iden
   const written = live.request("write-clip", { "track-id": "track:" + a.id, name: "A run 1 [r.1]", clip });
   const writes = live.writes.length;
   const r = live.request("watch-run-tracks", { "track-ids": ["track:" + a.id, "track:" + b.id] });
-  assert.deepEqual(r.result, { watching: 2 });
+  assert.deepEqual(r.result, { watching: 2, "watching-slots": 0 });
   assert.equal(live.writes.length, writes, "watching writes nothing");
   live.play(0, 0, 32); live.play(0, 0, 32); live.play(0, -2, 34);
   assert.deepEqual(live.emitted, [

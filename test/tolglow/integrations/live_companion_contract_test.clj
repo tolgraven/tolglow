@@ -187,7 +187,7 @@
         (testing "the companion accepts the run-track watch"
           (let [r (live/request! conn :watch-run-tracks {:track-ids (vec (vals (:tracks result)))})]
             (is (= :executed (:status r)) (pr-str r))
-            (is (= {:watching 2} (:result r)))))))
+            (is (= {:watching 2 :watching-slots 0} (:result r)))))))
     "http://127.0.0.1:9/api/live" "groups"))
 
 (defn- bridge-manager

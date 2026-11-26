@@ -40,16 +40,26 @@
   `:device-insert? false` takes away (an older Live). Chain colours are kept
   exactly; real Live picks the nearest palette entry. `record-input!` and
   `session-record!` stand in for Live recording a performer's MIDI into a
-  Session clip on an armed track, which Tolglow never does itself."
+  Session clip on an armed track, which Tolglow never does itself.
+
+  Parameter devices (#625): `add-parameter-device!` drops a Tolglow
+  parameters device on a track, as a performer or template must (the LOM
+  inserts native devices only). It has 32 slot parameters after Live's
+  Device On parameter. `:configure-parameter-device` applies names and ranges as the
+  device's own patcher is assumed to; `:device-applies? false` models a Live
+  that ignores the run-time attributes, so the read-back stays unchanged.
+  `:relay? false` models a companion without the relay. Tolglow's
+  `:set-parameter-values` writes are kept under `:parameter-writes`, and
+  `:parameter-envelopes` on a run clip under that clip's `:envelopes`."
   (:require [clojure.data.json :as json]))
 
 (defn create
   "tracks: existing musician tracks, e.g. [{:name \"Bass\" :arm? true}]."
   ([] (create {}))
   ([{:keys [tracks tempo exclusive-arm? can-capture-midi? capture-bars companion? envelope-lanes? scenes
-            insert-joins-group? device-insert?]
+            insert-joins-group? device-insert? relay? device-applies?]
      :or {tracks [] tempo 120.0 exclusive-arm? false can-capture-midi? true capture-bars 4 companion? true
-          envelope-lanes? false insert-joins-group? true device-insert? true}}]
+          envelope-lanes? false insert-joins-group? true device-insert? true relay? true device-applies? true}}]
    (atom {:tracks (vec (map-indexed (fn [i t] (cond-> (merge {:track-id (str "track:" (inc i)) :kind :midi :arm? false
                                                               :monitor :auto :input {:port "Keyboard" :channel 1}
                                                               :slots {} :history []} (dissoc t :drum-rack))
@@ -61,7 +71,7 @@
           :next-id 100 :tempo tempo :signature {:beats-per-bar 4 :bars-per-phrase 4}
           :exclusive-arm? exclusive-arm? :can-capture-midi? can-capture-midi? :capture-bars capture-bars
           :envelope-lanes? envelope-lanes? :scenes scenes :insert-joins-group? insert-joins-group?
-          :device-insert? device-insert?
+          :device-insert? device-insert? :relay? relay? :device-applies? device-applies? :parameter-writes []
           :watched [] :song-beat 0 :playing {} :selected nil :faults {} :requests []})))
 
 (defn- next-id! [live prefix]
@@ -80,7 +90,34 @@
                                         :start-beat start :end-beat (+ start length)})))
       (assoc :clips (vec (for [[slot c] (sort-by key (:slots track))]
                            {:clip-id (:clip-id c) :slot-index slot :name (:name c)
-                            :length-beats (get-in c [:clip :length-beats])})))))
+                            :length-beats (get-in c [:clip :length-beats])
+                            :envelopes? (boolean (seq (:envelopes c)))})))
+      (cond-> (and (string? (:name track)) (re-find #"^Tolglow(\s|$)" (:name track)))
+        (assoc :parameter-devices (vec (map-indexed (fn [i d] (assoc d :device-index (inc i))) (:parameter-devices track)))))))
+
+(def parameter-slots 32)
+
+(defn add-parameter-device!
+  "Drop a \"Tolglow parameters\" device (ordinal 0, or n for \"Tolglow
+  parameters n+1\") on the named track. Returns its device ID."
+  ([live track-name] (add-parameter-device! live track-name 0))
+  ([live track-name ordinal]
+   (let [id (str "device:" (:next-id (swap! live update :next-id inc)))
+         device {:device-id id :ordinal ordinal
+                 :name (if (zero? ordinal) "Tolglow parameters" (str "Tolglow parameters " (inc ordinal)))
+                 :parameters (vec (for [i (range parameter-slots)]
+                                    {:index i :name (str "slot " (inc i)) :min 0.0 :max 1.0 :quantized? false
+                                     :value 0.0 :automation-state 0}))}]
+     (swap! live update :tracks (fn [ts] (mapv #(if (= track-name (:name %)) (update % :parameter-devices (fnil conj []) device) %) ts)))
+     id)))
+
+(defn parameter-device
+  "The parameter device with this ordinal on the named track."
+  [live track-name ordinal]
+  (some #(when (= ordinal (:ordinal %)) %) (:parameter-devices (first (filter #(= track-name (:name %)) (:tracks @live))))))
+
+(defn- device-on-track [track device-id]
+  (first (keep-indexed (fn [i d] (when (= device-id (:device-id d)) i)) (:parameter-devices track))))
 
 (defn- find-clip [state clip-id]
   (first (for [[ti t] (map-indexed vector (:tracks state)), [slot c] (:slots t) :when (= clip-id (:clip-id c))]
@@ -240,7 +277,42 @@
                         1 {:status :executed :result {:track-id (:track-id (first found)) :created? false}}
                         (rejected :duplicate-tracks)))
       :watch-run-tracks (do (swap! live assoc :watched (vec (:track-ids payload)))
-                            {:status :executed :result {:watching (count (:track-ids payload))}})
+                            {:status :executed
+                             :result {:watching (count (:track-ids payload))
+                                      :watching-slots (* parameter-slots
+                                                         (reduce + (for [t (:tracks state) :when (some #{(:track-id t)} (:track-ids payload))]
+                                                                     (count (:parameter-devices t)))))}})
+      :configure-parameter-device
+      (let [[i code] (check-track state payload)
+            d (when i (device-on-track (get-in state [:tracks i]) (:device-id payload)))]
+        (cond
+          code (rejected code)
+          (nil? d) (rejected :stale-device)
+          (not= (:ordinal payload) (get-in state [:tracks i :parameter-devices d :ordinal])) (rejected :device-renamed)
+          (not (:relay? state)) (rejected :relay-unavailable)
+          :else (do (when (:device-applies? state)
+                      (swap! live update-in [:tracks i :parameter-devices d :parameters]
+                             (fn [ps] (reduce (fn [ps {:keys [index name type min max]}]
+                                                (update ps index #(assoc % :name name :min (double min) :max (double max)
+                                                                         :quantized? (not= :float (keyword type))
+                                                                         :value (clojure.core/max (double min) (clojure.core/min (double max) (:value %))))))
+                                              ps (:slots payload)))))
+                    {:status :executed :result {:device-id (:device-id payload) :relayed (count (:slots payload))}})))
+      :set-parameter-values
+      (let [[i code] (check-track state payload)
+            devices (when i (into {} (map-indexed (fn [n d] [(:ordinal d) n])) (get-in state [:tracks i :parameter-devices])))]
+        (cond
+          code (rejected code)
+          (some #(not (contains? devices (:device %))) (:values payload)) (rejected :parameter-device-missing)
+          :else (do (swap! live (fn [s]
+                                  (reduce (fn [s {:keys [device index value]}]
+                                            (-> s
+                                                (update-in [:tracks i :parameter-devices (devices device) :parameters index]
+                                                           (fn [p] (assoc p :value (clojure.core/max (:min p) (clojure.core/min (:max p) (double value)))
+                                                                          :automation-state (if (= 1 (:automation-state p)) 2 (:automation-state p)))))
+                                                (update :parameter-writes conj {:track-id (:track-id payload) :device device :index index :value value})))
+                                          s (:values payload))))
+                    {:status :executed :result {:written (count (:values payload))}})))
       :configure-track (let [[i code] (check-track state payload)]
                          (if code (rejected code)
                              (do (swap! live (fn [s]
@@ -259,6 +331,8 @@
                       (and (or (seq (get-in payload [:clip :controllers])) (some (comp seq :points) (:lanes payload)))
                            (not (:envelope-lanes? state)))
                       (rejected :controllers-unsupported)
+                      (some #(nil? (device-on-track (get-in state [:tracks i]) (:device-id %))) (:parameter-envelopes payload))
+                      (rejected :stale-device)
                       :else
                         (let [slot (or (:slot-index payload) (first-empty-slot (get-in state [:tracks i])))
                               scenes (:scenes state)
@@ -270,8 +344,11 @@
                             (let [id (next-id! live "clip")]
                               (when full? (swap! live update :scenes inc))
                               (swap! live assoc-in [:tracks i :slots slot]
-                                     {:clip-id id :name (:name payload) :looping? (get payload :looping? true)
-                                      :clip (with-lanes (:clip payload) (:lanes payload) nil)})
+                                     (cond-> {:clip-id id :name (:name payload) :looping? (get payload :looping? true)
+                                              :clip (with-lanes (:clip payload) (:lanes payload) nil)}
+                                       (seq (:parameter-envelopes payload))
+                                       (assoc :envelopes (into {} (map (fn [{:keys [device-id index points]}] [[device-id index] (vec points)]))
+                                                               (:parameter-envelopes payload)))))
                               {:status :executed :result {:clip-id id :slot-index slot :scene-created? (boolean full?)}})))))
       :place-clip (let [[i code] (check-track state payload)
                         found (find-clip state (:clip-id payload))
