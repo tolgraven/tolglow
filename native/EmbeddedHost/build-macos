@@ -20,10 +20,12 @@ echo '8240639e54a1270fbc11cd56b5f5f0d0ea4aab839a9b80c791978aef4522e01e  sqlite.j
 heap="${TOLGLOW_NATIVE_IMAGE_HEAP:-5g}"
 # Report the builder's memory and the machine's swap once a minute, so a slow
 # phase shows whether it is paging rather than deadlocked.
+descendants() { local child; for child in $(pgrep -P "$1"); do echo "$child"; descendants "$child"; done; }
 (
   start=$SECONDS
   while sleep 60; do
-    rss=$(ps -axo rss=,command= | awk -v java="$JAVA_HOME/bin/java" 'index($0, java) {kb += $1} END {printf "%.2f", kb / 1048576}')
+    pids=$(descendants $$ | paste -sd, -)
+    rss=$(ps -o rss= -p "${pids:-$$}" | awk '{kb += $1} END {printf "%.2f", kb / 1048576}')
     echo "[build-macos] $(( (SECONDS - start) / 60 )) min: builder RSS ${rss} GB, swap $(sysctl -n vm.swapusage | sed -E 's/.*used = ([^ ]+).*/\1/') used"
   done
 ) &
