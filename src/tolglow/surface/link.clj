@@ -341,6 +341,8 @@
                   :control-surface/attached {:surface-id surface-id}))))
 
 (defn- link [model current {:keys [link-id viewport members]}]
+  (when-not (and (vector? members) (every? map? members))
+    (reject! :invalid-link "Link members are a vector of {:surface-id :at}" {:link-id link-id}))
   (let [ids (map :surface-id members)
         surfaces (map #(get-in current [:surfaces %]) ids)
         viewport (or viewport (default-viewport current (first ids)))
@@ -450,19 +452,27 @@
     (update-state model update :surfaces #(update-vals % (fn [s] (assoc s :attached? false))))
     model))
 
+(defn- saved-surface? [id {:keys [viewports role attached?] :as s}]
+  ;; Geometry and viewport names must match the registered descriptor: the
+  ;; projection and every device read do arithmetic on them.
+  (let [{groups :viewports} (descriptor/descriptor (:descriptor s))]
+    (and (map? s) (id? id) (= id (:id s)) groups (keyword? role) (contains? #{nil true false} attached?)
+         (map? viewports) (= (set (keys viewports)) (set (keys groups)))
+         (every? (fn [[viewport v]]
+                   (and (= (get groups viewport) (:geometry v)) (content? (:content v)) (window? (:window v))))
+                 viewports))))
+
 (defn validate-state!
   "Validate saved surfaces and links before restoring them."
   [model]
   (let [{:keys [surfaces links]} (state model)]
     (when-not (and (map? surfaces) (map? links)
-                   (every? (fn [[id s]]
-                             (and (= id (:id s)) (descriptor/descriptor (:descriptor s))
-                                  (every? (fn [[_ v]] (and (content? (:content v)) (window? (:window v))))
-                                          (:viewports s))))
-                           surfaces)
+                   (every? (fn [[id s]] (saved-surface? id s)) surfaces)
                    (every? (fn [[id l]]
-                             (and (= id (:id l)) (window? (:window l)) (not (contains? surfaces id))
-                                  (every? #(and (get-in surfaces [(:surface-id %) :viewports (:viewport l)])
+                             (and (map? l) (id? id) (= id (:id l)) (keyword? (:viewport l)) (window? (:window l))
+                                  (not (contains? surfaces id))
+                                  (vector? (:members l)) (<= 2 (count (:members l)) 16)
+                                  (every? #(and (map? %) (get-in surfaces [(:surface-id %) :viewports (:viewport l)])
                                                 (position? (:at %)))
                                           (:members l))))
                            links)

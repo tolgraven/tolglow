@@ -5,6 +5,7 @@
             [afterglow.control.devices.session :as device-session]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [tolglow.persistence :as persistence]
             [tolglow.surface.link :as surface]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
@@ -271,6 +272,19 @@
     (is (= restarted (surface/validate-state! restarted)))
     (is (thrown? clojure.lang.ExceptionInfo
                  (surface/validate-state! (assoc-in restarted [:extensions ::surface/state :links "desk" :members 1 :surface-id] "gone"))))
+    (testing "stored shapes the projection does arithmetic on are refused"
+      (doseq [[path value] [[[:surfaces "m" :viewports :strips :geometry] nil]
+                            [[:surfaces "m" :viewports :strips :geometry] [16 1]]
+                            [[:surfaces "m" :viewports :bogus] {:geometry [8 1] :content {:type :none} :window {:x 0 :y 0}}]
+                            [[:surfaces "m" :role] "main"]
+                            [[:links "desk" :members] []]
+                            [[:links "desk" :members] [{:surface-id "m" :at {:x 0 :y 0}}]]
+                            [[:links "desk" :viewport] nil]]]
+        (is (thrown? clojure.lang.ExceptionInfo
+                     (surface/validate-state! (assoc-in restarted (into [:extensions ::surface/state] path) value)))
+            (pr-str path value))))
+    (is (= :invalid-link (:control/error (try (surface/apply-operation linked {:op :control-surface/link :link-id "z" :members 5})
+                                              (catch clojure.lang.ExceptionInfo e (ex-data e))))))
     (is (thrown? clojure.lang.ExceptionInfo
                  (surface/apply-operation linked {:op :control-surface/attach :surface-id "p" :descriptor :nope
                                                   :role :unit :viewports {}})))
@@ -279,3 +293,31 @@
     (is (= [{:surface-id "a" :at {:x 0 :y 0}} {:surface-id "b" :at {:x 1 :y 0}}]
            (surface/link-members ["a" "b"] {:mode :mirror :offset {:x 1 :y 0}}))
         "Mirror with an offset follows one page to the right")))
+
+(deftest loading-a-show-validates-links-and-detaches-surfaces
+  (let [{:keys [runtime] :as h} (harness)]
+    (try
+      (doseq [id ["m" "e"]]
+        (is (= :accepted (:status (submit! h :command {:op :control-surface/attach :surface-id id :descriptor :behringer/x-touch
+                                                       :role :main :viewports {:strips {:type :mixer-strips :cue-strips []}}})))))
+      (is (= :accepted (:status (submit! h :command {:op :control-surface/link :link-id "desk"
+                                                     :members (surface/link-members ["m" "e"] {})}))))
+      (let [document (show/export-show runtime)
+            current (:model @(:state runtime))
+            path [:model :extensions ::surface/state]]
+        (is (= ["desk"] (keys (get-in (persistence/thaw current document) [:extensions ::surface/state :links]))))
+        (is (= #{false} (set (map :attached? (vals (get-in (persistence/thaw current (assoc-in document (into path [:surfaces "m" :attached?]) true))
+                                                           [:extensions ::surface/state :surfaces])))))
+            "A restored show never claims a connected device")
+        (doseq [[edit why] [[#(assoc-in % (into path [:links "desk" :members 1 :surface-id]) "gone") "a link member that is not saved"]
+                            [#(assoc-in % (into path [:surfaces "m" :viewports :strips :geometry]) nil) "a geometry the descriptor lacks"]
+                            [#(assoc-in % [:model :settings :controllers :surfaces] {:follow-selection? "yes"}) "invalid settings"]]]
+          (is (thrown? clojure.lang.ExceptionInfo (persistence/thaw current (edit document))) why))
+        (testing "an import that would have broken every snapshot is refused and leaves the show alone"
+          ;; A hand-edited or foreign file: written without the save path's validation.
+          (let [source (#'persistence/encode-document
+                        (assoc-in document (into path [:links "desk" :members 1 :surface-id]) "gone"))
+                receipt (submit! h :import {:source source})]
+            (is (= [:rejected "Invalid control surfaces or links"] [(:status receipt) (:message receipt)]))
+            (is (= ["desk"] (mapv :id (filter :link? (:logical (surfaces runtime)))))))))
+      (finally (show/stop! runtime)))))
