@@ -223,7 +223,11 @@ low, gain (high), period or input, or a show variable, then set **From**,
 preferred or free beat ratios) and the **Knob start**/**Knob end** window, and
 select **Link**. Fractions such as `1/2` are accepted. Studio sends the same
 `:knob/*` commands and redraws from the committed `:knobs` projection, so a
-REPL `:knob/set` moves the open slider and values. A link that differs from the
+REPL `:knob/set` moves the open slider and values. While the slider is dragged
+one `:knob/set` per knob is in flight; turns made meanwhile collapse into the
+newest position, sent when the receipt arrives, so the owner admits them in
+order and ends on the last position. The slider shows the local position until
+a snapshot at or past the receipt's revision arrives. A link that differs from the
 knob, is shared with another knob, inactive or dangling says so under its
 name. The picker offers numeric destinations only; colour, enum and boolean
 links made from the REPL are shown and can be re-shaped, but their endpoints
@@ -280,6 +284,19 @@ each frame's beat, including exactly on and just below each ratio boundary in
 both directions. Halfway the pulse is half a beat long at half level. At the
 bright end it is a 1/16-beat pulse at full level. Other tests cover manual
 edits, an open gesture, ramp cancellation, two knobs on one destination,
-removal, command replay, a full backup round trip and dangling targets after
-reload. `tolglow.knobs-test` covers validation and every supported type
-without a running show.
+removal, command replay, a partial receipt when one derived write is refused,
+a full backup round trip and every dangling reason before and after reload.
+`tolglow.knobs-test` covers validation and every supported type without a
+running show, including `:direction :down` stepping exactly like a swapped
+range.
+
+## Room audition
+
+A Room draft (#531) cannot stage `:knob/*` commands, and the audition's private
+model carries no knobs, so an audition frame never commits knob or destination
+state. A knob turned while a draft is staged is a live edit after staging: it
+writes the live show, and the Room keeps the values the draft was staged with,
+as for any other live parameter edit. Applying the draft replays its steps on
+the live show, which keeps the knob and the values it last wrote.
+`tolglow.knob-sweep-test/a-room-audition-never-commits-knob-or-destination-state`
+checks this.
