@@ -364,3 +364,13 @@ top-row pads in the captured layout are shown.
 `tolglow.knob-presets-test` covers capture, recall and refusals on captured
 ArtDmx, Studio's command route and `/api/state`, a virtual Push 2 and a captured
 Push 3 layout, command replay and save/restore.
+
+`dev/tolglow/qa/knob_looks_browser.clj` drives the release Studio in headless
+Chrome against the preview-only demo show: it saves two looks from the strip,
+recalls the first, follows a REPL recall on the open page, checks 44 px touch
+targets on a tablet viewport, and renders a virtual Push 2's knob-look views
+through the Push capture worker.
+
+```
+CHROMIUM_PATH=... lein with-profile +dev run -m tolglow.qa.knob-looks-browser target/knob-looks-browser 4500
+```
