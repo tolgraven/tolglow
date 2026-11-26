@@ -26,10 +26,13 @@ try {
   await add('Through water');
   await add('Color gel');
   await panel.getByRole('button',{name:'Move Color gel earlier'}).tap();
-  const stage = panel.locator('.block-stage').nth(1);
+  // Address the water stage only once the reorder has rendered.
+  const stage = panel.locator('.block-stage').nth(1).filter({hasText:'2 · Through water'});
   await stage.getByLabel('Coordinates').selectOption({label:'Surface UV'});
   const wet = stage.getByRole('spinbutton',{name:'Wet amount',exact:true});
-  await wet.fill('0.4');await wet.blur();
+  // The tap on Write blurs the field, which commits the amount in the same task as the
+  // tap itself (as on an iPad). Both must reach the written stages.
+  await wet.fill('0.4');
   await panel.getByRole('button',{name:'Write stages to EDN'}).tap();
   await page.waitForFunction(() => document.querySelector('#definition-source').value.includes(':blocks'));
   const changed = await source.inputValue();
@@ -38,6 +41,7 @@ try {
   assert.ok(changed.includes(':coordinates :surface-uv'));
   assert.ok(changed.includes(':amount 0.4'));
   assert.ok(changed.indexOf(':optics/gel')<changed.indexOf(':optics/through-water'));
+  assert.match(changed,/\{:block :optics\/through-water,?\s+:coordinates :surface-uv,?\s+:amount 0\.4\}/);
   const ack = page.waitForResponse(response => response.url().endsWith('/api/definition') && response.request().method()==='POST');
   await page.getByRole('button',{name:'Validate & publish'}).tap();
   assert.equal((await ack).status(),200);

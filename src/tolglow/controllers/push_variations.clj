@@ -1,7 +1,10 @@
 (ns tolglow.controllers.push-variations
-  "Push interaction for the common cue parameter variation projection."
+  "Push interaction for the common cue parameter variation projection, and the
+  knob-look layout (#547) whose top pad row saves and recalls linked-knob
+  positions through the shared tolglow.knob-presets commands."
   (:require [tolglow.authoring.cue-variations :as ratios]
-            [tolglow.authoring.variation-control :as variations]))
+            [tolglow.authoring.variation-control :as variations]
+            [tolglow.knob-presets :as knob-presets]))
 
 (def ^:private ratio-grid
   (for [[y values] [[7 [1/8 1/6 1/4 1/3 3/8 1/2 2/3 3/4]]
@@ -122,22 +125,81 @@
                                                      :else [220 110 32])]))
                            (:cells view))}))))))
 
+(def knob-preset-row
+  "Pad row (bottom-left origin) that holds the eight knob looks."
+  7)
+
+(def knob-preset-colors
+  "Pad colours by slot state. A selected look whose knobs have since moved is
+  drawn in a paler tint than one that still matches."
+  {:empty [14 14 18] :stored [30 190 110] :selected [235 235 235] :selected-moved [120 150 255]})
+
+(defn- knob-preset-color [{:keys [state matches?]}]
+  (knob-preset-colors (cond (= :empty state) :empty
+                            (and (= :selected state) matches?) :selected
+                            (= :selected state) :selected-moved
+                            :else :stored)))
+
+(defn- knob-preset-projection
+  "Top-row cells from the shared knob-look projection. The view keeps each
+  slot's stored positions so a press can be refused if the slot changed."
+  [selection model prior]
+  (let [{:keys [slots] :as presets} (knob-presets/projection model)
+        key [selection presets]]
+    (if (= key (:cache-key prior))
+      prior
+      (let [cells (mapv (fn [{:keys [slot state matches? values knobs]}]
+                          (cond-> {:position [slot knob-preset-row] :slot slot :state state}
+                            (not= :empty state) (assoc :matches? matches? :values values
+                                                       :knobs (mapv #(select-keys % [:name :knob-id :text :missing?])
+                                                                    (take 4 knobs)))))
+                        slots)]
+        {:cache-key key
+         :view {:layout :knob-presets :cells cells}
+         :display {:layout :knob-presets :title "Knob looks"
+                   :cells (mapv #(-> (dissoc % :values) (assoc :label (str "Look " (inc (:slot %))))) cells)}
+         :colors (into {} (map (juxt :position knob-preset-color)) cells)}))))
+
+(defn- knob-preset-input
+  "Empty pad saves the knobs into it; a saved pad recalls it; Record with a
+  saved pad overwrites it. Cycle closes the overlay. Every command carries the
+  presented slot contents as :expected. Returns nil for events it leaves to Push."
+  [selection {:keys [action position]} {:keys [presented record?]}]
+  (cond
+    (= :variation/cycle action) {:state (when record? selection)}
+    action {:state selection}
+    ;; Other controls (encoders, transport) stay with Push.
+    (nil? position) nil
+    :else
+    (let [{:keys [slot state values] :as cell}
+          (some #(when (= position (:position %)) %) (:cells presented))]
+      {:state selection
+       :commands (when cell
+                   [(cond
+                      (= :empty state) {:op :knob-preset/capture :slot slot :expected nil}
+                      record? {:op :knob-preset/capture :slot slot :overwrite? true :expected values}
+                      :else {:op :knob-preset/recall :slot slot :expected values})])})))
+
 (defn- admitted-choice [presented op fields]
   (merge (select-keys presented [:instance-id :basis :layout :seed :row-page]) fields {:op op}))
 
 (defn- input [selection {:keys [action position]} model
-              {:keys [presented selected-instance record?]}]
+              {:keys [presented selected-instance record?] :as context}]
   (let [instance-id (:instance-id selection)]
     (cond
+      (= :knob-presets (:layout selection))
+      (knob-preset-input selection {:action action :position position} context)
+
       (= :variation/cycle action)
       (cond
         (and record? presented) {:state selection :commands [(admitted-choice presented :cue-variation/append {})]}
         record? {:state selection}
-        (= :rows (:layout selection)) {:state nil}
+        ;; Knob looks follow the cue layouts, or open first without a selected cue.
+        (= :rows (:layout selection)) {:state {:layout :knob-presets}}
         (= :full (:layout selection)) {:state (assoc selection :layout :rows)}
         (and selected-instance (get-in model [:instances selected-instance :cue-id]))
         {:state {:instance-id selected-instance :layout :full :row-page 0 :seed 0}}
-        :else {:state nil})
+        :else {:state {:layout :knob-presets}})
 
       (and selection (= :variation/ratio-mode action))
       (let [cue-id (get-in model [:instances instance-id :cue-id])
@@ -169,7 +231,12 @@
                            62 :variation/previous-page 63 :variation/next-page} controller)})]
     (input selection event model context)))
 
-(def pad-overlay {:input push-2-input :project projection})
+(defn- overlay-projection [selection model prior]
+  (if (= :knob-presets (:layout selection))
+    (knob-preset-projection selection model prior)
+    (projection selection model prior)))
+
+(def pad-overlay {:input push-2-input :project overlay-projection})
 
 (def push-3-pad-overlay
   {:open-encoder open-ratio-encoder
@@ -180,4 +247,4 @@
    :project (fn [selection model prior]
               (if (= :beat-ratios (:layout selection))
                 (ratio-projection selection model prior)
-                (projection selection model prior)))})
+                (overlay-projection selection model prior)))})
