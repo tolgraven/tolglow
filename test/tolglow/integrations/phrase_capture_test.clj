@@ -121,3 +121,16 @@
   (is (thrown? clojure.lang.ExceptionInfo
                (capture/validate-phrase {:phrase/version 1 :length-beats 4 :notes [{:id "n0" :cue-id :a :start 0 :length 1 :params {}}]
                                          :lanes [{:cue-id :b :param :x :points [{:beat 0 :value 1 :note "n0"}]}]}))))
+
+(deftest observe-model-applies-a-seek-before-the-commands-that-follow-it
+  (let [model (fn [beat time-ms order history]
+                {:epoch 0 :transport {:beat beat :bpm 120.0 :time-ms time-ms}
+                 :instances (into {} (for [{:keys [ack]} (vals history) :when (:instance-id ack)] [(:instance-id ack) {:phase :running}]))
+                 :control {:history-order order :history history}})
+        a (launch "a" "i1" :wash)
+        b (assoc-in (launch "b" "i2" :strobe) [:command :time-ms] 1000)
+        buffer (-> (capture/new-buffer {:bars 1})
+                   (capture/observe-model (model 9.0 4500 ["a"] {"a" (assoc-in a [:command :time-ms] 4500)}))
+                   (capture/observe-model (model 2.0 1000 ["a" "b"] {"a" (assoc-in a [:command :time-ms] 4500) "b" b})))]
+    (is (= 1 (:discontinuities buffer)))
+    (is (= [[:launch 2.0]] (mapv (juxt :kind :beat) (:events buffer))) "the launch after the seek keeps its own beat")))

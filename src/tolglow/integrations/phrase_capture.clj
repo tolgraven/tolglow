@@ -194,6 +194,10 @@
                     beat))
         history (get-in model [:control :history])
         buffer (if (not= (:epoch model) (:epoch buffer)) (reset-for-epoch buffer (:epoch model)) buffer)
+        ;; Apply a seek before this cycle's commands, which were accepted after it.
+        buffer (if (and (:last-beat buffer) (< beat (- (:last-beat buffer) 1e-9)))
+                 (advance-clock buffer {:beat beat :bpm bpm :meter meter})
+                 buffer)
         buffer (reduce (fn [buffer id]
                          (if (contains? (:seen buffer) id) buffer
                              (let [{:keys [command ack]} (get history id)
