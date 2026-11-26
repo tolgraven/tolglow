@@ -291,6 +291,53 @@
       {:db (-> db (update-in [:connections :pending] disj :live-runs)
                (assoc-in [:connections :live-runs] result))})))
 
+(rf/reg-event-fx :connections/live-runs-sync
+  (fn [{:keys [db]} _]
+    {:db (-> db (update-in [:connections :pending] (fnil conj #{}) :live-runs-sync)
+             (update-in [:connections :errors] dissoc :live-runs-sync))
+     :fx [[:studio/http {:path "/api/live-runs/sync" :body {} :timeout-ms 30000
+                         :on-success [:connections/live-runs-synced (token db) :live-runs-sync]
+                         :on-failure [:connections/failed (token db) :live-runs-sync]}]]}))
+
+(rf/reg-event-fx :connections/live-runs-synced
+  (fn [{:keys [db]} [_ request-token _ result]]
+    (when (current? db request-token)
+      {:db (-> db (update-in [:connections :pending] disj :live-runs-sync)
+               (assoc-in [:connections :live-runs-sync] result))
+       :dispatch-n [[:connections/live-runs-refresh] [:connections/parameter-devices-refresh]]})))
+
+;; Parameter devices on run tracks (#625): the projection show/live-parameter-devices returns.
+(rf/reg-event-fx :connections/parameter-devices-refresh
+  (fn [{:keys [db]} _]
+    {:db (-> db (update-in [:connections :pending] (fnil conj #{}) :parameter-devices)
+             (update-in [:connections :errors] dissoc :parameter-devices))
+     :fx [(req db :parameter-devices "/api/live-parameter-devices" nil :connections/parameter-devices-loaded)]}))
+
+(rf/reg-event-fx :connections/parameter-devices-loaded
+  (fn [{:keys [db]} [_ request-token _ result]]
+    (when (current? db request-token)
+      {:db (-> db (update-in [:connections :pending] disj :parameter-devices)
+               (assoc-in [:connections :parameter-devices] result))})))
+
+;; A shared parameter frame (#625): the view subscribes while mounted and reads
+;; the newest frame; the server renders once for every compatible view.
+(rf/reg-event-fx :connections/frame-subscribe
+  (fn [{:keys [db]} [_ request]]
+    {:fx [(req db :frame-preview "/api/parameter-frames/subscribe" (assoc request :consumer "studio-connections")
+               :connections/frame-subscribed)]}))
+
+(rf/reg-event-fx :connections/frame-subscribed
+  (fn [{:keys [db]} [_ request-token _ result]]
+    (when (current? db request-token)
+      {:db (assoc-in db [:connections :frame-preview] result)})))
+
+(rf/reg-event-fx :connections/frame-unsubscribe
+  (fn [{:keys [db]} [_ lease]]
+    {:db (update db :connections dissoc :frame-preview)
+     :fx (if lease [(req db :frame-preview "/api/parameter-frames/unsubscribe" {:lease lease} :connections/frame-unsubscribed)] [])}))
+
+(rf/reg-event-fx :connections/frame-unsubscribed (fn [_ _] nil))
+
 (rf/reg-event-fx :connections/launcher-refresh
   (fn [{:keys [db]} _]
     (let [page-id (get-in db [:ui :page-id])]
@@ -939,7 +986,89 @@
          (when-not setup
            [:p.small.muted "Connect the Live bridge, then Set up in Live (show/setup-live-launcher! at the REPL) to put a Drum Rack after the companion and name its pads."])])]]))
 
-(defn- live-runs-panel [s]
+(defn parameter-devices-text
+  "One line per channel's devices on its run tracks (the projection of
+  show/live-parameter-devices)."
+  [{:keys [cue-id devices slots tracks unsupported]}]
+  (let [placed (fn [{:keys [present missing stale]}]
+                 (cond (seq missing) (str "drop " (plural (count missing) "Tolglow parameters device" "Tolglow parameters devices") " here")
+                       (seq stale) "configuring"
+                       (seq present) "ready"
+                       :else "not synced"))]
+    (str (id-text cue-id) " · " (plural (count (remove :retired? slots)) "slot" "slots") " on " (plural devices "device" "devices")
+         (when (seq unsupported) (str " · " (count unsupported) " not in Live"))
+         (when (seq tracks) (str " · " (str/join ", " (map #(str (:track-name %) ": " (placed %)) tracks)))))))
+
+(defn slot-text
+  "A slot as Live shows it: name, range or choices, and unit."
+  [{:keys [name type min max choices unit places retired?]}]
+  (if retired?
+    (str name " (unused)")
+    (str name " · "
+         (if (= "enum" (id-text type))
+           (str/join " / " choices)
+           (str (if (number? min) (.toFixed min (if (= "int" (id-text type)) 0 (or places 3))) min) " – "
+                (if (number? max) (.toFixed max (if (= "int" (id-text type)) 0 (or places 3))) max)
+                (when unit (str " " unit)))))))
+
+(defn- frame-preview
+  "The shared parameter frame of one running instance, as the Live device
+  and the Push display can mount it too."
+  [instance-id param]
+  (let [tick (r/atom 0)
+        timer (atom nil)
+        mounted-lease (atom nil)]
+    (r/create-class
+     {:display-name "Shared parameter frame"
+      :component-did-mount
+      (fn [_]
+        (rf/dispatch [:connections/frame-subscribe {:instance-id instance-id :param param :window-beats 4
+                                                    :style "history" :width 320 :height 64
+                                                    :dpr (min 2 (max 1 (or js/window.devicePixelRatio 1)))}])
+        (reset! timer (js/setInterval #(swap! tick inc) 250)))
+      :component-will-unmount
+      (fn [_]
+        (js/clearInterval @timer)
+        (rf/dispatch [:connections/frame-unsubscribe @mounted-lease]))
+      :reagent-render
+      (fn [_ _]
+        (let [{:keys [lease shared?]} @(rf/subscribe [:connections/frame-preview])]
+          (reset! mounted-lease lease)
+          [:figure.parameter-frame
+           (when lease
+             [:img {:width 320 :height 64 :alt (str "Shared frame of " (id-text param))
+                    :src (str "/api/parameter-frames/frame?latest=true&lease=" (js/encodeURIComponent lease) "&n=" @tick)}])
+           [:figcaption.small.muted (str (id-text param) " · 4 beats" (when shared? " · shared with another view"))]]))})))
+
+(rf/reg-sub :connections/frame-preview (fn [db _] (get-in db [:connections :frame-preview])))
+
+(defn- parameter-devices-section [s instances]
+  (let [{:keys [channels counts sends] :as devices} (:parameter-devices s)]
+    [:div.parameter-devices
+     [:div.button-row
+      [:button#parameter-devices-refresh.button {:type "button" :disabled (contains? (:pending s) :parameter-devices)
+                                                 :on-click #(rf/dispatch [:connections/parameter-devices-refresh])} "Show parameter devices"]]
+     (when devices
+       [:<>
+        (into [:ul.parameter-device-channels]
+              (for [[index {:keys [cue-id slots banks] :as channel}] (map-indexed vector channels)
+                    :let [running (some #(when (= (id-text cue-id) (id-text (:cue-id %))) %) instances)
+                          first-slot (first (remove :retired? slots))
+                          ;; One preview at a time: the first channel with a running instance.
+                          previewed (first (keep-indexed (fn [i c] (when (some #(= (id-text (:cue-id c)) (id-text (:cue-id %))) instances) i)) channels))]]
+                ^{:key (str cue-id)}
+                [:li [:span.small (parameter-devices-text channel)]
+                 (into [:ol.parameter-device-slots {:aria-label (str (id-text cue-id) " slots")}]
+                       (for [slot slots] ^{:key (:slot slot)} [:li.small (slot-text slot)]))
+                 [:p.small.muted (str "Banks: " (str/join " | " (map #(str/join " " (map (fn [i] (inc (mod i 32))) %)) (first banks))))]
+                 (when (and running (= index previewed) first-slot (#{"float" "int"} (id-text (:type first-slot))))
+                   ^{:key (str (:id running) (:param first-slot))}
+                   [frame-preview (:id running) (id-text (:param first-slot))])]))
+        [:p.small.muted (str "Values from Live: " (or (:applied counts) 0) " applied · " (or (:echo counts) 0) " echoes dropped · "
+                             (or (:held counts) 0) " held by Tolglow · Tolglow writes sent: " (or (:executed sends) 0)
+                             (when (pos? (or (:failed sends) 0)) (str " (" (:failed sends) " not sent)")))]])]))
+
+(defn- live-runs-panel [s instances]
   (let [{:keys [channels mirror] :as runs} (:live-runs s)]
     [:section.panel {:aria-label "Live runs"}
      [:div.panel-top [:span.section-label "LIVE RUNS"]]
@@ -947,7 +1076,9 @@
       [:p.small.muted "What actually ran: one channel per launched cue, one take per run, a lane for each overlapping run, grouped as the effect groups are. Each take becomes one clip on its cue's run track in Live."]
       [:div.button-row
        [:button#live-runs-refresh.button {:type "button" :disabled (contains? (:pending s) :live-runs)
-                                          :on-click #(rf/dispatch [:connections/live-runs-refresh])} "Show what ran"]]
+                                          :on-click #(rf/dispatch [:connections/live-runs-refresh])} "Show what ran"]
+       [:button#live-runs-sync.button {:type "button" :disabled (or (contains? (:pending s) :live-runs-sync) (not (get-in s [:sync :active?])))
+                                       :on-click #(rf/dispatch [:connections/live-runs-sync])} "Sync to Live"]]
       (when runs
         [:<>
          [:p.small {:role "status"} (live-runs-text runs)]
@@ -963,7 +1094,9 @@
          (for [{:keys [code name]} (:problems mirror)]
            ^{:key (str code name)} [:p.connection-error.small (str (cljs.core/name code) (when name (str " · " name)))])
          (when-not mirror
-           [:p.small.muted "Mirror the record into Live from the REPL with show/sync-live-runs!; this panel then shows each take's clip."])])]]))
+           [:p.small.muted "Sync to Live (show/sync-live-runs! at the REPL) mirrors the record into Live; this panel then shows each take's clip."])])
+      [:p.small.muted "A Tolglow parameters device on a run track shows that effect's parameters as Studio does. Live automation on it steers the run; Sync writes each take's moves as its envelopes."]
+      [parameter-devices-section s instances]]]))
 
 (defn connection-view [db s]
   (let [active? (boolean (get-in s [:sync :active?])) pending? (boolean (seq (:pending s))) disabled? (or (nil? (:sync s)) active? pending?)]
@@ -989,7 +1122,7 @@
                                           @(rf/subscribe [:show-window/preview-only])) "Connect enabled adapters"]
        [:button#sync-stop.button {:type "button" :disabled (or (not active?) pending?) :on-click #(rf/dispatch [:connections/action :stop])} "Disconnect"]]]
      [:div.connections-layout [midi-panel s disabled?] [beat-link-panel s disabled?] [link-panel s disabled?]
-      [live-panel s (get-in db [:show :cues]) disabled?] [launcher-panel s] [capture-panel s] [live-runs-panel s] [audio-panel s] [section-reference-panel s]
+      [live-panel s (get-in db [:show :cues]) disabled?] [launcher-panel s] [capture-panel s] [live-runs-panel s (get-in db [:show :instances])] [audio-panel s] [section-reference-panel s]
       [capacity/panel (contains? (:pending s) :lighting-capacity)] [fog-control/panel (contains? (:pending s) :fog-control)] [output-panel db s] [pause-panel (contains? (:pending s) :pause)]]
      [audio-lfo/panel]
      [compute-client/panel]
