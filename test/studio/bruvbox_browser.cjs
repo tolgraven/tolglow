@@ -260,7 +260,51 @@ const crypto = require('node:crypto');
     assert.equal(lifecycle.notifiedPerEdit, 1);
     assert.deepEqual(lifecycle.stopped, [{ value: false }, false]);
     assert.deepEqual(lifecycle.failures, [closedNotice]);
+
+    // A finding is visible while typing: its message on its line and its own underline colour.
+    const display = await page.evaluate(async source => {
+      const { NeovimEngine } = await globalThis.tolglowLoadEngine('neovim');
+      const host = document.createElement('div');
+      host.style.cssText = 'position:fixed;inset:20px;width:800px;height:420px;z-index:1000';
+      document.body.append(host);
+      const failures = [];
+      const editor = new NeovimEngine(host, { pinBuffer: true, fileName: '/home/user/cue.clj', onError: error => failures.push(error) });
+      const until = async (ready, what) => {
+        for (let wait = 0; !ready(); wait++) {
+          if (wait > 150) throw new Error('Timed out waiting for ' + what);
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+      };
+      const rowText = row => editor.cells[row].map(([text]) => text).join('');
+      try {
+        await editor.start(source);
+        await editor.send('i');
+        await until(() => editor.currentMode.startsWith('insert'), 'insert mode');
+        const draft = await editor.draft();
+        const line = draft.source.split('\n')[1], token = line.indexOf('oops');
+        const col = new TextEncoder().encode(line.slice(0, token)).length;
+        const applied = await editor.setDraftDiagnostics(draft, [{ lnum: 1, col, end_col: col + 4, message: 'Unable to resolve symbol: oops', severity: 1 }]);
+        await until(() => editor.cells.some((_, row) => rowText(row).includes('Unable to resolve symbol: oops')), 'the finding message on screen');
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const row = editor.cells.findIndex((_, r) => rowText(r).trimStart().startsWith('2 '));
+        const numberWidth = rowText(row).indexOf('(');
+        const screenCol = numberWidth + Array.from(line.slice(0, token)).length;
+        const cell = editor.cells[row][screenCol], hl = editor.highlights[cell[1]] || {};
+        const ratio = editor.ratio, x = Math.floor((screenCol + 0.5) * editor.cellWidth * ratio), y = Math.floor((row * editor.cellHeight + 15.5) * ratio);
+        const [r, g, b] = editor.canvas.getContext('2d').getImageData(x, y, 1, 1).data;
+        return { applied, mode: editor.currentMode, messageRow: editor.cells.findIndex((_, r) => rowText(r).includes('Unable to resolve symbol: oops')), row,
+          cell: cell[0], underlined: Boolean(hl.underline || hl.undercurl), special: hl.special, pixel: (r << 16) | (g << 8) | b, failures };
+      } finally { editor.stop(); host.remove(); }
+    }, '(def a 1)\n(def label "Cue ☃" oops)\n(def c 3)');
+    assert.equal(display.applied, true);
+    assert.ok(display.mode.startsWith('insert'));
+    assert.equal(display.messageRow, display.row);
+    assert.equal(display.cell, 'o');
+    assert.equal(display.underlined, true);
+    assert.equal(typeof display.special, 'number');
+    assert.equal(display.pixel, display.special);
+    assert.deepEqual(display.failures, []);
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ status: 'passed', checks: ['pinned theme source hashes', 'native Bruvbox name and highlight RGB values', 'native 16-color terminal palette', 'actual buffer and cursor preserved', 'shared CSS palette', 'pinned cue across native scratch windows', 'UTF-8 draft digest and changedtick', 'stale and racing diagnostics rejected', 'owned diagnostics cleared on edit', 'one observer through reload, unload and reopen', 'late replies to a closed or stopped editor refused', 'clean browser/editor teardown'], native: result.native, css: result.css }, null, 2));
+    console.log(JSON.stringify({ status: 'passed', checks: ['pinned theme source hashes', 'native Bruvbox name and highlight RGB values', 'native 16-color terminal palette', 'actual buffer and cursor preserved', 'shared CSS palette', 'pinned cue across native scratch windows', 'UTF-8 draft digest and changedtick', 'stale and racing diagnostics rejected', 'owned diagnostics cleared on edit', 'one observer through reload, unload and reopen', 'late replies to a closed or stopped editor refused', 'finding message and underline shown while typing', 'clean browser/editor teardown'], native: result.native, css: result.css }, null, 2));
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

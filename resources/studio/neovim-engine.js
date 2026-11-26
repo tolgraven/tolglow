@@ -10,6 +10,9 @@ const observePinnedBuffer = `
   local buf = ...
   local api = vim.api
   local namespace = api.nvim_create_namespace('tolglow-cue-draft')
+  -- The sign column is off, so a finding shows its message at the end of its line,
+  -- also while typing: each finding belongs to the exact changedtick it was set for.
+  vim.diagnostic.config({virtual_text=true, underline=true, signs=false, update_in_insert=true}, namespace)
   local attached = false
   local attach
   local function changed()
@@ -251,7 +254,7 @@ export class NeovimEngine {
       const cursor = row === this.cursor[0] && col === this.cursor[1]; if (cursor && !this.currentMode.startsWith('insert')) [fg, bg] = [bg, fg];
       ctx.fillStyle = color(bg); ctx.fillRect(col * this.cellWidth, row * this.cellHeight, this.cellWidth + .3, this.cellHeight);
       ctx.fillStyle = color(fg); ctx.font = `${hl.italic ? 'italic ' : ''}${hl.bold ? 'bold ' : ''}12px monospace`; ctx.fillText(text, col * this.cellWidth, row * this.cellHeight + 2);
-      if (hl.underline || hl.undercurl) ctx.fillRect(col * this.cellWidth, row * this.cellHeight + 15, this.cellWidth, 1);
+      if (hl.underline || hl.undercurl) { ctx.fillStyle = color(hl.special ?? fg); ctx.fillRect(col * this.cellWidth, row * this.cellHeight + 15, this.cellWidth, 1); }
       if (cursor && this.currentMode.startsWith('insert')) { ctx.fillStyle = color(fg); ctx.fillRect(col * this.cellWidth, row * this.cellHeight, 2, this.cellHeight); }
     }
   }
