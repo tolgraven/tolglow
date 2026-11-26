@@ -132,9 +132,12 @@
   [model clock]
   (if-let [held (get-in model [:transport :held-ms])] (assoc clock :held-ms held) clock))
 
-(defn- show-clock
-  "Host milliseconds less the time the transport has been stopped: the show's
-  millisecond coordinate. Beats already stand still with the transport."
+(defn show-clock
+  "Host milliseconds less the time the transport has been stopped
+  ([:transport :held-ms], grown by tolglow.clock/hold): the show's millisecond
+  coordinate, continuous and nondecreasing. Beats already stand still with the
+  transport. Unchanged for a show that has never stopped. The energy conductor
+  also decides and slews on it."
   [model clock]
   (let [held (held-ms (:transport model))]
     (cond-> clock (and (pos? held) (time/finite-number? (:time-ms clock))) (update :time-ms - held))))

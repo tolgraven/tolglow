@@ -74,6 +74,7 @@ before commands and advancement:
 | Scheduler ramps with `:over {:ms …}` | `:start` and `:end` shift by the held interval. |
 | Response envelopes | Millisecond start/release anchors shift. Each selected instance samples its private clock plus its `:system :transport-held-ms`, so a stop holds the response for every instance while an explicit pause still holds it for that instance only. |
 | Routing ADSR envelopes | Millisecond start/release anchors in `[:routing :state :routes]` shift (`integrations.patch/hold-clock`). Beat envelopes already stand still, so both units hold. A gate that opens during a stop starts its attack on play. |
+| Energy conductor | Its decision cadence, pending corrections and target slew (`:target-response`) read the show clock, so a millisecond `:interval` keeps its place across a stop: no decision is due on play. No decision fires while stopped, and the slew holds its value (it already held while `:playing?` was false; the stop and play frames each count as held). Its observation of delivered light keeps the host clock and, like its rolling statistics, counts only intervals that began playing. |
 | Auto planner with a millisecond interval | Interval timer and `:next-at-ms` shift. Beat intervals already wait for play. |
 | Millisecond sequences | Unchanged: their logical clock accumulates only intervals that began playing. |
 | Spatial physics | Unchanged: the simulation reads `:playing?` and advances no physical time while stopped. |
@@ -113,8 +114,8 @@ These keep the wall clock on purpose, because they are not show progress:
 `tolglow.transport-pause-test` checks each category through the real show owner
 and a capture sink: start the change, stop part-way, hold five seconds, play,
 and require the output to stay frozen and continue without a jump. Beat
-scenarios, the global millisecond oscillator and both routing envelope units
-run at 70, 120 and 180 BPM. The held show clock also survives a backup round
+scenarios, the global millisecond oscillator, both routing envelope units and
+the energy conductor's slew and cadence run at 70, 120 and 180 BPM. The held show clock also survives a backup round
 trip, and a show saved without it reads host time as before.
 
 ## Covered state

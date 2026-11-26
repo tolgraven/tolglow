@@ -695,3 +695,65 @@
     (doseq [bad [-1 ##Inf "2500"]]
       (is (thrown? clojure.lang.ExceptionInfo (files/validate-model (assoc-in saved [:transport :held-ms] bad)))
           (pr-str bad)))))
+
+;; The energy conductor moves the show too: its target slew and its decision
+;; cadence run on the held show clock.
+
+(defn- conductor-runtime [bpm]
+  (let [ids [:a :b :c :d]
+        fixture (fn [id address] {:id id :universe 1 :address address :position [(* 0.5 (dec address)) 0 0]
+                                  :channels {:dimmer 1} :groups [:stage] :max-watts 100
+                                  :measured-relative-brightness 1.0})
+        looks {:full {:id :full :version 1 :targets ids :params {} :outputs {:dimmer 1.0}}
+               :conduct {:id :conduct :version 1 :targets [] :params {} :outputs {} :show-control? true}}]
+    (show/create-runtime
+      {:model (assoc (control/new-show {:show-id :pause-conductor :transport {:playing? true :beat 0.0 :bpm bpm}
+                                        :registry {:effects looks
+                                                   :cues (into {} (for [id (keys looks)] [id {:id id :version 1 :effect-id id}]))}})
+                     :rig {:fixtures (mapv fixture ids (range 1 5))})
+       :workspace-options nil})))
+
+(defn- conduct! [rt settings]
+  (launch! rt 0 :full)
+  (submit! rt 0 :settings {:scope :autopilot
+                           :values (merge {:enable-cue :conduct :scope {:group-id :stage} :strategy :instant :seed 71
+                                           :targets {:brightness 0.5 :activity 0.23} :window {:bars 1}}
+                                          settings)})
+  (launch! rt 0 :conduct))
+
+(defn- conductor-scenario [bpm settings sample]
+  (let [rt (conductor-runtime bpm)]
+    (try
+      (let [frames (run-scenario rt {:setup! #(conduct! % settings) :sample sample})]
+        {:frames frames :class (classify frames)})
+      (finally (show/stop! rt)))))
+
+(defn- slewed-brightness [rt]
+  (Math/round (* 1000.0 (get-in (show/snapshot rt) [:autopilot :targets :brightness] 1.0))))
+
+(defn- decisions [rt]
+  (get-in (show/snapshot rt) [:autopilot :decision :decision] 0))
+
+(deftest the-conductor-target-slew-pauses-with-the-transport
+  (doseq [bpm tempos
+          release [{:ms 4000} {:beats 8}]]
+    (let [{:keys [frames class]} (conductor-scenario bpm {:interval {:beats 1} :target-response {:release release}}
+                                                     slewed-brightness)]
+      (is (< 500 (value-at frames stop-at) 1000) (pr-str bpm release frames))
+      (is (= :frozen class) (pr-str bpm release frames))
+      (is (falling-after-play? frames) (pr-str bpm release)))))
+
+(deftest the-conductor-decides-on-show-time-and-not-while-stopped
+  (doseq [bpm tempos]
+    (testing "a millisecond cadence keeps its place: no decision is due on play"
+      (let [{:keys [frames class]} (conductor-scenario bpm {:interval {:ms 1500}} decisions)
+            stopped (value-at frames stop-at)]
+        (is (= :frozen class) (pr-str bpm frames))
+        ;; Decisions at 0 and 1.5 s; the next falls due at 3 s of show time, 8 s of host time.
+        (is (= 2 stopped) (pr-str bpm frames))
+        (is (= stopped (value-at frames (+ play-at 900))) (pr-str bpm frames))
+        (is (= (inc stopped) (value-at frames (+ play-at 1000))) (pr-str bpm frames))))
+    (testing "a musical cadence"
+      (let [{:keys [frames class]} (conductor-scenario bpm {:interval {:beats 1}} decisions)]
+        (is (= :frozen class) (pr-str bpm frames))
+        (is (rising-after-play? frames) (pr-str bpm))))))

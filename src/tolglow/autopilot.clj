@@ -101,13 +101,17 @@
             model (if changed? (stop-run model prior time-ms command) model)
             prior (when-not changed? prior)
             clock (assoc (time/frame-clock (assoc model :time-ms time-ms)) :epoch (:epoch model))
+            ;; Decisions and target slews move the show, so they run on show
+            ;; time and stand still while the transport is stopped (#702).
+            ;; Observation of delivered light keeps the host clock.
+            show-clock (signal/show-clock model clock)
             context {:start-clock (or (:start-clock prior) (signal/origin model clock)) :modulation-view modulation-view
                      :prepared (signal/prepare (:signals previous-cache) (:waveforms model))}
             model (assoc model :time-ms time-ms)
             requested (config/targets model opts context)
             knobs (config/policy-values model opts context)
             previous-state (:controller prior)
-            due? (and (not suspended?) (controller/due? previous-state clock (:epoch model) knobs))
+            due? (and (not suspended?) (controller/due? previous-state show-clock (:epoch model) knobs))
             previous-report (or (:statistics prior)
                                 (when (metered-frame? meter last-frame)
                                   (let [baseline (get-in (activity/advance-scene-meter nil patch (:scoped-meter plan)
@@ -119,12 +123,12 @@
                       {:brightness (get-in previous-report [:brightness :instant])
                        :activity (get-in previous-report [:activity :instant])})
             response (target-response/advance (:target-response prior)
-                       (cond-> clock suspended? (assoc :playing? false)) requested initial (:target-response opts))
+                       (cond-> show-clock suspended? (assoc :playing? false)) requested initial (:target-response opts))
             targets (:targets response)
             sources (when due? (read-sources plan (force raw-frame)))
             result (when due?
                      (controller/advance previous-state
-                       {:clock clock :epoch (:epoch model) :sources sources :targets targets
+                       {:clock show-clock :epoch (:epoch model) :sources sources :targets targets
                         :statistics previous-report :cue-ids (:cue-ids plan) :options knobs}))
             action-state (or (:actions prior) (actions/initial-state model scope))
             performed (perform model action-state (:actions result) time-ms command)
