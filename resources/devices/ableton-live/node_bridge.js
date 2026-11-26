@@ -125,7 +125,7 @@ function createBridge({ sendToMax, log = () => {}, timeoutMs = 3000, maxBody = 6
   function forward(event) {
     if (!server && event && event.kind === "status") return Promise.resolve({ "not-forwarded": "bridge-stopped" });
     if (!server) return Promise.reject(new Error("Start the bridge before forwarding Live input"));
-    if (!event || !["midi", "status", "handoff", "parameter", "parameter-error"].includes(event.kind)) return Promise.reject(new Error("Unknown Live callback kind"));
+    if (!event || !["midi", "run-clip", "status", "handoff", "parameter", "parameter-error"].includes(event.kind)) return Promise.reject(new Error("Unknown Live callback kind"));
     if (!syncSessionId && event.kind === "status") return Promise.resolve({ "not-forwarded": "awaiting-sync-handshake" });
     if (!syncSessionId) return Promise.reject(new Error("A successful inspect sync handshake is required before forwarding Live input"));
     // Capture ownership now. Queued callbacks are never rebound to a newer run.

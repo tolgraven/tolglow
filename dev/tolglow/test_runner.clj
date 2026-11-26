@@ -45,6 +45,7 @@
     tolglow.integrations.live-sync-test tolglow.integrations.phrase-capture-test tolglow.integrations.phrase-clip-test
     tolglow.integrations.live-connection-test tolglow.integrations.live-capture-roundtrip-test
     tolglow.integrations.live-companion-contract-test tolglow.integrations.phrase-capture-host-test
+    tolglow.integrations.live-runs-test
     tolglow.studio.link-pause-test tolglow.studio.sync-host-test tolglow.studio.modulation-host-test
     tolglow.studio.display-test tolglow.integrations.patch-test tolglow.studio.routing-host-test tolglow.studio.stem-routing-host-test
     tolglow.repl-test tolglow.repl.sessions-test tolglow.studio.repl-host-test

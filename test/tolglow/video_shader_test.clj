@@ -62,10 +62,13 @@
 
 (defn- log-of [renderer] @(:log (meta renderer)))
 
-(defn- eventually [pred & [timeout-ms]]
+(defn- eventually
+  "Poll pred until truthy or the timeout. A predicate that throws (say, on a
+  frame that has not arrived yet) counts as false and is retried."
+  [pred & [timeout-ms]]
   (let [deadline (+ (System/currentTimeMillis) (or timeout-ms 3000))]
     (loop []
-      (or (pred)
+      (or (try (pred) (catch Exception _ nil))
           (when (< (System/currentTimeMillis) deadline)
             (Thread/sleep 5)
             (recur))))))
@@ -142,7 +145,7 @@
           (is (pos? (get-in (producer/status p) [:instances 0 :unchanged])))))
       (testing "new committed uniforms reach the next slot"
         (producer/sync! p {"a" (request {:uniforms {"u_time" 0.1 "u_beats" 0.0 "u_level" 1.0}})})
-        (is (eventually #(= 255 (second (source/rgb-at (get-in (producer/frames p) [:frames :shader/index-strip]) 0 0))))))
+        (is (eventually #(some-> (get-in (producer/frames p) [:frames :shader/index-strip]) (source/rgb-at 0 0) second (= 255)))))
       (testing "a feed resolves to its newest-launched instance; each instance keeps its own frame"
         (producer/sync! p {"a" (request {:uniforms {"u_time" 0.1 "u_beats" 0.0 "u_level" 1.0}})
                            "b" (request {:order 2 :uniforms {"u_time" 0.0 "u_beats" 0.0 "u_level" 0.0}})})
@@ -175,7 +178,7 @@
         (is (re-find #"oops" (get-in row [:error :log])))
         (is (:last-working? row)))
       (testing "the last working program renders the new values of the uniforms it shares"
-        (is (eventually #(= 255 (second (source/rgb-at (get-in (producer/frames p) [:frames :shader/index-strip]) 0 0)))))
+        (is (eventually #(some-> (get-in (producer/frames p) [:frames :shader/index-strip]) (source/rgb-at 0 0) second (= 255))))
         (is (= index-glsl (first (last (:renders (log-of r)))))))
       (is (= 1 (count (filter #{index-glsl} (:compiles (log-of r))))) "A failed version is not recompiled every slot")
       (finally (producer/stop! p) (producer/close-renderer r)))))
@@ -324,7 +327,8 @@
       (is (= (set (map #(str "i" %) (range 2 10)))
              (set (map :instance-id (:instances (producer/status p))))))
       (is (= ["i0" "i1"] (:refused (producer/status p))) "The oldest launches stop rendering")
-      (is (eventually #(= 230 (second (source/rgb-at (get-in (producer/frames p) [:frames :shader/index-strip]) 0 0))))
+      (is (eventually #(when-let [f (get-in (producer/frames p) [:frames :shader/index-strip])]
+                         (= 230 (second (source/rgb-at f 0 0)))))
           "The feed shows the newest launch, which renders")
       (testing "the pixel-rate budget also admits newest first"
         (producer/sync! p {"small" (request {:order 1})
@@ -395,7 +399,7 @@
 (defn- tick-until [runtime t pred]
   (loop [t' t]
     (show/tick! runtime t')
-    (cond (pred) t'
+    (cond (try (pred) (catch Exception _ nil)) t'
           (> t' (+ t 10000)) (throw (ex-info "Condition never held" {}))
           :else (do (Thread/sleep 10) (recur (+ t' 25))))))
 

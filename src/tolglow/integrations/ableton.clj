@@ -195,7 +195,12 @@
   envelope with command/show/epoch/time and any ingress source identity.
   Return owner receipts through acknowledge-launch. Held grid launches release
   through the show owner by launch command ID. Echoed feedback and unmapped or
-  other-channel input yield no commands. Live mode transfers surface ownership."
+  other-channel input yield no commands. Live mode transfers surface ownership.
+  Commands carry origin :live-playback (MIDI a Live clip played) unless the
+  companion marks the event :live-input: a performer playing through Live
+  while the companion's track plays no clip (#683). Live-input commands are
+  performances: Capture and the run record keep them, and they are never
+  recorded back into Live, which already has its input."
   ([state event envelope] (midi->commands state event envelope nil))
   ([state {:keys [type note velocity controller value channel origin time-ms] :as event} envelope resolved-instance]
    (when-not (and (integer? channel) (<= 1 channel 16)
@@ -204,7 +209,8 @@
                     :cc (and (midi-number? controller) (midi-number? value))
                     false))
      (fail! "Invalid MIDI event" {:event event}))
-   (let [off? (or (= type :note-off) (and (= type :note-on) (zero? (or velocity 0))))
+   (let [envelope (cond-> envelope (= :live-input origin) (assoc-in [:source :origin] :live-input))
+         off? (or (= type :note-off) (and (= type :note-on) (zero? (or velocity 0))))
          mapping (get-in state [:mappings note])
          grid (get mapping :grid (:launch-grid state))
          held-key (if grid [(get-in envelope [:source :source-id]) note] note)
@@ -352,8 +358,7 @@
                     [controller mapping]))
         recording-key [(:show-id cmd) (:epoch cmd) (:command-id cmd)]
         suppressed? (or (not= :accepted (:status ack)) (not= (:command-id cmd) (:command-id ack))
-                        (= :live-playback (get-in cmd [:source :origin]))
-                        (= :tolglow-feedback (get-in cmd [:source :origin]))
+                        (#{:live-playback :live-input :tolglow-feedback} (get-in cmd [:source :origin]))
                         (contains? (:recorded state) recording-key))
         armed? (and (every? true? ((juxt :track-armed? :recording? :writable?) recording))
                     (:destination-id recording))

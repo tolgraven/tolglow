@@ -329,7 +329,7 @@
 (defn- get-routes
   [{:keys [snapshot! materials! definition! export! heartbeat! provider-get! chat-history! patch! checkpoint!
            app-agent! fixture! rdm! audio! video! sync! section-reference! waveform! workspace! terminal! sensor! repl! calibration! photometry! fog-calibration! event-subscribers! show-identity!
-           capture!]}]
+           capture! live-runs!]}]
   (merge
    {;; The runtime, show and epoch a window binds to before it loads Studio (#669).
     "/api/identity" (available show-identity! "Show identity unavailable" (fn [_] (ok (show-identity!))))
@@ -368,6 +368,7 @@
     "/api/audio/returns" (read-action audio! :return-status "Audio service unavailable")
     "/api/sync" (read-action sync! :status "Synchronization unavailable")
     "/api/capture" (read-action capture! :status "Phrase capture unavailable")
+    "/api/live-runs" (read-action live-runs! :status "Run record unavailable" #(query-fields % {:limit nil}))
     "/api/capture/last.mid" (available capture! "Phrase capture unavailable"
                                        (fn [_]
                                          (let [{:keys [filename bytes]} (capture! :smf {})]
