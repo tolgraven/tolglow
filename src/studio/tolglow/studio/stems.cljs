@@ -23,9 +23,12 @@
 (defn- text [event] (.. event -target -value))
 
 (defn form-rows
-  "Editable stem rows from a saved capture configuration."
+  "Editable stem rows from a saved capture configuration. Detector settings
+  set from the REPL ride along unchanged as :overrides."
   [config]
-  (mapv (fn [{:keys [id channel preset]}] {:id (wire id) :channel (str channel) :preset (if preset (wire preset) "full")})
+  (mapv (fn [{:keys [id channel preset] :as stem}]
+          (cond-> {:id (wire id) :channel (str channel) :preset (if preset (wire preset) "full")}
+            (seq (dissoc stem :id :channel :preset)) (assoc :overrides (dissoc stem :id :channel :preset))))
         (:stems config)))
 
 (defn payload
@@ -34,13 +37,13 @@
   [rows channels]
   (when (seq rows)
     (when (> (count rows) max-stems) (throw (js/Error. "Use at most 16 stems.")))
-    (let [stems (mapv (fn [{:keys [id channel preset]}]
+    (let [stems (mapv (fn [{:keys [id channel preset overrides]}]
                         (let [id (str/trim (str id)) n (js/Number channel)]
                           (when-not (re-matches #"[a-z][a-z0-9-]{0,31}" id)
                             (throw (js/Error. (str "Name stems in lowercase, such as kick or bass-di (\"" id "\")."))))
                           (when-not (and (js/Number.isInteger n) (<= 1 n channels))
                             (throw (js/Error. (str "Stem " id " needs a channel from 1 to " channels "."))))
-                          {:id (keyword id) :channel n :preset (keyword (or (not-empty preset) "full"))}))
+                          (merge overrides {:id (keyword id) :channel n :preset (keyword (or (not-empty preset) "full"))})))
                       rows)]
       (when-not (apply distinct? (map :id stems)) (throw (js/Error. "Each stem needs its own name.")))
       stems)))
@@ -135,38 +138,45 @@
          [:button.button {:type "button" :disabled (or busy? (str/blank? cue) (str/blank? param))
                           :on-click #(rf/dispatch [:stems/route-level stem cue param])} "Drive with level"]]))))
 
-(defn- stem-card
-  "One live stem. The onset lamp lights for a moment whenever the onset count
-  advances between status updates."
+(defn- onset-lamp
+  "Lights for a moment whenever the onset count advances. The timer starts
+  in the update lifecycle and is cleared on unmount; render stays pure."
   []
-  (let [seen (r/atom {:count nil :lit-until 0})]
-    (fn [{:keys [id channel preset]} feature routes show busy?]
-      (let [count (:onset-count feature) now (js/Date.now)
-            _ (when (and (number? count) (not= count (:count @seen)))
-                (reset! seen {:count count :lit-until (if (some? (:count @seen)) (+ now 180) 0)})
-                (js/setTimeout #(swap! seen assoc :tick (js/Date.now)) 200))
-            lit? (< now (:lit-until @seen))
-            stem (wire id) level (max 0 (min 1 (or (:level feature) 0)))]
-        [:article.stem-card {:aria-label (str "Stem " stem)}
-         [:div.stem-head
-          [:i.stem-onset {:class (when lit? "lit") :aria-hidden true}]
-          [:strong stem]
-          [:span.stem-meta (str "Ch " channel " · " (get preset-labels (keyword (wire preset)) (wire preset)))]]
-         [:div.stem-level
-          [:meter {:min 0 :max 1 :value level :aria-label (str stem " level")}]
-          [:span (level-text (:level-db feature))]]
-         [:div.stem-metrics
-          [:div [:small "Onsets"] [:strong (or count "—")]]
-          [:div [:small "Bleed rejected"] [:strong (or (:bleed-count feature) "—")]]
-          [:div [:small "Gate"] [:strong (if (number? (:gate-ms feature))
-                                           (str (js/Math.round (:gate-ms feature)) " ms"
-                                                (when (number? (:bpm feature)) (str " @ " (js/Math.round (:bpm feature)) " BPM")))
-                                           "—")]]
-          [:div [:small "Last onset"] [:strong (if (number? (:last-onset-beat feature))
-                                                 (str "beat " (.toFixed (:last-onset-beat feature) 2)) "—")]]]
-         (let [lines (route-lines (:cues show) routes)]
-           (if (seq lines) [:ul.stem-routes lines] [:p.small.muted "Not routed yet."]))
-         [route-form stem show busy?]]))))
+  (let [lit? (r/atom false) timer (atom nil)
+        flash! (fn [] (reset! lit? true)
+                 (some-> @timer js/clearTimeout)
+                 (reset! timer (js/setTimeout #(reset! lit? false) 180)))]
+    (r/create-class
+     {:display-name "StemOnsetLamp"
+      :component-did-update (fn [this [_ previous]]
+                              (let [[_ current] (r/argv this)]
+                                (when (and (number? previous) (number? current) (> current previous)) (flash!))))
+      :component-will-unmount (fn [_] (some-> @timer js/clearTimeout))
+      :reagent-render (fn [_count] [:i.stem-onset {:class (when @lit? "lit") :aria-hidden true}])})))
+
+(defn- stem-card [{:keys [id channel preset]} feature routes show busy?]
+  (let [count (:onset-count feature)
+        stem (wire id) level (max 0 (min 1 (or (:level feature) 0)))]
+    [:article.stem-card {:aria-label (str "Stem " stem)}
+     [:div.stem-head
+      [onset-lamp count]
+      [:strong stem]
+      [:span.stem-meta (str "Ch " channel " · " (get preset-labels (keyword (wire preset)) (wire preset)))]]
+     [:div.stem-level
+      [:meter {:min 0 :max 1 :value level :aria-label (str stem " level")}]
+      [:span (level-text (:level-db feature))]]
+     [:div.stem-metrics
+      [:div [:small "Onsets"] [:strong (or count "—")]]
+      [:div [:small "Bleed rejected"] [:strong (or (:bleed-count feature) "—")]]
+      [:div [:small "Gate"] [:strong (if (number? (:gate-ms feature))
+                                       (str (js/Math.round (:gate-ms feature)) " ms"
+                                            (when (number? (:bpm feature)) (str " @ " (js/Math.round (:bpm feature)) " BPM")))
+                                       "—")]]
+      [:div [:small "Last onset"] [:strong (if (number? (:last-onset-beat feature))
+                                             (str "beat " (.toFixed (:last-onset-beat feature) 2)) "—")]]]
+     (let [lines (route-lines (:cues show) routes)]
+       (if (seq lines) [:ul.stem-routes lines] [:p.small.muted "Not routed yet."]))
+     [route-form stem show busy?]]))
 
 (defn- editor [s width running?]
   (let [rows (get-in s [:audio-form :stems] [])

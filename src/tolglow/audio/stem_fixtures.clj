@@ -65,12 +65,15 @@
   neighbour mixed into every channel), :seed (675, snare noise) and
   :dropout {:stem :bass :from-beat 8 :to-beat 12} which silences that stem's
   own signal (its bleed into others remains) over transport beats.
+  :hats {:peak-db -20} adds a fifth stem on channel 5 with no bleed in or
+  out: a noise hit on every eighth note at that peak level, half of them
+  landing on kicks, to check a quiet instrument on its own channel.
 
   Returns {:sample-rate :bpm :frames :stems :samples {id doubles}
   :onsets {id [{:beat transport-beat :ms time}]}}. A transport playing from
   beat 0 at 0 ms at :bpm puts every onset exactly on its listed beat."
   ([] (render {}))
-  ([{:keys [bpm bars sample-rate lead-in-beats tail-beats bleed-db seed dropout]
+  ([{:keys [bpm bars sample-rate lead-in-beats tail-beats bleed-db seed dropout hats]
      :or {bpm 120.0 bars 4 sample-rate 48000 lead-in-beats 1 tail-beats 4 bleed-db -24.0 seed 675}}]
    (let [beat-ms (ms-per-beat bpm)
          total-beats (+ lead-in-beats (* 4 bars) tail-beats)
@@ -112,8 +115,21 @@
                                                     (* bleed (reduce + (map (fn [^doubles o] (aget o i)) others))))))
                                    [id out])))
                        stem-layout)]
-       {:sample-rate sample-rate :bpm (double bpm) :frames frames :stems stem-layout
-        :samples mixed :onsets @onsets}))))
+       (cond-> {:sample-rate sample-rate :bpm (double bpm) :frames frames :stems stem-layout
+                :samples mixed :onsets @onsets}
+         hats (as-> rendered
+                (let [out (double-array frames) noise (Random. (long (inc seed)))
+                      peak (Math/pow 10.0 (/ (:peak-db hats) 20.0))
+                      beats (map #(+ lead-in-beats (/ % 2)) (range (* 8 bars)))]
+                  (doseq [beat beats :let [start (at beat)]]
+                    (dotimes [i (min (- frames start) (long (* 0.06 sample-rate)))]
+                      (let [t (/ i (double sample-rate))]
+                        (aset out (+ start i) (+ (aget out (+ start i))
+                                                 (* peak (- (* 2.0 (.nextDouble noise)) 1.0) (Math/exp (/ (- t) 0.015))))))))
+                  (-> rendered
+                      (update :stems conj {:id :hats :channel 5 :preset :hats})
+                      (assoc-in [:samples :hats] out)
+                      (assoc-in [:onsets :hats] (mapv (fn [beat] {:beat (double beat) :ms (* beat beat-ms)}) beats))))))))))
 
 (defn pcm16
   "Interleave rendered stems into little-endian signed-16 PCM, channel order
@@ -159,7 +175,8 @@
   analyzer on the kick channel and each stem on its own channel."
   ([rendered] (capture-config rendered {}))
   ([rendered overrides]
-   (merge {:default? true :sample-rate (double (:sample-rate rendered)) :channels 4 :input-channel 1
+   (merge {:default? true :sample-rate (double (:sample-rate rendered)) :channels (reduce max (map :channel (:stems rendered)))
+           :input-channel 1
            :block-frames 480 :stems (:stems rendered)}
           overrides)))
 
@@ -168,6 +185,6 @@
   from beat 0 at its tempo. Returns tolglow.audio.stems/replay's result."
   ([rendered] (replay rendered {}))
   ([{:keys [sample-rate bpm samples stems]} {:keys [block-frames stem-overrides] :or {block-frames 480}}]
-   (stems/replay (stems/validate-config (mapv #(merge % (get stem-overrides (:id %))) stems) 4)
+   (stems/replay (stems/validate-config (mapv #(merge % (get stem-overrides (:id %))) stems) (reduce max (map :channel stems)))
                  {:samples samples :sample-rate sample-rate :block-frames block-frames
                   :clock-at (fn [ms] {:time-ms ms :beat (/ ms (ms-per-beat bpm)) :bpm bpm :playing? true})})))

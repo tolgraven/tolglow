@@ -754,7 +754,7 @@ unknown cue or a parameter outside its bounds is refused by the subscriber or
 patch save with its reason, and the previous routing stays.
 
 **Tracked gaps.** Studio cannot choose a recording for the `:file` input or
-edit a stem's detector settings beyond its preset; the REPL can. Linked knobs
+edit a stem's detector settings beyond its preset (it keeps any set from the REPL); the REPL can. Linked knobs
 are not yet a patch destination, so a stem level reaches a knob's targets only
 by routing each target. Physical interfaces and latency stay open on
 [issue #675](https://github.com/tolgraven/tolglow/issues/675).

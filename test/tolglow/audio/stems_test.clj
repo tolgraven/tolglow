@@ -13,10 +13,14 @@
 (deftest configuration-is-canonical-and-validated
   (let [[kick bass] (stems/validate-config [{:id :kick :channel 1 :preset :kick}
                                             {:id "bass" :channel 3 :preset "bass" :band "bass" :label "Bass DI"}] 4)]
-    (is (= [:kick 1 [30.0 160.0] :kick] ((juxt :id :channel :band :preset) kick)))
-    (is (= [:bass 3 :bass "Bass DI"] ((juxt :id :channel :band :label) bass)))
-    (is (= {:beats 1/4} (:min-interval bass)))
-    (is (= 18.0 (:isolation-db kick))))
+    (testing "the saved form keeps the preset name and only explicit overrides"
+      (is (= {:id :kick :channel 1 :preset :kick} kick))
+      (is (= {:id :bass :channel 3 :preset :bass :band :bass :label "Bass DI"} bass))
+      (is (= kick (first (stems/validate-config [kick] 4))) "canonical stems re-validate unchanged"))
+    (testing "the detector resolves preset and defaults at run time"
+      (is (= [[30.0 160.0] 18.0 {:beats 1/6}] ((juxt :band :isolation-db :min-interval) (stems/resolve-stem kick))))
+      (is (= [:bass {:beats 1/4}] ((juxt :band :min-interval) (stems/resolve-stem bass))))
+      (is (= 4.0 (:rise-db (stems/resolve-stem (first (stems/validate-config [{:id :g :channel 1 :preset :guitar :rise-db 4.0}] 1))))))))
   (doseq [[stems channels] [[[] 4] [[{:id :kick :channel 5}] 4] [[{:id :kick :channel 0}] 4]
                             [[{:id "Kick!" :channel 1}] 4] [[{:id :kick :channel 1} {:id :kick :channel 2}] 4]
                             [[{:id :kick :channel 1 :preset :tuba}] 4] [[{:id :kick :channel 1 :band [500.0 100.0]}] 4]
@@ -192,3 +196,19 @@
       (finally
         (doseq [f [fifo text junk folder]] (.delete ^java.io.File f))
         (.delete dir)))))
+
+(deftest a-quiet-instrument-on-its-own-channel-keeps-onsets-that-land-with-a-loud-kick
+  ;; The review probe: hats with no bleed, on every eighth note (half on
+  ;; kicks), at three peak levels well below the kick channel's.
+  (doseq [peak-db [-10.0 -20.0 -26.0]]
+    (testing (str "hats at " peak-db " dB")
+      (let [rendered (fixtures/render {:hats {:peak-db peak-db}})
+            {:keys [events frames]} (fixtures/replay rendered)
+            {:keys [matched false-positives]} (score rendered events :hats 25.0)]
+        (is (= 32 matched (count (get-in rendered [:onsets :hats]))))
+        (is (empty? false-positives))
+        (is (zero? (get-in (last frames) [:features :hats :bleed-count])))
+        (testing "while -24 dB neighbour bleed is still rejected"
+          (doseq [id [:kick :snare :bass :guitar]]
+            (is (empty? (:false-positives (score rendered events id 25.0))) id))
+          (is (pos? (reduce + (map #(get-in (last frames) [:features % :bleed-count]) [:snare :bass :guitar])))))))))

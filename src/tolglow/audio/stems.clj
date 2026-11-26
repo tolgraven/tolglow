@@ -110,13 +110,24 @@
                    (duration-ok? (:min-interval merged))
                    (or (nil? (:label merged)) (and (string? (:label merged)) (<= 1 (count (:label merged)) 64))))
       (fail! "Invalid stem detector settings" {:id id}))
-    (cond-> (assoc merged :id id :channel channel :band (if (vector? band) (mapv double band) band))
+    ;; Keep the preset name and only the settings given explicitly, so a
+    ;; later preset retune reaches saved shows (resolve-stem fills the rest).
+    (cond-> (-> (select-keys merged (keys (dissoc stem :preset :id)))
+                (assoc :id id :channel channel))
+      (contains? stem :band) (assoc :band (if (vector? band) (mapv double band) band))
       preset (assoc :preset preset))))
+
+(defn resolve-stem
+  "A canonical stem with its preset and the defaults filled in: the settings
+  the detector runs with."
+  [stem]
+  (merge defaults (get presets (:preset stem)) stem))
 
 (defn validate-config
   "Return canonical stems for a capture of `channels` PCM channels, or throw.
   Input is a vector of {:id :channel} maps with an optional :preset and
-  detector overrides. Ids are unique; two stems may read the same channel
+  detector overrides. The result keeps the preset name and only the explicit
+  overrides; resolve-stem gives the full detector settings. Ids are unique; two stems may read the same channel
   (for example, a kick band and a bass band of one drum-bus input)."
   [stems channels]
   (when-not (and (vector? stems) (<= 1 (count stems) max-stems))
@@ -147,9 +158,26 @@
   (20 ms), so an attack that builds over a few hops still counts in full."
   5)
 
+(def bleed-lag-ms
+  "Bleed reaches another channel up to this much later (about 1.7 m of air)."
+  5.0)
+
+(def bleed-correlation
+  "Raw-channel correlation above which a coincident quieter onset is the
+  louder stem's sound arriving through another channel."
+  0.5)
+
+(defn- ring-size
+  "Raw samples kept per stem: enough for a candidate's window and lag search."
+  [sample-rate]
+  (long (Math/ceil (* sample-rate (/ (+ (* 4 hop-ms) bleed-lag-ms 8.0) 1000.0)))))
+
 (defn- fresh-stem [stem sample-rate]
-  (merge (select-keys stem [:spec :onset-count :bleed-count :last-onset-ms :last-onset-beat])
+  (merge (select-keys stem [:spec :onset-count :bleed-count :last-onset-ms :last-onset-beat :typical-peak-db])
          {:design (design (get-in stem [:spec :band]) sample-rate) :filter-state []
+          ;; Raw input ring for the bleed correlation; copied before each block
+          ;; is written, so a returned state's array is never changed.
+          :ring (double-array (ring-size sample-rate))
           ;; envelope, hop energy, hop peak
           :scratch [0.0 0.0 0.0]
           :history [] :hold-db nil :latch-db nil :armed? true :gate-from-ms nil
@@ -160,12 +188,13 @@
   numbers survive discontinuities; filters and detectors restart."
   [stems]
   {:version 1
-   :stems (mapv (fn [spec] {:spec spec :onset-count 0 :bleed-count 0 :last-onset-ms nil :last-onset-beat nil}) stems)
+   :stems (mapv (fn [spec] {:spec (resolve-stem spec) :onset-count 0 :bleed-count 0 :last-onset-ms nil :last-onset-beat nil}) stems)
    :sequence 0 :sample-rate nil :origin-ms nil :sample-index 0 :last-end-ms nil
    :hop-samples nil :hop-n 0 :hop-start nil :window []})
 
 (defn- initialize [state sample-rate start-ms]
-  (assoc state :sample-rate sample-rate :origin-ms start-ms :sample-index 0 :hop-n 0 :hop-start nil :window []
+  (assoc state :sample-rate sample-rate :origin-ms start-ms :sample-index 0 :hop-n 0 :hop-start nil
+         :hop-start-index 0 :window [] :ring-size (ring-size sample-rate)
          :hop-samples (max 1 (long (Math/round (* sample-rate (/ hop-ms 1000.0)))))
          :stems (mapv #(fresh-stem % sample-rate) (:stems state))))
 
@@ -246,25 +275,52 @@
   different edges let the same attack through a few milliseconds apart."
   (* 3 hop-ms))
 
+(defn- correlation
+  "Largest normalized correlation between record's raw window on its own
+  channel and other's raw channel delayed by 0..bleed-lag-ms. Near 1 means
+  the candidate is mostly the other stem's sound; an independent instrument
+  stays near 0 whatever its level."
+  [rings ring-size window-samples lag-samples record other]
+  (let [^doubles a (rings (:index record)) ^doubles b (rings (:index other))
+        r (long ring-size) start (long (:start-index record)) w (long window-samples)
+        at (fn ^double [^doubles x ^long i] (aget x (int (Math/floorMod i r))))
+        energy-a (loop [k 0 acc 0.0] (if (= k w) acc (let [v (at a (+ start k))] (recur (inc k) (+ acc (* v v))))))]
+    (if (< energy-a 1.0e-18)
+      0.0
+      (loop [d 0 best 0.0]
+        (if (> d (long lag-samples))
+          best
+          (let [[dot energy-b] (loop [k 0 dot 0.0 eb 0.0]
+                                 (if (= k w) [dot eb]
+                                     (let [x (at a (+ start k)) y (at b (- (+ start k) d))]
+                                       (recur (inc k) (+ dot (* x y)) (+ eb (* y y))))))
+                c (if (< energy-b 1.0e-18) 0.0 (Math/abs (/ dot (Math/sqrt (* energy-a energy-b)))))]
+            (recur (inc d) (max best c))))))))
+
 (defn- bleed?
-  "A candidate is bleed when another stem has an onset within bleed-window-ms
-  whose filtered peak over the same window is at least the candidate stem's
-  :isolation-db above the candidate's. Peaks, not envelopes, are compared so
-  each stem's attack time does not decide. Different instruments landing
-  together at similar levels keep both onsets."
-  [record isolation-db window]
-  (and isolation-db
-       (some (fn [other]
-               (and (not= (:stem other) (:stem record))
-                    (<= (Math/abs (double (- (:time-ms other) (:time-ms record)))) (+ bleed-window-ms 1.0e-6))
-                    (>= (- (:peak-db other) (:peak-db record)) isolation-db)))
-             window)))
+  "A candidate is bleed when another stem, on another channel, had a louder
+  onset within bleed-window-ms and either the candidate's raw window is
+  mostly that stem's sound (correlation), or the candidate is :isolation-db
+  below this stem's own typical onset peak. Levels are never compared across
+  channels: a quiet instrument at its usual level keeps its onsets when a
+  loud hit lands elsewhere."
+  [record spec typical-db window correlate]
+  (when-let [isolation-db (:isolation-db spec)]
+    (some (fn [other]
+            (and (not= (:stem other) (:stem record)) (not= (:channel other) (:channel record))
+                 (<= (Math/abs (double (- (:time-ms other) (:time-ms record)))) (+ bleed-window-ms 1.0e-6))
+                 (> (:peak-db other) (:peak-db record))
+                 (or (and typical-db (<= (:peak-db record) (- typical-db isolation-db)))
+                     (>= (correlate record other) bleed-correlation))))
+          window)))
 
 (defn- close-hop
   "Decide every stem for one hop, confirm candidates old enough to judge,
   reject bleed across stems, and return [stems window emitted-events]."
-  [stems window scratches hop-start-ms clock]
-  (let [decisions (mapv #(decide %1 %2 hop-start-ms clock) stems scratches)
+  [stems window scratches hop-start-ms hop-start-index correlate]
+  (let [clock (:clock correlate)
+        correlate (:correlate correlate)
+        decisions (mapv #(decide %1 %2 hop-start-ms clock) stems scratches)
         peaks (into {} (map (fn [d] [(get-in d [:stem :spec :id]) (:hop-peak-db d)])) decisions)
         index (into {} (map-indexed (fn [i d] [(get-in d [:stem :spec :id]) i])) decisions)
         ;; Detectors commit at once, so gating and re-arming follow the attack.
@@ -272,11 +328,12 @@
         window (into (mapv (fn [r] (if (< (:hops r) confirm-hops)
                                      (-> r (update :peak-db max (peaks (:stem r))) (update :hops inc)) r))
                            window)
-                     (keep (fn [{:keys [candidate gate-from-ms]}]
+                     (keep (fn [[i {:keys [candidate gate-from-ms]}]]
                              (when candidate
                                {:stem (:stem candidate) :time-ms (:time-ms candidate) :peak-db (:peak-db candidate)
+                                :channel (:channel candidate) :index i :start-index hop-start-index
                                 :hops 0 :candidate candidate :previous-gate-from-ms gate-from-ms})))
-                     decisions)
+                     (map-indexed vector decisions))
         [stems window events]
         (reduce (fn [[stems window events] [w record]]
                   (if-not (and (:candidate record) (= confirm-hops (:hops record)))
@@ -284,12 +341,14 @@
                     (let [i (index (:stem record))
                           candidate (assoc (:candidate record) :peak-db (:peak-db record))
                           window (assoc window w (dissoc record :candidate))]
-                      (if (bleed? record (get-in stems [i :spec :isolation-db]) window)
+                      (if (bleed? record (get-in stems [i :spec]) (get-in stems [i :typical-peak-db]) window correlate)
                         ;; Bleed does not hold the stem's own gate shut.
                         [(update stems i #(-> % (update :bleed-count inc)
                                               (assoc :gate-from-ms (:previous-gate-from-ms record))))
                          window events]
                         [(update stems i #(-> % (assoc :last-onset-ms (:time-ms candidate) :last-onset-beat (:beat candidate))
+                                              ;; The stem's own gain staging: a slow average of its onset peaks.
+                                              (update :typical-peak-db (fn [t] (if t (+ t (* 0.2 (- (:peak-db record) t))) (:peak-db record))))
                                               (update :onset-count inc)))
                          window (conj events candidate)]))))
                 [stems window []] (map-indexed vector window))]
@@ -348,39 +407,53 @@
         rate (double sample-rate) index (long (:sample-index state)) hop-samples (long (:hop-samples state))
         specs (mapv :spec (:stems state))
         gains (mapv #(Math/pow 10.0 (/ (:gain-db %) 20.0)) specs)
-        filtered (mapv (fn [stem ^doubles samples gain]
-                         (let [input (if (== 1.0 (double gain)) samples (amap samples i out (* (double gain) (aget samples i))))]
-                           (shape/filter-samples (:design stem) (:filter-state stem) input)))
-                       (:stems state) arrays gains)
+        inputs (mapv (fn [^doubles samples gain]
+                       (if (== 1.0 (double gain)) samples (amap samples i out (* (double gain) (aget samples i)))))
+                     arrays gains)
+        filtered (mapv (fn [stem input] (shape/filter-samples (:design stem) (:filter-state stem) input))
+                       (:stems state) inputs)
         arrays (mapv first filtered)
+        ring-size (long (:ring-size state))
+        rings (mapv #(aclone ^doubles (:ring %)) (:stems state))
+        window-samples (* hop-samples (inc confirm-hops))
+        lag-samples (long (Math/round (* rate (/ bleed-lag-ms 1000.0))))
+        context {:clock clock
+                 :correlate (fn [record other] (correlation rings ring-size window-samples lag-samples record other))}
         scratches (mapv #(double-array (:scratch %)) (:stems state))
         attacks (mapv #(one-pole (:attack-ms %) rate) specs)
         releases (mapv #(one-pole (:release-ms %) rate) specs)
         ms-at (fn [i] (+ (:origin-ms state) (* 1000.0 (/ (double i) rate))))
-        [stems window hop-n hop-start events]
+        [stems window hop-n hop-start hop-start-index events]
         (loop [offset 0 stems (mapv #(assoc % :block-peak 0.0) (:stems state)) window (:window state [])
-               hop-n (long (:hop-n state)) hop-start (:hop-start state) events []]
+               hop-n (long (:hop-n state)) hop-start (:hop-start state) hop-start-index (:hop-start-index state 0) events []]
           (if (= offset n)
-            [stems window hop-n hop-start events]
+            [stems window hop-n hop-start hop-start-index events]
             (let [end (min n (+ offset (- hop-samples hop-n)))
-                  hop-start (or hop-start (ms-at (+ index offset)))
+                  [hop-start hop-start-index] (if hop-start [hop-start hop-start-index]
+                                                  [(ms-at (+ index offset)) (+ index offset)])
                   stems (mapv (fn [i stem]
+                                (let [^doubles ring (rings i) ^doubles input (inputs i)]
+                                  (loop [k (long offset)]
+                                    (when (< k end)
+                                      (aset ring (int (Math/floorMod (+ index k) ring-size)) (aget input k))
+                                      (recur (inc k)))))
                                 (let [peak (segment! (arrays i) offset end (scratches i) (attacks i) (releases i))]
                                   (update stem :block-peak max peak)))
                               (range) stems)
                   hop-n (+ hop-n (- end offset))]
               (if (= hop-n hop-samples)
-                (let [[stems window emitted] (close-hop stems window scratches hop-start clock)]
-                  (recur end stems window 0 nil (into events emitted)))
-                (recur end stems window hop-n hop-start events)))))
-        stems (mapv (fn [stem ^doubles s [_ z]] (assoc stem :scratch (vec s) :filter-state z)) stems scratches filtered)
+                (let [[stems window emitted] (close-hop stems window scratches hop-start hop-start-index context)]
+                  (recur end stems window 0 nil hop-start-index (into events emitted)))
+                (recur end stems window hop-n hop-start hop-start-index events)))))
+        stems (mapv (fn [stem ^doubles s [_ z] ring] (assoc stem :scratch (vec s) :filter-state z :ring ring))
+                    stems scratches filtered rings)
         sequence (:sequence state)
         events (vec (map-indexed (fn [i event]
                                    (assoc event :sequence (+ sequence i 1) :observed-at-ms received-at-ms
                                           :latency-ms (- received-at-ms (:time-ms event))))
                                  events))]
     {:state (assoc state :stems stems :window window :sample-index (+ index n) :sequence (+ sequence (count events))
-                   :hop-n hop-n :hop-start hop-start
+                   :hop-n hop-n :hop-start hop-start :hop-start-index hop-start-index
                    :last-end-ms (+ started-at-ms (* 1000.0 (/ n rate))))
      :features (into {} (map (fn [stem] [(get-in stem [:spec :id]) (feature stem)])) stems)
      :events events

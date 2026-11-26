@@ -25,7 +25,11 @@ preset and optional detector settings:
 `:input-channel` still selects the channel for the ordinary analyzer (kick,
 energy, bands and sections). Up to 16 stems; two stems may read the same
 channel. The configuration is saved with the show, like the rest of the audio
-connection, and capture still starts only when asked.
+connection, and capture still starts only when asked. A stem is saved as its
+id, channel, preset name and only the settings given explicitly
+(`tolglow.audio.stems/resolve-stem` fills in the rest when capture starts),
+so retuning a preset reaches saved shows. Studio keeps those explicit
+settings when it restarts capture, even though it edits only the preset.
 
 A `:file` input replays a multichannel 16-bit WAV through the same worker,
 paced in real time, and opens no device. `capture/file-config` reads the
@@ -53,7 +57,7 @@ Studio has no recording picker and the path would name any file on the host.
 | Envelope | Peak follower with the stem's attack and release. `:level` is the envelope over the floor-to-full-scale decibel range, 0–1. |
 | Onset | In 4 ms hops: the envelope rose `:rise-db` above the quietest of the last 20 ms, sits above `:floor-db` and within `:range-db` of the stem's slowly decaying peak, the detector has re-armed, and the gate has passed. |
 | Gate | `:min-interval` in beats, converted at the captured tempo clamped to **70–180 BPM** (120 without a clock). The default sixth of a beat is 143 ms at 70 BPM and 56 ms at 180. A gate shorter than 20 ms at 180 BPM (`{:ms 19}`, `{:beats 1/32}`) is refused, so no stem emits more than 50 onsets a second. |
-| Bleed | All stems share hops. A candidate is held 8 ms, then rejected as bleed if another stem had an onset within 12 ms whose peak was `:isolation-db` (18 dB) louder. Rejections are counted per stem. |
+| Bleed | All stems share hops. A candidate is held 8 ms, then judged against louder onsets on *other channels* within 12 ms. It is bleed when its raw window correlates (≥ 0.5, over 0–5 ms of delay) with that stem's raw channel, meaning it is mostly that sound, or when it is `:isolation-db` (18 dB) below this stem's own typical onset peak. Levels are never compared across channels, so a quiet instrument at its usual level keeps the onsets that land with a loud kick. Stems sharing a channel are never bleed of each other. Rejections are counted per stem. |
 
 Presets set band, envelope and gate per instrument (`:kick :snare :hats :bass
 :guitar :vocals :keys :full`); any value can be overridden per stem.
@@ -117,7 +121,11 @@ route once the show has it, and × removes an onset route.
   eight at 180, none doubled, within 15 ms. A dropout removes that stem's
   onsets without false positives; trailing silence releases every level to
   zero. The tempo gate drops a retrigger 100 ms after a hit at 70 BPM and
-  keeps it at 180. A WAV replays through capture's `:file` input.
+  keeps it at 180. A WAV replays through capture's `:file` input. A fifth
+  hats stem on its own channel (no bleed) at −10, −20 and −26 dB peak, an
+  eighth note each with half on kicks, keeps 32/32 onsets at every level
+  with no bleed rejections, while the −24 dB neighbour bleed is still
+  rejected.
 - `tolglow.studio.stem-routing-host-test`: the four stems through the real
   show owner. Kick onsets launch a cue within an eighth of a beat after each
   kick; the guitar level drives a cue parameter and releases in the silent

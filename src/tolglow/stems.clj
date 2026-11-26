@@ -15,6 +15,7 @@
   delivers, like show/post-events!."
   (:require [tolglow.audio.capture :as capture]
             [tolglow.audio.stem-routes :as stem-routes]
+            [tolglow.audio.stems :as detector]
             [tolglow.show :as show]))
 
 (defn start!
@@ -53,7 +54,8 @@
   [runtime]
   (let [audio (show/audio-action! runtime :status {}) routes (routes runtime)]
     (mapv (fn [{:keys [id] :as stem}]
-            (merge (select-keys stem [:id :channel :preset :label :band :min-interval])
+            (merge (select-keys (detector/resolve-stem stem) [:id :channel :preset :label :band :min-interval])
+                   {:overrides (dissoc stem :id :channel :preset)}
                    (select-keys (get-in audio [:features :stems id]) [:level :onset-count :bleed-count :gate-ms :bpm :last-onset-beat])
                    {:routes (get routes id {})}))
           (get-in audio [:config :stems]))))

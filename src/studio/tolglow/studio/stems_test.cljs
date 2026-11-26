@@ -15,6 +15,16 @@
                             [[{:id "kick" :channel "1"} {:id "kick" :channel "2"}] #"its own name"]]]
       (is (re-find message (try (stems/payload rows 4) "" (catch :default e (.-message e))))))))
 
+(deftest detector-overrides-set-from-the-repl-survive-a-studio-restart
+  (let [config {:stems [{:id "guitar" :channel 4 :preset "guitar" :rise-db 4.0 :min-interval {:beats 0.25}}]}
+        rows (stems/form-rows config)]
+    (is (= [{:id "guitar" :channel "4" :preset "guitar" :overrides {:rise-db 4.0 :min-interval {:beats 0.25}}}] rows))
+    (is (= [{:id :guitar :channel 4 :preset :guitar :rise-db 4.0 :min-interval {:beats 0.25}}]
+           (stems/payload rows 4)))
+    (testing "changing the instrument keeps the explicit settings"
+      (is (= :keys (:preset (first (stems/payload (assoc-in rows [0 :preset] "keys") 4)))))
+      (is (= 4.0 (:rise-db (first (stems/payload (assoc-in rows [0 :preset] "keys") 4))))))))
+
 (deftest the-audio-payload-carries-stems-for-a-multichannel-input
   (let [db {:connections {:inputs [] :audio-form (assoc connections/audio-defaults :input "system" :channels "4"
                                                         :input-channel "1"
