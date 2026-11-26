@@ -278,6 +278,48 @@
          (if (= 1 notes) " activation of " " activations of ") (str/join ", " (map #(if (keyword? %) (name %) (str %)) cues))
          " · " lane-points (if (= 1 lane-points) " parameter move" " parameter moves"))
     (or message "Nothing ran in the captured bars")))
+(rf/reg-event-fx :connections/live-runs-refresh
+  (fn [{:keys [db]} _]
+    {:db (-> db (update-in [:connections :pending] (fnil conj #{}) :live-runs)
+             (update-in [:connections :errors] dissoc :live-runs))
+     :fx [(req db :live-runs "/api/live-runs" nil :connections/live-runs-loaded)]}))
+
+(rf/reg-event-fx :connections/live-runs-loaded
+  (fn [{:keys [db]} [_ request-token _ result]]
+    (when (current? db request-token)
+      {:db (-> db (update-in [:connections :pending] disj :live-runs)
+               (assoc-in [:connections :live-runs] result))})))
+
+(defn- plural [n one many] (str n " " (if (= 1 n) one many)))
+
+(defn live-runs-text
+  "One line summarizing the run record (the same projection as show/live-runs
+  at the REPL)."
+  [{:keys [channels takes running mirror truncated? shown playback-events]}]
+  (let [clips (mapcat :takes (mapcat :lanes channels))
+        in-live (count (filter #(= "in-live" (some-> % :clip :status name)) clips))]
+    (if (zero? (or takes 0))
+      "Nothing has run yet"
+      (str (plural (count channels) "launched cue" "launched cues") " · " (plural takes "take" "takes")
+           (when (pos? (or running 0)) (str " (" running " running)"))
+           " · " (if mirror (str in-live " of " (count clips) " in Live") "not synced with Live")
+           (when truncated? (str " · newest " shown " shown"))
+           (when (pos? (or (:dropped playback-events) 0))
+             (str " · " (plural (:dropped playback-events) "playback event" "playback events") " dropped"))))))
+
+(defn- beat-text [b] (if (number? b) (.toFixed b 2) "—"))
+
+(defn take-text
+  "One take: run number, start beat, held beats and where its clip is."
+  [{:keys [run start-beat length-beats phase clip]}]
+  (str "run " run " · beat " (beat-text start-beat) " · "
+       (if length-beats (str "held " (beat-text length-beats)) (name phase))
+       " · " (case (some-> clip :status name)
+               "in-live" "in Live"
+               "recording" "recording"
+               "not-in-live" "not in Live yet"
+               (some-> clip :status name))))
+
 (rf/reg-event-fx :connections/action-complete
   (fn [{:keys [db]} [_ request-token operation result]]
     (when (current? db request-token)
@@ -771,6 +813,32 @@
          [:a#capture-download.button {:href "/api/capture/last.mid" :download true} "Download MIDI clip"])]
       (when result [:p.small {:role "status"} (capture-text result)])]]))
 
+(defn- live-runs-panel [s]
+  (let [{:keys [channels mirror] :as runs} (:live-runs s)]
+    [:section.panel {:aria-label "Live runs"}
+     [:div.panel-top [:span.section-label "LIVE RUNS"]]
+     [:div.form-body
+      [:p.small.muted "What actually ran: one channel per launched cue, one take per run, a lane for each overlapping run, grouped as the effect groups are. Each take becomes one clip on its cue's run track in Live."]
+      [:div.button-row
+       [:button#live-runs-refresh.button {:type "button" :disabled (contains? (:pending s) :live-runs)
+                                          :on-click #(rf/dispatch [:connections/live-runs-refresh])} "Show what ran"]]
+      (when runs
+        [:<>
+         [:p.small {:role "status"} (live-runs-text runs)]
+         (into [:ul.live-runs]
+               (for [{:keys [cue-id name group-path lanes]} channels]
+                 ^{:key (str cue-id)}
+                 [:li [:strong name] (when (seq group-path) [:span.small.muted (str " · in " (str/join " / " (map #(if (keyword? %) (cljs.core/name %) (str %)) group-path)))])
+                  (into [:ul]
+                        (for [{:keys [lane track-name takes]} lanes]
+                          ^{:key lane}
+                          [:li [:span.small track-name]
+                           (into [:ul] (for [t takes] ^{:key (:take-id t)} [:li.small (take-text t)]))]))]))
+         (for [{:keys [code name]} (:problems mirror)]
+           ^{:key (str code name)} [:p.connection-error.small (str (cljs.core/name code) (when name (str " · " name)))])
+         (when-not mirror
+           [:p.small.muted "Mirror the record into Live from the REPL with show/sync-live-runs!; this panel then shows each take's clip."])])]]))
+
 (defn connection-view [db s]
   (let [active? (boolean (get-in s [:sync :active?])) pending? (boolean (seq (:pending s))) disabled? (or (nil? (:sync s)) active? pending?)]
     [:section#view-connections.view
@@ -795,7 +863,7 @@
                                           @(rf/subscribe [:show-window/preview-only])) "Connect enabled adapters"]
        [:button#sync-stop.button {:type "button" :disabled (or (not active?) pending?) :on-click #(rf/dispatch [:connections/action :stop])} "Disconnect"]]]
      [:div.connections-layout [midi-panel s disabled?] [beat-link-panel s disabled?] [link-panel s disabled?]
-      [live-panel s (get-in db [:show :cues]) disabled?] [capture-panel s] [audio-panel s] [section-reference-panel s]
+      [live-panel s (get-in db [:show :cues]) disabled?] [capture-panel s] [live-runs-panel s] [audio-panel s] [section-reference-panel s]
       [capacity/panel (contains? (:pending s) :lighting-capacity)] [fog-control/panel (contains? (:pending s) :fog-control)] [output-panel db s] [pause-panel (contains? (:pending s) :pause)]]
      [audio-lfo/panel]
      [compute-client/panel]

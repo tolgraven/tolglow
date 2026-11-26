@@ -5,6 +5,7 @@
   (:require [afterglow.control.model :as control]
             [clojure.test :refer [deftest is testing]]
             [tolglow.effects.parameter-sources :as parameter-sources]
+            [tolglow.knob-candidates :as knob-candidates]
             [tolglow.knob-candidates.generate :as generate]
             [tolglow.knobs :as knobs]
             [tolglow.personalities :as personalities]))
@@ -238,3 +239,188 @@
     (is (< 5 (:seed second-candidate) (:seed third-candidate)))
     (is (= second-candidate (generate/generate eligibility nil {:seed (:seed second-candidate)}))
         "a reroll is reproducible from its own seed")))
+
+(deftest a-reroll-that-stops-after-a-repeat-says-it-repeated
+  (let [reroll-from #'generate/reroll-from
+        repeat {:status :ready :seed 6 :character :energy
+                :links [{:id "pulse-level" :destination {:kind :param :cue-id :pulse :param :level}}]}
+        seen #{(generate/candidate-signature repeat)}
+        too-few {:status :insufficient :message "No playable mapping"}]
+    (testing "seed 6 repeats and seed 7 has no playable mapping: the repeat comes back marked"
+      (is (= (assoc repeat :repeated? true) (reroll-from {6 repeat 7 too-few} 5 seen))))
+    (testing "a first seed with no playable mapping is reported as it is"
+      (is (= too-few (reroll-from {6 too-few} 5 seen))))
+    (testing "a new mapping after a repeat is not marked"
+      (let [fresh (assoc repeat :seed 7 :character :motion)]
+        (is (= fresh (reroll-from {6 repeat 7 fresh} 5 seen)))))
+    (testing "sixteen repeats in a row"
+      (is (= (assoc repeat :repeated? true) (reroll-from (constantly repeat) 5 seen))))))
+
+(deftest refused-options-carry-a-code
+  (let [eligibility (generate/eligibility (show))
+        refusal (fn [options]
+                  (try (generate/generate eligibility nil options) nil
+                       (catch clojure.lang.ExceptionInfo error
+                         [(:control/error (ex-data error)) (ex-message error)])))]
+    (is (= :invalid-seed (first (refusal {:seed 1.5}))))
+    (is (= [:unknown-character "Unknown character; choose one of energy, colour, motion"]
+           (refusal {:seed 1 :character :sparkle})))
+    (doseq [size [[1 9] [8 2] [3] 3 ["2" "4"]]]
+      (is (= :invalid-size (first (refusal {:seed 1 :size size}))) (pr-str size)))
+    (is (nil? (refusal {:seed 1 :size [2 8]})))))
+
+(defn- knob [model knob-id links]
+  (:model (knobs/apply-operation model {:op :knob/create :knob-id knob-id :name knob-id :links links})))
+
+(deftest destinations-existing-knobs-drive-are-left-out-unless-shared
+  (let [level {:kind :param :cue-id :pulse :param :level}
+        rate {:kind :param :cue-id :pulse :param :rate}
+        base (show)
+        pulse-id (some #(when (= :pulse (:cue-id %)) (:id %)) (vals (:instances base)))
+        model (-> base
+                  (knob "lift" [{:id "l" :destination level :range [0.2 0.9]}])
+                  ;; Addressed to the running launch, so it also covers the cue's rate.
+                  (knob "push" [{:id "r" :destination (assoc (dissoc rate :cue-id) :instance-id pulse-id) :range [1.0 6.0]}]))
+        driven (generate/knob-driven model)
+        avoided (generate/eligibility model {:avoid driven})
+        shared (generate/eligibility model {:shared driven})
+        on? (fn [destination] #(= destination (:destination %)))]
+    (is (= {level ["lift"] rate ["push"] {:kind :param :instance-id pulse-id :param :rate} ["push"]} driven))
+    (testing "left out, with the knob that drives each"
+      (is (not-any? (some-fn (on? level) (on? rate)) (:eligible avoided)))
+      (is (= #{["pulse · level" ["lift"]] ["pulse · rate" ["push"]]}
+             (set (for [x (:excluded avoided) :when (= :knob-driven (:reason x))] [(:label x) (:knob-ids x)]))))
+      (is (= (dec (dec (count (:eligible (generate/eligibility model))))) (count (:eligible avoided)))))
+    (testing "no candidate drives them, and its recipe records exactly what it avoided"
+      (doseq [seed (range 30)
+              :let [c (generate/generate avoided nil {:seed seed})]]
+        (is (= :ready (:status c)))
+        (is (not-any? (some-fn (on? level) (on? rate)) (:links c)))
+        (is (= (sort-by pr-str [level rate]) (get-in c [:recipe :avoid])))))
+    (testing "shared on request, and explained"
+      (is (= ["lift"] (:driven-by (some #(when ((on? level) %) %) (:eligible shared)))))
+      (let [shared-links (for [seed (range 60)
+                               :let [c (generate/generate shared nil {:seed seed :character :energy})]
+                               e (:explain c) :when (:shared-with e)]
+                           e)]
+        (is (seq shared-links))
+        (is (every? #(#{["lift"] ["push"]} (:shared-with %)) shared-links))
+        (is (every? #(nil? (get-in (generate/generate shared nil {:seed % :character :energy}) [:recipe :avoid]))
+                    (range 10)))))))
+
+(defn- namespaced-show []
+  (let [cues {:a/pulse {:id :a/pulse :effect-id :pulse :version 1}
+              :b/pulse {:id :b/pulse :effect-id :pulse :version 1}}
+        base (control/new-show {:show-id :gen :rig rig :transport {:playing? true :beat 0.0 :bpm 120.0}
+                                :registry {:effects (select-keys effects [:pulse]) :cues cues}})]
+    (reduce (fn [model cue] (first (launch model cue))) base [:a/pulse :b/pulse])))
+
+(deftest cues-that-differ-only-by-namespace-keep-distinct-link-ids
+  (let [model (namespaced-show)
+        eligibility (generate/eligibility model)
+        candidates (map #(generate/generate eligibility nil {:seed % :size [4 8]}) (range 40))
+        ids (set (mapcat #(map :id (:links %)) candidates))]
+    (is (= #{"a/pulse · level" "b/pulse · level"} (set (filter #(re-find #"level$" %) (map :label (:eligible eligibility))))))
+    (is (every? #(= :ready (:status %)) candidates))
+    (is (every? ids ["a/pulse-level" "b/pulse-level"]) "each cue's link keeps its namespace")
+    (doseq [{:keys [links explain]} candidates]
+      (is (apply distinct? (map :id links)))
+      (is (some? (knob model "kept" links)) "keeping never collides on a link ID")
+      (doseq [{:keys [link-id correlated-with]} explain :when correlated-with]
+        (is (= (subs link-id 0 7) (subs correlated-with 0 7)) "correlated pairs stay on one cue")))
+    (testing "a selection names a namespaced cue by its full text; a bare shared name is ambiguous"
+      (is (= [:a/pulse] (get-in (generate/eligibility model {:cue-ids ["a/pulse"]}) [:selection :cue-ids])))
+      (is (= #{:a/pulse} (set (map #(get-in % [:destination :cue-id]) (:eligible (generate/eligibility model {:cue-ids ["a/pulse"]}))))))
+      (is (= [:cue-missing] (map :reason (:excluded (generate/eligibility model {:cue-ids ["pulse"]}))))))))
+
+(defn- rig-show
+  "pulse, wash and aim running under namespaced cue IDs with distinct names."
+  []
+  (let [cues (into {} (for [id [:pulse :wash :aim]] [(keyword "rig" (name id)) {:id (keyword "rig" (name id)) :effect-id id :version 1}]))
+        base (control/new-show {:show-id :gen :rig rig :transport {:playing? true :beat 0.0 :bpm 120.0}
+                                :registry {:effects effects :cues cues}})]
+    (reduce (fn [model cue] (first (launch model cue))) base (sort (keys cues)))))
+
+(defn- candidate-command [model command]
+  (let [{:keys [model ack]} (control/apply-domain-command
+                             model (merge {:command-id (str (gensym "k")) :show-id :gen :epoch (:epoch model)
+                                           :source {:adapter :test}} command)
+                             knob-candidates/apply-operation)]
+    [model ack (get-in model [:knob-candidates :candidate])]))
+
+(deftest version-1-recipes-replay-with-their-own-link-ids-and-stale-edits-are-refused
+  (let [model (rig-show)
+        [_ fresh-ack fresh] (candidate-command model {:op :knob-candidate/generate :seed 4 :size [4 6]})
+        [_ v1-ack v1] (candidate-command model {:op :knob-candidate/generate :recipe {:generator 1 :seed 4 :size [4 6]}})
+        plain #(subs % 4)]
+    (is (= [:accepted :accepted] [(:status fresh-ack) (:status v1-ack)]))
+    (is (= [:ready :ready] [(:status fresh) (:status v1)]))
+    (is (<= 4 (count (:links fresh))))
+    (testing "a fresh recipe is version 2 with namespaced link IDs"
+      (is (= 2 generate/generator-version (get-in fresh [:recipe :generator])))
+      (is (every? #(re-find #"^rig/" %) (map :id (:links fresh)))))
+    (testing "a version 1 recipe regenerates the same links under its plain-name IDs"
+      (is (= 1 (get-in v1 [:recipe :generator])))
+      (is (= (map plain (map :id (:links fresh))) (map :id (:links v1))))
+      (is (= (map #(dissoc % :id) (:links fresh)) (map #(dissoc % :id) (:links v1)))))
+    (let [[dropped kept] (:links v1)]
+      (testing "its recorded edits still apply"
+        (let [edits [{:op :unlink :link-id (:id dropped)} {:op :link :link (assoc kept :curve :sine)}]
+              [_ ack c] (candidate-command model {:op :knob-candidate/generate
+                                                  :recipe {:generator 1 :seed 4 :size [4 6] :edits edits}})]
+          (is (= :accepted (:status ack)) (pr-str ack))
+          (is (not-any? #(= (:id dropped) (:id %)) (:links c)))
+          (is (= :sine (:curve (some #(when (= (:id kept) (:id %)) %) (:links c)))))))
+      (testing "an edit naming a link the recipe does not make is refused, not dropped or doubled"
+        (let [refusal (fn [recipe] ((juxt :status :code) (second (candidate-command model {:op :knob-candidate/generate :recipe recipe}))))]
+          (is (= [:rejected :unknown-link]
+                 (refusal {:generator 2 :seed 4 :size [4 6] :edits [{:op :unlink :link-id (:id dropped)}]}))
+              "a plain-name unlink against version 2 IDs")
+          (is (= [:rejected :duplicate-destination]
+                 (refusal {:generator 2 :seed 4 :size [4 6] :edits [{:op :link :link (assoc kept :curve :sine)}]}))
+              "a plain-name link on a destination the candidate already drives")
+          (is (= [:rejected :unsupported-generator] (refusal {:generator 3 :seed 4}))))))
+    (testing "live edits follow the same rules"
+      (let [[model] (candidate-command model {:op :knob-candidate/generate :seed 4 :size [4 6]})
+            [x y] (:links fresh)
+            [_ ack] (candidate-command model {:op :knob-candidate/unlink :link-id "nope"})
+            [_ dup] (candidate-command model {:op :knob-candidate/link :link (assoc x :id "again")})
+            [_ onto] (candidate-command model {:op :knob-candidate/link
+                                                :link (assoc y :id (:id x))})
+            [_ same] (candidate-command model {:op :knob-candidate/link :link (assoc x :curve :sine)})]
+        (is (= [:rejected :unknown-link] ((juxt :status :code) ack)))
+        (is (= [:rejected :duplicate-destination] ((juxt :status :code) dup)))
+        (is (= [:rejected :duplicate-destination] ((juxt :status :code) onto))
+            "replacing a link by its ID onto another link's destination")
+        (is (= :accepted (:status same)) "replacing a link on its own destination")))
+    (testing "a recipe's sharing flag is a boolean"
+      (is (= [:rejected :invalid-knob-candidate]
+             ((juxt :status :code) (second (candidate-command model {:op :knob-candidate/generate
+                                                                     :recipe {:generator 2 :seed 4 :include-knob-driven? "yes"}}))))))
+    (testing "a recipe's reversed size is normalised like a command's"
+      (let [[_ ack c] (candidate-command model {:op :knob-candidate/generate :recipe {:generator 2 :seed 4 :size [6 4]}})]
+        (is (= :accepted (:status ack)))
+        (is (= [4 6] (get-in c [:recipe :size])))
+        (is (= (:links fresh) (:links c)))))))
+
+(deftest a-version-1-recipe-groups-cues-by-plain-name-as-version-1-did
+  ;; Version 1 named owners by plain name, so :a/pulse and :b/pulse were one
+  ;; owner for correlated pairs and owner variety, and shared link-ID prefixes.
+  ;; The reference is the generator run on entries grouped that way.
+  (let [model (namespaced-show)
+        eligibility (generate/eligibility model)
+        plain (update eligibility :eligible
+                      (partial mapv #(assoc % :group (name (get-in % [:destination :cue-id])))))
+        compared (for [seed (range 60) size [nil [2 4] [4 6]]
+                       :let [options (cond-> {:seed seed} size (assoc :size size))
+                             replayed (generate/generate eligibility nil (assoc options :generator 1))
+                             reference (generate/generate plain nil options)]]
+                   [(select-keys replayed [:status :links :score :explain :character])
+                    (select-keys reference [:status :links :score :explain :character])])]
+    (is (every? (fn [[a b]] (= a b)) compared))
+    (is (some (fn [[a]] (some :correlated-with (:explain a))) compared) "correlations are exercised")
+    (is (not= (map first compared)
+              (for [seed (range 60) size [nil [2 4] [4 6]]]
+                (select-keys (generate/generate eligibility nil (cond-> {:seed seed} size (assoc :size size)))
+                             [:status :links :score :explain :character])))
+        "version 2 groups the two cues apart")))

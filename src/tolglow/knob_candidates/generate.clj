@@ -18,8 +18,15 @@
             [tolglow.registry :as registry]))
 
 (def generator-version
-  "Bump when a change makes a saved recipe resolve to different links."
-  1)
+  "Bump when a change makes a saved recipe resolve to different links.
+  2 (#737): link IDs keep the cue's namespace, and a recipe may carry :avoid.
+  A build that only knows 1 refuses such a recipe instead of misreplaying it."
+  2)
+
+(def generator-versions
+  "Recipe versions this build replays. A version 1 recipe regenerates with
+  version 1 link IDs (the cue's plain name), so its recorded edits still match."
+  #{1 2})
 
 (def min-links 2)
 
@@ -105,7 +112,12 @@
 (defn- owner-of [instance]
   (if-let [cue (:cue-id instance)] {:cue-id cue} {:instance-id (:id instance)}))
 
-(defn- owner-name [instance] (let [id (or (:cue-id instance) (:id instance))] (if (keyword? id) (name id) (str id))))
+(defn- id-text
+  "Text of an identifier with its namespace, so :a/wash and :b/wash stay apart."
+  [id]
+  (if (keyword? id) (subs (str id) 1) (str id)))
+
+(defn- owner-name [instance] (id-text (or (:cue-id instance) (:id instance))))
 
 (defn- waveform-inputs
   "Registered inputs of a binding's waveform, such as a pulse's :duty."
@@ -137,6 +149,30 @@
 (defn- destination-entry [instance destination schema role label default]
   {:key (pr-str (into (sorted-map) destination)) :destination destination :schema schema :role role
    :group (owner-name instance) :label label :default default})
+
+(defn knob-driven
+  "Destinations the show's existing knobs already drive, as destination key →
+  sorted knob IDs. A link addressed to a running launch by instance ID also
+  counts for that launch's cue, since a generated link addresses the cue."
+  [model]
+  (let [instances (:instances model)]
+    (-> (reduce (fn [acc [knob-id link]]
+                  (let [destination (knobs/destination-key link)
+                        cue-id (some->> (:instance-id destination) (get instances) :cue-id)
+                        addressed (cond-> [destination]
+                                    cue-id (conj (-> destination (dissoc :instance-id) (assoc :cue-id cue-id))))]
+                    (reduce #(update %1 %2 (fnil conj []) knob-id) acc addressed)))
+                {}
+                (for [[knob-id knob] (get-in model [:knobs :knobs]) link (:links knob)] [knob-id link]))
+        (update-vals #(vec (sort-by id-text (distinct %)))))))
+
+(defn- knob-driven-exclusion [{:keys [group destination label]} knob-ids]
+  {:owner group :param (:param destination) :reason :knob-driven :label label
+   :destination destination :knob-ids (vec knob-ids)
+   :message (if (seq knob-ids)
+              (str "Already driven by knob " (str/join ", " (map id-text knob-ids))
+                   "; generate with :include-knob-driven? true to share it")
+              "Already driven by an existing knob when the recipe was made")})
 
 (defn- param-entries
   "Eligible destinations and exclusions for one running instance."
@@ -181,15 +217,25 @@
      {:eligible [] :excluded []}
      (sort-by (comp str key) (:params definition)))))
 
-(defn- id-match [ids x] (some #(when (or (= % x) (= (name %) (name x))) %) ids))
+(defn- id-match
+  "The known ID x names: the same ID or its full text (\"show/wash\"), else
+  the only known ID with that plain name. Plain names that match cues in two
+  namespaces stay unresolved."
+  [ids x]
+  (or (some #(when (or (= % x) (= (id-text %) (id-text x))) %) ids)
+      (let [named (filter #(= (name %) (id-text x)) (filter keyword? ids))]
+        (when (= 1 (count named)) (first named)))))
 
 (defn eligibility
   "Destinations a generated knob may drive on the running show: effect
   parameters and the gain, period and inputs of bound waveforms, deduplicated
   by destination, in launch then parameter order. :cue-ids restricts the
-  selection. Every parameter left out is listed under :excluded with a reason."
+  selection. :avoid maps destination keys (see `knob-driven`) to the knob IDs
+  that drive them; those destinations are left out with reason :knob-driven.
+  :shared is the same map for destinations offered anyway, which then carry
+  :driven-by. Every parameter left out is listed under :excluded with a reason."
   ([model] (eligibility model {}))
-  ([model {:keys [cue-ids]}]
+  ([model {:keys [cue-ids avoid shared]}]
    (let [known (set (keys (get-in model [:registry :cues])))
          wanted (when (seq cue-ids) (mapv #(or (id-match known %) %) cue-ids))
          running (running-instances model)
@@ -208,9 +254,16 @@
                              x)]
                      (-> acc (update :eligible into e) (update :excluded into x))))
                  {:eligible [] :excluded (vec unselected)} selected)
-         seen (volatile! #{})]
-     {:eligible (vec (filter #(when-not (@seen (:key %)) (vswap! seen conj (:key %))) eligible))
-      :excluded (vec (distinct excluded))
+         seen (volatile! #{})
+         unique (filter #(when-not (@seen (:key %)) (vswap! seen conj (:key %))) eligible)
+         avoided? #(contains? avoid (:destination %))]
+     {:eligible (vec (for [entry unique :when (not (avoided? entry))]
+                       (if-let [knob-ids (get shared (:destination entry))]
+                         (assoc entry :driven-by (vec knob-ids))
+                         entry)))
+      :excluded (vec (distinct (concat excluded
+                                       (for [entry unique :when (avoided? entry)]
+                                         (knob-driven-exclusion entry (get avoid (:destination entry)))))))
       :selection (cond-> {:running (count selected)} wanted (assoc :cue-ids wanted))})))
 
 ;; ---------------------------------------------------------------------------
@@ -337,9 +390,23 @@
     (or (>= jitter 0.5) (<= smoothness 0.2)) [:linear :ease-in]
     :else [:linear :ease-in-out :ease-out]))
 
-(defn- link-id [{:keys [destination group]}]
+(defn- link-id
+  "Stable link ID from the full cue (or launch) ID and the destination, so cues
+  that differ only by namespace never share a link ID. :id-group replaces the
+  cue part when a version 1 recipe is replayed."
+  [{:keys [destination group id-group]}]
   (let [{:keys [param field input]} destination]
-    (str group "-" (name param) (when (or field input) (str "-" (name (or field input)))))))
+    (str (or id-group group) "-" (id-text param) (when (or field input) (str "-" (id-text (or field input)))))))
+
+(defn- version-1-ids
+  "Version 1 named an owner by its plain name: :rig/feel gave link IDs such as
+  \"feel-level\", and cues sharing a plain name across namespaces counted as
+  one owner for correlated pairs and owner variety. A replay does the same."
+  [entry]
+  (let [{:keys [cue-id instance-id]} (:destination entry)
+        id (or cue-id instance-id)
+        plain (if (keyword? id) (name id) (str id))]
+    (assoc entry :id-group plain :group plain)))
 
 (defn- build-link
   "[seed link-or-nil] for one destination in a character and feel."
@@ -486,7 +553,9 @@
                        " as the knob rises (" (:name character) ")"
                        (when (:quantize link) ", in preferred beat ratios")
                        (when (= [0.5 1.0] (:input link)) ", over the knob's upper half"))}
-      partner (assoc :correlated-with (first (remove #{(:id link)} (:links partner))) :correlation (:why partner)))))
+      partner (assoc :correlated-with (first (remove #{(:id link)} (:links partner))) :correlation (:why partner))
+      ;; Offered on request although an existing knob drives it: the last committed write wins.
+      (:driven-by entry) (assoc :shared-with (:driven-by entry)))))
 
 (defn- draft [seed pool character feel [low high]]
   (let [[seed x] (draw seed)
@@ -504,6 +573,11 @@
 (defn- signature [{:keys [character links]}]
   [character (sort (map #(pr-str (into (sorted-map) (knobs/destination-key %))) links))])
 
+(defn- refuse!
+  "Refuse options with a code the owner's receipt carries, so clients can branch on it."
+  [code message details]
+  (throw (ex-info message {:control/error code :details details})))
+
 (defn- insufficient [pool excluded selection message]
   {:status :insufficient :eligible (count pool) :needed min-links :message message
    :eligible-labels (mapv :label pool) :excluded excluded :selection selection})
@@ -511,17 +585,25 @@
 (defn generate
   "One candidate from eligibility data, a personality (or nil) and options:
   :seed (integer, required), :character (pin one of `characters`), :size
-  [min max] links. Returns {:status :ready ...} with :links, :score, :explain
-  and :recipe, or {:status :insufficient ...} explaining which parameters were
-  left out and why."
-  [{:keys [eligible excluded selection]} personality {:keys [seed character size] :as options}]
-  (when-not (integer? seed) (throw (ex-info "A generation seed must be an integer" {:seed seed})))
+  [min max] links, :generator (a version in `generator-versions`, default the
+  current one; only a recipe replay passes an older one). Returns
+  {:status :ready ...} with :links, :score, :explain and :recipe, or
+  {:status :insufficient ...} explaining which parameters were left out and why."
+  [{:keys [eligible excluded selection]} personality {:keys [seed character size generator] :as options}]
+  (when-not (integer? seed) (refuse! :invalid-seed "A generation seed must be an integer" {:seed seed}))
+  (when-not (generator-versions (or generator generator-version))
+    (refuse! :unsupported-generator "The recipe was made by a generator version this build does not know"
+             {:generator generator :known generator-versions}))
   (when (and character (not (character-index character)))
-    (throw (ex-info "Unknown character" {:character character :known (mapv :id characters)})))
-  (let [feel (feel personality)
-        [low high] (or size default-size)
+    (refuse! :unknown-character (str "Unknown character; choose one of "
+                                     (str/join ", " (map (comp name :id) characters)))
+             {:character character :known (mapv :id characters)}))
+  (let [version (or generator generator-version)
+        eligible (if (= 1 version) (mapv version-1-ids eligible) eligible)
+        feel (feel personality)
+        [low high] (cond (nil? size) default-size (and (sequential? size) (= 2 (count size))) size)
         _ (when-not (and (integer? low) (integer? high) (<= min-links low high max-links))
-            (throw (ex-info (str "Size is [min max] links within " min-links "–" max-links) {:size size})))
+            (refuse! :invalid-size (str "Size is [min max] links within " min-links "–" max-links) {:size size}))
         viable (filter (fn [c] (let [pool (filter #(get-in c [:polarity (:role %)]) eligible)]
                                  (and (<= min-links (count pool)) (some #((:anchors c) (:role %)) pool))))
                        characters)
@@ -547,6 +629,7 @@
 
       :else
       (let [entries-of (fn [chosen] (into {} (map (juxt link-id identity)) chosen))
+            avoided (vec (sort-by pr-str (keep #(when (= :knob-driven (:reason %)) (:destination %)) excluded)))
             [_ drafts] (reduce (fn [[seed acc] _]
                                  (let [[seed d] (draft seed pool chosen feel [low high])] [seed (conj acc d)]))
                                [seed* []] (range attempts))
@@ -560,14 +643,19 @@
           (insufficient pool excluded selection
                         (str "No playable mapping was found for the " (:name chosen) " character with seed " seed
                              "; reroll or widen the selection."))
-          {:status :ready :generator generator-version :seed seed :character (:id chosen)
+          {:status :ready :generator version :seed seed :character (:id chosen)
            :character-name (:name chosen) :name (str "Generated " (:name chosen))
            :links (:links best) :score (:score best)
            :explain (mapv #(explain-link % ((:entries best) (:id %)) chosen (:pairs best)) (:links best))
            :roles (into {} (map (fn [[id e]] [id (:role e)])) (:entries best))
-           :recipe (cond-> {:generator generator-version :seed seed :character (:id chosen)}
+           :recipe (cond-> {:generator version :seed seed :character (:id chosen)}
                      size (assoc :size size)
                      (:cue-ids selection) (assoc :cue-ids (:cue-ids selection))
+                     ;; Exactly the knob-driven destinations this show left out, so the
+                     ;; recipe repeats after this candidate's own knob drives them too.
+                     (seq avoided) (assoc :avoid avoided)
+                     ;; Rerolls after a repeat of this recipe share knob-driven destinations too.
+                     (:include-knob-driven? options) (assoc :include-knob-driven? true)
                      personality (assoc :personality (select-keys personality [:id :version])))})))))
 
 (defn candidate-signature
@@ -575,15 +663,21 @@
   [candidate]
   (signature candidate))
 
-(defn reroll
-  "The next candidate after seed whose signature is not in seen, trying at most
-  sixteen consecutive seeds. Returns the candidate, with :repeated? true when
-  every tried seed repeated an earlier one."
-  [eligibility personality options seed seen]
+(defn- reroll-from
+  "reroll's search over generate-seed, a function of one seed."
+  [generate-seed seed seen]
   (loop [s (inc seed) tries 1 first-ready nil]
-    (let [candidate (generate eligibility personality (assoc options :seed s))]
+    (let [candidate (generate-seed s)]
       (cond
-        (not= :ready (:status candidate)) (or first-ready candidate)
+        (not= :ready (:status candidate)) (if first-ready (assoc first-ready :repeated? true) candidate)
         (not (contains? seen (signature candidate))) candidate
         (>= tries reroll-limit) (assoc (or first-ready candidate) :repeated? true)
         :else (recur (inc s) (inc tries) (or first-ready candidate))))))
+
+(defn reroll
+  "The next candidate after seed whose signature is not in seen, trying at most
+  sixteen consecutive seeds. Stops at the first seed with no playable
+  mapping. Returns the candidate, with :repeated? true when it repeats an
+  earlier one: every tried seed repeated, or the search stopped after a repeat."
+  [eligibility personality options seed seen]
+  (reroll-from #(generate eligibility personality (assoc options :seed %)) seed seen))

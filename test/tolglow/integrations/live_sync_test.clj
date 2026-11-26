@@ -472,3 +472,32 @@
           (is (= beat (get-in (await-status!) [:clock :beat])))
           (is (= expected (source-epoch)))))
       (finally (sync/close! manager)))))
+
+(deftest run-clip-callbacks-reach-the-show-and-live-input-is-a-performance
+  (let [commands (atom []) clips (atom [])
+        manager (live-sync/create-manager
+                 {:now-ms (constantly 35)
+                  :config {:live {:enabled? true :mappings {36 {:cue-id :red :mode :persistent}
+                                                             37 {:cue-id :blue :mode :persistent}}}}
+                  :live-factory (fn [_] {:open! (fn [_] :live) :close! (fn [_])
+                                         :request! (fn [_ id _ _] {:id id :status :executed :result {}})})})
+        cb (assoc (callbacks commands (atom [])) :run-clip! #(swap! clips conj %))]
+    (try
+      (let [run (sync/start! manager cb)
+            message (fn [id kind event] {:protocol-version 1 :bridge-id "tolglow-m4l" :sync-session-id (:run-id run)
+                                         :event-id id :kind kind :event event})]
+        (is (session/flush! manager))
+        (testing "a run-clip event from the companion reaches the show's run-clip callback once"
+          (let [m (message "p:1" "run-clip" {:type "clip-started" :track-id "track:5" :clip-id "clip:9" :serial 1 :watch-session "w1"})]
+            (is (true? (live-sync/ingest-live! manager m)))
+            (is (false? (live-sync/ingest-live! manager m)))
+            (is (true? (live-sync/ingest-live! manager (message "p:2" "run-clip" {:type "clip-stopped" :track-id "track:5" :serial 2}))))
+            (is (session/flush! manager))
+            (is (= [["clip-started" "w1" 1] ["clip-stopped" (:run-id run) 2]] (mapv (juxt :type :watch-session :serial) @clips))
+                "an event without a watch session is keyed by the bridge's sync session")))
+        (testing "MIDI the companion marks as live input launches as a performance, clip playback as playback"
+          (is (live-sync/ingest-live! manager (message "p:3" "midi" {:type "note-on" :channel 1 :note 36 :velocity 100 :origin "live-input"})))
+          (is (live-sync/ingest-live! manager (message "p:4" "midi" {:type "note-on" :channel 1 :note 37 :velocity 100 :origin "live-playback"})))
+          (is (session/flush! manager))
+          (is (= [[:red :live-input] [:blue :live-playback]] (mapv (juxt :cue-id (comp :origin :source)) @commands)))))
+      (finally (sync/close! manager)))))
