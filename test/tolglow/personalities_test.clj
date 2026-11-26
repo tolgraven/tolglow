@@ -270,18 +270,21 @@
                        {:op :select :id :spirals :seed 5})
         package (personalities/export-package model [:studio/neon-alley :squircle])]
     (is (= {:type :tolglow/personalities :version 1 :schema 1
-            :personalities [custom (by-id :squircle)]
+            :personalities [(dissoc custom :extensions) (by-id :squircle)]
             :provenance [{:id :studio/neon-alley :version 1 :origin :show} {:id :squircle :version 1 :origin :builtin}]}
            package))
+    (is (= {:vendor/note "kept"} (:extensions custom)))
+    (is (= [custom] (:personalities (personalities/export-package model [:studio/neon-alley] {:extensions? true})))
+        "private extensions travel only when asked for")
     (is (= package (transit/decode (transit/encode package))))
-    (is (not (re-find #"spirals|chat history|seed" (pr-str package)))
+    (is (not (re-find #"spirals|chat history|seed|vendor" (pr-str package)))
         "the active selection and other show data are not part of a package")
     (is (thrown? clojure.lang.ExceptionInfo (personalities/export-package model [])))
     (is (thrown? clojure.lang.ExceptionInfo (personalities/export-package model [:missing])))
     (testing "import adds the chosen definitions to another show in one step"
       (let [other (demo/model)
             imported (operate other {:op :import :package package})]
-        (is (= custom (get (personalities/library imported) :studio/neon-alley)))
+        (is (= (dissoc custom :extensions) (get (personalities/library imported) :studio/neon-alley)))
         (is (nil? (personalities/active imported)))
         (is (= [:studio/neon-alley] (keys (:definitions (personalities/state imported))))
             "an unchanged built-in is not copied into the show")

@@ -425,17 +425,19 @@
 (defn export-package
   "Build a sharing package from an explicit selection of IDs. It carries the
   chosen definitions and their schema versions only: never the active
-  selection, the rest of the library or any other show data."
-  [model ids]
-  (when-not (and (vector? ids) (seq ids) (apply distinct? ids))
-    (throw (ex-info "Name the personalities to share" {})))
-  (let [entries (library model)
-        chosen (mapv #(get entries (resolve-id entries %)) ids)]
-    {:type :tolglow/personalities :version package-version :schema schema-version
-     :personalities chosen
-     :provenance (mapv (fn [{:keys [id version]}]
-                         {:id id :version version :origin (if (= (get builtin-index id) (get entries id)) :builtin :show)})
-                       chosen)}))
+  selection, the rest of the library or any other show data. A definition's
+  private :extensions stay behind unless options asks for :extensions? true."
+  ([model ids] (export-package model ids {}))
+  ([model ids {:keys [extensions?]}]
+   (when-not (and (vector? ids) (seq ids) (apply distinct? ids))
+     (throw (ex-info "Name the personalities to share" {})))
+   (let [entries (library model)
+         chosen (mapv #(get entries (resolve-id entries %)) ids)]
+     {:type :tolglow/personalities :version package-version :schema schema-version
+      :personalities (mapv #(cond-> % (not extensions?) (dissoc :extensions)) chosen)
+      :provenance (mapv (fn [{:keys [id version]}]
+                          {:id id :version version :origin (if (= (get builtin-index id) (get entries id)) :builtin :show)})
+                        chosen)})))
 
 (defn- package-personalities [{:keys [type version schema personalities provenance] :as package}]
   (when-not (and (map? package) (= #{:type :version :schema :personalities :provenance} (set (keys package)))
