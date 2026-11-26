@@ -1,7 +1,7 @@
 (ns tolglow.showcase
   "The Tolglow showcase show: a venue rig, a cue grid of ported and new looks,
   two macros and a sequence from the operator's saved compound cues, and a
-  recorded 32-bar timeline at 128 BPM.
+  recorded 32-bar timeline at 128 BPM that plays on the beat-clock scheduler.
 
   Run it with `lein run --config tolglow.showcase/config`. Output stays in the
   preview unless the command line selects a physical sink. Loading this
@@ -212,9 +212,9 @@
       ;; Phrase 4, bars 12-15: the operator's "mixed movement" macro takes the beams.
       (end 12 :aim-lfo :beam-shafts :colour-drift)
       {:at {:bar 12} :op :macro/run :macro-id :mixed-movement}
-      (ramp 12 :can-can :spread 40.0 {:bars 4} :ease-in-out)
+      (ramp 12 :can-can :spread 40.0 {:bars 3} :ease-in-out)
       (launch 14 :dimmer-sweep {:params {:beats 2.0 :width 0.6 :fade 0.6}})
-      (ramp 14 :dimmer-sweep :width 0.25 {:bars 2} :linear)
+      (ramp 14 :dimmer-sweep :width 0.25 {:beats 6} :linear)
       ;; Phrase 5, bars 16-19: breakdown and build. The beams gather on one
       ;; travelling point, a warm volume rolls along the tubes and a strobe
       ;; accelerates into a half-bar of darkness.
@@ -224,28 +224,30 @@
       (launch 16 :gather-path)
       {:at {:bar 16} :op :cue/launch :cue-id :rolling-volume :launch {:targets rig/tubes}}
       (ramp 16 :tube-sparkle :chance 0.08 {:bars 1} :ease-out)
-      (ramp 16 :beam-shafts :saturation 0.95 {:bars 4} :ease-in)
+      (ramp 16 :beam-shafts :saturation 0.95 {:bars 3} :ease-in)
       (launch 18 :strobe {:params {:rate 1.0 :duty 0.3 :level 0.25 :lightness 0.9}
-                          :mode :timed :duration {:bars 2}})
+                          :mode :one-shot :duration {:bars 2}})
       (ramp 18 :strobe :rate 8.0 {:beats 6} :ease-in)
       (ramp 18 :strobe :level 1.0 {:beats 6} :ease-in)
-      {:at {:bar 19 :beat 2} :op :param/set :target :master :value 0.0}
+      {:at {:bar 19 :beat 2} :op :master/set :value 0.0}
       ;; Phrase 6, bars 20-23: the drop. Blinders past full scale, the "heavy
       ;; colour" macro on the pixels, a fast can-can and overdriven risers.
-      {:at {:bar 20} :op :param/set :target :master :value 1.0}
+      {:at {:bar 20} :op :master/set :value 1.0}
       (end 20 :gather-path :rolling-volume :beam-shafts :tube-sparkle)
       (launch 20 :blinder-hit {:params {:drive 3.0 :decay 1.2} :mode :one-shot :duration {:beats 3}})
       {:at {:bar 20} :op :macro/run :macro-id :heavy-colour}
       (launch 20 :pinstripes {:params {:color-1 [1.0 0.06 0.02] :color-2 [1.0 0.5 0.04] :beats 1.0 :fade 0.3}})
       (launch 20 :can-can {:params {:bars 1.0 :stagger 2.4 :spread 34.0 :tilt-min -35.0 :tilt-max 72.0}})
-      (launch 20 :riser-chase {:sources? true :params {:beats 0.5 :bands 1.5 :drive 2.6}})
+      (launch 20 :riser-chase {:sources? true :params {:beats 0.5 :bands 1.5 :drive 1.9}})
+      (launch 20 :wash-ember {:params {:level 0.9}})
       (launch 20 :mover-orbit {:sources? true :params {:tint [1.0 0.16 0.04] :bars 2.0}})
       {:at {:bar 20} :op :subscriber/save :subscriber phrase-accents}
       ;; Phrase 7, bars 24-27: the drop opens out, then the strobe chase bounces.
       (end 24 :can-can)
       (launch 24 :aim-lfo {:params {:x-bars 1.0 :y-bars 0.75 :z-bars 2.0 :fan 1.0 :x-min -3.0 :x-max 3.0}})
-      (launch 24 :wash-ember {:sources? true})
-      (ramp 24 :riser-chase :drive 1.2 {:bars 4} :ease-out)
+      {:at {:bar 24} :op :modulation/bind :cue-id :wash-ember :param :layer/priority
+       :binding (get-in looks/sources [:wash-ember :layer/priority])}
+      (ramp 24 :riser-chase :drive 1.2 {:bars 3} :ease-out)
       {:at {:bar 26} :op :macro/run :macro-id :strobe-chase}
       ;; Phrase 8, bars 28-31: everything lets go, down to ribbon and haze.
       {:at {:bar 28} :op :subscriber/remove :id :phrase-accents}
@@ -254,35 +256,57 @@
       (end 28 :pinstripes :aim-lfo :riser-chase :mover-orbit :wash-ember)
       (launch 28 :beam-shafts {:sources? true :params {:hue 0.62 :saturation 0.6}})
       (launch 28 :bloom-halo {:params {:beats 16.0 :width 0.35 :halo 1.2 :tint [0.3 0.1 0.9]}})
-      (ramp 28 :aurora :wavelength 14.0 {:bars 4} :ease-in-out)
+      (ramp 28 :aurora :wavelength 14.0 {:bars 2} :ease-in-out)
       (end 30 :beam-shafts :bloom-halo)
       (end 31 :aurora :wash-tide :haze)]))})
 
 ;; --------------------------------------------------------------------- player
 
-(defn- next-bar [beat]
+(defn- origin-for
+  "The next bar line at least two beats away. The owner applies a post on its
+  next cycle, and every posted position must still be ahead of the transport."
+  [beat]
   (let [bar (:beats-per-bar meter)]
-    (* bar (Math/ceil (/ (double beat) bar)))))
+    (* bar (Math/ceil (/ (+ beat 2.0) bar)))))
+
+(defn- post-pass!
+  "Hand one pass of scheduler events to the show owner."
+  [runtime player origin pass]
+  (let [receipts (mapv #(show/submit! runtime %) (timeline/posts (:prepared @player) origin pass))]
+    (swap! player #(-> % (assoc :posted-pass pass) (update :receipts into receipts)))))
+
+(defn- unhappy-outcomes
+  "Scheduled events of this timeline that did not simply fire or complete."
+  [prepared model]
+  (let [prefix (str (name (:id prepared)) "/")]
+    (into #{}
+          (comp (filter #(and (string? (:event-id %)) (.startsWith ^String (:event-id %) prefix)
+                              (not (#{:fired :completed} (:status %)))))
+                (map #(select-keys % [:event-id :status :reason :message])))
+          (get-in model [:event-subscribers :recent]))))
 
 (defn- on-frame!
   "Runs under the show owner after each committed frame. It reads the model,
-  submits what the next frame needs and returns. The next owner cycle applies
-  those operations in order."
+  submits the direct commands the next frame needs and returns. The next owner
+  cycle applies them in order. A looping player posts the following pass one
+  bar before the current one ends."
   [runtime player committed]
-  (let [{:keys [prepared loop? state previous-beat]} @player
+  (let [{:keys [prepared loop? state previous-beat posted-pass]} @player
         model (:model committed)
         beat (get-in model [:transport :beat])
         horizon (+ beat (if previous-beat (max 0.0 (- beat previous-beat)) 0.0))
-        state (or state (timeline/start (if (zero? beat) 0.0 (next-bar beat)) 0))
         {:keys [state operations]} (timeline/advance prepared state model horizon)
         receipts (mapv (fn [[type payload]] (show/submit! runtime type payload)) operations)
-        state (if (and loop? (:done? state))
-                (timeline/start (+ (:origin state) (:length prepared)) (inc (:pass state)))
-                state)]
+        following (+ (:origin state) (:length prepared))
+        post-next? (and loop? (= posted-pass (:pass state))
+                        (>= (- horizon (:origin state)) (- (:length prepared) (:beats-per-bar meter))))
+        state (if (and loop? (:done? state)) (timeline/start following (inc (:pass state))) state)]
     (swap! player (fn [current]
                     (-> current
                         (assoc :state state :previous-beat beat)
-                        (update :receipts into receipts))))))
+                        (update :receipts into receipts)
+                        (update :outcomes into (unhappy-outcomes prepared model)))))
+    (when post-next? (post-pass! runtime player following (inc posted-pass)))))
 
 (defn- settle-receipts [player]
   (swap! player
@@ -295,42 +319,53 @@
                  (update :rejected into (map deref) rejected))))))
 
 (defn play!
-  "Attach the timeline player to a running or manually ticked show. It starts
-  at the next bar line, or at beat 0 on a fresh show. Options: `:timeline`
-  (default `timeline`) and `:loop?` (default false). Returns the player.
-  Starting twice returns the first player."
+  "Play the timeline on a running or manually ticked show. Its scheduler events
+  are posted at once and its direct commands follow frame by frame. It starts
+  on the next bar line at least two beats ahead. Options: `:timeline` (default
+  `timeline`), `:loop?` (default false) and `:origin`, an explicit transport
+  beat for timeline beat 0 that must not be behind the transport when the
+  owner next runs. Returns the player. Starting twice returns the first player."
   ([runtime] (play! runtime {}))
   ([runtime {:keys [loop?] :as options}]
-   (let [source (:timeline options timeline)
-         prepared (timeline/prepare source (:model @(:state runtime)))
-         player (atom {:prepared prepared :loop? (boolean loop?) :state nil :previous-beat nil
-                       :receipts [] :accepted 0 :rejected []})]
-     (:player (show/attach-observer!
-               runtime ::timeline
-               (fn [] {:player player
-                       :events! (fn [& _])
-                       :tracing? (constantly false)
-                       :frame! (fn [committed]
-                                 (settle-receipts player)
-                                 (on-frame! runtime player committed))
-                       :close! (fn [])}))))))
+   (let [model (:model @(:state runtime))
+         prepared (timeline/prepare (:timeline options timeline) model)
+         origin (double (:origin options (origin-for (get-in model [:transport :beat]))))
+         created (atom {:prepared prepared :loop? (boolean loop?) :state (timeline/start origin 0)
+                        :previous-beat nil :posted-pass nil :receipts [] :accepted 0 :rejected []
+                        :outcomes #{}})
+         player (:player (show/attach-observer!
+                          runtime ::timeline
+                          (fn [] {:player created
+                                  :events! (fn [& _])
+                                  :tracing? (constantly false)
+                                  :frame! (fn [committed]
+                                            (settle-receipts created)
+                                            (on-frame! runtime created committed))
+                                  :close! (fn [])})))]
+     (when (identical? player created) (post-pass! runtime player origin 0))
+     player)))
 
 (defn status
-  "Where the player is: timeline beat and bar, pass, and the operations it has
-  sent, had accepted or had rejected."
+  "Where the player is: timeline beat and bar, pass, the operations it has had
+  accepted or rejected, the direct commands that never found their cue, and
+  any scheduled event that was rejected, missed or cancelled."
   [player]
-  (let [{:keys [state previous-beat accepted rejected receipts prepared]} (settle-receipts player)
-        local (when (and state previous-beat) (- previous-beat (:origin state)))]
+  (let [{:keys [state previous-beat accepted rejected receipts prepared outcomes]} (settle-receipts player)
+        local (when previous-beat (- previous-beat (:origin state)))]
     {:timeline (:id prepared) :pass (:pass state) :done? (boolean (:done? state))
      :beat local :bar (when local (/ local (:beats-per-bar meter)))
-     :sent (:sent state 0) :accepted accepted :pending (count receipts)
-     :rejected rejected :missed (:missed state [])}))
+     :accepted accepted :pending (count receipts) :rejected rejected
+     :missed (:missed state []) :outcomes outcomes}))
 
 (defn stop!
-  "Detach the player and release every instance the timeline launched."
+  "Detach the player, withdraw what it still has scheduled and release every
+  instance the timeline launched. Returns the final status."
   [runtime player]
   (show/detach-observer! runtime ::timeline)
-  (let [model (:model @(:state runtime))]
+  (let [model (:model @(:state runtime))
+        source (timeline/source (get-in @player [:prepared :id]))]
+    (when (seq (filter :scheduled (get-in model [:event-subscribers :runs])))
+      (show/cancel-events! runtime {:posted-by source}))
     (doseq [id (keys (:composition-runs model))]
       (show/submit! runtime :composition-stop {:id id}))
     (doseq [{:keys [id source]} (vals (:instances model))
@@ -370,7 +405,7 @@
          runtime (show/create-runtime {:model (model {:seed seed}) :workspace-options nil
                                        :worker-timeout-ms 60000 :sink (capture-sink frames)})]
      (try
-       (let [player (play! runtime {:timeline source})
+       (let [player (play! runtime {:timeline source :origin 0.0})
              kept (loop [t 0 kept []]
                     (if (> t (+ (* last-bar bar-ms) frame-ms))
                       kept

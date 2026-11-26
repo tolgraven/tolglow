@@ -22,6 +22,8 @@
 
 (defn- probe [snapshot]
   {:running (into #{} (map :cue-id) (:instances snapshot))
+   :ramps (into #{} (map (juxt (comp :param :destination) :to)) (get-in snapshot [:schedule :ramps]))
+   :upcoming (count (get-in snapshot [:schedule :upcoming]))
    :faults (into [] (keep (fn [instance]
                             (when-let [fault (:fault instance)] [(:cue-id instance) (:message fault)])))
                  (:instances snapshot))
@@ -85,44 +87,71 @@
         (is (= [[:events 0]] (mapv :path problems)))
         (is (re-find message (:message (first problems))))))))
 
-(deftest the-player-fires-each-event-once-and-waits-for-instances
+(def ^:private probe-timeline
+  {:id :probe :bpm 120 :meter showcase/meter :length {:bar 2}
+   :events [{:at {:beat 1} :op :cue/launch :cue-id :haze :launch {:params {:level 0.2}}
+             :sources {:level {:type :lfo :waveform :sine :period {:beats 2} :from 0.0 :to 0.5}}}
+            {:at {:beat 2} :op :param/ramp :cue-id :haze :param :level :to 1.0 :over {:beats 2} :curve :ease-in}
+            {:at {:beat 2} :op :cue/launch :cue-id :rolling-volume :launch {:targets rig/tubes}}
+            {:at {:beat 5} :op :master/set :value 0.5}
+            {:at {:beat 6} :op :instance/end :cue-id :haze}
+            {:at {:beat 6} :op :instance/end :cue-id :rolling-volume}]})
+
+(deftest scheduler-events-are-posted-at-absolute-beats-in-authored-order
+  (let [prepared (timeline/prepare probe-timeline (showcase/model))
+        [post :as posts] (timeline/posts prepared 8.0 2)]
+    (is (= 1 (count posts)))
+    (is (= {:op :schedule/post :command-id "timeline/probe/2/post/0"
+            :source {:adapter :timeline :session-id "probe"}}
+           (dissoc post :events)))
+    (is (= [{:id "probe/2/0" :label "Launch haze" :op :cue/launch :at {:beat 9.0} :cue-id :haze
+             :launch {:params {:level 0.2}}}
+            {:id "probe/2/1" :label "Ramp haze level" :op :param/ramp :at {:beat 10.0} :cue-id :haze
+             :param :level :to 1.0 :over {:beats 2} :curve :ease-in}
+            {:id "probe/2/3" :label "Master" :op :master/set :at {:beat 13.0} :value 0.5}
+            {:id "probe/2/4" :label "End haze" :op :instance/end :at {:beat 14.0} :cue-id :haze}]
+           (:events post)))
+    (testing "what the scheduler cannot run stays a direct command"
+      (is (= [[1.0 :modulation/bind :haze] [2.0 :cue/launch :rolling-volume] [6.0 :instance/end :rolling-volume]]
+             (mapv (juxt :beat :op :cue-id) (:direct prepared)))))
+    (testing "a long timeline is split into batches the scheduler admits"
+      (let [many (assoc probe-timeline :events (vec (repeat 130 {:at {:beat 1} :op :master/set :value 1.0})))]
+        (is (= [64 64 2] (mapv (comp count :events) (timeline/posts (timeline/prepare many (showcase/model)) 0.0 0))))))))
+
+(deftest direct-commands-fire-once-and-binds-wait-for-the-launched-instance
   (let [model (showcase/model)
-        source {:id :probe :bpm 120 :meter showcase/meter :length {:bar 2}
-                :events [{:at {:beat 1} :op :cue/launch :cue-id :haze
-                          :sources {:level {:type :lfo :waveform :sine :period {:beats 2} :from 0.0 :to 0.5}}}
-                         {:at {:beat 2} :op :param/ramp :cue-id :haze :param :level :to 1.0 :over {:beats 2}}
-                         {:at {:beat 6} :op :instance/end :cue-id :haze}]}
-        prepared (timeline/prepare source model)
-        running (assoc-in model [:instances "0:1"]
-                          {:id "0:1" :cue-id :haze :order 0 :phase :running :params {:level 0.2}})
+        prepared (timeline/prepare probe-timeline model)
+        instance (fn [id cue started] {:id id :cue-id cue :order 0 :phase :running :started-at-beat started})
+        stale (assoc-in model [:instances "0:1"] (instance "0:1" :haze 8.5))
+        fresh (assoc-in model [:instances "0:2"] (instance "0:2" :haze 9.02))
+        both (assoc-in fresh [:instances "0:3"] (assoc (instance "0:3" :rolling-volume 10.0) :order 1))
         step (fn [state model beat] (timeline/advance prepared state model beat))
-        before (step (timeline/start 0.0 0) model 0.5)
-        launched (step (:state before) model 1.0)
-        bound (step (:state launched) running 1.5)
-        ramping (step (:state bound) running 3.0)
-        finished (step (:state ramping) running 4.0)
-        ended (step (:state finished) running 6.0)
-        over (step (:state ended) model 8.0)]
+        before (step (timeline/start 8.0 0) model 8.5)
+        waiting (step (:state before) stale 9.0)
+        bound (step (:state waiting) fresh 9.05)
+        launched (step (:state bound) fresh 10.0)
+        ended (step (:state launched) both 14.0)
+        over (step (:state ended) model 16.0)]
     (is (empty? (:operations before)))
-    (is (= [[:command {:op :cue/launch :cue-id :haze :launch {} :command-id "timeline/probe/0/0"
-                       :source {:adapter :timeline :session-id "probe"}}]]
-           (:operations launched)))
-    (is (= 1 (count (get-in launched [:state :waiting]))) "The bind waits for the new instance")
-    (is (= [[:modulation-bind {:instance-id "0:1" :param :level
+    (is (empty? (:operations waiting)) "An instance from before the launch beat is not the one to bind")
+    (is (= 1 (count (get-in waiting [:state :waiting]))))
+    (is (= [[:modulation-bind {:instance-id "0:2" :param :level
                                :binding {:type :lfo :waveform :sine :period {:beats 2} :from 0.0 :to 0.5}}]]
            (:operations bound)))
-    (is (= [[:param/set "0:1" 0.6]] (mapv (fn [[_ c]] [(:op c) (:instance-id c) (:value c)]) (:operations ramping))))
-    (is (= [[:param/set "0:1" 1.0]] (mapv (fn [[_ c]] [(:op c) (:instance-id c) (:value c)]) (:operations finished))))
-    (is (empty? (get-in finished [:state :ramps])))
-    (is (= [:instance/end] (mapv (comp :op second) (:operations ended))))
+    (is (= [[:command {:op :cue/launch :cue-id :rolling-volume :launch {:targets rig/tubes}
+                       :command-id "timeline/probe/0/1" :source {:adapter :timeline :session-id "probe"}}]]
+           (:operations launched)))
+    (is (= [[:command {:op :instance/end :instance-id "0:3" :command-id "timeline/probe/0/2"
+                       :source {:adapter :timeline :session-id "probe"}}]]
+           (:operations ended)))
     (is (false? (get-in ended [:state :done?])))
     (is (true? (get-in over [:state :done?])))
-    (is (empty? (:operations (step (:state over) model 9.0))) "A finished pass sends nothing more")
+    (is (empty? (:operations (step (:state over) model 17.0))) "A finished pass sends nothing more")
     (testing "the same model and beat give the same operations"
-      (is (= ramping (step (:state bound) running 3.0))))
-    (testing "an action whose cue never starts is reported after its patience"
+      (is (= bound (step (:state waiting) fresh 9.05))))
+    (testing "a bind whose cue never starts is reported after its patience"
       (let [stuck (reduce (fn [result beat] (step (:state result) model beat))
-                          launched (map #(+ 1.0 (* 0.01 %)) (range 1 20)))]
+                          waiting (map #(+ 9.0 (* 0.01 %)) (range 1 20)))]
         (is (= [{:index 0 :op :modulation/bind :cue-id :haze :param :level}] (get-in stuck [:state :missed])))))))
 
 (deftest replaying-the-timeline-twice-gives-byte-identical-dmx
@@ -138,13 +167,20 @@
       (is (= [1 2 3] (vec (keys (:universes (first frames))))))
       (is (every? #(= [512 512 512] (mapv count (vals (:universes %)))) frames)))
     (testing "the whole timeline went through the command path cleanly"
-      (let [status (:status first-run)]
+      (let [status (:status first-run)
+            prepared (timeline/prepare showcase/timeline (showcase/model))]
         (is (:done? status))
-        (is (pos? (:accepted status)))
-        (is (= (:sent status) (:accepted status)))
+        (is (= (+ (count (timeline/posts prepared 0.0 0)) (count (:direct prepared))) (:accepted status))
+            "Two scheduler posts and the direct commands, with no command per frame")
         (is (empty? (:rejected status)))
         (is (empty? (:missed status)))
+        (is (empty? (:outcomes status)) "Every scheduled event fired and every ramp completed")
         (is (zero? (:pending status))))
+      (testing "the owner runs the ramps"
+        (is (= 62 (:upcoming (first probes))) "The three opening launches fired on frame 0")
+        (is (zero? (:upcoming (peek probes))))
+        (is (= #{[:rate 8.0] [:level 1.0] [:saturation 0.95]} (:ramps (bar-frame 18.5))))
+        (is (empty? (:ramps (bar-frame 23)))))
       (is (empty? (distinct (mapcat :faults probes))) "No cue faulted on any frame"))
     (testing "every cue on the grid plays at some point"
       (is (= (set (keys (get-in (showcase/model) [:registry :cues])))
@@ -167,6 +203,33 @@
         (is (not= (digest (:dmx (showcase/replay (assoc bars :seed 7))))
                   (digest (:dmx (showcase/replay bars)))))))))
 
+(deftest a-looping-player-posts-each-pass-ahead-and-stop-withdraws-the-rest
+  (let [short {:id :loop-probe :bpm 128 :meter showcase/meter :length {:bar 2}
+               :events [{:at {:bar 0} :op :cue/launch :cue-id :haze :sources (:haze looks/sources)}
+                        {:at {:bar 0} :op :param/ramp :cue-id :haze :param :level :to 0.9 :over {:beats 2}}
+                        {:at {:bar 1} :op :instance/end :cue-id :haze}]}
+        runtime (show/create-runtime {:model (showcase/model) :workspace-options nil :worker-timeout-ms 60000})
+        launches (atom #{})]
+    (try
+      (let [player (showcase/play! runtime {:timeline short :loop? true :origin 0.0})]
+        (is (identical? player (showcase/play! runtime {:timeline short})) "A second play keeps the first player")
+        (doseq [t (range 0 9500 25)]
+          (show/tick! runtime t)
+          (swap! launches into (keep (fn [instance] (when (= :haze (:cue-id instance)) (:id instance))))
+                 (vals (:instances (:model @(:state runtime))))))
+        (let [status (showcase/status player)]
+          (is (= 2 (:pass status)) "Five bars in, the third two-bar pass is playing")
+          (is (= 3 (count @launches)))
+          (is (empty? (:rejected status)))
+          (is (empty? (:missed status)))
+          (is (empty? (:outcomes status))))
+        (is (seq (:upcoming (show/schedule runtime))) "The current pass still has events ahead")
+        (showcase/stop! runtime player)
+        (doseq [t (range 9500 12000 25)] (show/tick! runtime t))
+        (is (empty? (:upcoming (show/schedule runtime))))
+        (is (empty? (:instances (:model @(:state runtime))))))
+      (finally (show/stop! runtime)))))
+
 (deftest the-documented-config-starts-a-show-that-plays-its-timeline
   (let [config (-> showcase/config
                    (assoc :web-server false)
@@ -177,11 +240,12 @@
       (let [player (get-in runtime [:application :modules :showcase-timeline :player])
             deadline (+ (System/currentTimeMillis) 20000)]
         (while (and (< (System/currentTimeMillis) deadline)
-                    (< (:accepted (showcase/status player)) 5))
+                    (< (:accepted (showcase/status player)) 7))
           (Thread/sleep 50))
         (let [status (showcase/status player)
               snapshot (show/snapshot runtime)]
-          (is (>= (:accepted status) 5))
+          (is (>= (:accepted status) 7) "Two posts and the five opening binds")
+          (is (empty? (:outcomes status)))
           (is (empty? (:rejected status)))
           (is (= :first-light (:timeline status)))
           (is (= {:type :preview} (get-in snapshot [:status :output])))

@@ -48,11 +48,12 @@
     tolglow.event-subscribers-test tolglow.beat-scheduler-test tolglow.studio.projection-test tolglow.studio.active-preview-test tolglow.push-scene-test
     tolglow.controllers.content-browser-test tolglow.controllers.content-browser-host-test
     tolglow.controllers.content-browser-display-test
-    tolglow.preview.airplay-test])
+    tolglow.preview.airplay-test tolglow.showcase-test])
 
 (def suites
   {"pure" pure-tests
-   "parity" (into pure-tests '[tolglow.fixtures.patch-parity-test tolglow.fixtures-test tolglow.parity-test])})
+   "parity" (into pure-tests '[tolglow.fixtures.patch-parity-test tolglow.fixtures-test tolglow.parity-test
+                             tolglow.showcase-parity-test])})
 
 (defn -main [& [suite & extra]]
   (let [namespaces (get suites (or suite "pure"))]
