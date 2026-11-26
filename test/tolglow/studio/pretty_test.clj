@@ -15,19 +15,26 @@
        " :params {:level {:type :number :default 0.75 :bounds [0 1]} :rate {:type :number :default 2 :bounds [0.5 32] :unit :beats}}"
        " :version 3 :tags #{:emission :color :movement}"
        " :curve [0 0.125 0.25 0.375 0.5 0.625 0.75 0.875 1 0.875 0.75 0.625 0.5 0.375 0.25 0.125 0 0.125 0.25 0.375]"
-       " :blocks {[:outputs :dimmer] {:stages [{:block :lfo/sine :inputs {:phase 0.25}}]}} :list (a b c) :empty []}"))
+       " :blocks {[:outputs :dimmer] {:stages [{:block :lfo/sine :inputs {:phase 0.25}}]}} :list (a b c) :empty []"
+       " :launch [:mode :persistent :priority 10 :reload-policy :preserve-state :launch-grid :bar :quantize true :label \"A fairly long label\"]}"))
 
 (def golden-text
   (str/join "\n"
             ["{:id :after-hours"
              " :version 3"
              " :name \"Snow ☃ \\\"quoted\\\"\\nsecond line\\tend\""
-             " :blocks"
-             "   {[:outputs :dimmer] {:stages [{:block :lfo/sine :inputs {:phase 0.25}}]}}"
+             " :blocks {[:outputs :dimmer] {:stages [{:block :lfo/sine :inputs {:phase 0.25}}]}}"
              " :curve"
-             "   [0 0.125 0.25 0.375 0.5 0.625 0.75 0.875 1 0.875 0.75 0.625 0.5 0.375 0.25"
-             "    0.125 0 0.125 0.25 0.375]"
+             "   [0 0.125 0.25 0.375 0.5 0.625 0.75 0.875 1 0.875 0.75 0.625 0.5 0.375 0.25 0.125 0 0.125 0.25"
+             "    0.375]"
              " :empty []"
+             " :launch"
+             "   [:mode :persistent"
+             "    :priority 10"
+             "    :reload-policy :preserve-state"
+             "    :launch-grid :bar"
+             "    :quantize true"
+             "    :label \"A fairly long label\"]"
              " :list (a b c)"
              " :outputs"
              "   {:color {:op :const :value [0.725 0.5 0.25]}"
@@ -35,9 +42,7 @@
              "      {:op :multiply"
              "       :args"
              "         [{:op :param :key :level}"
-             "          {:op :sin"
-             "           :args"
-             "             [{:op :multiply :args [{:op :beat} {:op :param :key :rate}]}]}]}}"
+             "          {:op :sin :args [{:op :multiply :args [{:op :beat} {:op :param :key :rate}]}]}]}}"
              " :params"
              "   {:level {:type :number :default 0.75 :bounds [0 1]}"
              "    :rate {:type :number :default 2 :bounds [0.5 32] :unit :beats}}"
@@ -73,6 +78,10 @@
   (is (= "{:id :wash :version 1 :name \"Wash\" :tags [:color]}"
          (pretty/edn {:tags [:color] :name "Wash" :version 1 :id :wash})))
   (is (= "[]" (pretty/edn [])))
+  (testing "a map that does not fit puts every entry on its own line; so does a keyword-argument vector"
+    (is (= "{:a 1\n :b 2\n :c 3}" (pretty/edn {:a 1 :b 2 :c 3} {:width 12})))
+    (is (= "[:a 1\n :b 2\n :c 3]" (pretty/edn [:a 1 :b 2 :c 3] {:width 12})))
+    (is (= "[1 2 3\n 4 5 6]" (pretty/edn [1 2 3 4 5 6] {:width 7}))))
   (is (= "nil" (pretty/edn nil)))
   (testing "a narrower width and a starting column break the same value"
     (is (= "{:id :wash\n :version 1\n :name \"Wash\"\n :tags [:color]}"

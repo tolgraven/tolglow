@@ -9,9 +9,10 @@
   Layout: a collection stays on one line when it fits the width. Otherwise a
   map puts each entry on its own line with the value after its key, or, when
   a collection value does not fit on the rest of that line, on the next line
-  indented two columns past its key. A vector, list or
-  set of scalars fills each line, and one holding collections puts each
-  element on its own line. A map lists :id, :version and :name first, then
+  indented two columns past its key; several entries never share a line. A
+  vector, list or set of scalars fills each line, except that a keyword-argument
+  sequence ([:key value :key value ...]) puts each pair on its own line; one
+  holding collections puts each element on its own line. A map lists :id, :version and :name first, then
   keeps the order of a small (array) or sorted map and sorts the keys of a
   hash map, whose own order is arbitrary and differs between platforms. Set
   elements are sorted the same way. Records and other values print as pr-str
@@ -19,7 +20,7 @@
 
 (def default-width
   "Columns a line may use before a collection breaks across lines."
-  80)
+  100)
 
 (def ^:private flow-indent 2)
 
@@ -174,6 +175,12 @@
             (recur (inc i) lines (if line (str line " " text) text))
             (recur (inc i) (conj lines line) text)))))))
 
+(defn- keyword-pairs?
+  "A sequence of keyword/value pairs, as in keyword-argument style vectors."
+  [elements]
+  (and (<= 4 (count elements)) (even? (count elements))
+       (every? keyword? (take-nth 2 elements))))
+
 (defn- layout-sequence [kind x column tail width depth]
   (let [[open close] (delimiters kind)
         inner (+ column (count open))
@@ -186,7 +193,11 @@
                                                 (layout element inner (if (= i last-index) (+ tail (count close)) 0)
                                                         width (inc depth)))
                                               elements)))
-           (fill (mapv scalar-text elements) inner (+ tail (count close)) width))
+           (let [texts (mapv scalar-text elements)]
+             (if (keyword-pairs? elements)
+               (apply str (interpose (str "\n" (spaces inner))
+                                     (map (fn [[k v]] (str k " " v)) (partition 2 texts))))
+               (fill texts inner (+ tail (count close)) width))))
          close)))
 
 (defn- layout
@@ -201,7 +212,7 @@
         (scalar-text x))))
 
 (defn edn
-  "Pretty-printed EDN text of `value`. Options: `:width` (default 80); when
+  "Pretty-printed EDN text of `value`. Options: `:width` (default 100); when
   the text is spliced into other text, `:column`, the column its first line
   starts at (later lines are indented to match), and `:tail`, the number of
   characters that follow it on its last line; `:length` and `:level` elide

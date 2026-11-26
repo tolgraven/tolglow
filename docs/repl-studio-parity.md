@@ -99,9 +99,11 @@ prints the same text from the same data:
 (println (pretty/edn (get-in (:model (show/export-show runtime)) [:registry :effects :ember])))
 ```
 
-A collection stays on one line when it fits 80 columns. A map value that does
-not fit after its key starts the next line, indented two columns past the key,
-so deep expressions stay inside the width. `:id`, `:version` and `:name` come
+A collection stays on one line when it fits 100 columns. Otherwise every map
+entry gets its own line; a value that does not fit after its key starts the next
+line, indented two columns past the key, so deep expressions stay inside the
+width. A vector of scalars fills its lines, except a keyword-argument vector
+(`[:key value …]`), which puts each pair on its own line. `:id`, `:version` and `:name` come
 first; small maps keep their authored order and larger maps sort their keys. The text reads back to the same data and has no trailing newline,
 so the Neovim echo of a loaded definition matches it exactly. The layout is a
 view only: publication reads any EDN layout, and the registry stores data.

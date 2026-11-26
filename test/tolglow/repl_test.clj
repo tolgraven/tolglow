@@ -186,8 +186,10 @@
         (is (< 1 (count (str/split-lines wide))))
         (is (str/starts-with? wide "{:key-0 {:value 0 :label \"Label 0\"}\n :key-1 "))
         (is (= (edn/read-string wide) (into (sorted-map) (map (fn [i] [(keyword (str "key-" i)) {:value i :label (str "Label " i)}])) (range 6)))))
-      (is (= ["{:a" "   (0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28"]
-             (take 2 (str/split-lines (:result (run! session "{:a (range)}"))))))
+      (let [lines (str/split-lines (:result (run! session "{:a (range)}")))]
+        (is (= "{:a" (first lines)))
+        (is (str/starts-with? (second lines) "   (0 1 2 3 4 5 6 7 8 9 10 "))
+        (is (every? #(<= (count %) 100) lines)))
       (is (str/ends-with? (:result (run! session "{:a (range)}")) "61 62 63 ...)}"))
       (is (= 400 (count (:result (run! session "(vec (range 100000 100064))"))))
           "the result character bound still applies after pretty-printing")
