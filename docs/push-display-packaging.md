@@ -161,6 +161,28 @@ Choose the MIDI input and output of the device’s User port from the port list.
 
 The offscreen page renders the same CSS parameter widgets, waveform and history views, page grid, simulator and rig controls as Push 2. Bind captured buttons to `:display/parameters`, `:display/pages`, `:display/simulator`, `:display/rig` and `:display/camera` as needed. The bindable actions use the capture’s actual IDs. The display view follows the instance selected by a User Mode or MPE pad. Choosing a different lens or display does not launch a cue. A frame repeatedly sent to USB uses the last packed raster. Only the scheduled display worker asks the browser for new visuals.
 
+### Display start and refresh rate
+
+Afterglow keeps one libusb context for the whole process. Creating it runs `libusb_init`, which scans every attached USB device. On the qualification Mac (M4 Pro, macOS, libusb 1.0.30) the scan stalled on unrelated hubs and drives and took 25.0 s. macOS cannot skip the scan. Once the context exists, later opens reuse it: listing took 0.81 ms and inspecting the Push took 0.90 ms. [Issue #704](https://github.com/tolgraven/tolglow/issues/704)
+
+Tolglow starts the scan early so the display open does not wait for it:
+
+- Building a libusb Push 3 display with `push-browser-display` starts the scan on a background thread, so it overlaps the browser start.
+- A host that always drives a tethered Push 3 can enable the `:push-3-display` startup module (`:push-3-display {:enabled true}` in its config). The scan then runs alongside the rest of startup. See [application startup](application-startup.md#built-in-modules).
+
+The scan runs at most once per process, and a display open that starts during it waits for the scan to finish. Startup never throws or waits because of it. Hosts that do not configure a Push 3, and displays built with an injected sink, never load libusb. `(tolglow.studio.display/push-3-usb-status)` reports the scan without waiting. It returns `{:status :preparing}` while the scan runs. When it ends, it returns the receipt: `{:status :ready :init-ms …}`, or `{:status :failed :error …}` when libusb is missing or will not start. After a failure the display open tries libusb again and reports its own error. Each open display handle also carries Afterglow's `:timing` and `refresh-receipt`.
+
+The sink resends the latest frame on a 30 Hz deadline grid, so transfer time no longer lowers the rate. It used to wait 33 ms after each transfer, which gave about 19.5 Hz. A 10 s test chart at Afterglow `13403f2d` (the reviewed head of tolgraven/afterglow#162) measured on the Push 3:
+
+| Measure | Result |
+| --- | --- |
+| Frames | 301 in 9,984.7 ms, 30.05 frames/s |
+| Late intervals | 0 (longer than 1.5 periods), no failed transfers |
+| Payload transfer | median 11.54 ms, p95 11.88 ms, max 13.86 ms |
+| Frame interval | median 32.79 ms, p95 41.89 ms, max 47.85 ms |
+
+These measurements come from Afterglow's qualification CLI. The background start from Tolglow has not been run against the physical Push.
+
 The replay uses the production screen encoder and 24 actual Studio simulator captures. Hardware qualification covers colour and edge orientation, Live handoff, continuous audio/MIDI and disconnect. See [Afterglow’s driver, receipts and on-device instructions](https://github.com/tolgraven/afterglow/blob/master/doc/architecture/push-3-display.md).
 
 ## Browse saved shows

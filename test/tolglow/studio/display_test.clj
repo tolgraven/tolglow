@@ -7,6 +7,7 @@
             [afterglow.control.pages :as cue-pages]
             [tolglow.controllers.page-overview :as pages]
             [tolglow.studio.display :as display]
+            [afterglow.control.devices.push-3.usb :as push-3-usb]
             [afterglow.control.devices.transports :as transports])
   (:import [java.awt.image BufferedImage]
            [java.io ByteArrayOutputStream File]
@@ -348,3 +349,57 @@
         (is (= [:rig :browser-closed :usb-closed] @calls)))
       (is (thrown? Exception (display/browser-display {:device :push-2 :sink sink})))
       (is (thrown? Exception (display/browser-display {:device :unknown :sink sink}))))))
+
+(defn with-fresh-push-3-warm-ups
+  "Run f with no Push 3 libusb warm-up recorded, restoring the process record after."
+  [f]
+  (let [warm-ups @#'display/push-3-usb-warmups saved @warm-ups]
+    (reset! warm-ups {})
+    (try (f) (finally (reset! warm-ups saved)))))
+
+(deftest push-three-usb-warm-up-starts-once-per-library-and-reports-without-waiting
+  (with-fresh-push-3-warm-ups
+    (fn []
+      (let [calls (atom []) scan (promise) other (promise)]
+        (with-redefs [push-3-usb/prepare-in-background! (fn [options]
+                                                          (swap! calls conj options)
+                                                          (if (:library options) other scan))]
+          (is (nil? (display/push-3-usb-status)))
+          (is (identical? scan (display/warm-push-3-usb! {:bus 1 :address 12})))
+          (is (identical? scan (display/warm-push-3-usb!)))
+          (is (= {:status :preparing} (display/push-3-usb-status)))
+          (deliver scan {:library "usb-1.0" :init-ms 25016.8 :reused? false})
+          (is (= {:status :ready :library "usb-1.0" :init-ms 25016.8 :reused? false}
+                 (display/push-3-usb-status)))
+          (is (identical? other (display/warm-push-3-usb! {:library "/opt/test/libusb-1.0.dylib"})))
+          (is (= {:status :preparing} (display/push-3-usb-status {:library "/opt/test/libusb-1.0.dylib"})))
+          (is (= [{} {:library "/opt/test/libusb-1.0.dylib"}] @calls)))))))
+
+(deftest push-three-usb-warm-up-reports-a-missing-libusb-without-throwing
+  ;; The real Afterglow warm-up, pointed at a library that cannot load, fails
+  ;; before any USB device is enumerated.
+  (with-fresh-push-3-warm-ups
+    (fn []
+      (let [library (.getPath (io/file (System/getProperty "java.io.tmpdir") "tolglow-missing" "libusb-1.0.dylib"))
+            receipt (display/warm-push-3-usb! {:library library})]
+        (is (= {:library library :failed? true} (select-keys (deref receipt 10000 :timeout) [:library :failed?])))
+        (is (string? (:error @receipt)))
+        (is (= :failed (:status (display/push-3-usb-status {:library library}))))
+        (is (identical? receipt (display/warm-push-3-usb! {:library library})))))))
+
+(deftest only-a-libusb-push-three-display-warms-libusb
+  (with-fresh-push-3-warm-ups
+    (fn []
+      (let [calls (atom [])
+            sink {:device :push-3 :open! (constantly :usb) :render! (fn [_ _]) :close! (fn [_])}]
+        (with-redefs [push-3-usb/prepare-in-background! (fn [options] (swap! calls conj options) (promise))
+                      transports/wayang-display (fn [_] (throw (Exception. "Unexpected Push 2 display")))]
+          (display/browser-display {:device :push-3 :sink sink :browser-executable "/bin/false"})
+          (display/browser-display {:device :push-2 :sink (assoc sink :device :push-2) :browser-executable "/bin/false"})
+          (is (empty? @calls))
+          (let [transport (display/browser-display {:device :push-3 :usb {:bus 1 :address 12}
+                                                    :browser-executable "/bin/false"})]
+            (is (= :push-3 (:device transport)))
+            (display/browser-display {:device :push-3 :usb {:bus 1 :address 12} :browser-executable "/bin/false"})
+            (is (= [{}] @calls))
+            (is (= {:status :preparing} (display/push-3-usb-status)))))))))

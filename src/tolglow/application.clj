@@ -7,6 +7,7 @@
             [tolglow.data :as data]
             [tolglow.modules :as modules]
             [tolglow.show :as show]
+            [tolglow.studio.display :as display]
             [tolglow.rig.rdm :as rdm]
             [tolglow.fixtures.patch :as patch]
             [tolglow.agents :as agents]
@@ -136,6 +137,12 @@
     (when (seq options) (agents/configure! manager options))
     {:value manager}))
 
+(defn- warm-push-3-display
+  "Start the tethered Push 3 display's libusb scan in the background, so it
+  overlaps the rest of startup. The value is the promise of its receipt."
+  [_ options]
+  {:value (display/warm-push-3-usb! (select-keys options [:library]))})
+
 (defn- start-rdm [context options]
   (let [runtime (need-show context)
         manager (:rdm runtime)
@@ -158,7 +165,7 @@
    :lighting-activity (settings-module :lighting-activity {:enabled? true})
    :fog-control (settings-module :fog-control {:enabled? true})
    :lighting-scenes install-lighting-scenes
-   :rdm start-rdm :fixtures install-fixtures :cue-pages install-cue-pages})
+   :push-3-display warm-push-3-display :rdm start-rdm :fixtures install-fixtures :cue-pages install-cue-pages})
 
 (defn start!
   "Launch a show using :init stages and per-module :enabled options. Supply a
