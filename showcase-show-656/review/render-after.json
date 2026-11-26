@@ -1,0 +1,112 @@
+{
+  "browser": "155.0.8059.40",
+  "renderer": "Three.js r187",
+  "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Pro, Unspecified Version)",
+  "software": false,
+  "film": {
+    "bloom": 0.28,
+    "exposure": 0.85,
+    "grain": 0.0015
+  },
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36",
+  "size": [
+    1920,
+    1080
+  ],
+  "fps": 40,
+  "frames": 152,
+  "drift": 0,
+  "workLight": 0.04,
+  "bundleSha256": "eb7b577742be1fc8cf1a56d8820edfd4de2fde2bc5a077553aa8a10e152210d2",
+  "imagesSha256": "486302b3df1a44951533f252ba16f203112ef50c8cf9353057722be3e375bf8f",
+  "video": null,
+  "stills": [
+    {
+      "still": "still-bar-21_5.png",
+      "bar": 21.50666666666632,
+      "beat": 86.02666666666528,
+      "running": [
+        "haze",
+        "wash-tide",
+        "tube-sparkle",
+        "bloom-halo",
+        "confetti",
+        "pinstripes",
+        "can-can",
+        "riser-chase",
+        "wash-ember",
+        "mover-orbit"
+      ],
+      "lights": 14,
+      "scene": [
+        1920,
+        1080
+      ],
+      "display": [
+        1920,
+        1080
+      ],
+      "tier": "high",
+      "fog": {
+        "sampleTimeMs": 14159.388875,
+        "mixedDensity": 0.14068385895664196,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.16126026036562072,
+        "mixedVolumeM3": 61.900897940922455,
+        "roomVolumeM3": 440,
+        "localVolumeM3": 0.9232284259057922,
+        "foggerCount": 1
+      },
+      "frameNumber": 1614
+    }
+  ],
+  "capture": {
+    "faults": [],
+    "to-bar": 22,
+    "missed": 0,
+    "rejected": 0,
+    "frames": 152,
+    "output": "capture sink only",
+    "seed": 656,
+    "from-bar": 20,
+    "meter": {
+      "beats-per-bar": 4,
+      "bars-per-phrase": 4
+    },
+    "frame-ms": 25,
+    "timeline": "first-light",
+    "bpm": 128,
+    "dmx-frames": 152,
+    "universes": [
+      1,
+      2,
+      3
+    ]
+  },
+  "last": {
+    "bar": 22.01333333333293,
+    "lights": 14,
+    "scene": [
+      1920,
+      1080
+    ],
+    "display": [
+      1920,
+      1080
+    ],
+    "tier": "high",
+    "fog": {
+      "sampleTimeMs": 14516.030584,
+      "mixedDensity": 0.14069377661915367,
+      "extinctionPerM": 1.25,
+      "referencePathM": 1,
+      "fogLevel": 0.16127065822326012,
+      "mixedVolumeM3": 61.90526171242762,
+      "roomVolumeM3": 440,
+      "localVolumeM3": 0.832643594251467,
+      "foggerCount": 1
+    },
+    "frameNumber": 1652
+  }
+}
