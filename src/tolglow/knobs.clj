@@ -677,11 +677,11 @@
   {:op :knob/nudge :knob-id knob-id
    :delta (* delta (if fine? (:fine encoder-step) (:coarse encoder-step)))})
 
-(defn encoder-display
-  "Display columns for an encoder surface from the same projection Studio
-  shows: the knob value and up to eight links with their resolved text."
-  [model knob-id]
-  (when-let [{:keys [id name value links]} (knob-view model knob-id)]
+(defn projected-encoder-display
+  "encoder-display for one knob already taken from projection, so a surface
+  showing several knobs resolves their links once."
+  [knob]
+  (when-let [{:keys [id name value links]} knob]
     {:knob-id id :name name :value value :text (format "%.3f" (double value))
      :columns (mapv (fn [link]
                       (cond-> {:label (:label link) :status (:status link)}
@@ -689,3 +689,9 @@
                         (get-in link [:resolved :ratio]) (assoc :ratio (get-in link [:resolved :ratio]))
                         (:diverged? link) (assoc :diverged? true)))
                     (take 8 links))}))
+
+(defn encoder-display
+  "Display columns for an encoder surface from the same projection Studio
+  shows: the knob value and up to eight links with their resolved text."
+  [model knob-id]
+  (projected-encoder-display (knob-view model knob-id)))

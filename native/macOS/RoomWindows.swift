@@ -15,6 +15,8 @@ final class RoomWindows: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptM
     private weak var studio: WKWebView?
     private var room: (window: NSWindow, view: WKWebView)?
     private var screensObserver: NSObjectProtocol?
+    /// A move requested while the Room window was fullscreen waits for the exit animation.
+    private var placeAfterFullScreen = false
 
     init(origin: URL) {
         self.origin = origin
@@ -51,6 +53,7 @@ final class RoomWindows: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptM
               action.request.url.map({ $0.absoluteString.isEmpty || $0.absoluteString == "about:blank" }) ?? true
         else { return nil }
         close()
+        placeAfterFullScreen = false
         let size = NSSize(width: windowFeatures.width?.doubleValue ?? 960, height: windowFeatures.height?.doubleValue ?? 640)
         let view = WKWebView(frame: NSRect(origin: .zero, size: size), configuration: configuration)
         view.uiDelegate = self
@@ -77,15 +80,23 @@ final class RoomWindows: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptM
     func windowWillClose(_ notification: Notification) {
         guard let current = room, notification.object as? NSWindow === current.window else { return }
         room = nil
+        placeAfterFullScreen = false
         current.view.stopLoading()
         current.window.contentView = nil
         reply(["status": "closed"])
+    }
+
+    /// The Room shares Studio's web content process. If that process ends, Studio
+    /// reloads docked and the Room window would be left showing nothing.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        if webView === room?.view { close() }
     }
 
     /// The Room window never outlives Studio's web view.
     func close() {
         guard let current = room else { return }
         room = nil
+        placeAfterFullScreen = false
         current.window.delegate = nil
         current.view.stopLoading()
         current.window.contentView = nil
@@ -108,7 +119,9 @@ final class RoomWindows: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptM
     }
 
     private func moveToDisplay() {
-        guard let window = room?.window else { return }
+        // A move already waiting for the fullscreen exit places and replies;
+        // a second toggle or frame during that animation would undo or lose it.
+        guard let window = room?.window, !placeAfterFullScreen else { return }
         let screens = NSScreen.screens
         let studioScreen = studio?.window?.screen.flatMap { screens.firstIndex(of: $0) }
         let roomScreen = window.screen.flatMap { screens.firstIndex(of: $0) }
@@ -117,13 +130,31 @@ final class RoomWindows: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptM
             return
         }
         let screen = screens[target]
-        if window.styleMask.contains(.fullScreen) { window.toggleFullScreen(nil) }
+        // Leaving fullscreen is animated, and a frame set during it is lost.
+        // Place the window once it has left fullscreen.
+        if window.styleMask.contains(.fullScreen) {
+            placeAfterFullScreen = true
+            window.toggleFullScreen(nil)
+            return
+        }
         window.setFrame(screen.visibleFrame, display: true)
         if window.screen == screen {
             reply(["status": "placed", "label": screen.localizedName])
         } else {
             reply(["status": "manual"])
         }
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        guard placeAfterFullScreen, notification.object as? NSWindow === room?.window else { return }
+        placeAfterFullScreen = false
+        moveToDisplay()
+    }
+
+    func windowDidFailToExitFullScreen(_ window: NSWindow) {
+        guard placeAfterFullScreen, window === room?.window else { return }
+        placeAfterFullScreen = false
+        reply(["status": "manual"])
     }
 
     /// A display other than Studio's; the next free one when the Room is
