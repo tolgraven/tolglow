@@ -906,14 +906,19 @@
         dropped (transition (:db in-flight) [:studio/auto-publish 2])
         dropped-publish (transition (:db in-flight) (:dispatch dropped))
         published (transition (:db in-flight) (conj (get-in publish [:studio/http :on-success]) {:id "ember" :version 3}))
-        follow-up (some #(when (= :dispatch (first %)) (second %)) (:fx published))]
+        follow-up (some #(when (= :dispatch-later (first %)) (second %)) (:fx published))]
     (is (= [:studio/definition-publish true] (:dispatch sent)))
     (is (empty? dropped-publish))
-    (is (= [:studio/auto-publish 2] follow-up))
-    (is (= [:studio/definition-publish true] (:dispatch (transition (:db published) follow-up))))
+    (testing "the follow-up waits the same quiet time as an edit, so typing does not chain requests"
+      (is (= {:ms 850 :dispatch [:studio/auto-publish 2]} follow-up))
+      (is (not-any? #(= :dispatch (first %)) (:fx published))))
+    (testing "an edit typed before the follow-up fires supersedes it"
+      (let [typing (:db (transition (:db published) [:studio/definition-source (str newer "z")]))]
+        (is (empty? (transition typing (:dispatch follow-up))))))
+    (is (= [:studio/definition-publish true] (:dispatch (transition (:db published) (:dispatch follow-up)))))
     (testing "a publication that matches the current text queues nothing"
       (let [current (transition (:db publish) (conj (get-in publish [:studio/http :on-success]) {:id "ember" :version 3}))]
-        (is (not-any? #(= :dispatch (first %)) (:fx current)))))))
+        (is (not-any? #(#{:dispatch :dispatch-later} (first %)) (:fx current)))))))
 
 (deftest duration-field-edits-keep-the-other-current-field
   (let [added (transition base [:studio/composition-add "ember"])

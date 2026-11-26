@@ -1186,6 +1186,10 @@
                                                        :baseline nil :publication nil :publishing? false :load-token nil})
            (get-in db [:ui :builder :reactive]) (assoc-in [:ui :builder] default-builder))
      :studio/nvim-source initial-source}))
+(def ^:private auto-publish-delay-ms
+  "Quiet time after the latest edit before Publish valid edits sends it."
+  850)
+
 (defn- published-source? [definition source]
   (= source (get-in definition [:baseline :source])))
 
@@ -1201,7 +1205,7 @@
                                                :status (if published? (get-in definition [:baseline :status])
                                                          "Unpublished changes")})
      :dispatch-later (when (and (:auto? definition) (not published?))
-                       [{:ms 850 :dispatch [:studio/auto-publish revision]}])}))
+                       [{:ms auto-publish-delay-ms :dispatch [:studio/auto-publish revision]}])}))
 
 (rf/reg-event-fx :studio/definition-source
   ;; Neovim echoes text it was given (the initial load) and delivers its last edit up to
@@ -1368,7 +1372,11 @@
                                     :result "Published the text sent earlier. Your newer edits are not published yet."}))
              (get-in built [:reactive :base]) (assoc-in [:ui :builder :reactive :base :version] version))
        :fx (cond-> [] (not automatic?) (conj (notice "Definition validated and published."))
-             (and (not current?) (:auto? definition)) (conj [:dispatch [:studio/auto-publish (:edit-revision definition)]])
+             ;; Keep the edit's quiet time: publishing at once would chain a request per
+             ;; reply while the operator is still typing.
+             (and (not current?) (:auto? definition))
+             (conj [:dispatch-later {:ms auto-publish-delay-ms
+                                     :dispatch [:studio/auto-publish (:edit-revision definition)]}])
              (and built (:cue? built)) (conj [:studio/http {:path "/api/definition"
                                                           :body (cond-> {:kind "cues" :source cue-source :runtime-id (:runtime-id token) :expected-epoch (:epoch token)}
                                                                   existing-cue (assoc :expected-version (:version existing-cue)))
