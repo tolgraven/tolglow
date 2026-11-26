@@ -179,6 +179,16 @@
           (update buffer :suppressed #(into #{} (filter live-ids) %))
           (sort-by str (remove live-ids (keys (:open buffer))))))
 
+(defn- unseen-tail
+  "Command IDs after the last one already seen. History is append-only within
+  an epoch, so a per-cycle scan touches only the new commands."
+  [buffer order]
+  (let [order (vec order)]
+    (loop [i (dec (count order))]
+      (if (and (>= i 0) (not (contains? (:seen buffer) (nth order i))))
+        (recur (dec i))
+        (subvec order (inc i))))))
+
 (defn observe-model
   "Read newly accepted commands from a committed show model and fold them in.
   Each command's beat is derived from its :time-ms against the model transport,
@@ -206,7 +216,7 @@
                                (observe buffer (cond-> {:command command :ack ack :beat (max (or (:last-beat buffer) 0.0) (beat-at command))
                                                         :bpm bpm :meter meter}
                                                  (some? value) (assoc :value value))))))
-                       buffer (get-in model [:control :history-order]))
+                       buffer (unseen-tail buffer (get-in model [:control :history-order])))
         buffer (advance-clock buffer {:beat beat :bpm bpm :meter meter})
         running (set (keep (fn [[id instance]] (when (not= :ended (:phase instance)) id)) (:instances model)))]
     (observe-ended buffer running beat)))
