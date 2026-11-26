@@ -99,19 +99,20 @@ prints the same text from the same data:
 (println (pretty/edn (get-in (:model (show/export-show runtime)) [:registry :effects :ember])))
 ```
 
-A collection stays on one line when it fits 80 columns. `:id`, `:version` and
-`:name` come first; small maps keep their authored order and larger maps sort
-their keys. The text reads back to the same data and has no trailing newline,
+A collection stays on one line when it fits 80 columns. A map value that does
+not fit after its key starts the next line, indented two columns past the key,
+so deep expressions stay inside the width. `:id`, `:version` and `:name` come
+first; small maps keep their authored order and larger maps sort their keys. The text reads back to the same data and has no trailing newline,
 so the Neovim echo of a loaded definition matches it exactly. The layout is a
 view only: publication reads any EDN layout, and the registry stores data.
 ClojureScript prints whole floats such as `1.0` as `1`, so text that Studio
 generates (**Generate EDN**) can differ from the host's text in those numbers.
 Studio's read-only data views (debug event data, sensor UDP status, fault
 locations, RDM readback and job results) use the same printer, and tool-call
-JSON in the Assistant is indented by two spaces.
-
-Gap: values in the Develop REPL console still print on one line, as the REPL
-prints them.
+JSON in the Assistant is indented by two spaces. The Develop REPL console
+pretty-prints a data result or error data with the same printer, inside the
+REPL's existing bounds (64 items per collection, 10 levels, 8192 characters per
+result); strings and other values print as `pr` prints them.
 
 ## View recent cues
 

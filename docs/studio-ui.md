@@ -451,7 +451,9 @@ Opening or restoring a session never evaluates source.
 Evaluation uses the direct SSE endpoint and preserves session/runtime/epoch/run
 identity on every callback. The transcript bounds history to 100 requests and
 300 events per request; the JVM separately bounds source, printed values and
-stdout. Persisted history restores source and final result/error. The current
+stdout. A data result (map, vector, set or sequence) and error data print over
+several lines with the [shared printer](repl-studio-parity.md#read-a-definition-as-studio-shows-it)
+inside those bounds; strings and other values print on one line as before. Persisted history restores source and final result/error. The current
 window also retains streamed output when later history polls arrive. Closing the
 drawer detaches its stream and polling; interruption is a separate explicit
 cooperative request, not a hard-kill guarantee.
