@@ -15,6 +15,7 @@
             [tolglow.studio.preview-playback :as playback]
             [tolglow.studio.airplay :as airplay]
             [tolglow.studio.room-window :as room-window]
+            [tolglow.studio.view-tabs :as view-tabs]
             [tolglow.studio.panel-layout :as panel-layout]
             [tolglow.studio.panel-tiles :as panel-tiles]
             [tolglow.studio.block-builder :as block-builder]
@@ -1123,8 +1124,8 @@
     [:<>
      [:a.skip {:href "#main"} "Skip to show controls"]
      [sidebar db]
-     [:div.workspace [topbar db]
-      [:main#main {:tab-index -1}
+     [:div.workspace [topbar db] [view-tabs/strip db]
+      [:main#main (merge {:tab-index -1} (view-tabs/panel-attributes db))
        (when (or error (not connected?))
          [:div#connection-banner.connection-banner {:role "status"}
           (or error "Connecting to the studio. Cue controls become available when the show is ready.")])

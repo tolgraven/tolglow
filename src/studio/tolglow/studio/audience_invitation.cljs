@@ -1,5 +1,6 @@
 (ns tolglow.studio.audience-invitation
   (:require [clojure.string :as str]
+            [tolglow.studio.show-window :as show-window]
             [re-frame.core :as rf]
             [tolglow.studio.events :as events]))
 
@@ -61,9 +62,11 @@
       (when (empty? sources) [:option {:value ""} "Pair a sensor"])
       (for [id sources] ^{:key id} [:option {:value id} id])]]]
    (when-not receiver? [:p.small "Start an OSC receiver on loopback or all interfaces to host this stage."])
-   [:button.button.primary {:type "button" :disabled (or pending? (not receiver?) (nil? device-id)
-                                                         (str/blank? origin) (str/blank? stage-name))
-                            :on-click #(rf/dispatch [::operate :start])} "Start stage"]])
+   [:button#stage-start.button.primary (show-window/device-control
+                                        {:type "button" :disabled (or pending? (not receiver?) (nil? device-id)
+                                                                      (str/blank? origin) (str/blank? stage-name))
+                                         :on-click #(rf/dispatch [::operate :start])}
+                                        @(rf/subscribe [:show-window/preview-only])) "Start stage"]])
 
 (defn- running [{:keys [url id stage-name device-id pending?]}]
   (let [png (str "/api/sensors/stage/qr?id=" id)]
