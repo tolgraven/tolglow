@@ -912,6 +912,44 @@ that noticed it. Push has no auto-mode control. Close these when a performer can
 build a plan in Studio and start or stop auto mode from Push, both reading the
 same projection ([issue #217](https://github.com/tolgraven/tolglow/issues/217)).
 
+## Rehearse a passage with the agent
+
+A rehearsal uses no command of its own: the recorded agent sends
+`configure_auto` and `schedule_events` through `show/dispatch-tool!`, stems
+enter through `show/audio-callbacks` and are routed with `tolglow.stems`, and
+Push gestures are ordinary commands with a Push 3 source. Whatever reads those
+reads the rehearsal. [Rehearsal](rehearsal.md)
+
+From the REPL, review both modes, or play one in real time on a running show:
+
+```clojure
+(require '[tolglow.rehearsal :as rehearsal] '[tolglow.rehearsal.passage :as passage])
+(println (:report (rehearsal/club 670)))
+(println (:report (rehearsal/concert 670)))
+;; On a show started with (rehearsal/room-model p), Studio open:
+(rehearsal/play! runtime (passage/concert 670 :b))
+```
+
+In Studio, during `play!` (or `tolglow.qa.rehearsal room <port> …`) the show
+is an ordinary running show: the Room renders its committed frames, **Perform →
+Tools → Let it wander** reads the agent's mood as the running auto config and
+section, and the schedule lists the posted anchors and the chorus build. A
+Studio action meanwhile (Stop auto, a cue launch) goes through the same owner;
+the agent's next section line reconfigures auto again. A refusal reads the
+same: an anchor posted after its bar comes back from `schedule_events` with the
+scheduler's "has already passed" message in the agent log. Checked so far
+through Studio's own projection only: `tolglow.qa.rehearsal room 18871 club 670`
+sampled `/api/state` every 4 s and read the auto section (drive, lift, none in
+the breakdown and quiet) and the running looks while the agent's four changes
+were accepted 0–0.1 beats after their lines. The Studio page was not opened in
+a browser for this.
+
+**Tracked gaps.** Studio cannot start a rehearsal, choose a passage or take,
+or read the review and its flags; the review is REPL and file output. Push
+cannot start one. Close these when an operator can start a Room rehearsal and
+read its review in Studio, from the same `tolglow.rehearsal` operations
+([issue #670](https://github.com/tolgraven/tolglow/issues/670)).
+
 ## Reviewing a show feature
 
 - **Find it from either side.** Name the view, control label and public REPL entry point. Include the shared command, input units, identifiers and scope so an operator who knows one surface can recognize the other.

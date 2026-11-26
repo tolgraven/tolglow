@@ -11,6 +11,7 @@
             [tolglow.lighting-activity :as activity]
             [tolglow.registry :as registry]
             [tolglow.autopilot.signal :as signal]
+            [tolglow.automation.grid :as grid]
             [tolglow.automation.launch-params :as launch-params]
             [tolglow.automation.random :as random]
             [tolglow.automation.sections :as sections]))
@@ -550,6 +551,21 @@
        (and (nil? (:randomize config)) previous-random (not enabled?)) (assoc :randomize previous-random)
        (and (nil? (:randomize config)) (seq domains) enabled?) (assoc :randomize (assoc domains :params :none))))))
 
+(defn- decision-timer
+  "The interval timer at clock. A musical interval is placed on its grid by
+  tolglow.automation.grid/start: after a decision it continues from where
+  the previous interval fell due; with no usable due point (a start, a
+  changed interval, a gap, a rebase off the grid) it ends on the first grid
+  line at least its length less half a step away, so it never falls due on
+  the next frame. Millisecond intervals keep their physical start."
+  [duration clock previous]
+  (let [timer (time/start duration clock)
+        {:keys [unit value meter]} (:duration timer)]
+    (if-not (= :beats unit) timer
+      (let [due (when (and previous (= :beats (get-in previous [:duration :unit])))
+                  (+ (:started-at previous) (get-in previous [:duration :value])))]
+        (assoc timer :started-at (grid/start value (grid/step duration value meter) (:started-at timer) due))))))
+
 (defn- end-commands [model state ids force? time-ms]
   (mapv (fn [i id] (command model state :instance/end (cond-> {:instance-id id} force? (assoc :force? true)) i time-ms))
         (range) ids))
@@ -613,7 +629,7 @@
         (time/coordinate clock unit)
         (cond
           (and timer (not= duration (get-in timer [:duration :source])))
-          {:state (assoc state :interval-timer (time/start duration clock)) :commands [] :reasons (vec handed)}
+          {:state (assoc state :interval-timer (decision-timer duration clock nil)) :commands [] :reasons (vec handed)}
           (and timer (not (:done? (time/sample timer clock))))
           {:state state :commands [] :reasons (vec handed)}
           (and (nil? timer) (= :ms unit) (< time-ms (:next-at-ms state)))
@@ -666,7 +682,7 @@
                 randomized (into (sorted-map-by #(compare (str %1) (str %2)))
                                  (keep (fn [cue] (when-let [r (::randomized cue)] [(:id cue) r])))
                                  (:cues result))
-                timer (time/start duration clock)
+                timer (decision-timer duration clock (:interval-timer state))
                 next-at (+ (:started-at timer) (get-in timer [:duration :value]))]
             {:state (cond-> (assoc state :seed seed :epoch (:epoch model) :interval-timer timer
                                    :tick (inc (:tick state)))
