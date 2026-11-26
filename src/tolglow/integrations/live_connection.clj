@@ -49,6 +49,20 @@
                      Report Session clip starts and stops on these tracks as
                      {:type :clip-started|:clip-stopped :track-id :clip-id :serial}
                      events (live-runs/player decodes them).
+    :ensure-launcher {:name :scroll-row} -> {:track-id :device-index :rack-created? :renamed?}
+                     The cue launcher (#228): adopts the companion's own track
+                     (empty, Tolglow-named, or holding only a Drum Rack), names
+                     it, inserts a Drum Rack after the companion when none
+                     follows it (Track.insert_device, Live 12.3+; otherwise
+                     refused with :drum-rack-creation-unavailable) and scrolls
+                     the pad overview to :scroll-row.
+    :write-pads      {:track-id :expected-name :pads [{:note :name :color}]}
+                     -> {:pads [{:note :name :color :chain-created?}]
+                         :skipped [{:note :code}]}: names and colours each
+                     pad's first chain, inserting one for an empty pad
+                     (RackDevice.insert_chain + DrumChain.in_note, Live 12.3+).
+    :inspect-launcher {} -> {:track-id :name :can-insert? :rack nil |
+                             {:device-index :scroll-row :pads [{:note :name :color :chains}]}}
 
   Clip descriptions are those of `phrase-clip`. Live IDs are session
   identities: every write names the track it expects, and the Live side
@@ -60,7 +74,8 @@
 
 (def operations
   #{:inspect-set :ensure-track :ensure-group :configure-track :write-clip :extend-clip :capture-midi
-    :read-clip :show-clip :fire-clip :stop-clips :watch-run-tracks :place-clip})
+    :read-clip :show-clip :fire-clip :stop-clips :watch-run-tracks :place-clip
+    :ensure-launcher :write-pads :inspect-launcher})
 
 (def request-budget-chars
   "JSON characters of notes and lanes per request. The companion's loopback
@@ -123,6 +138,7 @@
     :inspect-set (update result :tracks #(mapv normalize-track %))
     :configure-track (update result :track normalize-track)
     :read-clip (update result :clip normalize-clip)
+    :write-pads (update result :skipped (partial mapv #(update % :code keywordize)))
     result))
 
 (def ^:private refusals

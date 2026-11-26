@@ -8,6 +8,7 @@
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [tolglow.integrations.live-connection :as live]
+            [tolglow.integrations.live-launcher :as launcher]
             [tolglow.integrations.live-runs :as runs]
             [tolglow.integrations.live-transport :as transport]
             [tolglow.integrations.phrase-clip :as clip])
@@ -186,3 +187,38 @@
             (is (= :executed (:status r)) (pr-str r))
             (is (= {:watching 2} (:result r)))))))
     "http://127.0.0.1:9/api/live" "groups"))
+
+(deftest the-companion-builds-the-cue-launcher-and-takes-its-pad-clip-over-http
+  (with-companion
+    (fn [port]
+      (let [t (transport/transport {:endpoint (str "http://127.0.0.1:" port "/live") :bridge-id "tolglow-m4l"
+                                    :sync-session-id "contract-launcher" :timeout-ms 3000})
+            handle ((:open! t) {})
+            _ ((:request! t) handle "handshake-1" :inspect {})
+            conn (live/open (assoc t :open! (constantly handle)) {:session-id "launcher"})
+            pads {:page-id :pads :scroll-row 9
+                  :pads [{:note 36 :cue-id :red :label "Red" :live-color 0xff0000}
+                         {:note 68 :cue-id :blue :label "Blue" :live-color 0x0000ff}]}
+            setup (launcher/setup! conn (launcher/desired pads))]
+        (testing "setup inserts a Drum Rack after the companion and names a chain per pad, verified by read-back"
+          (is (:ready? setup) (pr-str (:problems setup)))
+          (is (= [[:ensure-launcher :executed] [:write-pads :executed]] (:applied setup)))
+          (is (= "Tolglow launcher pads" (get-in setup [:launcher :name])))
+          (is (= {:device-index 1 :scroll-row 9
+                  :pads [{:note 36 :name "Red" :color 0xff0000 :chains 1} {:note 68 :name "Blue" :color 0x0000ff :chains 1}]}
+                 (get-in setup [:launcher :rack]))))
+        (testing "a rerun over HTTP finds the same track and Drum Rack"
+          (let [again (launcher/setup! conn (launcher/desired pads))]
+            (is (:ready? again))
+            (is (= (:track-id setup) (:track-id again)))))
+        (testing "a pad clip is written to the launcher track and reads back note for note"
+          (let [record {:take-order ["p.1" "p.2"]
+                        :takes {"p.1" {:take-id "p.1" :cue-id :red :start-beat 1 :release-beat 3}
+                                "p.2" {:take-id "p.2" :cue-id :blue :start-beat 5/2 :release-beat 4}}}
+                {:keys [clip]} (launcher/pad-clip record pads)
+                written (launcher/write-clip! conn setup clip {:name "Pads"})
+                read (live/request! conn :read-clip {:clip-id (get-in written [:result :clip-id])})]
+            (is (= :executed (:status written)) (pr-str written))
+            (is (= [{:pitch 36 :start 1 :duration 2 :velocity 127} {:pitch 68 :start 5/2 :duration 3/2 :velocity 127}]
+                   (mapv #(select-keys % [:pitch :start :duration :velocity]) (get-in read [:result :clip :notes]))))
+            (is (= 4 (get-in read [:result :clip :length-beats])))))))))
