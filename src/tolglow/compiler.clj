@@ -4,6 +4,7 @@
   (:require [afterglow.render.ir :as ir]
             [tolglow.compiler.blocks :as blocks]
             [tolglow.compiler.capability :as capability]
+            [tolglow.compiler.video :as video]
             [tolglow.effects.reactive :as reactive]
             [afterglow.runtime.keyframes :as keyframes]
             [afterglow.runtime.keyframes.values :as keyframe-values]
@@ -65,7 +66,15 @@
   "World positions and directions accept signed coordinates outside the unit interval."
   #{:aim :direction})
 
+(declare compile-ordinary-output)
+
 (defn- compile-output [schemas bind-pure prepared? reactive-inputs i output]
+  (if (video/video-output? (:value output))
+    (do (when reactive-inputs (fail! [:outputs i :value] "Reactive outputs read only declared signal values and constants"))
+        (video/compile-output output #(prepare-expression %1 schemas reactive-inputs %2) [:outputs i :value]))
+    (compile-ordinary-output schemas bind-pure prepared? reactive-inputs i output)))
+
+(defn- compile-ordinary-output [schemas bind-pure prepared? reactive-inputs i output]
   (let [path [:outputs i :value]
         value (:value output)
         tween? (= :tween (:op value))
@@ -158,9 +167,12 @@
         prepared
         (select (validate-frame-fixtures! fixtures))))))
 
-(defn predictable-outputs? [definition]
+(defn predictable-outputs?
+  "Video outputs follow received frames, never an interpolated forecast."
+  [definition]
   (let [outputs (registry/output-entries (:outputs definition))]
-    (and (seq outputs) (every? (comp keyframe-values/continuous :attribute) outputs))))
+    (and (seq outputs) (every? (comp keyframe-values/continuous :attribute) outputs)
+         (not-any? (comp video/video-output? :value) outputs))))
 
 (defn- compile-reactive-effect [definition outputs rig]
   (let [{:keys [inputs transition]} (:reactive definition)
@@ -229,10 +241,15 @@
             ;; Resolve it once per frame, including captured-meter normalization.
             outputs (if done? outputs
                         (mapv (fn [i output]
-                                (if (:frame-only? output)
+                                (cond
+                                  (:frame-only? output)
                                   (assoc output :sampled-value
                                          (with-path [:outputs i :value] #((:evaluate output) env)))
-                                  output)) (range) outputs))
+                                  ;; Sample the mapped video once per frame, then look targets up.
+                                  (:video output)
+                                  (assoc output :sampled-value
+                                         (with-path [:outputs i :value] #((:sample-video output) env frame instance)))
+                                  :else output)) (range) outputs))
             targets (when (matching/active? definition)
                       (or (when (or (nil? rig) (identical? rig frame-fixtures)) match-plan)
                           (matching/prepare frame-fixtures selected)))
@@ -242,11 +259,16 @@
                     (mapcat
                      (fn [fixture]
                        (let [rows (keep-indexed
-                          (fn [i {:keys [attribute blend targets evaluate frame-only? sampled-value]}]
+                          (fn [i {:keys [attribute blend targets evaluate frame-only? sampled-value video]}]
                             (when (and (or (nil? targets) (some #{(:id fixture)} targets))
-                                       (capability/capable? fixture attribute))
+                                       (capability/capable? fixture attribute)
+                                       ;; A video output writes only the targets its mapping sampled.
+                                       (or (nil? video) (contains? sampled-value (:id fixture))))
                               (let [value (try
-                                            (if frame-only? sampled-value
+                                            (cond
+                                              frame-only? sampled-value
+                                              video (get sampled-value (:id fixture))
+                                              :else
                                                 (evaluate (assoc env :fixture fixture :position (:position fixture [0 0 0])
                                                                  :surface-uv (:surface-uv fixture))))
                                             (catch clojure.lang.ExceptionInfo cause

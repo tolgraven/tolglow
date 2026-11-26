@@ -119,10 +119,11 @@
         html (.-documentElement doc)
         main-html (.-documentElement js/document)
         root (.createElement doc "main")]
-    (set! (.-title doc) "Tolglow · Room")
     (set! (.-lang html) (.-lang main-html))
     (set! (.-className html) (.-className main-html))
     (.replaceChildren head)
+    ;; After clearing the head, which holds the <title> that setting one creates.
+    (set! (.-title doc) "Tolglow · Room")
     (let [viewport (.createElement doc "meta")]
       (set! (.-name viewport) "viewport")
       (set! (.-content viewport) "width=device-width, initial-scale=1")

@@ -39,16 +39,72 @@
   (testing "a layout that is not a list becomes the default"
     (is (= (layout/default-layout :phone) (layout/normalize :phone {:id :room})))))
 
-(deftest storage-round-trips-and-rejects-other-versions
-  (let [saved {:desktop [{:id :room :w 8 :h 20} {:id :cues :w 4 :h 30} {:id :live :w 12 :h 40} {:id :tools :w 4 :h 12}]
-               :phone (layout/default-layout :phone)}]
+(def ^:private custom
+  [{:id :room :w 8 :h 20} {:id :cues :w 4 :h 30} {:id :param-2 :w 2 :h 6 :binding {:cue "ember" :param "level"}}
+   {:id :live :w 12 :h 40} {:id :tools :w 4 :h 12} {:id :viz :w 6 :h 24}])
+
+(deftest storage-round-trips-named-layouts-and-migrates-version-1
+  (let [saved {:desktop {:active "Show" :layouts [{:name "Show" :panels custom}
+                                                  {:name "Rehearsal" :panels (layout/default-layout :desktop)}]}
+               :phone {:active nil :layouts [{:name "Pocket" :panels (layout/default-layout :phone)}]}}]
     (is (= saved (layout/decode (layout/encode saved))))
-    (is (= {} (layout/decode "{\"version\":2,\"layouts\":{}}")))
+    (is (= {} (layout/decode "{\"version\":3,\"classes\":{}}")))
     (is (= {} (layout/decode "not json")))
     (is (= {} (layout/decode nil)))
-    (testing "an unknown size class is dropped, a known one repaired"
-      (is (= {:tablet (layout/default-layout :tablet)}
+    (testing "an active name that no layout has is dropped; repeated names keep the first"
+      (is (= {:tablet {:active nil :layouts [{:name "A" :panels (layout/default-layout :tablet)}]}}
+             (layout/decode "{\"version\":2,\"classes\":{\"watch\":{},\"tablet\":{\"active\":\"B\",\"layouts\":[{\"name\":\"A\",\"panels\":[]},{\"name\":\"A\",\"panels\":[{\"id\":\"room\"}]},{\"name\":\"  \"}]}}}"))))
+    (testing "version 1 held one layout per screen; it becomes the active Layout 1"
+      (is (= {:tablet {:active "Layout 1" :layouts [{:name "Layout 1" :panels (layout/default-layout :tablet)}]}}
              (layout/decode "{\"version\":1,\"layouts\":{\"watch\":[],\"tablet\":[]}}"))))))
+
+(deftest the-newer-of-the-app-and-page-copies-wins
+  (let [older (layout/encode {:desktop {:active nil :layouts [{:name "Old" :panels (layout/default-layout :desktop)}]}} 1000)
+        newer (layout/encode {:desktop {:active nil :layouts [{:name "New" :panels (layout/default-layout :desktop)}]}} 2000)]
+    (is (= newer (layout/newest-text newer older)))
+    (is (= newer (layout/newest-text older newer)))
+    (is (= older (layout/newest-text older older)) "a tie keeps the page copy")
+    (is (= older (layout/newest-text nil older)))
+    (is (= newer (layout/newest-text newer nil)))
+    (is (= newer (layout/newest-text "not json" newer)) "an unreadable app copy loses")
+    (is (= "New" (get-in (layout/decode newer) [:desktop :layouts 0 :name])) "the timestamp does not disturb decoding")))
+
+(deftest added-panels-tiers-and-bindings
+  (testing "parameter tiles and the visualization panel survive repair; bad bindings are dropped"
+    (let [repaired (layout/normalize :desktop [{:id "param-3" :w 1 :h 6 :binding {:cue " ember " :param "level"}}
+                                               {:id "viz"} {:id "viz"} {:id "param-x"}
+                                               {:id "param-4" :binding {:cue "" :param "level"}}])]
+      (is (= [:param-3 :viz :param-4 :cues :live :room :tools] (ids repaired)))
+      (is (= {:cue "ember" :param "level"} (:binding (first repaired))))
+      (is (not (contains? (nth repaired 2) :binding))))
+    (testing "a tile number too long to count past is dropped, so new tiles never share an ID"
+      (let [repaired (layout/normalize :desktop [{:id "param-99999999999999999999"}])]
+        (is (= [:cues :live :room :tools] (ids repaired)))
+        (is (= [:param-1 :param-2]
+               (->> (layout/add-panel :desktop (layout/add-panel :desktop repaired :param) :param)
+                    (filter (comp layout/param-id? :id))
+                    ids))))))
+  (testing "adding numbers tiles after the highest, the visualization panel only once"
+    (let [one (layout/add-panel :desktop (layout/default-layout :desktop) :param)
+          two (layout/add-panel :desktop (layout/remove-panel (layout/add-panel :desktop one :param) :param-1) :param)]
+      (is (= {:id :param-1 :w 2 :h 6} (peek one)))
+      (is (= [:cues :live :room :tools :param-2 :param-3] (ids two)))
+      (is (= 1 (count (filter #{:viz} (ids (layout/add-panel :desktop (layout/add-panel :desktop one :viz) :viz))))))
+      (is (= (layout/default-layout :desktop) (layout/remove-panel (layout/default-layout :desktop) :room))
+          "a Perform panel cannot be removed")))
+  (testing "binding and unbinding a tile"
+    (let [bound (layout/bind custom :param-2 {:cue "moon" :param "speed"})]
+      (is (= {:cue "moon" :param "speed"} (:binding (nth bound 2))))
+      (is (not (contains? (nth (layout/bind bound :param-2 nil) 2) :binding)))))
+  (testing "tiers follow the share of the grid a tile takes"
+    (is (= :single (layout/tier :desktop {:w 2 :h 6})))
+    (is (= :single (layout/tier :desktop {:w 12 :h 8})) "a short strip shows one reading")
+    (is (= :compact (layout/tier :desktop {:w 4 :h 30})))
+    (is (= :full (layout/tier :desktop {:w 5 :h 30})))
+    (is (= :single (layout/tier :phone {:w 1 :h 20})) "half a phone is a 1×1 tile")
+    (is (= :full (layout/tier :phone {:w 2 :h 20})))
+    (is (= :single (layout/tier :tablet {:w 1 :h 20})))
+    (is (= :compact (layout/tier :tablet {:w 2 :h 20})))))
 
 (deftest moving-reorders-without-losing-panels
   (let [start (layout/default-layout :desktop)]
@@ -81,6 +137,13 @@
               (layout/default-entry :phone :room) (layout/default-entry :phone :tools)]
              seeded)))))
 
+(deftest dragging-near-an-edge-scrolls-faster-closer-to-it
+  (is (= 0 (layout/edge-speed 400 800)))
+  (is (= -18 (layout/edge-speed 0 800)))
+  (is (= -9 (layout/edge-speed 32 800)))
+  (is (= 9 (layout/edge-speed 768 800)))
+  (is (= 18 (layout/edge-speed 900 800)) "a pointer past the bottom scrolls at full speed"))
+
 (deftest a-drag-finds-the-panel-under-the-pointer
   (let [rects [{:id :cues :left 0 :top 0 :width 400 :height 600}
                {:id :live :left 416 :top 0 :width 784 :height 1200}]]
@@ -88,34 +151,90 @@
     (is (nil? (layout/target-at rects :cues 100 100)) "the dragged panel is never its own target")
     (is (nil? (layout/target-at rects :cues 408 100)) "a gap is not a target")))
 
+(defn- saved-of [db] (get-in db [:ui :panel-layout :saved]))
+
 (deftest editing-saves-only-on-done-and-cancel-restores
   (let [editing (run desktop [:panel-layout/began nil])
         moved (run editing [:panel-layout/move :room -2] [:panel-layout/resize :room 1 2])]
     (is (layout/editing? editing))
+    (is (= "Layout 1" (get-in editing [:ui :panel-layout :edit :name])) "a new layout gets a free name")
     (is (= (layout/default-layout :desktop) (layout/active-layout editing)))
     (is (= [:room :cues :live :tools] (ids (layout/active-layout moved))))
     (is (re-find #"Room · position 1 of 4 · 6 columns by 28 rows" (get-in moved [:ui :panel-layout :edit :announce])))
-    (testing "cancel keeps the built-in layout"
-      (is (nil? (layout/active-layout (run moved [:panel-layout/cancel])))))
-    (testing "done stores the layout for this size class only"
-      (let [effects (transition moved [:panel-layout/done])
-            saved (get-in effects [:db :ui :panel-layout :saved])]
-        (is (= [:room :cues :live :tools] (ids (:desktop saved))))
-        (is (= saved (:panel-layout/store effects)))
+    (testing "cancel keeps the built-in layout and writes nothing"
+      (is (nil? (layout/active-layout (run moved [:panel-layout/cancel]))))
+      (is (not (contains? (transition moved [:panel-layout/cancel]) :panel-layout/store)))
+      (is (not (contains? (transition moved [:panel-layout/escape]) :panel-layout/store))))
+    (testing "done stores the named layout for this size class only and makes it active"
+      (let [effects (transition (run moved [:panel-layout/name "  Show  "]) [:panel-layout/done])
+            saved (saved-of (:db effects))]
+        (is (= {:active "Show"} (select-keys (:desktop saved) [:active])))
+        (is (= [:room :cues :live :tools] (ids (layout/find-panels saved :desktop "Show"))))
+        (is (= {:saved saved :notice "Saved “Show” for this desktop screen."} (:panel-layout/store effects))
+            "the confirmation travels with the write and shows only if it succeeds")
+        (is (nil? (:dispatch effects)))
         (is (nil? (get-in effects [:db :ui :panel-layout :edit])))
         (testing "another size class still uses the built-in layout"
           (is (nil? (layout/active-layout (assoc-in (:db effects) [:ui :panel-layout :class] :phone)))))
-        (testing "reset removes the saved layout and stores the removal"
+        (testing "reset switches to the built-in layout and keeps the saved one in the menu"
           (let [reset (transition (:db effects) [:panel-layout/reset])]
-            (is (= {} (:panel-layout/store reset)))
-            (is (nil? (layout/active-layout (:db reset))))))))
-    (testing "editing a saved layout starts from it rather than measuring again"
-      (let [saved (assoc-in desktop [:ui :panel-layout :saved :desktop] (layout/move (layout/default-layout :desktop) :tools -3))
-            effects (transition saved [:panel-layout/begin])]
-        (is (nil? (:panel-layout/measure effects)))
-        (is (= [:tools :cues :live :room] (ids (get-in effects [:db :ui :panel-layout :edit :layout]))))))
+            (is (nil? (get-in (:panel-layout/store reset) [:saved :desktop :active])))
+            (is (= ["Show"] (map :name (get-in (:panel-layout/store reset) [:saved :desktop :layouts]))))
+            (is (nil? (layout/active-layout (:db reset))))
+            (testing "and the menu switches back to it"
+              (is (= [:room :cues :live :tools] (ids (layout/active-layout (run (:db reset) [:panel-layout/select "Show"]))))))))
+        (testing "editing a saved layout starts from it rather than measuring again"
+          (let [begun (transition (:db effects) [:panel-layout/begin])]
+            (is (nil? (:panel-layout/measure begun)))
+            (is (= {:name "Show" :original "Show"} (select-keys (get-in begun [:db :ui :panel-layout :edit]) [:name :original])))))
+        (testing "renaming replaces the layout in place; save as new keeps the original"
+          (let [db (:db effects)
+                renamed (run db [:panel-layout/begin] [:panel-layout/name "Encore"] [:panel-layout/done])
+                copied (run db [:panel-layout/begin] [:panel-layout/move :tools -3] [:panel-layout/save-as])]
+            (is (= ["Encore"] (map :name (layout/named (saved-of renamed) :desktop))))
+            (is (= ["Show" "Show 2"] (map :name (layout/named (saved-of copied) :desktop))))
+            (is (= "Show 2" (layout/active-name (saved-of copied) :desktop)))
+            (is (= [:room :cues :live :tools] (ids (layout/find-panels (saved-of copied) :desktop "Show"))))
+            (is (= [:tools :room :cues :live] (ids (layout/find-panels (saved-of copied) :desktop "Show 2"))))
+            (testing "a name another layout already has gets a number"
+              (let [clash (run copied [:panel-layout/begin] [:panel-layout/name "Show"] [:panel-layout/done])
+                    fresh (run copied [:panel-layout/reset] [:panel-layout/began nil] [:panel-layout/name "Show"] [:panel-layout/done])]
+                (is (= ["Show" "Show 2"] (map :name (layout/named (saved-of clash) :desktop))) "renaming onto a taken name keeps a free one")
+                (is (= ["Show" "Show 2" "Show 3"] (map :name (layout/named (saved-of fresh) :desktop))))))
+            (testing "delete removes the edited layout and returns to the built-in one"
+              (let [deleted (transition (run copied [:panel-layout/begin]) [:panel-layout/delete])]
+                (is (= ["Show"] (map :name (get-in (:panel-layout/store deleted) [:saved :desktop :layouts]))))
+                (is (nil? (layout/active-layout (:db deleted))))))))))
+    (testing "selecting an unknown layout or while editing changes nothing"
+      (is (nil? (transition desktop [:panel-layout/select "Nope"])))
+      (is (nil? (transition editing [:panel-layout/select nil]))))
     (testing "without a saved layout, begin measures the built-in one"
       (is (true? (:panel-layout/measure (transition desktop [:panel-layout/begin])))))))
+
+(deftest added-panels-are-edited-bound-and-their-windows-follow-the-layout
+  (let [editing (run desktop [:panel-layout/began nil] [:panel-layout/add :param] [:panel-layout/add :viz]
+                     [:panel-layout/bind :param-1 {:cue "ember" :param "level"}])]
+    (is (= [:cues :live :room :tools :param-1 :viz] (ids (layout/active-layout editing))))
+    (is (= {:cue "ember" :param "level"} (:binding (nth (layout/active-layout editing) 4))))
+    (testing "binding outside edit mode updates and stores the active layout"
+      (let [done (run editing [:panel-layout/done])
+            effects (transition done [:panel-layout/bind :param-1 {:cue "moon" :param "speed"}])]
+        (is (= {:cue "moon" :param "speed"}
+               (:binding (nth (layout/find-panels (:saved (:panel-layout/store effects)) :desktop "Layout 1") 4))))
+        (testing "switching away from a layout redocks windows of panels it alone holds"
+          (let [detached (assoc-in done [:ui :panel-windows] {:param-1 {:phase :popped :generation 1}
+                                                              :live {:phase :popped :generation 1}})
+                switched (transition detached [:panel-layout/select nil])]
+            (is (= [[:panel-window/redock :param-1]] (:dispatch-n switched))))
+          (testing "and so does a size class whose layout lacks them"
+            (let [detached (assoc-in done [:ui :panel-windows] {:param-1 {:phase :popped :generation 1}
+                                                                :live {:phase :popped :generation 1}})
+                  resized (transition detached [:panel-layout/class :tablet])]
+              (is (= :tablet (get-in resized [:db :ui :panel-layout :class])))
+              (is (= [[:panel-window/redock :param-1]] (:dispatch-n resized)))
+              (is (nil? (:dispatch resized)) "no editing ended, so no notice"))))))
+    (testing "removing a tile in edit mode"
+      (is (= [:cues :live :room :tools :viz] (ids (layout/active-layout (run editing [:panel-layout/remove :param-1]))))))))
 
 (deftest pointer-gestures-preview-then-commit-or-cancel
   (let [rects [{:id :cues :left 0 :top 0 :width 400 :height 600}
@@ -188,12 +307,14 @@
     (is (not (re-find #"custom-layout|grid-column|layout-chrome" built-in)))
     (is (= ["cues" "live" "room" "tools"] (map second (re-seq #"data-panel=\"(\w+)\"" built-in)))))
   (let [saved (assoc-in desktop [:ui :panel-layout :saved :desktop]
-                        [{:id :room :w 8 :h 20} {:id :cues :w 4 :h 30} {:id :live :w 12 :h 40} {:id :tools :w 4 :h 12}])
+                        {:active "Show" :layouts [{:name "Show" :panels [{:id :room :w 8 :h 20} {:id :cues :w 4 :h 30}
+                                                                        {:id :live :w 12 :h 40} {:id :tools :w 4 :h 12}]}]})
         custom (markup saved)]
     (is (re-find #"custom-layout" custom))
     (is (re-find #"--layout-columns:12" custom))
     (is (= ["room" "cues" "live" "tools"] (map second (re-seq #"data-panel=\"(\w+)\"" custom))))
-    (is (re-find #"data-panel=\"room\" style=\"grid-column:span 8;grid-row:span 20\"" custom))
+    (is (re-find #"data-panel=\"room\" style=\"grid-column:span 8;grid-row:span 20\" data-tier=\"full\"" custom))
+    (is (re-find #"data-panel=\"cues\" style=\"[^\"]*\" data-tier=\"compact\"" custom))
     (is (not (re-find #"layout-chrome|inert" custom)) "no edit handles or shield outside edit mode")
     (testing "edit mode shields content and labels every handle"
       (let [editing (markup (run saved [:panel-layout/begin]))]
@@ -201,5 +322,8 @@
         (is (= 4 (count (re-seq #"inert=\"\"" editing))))
         (is (re-find #"aria-label=\"Move Room panel, position 1 of 4. Drag, or use the arrow keys.\"" editing))
         (is (re-find #"aria-label=\"Resize Room, 8 of 12 columns by 20 rows" editing))
-        (is (re-find #">Detach</button>" editing) "the Room offers its pop-out window")
-        (is (= 1 (count (re-seq #"layout-detach" editing))) "only the Room detaches")))))
+        (is (= 4 (count (re-seq #">Detach<span class=\"sr-only\">" editing))) "every panel can be detached")
+        (is (re-find #"title=\"Open Room in its own window\"" editing))
+        (is (re-find #"title=\"Move Room later\" data-step=\"later\" class=\"layout-step\">Later<span class=\"sr-only\"> Room</span>" editing)
+            "a step button's accessible name starts with its visible word")
+        (is (not (re-find #"aria-pressed" editing)))))))
