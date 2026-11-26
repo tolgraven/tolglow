@@ -27,7 +27,7 @@
     skips it, instead of being treated as [0 1].
   - SOLO and MUTE are :effect-selection/toggle (#532) on the strip's
     instances in the configured mode; SHIFT adds, CONTROL inverts the mode
-    (selection-toggle). Scribble colours follow the cue swatch or effect
+    for that one command (selection-toggle). Scribble colours follow the cue swatch or effect
     category by hue; selected-strip modes light every item strip cyan, as the script does
     in plug-in mode; empty strips are black.
   - Meters show each strip's effective output level: instance opacity times
@@ -422,62 +422,42 @@
                {:op :instance/end :instance-id (:id instance) :force? (= :releasing (:phase instance))}
                {:op :cue/launch :cue-id (:cue-id s) :launch {:mode :persistent}})])))
 
-(defn- toggle-command [control selector additive?]
-  {:op :effect-selection/toggle :control control :selector selector :additive? additive?})
+(defn- toggle-command
+  "Additive actions keep the :additive? true shorthand and only exclusive ones
+  send :mode, so a peer without the per-action :mode (#749) loses the
+  exclusive press rather than turning additive presses exclusive."
+  [control selector mode]
+  (cond-> {:op :effect-selection/toggle :control control :selector selector}
+    (= :additive mode) (assoc :additive? true)
+    (= :exclusive mode) (assoc :mode :exclusive)))
 
 (defn- selected-instance-ids [ctx control]
   (let [field (case control :solo :soloed? :mute :muted?)]
     (into [] (comp (filter (comp field val)) (map key)) (:flags ctx))))
 
 (defn selection-toggle
-  "Solo or Mute for a strip's instances: {:commands :exclusive-add?}, with
-  no commands when the strip has none. modifier picks the mode, as the
-  operator's Live script does:
-    nil        the configured mode (:effect-selection/configure)
-    :additive  keep the other selected strips (SHIFT)
-    :invert    the opposite of the configured mode (CONTROL)
-  With a configured :additive mode, :invert replaces the selection with this
-  strip's instances, or clears them when they are the whole selection. The
-  shared toggle has no per-action exclusive mode, so this takes two additive
-  toggles in two owner cycles, and the pair is not atomic:
-    - the strip already wholly selected among others: one toggle drops the
-      others;
-    - otherwise the first toggle adds the strip through its own selector
-      (:exclusive-add? true). The host sends exclusive-drop for its
-      acknowledgement only after it is accepted, so Solo or Mute stays
-      active in every committed frame, and a refused or empty add drops
-      nothing. A selection another client makes between the two cycles
-      survives the drop."
+  "Solo or Mute for a strip's instances: one :effect-selection/toggle in a
+  vector, or none when the strip has no instances. modifier picks the mode,
+  as the operator's Live script does:
+    nil        the owner's configured mode (:effect-selection/configure);
+               the command carries neither :mode nor :additive?
+    :additive  :additive? true, keeping the other selected strips (SHIFT)
+    :invert    the opposite of the configured mode (CONTROL): :additive?
+               true under an exclusive default, :mode :exclusive under an
+               additive one
+  With a configured :additive mode, :invert sends :mode :exclusive, which the
+  owner applies in one commit: it replaces the selection with this strip's
+  instances, or clears them when they are the whole selection (#749)."
   [ctx control s modifier]
-  (let [selector (:selector s) targets (:instance-ids s)]
-    (if-not (and selector (seq targets))
-      {:commands []}
-      (let [configured (get-in ctx [:modes control] :exclusive)
-            mode (case modifier
-                   :additive :additive
-                   :invert (if (= :additive configured) :exclusive :additive)
-                   configured)]
-        (if (or (= mode configured) (= :additive mode))
-          {:commands [(toggle-command control selector (= :additive mode))]}
-          (let [current (selected-instance-ids ctx control)
-                target-set (set targets)
-                current-set (set current)]
-            (cond
-              (= target-set current-set) {:commands [(toggle-command control selector true)]}
-              (every? current-set targets)
-              {:commands [(toggle-command control {:instance-ids (filterv (complement target-set) current)} true)]}
-              :else {:commands [(toggle-command control selector true)] :exclusive-add? true})))))))
-
-(defn exclusive-drop
-  "The second step of an exclusive selection-toggle: for the accepted
-  acknowledgement of its additive add, the toggle that drops every other
-  selected instance, or nil. Nothing is dropped when the add was refused,
-  matched no instance, or left the strip unselected."
-  [{:keys [status control instance-ids selected-instance-ids]}]
-  (let [selected (set selected-instance-ids) targets (set instance-ids)]
-    (when (and (= :accepted status) (seq targets) (every? selected targets))
-      (let [others (filterv (complement targets) selected-instance-ids)]
-        (when (seq others) (toggle-command control {:instance-ids others} true))))))
+  (let [{:keys [selector instance-ids]} s]
+    (if-not (and selector (seq instance-ids))
+      []
+      (let [configured (get-in ctx [:modes control] :exclusive)]
+        [(toggle-command control selector
+                         (case modifier
+                           :additive :additive
+                           :invert (if (= :additive configured) :exclusive :additive)
+                           nil))]))))
 
 (defn soloed-instance-ids [ctx] (selected-instance-ids ctx :solo))
 
@@ -489,11 +469,9 @@
   (let [soloed (soloed-instance-ids ctx)
         alive (filterv #(get-in ctx [:model :instances %]) stored)]
     (cond
-      (seq soloed) {:commands [{:op :effect-selection/toggle :control :solo :selector {:instance-ids soloed} :additive? true}]
-                    :stored soloed}
-      (seq alive) {:commands [{:op :effect-selection/toggle :control :solo :selector {:instance-ids alive} :additive? true}]
-                   :stored []}
-      :else {:commands (:commands (selection-toggle ctx :solo selected-strip nil)) :stored []})))
+      (seq soloed) {:commands [(toggle-command :solo {:instance-ids soloed} :additive)] :stored soloed}
+      (seq alive) {:commands [(toggle-command :solo {:instance-ids alive} :additive)] :stored []}
+      :else {:commands (selection-toggle ctx :solo selected-strip nil) :stored []})))
 
 ;; ---------------------------------------------------------------------------
 ;; Colours (the script's hue matching with a white cut-off)

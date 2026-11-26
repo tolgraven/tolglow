@@ -255,7 +255,9 @@ In **Perform → In the mix**, use **Solo** or **Mute** on a running card.
 contribution. The action buttons show which controls are selected. A mixed
 button means some of the selected category or layer members have that flag.
 
-Use **Add once** before an action or hold Shift while clicking to use additive mode. The
+Use **Add once** before an action or hold Shift while clicking to use additive
+mode for that action. Use **Exclusive once** or hold Alt/Option to make that
+action replace the selection, even while the default is additive. The
 **Defaults** control sets the normal mode for Solo and Mute independently.
 Choose a category or **All running** to act on that group. Expand **Layers**
 when a native composition is playing to act on a particular layer.
@@ -271,18 +273,35 @@ open cards update. The same selector supports categories and native layer IDs.
                             :additive? true})))
 ```
 
+To solo one running effect exclusively while the Solo default is additive,
+send `:mode :exclusive`. The acknowledgement's `:selected-instance-ids` holds
+only that instance, and the open Studio cards show every other card as
+**Excluded by Solo** after the same commit. Clicking **Exclusive once** and then
+**Solo** in Studio sends the same command; read it back with the snapshot above.
+
+```clojure
+(let [{:keys [effect-selection]} (show/snapshot runtime)]
+  (when-let [instance-id (first (:included-instance-ids effect-selection))]
+    (select-keys @(show/submit! runtime {:op :effect-selection/toggle :control :solo
+                                         :selector {:instance-ids [instance-id]}
+                                         :mode :exclusive})
+                 [:status :mode :selected-instance-ids])))
+```
+
 See [Effect Solo and Mute](effect-selection.md) for the shared policy and
 examples for configuring the default modes.
 
-**Tracked gap.** The X-Touch's CONTROL inverts the configured mode for one
-press, as the operator's Live script does: with an additive default it
-replaces the selection. Studio's **Add once**, Shift-click and the REPL's
-`:additive? true` only make one action additive; nothing in Studio or the
-shared toggle makes one action exclusive while the default is additive, so
-the unit sends two additive toggles in two owner cycles, add first and drop
-second ([X-Touch](xtouch.md#mixer-layout-tolglow-706-slice-2)). They are not
-atomic: a Studio solo that lands between them survives the drop. #749 tracks a
-per-action mode on the shared toggle that closes this gap.
+The X-Touch's CONTROL inverts the configured mode for one press, as the
+operator's Live script does. It sends the same single toggle with the inverted
+`:mode` ([X-Touch](xtouch.md#mixer-layout-tolglow-706-slice-2)), so Studio,
+the REPL and the unit share one atomic command (#749).
+
+After `npm run studio:build`, `lein with-profile +dev run -m
+tolglow.qa.effect-selection-browser 18890 target/effect-selection-qa` checks both directions against the production
+Studio build in headless Chrome: Studio shows a REPL exclusive Solo, and
+`show/snapshot` shows the result of **Exclusive once**, Alt-click and a plain
+click. Remaining gap: these gestures have not been tried on an iPad or other
+real touchscreen.
 
 ## Suspend automatic section patterns
 

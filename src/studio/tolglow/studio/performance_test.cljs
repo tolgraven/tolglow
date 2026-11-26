@@ -33,33 +33,65 @@
 
 (deftest solo-and-mute-send-shared-selectors-and-consume-the-touch-modifier
   (let [identity {:runtime-id "runtime-a" :show-id :test :epoch 4}
-        view (assoc identity :revision 7 :effect-selection {:modes {:solo :exclusive :mute :exclusive}})
+        view (assoc identity :revision 7 :effect-selection {:modes {:solo :exclusive :mute :additive}})
         db (assoc base :server-projection {:view view})
-        armed (transition db [:effect-selection/add-once identity])
+        armed (transition db [:effect-selection/once identity :additive])
         selector {:instance-ids ["4:1"]}
-        sent (transition (:db armed) [:effect-selection/toggle identity :solo selector false])
+        sent (transition (:db armed) [:effect-selection/toggle identity :solo selector nil])
         payload (command sent)
         accepted (transition (:db sent) (conj (:on-success payload) {:status "accepted" :revision 8}))
         ready (assoc-in (:db accepted) [:server-projection :view :revision] 8)
-        normal (command (transition ready [:effect-selection/toggle identity :mute {:layer-id :layer/test} false]))
-        shifted (command (transition ready [:effect-selection/toggle identity :mute (:selector group-target) true]))
+        fields #(dissoc (:fields (command %)) :command-id)
+        normal (transition ready [:effect-selection/toggle identity :mute {:layer-id :layer/test} nil])
+        shifted (transition ready [:effect-selection/toggle identity :mute (:selector group-target) :additive])
+        alt (transition ready [:effect-selection/toggle identity :mute (:selector group-target) :exclusive])
+        exclusive-armed (:db (transition ready [:effect-selection/once identity :exclusive]))
+        exclusive-sent (transition exclusive-armed [:effect-selection/toggle identity :mute selector nil])
         configured (command (transition ready [:effect-selection/configure identity :mute :additive]))
         newer (assoc-in (:db sent) [:server-projection :view :epoch] 5)]
+    (is (= :additive (get-in armed [:db :ui :effect-selection :once])))
     (is (= :effect-selection/toggle (:op payload)))
     (is (= {:control :solo :selector selector :additive? true} (dissoc (:fields payload) :command-id)))
+    (is (nil? (get-in sent [:db :ui :effect-selection :once])) "Sending consumes the one-action mode")
     (is (= [4 "runtime-a" "performance-session"] ((juxt :epoch :runtime-id :session) payload)))
     (is (= (:server-projection db) (get-in sent [:db :server-projection])))
-    (is (nil? (:fx (transition (:db accepted) [:effect-selection/toggle identity :solo selector false]))))
-    (is (= {:control :mute :selector {:layer-id :layer/test} :additive? false}
-           (dissoc (:fields normal) :command-id)))
-    (is (= {:control :mute :selector (:selector group-target) :additive? true}
-           (dissoc (:fields shifted) :command-id)))
+    (is (nil? (:fx (transition (:db accepted) [:effect-selection/toggle identity :solo selector nil]))))
+    (is (= {:control :mute :selector {:layer-id :layer/test}} (fields normal))
+        "A plain click leaves the configured mode to the owner")
+    (is (= {:control :mute :selector (:selector group-target) :additive? true} (fields shifted)))
+    (is (= {:control :mute :selector (:selector group-target) :mode :exclusive} (fields alt))
+        "Alt-click makes one action exclusive while the default is additive")
+    (is (= :exclusive (get-in exclusive-armed [:ui :effect-selection :once])))
+    (is (= {:control :mute :selector selector :mode :exclusive} (fields exclusive-sent))
+        "Exclusive once does the same on a touchscreen")
+    (is (nil? (get-in exclusive-sent [:db :ui :effect-selection :once])))
+    (is (nil? (get-in (transition exclusive-armed [:effect-selection/once identity :exclusive])
+                      [:db :ui :effect-selection :once]))
+        "Pressing the armed button again disarms it")
+    (is (= :additive (get-in (transition exclusive-armed [:effect-selection/once identity :additive])
+                             [:db :ui :effect-selection :once]))
+        "Arming the other one-action mode replaces it")
+    (is (= ready (:db (transition ready [:effect-selection/once identity :replace]))) "Unknown modes are ignored")
+    (is (= {:control :solo :selector selector :additive? true}
+           (fields (transition exclusive-armed [:effect-selection/toggle identity :solo selector :additive])))
+        "A click modifier wins over the armed mode")
     (is (= :effect-selection/configure (:op configured)))
     (is (= {:mute :additive} (get-in configured [:fields :modes])))
     (is (= newer (:db (transition newer (conj (:on-failure payload) "Instance no longer exists")))))
     (is (= "Instance no longer exists"
            (get-in (transition (:db sent) (conj (:on-failure payload) "Instance no longer exists"))
                    [:db :ui :effect-selection :error])))))
+
+(deftest click-modifiers-pick-the-one-action-mode
+  (is (= :additive (selection/click-mode #js {:shiftKey true :altKey true})))
+  (is (= :exclusive (selection/click-mode #js {:shiftKey false :altKey true})))
+  (is (nil? (selection/click-mode #js {:shiftKey false :altKey false})))
+  (let [buttons (->> (selection/toolbar {:identity {} :selection {:modes {:solo :additive :mute :exclusive}}
+                                         :interaction {:once :exclusive} :pending? false})
+                     (tree-seq coll? seq)
+                     (filter #(and (vector? %) (= :button.button.effect-selection-once (first %)))))]
+    (is (= [["additive" false "Add once"] ["exclusive" true "Exclusive once"]]
+           (mapv (fn [[_ attrs label]] [(:data-selection-once attrs) (:aria-pressed attrs) label]) buttons)))))
 
 (deftest solo-and-mute-button-flags-reflect-the-committed-selection
   (let [a {:id "4:1" :soloed? true :muted? true :suppressed-by :mute}

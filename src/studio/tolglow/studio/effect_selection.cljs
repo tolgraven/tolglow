@@ -22,11 +22,18 @@
 (defn- available? [{:keys [selection pending? identity]} expected]
   (and selection (not pending?) (= identity expected)))
 
-(rf/reg-event-db :effect-selection/add-once
-  (fn [db [_ expected]]
+(def once-modes
+  "One-action overrides of the configured mode, for touchscreens without a
+  modifier key: [mode label title]."
+  [[:additive "Add once" "Use additive mode for the next Solo or Mute"]
+   [:exclusive "Exclusive once" "Make the next Solo or Mute replace the selection"]])
+
+(rf/reg-event-db :effect-selection/once
+  (fn [db [_ expected mode]]
     (let [{:keys [identity interaction] :as view} (selection-view db)]
-      (if (available? view expected)
-        (assoc-in db interaction-path (assoc interaction :identity identity :add-once? (not (:add-once? interaction))))
+      (if (and (available? view expected) (some #(= mode (first %)) once-modes))
+        (assoc-in db interaction-path (assoc interaction :identity identity
+                                             :once (when-not (= mode (:once interaction)) mode)))
         db))))
 
 (defn- send-selection [db {:keys [identity interaction]} op fields]
@@ -37,12 +44,23 @@
                                           (assoc :identity identity :pending {:id command-id})))
      :fx [[effect (assoc request :on-failure (conj result false))]]}))
 
+(defn click-mode
+  "The one-action mode a click's modifier keys ask for: Shift adds,
+  Alt/Option makes it exclusive, otherwise nil."
+  [event]
+  (cond (.-shiftKey event) :additive (.-altKey event) :exclusive))
+
 (rf/reg-event-fx :effect-selection/toggle
-  (fn [{:keys [db]} [_ expected control selector shifted?]]
-    (let [{:keys [interaction] :as view} (selection-view db)]
+  (fn [{:keys [db]} [_ expected control selector clicked-mode]]
+    (let [{:keys [interaction] :as view} (selection-view db)
+          mode (or clicked-mode (:once interaction))]
       (when (available? view expected)
-        (send-selection db (update view :interaction dissoc :add-once?) :effect-selection/toggle
-                        {:control control :selector selector :additive? (boolean (or shifted? (:add-once? interaction)))})))))
+        ;; Without a mode the owner applies the configured one when the command lands.
+        ;; Additive keeps the :additive? shorthand; only exclusive needs the newer :mode.
+        (send-selection db (update view :interaction dissoc :once) :effect-selection/toggle
+                        (cond-> {:control control :selector selector}
+                          (= :additive mode) (assoc :additive? true)
+                          (= :exclusive mode) (assoc :mode :exclusive)))))))
 
 (rf/reg-event-fx :effect-selection/configure
   (fn [{:keys [db]} [_ expected control mode]]
@@ -79,8 +97,8 @@
     [:button.button.effect-selection-action
      {:type "button" :data-selection-control (name control) :disabled pending?
       :aria-pressed (case flag :partial "mixed" :all true false)
-      :title (str label " · Shift-click to add")
-      :on-click #(rf/dispatch [:effect-selection/toggle identity control selector (.-shiftKey %)])}
+      :title (str label " · Shift-click to add, Alt/Option-click to replace the selection")
+      :on-click #(rf/dispatch [:effect-selection/toggle identity control selector (click-mode %)])}
      label]))
 
 (defn instance-flags [row]
@@ -99,8 +117,10 @@
                   :on-change #(rf/dispatch [:effect-selection/configure identity control (keyword (.. % -target -value))])}
          [:option {:value "exclusive"} "Exclusive"]
          [:option {:value "additive"} "Additive"]]])]]
-   [:button.button.effect-selection-add
-    {:type "button" :aria-pressed (boolean (:add-once? interaction)) :disabled pending?
-     :title "Use additive mode for the next Solo or Mute"
-     :on-click #(rf/dispatch [:effect-selection/add-once identity])}
-    "Add once"]])
+   (for [[mode label title] once-modes]
+     ^{:key mode}
+     [:button.button.effect-selection-once
+      {:type "button" :data-selection-once (name mode) :aria-pressed (= mode (:once interaction))
+       :disabled pending? :title title
+       :on-click #(rf/dispatch [:effect-selection/once identity mode])}
+      label])])
