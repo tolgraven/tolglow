@@ -149,20 +149,20 @@
         rate-cc (get-in (first (filter #(= :rate (:param %)) (:lanes layout))) [:components 0 :cc])
         level-cc (get-in (first (filter #(= [:wash :level] ((juxt :cue-id :param) %)) (:lanes layout))) [:components 0 :cc])
         quarter (first (clip/encode-value (first (filter #(= :level (:param %)) (:lanes layout))) 0.25))]
-    [[cue-ch (fn [c] (update c :notes (fn [ns] (mapv #(if (and (= strobe-pitch (:pitch %)) (= 2 (:start %)))
+    [[cue-ch (fn [c] (update c :notes (fn [ns] (mapv #(if (and (= strobe-pitch (:pitch %)) (== 2 (:start %)))
                                                          (assoc % :start 5/2 :duration 1) %) ns))))]
      [lane-ch (fn [c] (update c :controllers
                               (fn [cs] (mapv (fn [{:keys [beat controller] :as e}]
                                                (cond
-                                                 (and (= 2 beat) (#{rate-cc (+ 32 rate-cc)} controller)) (assoc e :beat 5/2)
-                                                 (and (= 3/2 beat) (= level-cc controller)) (assoc e :value (bit-shift-right quarter 7))
-                                                 (and (= 3/2 beat) (= (+ 32 level-cc) controller)) (assoc e :value (bit-and quarter 127))
+                                                 (and (== 2 beat) (#{rate-cc (+ 32 rate-cc)} controller)) (assoc e :beat 5/2)
+                                                 (and (== 3/2 beat) (= level-cc controller)) (assoc e :value (bit-shift-right quarter 7))
+                                                 (and (== 3/2 beat) (= (+ 32 level-cc) controller)) (assoc e :value (bit-and quarter 127))
                                                  :else e))
                                              cs))))]]))
 
 (defn- round-trip [bpm replay-bpm]
   (let [live (fake/create {:tracks [{:name "Bass" :arm? true :input {:port "Keyboard" :channel 1}}]})
-        conn (live/open (fake/transport live) {:session-id (str "capture-" bpm)})
+        conn (live/open (fake/transport live {:json? true}) {:session-id (str "capture-" bpm)})
         h (perform! (harness bpm))
         phrase (try (capture/capture (:buffer @(:state h)) {:end-beat 16})
                     (finally (show/stop! (:rt h))))
@@ -218,16 +218,17 @@
   (doseq [bpm [70 120 180]]
     (testing (str bpm " BPM")
       (let [live (fake/create {:tracks [{:name "Drums" :arm? true :input {:port "Keyboard" :channel 1}}]})
-            conn (live/open (fake/transport live) {:session-id "feed"})
+            conn (live/open (fake/transport live {:json? true}) {:session-id "feed"})
             layout (clip/allocate-layout {} registry {:cues [:wash :strobe :aim] :channel 1 :lane-channel 2
                                                       :params [[:wash :level] [:wash :mode] [:strobe :rate] [:aim :direction]]})
             port (fake/midi-port live "Tolglow")
-            setup (live/setup! conn (live/desired-setup layout {:port "Tolglow" :route :live-capture-midi}))
+            desired (live/desired-setup layout {:port "Tolglow" :route :live-capture-midi})
+            setup (live/setup! conn desired)
             grid 1/4
             feed (fn [{:keys [beat] :as event}]
                    ;; Live stamps MIDI on arrival; this feed has no transport jitter.
                    (fake/set-song-beat! live (* grid (Math/round (/ (double beat) grid))))
-                   ((:send! port) nil (clip/feed-messages layout event)))
+                   ((:send! port) nil (live/feed-routing desired (clip/feed-messages layout event))))
             h (perform! (harness bpm :feed feed))
             phrase (try (capture/capture (:buffer @(:state h)) {:end-beat 16})
                         (finally (show/stop! (:rt h))))

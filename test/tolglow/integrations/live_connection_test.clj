@@ -23,9 +23,11 @@
     (is (:ready? first-run) (pr-str (:problems first-run)))
     (is (= [[:ensure-track :executed] [:configure-track :executed] [:ensure-track :executed] [:configure-track :executed]]
            (:applied first-run)))
-    (is (= [{:name "Tolglow Cues" :arm? true :monitor :auto :input {:port "Tolglow" :channel 1}}
-            {:name "Tolglow Lanes" :arm? true :monitor :auto :input {:port "Tolglow" :channel 2}}]
-           (mapv #(select-keys % [:name :arm? :monitor :input]) (get-in first-run [:set :tracks]))))
+    (is (= [{:name "Tolglow Cues" :arm? true :monitor :auto :input {:port "Tolglow" :channel 16} :playback-channel 1}
+            {:name "Tolglow Lanes" :arm? true :monitor :auto :input {:port "Tolglow" :channel 15} :playback-channel 2}]
+           (mapv #(select-keys % [:name :arm? :monitor :input :playback-channel]) (get-in first-run [:set :tracks])))
+        "each track is fed on its own channel, which clip playback never uses")
+    (is (= "track:1" (get-in first-run [:tracks 1])) "the cue track is the track the companion was placed on")
     (let [conn (connect set)
           again (live/setup! conn desired)]
       (is (:ready? again))
@@ -127,3 +129,34 @@
     (is (= [{:channel 1 :name "Tolglow Capture"}]
            (mapv #(select-keys % [:channel :name]) (:tracks (live/desired-setup single {})))))
     (is (= [1] (clip/channels single)))))
+
+(deftest the-companion-track-is-adopted-and-required
+  (let [set (fake/create {:tracks [{:name "Bass" :arm? true}]})
+        result (live/setup! (connect set) desired)]
+    (is (:ready? result))
+    (is (= ["Bass" "Tolglow Cues" "Tolglow Lanes"] (mapv :name (get-in result [:set :tracks]))))
+    (is (= {:track-id "track:2" :created? false}
+           (:result (live/request! (connect set) :ensure-track {:name "Tolglow Cues" :kind :midi :host? true})))
+        "once adopted, the host track is found by name"))
+  (let [result (live/setup! (connect (fake/create {:companion? false})) desired)]
+    (is (= [[:ensure-track :rejected]] (:applied result)) "without a companion in the Set nothing is created")
+    (is (not (:ready? result))))
+  (is (thrown? clojure.lang.ExceptionInfo (live/desired-setup layout {:feed-channels [2 1]}))
+      "a feed channel equal to a playback channel would echo"))
+
+(deftest json-results-come-back-as-tolglow-data
+  (let [set (fake/create)
+        conn (live/open (fake/transport set {:json? true}) {:session-id "wire"})
+        setup (live/setup! conn desired)
+        clip {:clip/version 1 :length-beats 4 :meter {:beats-per-bar 7/2 :bars-per-phrase 4}
+              :notes [{:pitch 36 :start 1/3 :duration 2/3 :velocity 127}]
+              :controllers [{:beat 1/4 :controller 1 :value 64}]}
+        written (live/request! conn :write-clip {:track-id (get-in setup [:tracks 1]) :expected-name "Tolglow Cues"
+                                                  :slot-index nil :name "x" :clip clip})]
+    (is (:ready? setup) (pr-str (:problems setup)))
+    (is (= :auto (get-in setup [:set :tracks 0 :monitor])))
+    (is (= clip (get-in (live/request! conn :read-clip {:clip-id (get-in written [:result :clip-id])}) [:result :clip]))
+        "thirds and sevens survive JSON doubles exactly")
+    (is (= :stale-clip (:code (live/request! conn :read-clip {:clip-id "clip:missing"}))))
+    (is (= [{:type :cc :channel 16} {:type :note-on :channel 15}]
+           (live/feed-routing desired [{:type :cc :channel 1} {:type :note-on :channel 2}])))))

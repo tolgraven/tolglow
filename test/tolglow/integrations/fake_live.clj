@@ -7,17 +7,24 @@
   It follows the documented Live Object Model where it is known and makes no
   claim about undocumented behaviour: Capture MIDI here takes whole bars ending
   at the nearest bar line, which real Live decides heuristically. Faults can
-  be injected per operation to exercise lost acknowledgements.")
+  be injected per operation to exercise lost acknowledgements.
+
+  Like the real companion, it sits on one track (appended as \"MIDI\" unless
+  :companion? is false); setup adopts that track for the host capture track.
+  `(transport live {:json? true})` sends every payload and receipt through JSON,
+  as the loopback HTTP companion does."
+  (:require [clojure.data.json :as json]))
 
 (defn create
   "tracks: existing musician tracks, e.g. [{:name \"Bass\" :arm? true}]."
   ([] (create {}))
-  ([{:keys [tracks tempo exclusive-arm? can-capture-midi? capture-bars]
-     :or {tracks [] tempo 120.0 exclusive-arm? false can-capture-midi? true capture-bars 4}}]
+  ([{:keys [tracks tempo exclusive-arm? can-capture-midi? capture-bars companion?]
+     :or {tracks [] tempo 120.0 exclusive-arm? false can-capture-midi? true capture-bars 4 companion? true}}]
    (atom {:tracks (vec (map-indexed (fn [i t] (merge {:track-id (str "track:" (inc i)) :kind :midi :arm? false
                                                       :monitor :auto :input {:port "Keyboard" :channel 1}
                                                       :slots {} :history []} t))
-                                    tracks))
+                                    (cond-> (vec tracks) companion? (conj {:name "MIDI" :companion? true :arm? false
+                                                                           :input {:port "All Ins" :channel nil}}))))
           :next-id 100 :tempo tempo :signature {:beats-per-bar 4 :bars-per-phrase 4}
           :exclusive-arm? exclusive-arm? :can-capture-midi? can-capture-midi? :capture-bars capture-bars
           :song-beat 0 :playing {} :selected nil :faults {} :requests []})))
@@ -29,7 +36,7 @@
   (first (keep-indexed (fn [i t] (when (= track-id (:track-id t)) i)) (:tracks state))))
 
 (defn- public-track [track]
-  (-> (select-keys track [:track-id :name :kind :arm? :monitor :input])
+  (-> (select-keys track [:track-id :name :kind :arm? :monitor :input :playback-channel])
       (assoc :clips (vec (for [[slot c] (sort-by key (:slots track))]
                            {:clip-id (:clip-id c) :slot-index slot :name (:name c)
                             :length-beats (get-in c [:clip :length-beats])})))))
@@ -79,15 +86,21 @@
                              :live-version "simulated"}}
       :ensure-track (if-let [t (first (filter #(and (= (:name payload) (:name %)) (= :midi (:kind %))) (:tracks state)))]
                       {:status :executed :result {:track-id (:track-id t) :created? false}}
+                      (if (:host? payload)
+                        (if-let [i (first (keep-indexed (fn [i t] (when (:companion? t) i)) (:tracks state)))]
+                          (do (swap! live assoc-in [:tracks i :name] (:name payload))
+                              {:status :executed :result {:track-id (get-in state [:tracks i :track-id]) :created? false :adopted? true}})
+                          (rejected :no-companion))
                       (let [id (next-id! live "track")]
                         (swap! live update :tracks conj {:track-id id :name (:name payload) :kind :midi :arm? false
                                                          :monitor :auto :input {:port "All Ins" :channel nil}
                                                          :slots {} :history []})
-                        {:status :executed :result {:track-id id :created? true}}))
+                        {:status :executed :result {:track-id id :created? true}})))
       :configure-track (let [[i code] (check-track state payload)]
                          (if code (rejected code)
                              (do (swap! live (fn [s]
-                                               (let [s (update-in s [:tracks i] merge (select-keys payload [:arm? :monitor :input]))]
+                                               (let [s (update-in s [:tracks i] merge (cond-> (select-keys payload [:arm? :monitor :input :playback-channel])
+                                                                                   (string? (:monitor payload)) (update :monitor keyword)))]
                                                  ;; Exclusive Arm as a preference: arming one track disarms the rest.
                                                  (if (and (:exclusive-arm? s) (:arm? payload))
                                                    (update s :tracks (fn [ts] (vec (map-indexed #(if (= %1 i) %2 (assoc %2 :arm? false)) ts))))
@@ -127,9 +140,9 @@
       :stop-clips (do (swap! live update :playing #(apply dissoc % (:track-ids payload)))
                       {:status :executed :result {}}))))
 
-(defn transport
-  "The live-connection transport for this simulated Set."
-  [live]
+(defn- through-json [x] (json/read-str (json/write-str x) :key-fn keyword))
+
+(defn- base-transport [live]
   {:open! (fn [_] {:live live})
    :request! (fn [_ id op payload]
                (swap! live update :requests conj [op payload])
@@ -141,6 +154,16 @@
                                (execute live op payload))]
                  (assoc receipt :id id)))
    :close! (fn [_] nil)})
+
+(defn transport
+  "The live-connection transport for this simulated Set."
+  ([live] (transport live {}))
+  ([live {:keys [json?]}]
+   (let [t (base-transport live)]
+     (if json?
+       (assoc t :request! (fn [handle id op payload]
+                            (through-json ((:request! t) handle id op (through-json payload)))))
+       t))))
 
 (defn inject-fault! [live op & faults] (swap! live update-in [:faults op] concat faults))
 
@@ -183,7 +206,9 @@
     (->> (for [[track-id {:keys [clip-id] :as p}] (:playing state)
                :let [start (:from p)
                      {:keys [track-index entry]} (find-clip state clip-id)
-                     channel (get-in state [:tracks track-index :input :channel])
+                     ;; The companion forwards clip playback on the track's layout channel.
+                     channel (or (get-in state [:tracks track-index :playback-channel])
+                                 (get-in state [:tracks track-index :input :channel]))
                      {:keys [length-beats notes controllers]} (:clip entry)]
                loop (range (long (Math/floor (/ (- from start) length-beats)))
                            (inc (long (Math/ceil (/ (- to start) length-beats)))))

@@ -57,16 +57,52 @@
 (defn close! [{:keys [transport handle]}]
   (when-let [close (:close! transport)] (close handle)))
 
+(def ^:private ticks-per-beat
+  "Beats from the wire snap to Standard MIDI File ticks, so a JSON double such
+  as 0.25 or 0.3333333333333333 returns to the exact 1/4 or 1/3 beat."
+  960)
+
+(defn wire-beat
+  "An exact beat from a JSON number: the nearest 1/960 beat."
+  [x]
+  (when (number? x) (/ (Math/round (* (double x) ticks-per-beat)) ticks-per-beat)))
+
+(defn- keywordize [x] (if (string? x) (keyword x) x))
+
+(defn- normalize-clip [clip]
+  (when clip
+    (-> (if (contains? clip :clip/version) clip (-> clip (assoc :clip/version (:version clip 1)) (dissoc :version)))
+        (update :length-beats wire-beat)
+        (update :meter (fn [m] (when m (update m :beats-per-bar #(if (integer? %) % (rationalize (wire-beat %)))))))
+        (update :notes (fn [ns] (mapv #(-> % (update :start wire-beat) (update :duration wire-beat)) ns)))
+        (update :controllers (fn [cs] (mapv #(update % :beat wire-beat) cs))))))
+
+(defn- normalize-track [track]
+  (-> track (update :kind keywordize) (update :monitor keywordize)))
+
+(defn normalize-result
+  "Bring a result decoded from JSON back to Tolglow data: enumerations become
+  keywords and clip beats become exact rationals. Idempotent on Tolglow data."
+  [op result]
+  (case op
+    :inspect-set (update result :tracks #(mapv normalize-track %))
+    :configure-track (update result :track normalize-track)
+    :read-clip (update result :clip normalize-clip)
+    result))
+
 (defn request!
   "Send one operation and return its validated receipt. Never retries."
   [{:keys [transport handle session-id counter log]} op payload]
   (when-not (contains? operations op) (fail! "Unknown Live connection operation" {:op op}))
   (let [id (str session-id "/" (swap! counter inc))
-        receipt ((:request! transport) handle id op payload)]
+        receipt (update ((:request! transport) handle id op payload) :status keywordize)]
     (when-not (and (map? receipt) (= id (:id receipt)) (#{:executed :rejected :indeterminate} (:status receipt)))
       (fail! "Live connection returned an invalid receipt" {:op op :id id}))
     (swap! log conj {:id id :op op :status (:status receipt)})
-    receipt))
+    (cond-> receipt
+      (map? (:result receipt)) (update :result #(normalize-result op %))
+      (map? (:error receipt)) (update-in [:error :code] keywordize)
+      (string? (:code receipt)) (update :code keyword))))
 
 (defn operations-sent
   "Operations this connection sent, in order, for diagnostics and tests."
@@ -76,28 +112,49 @@
 ;; ---------------------------------------------------------------------------
 ;; Setup (#680)
 
+(def default-feed-channels
+  "Channels Tolglow feeds capture tracks on, one per track. Live clips do not
+  keep a channel, so clip playback reaches the companion on channel 1; the
+  companion drops input on the feed channel (Tolglow's own monitored feed) and
+  forwards everything else as playback on the track's layout channel."
+  [16 15 14 13])
+
 (defn desired-setup
-  "The tracks a layout needs: one armed MIDI capture track per channel, fed by
-  the named input port on that channel. Monitoring is Auto so recorded clips
-  play back while the track stays armed for the next capture."
-  [layout {:keys [port route names] :or {port "Tolglow" route :tolglow-buffer}}]
+  "The tracks a layout needs: one armed MIDI capture track per layout channel,
+  fed by the named input port on its own feed channel. Monitoring is Auto so
+  recorded clips play back while the track stays armed for the next capture.
+  The cue track is the track that hosts the companion device (:host? true):
+  setup adopts and renames the track the companion was placed on."
+  [layout {:keys [port route names feed-channels] :or {port "Tolglow" route :tolglow-buffer
+                                                       feed-channels default-feed-channels}}]
   (when-not (contains? capture-routes route) (fail! "Unknown capture route" {:route route}))
   (let [chs (clip/channels layout)
         default-name (fn [ch] (cond (= 1 (count chs)) "Tolglow Capture"
                                     (= ch (:channel layout)) "Tolglow Cues"
                                     :else "Tolglow Lanes"))]
+    (when (some (set chs) (take (count chs) feed-channels))
+      (fail! "Feed channels must differ from the layout's playback channels" {:channels chs}))
     {:route route
-     :tracks (vec (for [ch chs]
-                    {:channel ch :name (get names ch (default-name ch)) :kind :midi
-                     :arm? true :monitor :auto :input {:port port :channel ch}}))}))
+     :tracks (vec (for [[ch feed] (map vector chs feed-channels)]
+                    (cond-> {:channel ch :name (get names ch (default-name ch)) :kind :midi
+                             :arm? true :monitor :auto :input {:port port :channel feed}
+                             :feed-channel feed :playback-channel ch}
+                      (= ch (:channel layout)) (assoc :host? true))))}))
+
+(defn feed-routing
+  "Rewrite layout-channel feed messages (clip/feed-messages) onto each capture
+  track's feed channel."
+  [desired messages]
+  (let [by-channel (into {} (map (juxt :channel :feed-channel)) (:tracks desired))]
+    (mapv #(update % :channel (fn [ch] (get by-channel ch ch))) messages)))
 
 (defn- track-named [set-snapshot name]
   (let [matches (filter #(and (= name (:name %)) (= :midi (:kind %))) (:tracks set-snapshot))]
     (when (= 1 (count matches)) (first matches))))
 
-(defn- track-state [track] (select-keys track [:arm? :monitor :input]))
+(defn- track-state [track] (select-keys track [:arm? :monitor :input :playback-channel]))
 
-(defn- wanted-state [spec] (select-keys spec [:arm? :monitor :input]))
+(defn- wanted-state [spec] (select-keys spec [:arm? :monitor :input :playback-channel]))
 
 (defn verify-setup
   "Compare an inspected Set with the desired setup. Returns
@@ -131,7 +188,7 @@
                        track (track-named set-snapshot (:name spec))]
                    (cond
                      (> (count named) 1) []
-                     (nil? track) [[:ensure-track {:name (:name spec) :kind :midi}]
+                     (nil? track) [[:ensure-track (cond-> {:name (:name spec) :kind :midi} (:host? spec) (assoc :host? true))]
                                    [:configure-track (assoc (wanted-state spec) :expected-name (:name spec))]]
                      (not= (wanted-state spec) (track-state track))
                      [[:configure-track (assoc (wanted-state spec) :track-id (:track-id track) :expected-name (:name spec))]]
