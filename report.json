@@ -1,0 +1,96 @@
+{
+  "origin": "http://127.0.0.1:4670",
+  "startedAt": "2026-11-26T09:24:11.513Z",
+  "checks": {
+    "the paced recording produces onsets on all four stems": {
+      "kick": {
+        "onsets": 4,
+        "bleed": 0,
+        "channel": 1
+      },
+      "snare": {
+        "onsets": 2,
+        "bleed": 1,
+        "channel": 2
+      },
+      "bass": {
+        "onsets": 3,
+        "bleed": 1,
+        "channel": 3
+      },
+      "guitar": {
+        "onsets": 4,
+        "bleed": 0,
+        "channel": 4
+      }
+    },
+    "cards show stems, gates and routes from the capture status and show data": [
+      {
+        "stem": "kick",
+        "meta": "Ch 1 · Kick",
+        "level": 0.49624523546419513,
+        "metrics": {
+          "Onsets": "5",
+          "Bleed rejected": "0",
+          "Gate": "83 ms @ 120 BPM",
+          "Last onset": "beat 5.25"
+        },
+        "routes": [
+          "Onset → launch Flash"
+        ],
+        "overflow": 0
+      },
+      {
+        "stem": "snare",
+        "meta": "Ch 2 · Snare",
+        "level": 0.02810324317248682,
+        "metrics": {
+          "Onsets": "2",
+          "Bleed rejected": "1",
+          "Gate": "83 ms @ 120 BPM",
+          "Last onset": "beat 4.25"
+        },
+        "routes": [],
+        "overflow": 0
+      },
+      {
+        "stem": "bass",
+        "meta": "Ch 3 · Bass",
+        "level": 0.7217413924539685,
+        "metrics": {
+          "Onsets": "5",
+          "Bleed rejected": "1",
+          "Gate": "125 ms @ 120 BPM",
+          "Last onset": "beat 5.75"
+        },
+        "routes": [],
+        "overflow": 0
+      },
+      {
+        "stem": "guitar",
+        "meta": "Ch 4 · Guitar",
+        "level": 0.16411754538657958,
+        "metrics": {
+          "Onsets": "4",
+          "Bleed rejected": "0",
+          "Gate": "125 ms @ 120 BPM",
+          "Last onset": "beat 4.25"
+        },
+        "routes": [
+          "Level → Breathe · level"
+        ],
+        "overflow": 0
+      }
+    ],
+    "onset counts advance live and match the server": {
+      "studio": 6,
+      "server": 6
+    },
+    "a card routes snare onsets to a cue and lists the new subscriber": true,
+    "phone width fits without horizontal scroll": {
+      "overflow": 0
+    }
+  },
+  "result": "pass",
+  "finishedAt": "2026-11-26T09:24:16.669Z"
+}
