@@ -1,0 +1,67 @@
+{
+  "browser": "155.0.8059.40",
+  "renderer": "Three.js r187",
+  "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Pro, Unspecified Version)",
+  "software": false,
+  "film": {
+    "bloom": 0.28,
+    "exposure": 0.85,
+    "grain": 0.0015
+  },
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36",
+  "size": [
+    1600,
+    900
+  ],
+  "fps": 40,
+  "frames": 40,
+  "drift": 0,
+  "workLight": 0.25,
+  "bundleSha256": "eb7b577742be1fc8cf1a56d8820edfd4de2fde2bc5a077553aa8a10e152210d2",
+  "imagesSha256": "f40da3de6d0a3fc4c4e0ec1f83ebe2be4ea75dd948e681875bb3fe2182d9cf9e",
+  "video": null,
+  "stills": [
+    {
+      "still": "still-bar-1_3.png",
+      "bar": 1.3124999999999973,
+      "beat": 5.249999999999989,
+      "running": [
+        "gig-preview"
+      ],
+      "lights": 16,
+      "scene": [
+        1600,
+        900
+      ],
+      "display": [
+        1600,
+        900
+      ],
+      "tier": "high",
+      "frameNumber": 106
+    }
+  ],
+  "capture": {
+    "meter": {
+      "beats-per-bar": 4,
+      "bars-per-phrase": 4
+    },
+    "frame-ms": 25,
+    "frames": 40,
+    "output": "capture sink only"
+  },
+  "last": {
+    "bar": 1.5124999999999966,
+    "lights": 16,
+    "scene": [
+      1600,
+      900
+    ],
+    "display": [
+      1600,
+      900
+    ],
+    "tier": "high",
+    "frameNumber": 122
+  }
+}
