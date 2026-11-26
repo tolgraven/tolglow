@@ -219,8 +219,9 @@
     (mapv + position (mat* r (mapv #(* s %) (local-point resolved uv))))))
 
 (def ^:private max-wave-samples
-  "Coarse samples across the search window before refinement."
-  256)
+  "Coarse samples across the search window before refinement; the half-
+  wavelength window needs at most 33."
+  64)
 
 (defn wave-distance
   "Distance in local metres from the point (t, z) to the curve
@@ -230,10 +231,9 @@
 
   The sheet stays within |z| ≤ |amplitude|, so |z| − |amplitude| is a lower
   bound that rejects far heads without searching. The foot point lies
-  within the vertical gap |z − d(t)| of t, and within
-  √((wavelength / 2)² + lower²), since every level the curve takes occurs
-  within half a wavelength of t. That window is sampled at most every
-  wavelength / 32 (up to 256 samples). Newton steps with backtracking on
+  within the vertical gap |z − d(t)| of t, and within half a wavelength of
+  it (by periodicity). That window is sampled every wavelength / 32, at
+  most 33 samples. Newton steps with backtracking on
   (s − t)² + (d(s) − z)² then refine the best sample and every crest,
   trough and crossing of the head's level in the window, where a steep
   wave's nearest point hides between samples."
@@ -247,13 +247,14 @@
             p0 (* 2.0 math/PI (double phase))
             d (fn [s] (* amp (math/sin (+ (* k s) p0))))
             f (fn [s] (let [ds (- s t) dz (- (d s) z)] (+ (* ds ds) (* dz dz))))
-            ;; Upper bounds on the distance, so on the foot point's offset
-            ;; from t: the vertical gap, and reaching the level clamp(z) that
-            ;; the curve passes within half a wavelength either side of t.
-            v (min (abs (- z (d t))) (math/hypot (* 0.5 lam) lower))
+            ;; The foot point's offset from t is at most the vertical gap,
+            ;; and at most half a wavelength: a curve point farther out has a
+            ;; copy one wavelength nearer at the same height. This caps the
+            ;; search at 33 samples and a few seeds whatever the wavelength.
+            v (min (abs (- z (d t))) (* 0.5 lam))
             n (long (max 1 (min max-wave-samples (math/ceil (/ (* 2.0 v) (/ lam 32.0))))))
             step (/ (* 2.0 v) n)
-            [best fbest] (loop [i 0 best t fbest (* v v)]
+            [best fbest] (loop [i 0 best t fbest (f t)]
                            (if (> i n)
                              [best fbest]
                              (let [s (+ (- t v) (* i step)) fs (f s)]
@@ -282,8 +283,10 @@
             ;; head's level or by a crest or trough, narrower than any
             ;; sampling step: seed Newton at each of those in the window too.
             crossings (let [base (when (<= (abs z) a) (math/asin (max -1.0 (min 1.0 (/ z amp)))))
-                            m0 (math/floor (/ (- (* k (- t v)) p0) (* 2.0 math/PI)))
-                            m1 (math/ceil (/ (- (* k (+ t v)) p0) (* 2.0 math/PI)))]
+                            ;; Every theta + 2πm whose s = (theta + 2πm − p0) / k
+                            ;; falls in the window; one spare period each side.
+                            m0 (dec (math/floor (/ (+ (* k (- t v)) p0) (* 2.0 math/PI))))
+                            m1 (inc (math/ceil (/ (+ (* k (+ t v)) p0) (* 2.0 math/PI))))]
                         (for [m (range (long m0) (inc (long m1)))
                               theta (cond-> [(* 0.5 math/PI) (* 1.5 math/PI)] base (conj base (- math/PI base)))
                               :let [cs (/ (- (+ theta (* 2.0 math/PI m)) p0) k)]

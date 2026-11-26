@@ -2,7 +2,8 @@
   "Per-frame cost of a surface video output on the lighting thread (#674):
   2,000 strip pixels in contact with an 8 × 4 m wave plus 2,000 heads far
   from it, a 1024 × 576 frame, box filtered. Scenarios: still (cached),
-  wave phase moving, crop sliding, and the whole surface moving.
+  wave phase moving, crop sliding, and the whole surface moving. Then the
+  wave search's worst case: 2,000 heads just above a steep wave's crests.
 
     lein run -m tolglow.bench-video-surfaces"
   (:require [tolglow.compiler :as compiler]
@@ -40,6 +41,17 @@
                                ["wave phase moving" (fn [i] {:phase (- (mod (* i 0.01) 2.0) 1.0)})]
                                ["crop sliding" (fn [i] {:crop-x (* i 0.0005)})]
                                ["surface moving" (fn [i] {:x (* i 0.0005)})]]]
-      (println (format "%-20s %.2f ms median" label (time-it params-fn))))))
+      (println (format "%-20s %.2f ms median" label (time-it params-fn))))
+    ;; Worst case for the wave search: 2,000 heads just above the crests of a
+    ;; steep wave (amplitude 0.3 m, contact 0.25 m), contacts only.
+    (doseq [lam [0.1 0.02 0.001]]
+      (let [resolved (surface/resolve-surface {:id :w :source :g :shape :wave :position [0 0 0] :size-m [8 4]
+                                               :wave {:amplitude-m 0.3 :wavelength-m lam} :contact {:distance-m 0.25}}
+                                              nil 0)
+            heads (mapv (fn [i] {:id i :position [(- (* 0.0039 i) 3.9) 0.0 (+ 0.31 (* 0.0001 (mod i 100)))]}) (range 2000))]
+        (dotimes [_ 5] (surface/contacts resolved heads))
+        (println (format "steep wave contacts, wavelength %.3f m: %.2f ms median" lam
+                         (median (for [_ (range 40)]
+                                   (let [t0 (System/nanoTime)] (surface/contacts resolved heads) (/ (- (System/nanoTime) t0) 1e6))))))))))
 
 (defn -main [& _] (run))

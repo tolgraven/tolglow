@@ -112,8 +112,8 @@
             {:values (if (= :luma channel) (update-vals colors sampler/luma) colors)}))))))
 
 (defn- surface-sampler
-  "Two caches: contacts by `contact-key`, plans by `layout-key`, contact ids
-  and frame size. A sliding crop reuses the contacts; a travelling wave
+  "Two caches: contacts by `contact-key` and the rig, plans by `layout-key`,
+  contact ids, the rig and frame size. A sliding crop reuses the contacts; a travelling wave
   whose contact set holds reuses the plan."
   [surface-id channel placement-fns]
   (let [contact-cache (sampler/plan-cache) plans (sampler/plan-cache) rigs (sampler/plan-cache 2)]
@@ -133,7 +133,8 @@
                     {:keys [contacts ids opacity]}
                     (contact-cache [(contact-key resolved) fixtures]
                                    #(surface-contacts resolved fixtures (rigs fixtures (fn [] (spatial-rig fixtures)))))
-                    plan (plans [(layout-key resolved) ids (:width f) (:height f)]
+                    ;; The rig is in the key: a moved head keeps its id but not its uv.
+                    plan (plans [(layout-key resolved) ids fixtures (:width f) (:height f)]
                                 #(contact-plan resolved contacts (:width f) (:height f)))
                     colors (sampler/colors plan (sampler/sample plan f))]
                 {:values (if (= :luma channel) (update-vals colors sampler/luma) colors)

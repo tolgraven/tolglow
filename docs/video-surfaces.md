@@ -22,7 +22,7 @@ Place a video source on a plane, a wavy sheet or a sphere in the room. Every hea
 
 **Wrapping and seams.** Sheets do not wrap. A head whose nearest point lies off the sheet's edge is never in contact. A sphere wraps in `u`: a head just either side of the seam reads the first or the last column, and a sampling footprint that straddles the seam continues on the other edge of the crop instead of reading black.
 
-**Contact.** The contact distance is the unsigned distance from a head to the nearest surface point, in venue metres, so both faces count. A negative scale mirrors the surface; distances stay unsigned and a zero scale touches nothing. For a wave, `|z| − |amplitude|` first rejects far heads, then the nearest point is searched: the window around the head that can hold it is sampled every wavelength / 32, and Newton steps refine the best sample and every crest, trough and crossing of the head's height in the window, where a steep wave's nearest point hides between samples. Against a dense brute-force reference the search agrees to within 1e-15 m on gentle and steep waves (amplitude 0.3 m, wavelength down to 0.1 m), and contact classification near the threshold matches it. A head within `:distance-m` takes full weight. Over `:feather-m` the weight falls to zero with the spatial volumes' `:linear` or `:smoothstep` curve ([spatial cues](spatial-show.md)). The weight is the head's write opacity, so the look below shows through the feather. Candidate heads come from the spatial rig index used by volumes, inside a box of `|scale| · (half diagonal + |amplitude|) + contact + feather`; each candidate is then measured exactly.
+**Contact.** The contact distance is the unsigned distance from a head to the nearest surface point, in venue metres, so both faces count. A negative scale mirrors the surface; distances stay unsigned and a zero scale touches nothing. For a wave, `|z| − |amplitude|` first rejects far heads, then the nearest point is searched. It lies within half a wavelength of the head along the wave (a farther curve point has a copy one wavelength nearer at the same height), so the search samples that window every wavelength / 32 — at most 33 samples — and Newton steps refine the best sample and every crest, trough and crossing of the head's height in it, where a steep wave's nearest point hides between samples. The work per head does not grow with contact distance over wavelength. Against a dense brute-force reference the search agrees to within 1e-6 m on gentle and steep waves (amplitude 0.05–0.6 m, wavelength down to 0.02 m), and contact classification near the threshold matches it. A head within `:distance-m` takes full weight. Over `:feather-m` the weight falls to zero with the spatial volumes' `:linear` or `:smoothstep` curve ([spatial cues](spatial-show.md)). The weight is the head's write opacity, so the look below shows through the feather. Candidate heads come from the spatial rig index used by volumes, inside a box of `|scale| · (half diagonal + |amplitude|) + contact + feather`; each candidate is then measured exactly.
 
 **Sampling footprint.** Each head averages a small box of the source in linear light, with the 2D sampler's filters. A pixel of a strip averages its share along the strip: the spacing to its neighbouring pixels in contact, measured on the source and the short way across a seam. Across the strip it averages the strip's `:strips` height, or else the surface `:footprint :height`. Choose how much source height feeds a strip there: 0 reads a single line, 0.25 averages a quarter of the surface height. A head outside a pixel layout averages `:footprint :width` × `:height`. Sizes are fractions of the surface, so zooming the crop zooms what each head averages.
 
@@ -82,11 +82,13 @@ The Room draws every running surface from its recorded pose, textured with the l
 
 **Cost.** `lein run -m tolglow.bench-video-surfaces` times one compiled surface output step: 2,000 strip pixels in contact with an 8 × 4 m wave plus 2,000 heads far from it, 1024 × 576, box filtered, medians on the M4 Pro with other agents loading the machine. Before the split caches (43399af4) and after:
 
-| Frame | Before | After |
+| Frame | Before (43399af4) | After |
 | --- | --- | --- |
-| Surface still | 1.26 ms | 1.17 ms |
-| Wave phase moving | 5.30 ms | 2.93 ms |
-| Crop sliding | 5.42 ms | 2.23 ms |
-| Whole surface moving | 4.89 ms | 4.15 ms |
+| Surface still | 1.26 ms | 1.37 ms |
+| Wave phase moving | 5.30 ms | 3.63 ms |
+| Crop sliding | 5.42 ms | 2.46 ms |
+| Whole surface moving | 4.89 ms | 5.11 ms |
 
-The still frame is the ordinary per-target assignment path every effect pays; sampling a cached plan takes about 0.06 ms of it. A moving surface rebuilds contacts (about 1 ms) and its plan (about 1.2 ms). Steep waves search more per head near the sheet; heads beyond `|amplitude|` plus the contact distance cost one comparison.
+The after column was measured at load average 5.5, which also moved the unchanged still frame by 0.1–0.2 ms between runs. The same harness times the wave search's worst case: 2,000 heads just above the crests of a 0.3 m wave with 0.25 m contact take 3.5 ms at wavelength 0.1 m, 3.5 ms at 0.02 m and 3.3 ms at 0.001 m.
+
+The still frame is the ordinary per-target assignment path every effect pays; sampling a cached plan takes about 0.06 ms of it. A moving surface rebuilds contacts (1–2 ms, the exact wave search included) and its plan (about 1.2 ms). A whole surface moving every frame costs about what it did before the fixes, because the exact wave distance replaced a cheaper but wrong estimate. Heads beyond `|amplitude|` plus the contact distance cost one comparison.
