@@ -4,7 +4,14 @@
 #   push3-display.sh status          IORegistry read only: location, interface-0 owner, libusb
 #   push3-display.sh list            Afterglow list (reads cached descriptors, claims nothing)
 #   push3-display.sh inspect         Afterglow inspect (opens the device, claims nothing)
-#   push3-display.sh show-chart [S]  Afterglow show-chart: claims interface 0 for S seconds (default 12)
+#   push3-display.sh show-chart [S]  Claims interface 0 and shows Afterglow's chart for S seconds (default 12)
+#                                    through tolglow.qa.naut-hardware/display-chart!, which prints and writes
+#                                    a receipt (frames, transfer times, libusb errors). Afterglow's own
+#                                    show-chart prints nothing on success.
+#
+# libusb_init on this Mac stalls 5 s for each of five unrelated USB devices
+# (hubs and a drive), so claiming the display takes about 25 s before the
+# first frame. That is libusb's macOS enumeration, not the Push 3.
 #
 # inspect and show-chart refuse while another process (Live's Push3 helper) holds
 # a user client on the display interface. libusb's macOS open asks other device
@@ -64,5 +71,5 @@ export JVM_OPTS="${JVM_OPTS:--Xmx3g}"
 case "$command" in
   list) exec lein run -m afterglow.control.devices.push-3.qualification list ;;
   inspect) exec lein run -m afterglow.control.devices.push-3.qualification inspect "$bus" "$address" ;;
-  show-chart) exec lein run -m afterglow.control.devices.push-3.qualification show-chart "$bus" "$address" "$seconds" ;;
+  show-chart) exec lein run -m tolglow.qa.naut-hardware display-chart "$bus" "$address" "$seconds" ;;
 esac

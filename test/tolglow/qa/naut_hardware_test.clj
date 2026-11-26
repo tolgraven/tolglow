@@ -26,22 +26,53 @@
                                (when (= 0x90 (first bytes)) (emit! [0x80 (second bytes) 0]))))}]
     (kit/capture-layout! {:transport transport :plan plan :operator operator :timeout-ms 2000 :settle-ms 30})))
 
+(def push-3-identity-reply
+  "Push 3 (firmware 1.0 build 91) reply captured on 2026-11-26 from both the
+  User and Live ports with Live quit. The four serial bytes are zeroed here."
+  [0xf0 0x7e 0x01 0x06 0x02 0x00 0x21 0x1d 0x69 0x32 0x03 0x00 0x01 0x00 0x5b 0x00
+   0x00 0x00 0x00 0x00 0x00 0x03 0x01 0x14 0x04 0xf7])
+
+(def device-answers
+  "Replies in the shape the hardware gave on 2026-11-26 (X-Touch/XT firmware
+  V1.22 verbatim; MCU serial and challenge replaced with ASCII zeros)."
+  {kit/identity-request [push-3-identity-reply]
+   (kit/mcu-version-request 0x14) [[0xf0 0 0 0x66 0x14 0x14 0x56 0x31 0x2e 0x32 0x32 0xf7]]
+   (kit/mcu-version-request 0x15) [[0xf0 0 0 0x66 0x15 0x14 0x56 0x31 0x2e 0x32 0x32 0xf7]]
+   (kit/mcu-device-query 0x14) [(into [0xf0 0 0 0x66 0x14 0x01] (conj (vec (repeat 11 0x30)) 0xf7))]
+   (kit/mcu-device-query 0x15) [(into [0xf0 0 0 0x66 0x15 0x01] (conj (vec (repeat 11 0x30)) 0xf7))]})
+
 (deftest probes-record-device-replies-and-silence
-  (let [answers {kit/identity-request [[0xf0 0x7e 0x00 0x06 0x02 0x00 0x21 0x1d 0x01 0x01 0x02 0x00 0x01 0x05 0x04 0x00 0xf7]]
-                 (kit/mcu-version-request 0x14) [[0xf0 0 0 0x66 0x14 0x14 0x31 0x2e 0x32 0x32 0x00 0xf7]]
-                 (kit/mcu-version-request 0x15) [[0xf0 0 0 0x66 0x15 0x14 0x31 0x2e 0x30 0x30 0x00 0xf7]]}]
-    (doseq [check (keys kit/probes)]
-      (testing check
-        (let [{:keys [transport]} (kit/virtual-peer (fn [m] (cons [0x90 104 127] (get answers m))))
-              receipt (kit/probe! check {:transport transport :timeout-ms 1000})]
-          (is (= :answered (:verdict receipt)) (pr-str receipt))
-          (is (pos? (:ignored receipt)) "unrelated input arriving first is skipped"))))
-    (is (= {:device-id 0 :manufacturer "00 21 1D" :family "01 01" :model "02 00" :version "01 05 04 00"}
-           (:decoded (kit/probe! :push-3/identity {:transport (:transport (kit/virtual-peer answers))}))))
-    (is (= "1.22?" (get-in (kit/probe! :x-touch/firmware {:transport (:transport (kit/virtual-peer answers))})
-                           [:decoded :ascii])))
-    (is (= :no-reply (:verdict (kit/probe! :x-touch-ext/firmware {:transport (:transport (kit/virtual-peer))
-                                                                   :timeout-ms 100}))))))
+  (doseq [check (keys kit/probes)]
+    (testing check
+      (let [{:keys [transport]} (kit/virtual-peer (fn [m] (concat [[0xfe] [0x90 104 127]] (get device-answers m))))
+            receipt (kit/probe! check {:transport transport :timeout-ms 1000})]
+        (is (= :answered (:verdict receipt)) (pr-str receipt))
+        (is (= 2 (:ignored receipt)) "unrelated input arriving first is skipped")
+        (is (= {"90" 1 "FE" 1} (get-in receipt [:other-input :by-status])))
+        (is (= ["90 68 7F"] (mapv :hex (get-in receipt [:other-input :sample]))) "Active Sensing is counted, not sampled"))))
+  (is (= {:device-id 1 :manufacturer "00 21 1D" :family "69 32" :model "03 00"
+          :version "01 00 5B 00 00 00 00 00 00 03 01 14 04"
+          :ableton {:software "1.0" :build 91 :serial-bytes 4 :trailing "00 03 01 14 04"}}
+         (:decoded (kit/probe! :push-3/identity {:transport (:transport (kit/virtual-peer device-answers))}))))
+  (is (= "V1.22" (get-in (kit/probe! :x-touch/firmware {:transport (:transport (kit/virtual-peer device-answers))})
+                         [:decoded :ascii])))
+  (is (= {:payload-bytes 11 :payload-ascii "00000000000" :serial-ascii "0000000" :challenge "30 30 30 30"}
+         (:decoded (kit/probe! :x-touch-ext/device-query {:transport (:transport (kit/virtual-peer device-answers))}))))
+  (is (= :no-reply (:verdict (kit/probe! :x-touch-ext/firmware {:transport (:transport (kit/virtual-peer))
+                                                                 :timeout-ms 100})))))
+
+(deftest probes-report-transport-failures-instead-of-throwing
+  (let [failing {:open! (fn [_] (throw (ex-info "MIDI device discovery is still running." {:reason :midi/discovery-pending})))
+                 :send! (fn [& _]) :close! (fn [_])}
+        receipt (kit/probe! :x-touch/firmware {:transport failing})]
+    (is (= :error (:verdict receipt)))
+    (is (re-find #"discovery" (get-in receipt [:error :message]))))
+  (let [closed (atom false)
+        receipt (kit/probe! :x-touch/firmware {:transport {:open! (fn [_] :h)
+                                                           :send! (fn [& _] (throw (java.io.IOException. "gone")))
+                                                           :close! (fn [_] (reset! closed true))}})]
+    (is (= :error (:verdict receipt)))
+    (is @closed "the transport is closed after a failed send")))
 
 (deftest layout-capture-learns-each-control-once
   (let [{:keys [layout skipped samples]} (capture-with-replay (kit/push-3-capture-plan))]
@@ -86,6 +117,64 @@
         (is (every? #(= (if (= id :x-touch-ext/strips) 0x15 0x14) (nth % 4))
                     (filter #(= 0xf0 (first %)) @sent))
             "each unit's SysEx carries its own device ID")))))
+
+(deftest motor-check-sweeps-and-records-silence-as-no-readback
+  (let [{:keys [transport sent]} (kit/virtual-peer device-answers)
+        receipt (kit/motor-check! {:transport transport :positions [0.75 0.0] :settle-ms 20})]
+    (is (= :no-position-readback (:verdict receipt)))
+    (is (= [0.75 0.0] (mapv :position (:steps receipt))))
+    (is (= 12287 (:raw-target (first (:steps receipt)))) "check 4's 75% target")
+    (is (= [0xe0 0 0] (last (filter #(= 0xe0 (first %)) @sent))) "strip 1 ends at zero")
+    (is (= (kit/rest-state false) (vec (take-last (count (kit/rest-state false)) (butlast @sent))))
+        "the unit is left at rest (every fader, master included, at zero) before the closing firmware probe")
+    (is (= 9 (count (filter #(<= 0xe0 (first %) 0xe8) (kit/rest-state false))))))
+  (let [{:keys [transport emit!]} (kit/virtual-peer (fn [m] (when (= 0xe0 (first m)) [[0xe0 (second m) (nth m 2)]])))
+        receipt (kit/motor-check! {:transport transport :positions [0.5] :settle-ms 20})]
+    (is (= :unresponsive (:verdict receipt)) "no firmware answer afterwards")
+    (is (seq (:readback (first (:steps receipt)))) "echoed position messages are decoded")))
+
+(deftest lcd-check-ends-at-rest
+  (let [{:keys [transport sent]} (kit/virtual-peer device-answers)
+        receipt (kit/lcd-check! {:transport transport :extender? true :hold-ms 5})]
+    (is (= :sent (:verdict receipt)))
+    (is (every? #(= 0x15 (nth % 4)) (filter #(= 0xf0 (first %)) @sent)))
+    (is (= (kit/rest-state true) (vec (take-last (count (kit/rest-state true)) (remove #(= 0x13 (nth % 5 nil)) @sent)))))))
+
+(deftest display-chart-receipt-counts-transfers
+  (let [writes (atom [])
+        backend {:open! (fn [_] {:descriptor {:display {:interface 0}}})
+                 :write! (fn [_ ^bytes data] (swap! writes conj (alength data)))
+                 :close! (fn [_])}
+        receipt (kit/display-chart! {:bus 1 :address 12 :seconds 1 :backend backend})]
+    (is (= :presented (:verdict receipt)) (pr-str receipt))
+    (is (pos? (:frames receipt)))
+    (is (= (:frames receipt) (get-in receipt [:transfers :header])))
+    (is (= (* (:frames receipt) (+ 16 327680)) (get-in receipt [:transfers :bytes])))
+    (is (number? (:first-frame-ms receipt)))
+    (is (= 1 (get-in receipt [:transfers :closes]))))
+  (let [receipt (kit/display-chart! {:bus 1 :address 12 :seconds 1
+                                     :backend {:open! (fn [_] {}) :close! (fn [_])
+                                               :write! (fn [& _] (throw (ex-info "Push 3 USB bulk-out failed (-7)"
+                                                                                 {:operation :bulk-out :libusb-code -7})))}})]
+    (is (= :failed (:verdict receipt)))
+    (is (= 1 (count (:errors receipt))))
+    (is (re-find #"-7" (get-in receipt [:failure :message])))))
+
+(deftest push-3-mode-switches-and-reads-aftertouch-back
+  (let [aftertouch (atom 2)
+        {:keys [transport sent]} (kit/virtual-peer
+                                   (fn [[_ _ _ _ _ _ command value]]
+                                     (case command
+                                       0x0a [[0xf0 0 0x21 0x1d 1 1 0x0a value 0xf7]]
+                                       0x1e (do (reset! aftertouch value) nil)
+                                       0x1f [[0xf0 0 0x21 0x1d 1 1 0x1f @aftertouch 0xf7]]
+                                       nil)))]
+    (is (= :passed (:verdict (kit/push-3-mode! :user {:transport transport :settle-ms 30}))))
+    (is (= 1 @aftertouch))
+    (let [receipt (kit/push-3-mode! :live {:transport transport :settle-ms 30})]
+      (is (= :passed (:verdict receipt)))
+      (is (= 2 (:aftertouch-mode receipt))))
+    (is (= "F0 00 21 1D 01 01 0A 00 F7" (kit/hex (last (butlast @sent)))) "Live Mode is restored last, before the query")))
 
 (deftest rate-check-measures-and-reprobes
   (let [{:keys [transport sent]} (kit/virtual-peer {(kit/mcu-version-request 0x14) [[0xf0 0 0 0x66 0x14 0x14 0x31 0xf7]]})

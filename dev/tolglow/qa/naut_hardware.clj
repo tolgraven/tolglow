@@ -5,6 +5,9 @@
   here discovers devices on require, arms lighting output or talks to Live. See
   docs/qualification/naut-hardware.md for the operator procedure."
   (:require [afterglow.control.codecs.x-touch :as xt-codec]
+            [afterglow.control.devices.push-3.display :as push3-display]
+            [afterglow.control.devices.push-3.qualification :as push3-qualification]
+            [afterglow.control.devices.push-3.usb :as push3-usb]
             [afterglow.control.devices.session :as device-session]
             [afterglow.control.devices.transports :as transports]
             [afterglow.control.model :as control]
@@ -25,13 +28,26 @@
 
 (def roles
   {:push-3 {:name "CoreMIDI4J - Ableton Push 3 User Port"}
+   :push-3-live {:name "CoreMIDI4J - Ableton Push 3 Live Port"}
    :x-touch {:name "CoreMIDI4J - X-Touch INT"}
    :x-touch-ext {:name "CoreMIDI4J - X-Touch-Ext"}})
 
 (defn ports
-  "Passive JVM MIDI listing. No device is opened."
-  []
-  (transports/midi-ports))
+  "Passive JVM MIDI listing. No device is opened. Afterglow's shared scan gives
+  up after 1.5 s with a retryable :midi/discovery-pending error; the first
+  CoreMIDI4J scan in a fresh JVM can take longer, so join it for up to
+  wait-ms (default 20 s) instead of failing the check."
+  ([] (ports 20000))
+  ([wait-ms]
+   (let [deadline (+ (System/currentTimeMillis) wait-ms)]
+     (loop []
+       (let [result (try (transports/midi-ports)
+                         (catch clojure.lang.ExceptionInfo error
+                           (if (and (= :midi/discovery-pending (:reason (ex-data error)))
+                                    (< (System/currentTimeMillis) deadline))
+                             ::pending
+                             (throw error))))]
+         (if (= ::pending result) (do (Thread/sleep 250) (recur)) result))))))
 
 (defn port
   "Resolve exactly one input or output port for role from a fresh listing."
@@ -48,10 +64,11 @@
 
 (defn midi-transport
   "Bidirectional Afterglow transport for role. Opening it is an explicit act."
-  [role]
-  (let [in (port role :input) out (port role :output)]
-    (transports/midi-transport {:input-index (:index in) :output-index (:index out)
-                                :expected-input-name (:name in) :expected-output-name (:name out)})))
+  ([role] (midi-transport role (ports)))
+  ([role listing]
+   (let [in (port role :input listing) out (port role :output listing)]
+     (transports/midi-transport {:input-index (:index in) :output-index (:index out)
+                                 :expected-input-name (:name in) :expected-output-name (:name out)}))))
 
 (defn- message-bytes [^MidiMessage message]
   (mapv #(bit-and 0xff %) (take (.getLength message) (.getMessage message))))
@@ -142,14 +159,25 @@
   (and (vector? message) (<= 15 (count message)) (= [0xf0 0x7e] (subvec message 0 2))
        (= [0x06 0x02] (subvec message 3 5)) (= 0xf7 (peek message))))
 
+(defn- ascii [bytes] (apply str (map #(if (<= 32 % 126) (char %) \?) bytes)))
+
 (defn describe-identity
   "Universal Identity Reply fields. A leading zero manufacturer byte means a
-  three-byte manufacturer ID (Ableton is 00 21 1D, Behringer 00 20 32)."
+  three-byte manufacturer ID (Ableton is 00 21 1D, Behringer 00 20 32).
+  Ableton replies follow the Push 2 interface document's layout (family,
+  member, major, minor, 14-bit build, four serial bytes, then board data);
+  Push 3 appends more bytes after the serial than Push 2 does, which are
+  recorded raw as :trailing."
   [message]
   (let [body (subvec message 5 (dec (count message)))
-        [manufacturer more] (if (zero? (first body)) [(subvec body 0 3) (subvec body 3)] [(subvec body 0 1) (subvec body 1)])]
-    {:device-id (nth message 2) :manufacturer (hex manufacturer)
-     :family (hex (take 2 more)) :model (hex (take 2 (drop 2 more))) :version (hex (drop 4 more))}))
+        [manufacturer more] (if (zero? (first body)) [(subvec body 0 3) (subvec body 3)] [(subvec body 0 1) (subvec body 1)])
+        generic {:device-id (nth message 2) :manufacturer (hex manufacturer)
+                 :family (hex (take 2 more)) :model (hex (take 2 (drop 2 more))) :version (hex (drop 4 more))}]
+    (if (and (= [0 0x21 0x1d] manufacturer) (<= 12 (count more)))
+      (let [[major minor build-lsb build-msb] (subvec more 4 8)]
+        (assoc generic :ableton {:software (str major "." minor) :build (+ build-lsb (* 128 build-msb))
+                                 :serial-bytes 4 :trailing (hex (subvec more 12))}))
+      generic)))
 
 (defn mcu-version-request [device] [0xf0 0x00 0x00 0x66 device 0x13 0x00 0xf7])
 
@@ -162,41 +190,152 @@
 
 (defn describe-mcu-version [message]
   (let [payload (subvec message 6 (dec (count message)))]
-    {:bytes (hex payload) :ascii (apply str (map #(if (<= 32 % 126) (char %) \?) payload))}))
+    {:bytes (hex payload) :ascii (ascii payload)}))
+
+(defn mcu-device-query [device] [0xf0 0x00 0x00 0x66 device 0x00 0xf7])
+
+(defn mcu-host-connection-query?
+  "MCU answers a device query with a host connection query: F0 00 00 66 dd 01,
+  seven serial bytes and four challenge bytes. The kit never completes the
+  handshake (no 02 reply); the firmware probe still answers afterwards."
+  [device]
+  (fn [message]
+    (and (vector? message) (<= 8 (count message)) (= [0xf0 0 0 0x66 device 0x01] (subvec message 0 6))
+         (= 0xf7 (peek message)))))
+
+(defn describe-mcu-device [message]
+  (let [payload (subvec message 6 (dec (count message)))]
+    {:payload-bytes (count payload) :payload-ascii (ascii payload) :serial-ascii (ascii (take 7 payload))
+     :challenge (hex (drop 7 payload))}))
 
 (def probes
   {:push-3/identity {:role :push-3 :issues [219] :request identity-request
                      :reply? identity-reply? :describe describe-identity}
+   :push-3/identity-live-port {:role :push-3-live :issues [219] :request identity-request
+                               :reply? identity-reply? :describe describe-identity}
    :x-touch/identity {:role :x-touch :issues [310] :request identity-request
-                      :reply? identity-reply? :describe describe-identity}
+                      :reply? identity-reply? :describe describe-identity
+                      :note "MCU-mode X-Touch firmware 1.22 has not answered Universal Identity on hardware; use x-touch/device-query."}
+   :x-touch-ext/identity {:role :x-touch-ext :issues [310] :request identity-request
+                          :reply? identity-reply? :describe describe-identity
+                          :note "MCU-mode XT firmware 1.22 has not answered Universal Identity on hardware; use x-touch-ext/device-query."}
    :x-touch/firmware {:role :x-touch :issues [310 553] :request (mcu-version-request 0x14)
                       :reply? (mcu-version-reply? 0x14) :describe describe-mcu-version}
    :x-touch-ext/firmware {:role :x-touch-ext :issues [310 553] :request (mcu-version-request 0x15)
-                          :reply? (mcu-version-reply? 0x15) :describe describe-mcu-version}})
+                          :reply? (mcu-version-reply? 0x15) :describe describe-mcu-version}
+   :x-touch/device-query {:role :x-touch :issues [310 553] :request (mcu-device-query 0x14)
+                          :reply? (mcu-host-connection-query? 0x14) :describe describe-mcu-device}
+   :x-touch-ext/device-query {:role :x-touch-ext :issues [310 553] :request (mcu-device-query 0x15)
+                              :reply? (mcu-host-connection-query? 0x15) :describe describe-mcu-device}})
+
+(defn- status-name [bytes]
+  (let [status (first bytes)]
+    (cond (nil? status) "empty"
+          (< status 0xf0) (format "%02X" (bit-and status 0xf0))
+          :else (format "%02X" status))))
+
+(defn input-summary
+  "Counts by status byte (channel stripped) and up to sample distinct messages,
+  each with its first arrival time. Active Sensing (FE) is counted, not sampled."
+  ([entries] (input-summary entries 8))
+  ([entries sample]
+   {:count (count entries)
+    :by-status (into (sorted-map) (frequencies (map (comp status-name :bytes) entries)))
+    :sample (->> entries
+                 (remove #(= [0xfe] (:bytes %)))
+                 (reduce (fn [seen {:keys [bytes ms]}] (if (some #(= bytes (:bytes %)) seen) seen (conj seen {:bytes bytes :ms ms}))) [])
+                 (take sample)
+                 (mapv (fn [{:keys [bytes ms]}] {:ms (Math/round (double ms)) :hex (hex (take 48 bytes))
+                                                 :length (count bytes)})))}))
+
+(defn- error-data [^Throwable error]
+  (cond-> {:class (.getName (class error)) :message (.getMessage error)}
+    (ex-data error) (assoc :data (pr-str (ex-data error)))
+    (.getCause error) (assoc :cause (str (.getCause error)))))
 
 (defn probe!
-  "Send one query and wait for the device's reply. Other input is counted but
-  not interpreted. Returns a receipt; never throws for a silent device."
+  "Send one query and wait for the device's reply. Other input is summarised
+  (counts and a sample) but not interpreted. Returns a receipt and never
+  throws: a silent device is :no-reply, a transport failure is :error."
   [check {:keys [transport timeout-ms port] :or {timeout-ms 1500}}]
-  (let [{:keys [request reply? describe issues role]} (or (get probes check)
-                                                           (throw (ex-info "Unknown probe" {:check check})))
+  (let [{:keys [request reply? describe issues role note]} (or (get probes check)
+                                                                (throw (ex-info "Unknown probe" {:check check})))
         queue (LinkedBlockingQueue.)
-        handle ((:open! transport) #(.put queue (vec %)))
         start (System/nanoTime)
         elapsed #(/ (- (System/nanoTime) start) 1e6)
-        base {:check check :issues issues :role role :port port :request (hex request)
-              :at (str (Instant/now))}]
+        base (cond-> {:check check :issues issues :role role :port port :request (hex request)
+                      :at (str (Instant/now))}
+               note (assoc :note note))
+        other (fn [entries] (assoc (input-summary entries) :note "input other than the reply, in arrival order"))]
     (try
-      ((:send! transport) handle [request])
-      (loop [ignored 0]
-        (let [remaining (long (- timeout-ms (elapsed)))
-              message (when (pos? remaining) (.poll queue remaining TimeUnit/MILLISECONDS))]
-          (cond
-            (nil? message) (assoc base :verdict :no-reply :ignored ignored :timeout-ms timeout-ms)
-            (reply? message) (assoc base :verdict :answered :reply (hex message) :decoded (describe message)
-                                    :elapsed-ms (elapsed) :ignored ignored)
-            :else (recur (inc ignored)))))
-      (finally ((:close! transport) handle)))))
+      (let [handle ((:open! transport) #(.put queue {:ms (elapsed) :bytes (vec %)}))]
+        (try
+          (let [sent-ms (elapsed)]
+            ((:send! transport) handle [request])
+            (loop [ignored []]
+              (let [remaining (long (- timeout-ms (- (elapsed) sent-ms)))
+                    {message :bytes ms :ms :as entry} (when (pos? remaining) (.poll queue remaining TimeUnit/MILLISECONDS))]
+                (cond
+                  (nil? entry) (assoc base :verdict :no-reply :ignored (count ignored) :other-input (other ignored)
+                                      :timeout-ms timeout-ms)
+                  (reply? message) (assoc base :verdict :answered :reply (hex message) :decoded (describe message)
+                                          :elapsed-ms (- ms sent-ms) :ignored (count ignored)
+                                          :other-input (other ignored))
+                  :else (recur (conj ignored entry))))))
+          (finally ((:close! transport) handle))))
+      (catch Throwable error
+        (assoc base :verdict :error :error (error-data error))))))
+
+;; ---------------------------------------------------------------------------
+;; Push 3 MIDI mode and aftertouch mode. With Live quit, Push's own Setup page
+;; is unavailable, so the kit sets both by SysEx and reads the aftertouch mode
+;; back. Command 0A (MIDI mode: 0 Live, 1 User) and 1E/1F (set/get aftertouch
+;; mode) follow Ableton's Push 2 interface document; on this Push 3 (firmware
+;; 1.0 build 91) 1F answered 02 while Live's preference was MPE, 1E 01 then
+;; read back 01 (Poly), and 0A was echoed on both the Live and User ports.
+
+(defn- with-session
+  "Open transport, record every input message with its time, run f with a
+  send! function and an elapsed-ms clock, and always close."
+  [transport f]
+  (let [received (atom []) start (System/nanoTime)
+        elapsed #(/ (- (System/nanoTime) start) 1e6)
+        handle ((:open! transport) #(swap! received conj {:ms (elapsed) :bytes (vec %)}))]
+    (try (f #((:send! transport) handle %) elapsed received)
+         (finally ((:close! transport) handle)))))
+
+(defn- ableton-sysex [& payload] (vec (concat [0xf0 0x00 0x21 0x1d 0x01 0x01] payload [0xf7])))
+
+(def push-3-modes
+  {:user {:send [(ableton-sysex 0x0a 0x01) (ableton-sysex 0x1e 0x01)] :aftertouch 1
+          :about "User Mode with Poly Aftertouch, as the kit's layout capture and pad scenario need"}
+   :live {:send [(ableton-sysex 0x1e 0x02) (ableton-sysex 0x0a 0x00)] :aftertouch 2
+          :about "Live Mode with MPE aftertouch (the operator's Live preference), restored after the session"}})
+
+(defn push-3-mode!
+  "Switch the Push 3 to mode (:user or :live), then query the aftertouch
+  mode. Every message received within settle-ms of each send is recorded."
+  [mode {:keys [transport settle-ms port] :or {settle-ms 500}}]
+  (let [{:keys [send aftertouch about]} (or (get push-3-modes mode) (throw (ex-info "Use :user or :live" {:mode mode})))
+        query (ableton-sysex 0x1f)]
+    (try
+      (with-session transport
+        (fn [send! elapsed received]
+          (let [exchange (fn [message]
+                           (reset! received [])
+                           (send! [message])
+                           (Thread/sleep (long settle-ms))
+                           {:sent (hex message)
+                            :received (mapv #(hex (:bytes %)) (remove #(= [0xfe] (:bytes %)) @received))})
+                steps (mapv exchange send)
+                readback (exchange query)
+                reported (some #(let [b (:bytes %)] (when (= (subvec (ableton-sysex 0x1f 0) 0 7) (vec (take 7 b))) (nth b 7)))
+                               @received)]
+            {:check :push-3/mode :issues [219] :mode mode :about about :port port :at (str (Instant/now))
+             :steps steps :aftertouch-query readback :aftertouch-mode reported
+             :verdict (if (= aftertouch reported) :passed :failed)})))
+      (catch Throwable error
+        {:check :push-3/mode :mode mode :port port :at (str (Instant/now)) :verdict :error :error (error-data error)}))))
 
 ;; ---------------------------------------------------------------------------
 ;; Push 3 User Mode layout capture (operator presses each control once).
@@ -561,86 +700,354 @@
 ;; X-Touch LCD/color rate and flicker (#310). Bounded and explicitly started;
 ;; the device must still answer its firmware query afterwards.
 
+(defn- distribution [values]
+  (when (seq values)
+    (let [sorted (vec (sort values)) n (count sorted)
+          at #(nth sorted (min (dec n) (int (Math/floor (* % n)))))]
+      {:n n :min (first sorted) :median (at 0.5) :p95 (at 0.95) :max (peek sorted)
+       :mean (/ (reduce + sorted) n)})))
+
+(defn- strip-count [extender?] (if extender? 8 9))
+
+(defn rest-state
+  "Messages that leave a unit at rest: every fader (main unit includes the
+  master, strip 8) at zero, both LCD rows blank, white backlights, rings off
+  and the per-strip REC/SOLO/MUTE/SELECT LEDs off."
+  [extender?]
+  (vec (concat (for [strip (range (strip-count extender?))] (xt-codec/fader strip 0))
+               [(xt-codec/text extender? 0 0 (apply str (repeat 56 \space)))
+                (xt-codec/text extender? 1 0 (apply str (repeat 56 \space)))
+                (xt-codec/colors extender? (vec (repeat 8 7)))]
+               (for [strip (range 8)] (xt-codec/encoder-ring strip 0))
+               (for [base [0 8 16 24] strip (range 8)] (xt-codec/button-led (+ base strip) :off)))))
+
+(defn- fader-input [entries]
+  (vec (keep #(let [decoded (try (xt-codec/decode (:bytes %)) (catch Exception _ nil))]
+                (when (= :fader (:type decoded))
+                  {:ms (Math/round (double (:ms %))) :strip (:strip decoded) :raw (:raw-value decoded)}))
+             entries)))
+
+(defn motor-check!
+  "Drive every motor fader through positions (check 4's 75% first), settling
+  settle-ms after each, then return to zero. Any position messages the unit
+  sends back are recorded and decoded. MCU-mode units report fader position
+  only while a fader is touched, so silence here is :no-position-readback and
+  the travel itself needs the operator's eyes (:confirm!). Probes firmware
+  afterwards to show the unit still answers."
+  [{:keys [transport extender? positions settle-ms operator port]
+    :or {positions [0.75 0.25 0.5 1.0 0.0] settle-ms 1500}}]
+  (let [extender? (boolean extender?)
+        strips (range (strip-count extender?))
+        steps (with-session transport
+                (fn [send! elapsed received]
+                  (send! (rest-state extender?))
+                  (Thread/sleep (long settle-ms))
+                  (reset! received [])
+                  (let [steps (vec (for [position (concat positions (when-not (= 0.0 (double (last positions))) [0.0]))]
+                                     (let [messages (mapv #(xt-codec/fader % position) strips)
+                                           sent-ms (elapsed)]
+                                       (send! messages)
+                                       (Thread/sleep (long settle-ms))
+                                       (let [input @received]
+                                         (reset! received [])
+                                         {:position position :sent-ms (Math/round (double sent-ms))
+                                          :sent (hex (first messages)) :strips (count messages)
+                                          :raw-target (let [[_ lsb msb] (first messages)] (+ lsb (* 128 msb)))
+                                          :readback (fader-input input)
+                                          :other-input (input-summary input)}))))]
+                    (send! (rest-state extender?))
+                    steps)))
+        after (probe! (if extender? :x-touch-ext/firmware :x-touch/firmware) {:transport transport})
+        readback? (some (comp seq :readback) steps)
+        answer (when operator
+                 ((:confirm! operator) (str "Did every fader travel to 3/4, 1/4, 1/2, the top and back to the bottom, "
+                                            "stopping at each position (the main unit includes the master fader)?")))]
+    {:check (if extender? :x-touch-ext/motor :x-touch/motor) :issues [553 310] :port port :at (str (Instant/now))
+     :settle-ms settle-ms :steps steps :after after :answer answer
+     :verdict (cond (not= :answered (:verdict after)) :unresponsive
+                    readback? :readback
+                    :else :no-position-readback)}))
+
+(def ^:private palette-labels ["off" "red" "green" "yellow" "blue" "magenta" "cyan" "white"])
+
+(defn lcd-check!
+  "Write a known pattern to both LCD rows, step all strips through each native
+  backlight colour, then set one colour per strip, light each strip's
+  REC/SOLO/MUTE/SELECT LEDs and sweep the encoder rings. Ends at rest-state
+  and probes firmware. Everything it sent is in the receipt; what it looked
+  like needs the operator (:confirm!)."
+  [{:keys [transport extender? hold-ms operator port] :or {hold-ms 400}}]
+  (let [extender? (boolean extender?)
+        unit (if extender? "XT" "XTouch")
+        sent (atom [])
+        timing (with-session transport
+                 (fn [send! elapsed _]
+                   (let [send! (fn [messages] (swap! sent into messages) (send! messages))
+                         t0 (elapsed)]
+                     (send! [(xt-codec/text extender? 0 0 (apply str (map #(format "%-7s" (str unit (inc %))) (range 8))))
+                             (xt-codec/text extender? 1 0 (apply str (map #(format "%-7s" (nth palette-labels (inc (mod % 7)))) (range 8))))])
+                     (doseq [colour (range 8)]
+                       (send! [(xt-codec/colors extender? (vec (repeat 8 colour)))])
+                       (Thread/sleep (long hold-ms)))
+                     (send! [(xt-codec/colors extender? (mapv #(inc (mod % 7)) (range 8)))])
+                     (doseq [base [0 8 16 24]]
+                       (send! (mapv #(xt-codec/button-led (+ base %) :on) (range 8)))
+                       (Thread/sleep (long hold-ms))
+                       (send! (mapv #(xt-codec/button-led (+ base %) :off) (range 8))))
+                     (doseq [position (range 12)]
+                       (send! (mapv #(xt-codec/encoder-ring % position) (range 8)))
+                       (Thread/sleep 60))
+                     (Thread/sleep (long (* 3 hold-ms)))
+                     (send! (rest-state extender?))
+                     {:pattern-ms (Math/round (double (- (elapsed) t0)))})))
+        after (probe! (if extender? :x-touch-ext/firmware :x-touch/firmware) {:transport transport})
+        answer (when operator
+                 ((:confirm! operator) (str "Did the top row read " unit "1.." unit "8, the bottom row the colour names, "
+                                            "did the backlights step off, red, green, yellow, blue, magenta, cyan, white "
+                                            "and then match the names, did the REC, SOLO, MUTE and SELECT rows light in turn, "
+                                            "and did the rings sweep?")))]
+    (merge timing
+           {:check (if extender? :x-touch-ext/lcd :x-touch/lcd) :issues [310 553] :port port :at (str (Instant/now))
+            :messages (count @sent) :sysex (mapv hex (filter #(= 0xf0 (first %)) @sent))
+            :after after :answer answer
+            :verdict (if (= :answered (:verdict after)) :sent :unresponsive)})))
+
 (defn rate-check!
   "Send scribble-strip text at each rate in rates-hz for seconds each, then a
-  bounded native-color alternation at alternation-ms. Probes firmware before
-  and after. Returns achieved message rates and probe latencies."
+  bounded native-color alternation at alternation-ms. Probes firmware before,
+  after each stage and at the end; a firmware reply that slows down or stops
+  after a burst is the measurable sign of a backlog. Ends at rest-state.
+  Returns achieved message rates and probe latencies."
   [{:keys [transport extender? rates-hz seconds alternation-ms operator port]
     :or {rates-hz [10 25 50] seconds 5 alternation-ms 20}}]
-  (let [device (xt-codec/device-id (boolean extender?))
+  (let [extender? (boolean extender?)
+        device (xt-codec/device-id extender?)
         probe-id (if extender? :x-touch-ext/firmware :x-touch/firmware)
+        latency #(select-keys % [:verdict :elapsed-ms])
         before (probe! probe-id {:transport transport})
-        handle ((:open! transport) (fn [_]))
-        send! #((:send! transport) handle [%])
+        ;; Sends are scheduled on fixed deadlines, so a send that blocks shows up
+        ;; as a lower achieved rate and a longer :send-ms rather than as drift.
         run (fn [period-ms total-ms message-fn]
-              (let [start (System/nanoTime) n (volatile! 0)]
-                (while (< (/ (- (System/nanoTime) start) 1e6) total-ms)
-                  (send! (message-fn @n)) (vswap! n inc)
-                  (Thread/sleep (long period-ms)))
-                {:messages @n :achieved-hz (/ @n (/ (- (System/nanoTime) start) 1e9))}))
-        texts (try
-                (vec (for [hz rates-hz]
-                       (assoc (run (/ 1000.0 hz) (* 1000 seconds)
-                                   (fn [n] (xt-codec/text (boolean extender?) 0 0 (format "%-56s" (str "Tolglow rate " hz " Hz #" n)))))
-                              :requested-hz hz)))
-                (finally ((:close! transport) handle)))
-        handle ((:open! transport) (fn [_]))
-        alternation (try
-                      (let [send! #((:send! transport) handle [%])
-                            start (System/nanoTime) n (volatile! 0)]
-                        (while (< (/ (- (System/nanoTime) start) 1e6) (* 1000 seconds))
-                          (send! (xt-codec/colors (boolean extender?) (vec (repeat 8 (if (even? @n) 1 4)))))
-                          (vswap! n inc)
-                          (Thread/sleep (long alternation-ms)))
-                        (send! (xt-codec/colors (boolean extender?) (vec (repeat 8 7))))
-                        {:interval-ms alternation-ms :messages @n
-                         :achieved-hz (/ @n (/ (- (System/nanoTime) start) 1e9))})
-                      (finally ((:close! transport) handle)))
+              (with-session transport
+                (fn [send! _ _]
+                  (let [start (System/nanoTime) n (volatile! 0) durations (transient [])
+                        ms-since #(/ (- (System/nanoTime) %) 1e6)]
+                    (while (< (ms-since start) total-ms)
+                      (let [t0 (System/nanoTime)]
+                        (send! [(message-fn @n)])
+                        (conj! durations (ms-since t0)))
+                      (vswap! n inc)
+                      (let [wait (- (* @n period-ms) (ms-since start))]
+                        (when (pos? wait) (Thread/sleep (long wait)))))
+                    {:messages @n :achieved-hz (/ @n (/ (- (System/nanoTime) start) 1e9))
+                     :send-ms (distribution (persistent! durations))}))))
+        texts (vec (for [hz rates-hz]
+                     (assoc (run (/ 1000.0 hz) (* 1000 seconds)
+                                 (fn [n] (xt-codec/text extender? 0 0 (format "%-56s" (str "Tolglow rate " hz " Hz #" n)))))
+                            :requested-hz hz
+                            :probe-after (latency (probe! probe-id {:transport transport})))))
+        alternation (assoc (run alternation-ms (* 1000 seconds)
+                                (fn [n] (xt-codec/colors extender? (vec (repeat 8 (if (even? n) 1 4))))))
+                           :interval-ms alternation-ms)
+        _ (with-session transport (fn [send! _ _] (send! [(xt-codec/colors extender? (vec (repeat 8 7)))])))
         after (probe! probe-id {:transport transport})
         answer (when operator
                  ((:confirm! operator) "During the red/blue alternation, did strips look a stable magenta/purple without visible flicker?"))]
+    (with-session transport (fn [send! _ _] (send! (rest-state extender?))))
     {:check (if extender? :x-touch-ext/rate :x-touch/rate) :issues [310] :device device :port port
-     :at (str (Instant/now)) :before before :after after :text texts :alternation alternation
+     :at (str (Instant/now)) :before before :after after :text texts
+     :alternation (assoc alternation :probe-after (latency after))
      :answer answer
-     :verdict (if (and (= :answered (:verdict before)) (= :answered (:verdict after))) :responsive :unresponsive)}))
+     :verdict (if (and (= :answered (:verdict before)) (= :answered (:verdict after))
+                       (every? #(= :answered (get-in % [:probe-after :verdict])) texts))
+                :responsive :unresponsive)}))
+
+(defn rest!
+  "Leave one unit at rest (see rest-state) and return the messages sent."
+  [transport extender?]
+  (let [messages (rest-state (boolean extender?))]
+    (with-session transport (fn [send! _ _] (send! messages)))
+    {:check (if extender? :x-touch-ext/rest :x-touch/rest) :at (str (Instant/now)) :messages (count messages)}))
+
+;; ---------------------------------------------------------------------------
+;; Tethered Push 3 display chart with a receipt. Afterglow's own show-chart
+;; prints nothing on success; this wraps the same sink and USB backend and
+;; counts every bulk transfer, its duration and any libusb failure.
+
+(defn instrumented-backend
+  "Wrap a display backend ({:open! :write! :close!}) so each transfer is
+  timed and counted. Returns {:backend .. :stats atom}."
+  [backend]
+  (let [stats (atom {:opens 0 :closes 0 :header-transfers 0 :payload-transfers 0 :bytes 0
+                     :header-ms [] :payload-ms [] :errors [] :descriptor nil})]
+    {:stats stats
+     :backend {:open! (fn [options]
+                        (let [wire ((:open! backend) options)]
+                          (swap! stats #(-> % (update :opens inc) (assoc :descriptor (:descriptor wire))))
+                          wire))
+               :write! (fn [wire ^bytes data]
+                         (let [t0 (System/nanoTime)]
+                           (try ((:write! backend) wire data)
+                                (swap! stats #(-> %
+                                                  (update (if (= 16 (alength data)) :header-transfers :payload-transfers) inc)
+                                                  (update :bytes + (alength data))
+                                                  (update (if (= 16 (alength data)) :header-ms :payload-ms)
+                                                          conj (/ (- (System/nanoTime) t0) 1e6))))
+                                (catch Throwable error
+                                  (swap! stats update :errors conj (assoc (error-data error) :bytes (alength data)))
+                                  (throw error)))))
+               :close! (fn [wire] (try ((:close! backend) wire) (finally (swap! stats update :closes inc))))}}))
+
+(defn display-chart!
+  "Claim the tethered Push 3 display (bus/address from push3-display.sh
+  status), show Afterglow's qualification chart for seconds, release it and
+  return a receipt: first-frame completion time, transfer counts and bytes,
+  per-transfer durations, refresh rate achieved and any failure. :backend
+  replaces the libusb backend (replay tests)."
+  [{:keys [bus address seconds backend library] :or {seconds 12}}]
+  (let [{stats :stats instrumented :backend} (instrumented-backend
+                                               (or backend {:open! push3-usb/open! :write! push3-usb/write!
+                                                            :close! push3-usb/close!}))
+        sink (push3-display/sink (cond-> {:bus bus :address address :backend instrumented}
+                                   library (assoc :library library)))
+        start (System/nanoTime)
+        elapsed #(/ (- (System/nanoTime) start) 1e6)
+        first-frame (promise)
+        base {:check :push-3/display-chart :issues [219] :bus bus :address address :seconds seconds
+              :at (str (Instant/now)) :chart "afterglow.control.devices.push-3.qualification/chart"}
+        outcome (try
+                  (let [image (push3-qualification/chart)
+                        chart-ms (elapsed)
+                        handle ((:open! sink))
+                        open-ms (elapsed)]
+                    (try
+                      ((:render-with-receipt! sink) handle image #(deliver first-frame (elapsed)))
+                      (let [shown (elapsed)]
+                        ;; seconds counts from the first presented frame, not from open.
+                        (loop []
+                          (when (and (< (- (elapsed) shown) (* 1000 seconds)) (nil? (:failure @(:state handle))))
+                            (Thread/sleep 100) (recur)))
+                        {:failure (some-> (:failure @(:state handle)) error-data)
+                         :stages-ms {:chart chart-ms :open-and-claim (- open-ms chart-ms) :first-render (- shown open-ms)}
+                         :shown-ms (- (elapsed) shown)
+                         :streamed-ms (elapsed)})
+                      (finally ((:close! sink) handle))))
+                  (catch Throwable error {:failure (error-data error) :streamed-ms (elapsed)}))
+        {:keys [payload-transfers header-transfers header-ms payload-ms errors descriptor] :as s} @stats]
+    (merge base
+           {:streamed-ms (:streamed-ms outcome)
+            :stages-ms (:stages-ms outcome)
+            :shown-ms (:shown-ms outcome)
+            :first-frame-ms (deref first-frame 0 nil)
+            :frames payload-transfers
+            :transfers {:header header-transfers :payload payload-transfers :bytes (:bytes s)
+                        :opens (:opens s) :closes (:closes s)}
+            :refresh-hz (when (and (pos? payload-transfers) (:shown-ms outcome))
+                          (/ payload-transfers (/ (:shown-ms outcome) 1000.0)))
+            :header-transfer-ms (distribution header-ms)
+            :payload-transfer-ms (distribution payload-ms)
+            :errors errors
+            :failure (:failure outcome)
+            :descriptor descriptor
+            :verdict (cond (:failure outcome) :failed
+                           (and (pos? payload-transfers) (= payload-transfers header-transfers)) :presented
+                           :else :no-frames)})))
 
 ;; ---------------------------------------------------------------------------
 ;; Command line
 
 (defn- read-layout [path] (:layout (edn/read-string (slurp path))))
 
+(defn- summary-line [{:keys [check verdict reply elapsed-ms error decoded]}]
+  (str (format "%-28s %-14s" check verdict)
+       (when elapsed-ms (format " %6.1f ms" (double elapsed-ms)))
+       (when reply (str "  " reply))
+       (when-let [text (or (:ascii decoded) (:payload-ascii decoded))] (str "  \"" text "\""))
+       (when error (str "  " (:message error)))))
+
+(def ^:private ok-verdicts
+  #{:answered :no-reply :passed :responsive :presented :sent :readback :no-position-readback})
+
+(defn- role-port [role direction]
+  (try (:name (port role direction)) (catch Exception error (str "unresolved: " (.getMessage error)))))
+
+(defn- unit-role [target]
+  (let [role (keyword target)]
+    (when-not (#{:x-touch :x-touch-ext} role) (throw (ex-info "Use x-touch or x-touch-ext" {:target target})))
+    role))
+
+(defn- report! [receipt summary-keys]
+  (pprint/pprint (if summary-keys (select-keys receipt summary-keys) receipt))
+  (println "receipt:" (write-receipt! receipt))
+  receipt)
+
 (defn -main
   "lein run -m tolglow.qa.naut-hardware ports
-   ... probe push-3/identity|x-touch/identity|x-touch/firmware|x-touch-ext/firmware
+   ... probe all | probe CHECK   (push-3/identity, push-3/identity-live-port, x-touch/firmware,
+                                  x-touch/device-query, x-touch/identity and the x-touch-ext ones)
    ... capture-layout [pad-rows]
    ... scenario push-3/pads LAYOUT.edn | scenario x-touch/strips | scenario x-touch-ext/strips
-   ... rate x-touch|x-touch-ext"
-  [& [command target extra]]
-  (let [operator (console-operator)]
-    (case command
-      "ports" (pprint/pprint (filterv #(some (fn [role] (= (:name role) (:name %))) (vals roles)) (ports)))
-      "probe" (let [check (keyword target) role (:role (get probes check))
-                    receipt (probe! check {:transport (midi-transport role) :port (:name (port role :output))})]
-                (pprint/pprint receipt) (println "receipt:" (write-receipt! receipt)))
-      "capture-layout" (let [plan (push-3-capture-plan (if target {:pad-rows (parse-long target)} {}))
-                             result (capture-layout! {:transport (input-transport :push-3) :plan plan
-                                                      :operator {:prompt! (:capture-prompt! operator)}})
-                             receipt (assoc result :check :push-3/layout :issues [219] :at (str (Instant/now))
-                                                   :port (:name (port :push-3 :input)))]
-                         (pprint/pprint (select-keys receipt [:skipped]))
-                         (println "receipt:" (write-receipt! receipt)))
-      "scenario" (let [id (keyword target)
-                       device (:device (get scenarios id))
-                       transport (if (= :push-3 device) (input-transport :push-3) (midi-transport device))
-                       receipt (run-scenario! id {:transport transport :operator operator
-                                                  :layout (when extra (read-layout extra))
-                                                  :port (:name (port device :input))})]
-                   (pprint/pprint (select-keys receipt [:verdict :steps :session]))
-                   (println "receipt:" (write-receipt! receipt)))
-      "rate" (let [role (keyword target)
-                   receipt (rate-check! {:transport (midi-transport role) :extender? (= :x-touch-ext role)
-                                         :operator operator :port (:name (port role :output))})]
-               (pprint/pprint (dissoc receipt :text))
-               (println "receipt:" (write-receipt! receipt)))
-      (println (:doc (meta #'-main))))
-    (shutdown-agents)))
+   ... motor x-touch|x-touch-ext [--unattended]
+   ... lcd x-touch|x-touch-ext [--unattended]
+   ... rate x-touch|x-touch-ext [--unattended]
+   ... rest x-touch|x-touch-ext
+   ... push-3-mode user|live    (User Mode + Poly Aftertouch, or back to Live Mode + MPE)
+   ... display-chart BUS ADDRESS [SECONDS]
+  Every check prints its receipt path. The exit status is 0 when each receipt
+  has an expected verdict (an honest :no-reply included) and 1 otherwise."
+  [& [command target extra & more]]
+  (let [unattended? (some #{"--unattended"} (concat [target extra] more))
+        operator (cond-> (console-operator) unattended? (assoc :confirm! (constantly nil)))
+        confirming (when-not unattended? operator)
+        receipts
+        (case command
+          "ports" (do (pprint/pprint (filterv #(some (fn [role] (= (:name role) (:name %))) (vals roles)) (ports))) [])
+          "probe" (let [checks (if (= "all" target) (sort (keys probes)) [(keyword target)])
+                        listing (try (ports) (catch Exception _ nil))
+                        receipts (vec (for [check checks]
+                                        (let [role (:role (get probes check))
+                                              receipt (try (probe! check {:transport (midi-transport role (or listing (ports)))
+                                                                          :port (:name (port role :output (or listing (ports))))})
+                                                           (catch Throwable error
+                                                             {:check check :role role :at (str (Instant/now))
+                                                              :verdict :error :error (error-data error)}))]
+                                          (assoc receipt :path (write-receipt! receipt)))))]
+                    (doseq [receipt receipts] (println (summary-line receipt)) (println "  receipt:" (:path receipt)))
+                    receipts)
+          "capture-layout" (let [plan (push-3-capture-plan (if target {:pad-rows (parse-long target)} {}))
+                                 result (capture-layout! {:transport (input-transport :push-3) :plan plan
+                                                          :operator {:prompt! (:capture-prompt! operator)}})]
+                             [(report! (assoc result :check :push-3/layout :issues [219] :at (str (Instant/now))
+                                              :port (role-port :push-3 :input) :verdict (if (empty? (:skipped result)) :passed :partial))
+                                       [:skipped])])
+          "scenario" (let [id (keyword target)
+                           device (:device (get scenarios id))
+                           transport (if (= :push-3 device) (input-transport :push-3) (midi-transport device))]
+                       [(report! (run-scenario! id {:transport transport :operator operator
+                                                    :layout (when (and extra (not= "--unattended" extra)) (read-layout extra))
+                                                    :port (role-port device :input)})
+                                 [:verdict :steps :session])])
+          "motor" (let [role (unit-role target)]
+                    [(report! (motor-check! {:transport (midi-transport role) :extender? (= :x-touch-ext role)
+                                             :operator confirming :port (role-port role :output)})
+                              [:check :verdict :steps :after :answer])])
+          "lcd" (let [role (unit-role target)]
+                  [(report! (lcd-check! {:transport (midi-transport role) :extender? (= :x-touch-ext role)
+                                         :operator confirming :port (role-port role :output)})
+                            [:check :verdict :messages :pattern-ms :after :answer])])
+          "rate" (let [role (unit-role target)]
+                   [(report! (rate-check! {:transport (midi-transport role) :extender? (= :x-touch-ext role)
+                                           :operator confirming :port (role-port role :output)})
+                             [:check :verdict :text :alternation :before :after :answer])])
+          "push-3-mode" (let [mode (keyword target)]
+                          [(report! (push-3-mode! mode {:transport (midi-transport :push-3) :port (role-port :push-3 :output)})
+                                    nil)])
+          "rest" (let [role (unit-role target)]
+                   [(report! (assoc (rest! (midi-transport role) (= :x-touch-ext role)) :verdict :sent) nil)])
+          "display-chart" (let [receipt (display-chart! {:bus (some-> target parse-long) :address (some-> extra parse-long)
+                                                         :seconds (or (some-> (first more) parse-long) 12)})]
+                            [(report! receipt [:check :verdict :stages-ms :first-frame-ms :frames :refresh-hz :transfers
+                                               :payload-transfer-ms :errors :failure])])
+          (do (println (:doc (meta #'-main))) []))]
+    (shutdown-agents)
+    (System/exit (if (every? #(ok-verdicts (:verdict %)) receipts) 0 1))))
