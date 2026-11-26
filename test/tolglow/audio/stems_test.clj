@@ -1,5 +1,6 @@
 (ns tolglow.audio.stems-test
   (:require [clojure.test :refer [deftest is testing]]
+            [tolglow.audio.capture :as capture]
             [tolglow.audio.stem-fixtures :as fixtures]
             [tolglow.audio.stems :as stems]))
 
@@ -114,3 +115,29 @@
   (is (= {:matched 2 :missed [300] :false-positives [104 500] :errors-ms [2 -3]
           :max-abs-error-ms 3.0 :mean-abs-error-ms 2.5}
          (stems/score-onsets [102 104 197 500] [100 200 300] 5))))
+
+(deftest a-multichannel-recording-replays-through-capture-as-named-stems
+  (let [file (java.io.File/createTempFile "tolglow-stems-" ".wav")
+        rendered (fixtures/render {:bars 2})
+        events (atom [])]
+    (try
+      (is (= {:channels 4 :sample-rate 48000} (select-keys (fixtures/write-wav! rendered file) [:channels :sample-rate])))
+      (let [config (capture/file-config (str file) {:stems fixtures/stem-layout :file-paced? false})
+            manager (capture/create-manager)]
+        (is (= {:file (str file) :sample-rate 48000.0 :channels 4 :input-channel 1}
+               (select-keys config [:file :sample-rate :channels :input-channel])))
+        (is (= [:kick :snare :bass :guitar] (mapv :id (:stems config))))
+        (is (thrown? clojure.lang.ExceptionInfo (capture/validate-config (assoc config :stems [{:id :kick :channel 9}]))))
+        (is (thrown? clojure.lang.ExceptionInfo (capture/validate-config (assoc config :default? true))))
+        (try
+          (let [handle (capture/start! manager config {:events! #(do (swap! events into %) true)})
+                result (deref (:result handle) 10000 ::timeout)
+                stems (get-in (capture/status manager) [:features :stems])]
+            (is (= :completed (:status result)) (pr-str result))
+            (is (= {:kick 8 :snare 4 :bass 8 :guitar 4} (update-vals stems :onset-count)))
+            (is (= 24 (count (filter #(= :audio/onset (:type %)) @events)))
+                "every onset that reached the features also reached the event handler")
+            (is (every? #(= (keyword "stem" (name (:stem %))) (get-in % [:source :id]))
+                        (filter #(= :audio/onset (:type %)) @events))))
+          (finally (capture/close! manager))))
+      (finally (.delete file)))))
