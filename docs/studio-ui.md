@@ -283,12 +283,19 @@ mode every panel's content is inert and dimmed and a frame shows the grid.
 Drag a panel's title onto another panel to move it there (onto a later panel
 lands after it, onto an earlier one before it); the panel under the pointer is
 marked as the drop target. Drag the corner to resize it in grid columns and
-20 px rows, with the size shown while dragging. Every move and resize also
-works without dragging: the title and corner are buttons that take arrow keys
-(Home and End move to the ends; Shift steps the corner by four), and each frame
-has Earlier, Later, Narrower, Wider, Shorter and Taller buttons. A screen
-reader hears the new position and size. Escape cancels a drag in progress, and
-otherwise cancels editing.
+20 px rows, with the size shown while dragging. Holding a drag near the top or
+bottom of the visible area scrolls the page, so a panel can be dropped onto
+one that started off screen. Every move and resize also works without
+dragging: the title and corner are buttons that take arrow keys (Home and End
+move to the ends; Shift steps the corner by four), and each frame has Earlier,
+Later, Narrower, Wider, Shorter and Taller buttons whose accessible names start
+with those words. A screen reader hears the new position and size from a live
+region that stays mounted. Escape cancels a drag in progress, and otherwise
+cancels editing. Panels flow in their list order without dense packing, so the
+visual order is the keyboard and screen reader order; a gap can remain where a
+wide panel does not fit beside the one before it. A save is confirmed only
+after local storage accepted it; if the browser refuses (private mode, full
+storage), Studio says so and the layout stays in use until reload.
 
 **Named layouts.** Each screen size class keeps any number of named layouts
 and remembers the active one; the menu beside Edit layout switches between
