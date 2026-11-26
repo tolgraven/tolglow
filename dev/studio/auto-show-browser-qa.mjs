@@ -52,10 +52,9 @@ async function replPhase(page) {
 
 async function studioPhase(page) {
   const panel = await openPanel(page);
+  // The REPL plan varies parameters, so Vary starts ticked.
   const vary = panel.getByLabel('Vary marked parameters within their ranges');
-  await vary.click();
-  // Reagent renders the controlled checkbox on the next frame.
-  await eventually(() => vary.isChecked(), 'vary checkbox checked');
+  await eventually(() => vary.isChecked(), 'vary follows the saved config');
   const started = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/auto');
   await panel.getByRole('button', {name: 'Start auto', exact: true}).click();
   const reply = await started;
