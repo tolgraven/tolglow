@@ -122,13 +122,36 @@
     (when (oscillator/phase-references reference)
       (oscillator/phase (merge {:period {:bars 1}} spec) clock elapsed (:meter origin)))))
 
+(defn- held-ms [clock]
+  (let [held (:held-ms clock)] (if (time/finite-number? held) held 0)))
+
+(defn origin
+  "A start clock for local phases measured without an activation. Carries the
+  show's held transport time (tolglow.clock/hold), so millisecond phases from
+  it stand still across a stop like the show clock. Omitted until a stop."
+  [model clock]
+  (if-let [held (get-in model [:transport :held-ms])] (assoc clock :held-ms held) clock))
+
+(defn show-clock
+  "Host milliseconds less the time the transport has been stopped
+  ([:transport :held-ms], grown by tolglow.clock/hold): the show's millisecond
+  coordinate, continuous and nondecreasing. Beats already stand still with the
+  transport. Unchanged for a show that has never stopped. The energy conductor
+  also decides and slews on it."
+  [model clock]
+  (let [held (held-ms (:transport model))]
+    (cond-> clock (and (pos? held) (time/finite-number? (:time-ms clock))) (update :time-ms - held))))
+
 (defn- phase-coordinate [model options spec]
   (let [clock (time/frame-clock model)
         local? (= :local (:phase spec))
         instance (when local? (get-in model [:instances (:instance-id options)]))
         origin (if instance {:time-ms (:started-at-ms instance) :beat (:started-at-beat instance)}
-                   (:start-clock options))
-        clock (if instance (system/private-clock instance clock) clock)
+                   (let [start (:start-clock options)]
+                     (cond-> start (and (pos? (held-ms start)) (time/finite-number? (:time-ms start)))
+                       (update :time-ms - (held-ms start)))))
+        ;; An activation's private clock already holds; others read the show clock.
+        clock (if instance (system/private-clock instance clock) (show-clock model clock))
         {:keys [unit value]} (time/normalize-duration (:period spec {:bars 1}) (:meter clock))
         key (if (= :ms unit) :time-ms :beat)
         now (get clock key)
@@ -175,7 +198,9 @@
   "Resolve a numeric binding using the committed show. A local waveform uses
   :start-clock, or an :instance-id for its private, pause-aware launch clock.
   Musical :phase-reference :launch captures the activation meter, and
-  :transport follows the shared beat and current meter.
+  :transport follows the shared beat and current meter. Without an activation a
+  millisecond period reads the show clock, host time less the transport's
+  [:transport :held-ms], so it stands still while the transport is stopped.
   Named signals use [:settings :autopilot :signals] and a shared show phase.
   :default (zero if omitted) handles missed inputs or retired registry entries."
   ([model spec] (value model spec {}))

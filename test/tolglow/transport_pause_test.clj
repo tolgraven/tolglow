@@ -97,20 +97,41 @@
 
 (defn classify
   "How a change behaved across the stop: :keeps-running when any held frame
-  differs from the stop frame, :jumps when the first frame after play moves by
-  more than two and a half frames of the normal progress just before the stop
-  (and at least three steps), else :frozen."
+  differs from the stop frame, :jumps when the stop frame or the first frame
+  after play moves by more than two and a half frames of the normal progress
+  just before the stop (and at least three steps), else :frozen."
   [frames]
   (let [stopped (value-at frames stop-at)
-        ;; Normal progress per frame shortly before the stop.
+        ;; Normal progress per frame shortly before the stop, excluding the
+        ;; stop frame itself so a jump on that edge cannot hide in it.
         rate (apply max (map (fn [t] (Math/abs (double (- (value-at frames t) (value-at frames (- t frame-ms))))))
-                             (range (- stop-at 400) (inc stop-at) frame-ms)))
+                             (range (- stop-at 400) stop-at frame-ms)))
+        limit (max 3.0 (* 2.5 rate))
         held (keep (fn [[t v]] (when (< stop-at t play-at) v)) frames)
         resumed (value-at frames (+ play-at frame-ms))]
     (cond
+      (> (Math/abs (double (- stopped (value-at frames (- stop-at frame-ms))))) limit) :jumps
       (some #(not= stopped %) held) :keeps-running
-      (> (Math/abs (double (- resumed stopped))) (max 3.0 (* 2.5 rate))) :jumps
+      (> (Math/abs (double (- resumed stopped))) limit) :jumps
       :else :frozen)))
+
+(defn run-continuous
+  "The same frames as run-scenario for a show that never stops."
+  [rt {:keys [setup! at sample] :or {sample dmx at {}}}]
+  (setup! rt)
+  (into [[0 (sample rt)]]
+        (for [t (range frame-ms (inc end-at) frame-ms)]
+          (do (if (contains? at t) ((get at t) rt t) (tick! rt t))
+              [t (sample rt)]))))
+
+(defn resumes-exactly?
+  "Every frame after play equals the frame of a never-stopping twin that many
+  milliseconds after the stop, and every frame up to the stop matches too: the
+  stop removed exactly the held interval."
+  [frames twin]
+  (let [held (- play-at stop-at)]
+    (and (every? (fn [[t v]] (= v (value-at twin t))) (filter #(<= (first %) stop-at) frames))
+         (every? (fn [[t v]] (= v (value-at twin (- t held)))) (filter #(>= (first %) play-at) frames)))))
 
 (defn- launch! [rt t cue & [launch]]
   (:instance-id (command! rt t (cond-> {:op :cue/launch :cue-id cue} launch (assoc :launch launch)))))
@@ -547,3 +568,258 @@
               (run-for! 500)
               (is (< stopped (dmx rt)) "continues after play"))))
         (finally (show/stop! rt))))))
+
+;; #702: show-level held time for global millisecond phases, and routing ADSR
+;; envelopes in both units.
+
+(defn- orb-model [bpm]
+  (assoc (control/new-show {:show-id :pause-orb :transport {:playing? true :beat 0.0 :bpm bpm}})
+         :rig {:fixtures [{:id :left :position [0 1 0] :universe 1 :address 1 :channels {:red 1 :green 2 :blue 3}}]}))
+
+(defn- orb-runtime [bpm]
+  (let [dmx (atom nil)]
+    (assoc (show/create-runtime {:model (orb-model bpm) :workspace-options nil
+                                 :sink {:send! (fn [universes _] (reset! dmx (bit-and 255 (first (get universes 1)))))}})
+           ::dmx dmx)))
+
+(def ^:private global-saw
+  "A shared show-clock oscillator: :phase defaults to :global."
+  {:waveform :saw :period {:ms 8000}})
+
+(defn- spawn-orb! [rt t]
+  (submit! rt t :spatial-cue {:op :spawn :id :orb :page-id :main :cell [0 0]
+                              :volume {:shape :ball :position [0 1 0] :velocity [0 0 0] :gravity [0 0 0]
+                                       :radius 0.5 :selection #{:position}
+                                       :falloff {:inner-m 0.5 :outer-m 0.5 :curve :linear}}
+                              :paint {:red 1.0} :sources {:red global-saw}}))
+
+(defn- orb-scenario [bpm]
+  (let [rt (orb-runtime bpm)]
+    (try
+      (let [frames (run-scenario rt {:setup! #(spawn-orb! % 0)})]
+        {:frames frames :class (classify frames) :model (model rt) :snapshot (show/snapshot rt)})
+      (finally (show/stop! rt)))))
+
+(deftest a-global-millisecond-oscillator-pauses-with-the-transport
+  (doseq [bpm tempos]
+    (let [{:keys [frames class model snapshot]} (orb-scenario bpm)
+          red #(value-at frames %)]
+      (is (= :frozen class) (pr-str bpm frames))
+      (is (rising-after-play? frames) (pr-str bpm))
+      (testing "the saw reads show time: two seconds before the stop, then on from there"
+        (is (= 64 (red stop-at)) (pr-str bpm frames))
+        (is (= (red (- stop-at 1000)) (- (red (+ play-at 1000)) 64)) (pr-str bpm frames))
+        (is (= 191 (red end-at)) "six seconds of show time at the end, not eleven"))
+      (testing "the held coordinate is saved state and reaches the snapshot"
+        (is (== (- play-at stop-at) (get-in model [:transport :held-ms])))
+        (is (== (- play-at stop-at) (get-in snapshot [:transport :held-ms])))))))
+
+(defn- route-spec [envelope]
+  {:version 1 :id :pause-route :revision 1
+   :sources {"fader" {:kind :control :range [0.0 1.0] :timeout {:beats 4096}}}
+   :destinations {:level {:cue-id :wash :param :level :range [0.0 1.0] :base 0.0 :combine :max}}
+   :routes [{:id :input :source "fader" :destination :level :envelope envelope}]})
+
+(defn- gate! [rt t id on?]
+  ((:events! (show/sync-callbacks rt))
+   {:type :sync/observation
+    :observation {:source-id "fader" :event-id id :value (if on? 1.0 0.0) :gate? on? :confidence 1.0
+                  :observed-at-ms t :kind :control :origin :control}})
+  (tick! rt t))
+
+(defn- routed! [rt envelope]
+  (submit! rt 0 :patch-save {:source (pr-str (route-spec envelope))})
+  (submit! rt 0 :patch-enabled {:enabled? true})
+  (launch! rt 0 :wash)
+  (gate! rt 0 "on" true))
+
+(defn- routed-scenario [bpm envelope & [at]]
+  (scenario {:setup! #(routed! % envelope) :at (or at {})} bpm))
+
+(deftest routing-envelope-attacks-pause-with-the-transport-in-both-units
+  (doseq [bpm tempos
+          envelope [{:attack {:ms 4000}} {:attack {:beats 8}}]]
+    (let [{:keys [frames class]} (routed-scenario bpm envelope)]
+      (is (< 0 (value-at frames stop-at) 255) (pr-str bpm envelope frames))
+      (is (= :frozen class) (pr-str bpm envelope frames))
+      (is (rising-after-play? frames) (pr-str bpm envelope)))))
+
+(deftest routing-envelope-releases-pause-with-the-transport-in-both-units
+  (doseq [bpm tempos
+          envelope [{:attack {:ms 0} :release {:ms 4000}} {:attack {:beats 0} :release {:beats 8}}]]
+    (let [{:keys [frames class]} (routed-scenario bpm envelope {1000 (fn [rt t] (gate! rt t "off" false))})]
+      (is (< 0 (value-at frames stop-at) 255) (pr-str bpm envelope frames))
+      (is (= :frozen class) (pr-str bpm envelope frames))
+      (is (falling-after-play? frames) (pr-str bpm envelope))
+      (when (:ms (:release envelope))
+        (testing "the release keeps its remaining three seconds after play"
+          (is (pos? (value-at frames (+ play-at 2900))) (pr-str frames))
+          (is (zero? (value-at frames (+ play-at 3100))) (pr-str frames)))))))
+
+(deftest a-gate-that-opens-during-the-stop-starts-its-attack-on-play
+  (doseq [envelope [{:attack {:ms 1000}} {:attack {:beats 2}}]]
+    (let [rt (runtime)]
+      (try
+        (submit! rt 0 :patch-save {:source (pr-str (route-spec envelope))})
+        (submit! rt 0 :patch-enabled {:enabled? true})
+        (launch! rt 0 :wash)
+        (set-playing! rt 500 false)
+        (gate! rt 1000 "on" true)
+        (doseq [t (range 1100 3001 100)] (tick! rt t))
+        (is (= 0 (dmx rt)) (pr-str envelope))
+        (set-playing! rt 3000 true)
+        (tick! rt 3500)
+        (is (< 115 (dmx rt) 140) (pr-str envelope (dmx rt)))
+        (finally (show/stop! rt))))))
+
+(deftest the-held-show-clock-survives-a-backup-round-trip
+  (let [rt (orb-runtime 120.0)]
+    (try
+      (spawn-orb! rt 0)
+      (doseq [t (range 100 2000 100)] (tick! rt t))
+      (set-playing! rt 2000 false)
+      (let [stopped (dmx rt)]
+        (tick! rt 4000)
+        (let [{saved :model frame-output :frame-output} (show/export-show rt)
+              restored (orb-runtime 120.0)]
+          (is (== 2000 (get-in saved [:transport :held-ms])))
+          (try
+            (submit! restored 0 :import {:source (files/write-string saved frame-output)})
+            (is (== 2000 (get-in (model restored) [:transport :held-ms])) "the import keeps the held count")
+            (doseq [t (range 4100 7000 100)] (tick! restored t))
+            (is (= stopped (dmx restored)) "the restored oscillator is still held")
+            (set-playing! restored 7000 true)
+            (tick! restored 7100)
+            (is (<= stopped (dmx restored) (+ stopped 4)) (pr-str stopped (dmx restored)))
+            (finally (show/stop! restored)))))
+      (finally (show/stop! rt)))))
+
+(deftest a-show-saved-without-a-held-count-reads-host-time-as-before
+  (let [rt (orb-runtime 120.0)]
+    (try
+      (spawn-orb! rt 0)
+      (doseq [t (range 100 2001 100)] (tick! rt t))
+      (let [{saved :model frame-output :frame-output} (show/export-show rt)
+            restored (orb-runtime 120.0)]
+        (is (not (contains? (:transport saved) :held-ms)) "a show that never stopped saves no held count")
+        (try
+          (submit! restored 0 :import {:source (files/write-string saved frame-output)})
+          (is (not (contains? (:transport (model restored)) :held-ms)))
+          (tick! restored 4000)
+          (is (= 128 (dmx restored)) "half of the eight second saw at four seconds of host time")
+          (finally (show/stop! restored))))
+      (finally (show/stop! rt)))))
+
+(deftest a-saved-held-count-must-be-finite-and-nonnegative
+  (let [saved (assoc-in (live-model 120.0) [:transport :held-ms] 2500.0)]
+    (is (= 2500.0 (get-in (files/validate-model saved) [:transport :held-ms])))
+    (doseq [bad [-1 ##Inf "2500"]]
+      (is (thrown? clojure.lang.ExceptionInfo (files/validate-model (assoc-in saved [:transport :held-ms] bad)))
+          (pr-str bad)))))
+
+;; The energy conductor moves the show too: its target slew and its decision
+;; cadence run on the held show clock.
+
+(defn- conductor-runtime [bpm]
+  (let [ids [:a :b :c :d]
+        fixture (fn [id address] {:id id :universe 1 :address address :position [(* 0.5 (dec address)) 0 0]
+                                  :channels {:dimmer 1} :groups [:stage] :max-watts 100
+                                  :measured-relative-brightness 1.0})
+        looks {:full {:id :full :version 1 :targets ids :params {} :outputs {:dimmer 1.0}}
+               :conduct {:id :conduct :version 1 :targets [] :params {} :outputs {} :show-control? true}}]
+    (show/create-runtime
+      {:model (assoc (control/new-show {:show-id :pause-conductor :transport {:playing? true :beat 0.0 :bpm bpm}
+                                        :registry {:effects looks
+                                                   :cues (into {} (for [id (keys looks)] [id {:id id :version 1 :effect-id id}]))}})
+                     :rig {:fixtures (mapv fixture ids (range 1 5))})
+       :workspace-options nil})))
+
+(defn- conduct! [rt settings]
+  (launch! rt 0 :full)
+  (submit! rt 0 :settings {:scope :autopilot
+                           :values (merge {:enable-cue :conduct :scope {:group-id :stage} :strategy :instant :seed 71
+                                           :targets {:brightness 0.5 :activity 0.23} :window {:bars 1}}
+                                          settings)})
+  (launch! rt 0 :conduct))
+
+(defn- conductor-scenario [bpm settings sample]
+  (let [rt (conductor-runtime bpm)]
+    (try
+      (let [frames (run-scenario rt {:setup! #(conduct! % settings) :sample sample})]
+        {:frames frames :class (classify frames)})
+      (finally (show/stop! rt)))))
+
+(defn- slewed-brightness [rt]
+  (Math/round (* 1000.0 (get-in (show/snapshot rt) [:autopilot :targets :brightness] 1.0))))
+
+(defn- decisions [rt]
+  (get-in (show/snapshot rt) [:autopilot :decision :decision] 0))
+
+(deftest the-conductor-target-slew-pauses-with-the-transport
+  (doseq [bpm tempos
+          release [{:ms 4000} {:beats 8}]]
+    (let [{:keys [frames class]} (conductor-scenario bpm {:interval {:beats 1} :target-response {:release release}}
+                                                     slewed-brightness)]
+      (is (< 500 (value-at frames stop-at) 1000) (pr-str bpm release frames))
+      (is (= :frozen class) (pr-str bpm release frames))
+      (is (falling-after-play? frames) (pr-str bpm release)))))
+
+(deftest the-conductor-decides-on-show-time-and-not-while-stopped
+  (doseq [bpm tempos]
+    (testing "a millisecond cadence keeps its place: no decision is due on play"
+      (let [{:keys [frames class]} (conductor-scenario bpm {:interval {:ms 1500}} decisions)
+            stopped (value-at frames stop-at)]
+        (is (= :frozen class) (pr-str bpm frames))
+        ;; Decisions at 0 and 1.5 s; the next falls due at 3 s of show time, 8 s of host time.
+        (is (= 2 stopped) (pr-str bpm frames))
+        (is (= stopped (value-at frames (+ play-at 900))) (pr-str bpm frames))
+        (is (= (inc stopped) (value-at frames (+ play-at 1000))) (pr-str bpm frames))))
+    (testing "a musical cadence"
+      (let [{:keys [frames class]} (conductor-scenario bpm {:interval {:beats 1}} decisions)]
+        (is (= :frozen class) (pr-str bpm frames))
+        (is (rising-after-play? frames) (pr-str bpm))))))
+
+;; The fixture output response (attack/release of delivered light) follows show
+;; time: a stop freezes it on both edges and play resumes it exactly.
+
+(defn- response-run [bpm envelope continuous? & [release-at]]
+  (let [rt (runtime bpm) id (atom nil)
+        at (if release-at {release-at (fn [rt t] (command! rt t {:op :instance/remove :instance-id @id}))} {})
+        setup {:setup! (fn [rt] (submit! rt 0 :settings {:scope :output-response :values {:enabled? true :global envelope}})
+                         (reset! id (launch! rt 0 :wash)))
+               :at at}]
+    (try ((if continuous? run-continuous run-scenario) rt setup)
+         (finally (show/stop! rt)))))
+
+(deftest the-output-response-attack-pauses-with-the-transport
+  (doseq [bpm tempos
+          attack [{:ms 6000} {:ms 6000 :mode :linear} {:beats 12} {:blend 0.02}]]
+    (let [frames (response-run bpm {:attack attack} false)
+          twin (response-run bpm {:attack attack} true)]
+      (is (< 0 (value-at frames stop-at) 255) (pr-str bpm attack frames))
+      (is (= :frozen (classify frames)) (pr-str bpm attack frames))
+      (is (rising-after-play? frames) (pr-str bpm attack))
+      (is (resumes-exactly? frames twin) (pr-str bpm attack frames twin)))))
+
+(deftest the-output-response-release-pauses-with-the-transport
+  (doseq [bpm tempos
+          release [{:ms 6000} {:ms 6000 :mode :linear} {:beats 12}]]
+    (let [envelope {:attack {:ms 0} :release release}
+          frames (response-run bpm envelope false 1000)
+          twin (response-run bpm envelope true 1000)]
+      (is (< 0 (value-at frames stop-at) 255) (pr-str bpm release frames))
+      (is (= :frozen (classify frames)) (pr-str bpm release frames))
+      (is (falling-after-play? frames) (pr-str bpm release))
+      (is (resumes-exactly? frames twin) (pr-str bpm release frames twin)))))
+
+(deftest the-ambient-pause-look-still-bypasses-the-output-response
+  (let [rt (runtime)]
+    (try
+      (submit! rt 0 :settings {:scope :output :values {:pause-look {:mode :ambient :level 0.0}}})
+      (submit! rt 0 :settings {:scope :output-response :values {:enabled? true :global {:attack {:ms 6000}}}})
+      (launch! rt 0 :wash)
+      (tick! rt 1900)
+      (is (< 0 (dmx rt) 255))
+      (set-playing! rt 2000 false)
+      (is (= 0 (dmx rt)) "the ambient look (level zero here) replaces the shaped output; nothing is frozen")
+      (finally (show/stop! rt)))))

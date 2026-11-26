@@ -71,6 +71,7 @@ take precedence.
 | ID | Startup action |
 | --- | --- |
 | `:show` | Creates the runtime and starts its render and output schedules. Top-level `:hz` sets the frame rate. `:show` accepts runtime options including `:model`, `:workers`, `:ola` and `:artnet`. |
+| `:push-3-display` | Off by default. Enable it on a host that drives a tethered Push 3 display. It starts the display's libusb scan on a background thread (about 25 s on macOS), so the scan overlaps startup. Startup does not wait for the scan. The module value is a promise of the receipt. A missing libusb gives a `:failed?` receipt, not an error. Optional `:library` selects a libusb path. [Display start](push-display-packaging.md#display-start-and-refresh-rate) |
 | `:fixtures` | Publishes fixture type `:definitions` and expands named `:patches` groups or installs a full fixture vector using the rig validator. See [fixture patch groups](fixture-patch-groups.md). |
 | `:cue-pages` | Installs `:definitions` in order. Each page has an ID and a map from grid coordinates to registered cue IDs. |
 | `:show-state` | Loads `:load-file` as a full Transit backup, runs `:actions` (command maps or zero-argument Clojure functions) in order and saves to `:save-file` during shutdown if configured. |

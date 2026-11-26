@@ -192,6 +192,21 @@
         (update :routes #(into {} (map (fn [[id captured]] [id (-> captured (update :clock shift-clock)
                                                                                   (update :envelope shift-envelope))]) %))))))
 
+(defn hold-clock
+  "Keep ADSR envelopes where they were across held-ms of stopped transport:
+  their millisecond start/release anchors move forward by the held time. Beat
+  envelopes already stand still with the transport beat, so both units hold.
+  The routing clock, observations, timeouts and smoothing follow live input
+  and stay on the wall clock."
+  [state held-ms]
+  (let [hold (fn [captured]
+               (cond-> captured
+                 (some? (:started-at-ms captured)) (update :started-at-ms + held-ms)
+                 (some? (:released-at-ms captured)) (update :released-at-ms + held-ms)))]
+    (cond-> state
+      (seq (:routes state))
+      (update :routes #(into {} (map (fn [[id route]] [id (cond-> route (:envelope route) (update :envelope hold))])) %)))))
+
 (defn- observation-error [spec state clock observation]
   (let [source (get-in spec [:sources (:source-id observation)]) c (:clock observation)
         last-clock (get-in state [:sources (:source-id observation) :clock])]

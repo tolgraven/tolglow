@@ -130,7 +130,13 @@
       (check-errors! (registry/validate-definition kind definition) path)
       (check! (and (= id (:id definition)) (= version (:version definition))
                    (integer? version) (pos? version)) path "Registry identity/version does not match its entry")
-      (when (= kind :effects) (compiler/compile-effect definition)))
+      ;; Current and cue-pinned effects must compile. A superseded revision an
+      ;; older owner admitted with a dangling expression (#703) stays verbatim in
+      ;; history rather than blocking every later backup once it is replaced.
+      (when (and (= kind :effects)
+                 (or (= definition (get-in r [:effects id]))
+                     (some #(and (= id (:effect-id %)) (= version (:effect-version %))) (vals (:cues r)))))
+        (check-errors! (compiler/definition-errors kind definition) path)))
     (doseq [kind [:effects :cues :fixtures] [id definition] (get r kind)]
       (when-let [historical (get-in r [:versions [kind id (:version definition)]])]
         (check! (= definition historical) [:registry kind id] "Current definition conflicts with its historical version"))
@@ -163,8 +169,7 @@
                  (#{:persistent :held :timed :one-shot} (:launch-mode instance))
                  (control/reload-policies (or (:reload-policy instance) :pinned)))
             path "Invalid captured running instance")
-    (check-errors! (registry/validate-definition :effects definition) (conj path :definition))
-    (compiler/compile-effect definition)
+    (check-errors! (compiler/definition-errors :effects definition) (conj path :definition))
     (system/validate-state instance)
     (parameter-sources/validate-saved! model instance)
     (when-let [window (:tolglow.effects.keyframes/saved instance)]
@@ -398,7 +403,9 @@
             [:transport] "Transport needs finite beat, supported BPM and play state")
     (time/normalize-meter (:meter transport))
     (when (contains? transport :time-ms)
-      (check! (nonnegative? (:time-ms transport)) [:transport :time-ms] "Transport time must be nonnegative")))
+      (check! (nonnegative? (:time-ms transport)) [:transport :time-ms] "Transport time must be nonnegative"))
+    (when (contains? transport :held-ms)
+      (check! (nonnegative? (:held-ms transport)) [:transport :held-ms] "Held transport time must be nonnegative")))
   (doseq [key [:frame-number] :when (contains? model key)]
     (check! (natural? (get model key)) [key] "Frame count must be nonnegative"))
   (when (contains? model :last-frame-time-ms)

@@ -278,3 +278,41 @@
         (is (= [1 1] (mapv #(get-in % [0 :cue-timing :due-beat]) @recorded)))
         (is (= [500 500] (mapv #(get-in % [0 :cue-timing :admitted-at :time-ms]) @recorded))))
       (finally (show/stop! runtime)))))
+
+(deftest midi-only-push-3-reaches-its-hold-deadline-without-a-host-schedule
+  ;; #694: no :display and no :schedule!, through the show host on the wall
+  ;; clock. Demo cues are expressive, so the gesture modifier makes the pad wait.
+  (let [runtime (show/start! {:workspace-options nil :workers 1 :frame-rate 40 :model (demo/model)}
+                             (constantly nil))
+        receive (atom nil) launched (promise) ended (promise) started (System/nanoTime)
+        elapsed-ms #(quot (- (System/nanoTime) started) 1000000)
+        submit! show/submit!]
+    (with-redefs [show/submit! (fn [runtime & [command :as args]]
+                                 (when (map? command)
+                                   (case (:op command)
+                                     :cue/launch (deliver launched (assoc command ::at (elapsed-ms)))
+                                     :instance/end (deliver ended command)
+                                     nil))
+                                 (apply submit! runtime args))]
+      (try
+        (let [device (show/connect-device! runtime :push-3
+                       {:session-id "midi-only-push-3" :user-mode? true :expression-mode :poly-aftertouch
+                        :cue-gestures? true :hold-ms 100
+                        :layout {:pads {[0 0] {:channel 3 :note 12}}
+                                 :buttons {:choose {:channel 5 :controller 42}}}
+                        :button-bindings {:choose :choose-cue} :gesture-modifier :choose-cue
+                        :midi {:open! (fn [callback] (reset! receive callback) :capture)
+                               :send! (fn [_ _]) :close! (fn [_])}})]
+          (is (some? (:schedule @(:resources device))) "the session owns its refresh cadence")
+          (@receive [0xb5 42 127])
+          (let [pressed (elapsed-ms)]
+            (@receive [0x93 12 96])
+            (let [launch (deref launched 2000 ::timeout)]
+              (is (map? launch) "a held pad becomes a hold without further input")
+              (when (map? launch)
+                (is (= [:ember :held] [(:cue-id launch) (get-in launch [:launch :mode])]))
+                (is (<= (+ pressed 100) (::at launch) (+ pressed 1000))))))
+          (@receive [0x83 12 0])
+          (is (= :instance/end (:op (deref ended 2000 ::timeout))))
+          (@receive [0xb5 42 0]))
+        (finally (show/disconnect-device! runtime "midi-only-push-3") (show/stop! runtime))))))

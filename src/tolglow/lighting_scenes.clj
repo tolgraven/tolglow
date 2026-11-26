@@ -5,6 +5,7 @@
   (:require [afterglow.control.model :as control]
             [clojure.string :as str]
             [tolglow.automation.random :as random]
+            [tolglow.compiler :as compiler]
             [tolglow.lighting-capacity :as capacity]
             [tolglow.lighting-budget :as budget]
             [tolglow.lighting-match :as matching]
@@ -149,7 +150,14 @@
                   (when (and (seq outs)
                              (or (some #(not= :dimmer (:attribute %)) outs)
                                  (some #(and (:dimmer (:channels %))
-                                             (not (some registry/emitter-attributes (keys (:channels %))))) heads)))
+                                             (not (some registry/emitter-attributes (keys (:channels %))))) heads))
+                             ;; The scene copies outputs and parameters only, not
+                             ;; reactive inputs or blocks. Its revision is
+                             ;; published past the owner's check, so it must
+                             ;; compile here or the backup refuses it (#703).
+                             (empty? (compiler/definition-errors
+                                      :effects {:id :scene-source :version 1 :targets (mapv :id heads)
+                                                :params (:params effect {}) :outputs outs})))
                     {:effect effect :outputs outs :params (candidate-params effect group generation)})))
                           (concat (remove #(= last-source-id (:id %)) rotated)
                                   (filter #(= last-source-id (:id %)) rotated)))

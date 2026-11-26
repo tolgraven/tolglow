@@ -5,6 +5,7 @@
             [clojure.java.io :as io]
             [afterglow.control.display :as presentation]
             [afterglow.control.devices.push-3.display :as push-3]
+            [afterglow.control.devices.push-3.usb :as push-3-usb]
             [afterglow.control.devices.transports :as transports])
   (:import [java.awt.image BufferedImage]
            [java.lang ProcessHandle]
@@ -329,16 +330,48 @@
          :device :push-2 :input :view
          :display-capabilities presentation/parameter-only-capabilities))
 
+(defonce ^:private push-3-usb-warmups (atom {}))
+
+(defn warm-push-3-usb!
+  "Start Afterglow's shared libusb context for the tethered Push 3 display on a
+  daemon thread, at most once per :library in this process, and return the
+  promise of its receipt: {:library :init-ms :reused?}, or {:library :failed?
+  true :error} when libusb is missing or cannot start. Never throws or blocks.
+  On macOS the first libusb_init scans every USB device (about 25 s on the
+  qualification Mac), so a host that starts this early lets the display open
+  reuse the context. A display open during the scan waits for it to finish.
+  Nothing is opened or claimed. A failed warm-up is not retried here; the
+  display open then tries libusb itself and reports its own error."
+  ([] (warm-push-3-usb! {}))
+  ([{:keys [library] :as options}]
+   (let [started (delay (push-3-usb/prepare-in-background! (select-keys options [:library])))]
+     (force (get (swap! push-3-usb-warmups #(if (contains? % library) % (assoc % library started)))
+                 library)))))
+
+(defn push-3-usb-status
+  "Report the Push 3 libusb warm-up for :library without waiting: nil when
+  none was started, {:status :preparing} during the scan, otherwise its receipt
+  with :status :ready or :failed."
+  ([] (push-3-usb-status {}))
+  ([{:keys [library]}]
+   (when-let [warmup (get @push-3-usb-warmups library)]
+     (let [receipt (force warmup)]
+       (cond (not (realized? receipt)) {:status :preparing}
+             (:failed? @receipt) (assoc @receipt :status :failed)
+             :else (assoc @receipt :status :ready))))))
+
 (defn browser-display
   "Create an offscreen re-frame display for a tethered Push. Push 2 uses Wayang.
   For Push 3, pass :device :push-3 and :usb {:bus b :address a} from enumeration.
-  Both routes accept an injected image sink for capture and replay."
+  Both routes accept an injected image sink for capture and replay. Building
+  the libusb Push 3 sink starts warm-push-3-usb!, so the device scan overlaps
+  the browser start; an injected sink never touches libusb."
   [{:keys [device sink usb] :or {device :push-2} :as options}]
   (when-not (#{:push-2 :push-3} device)
     (throw (ex-info "Unknown Push display device" {:device device})))
   (let [sink (or sink (case device
                         :push-2 (transports/wayang-display {:renderer! blit!})
-                        :push-3 (push-3/sink usb)))]
+                        :push-3 (do (warm-push-3-usb! usb) (push-3/sink usb))))]
     (when (and (:device sink) (not= device (:device sink)))
       (throw (ex-info "Display and sink select different devices" {:device device :sink (:device sink)})))
     (assoc (transport (assoc options :capture (process-capture options) :sink sink)) :device device :input :view)))
