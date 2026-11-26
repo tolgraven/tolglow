@@ -15,6 +15,18 @@ try MainActor.assumeIsolated {
     try expect(RoomWindows.role("studio") == nil, "an unknown role is ignored")
     try expect(RoomWindows.role(nil) == nil && RoomWindows.role(3) == nil, "a missing or non-text role is ignored")
 
+    let token = "0E8B7A1C-2D3F-4A5B-8C9D-0E1F2A3B4C5D".lowercased()
+    try expect(RoomWindows.identity(windowName: "tolglow-room-\(token)-3").map { $0.role == "room" && $0.id == nil } == true,
+               "the Room's window is known by its name")
+    try expect(RoomWindows.identity(windowName: "tolglow-panel-live-\(token)-1").map { $0.role == "panel" && $0.id == "live" } == true,
+               "a panel window names its panel")
+    try expect(RoomWindows.identity(windowName: "tolglow-panel-param-12-\(token)-2").map { $0.role == "panel" && $0.id == "param-12" } == true,
+               "a tile's id keeps its dash")
+    for other in [nil, "", "Tolglow", "tolglow-room-\(token)", "tolglow-room-not-a-uuid-at-all-x-1", "tolglow-panel-\(token)-1",
+                  "tolglow-studio-\(token)-1", "other-room-\(token)-1"] {
+        try expect(RoomWindows.identity(windowName: other) == nil, "no identity in \(other ?? "nil")")
+    }
+
     let room = RoomWindows.closedReply(role: "room", id: nil)
     try expect(room["status"] as? String == "closed" && room["role"] as? String == "room" && room["id"] == nil,
                "closing the Room reports the Room")
@@ -40,7 +52,9 @@ try MainActor.assumeIsolated {
                "a kept layouts copy is answered with its request")
     let refused = try reply(StudioPage.layoutsReply(request: 8, kept: false))
     try expect(refused["kept"] as? Bool == false && refused["request"] as? Int == 8, "a refused copy says so")
-    try expect(!FolderStore(defaults: UserDefaults(suiteName: "room-windows-check")!, key: "layouts", limit: FolderStore.layouts.limit)
+    let suite = "room-windows-check-\(UUID().uuidString)"
+    defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+    try expect(!FolderStore(defaults: UserDefaults(suiteName: suite)!, key: "layouts", limit: FolderStore.layouts.limit)
                 .save(String(repeating: "x", count: FolderStore.layouts.limit + 1), for: "/show"),
                "a copy over the layouts limit is refused, so the page warns")
 }

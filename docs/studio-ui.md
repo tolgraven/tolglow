@@ -110,17 +110,23 @@ delivery) that arrives while the request is in flight stays unpublished and, wit
 Publish valid edits on, is published next. A refused publication follows the same
 rule: Publication failed describes the text Studio still holds, while newer text
 stays Unpublished changes (the result names the refusal of the earlier text) and,
-with Publish valid edits on, goes out after the usual 850 ms quiet time. Switching
-from Neovim to the text editor and **Generate EDN** are edits too: their status
-follows the baseline. Neovim echoes of the text Studio already holds change
-nothing.
+with Publish valid edits on, goes out after the usual 850 ms quiet time. If the
+editor was taken back to the published text meanwhile, a refusal leaves that
+text's baseline status, with nothing queued. Switching from Neovim to the text
+editor is an edit too. **Generate EDN** takes its status from the baseline the
+same way, but only produces text: it never queues Publish valid edits. Neovim
+echoes of the text Studio already holds change nothing.
 
 Every controlled checkbox in Studio uses one component
 (`tolglow.studio.checkbox/input`). React restores a controlled checkbox to its
 rendered state when the change event ends, before Reagent's next frame renders
-the new state; the component renders pending updates first, so the box never
-shows its old state for a frame. A checkbox whose handler only sends a request
-shows the committed state until the reply arrives.
+the new state; the component renders pending updates first. That keeps the new
+state only when the handler has already changed what the box renders from, so
+every checkbox handler that changes app-db or a local atom does it
+synchronously (`rf/dispatch-sync`, `swap!`), including optimistic pending
+state such as a submitted lighting policy or an audience inclusion. The few
+that only send a request and keep no pending state (spatial settings, follow
+selection, fog control) show the committed state until the reply arrives.
 
 The default editor is a labeled accessible textarea with Tab indentation and
 Ctrl/Cmd+Enter publication. Selecting Neovim loads the actual pinned WASM runtime
@@ -351,7 +357,7 @@ their plots) and *single*, the 1×1 tile (one reading; the Room keeps only its
 one on tablet or phone) or at most 8 rows, and compact at up to a third of the
 columns or at most 14 rows. Growing a tile back restores its full controls and
 keeps its chosen parameter. A tile's **Source** opens the source editor inside
-the tile, with its own element IDs, not in the Live card (which may be in another
+the tile, with its own element IDs and keyboard focus in that window, not in the Live card (which may be in another
 window).
 
 **Any panel in its own window.** Every frame has **Detach**/**Redock**. The Room
@@ -388,7 +394,9 @@ The app answers with a `tolglow-studio-window` event whose detail is
 `{type: "layouts", request, kept}`; it refuses a copy over 64 KB. Inside the app
 a save is confirmed only once the app says it kept its copy, because only that
 copy survives a relaunch; a refusal, or no answer within 3 s, warns that the
-layout will be gone after the app relaunches. In a browser local storage
+layout will be gone after the app relaunches. An answer to a newer save settles
+older pending ones, so an older save's timeout cannot warn after a newer save was
+kept. In a browser local storage
 decides, as above.
 Editing a new layout starts from a measurement of the built-in layout on
 screen. A saved layout is repaired on load: unknown panels are dropped, missing
@@ -427,19 +435,23 @@ touch screen or the packaged Mac app.
 
 In the packaged Mac app `native/macOS/RoomWindows.swift` hosts every blank
 same-origin `window.open` from Studio's main frame in its own native window,
-cascaded and titled from the page's `document.title`. Studio identifies each
-window right after opening it (`{action: "identify", role: "room" | "panel",
-id}` on the `tolglowRoomWindow` handler, posted from the new window's own
-document when it has the handler, else from Studio's, which names the window
-opened last). Only the Room's window is placed on another display. Closing a
+cascaded and titled from the page's `document.title`. The app reads each
+window's role and panel from the name Studio gives it in `window.open`
+(`tolglow-room-<token>-<n>`, `tolglow-panel-<id>-<token>-<n>`). Studio also
+identifies each window right after opening it (`{action: "identify", role:
+"room" | "panel", id}` on the `tolglowRoomWindow` handler, posted from the new
+window's own document when it has the handler, else from Studio's, which names
+the window opened last); that only fills in a window whose name gave nothing. Only the Room's window is placed on another display. Closing a
 window sends `{status: "closed", role, id}` on the `tolglow-room-window` event,
 so the Room and each panel redock only for their own window.
-`native/Tests/RoomWindows` checks the roles, close replies and display choice;
+`native/Tests/RoomWindows` checks the window names, roles, close replies, display
+choice and the layouts reply;
 the window lifetime itself has not been exercised in the running app.
 
 `dev/studio/definition-controls-qa.mjs` uses Playwright `check()` and `uncheck()`
-on Publish valid edits, Create matching cue, Evaluate when inputs change and the
-auto-launch visual activity box; holds a refused publication while a newer edit
+on Publish valid edits, Create matching cue, Evaluate when inputs change, the
+auto-launch visual activity box, a parameter motion target and a video strip's
+direction; holds a refused publication while a newer edit
 is typed and checks the follow-up; checks the status after Generate EDN; and
 taps one stage's Remove twice in one task. Headless Chrome only.
 

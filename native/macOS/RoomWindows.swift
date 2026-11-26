@@ -11,11 +11,15 @@ import WebKit
 /// are script messages answered with a `tolglow-room-window` event on Studio's
 /// window.
 ///
-/// Studio identifies each window right after opening it with
-/// `{action: "identify", role: "room" | "panel", id}`, posted from the new
-/// window's own document (or, failing that, from Studio's, which names the
-/// window opened last). Only the Room's window is placed, and closing a window
-/// reports its role and id so the right panel redocks.
+/// Each window's role and panel come from the name Studio gives it in
+/// `window.open` (`tolglow-room-<token>-<generation>`,
+/// `tolglow-panel-<id>-<token>-<generation>`), read from the new window once
+/// WebKit has created it. Studio also identifies each window right after
+/// opening it with `{action: "identify", role: "room" | "panel", id}`, posted
+/// from the new window's own document (or, failing that, from Studio's, which
+/// names the window opened last); that only fills in a window whose name gave
+/// nothing. Only the Room's window is placed, and closing a window reports its
+/// role and id so the right panel redocks.
 @MainActor
 final class RoomWindows: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler, NSWindowDelegate {
     static let messageName = "tolglowRoomWindow"
@@ -26,6 +30,8 @@ final class RoomWindows: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptM
         let view: WKWebView
         var role: String?
         var id: String?
+        /// The role came from the window's own name, which nothing overrides.
+        var named = false
         var title: NSKeyValueObservation?
         init(window: NSWindow, view: WKWebView) {
             self.window = window
@@ -110,7 +116,40 @@ final class RoomWindows: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptM
         window.makeKeyAndOrderFront(nil)
         hosted.append(entry)
         lastOpened = view
+        // WebKit names the new window's frame after this returns.
+        DispatchQueue.main.async { [weak self, weak view] in
+            view?.evaluateJavaScript("window.name") { result, _ in
+                MainActor.assumeIsolated {
+                    guard let self, let view, let entry = self.entry(for: view),
+                          let identity = Self.identity(windowName: result as? String) else { return }
+                    self.assign(entry, role: identity.role, id: identity.id, named: true)
+                }
+            }
+        }
         return view
+    }
+
+    private func assign(_ entry: Hosted, role: String, id: String?, named: Bool) {
+        if entry.named && !named { return }
+        if role == "room" { for other in hosted where other !== entry && other.role == "room" { other.role = nil } }
+        entry.role = role
+        entry.id = id
+        entry.named = entry.named || named
+    }
+
+    /// The role and panel id in a window name Studio gave: `tolglow-room-<uuid>-<n>`
+    /// or `tolglow-panel-<id>-<uuid>-<n>` (a panel id may contain dashes).
+    static func identity(windowName name: String?) -> (role: String, id: String?)? {
+        guard let parts = name?.split(separator: "-", omittingEmptySubsequences: false).map(String.init),
+              parts.count >= 8, parts[0] == "tolglow", Int(parts[parts.count - 1]) != nil,
+              UUID(uuidString: parts[(parts.count - 6)..<(parts.count - 1)].joined(separator: "-")) != nil
+        else { return nil }
+        let middle = parts[1..<(parts.count - 6)]
+        switch middle.first {
+        case "room" where middle.count == 1: return ("room", nil)
+        case "panel" where middle.count >= 2: return ("panel", middle.dropFirst().joined(separator: "-"))
+        default: return nil
+        }
     }
 
     /// Studio called `close()` on one of its windows.
@@ -171,9 +210,7 @@ final class RoomWindows: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptM
             let target = fromStudio ? lastOpened : message.webView
             guard let target, let entry = entry(for: target),
                   let role = Self.role(body["role"]) else { return }
-            if role == "room" { for other in hosted where other !== entry && other.role == "room" { other.role = nil } }
-            entry.role = role
-            entry.id = body["id"] as? String
+            assign(entry, role: role, id: body["id"] as? String, named: false)
         case "move-to-display" where fromStudio:
             moveToDisplay()
         default:
