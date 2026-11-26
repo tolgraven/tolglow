@@ -115,8 +115,9 @@
      :description {:name (.getName (File. ^String file)) :format :signed-16-pcm :timestamp-method :file-sample-counter}
      :read! (fn [^bytes bytes offset length]
               (when paced?
-                (let [due (+ started-at-ms (* 1000.0 (/ @read-frames (double sample-rate))))
-                      wait (long (- due (now-ms)))]
+                ;; Deliver a block once its last sample would have been heard.
+                (let [due (+ started-at-ms (* 1000.0 (/ (+ @read-frames (quot length frame-size)) (double sample-rate))))
+                      wait (long (Math/ceil (- due (now-ms))))]
                   (when (pos? wait) (Thread/sleep wait))))
               (let [n (.read stream bytes (int offset) (int (* frame-size (quot length frame-size))))]
                 (when (pos? n) (swap! read-frames + (quot n frame-size)))

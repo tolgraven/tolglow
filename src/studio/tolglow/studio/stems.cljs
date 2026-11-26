@@ -208,7 +208,10 @@
          [:summary [:span.section-label "INSTRUMENT STEMS"]
           [:span.small.muted (if (seq configured) (str (count configured) " stems from this capture") "Name channels of a multichannel input")]]
          [:p.small.muted "Each stem reads one channel: its onsets can launch cues and its level can drive a parameter. While the transport is stopped, stems launch nothing and their routes hold."]
-         [editor s width running?]
+         ;; Stems are part of the capture configuration: edit them while stopped.
+         (if (and running? (seq configured))
+           [:p.small.muted "Stop capture to rename stems or change their channels."]
+           [editor s width running?])
          (when (and running? (seq configured))
            [:div.stem-cards
             (for [stem configured]
