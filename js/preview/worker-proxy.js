@@ -6,7 +6,7 @@ import {cameraControls, cameraPreset} from './camera.js';
 import {PreviewActivity} from './preview-activity.js';
 import {CameraNavigator} from './camera-navigation.js';
 import {LatestStateChannel} from './mailbox.js';
-import {presentFrame, showIdentity} from './presentation.js';
+import {CommittedFrames, presentFrame, showIdentity} from './presentation.js';
 import {clamp, roomDimensions} from './math.js';
 
 const sceneFields = ['rig', 'editor', 'sculpt-guide', 'spatial-volumes', 'volume-guides', 'glass-meshes', 'glass-volumes'];
@@ -14,6 +14,15 @@ const sceneFields = ['rig', 'editor', 'sculpt-guide', 'spatial-volumes', 'volume
 export function workerSupported() {
   return typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined'
     && typeof OffscreenCanvas.prototype.transferToImageBitmap === 'function';
+}
+
+// The worker can present completed frames itself when the visible canvas can be
+// handed over and an offscreen canvas accepts bitmaps. A page thread busy with
+// Studio state then no longer limits how often the room reaches the display.
+export function surfaceSupported(canvas) {
+  if (typeof canvas?.transferControlToOffscreen !== 'function' || typeof OffscreenCanvas === 'undefined') return false;
+  try {return Boolean(new OffscreenCanvas(1, 1).getContext('bitmaprenderer'));}
+  catch {return false;}
 }
 
 /** DOM/input owner only. Scene, fog and WebGL objects live in the worker. */
@@ -24,6 +33,8 @@ export class WorkerRoomPreview {
     this.identity = showIdentity(null); this.visible = false; this.generation = 0; this.paused = false;
     this.filmSettings = {}; this.lightingMode = 'hold'; this.fogOverride = null; this.workLight = .12; this.qualityChoice = 'auto'; this.actions = []; this.actionId = 0;
     this.lastFrame = 0; this.discardedFrames = 0; this.telemetry = {}; this.rendering = false;
+    this.surfaceAllowed = options.surface !== false; this.surface = false;
+    this.readers = new CommittedFrames(frames => this.readCommitted(frames));
     this.navigationListeners = new Set();
     this.abort = new AbortController(); this.whenReady = new Promise(resolve => {this.resolveReady = resolve;});
     this.camera = new THREE.PerspectiveCamera(49, 1, .08, 100);
@@ -113,9 +124,29 @@ export class WorkerRoomPreview {
     else if (message.type === 'error') this.fail(message.message);
     else if (message.type === 'frame') {
       this.rendering = !!message.rendering;
+      if (!message.bitmap) {this.presentedByWorker(message); return;}
+      let handed = false;
       try {
         if (!this.visible || message.generation !== this.generation) {
           message.bitmap.close(); this.discardedFrames++; return;
+        }
+        // The worker has produced an actual frame. From here the canvas can
+        // belong to it; an earlier startup failure still finds it untouched.
+        let canvas = null;
+        if (!this.presenter && this.surfaceAllowed && surfaceSupported(this.canvas)) {
+          // A canvas that already owns a context stays with the page.
+          try {canvas = this.canvas.transferControlToOffscreen();} catch {this.surfaceAllowed = false;}
+        }
+        if (canvas) {
+          const current = message.frameId > this.lastFrame && this.frameIdentity(message) === this.identity;
+          this.surface = handed = true;
+          this.lastFrame = Math.max(this.lastFrame, message.frameId);
+          const bitmap = current ? message.bitmap : null;
+          if (!current) {message.bitmap.close(); this.discardedFrames++; this.retryDraw();}
+          // The worker shows this first image itself and reports it like every later one.
+          this.worker.postMessage({type: 'surface', canvas, identity: this.identity, frameId: message.frameId, bitmap},
+            bitmap ? [canvas, bitmap] : [canvas]);
+          return;
         }
         const accepted = presentFrame(message, this.identity, this.lastFrame, bitmap => {
           // Do not claim the DOM canvas context before an actual worker frame.
@@ -136,21 +167,48 @@ export class WorkerRoomPreview {
           this.observedFrame?.(this.canvas, message.showId, message.epoch, message.showFrame);
         });
         this.lastFrame = Math.max(this.lastFrame, message.frameId);
-        if (accepted) {
-          this.telemetry = message.telemetry; this._ready = true; clearTimeout(this.startupTimer); this.resolveReady(true);
-          if (this.drawRequest && message.actionThrough >= this.drawRequest.id) {this.drawRequest.resolve(true); this.drawRequest = null;}
-        } else {
-          this.discardedFrames++;
-          // An explicit paused draw remains pending until the current show's
-          // image arrives, even if its first attempt belonged to an old epoch.
-          if (this.drawRequest) {
-            this.drawRequest.id = ++this.actionId;
-            this.actions.push({id: this.actionId, type: 'draw'}); this.sendState();
-          }
-        }
+        if (accepted) this.accepted(message);
+        else {this.discardedFrames++; this.retryDraw();}
       } catch (error) {this.fail(error);}
-      finally {if (this.worker) this.worker.postMessage({type: 'frame-ack', frameId: message.frameId});}
+      finally {if (this.worker && !handed) this.worker.postMessage({type: 'frame-ack', frameId: message.frameId});}
     }
+  }
+  frameIdentity(message) {
+    return showIdentity({'runtime-id': message.runtimeId, 'show-id': message.showId, epoch: message.epoch});
+  }
+  accepted(message) {
+    this.telemetry = message.telemetry; this._ready = true; clearTimeout(this.startupTimer); this.resolveReady(true);
+    if (this.drawRequest && message.actionThrough >= this.drawRequest.id) {this.drawRequest.resolve(true); this.drawRequest = null;}
+  }
+  // An explicit paused draw remains pending until the current show's
+  // image arrives, even if its first attempt belonged to an old epoch.
+  retryDraw() {
+    if (!this.drawRequest) return;
+    this.drawRequest.id = ++this.actionId;
+    this.actions.push({id: this.actionId, type: 'draw'}); this.sendState();
+  }
+  // The worker already placed this frame on the canvas, or closed it. Record
+  // the outcome here; nothing in this path can delay the next presentation.
+  presentedByWorker(message) {
+    this.lastFrame = Math.max(this.lastFrame, message.frameId);
+    if (!this.visible || message.generation !== this.generation) {this.discardedFrames++; return;}
+    if (!message.presented || this.frameIdentity(message) !== this.identity) {
+      this.discardedFrames++; this.retryDraw(); return;
+    }
+    this.presented = true; this.accepted(message);
+    // The page's copy of the canvas receives this image at the display's next
+    // frame. Readers are called once it has, in frame order.
+    if (this.canvas.tolglowCaptureVideo || this.observedFrame) this.readers.add(message);
+  }
+  readCommitted(frames) {
+    if (this.disposed || this.error || !this.visible) return;
+    try {
+      this.canvas.tolglowCaptureVideo?.(this.canvas);
+      for (const frame of frames) {
+        if (frame.generation === this.generation && this.frameIdentity(frame) === this.identity)
+          this.observedFrame?.(this.canvas, frame.showId, frame.epoch, frame.showFrame);
+      }
+    } catch (error) {this.fail(error);}
   }
   update(snapshot) {
     if (this.fallback) return this.fallback.update(snapshot);
@@ -159,7 +217,8 @@ export class WorkerRoomPreview {
     const nextIdentity = showIdentity(snapshot);
     if (this.identity !== nextIdentity) {
       this.identity = nextIdentity; this._ready = false;
-      if (this.bitmapPresenter) this.presenter.transferFromImageBitmap(null);
+      if (this.surface) this.worker?.postMessage({type: 'identity', identity: nextIdentity});
+      else if (this.bitmapPresenter) this.presenter.transferFromImageBitmap(null);
       else this.presenter?.clearRect(0, 0, this.canvas.width, this.canvas.height);
     }
     // Explicit graphics projection: no chat, credentials or definitions cross
@@ -241,12 +300,18 @@ export class WorkerRoomPreview {
       discardedFrames: this.discardedFrames, visible: this.visible, hidden: document.hidden, paused: this.paused,
       navigation: this.getNavigationState(), camera: this.camera.position.toArray(), target: this.controls.target.toArray()};
   }
-  stopProxy() {
+  stopProxy(clear = false) {
     this.refresh?.setActive(false);
     this.editorInput?.dispose(); this.editorInput = null;
     clearTimeout(this.startupTimer); this.navigation?.dispose(); this.abort.abort();
     this.resizeObserver?.disconnect(); this.activity?.dispose(); this.controls.dispose(); this.channel?.close();
-    this.worker?.terminate(); this.worker = null;
+    this.readers.clear();
+    const worker = this.worker; this.worker = null;
+    if (!worker) return;
+    // Only the worker can blank a canvas it presents. Let it retire its own
+    // resources first, then end it regardless.
+    if (clear && this.surface) {worker.postMessage({type: 'dispose'}); setTimeout(() => worker.terminate(), 250);}
+    else worker.terminate();
   }
   fail(error) {
     if (this.disposed || this.fallback) return;
@@ -273,7 +338,7 @@ export class WorkerRoomPreview {
     this.drawRequest?.resolve(false); this.drawRequest = null;
   }
   dispose() {
-    if (this.disposed) return; this.disposed = true; this._ready = false; this.stopProxy(); this.fallback?.dispose();
+    if (this.disposed) return; this.disposed = true; this._ready = false; this.stopProxy(true); this.fallback?.dispose();
     this.navigationListeners.clear();
     if (this.bitmapPresenter) this.presenter.transferFromImageBitmap(null);
     else this.presenter?.clearRect(0, 0, this.canvas.width, this.canvas.height);

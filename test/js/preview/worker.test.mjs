@@ -72,6 +72,28 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
     assert.equal(heartbeat.telemetry.activeLights, 8);
     assert.equal(heartbeat.telemetry.programCount, first.programCount, 'A cue launch must not compile a new light-count shader');
 
+    // Block the page thread outright. A worker that waits for the page to show
+    // each bitmap stops after its bounded queue; one that owns the canvas goes on.
+    // Software rendering presents one frame about every 300-400 ms here, and CI
+    // presented exactly 4 in a 1.5 s block, so the block is 3 s for some margin.
+    // A worker held by its queue stays at that bound however long the block.
+    const starved = await page.evaluate(async () => {
+      const reports = [], listener = event => {if (event.data.type === 'frame') reports.push(event.data);};
+      engine.worker.addEventListener('message', listener);
+      const end = performance.now() + 3000; while (performance.now() < end);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      engine.worker.removeEventListener('message', listener);
+      const copy = document.createElement('canvas'); copy.width = copy.height = 16;
+      const context = copy.getContext('2d'); context.drawImage(engine.canvas, 0, 0, 16, 16);
+      return {surface: engine.surface, presentation: engine.getTelemetry().presentation, during: reports.length,
+        presented: reports.filter(frame => frame.presented).length, carriedBitmap: reports.some(frame => frame.bitmap),
+        lit: context.getImageData(0, 0, 16, 16).data.some((value, i) => i % 4 !== 3 && value > 0)};
+    });
+    assert.equal(starved.surface, true); assert.equal(starved.presentation, 'worker');
+    assert.ok(starved.presented >= 4, `Only ${starved.presented} frames reached the canvas while the page was blocked`);
+    assert.equal(starved.carriedBitmap, false);
+    assert.equal(starved.lit, true, 'the handed-over canvas still reads back as the presented room');
+
     const fenced = await page.evaluate(async () => {
       engine.setLightingMode('interpolate'); engine.pause(); await engine.draw();
       // Change show epoch after a real render starts, while its shader work is
@@ -102,18 +124,51 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
     assert.equal(atmosphere.fog.atmosphere.referencePathM,5);
     assert.equal(atmosphere.fog.atmosphere.fogLevel,.060587);
     assert.ok(Math.abs(atmosphere.fog.massEstimate - 3.5)<.00001);
+    // Page-side readers of a handed-over canvas are called once its copy on the
+    // page holds the reported frame. Alternate two very different images while
+    // paused, so a reader that ran too early would return the previous one.
+    // Software rendering commits early enough to pass either way; on a hardware
+    // GPU a reader on the first animation frame saw the previous image in 17
+    // of 30 draws. `CommittedFrames` has the deterministic test.
+    const readers = await page.evaluate(async () => {
+      const probe = document.createElement('canvas'); probe.width = probe.height = 8;
+      const context = probe.getContext('2d', {willReadFrequently: true});
+      window.canvasLevel = source => {
+        context.clearRect(0, 0, 8, 8); context.drawImage(source, 0, 0, 8, 8);
+        return context.getImageData(0, 0, 8, 8).data.reduce((sum, value) => sum + value, 0);
+      };
+      const results = [];
+      for (let trial = 0; trial < 6; trial++) {
+        const captured = new Promise(resolve => {engine.canvas.tolglowCaptureVideo = pixels => resolve(canvasLevel(pixels));});
+        engine.setWorkLight(trial % 2 ? 0 : 1); await engine.draw();
+        const seen = await captured; delete engine.canvas.tolglowCaptureVideo;
+        await new Promise(resolve => setTimeout(resolve, 250));
+        results.push({seen, settled: canvasLevel(engine.canvas)});
+      }
+      return results;
+    });
+    assert.ok(readers.every((sample, i) => !i || sample.settled !== readers[i - 1].settled),
+      `the alternating images must differ: ${JSON.stringify(readers)}`);
+    assert.deepEqual(readers.map(sample => sample.seen), readers.map(sample => sample.settled),
+      'a capture reader must see the frame it was called for, not the one before it');
     const resized = await page.evaluate(async () => {
       engine.canvas.style.width = '480px'; engine.canvas.style.height = '300px'; engine.resize(); await engine.draw();
-      const telemetry = engine.getTelemetry(); const canvas = engine.canvas; engine.dispose();
-      return {telemetry, disposed: engine.disposed, terminated: engine.worker === null,
+      const telemetry = engine.getTelemetry(); const canvas = engine.canvas;
+      await new Promise(resolve => setTimeout(resolve, 250));
+      const shown = canvasLevel(canvas), backing = [canvas.width, canvas.height]; engine.dispose();
+      await new Promise(resolve => setTimeout(resolve, 500));
+      return {telemetry, disposed: engine.disposed, terminated: engine.worker === null, shown, backing, afterDispose: canvasLevel(canvas),
         channelClosed: engine.channel.closed, ownerRemoved: !canvas.tolglowPreview, drawAfterDispose: await engine.draw()};
     });
     const scale = resized.telemetry.renderScale;
     assert.ok(scale >= .5 && scale <= 1);
     assert.deepEqual(resized.telemetry.displayPixels, [480, 300]);
+    assert.deepEqual(resized.backing, [480, 300], 'page-side readers size themselves from the handed-over canvas');
     assert.equal(resized.telemetry.displayRange, 'sdr');
     assert.deepEqual(resized.telemetry.pixels, [Math.round(360 * scale), Math.round(225 * scale)]);
     assert.ok(resized.disposed && resized.terminated && resized.channelClosed && resized.ownerRemoved);
+    assert.ok(resized.shown > 0, 'the room was on the canvas before disposal');
+    assert.equal(resized.afterDispose, 0, 'disposal leaves a blank canvas, not the last room image');
     assert.equal(resized.drawAfterDispose, false);
     assert.deepEqual(errors, []);
 
@@ -143,6 +198,6 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
     assert.deepEqual(fallback.observed, fallback.navigation);
     assert.deepEqual(fallback.secondaryObserved, fallback.navigation); assert.equal(fallback.cameraShared, true);
     assert.deepEqual(errors, []);
-    t.diagnostic(JSON.stringify({scope: 'Chromium SwiftShader, not physical GPU/Safari', first, heartbeat, fenced, resized, fallback}));
+    t.diagnostic(JSON.stringify({scope: 'Chromium SwiftShader, not physical GPU/Safari', first, heartbeat, starved, fenced, readers, resized, fallback}));
   } finally {await browser?.close(); await new Promise(resolve => server.close(resolve));}
 });

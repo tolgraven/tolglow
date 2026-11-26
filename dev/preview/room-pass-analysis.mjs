@@ -1,10 +1,13 @@
 // Browser-side collection uses completed, accepted bitmaps from the real proxy.
+// When the worker presents on its own surface it reports the canvas submission.
 export function beginPassSample(options) {
   const {mode, defer = false} = typeof options === 'string' ? {mode: options} : options;
   if (window.finishRoomPassSample) throw new Error('A Room pass collector is already prepared.');
   const engine = document.querySelector('#preview').tolglowPreview;
-  if (!engine.worker || !engine.bitmapPresenter) throw new Error('Pass attribution requires a worker and bitmaprenderer.');
-  const presenter = engine.presenter, original = presenter.transferFromImageBitmap, values = new Map();
+  if (!engine.worker || !(engine.bitmapPresenter || engine.surface)) throw new Error('Pass attribution requires a worker and bitmaprenderer.');
+  // A deferred start can follow the handover, so the presenter is chosen then.
+  let presenter = null, original = null;
+  const values = new Map();
   let submitted, accepted = 0, raymarched = 0, started = false;
   const policies = new Set(), queryFrames = [];
   let maximumDensity = 0, detailedFrames = 0, missingPolicyFrames = 0;
@@ -29,7 +32,7 @@ export function beginPassSample(options) {
     for (const [phase, ms] of Object.entries(p.gpuMs)) add(phase+'GpuMs', ms);
     add('workerFrameMs', t.workerFrameMs); add('gpuFenceWaitMs', t.gpuCompletionWaitMs);
     add('readyForFrameMs', t.readyForFrameMs); add('rafDeliveryMs', t.rafDeliveryMs);
-    add('bitmapExportMs', t.bitmapTransferMs); add('domSubmitMs', submitted);
+    add('bitmapExportMs', t.bitmapTransferMs); add('domSubmitMs', engine.surface ? t.presentSubmitMs : submitted);
     add('workerPostThroughDomMs', performance.timeOrigin + performance.now() - p.sentAt);
     queryFrames.push({frame: p.frame, enabled: p.timerQueriesEnabled, started: p.timerQueriesStarted,
       apiCalls: p.timerApiCalls, supported: p.timerSupported, extensionRequested: p.timerExtensionRequested, workerFrameMs: t.workerFrameMs,
@@ -37,12 +40,16 @@ export function beginPassSample(options) {
   };
   window.startRoomPassSample = () => {
     if (started) return;
-    started = true; presenter.transferFromImageBitmap = transfer;
+    started = true;
+    if (!engine.surface) {
+      presenter = engine.presenter; original = presenter.transferFromImageBitmap;
+      presenter.transferFromImageBitmap = transfer;
+    }
     engine.worker.addEventListener('message', collect);
   };
   window.finishRoomPassSample = () => {
     if (started) {
-      presenter.transferFromImageBitmap = original;
+      if (presenter) presenter.transferFromImageBitmap = original;
       engine.worker.removeEventListener('message', collect);
     }
     delete window.startRoomPassSample;

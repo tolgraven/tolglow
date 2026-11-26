@@ -26,7 +26,7 @@ async function withPresentationBoundary(run) {
     presenter.transferFromImageBitmap({});
     const event = new Event('message'); event.data = {type: 'frame', telemetry}; worker.dispatchEvent(event);
   };
-  try {await run({present, presenter, original, window, document});}
+  try {await run({present, presenter, original, window, document, engine});}
   finally {
     window.finishRoomPassSample?.();
     for (const [key, descriptor] of previous) {
@@ -77,5 +77,24 @@ test('a headless browser sample is recorded but cannot qualify as a foreground d
     assert.deepEqual(await sample(), []);
     navigator.userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36';
     assert.deepEqual(await sample(), ['headless browser has no foreground display']);
+  });
+});
+
+test('a deferred sample that starts after the handover reads the worker submission', async () => {
+  await withPresentationBoundary(async ({present, presenter, original, engine}) => {
+    beginPassSample({mode: 'full', defer: true});
+    // The worker takes the canvas before the sample starts.
+    engine.surface = true; engine.bitmapPresenter = false;
+    Object.assign(engine.telemetry, {presentation: 'worker', presentSubmitMs: .25});
+    const pending = measureRoom(0);
+    const shown = performance.timeOrigin + performance.now();
+    engine.telemetry = {...engine.telemetry, presentedAtMs: shown}; present();
+    engine.telemetry = {...engine.telemetry, presentedAtMs: shown + 16}; present();
+    const measured = await pending;
+    assert.equal(presenter.transferFromImageBitmap, original, 'a handed-over canvas has no page presenter to wrap');
+    assert.equal(measured.frameMeasurement, 'worker canvas submission');
+    assert.equal(measured.passDiagnostic.accepted, 2);
+    assert.equal(measured.passDiagnostic.timings.domSubmitMs.p50, .25);
+    assert.ok(Math.abs(measured.presented.p50Ms - 16) < .001, 'cadence comes from the worker submission times');
   });
 });

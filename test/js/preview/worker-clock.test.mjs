@@ -30,8 +30,11 @@ const bundle = await build({stdin: {
     };`
 }, bundle: true, format: 'iife', platform: 'browser', write: false});
 
+const BLINK = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36';
+const WEBKIT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15';
+
 function worker({hz = 60, work = 0, software = false, quality = software ? 'auto' : 'mobile',
-  yieldMs, readyAfterYields = Infinity} = {}) {
+  yieldMs, readyAfterYields = Infinity, userAgent = BLINK, animationFrames = true} = {}) {
   let now = 0, nextId = 0, stateId = 0, readyThrough = Infinity, serial = 0, closed = false, yields = 0;
   const fences = new Set(), bitmaps = [], listeners = new Map(), resizes = [];
   const rafs = new Map(), timers = new Map(), messages = [], draws = [];
@@ -51,8 +54,14 @@ function worker({hz = 60, work = 0, software = false, quality = software ? 'auto
     flush() {}
   }};
   const host = {graphics, AbortController, console, performance: {now: () => now, timeOrigin: 0},
+    navigator: {userAgent},
     requestAnimationFrame(callback) {
-      assert.equal(rafs.size, 0, 'only one display wakeup may be outstanding');
+      // Chrome refuses animation frames in a worker without a parent frame sink.
+      if (!animationFrames) throw Object.assign(new Error('unsupported'), {name: 'NotSupportedError'});
+      // The refresh sampler owns its own short burst beside the draw wakeup.
+      const sampler = callback.name === 'bound tick';
+      assert.equal([...rafs.values()].filter(pending => (pending.name === 'bound tick') === sampler).length, 0,
+        'only one display wakeup may be outstanding per owner');
       const id = ++nextId; rafs.set(id, callback); return id;
     },
     cancelAnimationFrame: id => rafs.delete(id), setTimeout: timer, clearTimeout: id => timers.delete(id),
@@ -99,6 +108,7 @@ function worker({hz = 60, work = 0, software = false, quality = software ? 'auto
   send({type: 'activity', active: true, generation: 1}); update(); healthy();
   return {draws, messages, frames, healthy, update, advance, state, bitmaps, resizes, fences, send,
     get engine() {return graphics.engine;},
+    get closed() {return closed;},
     get yields() {return yields;},
     get timerWaits() {return [...timers.values()].map(entry => entry.at - now);},
     set fenceReady(value) {readyThrough = value ? Infinity : 0;},
@@ -118,6 +128,11 @@ function worker({hz = 60, work = 0, software = false, quality = software ? 'auto
     dispose() {
       if (closed) return;
       send({type: 'dispose'}); healthy();
+      // A worker that presents stays for the animation frame that commits its blank image.
+      for (let frame = 0; !closed && frame < 2; frame++) {
+        const callbacks = [...rafs.values()]; rafs.clear();
+        for (const callback of callbacks) callback(now);
+      }
       assert.ok(closed); assert.equal(fences.size, 0); assert.equal(rafs.size, 0); assert.equal(timers.size, 0);
     }
   };
@@ -332,4 +347,186 @@ test('Auto measures the completed display cycle through bitmap acknowledgement',
   assert.equal(w.frames().at(-1).telemetry.workerFrameMs, 2);
   assert.ok(Math.abs(w.engine.measuredFrameMs - 13) < 1e-9,
     'delivery lateness and bitmap acknowledgement must count against Auto\'s display budget');
+});
+
+// A presentation surface the worker owns after the proxy hands the canvas over.
+function surfaceFor(w, identity = '[null,null,null]') {
+  const shown = [];
+  const canvas = {width: 0, height: 0, getContext: type => type === 'bitmaprenderer'
+    ? {transferFromImageBitmap(bitmap) {shown.push(bitmap);}} : null};
+  const first = w.frames().at(-1);
+  w.send({type: 'surface', canvas, identity, frameId: first.frameId, bitmap: first.bitmap});
+  w.healthy();
+  return shown;
+}
+
+test('a handed-over surface presents every completed frame without a page acknowledgement', async t => {
+  const w = worker(); t.after(() => w.dispose());
+  await w.refresh(1000 / 60);
+  assert.equal(w.frames().length, 1); assert.ok(w.frames()[0].bitmap);
+  const shown = surfaceFor(w);
+  assert.equal(shown.length, 1, 'the first image is shown by the worker that rendered it');
+  assert.equal(w.frames().at(-1).presented, true);
+  // The page never answers again. Sixty refreshes still yield sixty images.
+  for (let frame = 2; frame <= 61; frame++) await w.refresh(frame * 1000 / 60);
+  assert.equal(w.draws.length, 61); assert.equal(shown.length, 61);
+  const reports = w.frames().slice(1);
+  assert.ok(reports.every(frame => !frame.bitmap && frame.telemetry.presentation === 'worker'));
+  assert.deepEqual(reports.map(frame => frame.frameId), Array.from({length: 61}, (_, i) => i + 1));
+  assert.ok(w.bitmaps.every(bitmap => bitmap.closed), 'each presented bitmap is released');
+  assert.equal(w.fences.size, 0);
+});
+
+test('a surface keeps GPU ownership bounded and closes images from a show the page has left', async t => {
+  const w = worker(); t.after(() => w.dispose());
+  await w.refresh(1000 / 60);
+  const shown = surfaceFor(w);
+  w.fenceReady = false;
+  for (let frame = 2; frame <= 6; frame++) await w.refresh(frame * 1000 / 60);
+  assert.equal(w.fences.size, 2, 'two submitted draws at most, with or without acknowledgements');
+  assert.equal(w.draws.length, 3);
+  // The page moved to another show while both draws were on the GPU.
+  w.send({type: 'identity', identity: '["runtime","other",2]'});
+  assert.equal(shown.at(-1), null, 'the old image is cleared at once');
+  w.fenceReady = true; await w.advance(140);
+  const late = w.frames().slice(-2);
+  assert.deepEqual(late.map(frame => frame.presented), [false, false]);
+  assert.equal(shown.filter(Boolean).length, 1);
+  assert.ok(w.bitmaps.every(bitmap => bitmap.closed));
+  w.send({type: 'identity', identity: '[null,null,null]'});
+  await w.refresh(200);
+  assert.equal(w.frames().at(-1).presented, true);
+  w.send({type: 'dispose'}); w.healthy();
+  assert.equal(shown.at(-1), null, 'disposal blanks the canvas only the worker can reach');
+  assert.equal(w.fences.size, 0);
+  assert.equal(w.closed, false, 'the blank image is committed at the next display frame, so the worker outlives it');
+  w.dispose();
+});
+
+test('a presenting worker without animation frames still ends after blanking its surface', async t => {
+  const w = worker({animationFrames: false}); t.after(() => w.dispose());
+  await w.advance(1000 / 60);
+  const shown = surfaceFor(w);
+  w.send({type: 'dispose'}); w.healthy();
+  assert.equal(shown.at(-1), null);
+  assert.equal(w.closed, false);
+  await w.advance(1000);
+  assert.equal(w.closed, true);
+  assert.deepEqual(w.timerWaits, []);
+});
+
+test('a worker whose animation frames are unsupported renders on timers', async t => {
+  const w = worker({animationFrames: false}); t.after(() => w.dispose());
+  for (let frame = 1; frame <= 6; frame++) {
+    await w.advance(frame * 1000 / 60);
+    if (w.frames().at(-1)?.bitmap && !w.frames().at(-1).bitmap.closed) w.acknowledge();
+  }
+  assert.ok(w.draws.length >= 5, `only ${w.draws.length} timer-paced draws`);
+  assert.equal(w.engine.targetHz, 60);
+});
+
+test('a hidden surface shows nothing from the expired generation and resumes without an acknowledgement', async t => {
+  const w = worker(); t.after(() => w.dispose());
+  await w.refresh(1000 / 60);
+  const shown = surfaceFor(w);
+  w.fenceReady = false;
+  await w.refresh(2 * 1000 / 60);
+  await w.refresh(3 * 1000 / 60);
+  assert.equal(w.fences.size, 2);
+  // The tab is hidden while two draws are on the GPU.
+  w.send({type: 'activity', active: false, generation: 2});
+  w.fenceReady = true; await w.advance(120);
+  assert.equal(shown.length, 1, 'neither draw of the hidden generation reaches the canvas');
+  assert.equal(w.frames().length, 2, 'and neither is reported as a frame');
+  assert.ok(w.bitmaps.every(bitmap => bitmap.closed)); assert.equal(w.fences.size, 0);
+  for (let frame = 9; frame <= 12; frame++) await w.refresh(frame * 1000 / 60);
+  assert.equal(w.draws.length, 3, 'a hidden worker submits nothing');
+  // Shown again: the last image stayed on the canvas and new ones follow it.
+  w.state.generation = 3;
+  w.send({type: 'activity', active: true, generation: 3}); w.update();
+  for (let frame = 13; frame <= 16; frame++) await w.refresh(frame * 1000 / 60);
+  assert.ok(shown.length >= 4, `only ${shown.length - 1} images after becoming visible again`);
+  assert.ok(shown.every(Boolean), 'hiding and showing never blanks the surface');
+  assert.ok(w.frames().slice(2).every(frame => frame.presented && frame.generation === 3));
+});
+
+test('graphics context loss leaves a surface with its last image and presents again once restored', async t => {
+  const w = worker(); t.after(() => w.dispose());
+  await w.refresh(1000 / 60);
+  const shown = surfaceFor(w);
+  w.fenceReady = false;
+  await w.refresh(2 * 1000 / 60);
+  await w.refresh(3 * 1000 / 60);
+  w.contextEvent('webglcontextlost');
+  assert.ok(w.bitmaps.every(bitmap => bitmap.closed)); assert.equal(w.fences.size, 0);
+  assert.equal(shown.length, 1); assert.ok(shown[0], 'the surface keeps the image it had');
+  w.contextEvent('webglcontextrestored');
+  w.fenceReady = true;
+  for (let frame = 5; frame <= 7; frame++) await w.refresh(frame * 1000 / 60);
+  assert.ok(shown.length >= 3 && shown.every(Boolean));
+  assert.ok(w.frames().slice(-2).every(frame => frame.presented && !frame.bitmap));
+});
+
+test('the worker samples the display itself when the page reports a starved callback rate', async t => {
+  const w = worker({hz: 15}); t.after(() => w.dispose());
+  assert.equal(w.engine.targetHz, 15);
+  for (let frame = 1; frame <= 45; frame++) {
+    await w.refresh(frame * 1000 / 60);
+    if (w.frames().at(-1)?.bitmap) w.acknowledge();
+  }
+  assert.equal(w.engine.displayHz, 60);
+  assert.equal(w.engine.targetHz, 60);
+  // A later page sample cannot lower what this thread measured on the panel.
+  w.update();
+  assert.equal(w.engine.targetHz, 60);
+});
+
+test('headless and embedded Blink builds sample the display from the worker as Chrome does', async t => {
+  for (const product of ['HeadlessChrome/155.0.0.0', 'Chromium/155.0.0.0 Chrome/155.0.0.0', 'Chrome/155.0.0.0 Mobile']) {
+    const w = worker({hz: 15, userAgent: BLINK.replace('Chrome/155.0.0.0', product)}); t.after(() => w.dispose());
+    for (let frame = 1; frame <= 45; frame++) {
+      await w.refresh(frame * 1000 / 60);
+      if (w.frames().at(-1)?.bitmap && !w.frames().at(-1).bitmap.closed) w.acknowledge();
+    }
+    assert.equal(w.engine.displayHz, 60, product);
+  }
+});
+
+test('timer-paced worker animation frames cannot raise the display rate the page measured', async t => {
+  // WebKit services worker animation frames from a 15 ms timer on every panel.
+  const w = worker({hz: 60, userAgent: WEBKIT}); t.after(() => w.dispose());
+  for (let frame = 1; frame <= 45; frame++) {
+    await w.refresh(frame * 15);
+    if (w.frames().at(-1)?.bitmap && !w.frames().at(-1).bitmap.closed) w.acknowledge();
+  }
+  assert.equal(w.engine.displayHz, 60);
+  assert.equal(w.engine.targetHz, 60);
+});
+
+test('Auto lowers its internal scale while a saturated GPU always has a draw outstanding', async t => {
+  const w = worker({quality: 'auto', work: 2}); t.after(() => w.dispose());
+  await w.refresh(1000 / 60);
+  surfaceFor(w);
+  // From here each draw takes fifty milliseconds to complete and a second one
+  // is always queued behind it, as on a large rig at full resolution.
+  w.fenceReady = false;
+  let time = 1000 / 60, done = 1;
+  await w.refresh(time += 1000 / 60);
+  for (let step = 0; step < 60; step++) {
+    await w.refresh(time += 50);
+    if (w.engine.renderScale < 1) break;
+    assert.equal(w.fences.size, 2, 'the queue stays full until Auto reacts');
+    w.completeThrough(++done); await w.advance(time + 3);
+  }
+  assert.ok(w.engine.renderScale < 1, 'sustained overload must reduce the scene raster');
+  assert.equal(w.engine.resizePending, true);
+  assert.equal(w.fences.size, 1, 'a draw was still outstanding when the decision was taken');
+  // The new raster waits for the submitted draws. Nothing else is submitted meanwhile.
+  const submitted = w.draws.length;
+  await w.refresh(time += 50);
+  assert.equal(w.draws.length, submitted);
+  w.fenceReady = true; await w.advance(time += 10);
+  assert.equal(w.fences.size, 0);
+  await w.refresh(time += 50);
+  assert.equal(w.draws.length, submitted + 1);
 });

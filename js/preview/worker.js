@@ -1,4 +1,4 @@
-import {nextDisplayDeadline} from './display-clock.js';
+import {DisplayRefresh, nextDisplayDeadline} from './display-clock.js';
 import {showIdentity} from './presentation.js';
 import {SceneRenderer} from './scene-renderer.js';
 
@@ -6,10 +6,28 @@ let engine, canvas, stateId = 0, actionThrough = 0, frameId = 0;
 let state, stopped = false, lastDraw = 0, nextDraw = null, renderOnce = false;
 let active = false, generation = 0, deferredState = null, pendingFrame = null;
 let pendingLoad = null, lastAck = null, pollTimer = null, yielding = false;
+// A transferred presentation surface lets completed frames reach the page
+// without a main-thread task. Until it arrives, bitmaps travel to the proxy.
+let surface = null, presenter = null, expectedIdentity = null;
+let proxyHz = null, workerHz = null;
 const frames = [];
 const send = value => postMessage(value);
 const canDraw = () => active && state?.generation === generation && (!state.paused || renderOnce);
 const gpuPending = () => frames.some(frame => frame.fence);
+const frameIdentity = metadata => showIdentity({'runtime-id': metadata.runtimeId, 'show-id': metadata.showId, epoch: metadata.epoch});
+
+// Animation callbacks on a busy Studio thread arrive at a fraction of the panel
+// rate. Blink delivers this thread's callbacks from the same display, so there
+// neither sample can exceed it. WebKit paces worker callbacks with a 15 ms
+// timer on every panel, which would read as about 66 Hz. Outside Blink the
+// page's sample stays the only measurement of the display.
+const displayDriven = /Chrom(?:e|ium)\//.test(self.navigator?.userAgent ?? '');
+const refresh = new DisplayRefresh(hz => {workerHz = hz; applyDisplayHz();}, displayDriven ? self : {});
+
+function applyDisplayHz() {
+  const hz = Math.max(proxyHz ?? 0, workerHz ?? 0);
+  if (engine && hz) engine.setDisplayHz(hz);
+}
 
 function canSubmit() {
   if (stopped || !engine || engine.lost || deferredState || !canDraw()) return false;
@@ -40,9 +58,25 @@ function retireFrames() {
 
 function stop() {
   stopped = true; deferredState = pendingLoad = null;
+  refresh.setActive(false);
   engine?.displayClock.cancel();
   retireFrames();
   engine?.dispose();
+}
+
+// A canvas shows what this thread gave it at the display's next frame. Ending
+// the worker before then would leave the previous image on a canvas that no
+// one else can reach.
+function afterCommit(done) {
+  let frame = null, remaining = 2;
+  const finish = () => {clearTimeout(timer); if (frame !== null) cancelAnimationFrame(frame); done();};
+  const timer = setTimeout(finish, 200);
+  const wait = () => {
+    frame = null;
+    if (!remaining--) return finish();
+    try {frame = self.requestAnimationFrame?.(wait) ?? null;} catch {/* The timer ends it. */}
+  };
+  wait();
 }
 
 function fail(error) {
@@ -68,18 +102,55 @@ function pollAgain(frame) {
   }
 }
 
+function completed(frame, now) {
+  if (active && frame.metadata.generation === generation) {
+    engine.lastReadyMs = now - frame.time;
+    // With render-ahead, completed frames can arrive every refresh even
+    // when their individual latency spans two refreshes.
+    pendingLoad = {elapsed: Math.min(engine.lastReadyMs, lastAck === null ? Infinity : now - lastAck), now};
+    lastAck = now;
+    if (engine.softwareRenderer) nextDraw = now + engine.frameInterval;
+  }
+}
+
+function frameMessage(frame) {
+  const {metadata, telemetry, time, started, duration, gpuWait, bitmapMs} = frame;
+  return {type: 'frame', ...metadata, rendering: frames.length > 0,
+    telemetry: {...telemetry, frameIntervalMs: engine.frameInterval,
+      workerFrameMs: duration, rafDeliveryMs: started - time, readyForFrameMs: engine.lastReadyMs,
+      gpuCompletionWaitMs: gpuWait, idleBudgetMs: Math.max(0, engine.frameInterval - duration),
+      bitmapTransferMs: bitmapMs, presentation: presenter ? 'worker' : 'proxy', presentSubmitMs: frame.presentMs,
+      presentedAtMs: frame.presentedAt}};
+}
+
+// Show the image from this thread. An image from a show the page has already
+// left is closed, exactly as the proxy would refuse it.
+function present(frame) {
+  const {bitmap} = frame, presented = frameIdentity(frame.metadata) === expectedIdentity;
+  frame.bitmap = null;
+  if (presented) {
+    if (surface.width !== bitmap.width || surface.height !== bitmap.height) {
+      surface.width = bitmap.width; surface.height = bitmap.height;
+    }
+    const begun = performance.now();
+    presenter.transferFromImageBitmap(bitmap);
+    frame.presentMs = performance.now() - begun;
+    frame.presentedAt = performance.timeOrigin + begun;
+  }
+  bitmap.close();
+  completed(frame, performance.now());
+  send({...frameMessage(frame), presented});
+}
+
 function publish() {
+  while (presenter && frames[0] && !frames[0].fence) present(frames.shift());
   const frame = frames[0];
-  if (!frame || frame.fence || pendingFrame) return;
+  if (presenter || !frame || frame.fence || pendingFrame) return;
   frames.shift();
   pendingFrame = frame;
-  const {bitmap, metadata, telemetry, time, started, duration, gpuWait, bitmapMs} = frame;
+  const {bitmap} = frame;
   try {
-    postMessage({type: 'frame', ...metadata, bitmap, rendering: frames.length > 0,
-      telemetry: {...telemetry, frameIntervalMs: engine.frameInterval,
-        workerFrameMs: duration, rafDeliveryMs: started - time, readyForFrameMs: engine.lastReadyMs,
-        gpuCompletionWaitMs: gpuWait, idleBudgetMs: Math.max(0, engine.frameInterval - duration),
-        bitmapTransferMs: bitmapMs}}, [bitmap]);
+    postMessage({...frameMessage(frame), bitmap}, [bitmap]);
     frame.bitmap = null;
   } catch (error) {
     bitmap.close();
@@ -116,8 +187,15 @@ function advance() {
     publish();
 
     const waiting = frames.find(frame => frame.fence);
-    if (waiting) pollAgain(waiting);
-    else {
+    if (waiting) {
+      pollAgain(waiting);
+      // A saturated GPU always has a draw outstanding. Auto still has to see
+      // those samples; it only asks for a drain before replacing resources.
+      if (pendingLoad && canDraw() && !engine.resizePending) {
+        engine.measureLoad(pendingLoad.elapsed, pendingLoad.now, false);
+        pendingLoad = null;
+      }
+    } else {
       clearTimeout(pollTimer); pollTimer = null;
       // Changed projections and quality tiers can replace GPU resources. Their
       // application waits for every submitted draw, even if a bitmap is ready.
@@ -187,7 +265,8 @@ function applyState(message, outputOnly = false) {
     }, {signal});
     canvas.addEventListener('webglcontextrestored', () => advance(), {signal});
   }
-  engine.setDisplayHz(state.displayHz);
+  proxyHz = state.displayHz; applyDisplayHz();
+  refresh.setActive(active && !state.paused);
   engine.platform.viewport = state.viewport; engine.visible = true;
   if (engine.restorePending) engine.restoreContext();
   engine.reducedMotion.matches = state.reducedMotion;
@@ -222,6 +301,7 @@ self.onmessage = event => {
     const message = event.data;
     if (message.type === 'activity') {
       active = message.active; generation = message.generation;
+      refresh.setActive(active && !!state && !state.paused);
       renderOnce = false; lastDraw = 0; nextDraw = lastAck = pendingLoad = null;
       if (deferredState && deferredState.state.generation !== generation) {
         const stale = deferredState; deferredState = null; applyState(stale);
@@ -245,17 +325,26 @@ self.onmessage = event => {
       else applyState(message);
     } else if (message.type === 'frame-ack' && message.frameId === pendingFrame?.metadata.frameId) {
       const acknowledged = pendingFrame; pendingFrame = null;
-      if (active && acknowledged.metadata.generation === generation) {
-        const now = performance.now();
-        engine.lastReadyMs = now - acknowledged.time;
-        // With render-ahead, completed frames can arrive every refresh even
-        // when their individual latency spans two refreshes.
-        pendingLoad = {elapsed: Math.min(engine.lastReadyMs, lastAck === null ? Infinity : now - lastAck), now};
-        lastAck = now;
-        if (engine.softwareRenderer) nextDraw = now + engine.frameInterval;
-      }
+      completed(acknowledged, performance.now());
       advance();
-    } else if (message.type === 'dispose') {stop(); close();}
+    } else if (message.type === 'surface') {
+      // The proxy proved a first frame and handed over the visible canvas.
+      surface = message.canvas; presenter = surface.getContext('bitmaprenderer');
+      if (!presenter) throw new Error('No worker bitmap presentation context');
+      expectedIdentity = message.identity;
+      const first = pendingFrame; pendingFrame = null;
+      if (message.bitmap) {
+        if (first?.metadata.frameId === message.frameId) {first.bitmap = message.bitmap; present(first);}
+        else message.bitmap.close();
+      } else if (first) completed(first, performance.now());
+      advance();
+    } else if (message.type === 'identity') {
+      expectedIdentity = message.identity;
+      presenter?.transferFromImageBitmap(null);
+    } else if (message.type === 'dispose') {
+      presenter?.transferFromImageBitmap(null); stop();
+      if (presenter) afterCommit(() => close()); else close();
+    }
   } catch (error) {fail(error);}
 };
 send({type: 'ready'});
