@@ -91,7 +91,7 @@ With no active personality, or one that weights no sculpt form, the cue renders 
 
 ## Author, share and save
 
-Publish a definition from the REPL. A changed definition needs a higher `:version`. A show definition with a built-in's ID replaces that built-in in this show, and removing it restores the built-in. A running selection keeps the revision it captured until it is selected again; the projection then reports `:current? false`.
+Publish a definition from the REPL, or post it to `/api/personality` as Transit so keywords such as `:tags` keep their type. A changed definition needs a higher `:version`. A show definition with a built-in's ID replaces that built-in in this show, and removing it restores the built-in. A running selection keeps the revision it captured until it is selected again; the projection then reports `:current? false`.
 
 ```clojure
 @(show/submit! runtime :personality {:op :put :personality neon-alley})
@@ -100,7 +100,7 @@ Publish a definition from the REPL. A changed definition needs a higher `:versio
 
 A full show file keeps every show definition and the active selection with its captured personality, and the file is validated before it loads. A show restart keeps the selection.
 
-Sharing is a separate, explicit selection. `export-package` returns only the named definitions with their schema versions and origin. It leaves out the active selection, the rest of the library and all other show data. Another show admits the package through the owner, all or nothing.
+Sharing is a separate, explicit selection. `export-package` returns only the named definitions with their schema versions and origin. It leaves out the active selection, the rest of the library, all other show data and each definition's `:extensions`. Pass `{:extensions? true}` as a third argument to send the extensions too. Another show admits the package through the owner, all or nothing.
 
 ```clojure
 (require '[tolglow.personalities :as personalities])
@@ -161,5 +161,6 @@ The browser check drives the optimized Studio in headless Chrome against a show 
 - Studio selects, blends, reshuffles and clears. It has no editor for authoring a personality, removing one or importing a package; use the REPL.
 - Studio's sculpt tool does not offer the personality input on a volume cue; spawn the cue from the REPL or `POST /api/spatial/cues`.
 - Only the static volume cue reads the active personality. The palette, concurrency limits, motion character and the aim-path and waveform families are data other effects and the autopilot can read, and nothing consumes them yet.
-- Nothing selects a personality from the track analysis yet. Section-driven events and the scheduler submit the same `:personality` operation when they do.
+- Nothing selects a personality from the track analysis yet. A section-driven event or an agent submits the same `:personality` operation when it does.
+- The [beat-clock scheduler](scheduler.md) has no personality action, so a change of feel cannot be posted ahead of time on the beat clock.
 - The Push icon appears on the browser display page. The native display path draws no SVG.
