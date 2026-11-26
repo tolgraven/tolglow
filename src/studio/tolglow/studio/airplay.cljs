@@ -2,6 +2,7 @@
   "The Room component owns its encoder, read-only HLS session and route picker."
   (:require [re-frame.core :as rf]
             [reagent.core :as r]
+            [tolglow.studio.show-window :as show-window]
             [tolglow.studio.state-socket :as socket]
             [tolglow.transit :as transit]))
 
@@ -105,7 +106,9 @@
                      :x-webkit-airplay "allow" :aria-hidden true
                      :style {:position "absolute" :width 1 :height 1 :opacity 0 :pointer-events "none"}}]
             (case phase
-              :idle (button "Share video" configure!)
+              :idle (if-let [reason @(rf/subscribe [:show-window/preview-only])]
+                      [:button#airplay-share.text-button (show-window/device-control {:type "button"} reason) "Share video"]
+                      (button "Share video" configure!))
               :looking [:span {:role "status"} "Finding interfaces…"]
               :choose [:<>
                        [:select {:aria-label "Network for the preview receiver" :value address

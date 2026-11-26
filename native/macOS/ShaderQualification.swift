@@ -142,11 +142,12 @@ final class ShaderQualification: NSObject, WKScriptMessageHandler {
 /// Shared by the shipped window and its native verification runner.
 @MainActor
 func studioWebView(origin: URL, navigation: StudioNavigation, qualification: ShaderQualification?,
-                   rooms: RoomWindows? = nil) -> WKWebView {
+                   rooms: RoomWindows? = nil, configure: ((WKWebViewConfiguration) -> Void)? = nil) -> WKWebView {
     let configuration = WKWebViewConfiguration()
     configuration.allowsAirPlayForMediaPlayback = true
     qualification?.configure(configuration)
     rooms?.configure(configuration)
+    configure?(configuration)
     let view = StudioContentView(frame: .zero, configuration: configuration)
     view.navigationDelegate = navigation
     rooms?.attach(view)

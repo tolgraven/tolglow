@@ -211,6 +211,7 @@
         audition (some-> (:scene-draft runtime) deref audition-projection not-empty)]
     (merge (select-keys model [:show-id :epoch :revision :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
+            :preview-only (get-in runtime [:preview-only :message])
             :section-patterns-enabled? (some? (:section-patterns runtime))
             :frame-number (get model :frame-number 0)
             :transport-generation (:transport-generation snapshot 0)
@@ -401,6 +402,32 @@
      (or (contains? #{:native-gpu :distributed} compute-backend) (= :native-gpu movement-backend))
      (assoc :budget-ms (or gpu-budget-ms (max 1 (long (/ 500.0 frame-rate))))))))
 
+(defn- preview-only-options [value]
+  (cond
+    (nil? value) nil
+    (and (map? value) (string? (:message value)) (seq (:message value))) (select-keys value [:message :owner])
+    :else (throw (ex-info "Preview-only must be a map with a :message" {}))))
+
+(defn preview-only
+  "Why this show may not open devices or arm output, as {:message …}, or nil.
+  The Mac app starts a show preview-only while another window's show owns the
+  Mac's devices and output (#669)."
+  [runtime]
+  (:preview-only runtime))
+
+(defn require-devices!
+  "Refuse a device-opening or output-arming action on a preview-only show with
+  a coded refusal (:code :preview-only, HTTP 409). Device actions call this in
+  the owner, so Studio, the REPL, configured modules and startup actions are
+  refused alike."
+  [runtime action]
+  (when-let [{:keys [message]} (preview-only runtime)]
+    (throw (ex-info message {:code :preview-only :action action :http/status 409}))))
+
+(def ^:private output-arming
+  "Owner operations that start driving fixtures through the physical sink."
+  {:calibration #{:start} :photometry #{:start :start-surface} :fog-calibration #{:start}})
+
 (defn- new-phrase-capture
   "Owner state for retrospective Capture (#671). options is false to disable,
   or phrase-capture/new-buffer options such as {:bars 8 :grid {:beats 1/4}}."
@@ -514,6 +541,7 @@
       :observers (atom {}) :response-sample-readers (atom {}) :frame-rate (get options :frame-rate 40)
       :publisher publisher :presentation-clock (volatile! 0) :wire-retirement (atom nil)
       :independent-output? (boolean (:independent-output? options))
+      :preview-only (preview-only-options (:preview-only options))
       :executor worker-pool
       :spatial-sampling field-sampler
       :leases (atom {})
@@ -2751,6 +2779,8 @@
                         (or (nil? (:runtime-id payload)) (= (:id runtime) (:runtime-id payload))))
            (throw (ex-info "Show stopped or session changed" {})))
          (when (and (= :import type) authority) (require-import-device! runtime authority))
+         (when (contains? (get output-arming type) (keyword (:op payload)))
+           (require-devices! runtime [type (keyword (:op payload))]))
          (let [payload (if (= :rig type) (prepare-rig-edit before payload) payload)
                payload (if (and (= :fog-calibration type) (= :fit (:op payload)))
                          (merge payload (fog-scan/prepare-fit before (:session-id payload) (:trace @(:venue-fog runtime))))
@@ -2796,6 +2826,7 @@
          (when @candidate (connections/abort-prepared! @candidate))
          (let [command-id (or (:command-id payload) (get-in payload [:command :command-id]))]
            (deliver reply (cond-> (merge {:status :rejected} (error-data error))
+                            (= :preview-only (:code (ex-data error))) (assoc :code :preview-only)
                             command-id (assoc :command-id command-id))))))
      reply))
 
@@ -3177,6 +3208,7 @@
   {id {:target :knob :knob-id k}}; on Push 2 set :knob-page {:button cc
   :knob-ids [k ...]} to toggle the track encoders onto up to eight knobs."
   [runtime kind {:keys [session-id ::restore-lease ::reconnect-lease] :as options}]
+  (require-devices! runtime [:connect-device kind])
   (let [id session-id epoch (get-in @(:state runtime) [:model :epoch])]
     (when-not (and (string? id) (seq id)) (throw (ex-info "Device requires session-id" {})))
     (locking (:devices runtime)
@@ -3204,7 +3236,12 @@
             push-3-variation-pads? (and (= kind :push-3) (true? (:cue-variation-pads? options)))
             x-touch? (= :x-touch kind)
             ;; Validates the cue channel bindings before any port opens.
-            _ (when x-touch? (x-touch/validate-channels! (vec (:channels options []))))
+            _ (when x-touch?
+                (x-touch/validate-channels! (vec (:channels options [])))
+                ;; A fresh connection only: a reconnect or restore keeps its session,
+                ;; and a strip that lost its range shows !range instead.
+                (when-not (or restore-lease reconnect-lease)
+                  (x-touch/validate-channel-ranges! (:model @(:state runtime)) (vec (:channels options [])))))
             surface-content (when x-touch?
                               {:type :mixer-strips :effect-group-view effect-group-view
                                :cue-strips (vec (:channels options []))})
@@ -3461,7 +3498,8 @@
                          (throw (ex-info "RDM action belongs to a previous show session" {})))
                        {:runtime-id (:id runtime) :expected-epoch epoch}))]
       (case operation
-        :connect (rdm/connect! (:rdm runtime) (:config payload {}) identity)
+        :connect (do (require-devices! runtime :rdm-connect)
+                     (rdm/connect! (:rdm runtime) (:config payload {}) identity))
         :disconnect (rdm/disconnect-session! (:rdm runtime) (:session-id payload))
         :cancel (rdm/cancel! (:rdm runtime) (:job-id payload))
         (:associate :unassociate :adopt)
@@ -3512,7 +3550,8 @@
     :return-mixers (duplex/mixers)
     :return-status (duplex/status (:audio-returns runtime))
     :return-start (session-operation! runtime payload
-                    (fn [_] (duplex/start! (:audio-returns runtime) (:model @(:state runtime))
+                    (fn [_] (require-devices! runtime :audio-return-start)
+                      (duplex/start! (:audio-returns runtime) (:model @(:state runtime))
                                            #(get @(:state runtime) :model) #(now-ms runtime)
                                            (:open-audio-returns! runtime))))
     :return-stop (let [manager (:audio-returns runtime)
@@ -3520,6 +3559,7 @@
                    (duplex/stop! manager id))
     :start (session-operation! runtime payload
                                (fn [config]
+                                 (require-devices! runtime :audio-start)
                                  (connections/start-audio! (:connections runtime) config (audio-callbacks runtime))
                                  (audio/status (connections/audio (:connections runtime)))))
     :stop (let [shutdown! (session-operation! runtime payload
@@ -3612,7 +3652,8 @@
                      map? (assoc :unmapped (ableton/unmapped-fields (:live config) (:registry model) page))))
       (:learn-parameter :forget-parameter) {:accepted? (live-sync/edit-observed-parameter! manager operation (live-params/wire-id (:id payload)))}
       :arrange {:accepted? (live-sync/place-in-arrangement! manager (:song-beat payload) (:request-id payload))}
-      :start (do (connections/start-sync! (:connections runtime) (sync-callbacks runtime))
+      :start (do (require-devices! runtime :sync-start)
+                 (connections/start-sync! (:connections runtime) (sync-callbacks runtime))
                  (sync/status manager))
       :stop (let [generation (:generation (connections/status (:connections runtime)))]
               #(connections/stop-sync! (:connections runtime) generation))
@@ -3673,12 +3714,14 @@
              5000 {:status :pending :message "Sensor configuration remains queued"})
       (:stage-start :stage-stop)
       (let [current (session-operation! runtime payload (fn [_] (connections/sensors (:connections runtime))))]
+        (when (= :stage-start operation) (require-devices! runtime :sensor-stage-start))
         (if (= :stage-start operation)
           (sensors/start-stage! current payload)
           (audience-stage/stop-current! (:stage current) (:stage-id payload))))
       :stage-qr (audience-stage/png (:stage manager) (:id payload))
       :osc-start
-      (let [manager (session-operation! runtime payload (fn [_] (connections/sensors (:connections runtime))))]
+      (let [manager (session-operation! runtime payload (fn [_] (require-devices! runtime :sensor-osc-start)
+                                                          (connections/sensors (:connections runtime))))]
         (sensors/start-osc! manager (select-keys payload [:host :port]))
         (:udp (sensors/status manager)))
       :osc-stop
