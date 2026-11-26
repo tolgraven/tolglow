@@ -33,12 +33,14 @@
                :cues (into {} (for [id (keys effects)] [id {:id id :effect-id id :version 1}]))}
     :rig {:fixtures [{:id :head :universe 1 :address 1 :channels {:red 1 :green 2 :blue 3 :dimmer 4 :pan 5}}]}}))
 
-(defn- harness []
-  (let [packets (atom [])
-        sink {:send! (fn [universes _]
-                       (swap! packets conj (vec (artnet/artdmx-packet 1 1 (get universes 1)))))}]
-    {:rt (show/create-runtime {:model (live-model) :sink sink :workspace-options nil})
-     :packets packets}))
+(defn- harness
+  ([] (harness nil))
+  ([options]
+   (let [packets (atom [])
+         sink {:send! (fn [universes _]
+                        (swap! packets conj (vec (artnet/artdmx-packet 1 1 (get universes 1)))))}]
+     {:rt (show/create-runtime (merge {:model (live-model) :sink sink :workspace-options nil} options))
+      :packets packets})))
 
 ;; ArtDmx data starts at byte 18.
 (defn- channel [packet n] (bit-and 255 (nth packet (+ 17 n))))
@@ -361,4 +363,97 @@
         (turn! 720 200 false)
         (is (= 1.0 (:value (knobs/encoder-display (model) :look))) "turning past the end clamps")
         (is (= ["1.000" "0.750" "1/2 beats" "1.000" "0.125"] (mapv :text (:columns (knobs/encoder-display (model) :look))))))
+      (finally (show/stop! rt)))))
+
+(deftest a-rejected-linked-write-is-reported-on-its-link-and-the-rest-still-apply
+  ;; Writes use the derived IDs <command-id>/<n>. A client that already used
+  ;; one of those IDs for another command makes that one write conflict; the
+  ;; receipt says so on the link instead of claiming the write.
+  (let [{:keys [rt packets]} (harness)]
+    (try
+      (let [{:keys [tint aim]} (setup! rt)
+            _ (submit! rt 100 {:op :param/set :instance-id tint :param :saturation :value 0.05 :command-id "turn-9/0"})
+            ack (submit! rt 120 {:op :knob/set :knob-id :look :value 0.5 :command-id "turn-9"})
+            by-id (into {} (map (juxt :link-id identity)) (:links ack))]
+        (is (= :accepted (:status ack)) "the knob value itself committed")
+        (is (= {:status :rejected :code :command-id-conflict}
+               (select-keys (by-id "sat") [:status :code])))
+        (is (= #{:applied} (set (map :status (vals (dissoc by-id "sat"))))))
+        (is (= 0.5 (:value (knobs/knob-view (:model @(:state rt)) :look))))
+        (is (= 0.05 (:saturation (params rt tint))) "the refused destination keeps its value")
+        (is (< (Math/abs (- (+ 0.25 (* 0.5 (easing/sample :ease-in-out 0.5))) (:pan (params rt aim)))) 1e-9))
+        (is (:diverged? (link (knobs/knob-view (:model @(:state rt)) :look) "sat")))
+        (is (<= (Math/abs (- (channel (peek @packets) 2) (* 255 0.95))) 1.0) "DMX shows the refused value")
+        (is (= (:links ack) (:links (submit! rt 140 {:op :knob/set :knob-id :look :value 0.5 :command-id "turn-9"})))
+            "a replay reports the same partial outcome"))
+      (finally (show/stop! rt)))))
+
+(deftest a-room-audition-never-commits-knob-or-destination-state
+  ;; A Room draft cannot stage knob commands, and its private model carries no
+  ;; knobs. A knob turned during an audition is a live edit after staging: it
+  ;; writes the live show, and the Room keeps the values it was staged with.
+  (let [{:keys [rt packets]} (harness {:audition {:max-live-share ##Inf}})
+        draft #(deref (:scene-draft rt))
+        tick! (fn [t] (show/tick! rt t) (is (show/await-audition rt 5000)))]
+    (try
+      (let [{:keys [tint pulse]} (setup! rt)
+            _ (submit! rt 100 {:op :knob/set :knob-id :look :value 0.5})
+            refused (submit! rt 110 {:op :scene-draft/stage :draft-id "scene"
+                                     :operations [{:op :knob/set :knob-id :look :value 1.0}]})
+            staged (submit! rt 120 {:op :scene-draft/stage :draft-id "scene"
+                                    :operations [{:op :instance/end :instance-id pulse}]})
+            before (:model @(:state rt))]
+        (is (= :rejected (:status refused)) "a knob command cannot be staged")
+        (is (= :accepted (:status staged)))
+        (run! tick! (range 140 400 20))
+        (testing "audition frames leave the knob, its links and every destination as they were"
+          (is (= (:knobs before) (:knobs (:model @(:state rt)))))
+          (is (= (params rt tint) (get-in before [:instances tint :params])))
+          (is (= (get-in before [:instances pulse :parameter-bindings])
+                 (get-in @(:state rt) [:model :instances pulse :parameter-bindings])))
+          (is (not (contains? (get-in (draft) [:frame :model]) :knobs)) "the private model has no knobs"))
+        (testing "a knob turned during the audition writes the live show only"
+          (let [ack (submit! rt 400 {:op :knob/set :knob-id :look :value 1.0})]
+            (tick! 420)
+            (is (= #{:applied} (set (map :status (:links ack)))))
+            (is (= 1.0 (:saturation (params rt tint))))
+            (is (<= (channel (peek @packets) 2) 1) "live DMX follows the knob")
+            (is (< (Math/abs (- 0.6 (get-in (draft) [:frame :model :instances tint :params :saturation]))) 1e-9)
+                "the Room keeps the staged saturation")
+            (is (= :auditioning (:status (show/scene-draft rt))) "a knob turn does not stale the draft")))
+        (testing "applying the draft keeps the knob and its live values"
+          (let [applied (submit! rt 440 {:op :scene-draft/apply :draft-id "scene" :expected-draft-revision 0})
+                view (knobs/knob-view (:model @(:state rt)) :look)]
+            (is (= :accepted (:status applied)))
+            (is (= 1.0 (:value view)))
+            (is (= 1.0 (:saturation (params rt tint))))
+            (is (= #{:inactive} (set (map :status (filter #(#{"rate" "gain" "duty"} (:id %)) (:links view)))))
+                "links to the ended pulse cue wait for its next launch"))))
+      (finally (show/stop! rt)))))
+
+(deftest every-dangling-reason-survives-a-reload
+  (let [{:keys [rt]} (harness)]
+    (try
+      (let [{:keys [tint pulse]} (setup! rt)
+            _ (message! rt 50 :modulation-unbind {:instance-id pulse :param :level})
+            _ (submit! rt 60 {:op :instance/end :instance-id tint})
+            _ (show/tick! rt 80)
+            _ (submit! rt 100 {:op :registry/publish :kind :effects
+                               :definition (-> (:tint effects) (assoc :version 2) (update :params dissoc :saturation)
+                                               (assoc :outputs {:color {:op :param :key :hue :type :vec3}}))})
+            _ (submit! rt 110 {:op :cue/put :cue {:id :tint :effect-id :tint :version 2}})
+            _ (submit! rt 120 {:op :cue/delete :cue-id :aim})
+            model (:model @(:state rt))
+            reasons (fn [model] (into {} (map (juxt :id (juxt :status :reason)))
+                                      (:links (knobs/knob-view model :look))))
+            expected {"sat" [:dangling :param-missing] "pan" [:dangling :cue-missing]
+                      "rate" [:dangling :lfo-missing] "gain" [:dangling :lfo-missing] "duty" [:dangling :lfo-missing]}]
+        (is (= expected (reasons model)))
+        (is (= expected (reasons (files/thaw (live-model) (files/freeze model)))))
+        (is (= 5 (count (get-in (files/thaw (live-model) (files/freeze model)) [:knobs :knobs :look :links])))
+            "nothing is dropped")
+        (let [ack (submit! rt 140 {:op :knob/set :knob-id :look :value 1.0})]
+          (is (= :accepted (:status ack)))
+          (is (= (update-vals expected (fn [[_ reason]] [:skipped reason]))
+                 (into {} (map (juxt :link-id (juxt :status :reason))) (:links ack))))))
       (finally (show/stop! rt)))))
