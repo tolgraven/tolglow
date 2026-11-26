@@ -94,29 +94,37 @@
 
 (defn desired
   "What the Set should hold for a launcher: its track name, the pad overview's
-  scroll row and one named, coloured chain per pad that launches a cue."
-  [{:keys [page-id scroll-row] :as launcher}]
-  {:name (track-name page-id) :scroll-row scroll-row
-   :grid-notes (set (map :note (:pads launcher)))
-   :pads (vec (for [{:keys [note cue-id label live-color]} (sort-by :note (:pads launcher)) :when cue-id]
-                (let [n (str (or label (wire-id cue-id)))]
-                  {:note note :name (subs n 0 (min 128 (count n))) :color (or live-color 0)})))})
+  scroll row and one named, coloured chain per pad that launches a cue.
+  :feed-port names the MIDI port Tolglow feeds Capture tracks on (the Live
+  bridge's :feed-port setting, live-connection/default-feed-port when none):
+  a launcher track listening there hears Tolglow, not the performer."
+  ([launcher] (desired launcher {}))
+  ([{:keys [page-id scroll-row] :as launcher} {:keys [feed-port]}]
+   {:name (track-name page-id) :scroll-row scroll-row
+    :feed-port (or feed-port live/default-feed-port)
+    :grid-notes (set (map :note (:pads launcher)))
+    :pads (vec (for [{:keys [note cue-id label live-color]} (sort-by :note (:pads launcher)) :when cue-id]
+                 (let [n (str (or label (wire-id cue-id)))]
+                   {:note note :name (subs n 0 (min 128 (count n))) :color (or live-color 0)})))}))
 
-(def feed-ports
-  "Input ports Tolglow itself drives (live-connection/desired-setup's default
-  :port). A launcher track listening there hears Tolglow, not the performer."
-  #{"Tolglow"})
+(defn feed-port?
+  "Does an input port name Tolglow's feed port? Live shows a virtual port by
+  its name, possibly inside a driver's name (\"IAC Driver (Tolglow)\"), so the
+  feed port's name anywhere in it counts, ignoring case."
+  [port feed-port]
+  (boolean (and (string? port) (string? feed-port) (seq feed-port)
+                (.contains (.toLowerCase ^String port) (.toLowerCase ^String feed-port)))))
 
 (defn- input-problems
   "Can a performer's pad hits reach the companion on this track? Its input
   must be a controller port or All Ins, not another track or Tolglow's own
   feed, and not a single channel 2-16: the companion drops that channel as
   Tolglow's feed (live-connection's echo rule)."
-  [{:keys [input] :as read-back}]
+  [{:keys [input] :as read-back} feed-port]
   (let [{:keys [port channel]} input]
     (cond-> []
       (or (nil? port) (= "No Input" port)) (conj {:code :no-input})
-      (contains? feed-ports port) (conj {:code :input-is-tolglow-feed :port port})
+      (feed-port? port feed-port) (conj {:code :input-is-tolglow-feed :port port})
       (true? (:routed-from-track? read-back)) (conj {:code :input-from-track :port port})
       (and (integer? channel) (<= 2 channel 16)) (conj {:code :input-feed-channel :channel channel}))))
 
@@ -136,7 +144,7 @@
                    (nil? rack) (conj {:code :no-drum-rack})
                    (and rack (some? (:scroll-row wanted)) (not= (:scroll-row wanted) (:scroll-row rack)))
                    (conj {:code :scroll-row :expected (:scroll-row wanted) :actual (:scroll-row rack)}))
-        problems (into problems (input-problems read-back))
+        problems (into problems (input-problems read-back (get wanted :feed-port live/default-feed-port)))
         problems (into problems
                        (when rack
                          (for [{:keys [note name]} (:pads wanted)

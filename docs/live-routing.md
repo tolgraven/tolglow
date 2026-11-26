@@ -417,7 +417,11 @@ track once. One companion hosts either the launcher or Capture's cue track
   separate connection with its own session would lose the companion at the
   bridge's next poll (every 500 ms) and, while it held it, the bridge would
   drop the companion's pad hits. Connect the bridge first; without it setup is
-  refused as `not-connected` and nothing is sent.
+  refused as `not-connected` and nothing is sent. An operation the bridge drops
+  before sending it (the bridge stops or rebinds while it waits in the queue)
+  is refused at once as `not-sent`; only one that started without a receipt is
+  indeterminate. Studio waits long enough for three bridge operations and
+  shows the launcher again after a failure.
 - `:ensure-launcher` adopts the track only when it is a `Tolglow launcher …`
   track, an empty track, or holds only the companion and a Drum Rack. Any
   other Tolglow track, such as Capture's cue track, is refused with
@@ -442,7 +446,9 @@ track once. One companion hosts either the launcher or Capture's cue track
   scroll row and every filled pad back, and `live-launcher/setup!` verifies
   them. Problems: a wrong track name, a missing Drum Rack, a wrong scroll
   row, a pad without its chain or name, and an input that cannot carry the
-  performer's pads: none, Tolglow's own feed port, another track (MIDI From,
+  performer's pads: none, Tolglow's own feed port (the bridge setting
+  `:feed-port`, default `Tolglow`, matched anywhere in the port name, as in
+  `IAC Driver (Tolglow)`), another track (MIDI From,
   or a track whose output names this one), or a single channel 2–16, which
   the companion drops as Tolglow's feed. Use All Ins or the controller's port.
   A filled pad on the grid that launches no cue is a `stale-pad` warning: it

@@ -119,8 +119,8 @@
               :sync-options {:live-factory (bridge-factory ls requests)}})]
      {:rt rt :ls ls :requests requests :manager (connections/sync (:connections rt)) :serial (atom 0)})))
 
-(defn- start-bridge! [{:keys [rt]}]
-  (let [configured (show/sync-action! rt :configure {:config {:live {:enabled? true}} :page-id "pads"})]
+(defn- start-bridge! [{:keys [rt]} & [live]]
+  (let [configured (show/sync-action! rt :configure {:config {:live (merge {:enabled? true} live)} :page-id "pads"})]
     (show/sync-action! rt :start {})
     configured))
 
@@ -344,7 +344,17 @@
         (let [setup (show/setup-live-launcher! rt {:page-id :pads})]
           (is (false? (:ready? setup)))
           (is (= [{:code :input-is-tolglow-feed :port "Tolglow"} {:code :input-feed-channel :channel 16}] (:problems setup))))
-        (finally (show/stop! rt))))))
+        (finally (show/stop! rt)))))
+  (testing "the feed port is the one the bridge settings name, also inside a driver's port name"
+    (doseq [[feed-port expected] [["Lights Feed" [{:code :input-is-tolglow-feed :port "IAC Driver (Lights Feed)"}]]
+                                  [nil []]]]
+      (let [{:keys [rt] :as f} (fixture (fake/create {:companion? false
+                                                      :tracks [{:name "Tolglow launcher pads" :companion? true
+                                                                :input {:port "IAC Driver (Lights Feed)" :channel nil}}]}))]
+        (try
+          (start-bridge! f (when feed-port {:feed-port feed-port}))
+          (is (= expected (:problems (show/setup-live-launcher! rt {:page-id :pads}))) (pr-str feed-port))
+          (finally (show/stop! rt)))))))
 
 (deftest a-replay-marked-live-input-would-record-takes
   ;; Negative control for the replay above: the playback origin the companion

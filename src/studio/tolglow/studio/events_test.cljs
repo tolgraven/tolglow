@@ -2066,6 +2066,11 @@
         (is (= ["/api/live-launcher/setup" {:page-id "pads"}] [(:path setup-request) (:body setup-request)]))
         (is (= ["/api/live-launcher/write-clip" {:page-id "pads"}] [(:path write-request) (:body write-request)]))
         (is (= [:connections/launcher-refresh] (:dispatch acted)))
+        (is (= 32000 (:timeout-ms setup-request)) "outlasts three bridge operations at the default 2 s timeout")
+        (is (= 20000 (connections/launcher-timeout-ms {:sync {:config {:live {:timeout-ms 1000}}}})))
+        (let [failed (transition (:db setup) [:connections/launcher-failed (connections/token (:db setup)) :launcher "timeout"])]
+          (is (= [:connections/launcher-refresh] (:dispatch failed)) "after a failure Studio shows what the host did")
+          (is (= "timeout" (get-in failed [:db :connections :errors :launcher]))))
         (is (not (contains? (get-in acted [:db :connections :pending]) :launcher)))))
     (is (str/includes? (renderToStaticMarkup (r/as-element [connections/connection-view (:db done) (connections/state (:db done))]))
                        "Set up in Live"))))

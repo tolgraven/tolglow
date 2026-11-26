@@ -4094,7 +4094,9 @@
   (let [launcher (launcher-for runtime page-id)]
     ;; One setup or clip write at a time: Studio and the REPL share the record.
     (locking (:live-launcher runtime)
-      (let [result (assoc (live-launcher/setup! conn (live-launcher/desired launcher)) :page-id (:page-id launcher))]
+      (let [live (get-in (sync/export-state (connections/sync (:connections runtime))) [:config :live])
+            result (assoc (live-launcher/setup! conn (live-launcher/desired launcher (select-keys live [:feed-port])))
+                          :page-id (:page-id launcher))]
         (swap! (:live-launcher runtime) assoc :setup result)
         result))))
 

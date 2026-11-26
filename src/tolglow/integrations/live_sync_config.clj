@@ -10,7 +10,10 @@
    :poll-ms 500 :timeout-ms 2000 :record-route :bridge :mode :lighting :channel 1
    :launch-grid :off :mappings {} :parameters {} :pairing nil :automap? true :observed-parameters {}
    ;; nil until chosen: see normalize-pad-layout.
-   :pad-layout nil})
+   :pad-layout nil
+   ;; The MIDI port Tolglow feeds Capture tracks on (live-connection/desired-setup
+   ;; :port). The cue launcher refuses a track that listens to it.
+   :feed-port "Tolglow"})
 
 (defn- normalize-pad-layout
   "Which Drum Rack layout new automatic pad assignments follow
@@ -97,6 +100,7 @@
         live (assoc live :pad-layout (normalize-pad-layout (:pad-layout live) (:mappings live)))
         {:keys [automap? mode record-route bridge-id channel poll-ms timeout-ms pairing endpoint]} live
         notes (concat (keys (:mappings live)) (keep :lane-note (vals (:parameters live))))]
+    (check! (text? (:feed-port live) 128) "The Tolglow feed port needs a name")
     (check! (and (boolean? automap?) (#{:lighting :live} mode) (#{:bridge :midi} record-route)
                  (text? bridge-id 128) (bounded-int? channel 1 16)
                  (bounded-int? poll-ms 100 10000) (bounded-int? timeout-ms 50 10000)

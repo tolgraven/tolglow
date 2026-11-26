@@ -155,7 +155,7 @@
   reached Max, indeterminate otherwise (it may have been written)."
   [id ^Exception e]
   (let [{:keys [http-status] :as data} (ex-data e)
-        code (or (get refusals http-status) (when (:live/not-sent? data) :not-connected))]
+        code (or (get refusals http-status) (when (:live/not-sent? data) (or (:live/code data) :not-connected)))]
     (if code
       {:id id :status :rejected :error {:code code :message (.getMessage e) :http-status http-status}}
       {:id id :status :indeterminate :error {:code :transport-failure :message (.getMessage e) :http-status http-status}})))
@@ -190,13 +190,18 @@
   tags everything else as playback from its track (see track-channels)."
   [16 15 14 13])
 
+(def default-feed-port
+  "The MIDI port Tolglow feeds capture tracks on unless setup names another
+  (desired-setup :port, the Live bridge's :feed-port setting)."
+  "Tolglow")
+
 (defn desired-setup
   "The tracks a layout needs: one armed MIDI capture track per layout channel,
   fed by the named input port on its own feed channel. Monitoring is Auto so
   recorded clips play back while the track stays armed for the next capture.
   The cue track is the track that hosts the companion device (:host? true):
   setup adopts and renames the track the companion was placed on."
-  [layout {:keys [port route names feed-channels] :or {port "Tolglow" route :tolglow-buffer
+  [layout {:keys [port route names feed-channels] :or {port default-feed-port route :tolglow-buffer
                                                        feed-channels default-feed-channels}}]
   (when-not (contains? capture-routes route) (fail! "Unknown capture route" {:route route}))
   (let [chs (clip/channels layout)

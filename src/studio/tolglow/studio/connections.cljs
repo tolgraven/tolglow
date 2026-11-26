@@ -305,13 +305,32 @@
       {:db (-> db (update-in [:connections :pending] disj :launcher)
                (assoc-in [:connections :launcher] result))})))
 
+(defn launcher-timeout-ms
+  "How long Studio waits for Set up in Live or Write pad clip. The host sends
+  up to three operations through the Live bridge, each waiting at most 1 s
+  plus four bridge timeouts, so the client outlasts that."
+  [s]
+  (let [bridge-timeout (get-in s [:sync :config :live :timeout-ms] 2000)]
+    (+ 5000 (* 3 (+ 1000 (* 4 bridge-timeout))))))
+
 (rf/reg-event-fx :connections/launcher-action
   (fn [{:keys [db]} [_ operation]]
     (let [page-id (get-in db [:ui :page-id])]
       {:db (-> db (update-in [:connections :pending] (fnil conj #{}) :launcher)
                (update-in [:connections :errors] dissoc :launcher))
-       :fx [(req db :launcher (str "/api/live-launcher/" (name operation)) (cond-> {} page-id (assoc :page-id (str page-id)))
-                 :connections/launcher-acted)]})))
+       :fx [[:studio/http {:path (str "/api/live-launcher/" (name operation))
+                           :body (cond-> {} page-id (assoc :page-id (str page-id)))
+                           :timeout-ms (launcher-timeout-ms (state db))
+                           :on-success [:connections/launcher-acted (token db) :launcher]
+                           :on-failure [:connections/launcher-failed (token db) :launcher]}]]})))
+
+(rf/reg-event-fx :connections/launcher-failed
+  ;; Show the failure, then the projection: the host keeps what it did.
+  (fn [{:keys [db]} [_ request-token key error]]
+    (when (current? db request-token)
+      {:db (-> db (assoc-in [:connections :errors key] (str error))
+               (update-in [:connections :pending] disj key))
+       :dispatch [:connections/launcher-refresh]})))
 
 (rf/reg-event-fx :connections/launcher-acted
   ;; The host answers with the setup or clip result; show the projection again.
