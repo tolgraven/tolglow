@@ -129,6 +129,9 @@
             (when (map? sources)
               (mapcat (fn [[id source]]
                         (concat (when-not (identifier? id) [(error [:sources] "Source ids are keywords or strings")])
+                                ;; Shader cues publish their feeds as :shader/<id> (#673).
+                                (when (and (keyword? id) (= "shader" (namespace id)))
+                                  [(error [:sources id] "The shader namespace is reserved for shader cue feeds")])
                                 (source-errors source [:sources id]))) sources))
             (when-not (or (nil? mappings) (map? mappings)) [(error [:mappings] "Mappings are a map by id")])
             (when (map? mappings)

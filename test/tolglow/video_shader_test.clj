@@ -36,7 +36,7 @@
 (defn test-renderer
   "programs: GLSL source -> (fn [uniforms x y w h] [r g b]). :render-ms
   delays each frame (a slow GPU)."
-  [programs & {:keys [render-ms]}]
+  [programs & {:keys [render-ms draw-ms]}]
   (let [^ExecutorService worker (Executors/newSingleThreadExecutor)
         log (atom {:compiles [] :renders [] :released []})
         task (fn [f] (.submit worker ^Callable f))]
@@ -54,7 +54,7 @@
                    (when render-ms (Thread/sleep (long render-ms)))
                    (swap! log update :renders conj [(:source s) uniforms])
                    {:pixels (bgra width height (fn [x y] (f uniforms x y width height)))
-                    :width width :height height :draw-ms 0.1 :readback-ms 0.05})))
+                    :width width :height height :draw-ms (or draw-ms 0.1) :readback-ms 0.05})))
         (release-shader [_ s] (task #(do (swap! log update :released conj (:source s)) true)))
         (describe-renderer [_] {:backend :test :renders (count (:renders @log))})
         (close-renderer [_] (.shutdownNow worker)))
@@ -103,7 +103,8 @@
            [[:shader :uniforms :u_level :value] (assoc-in strip-effect [:shader :uniforms :u_level :type] :vec3)]
            [[:shader :uniforms :u_level :value :key] (assoc-in strip-effect [:shader :uniforms :u_level :value :key] :gone)]
            [[:shader :uniforms :u_level :value] (assoc-in strip-effect [:shader :uniforms :u_level :value] {:op :position :axis :x})]
-           [[:shader] (assoc-in strip-effect [:shader :colour] 1)]]]
+           [[:shader] (assoc-in strip-effect [:shader :colour] 1)]
+           [[:shader :feed] (assoc-in strip-effect [:shader :feed] :camera)]]]
     (is (= path (:path (first (compiler/definition-errors :effects definition)))) (pr-str path)))
   (testing "the step keeps evaluated uniforms in the instance state"
     (let [step (compiler/compile-effect (assoc-in strip-effect [:shader :uniforms :u_steps]
@@ -180,7 +181,7 @@
       (finally (producer/stop! p) (producer/close-renderer r)))))
 
 (deftest slow-renders-drop-slots-instead-of-catching-up
-  (let [r (test-renderer programs :render-ms 70)
+  (let [r (test-renderer programs :render-ms 70 :draw-ms 70)
         p (producer/create {:renderer r})]
     (try
       ;; Every slot has new uniforms, so every slot needs a render.
@@ -191,22 +192,116 @@
         (Thread/sleep 1000)
         (deliver stop :stop)
         @feeder)
-      (let [{:keys [slots rendered dropped]} (get-in (producer/status p) [:instances 0])]
-        ;; 30 fps for one second is about 30 slots; a 70 ms render fits at most
-        ;; about 14 (fewer when the machine is loaded), so at least half drop.
-        (is (<= 4 rendered 16) (pr-str [slots rendered dropped]))
-        (is (>= dropped rendered) (pr-str [slots rendered dropped]))
+      (let [{:keys [slots rendered dropped throttled]} (get-in (producer/status p) [:instances 0])]
+        ;; A 70 ms frame is longer than the 33 ms period, so the cue then waits
+        ;; three times its render time: about one frame per 280 ms.
+        (is (<= 2 rendered 6) (pr-str [slots rendered dropped]))
+        (is (pos? throttled))
         (is (<= 24 (+ slots dropped) 36) "Each slot is either rendered or dropped, never queued"))
       (finally (producer/stop! p) (producer/close-renderer r)))))
 
-(deftest instances-beyond-the-limit-wait-in-launch-order
+(defn- counted-factory
+  "A renderer factory counting opens; renders of slow-source take render-ms
+  on the one shared worker, like a heavy shader on one GPU."
+  [opens slow-source render-ms]
+  (fn []
+    (swap! opens inc)
+    (let [worker (Executors/newSingleThreadExecutor)
+          task (fn [f] (.submit worker ^Callable f))]
+      (reify producer/ShaderRenderer
+        (compile-shader [_ _] (task (fn [] {:compiled? true})))
+        (render-frame [_ s {:keys [width height]}]
+          (task (fn [] (let [slow? (= slow-source (:source s))]
+                         (when slow? (Thread/sleep (long render-ms)))
+                         {:pixels (byte-array (* 4 width height)) :width width :height height
+                          :draw-ms (if slow? (double render-ms) 0.1) :readback-ms 0.1}))))
+        (release-shader [_ _] (task (fn [] true)))
+        (describe-renderer [_] {:backend :test})
+        (close-renderer [_] (.shutdownNow worker))))))
+
+(defn- feed-for [p ms requests]
+  (let [stop (promise)
+        feeder (future (loop [x 0.0]
+                         (producer/sync! p (into {} (map (fn [[id r]] [id (assoc-in r [:uniforms "u_time"] x)])) requests))
+                         (when (= ::go (deref stop 10 ::go)) (recur (+ x 0.01)))))]
+    (Thread/sleep (long ms))
+    (deliver stop :stop)
+    @feeder))
+
+(deftest a-slow-cue-neither-reopens-the-renderer-nor-starves-a-fast-one
+  (let [opens (atom 0)
+        p (producer/create {:renderer (counted-factory opens gradient-glsl 300)})
+        slow (assoc (request {:order 2 :feed :shader/slow})
+                    :shader {:source gradient-glsl :uniforms {"u_time" :float "u_beats" :float "u_level" :float}})]
+    (try
+      (feed-for p 2000 {"fast" (request {}) "slow" slow})
+      (let [rows (into {} (map (juxt :instance-id identity)) (:instances (producer/status p)))]
+        (is (= 1 @opens) "One renderer for the whole run")
+        (is (= 1 (:opened (producer/status p))))
+        (is (zero? (:failures (rows "fast"))) (pr-str (rows "fast")))
+        ;; The slow cue holds the shared worker 300 ms per frame, then waits
+        ;; 900 ms: the fast cue keeps most of its 60 frames.
+        (is (<= 30 (:rendered (rows "fast"))) (pr-str (rows "fast")))
+        (is (<= 1 (:rendered (rows "slow")) 3) (pr-str (rows "slow")))
+        (is (pos? (:throttled (rows "slow")))))
+      (finally (producer/stop! p)))))
+
+(deftest a-late-frame-is-published-when-it-lands-without-replacing-the-renderer
+  (let [opens (atom 0)
+        p (producer/create {:renderer (counted-factory opens gradient-glsl 400) :render-timeout-ms 100})
+        slow (assoc (request {:feed :shader/slow})
+                    :shader {:source gradient-glsl :uniforms {"u_time" :float "u_beats" :float "u_level" :float}})]
+    (try
+      (feed-for p 1500 {"slow" slow})
+      (let [row (first (:instances (producer/status p)))]
+        (is (= 1 @opens))
+        (is (pos? (:late row)) (pr-str row))
+        (is (pos? (:rendered row)) "A late frame is still published once it lands")
+        (is (pos? (:dropped row)) "Slots that pass while it renders are dropped")
+        (is (zero? (:failures row))))
+      (finally (producer/stop! p)))))
+
+(deftest a-closed-renderer-is-replaced-off-the-cadence-thread
+  (let [opens (atom 0) closes (atom [])
+        fail? (atom true)
+        p (producer/create
+           {:renderer (fn []
+                        (swap! opens inc)
+                        (reify producer/ShaderRenderer
+                          (compile-shader [_ _] (doto (java.util.concurrent.CompletableFuture.) (.complete {:compiled? true})))
+                          (render-frame [_ _ {:keys [width height]}]
+                            (let [f (java.util.concurrent.CompletableFuture.)]
+                              (if (compare-and-set! fail? true false)
+                                (.completeExceptionally f (ex-info "Shader renderer is closed" {:type :afterglow.render.gpu.shader-frames/closed}))
+                                (.complete f {:pixels (byte-array (* 4 width height)) :width width :height height}))
+                              f))
+                          (release-shader [_ _] (doto (java.util.concurrent.CompletableFuture.) (.complete true)))
+                          (describe-renderer [_] {:backend :test})
+                          (close-renderer [_] (swap! closes conj (.getName (Thread/currentThread))))))})]
+    (try
+      (producer/sync! p {"a" (request {})})
+      (is (eventually #(get-in (producer/frames p) [:frames :shader/index-strip])))
+      (is (= 2 @opens) "Afterglow's closed context is replaced once")
+      (is (eventually #(= ["tolglow-shader-renderer-close"] @closes)))
+      (finally (producer/stop! p)))))
+
+(deftest the-newest-launches-render-and-the-feed-follows-what-renders
   (let [r (test-renderer programs)
         p (producer/create {:renderer r})]
     (try
-      (producer/sync! p (into {} (for [i (range 10)] [(str "i" i) (request {:order i})])))
-      (is (= (set (map #(str "i" %) (range producer/max-instances)))
+      (producer/sync! p (into {} (for [i (range 10)]
+                                   [(str "i" i) (request {:order i :uniforms {"u_time" 0.0 "u_beats" 0.0 "u_level" (/ i 10.0)}})])))
+      (is (= (set (map #(str "i" %) (range 2 10)))
              (set (map :instance-id (:instances (producer/status p))))))
-      (is (= ["i8" "i9"] (:refused (producer/status p))))
+      (is (= ["i0" "i1"] (:refused (producer/status p))) "The oldest launches stop rendering")
+      (is (eventually #(= 230 (second (source/rgb-at (get-in (producer/frames p) [:frames :shader/index-strip]) 0 0))))
+          "The feed shows the newest launch, which renders")
+      (testing "the pixel-rate budget also admits newest first"
+        (producer/sync! p {"small" (request {:order 1})
+                           "huge" (request {:order 2 :width 4096 :height 2160 :fps 20})
+                           "huger" (request {:order 3 :width 4096 :height 2160 :fps 20})})
+        (is (= #{"huger" "small"} (set (map :instance-id (:instances (producer/status p))))))
+        (is (= ["huge"] (:refused (producer/status p)))))
       (finally (producer/stop! p) (producer/close-renderer r)))))
 
 (deftest a-missing-gpu-renderer-is-reported-not-thrown
@@ -307,18 +402,89 @@
       (publish! runtime strip-effect 0)
       (let [id (launch! runtime :index-strip 25)
             t (tick-until runtime 50 #(get-in @(:state runtime) [:video-latch :instance-frames id]))
-            uniforms #(shader/uniforms-of (get-in @(:state runtime) [:model :instances id]))]
-        (show/tick! runtime (+ t 100))
-        (let [before (uniforms)]
-          (command! runtime {:op :transport/set :transport {:playing? false}} (+ t 125))
-          (let [held (uniforms)]
-            (show/tick! runtime (+ t 500))
-            (is (= held (uniforms)) "A stopped transport holds the shader clock")
-            (is (< (get held "u_time") (+ (get before "u_time") 0.05)) (pr-str before held))))
-        (Thread/sleep 100)
-        (let [renders (count (:renders (log-of r)))]
-          (Thread/sleep 150)
-          (is (= renders (count (:renders (log-of r)))) "Frozen uniforms render nothing new")))
+            u-time #(get (shader/uniforms-of (get-in @(:state runtime) [:model :instances id])) "u_time")]
+        (testing "a stopped transport holds the shader clock and play resumes without catching up"
+          (show/tick! runtime (+ t 100))
+          (let [before (u-time)]
+            (command! runtime {:op :transport/set :transport {:playing? false}} (+ t 125))
+            (let [held (u-time)]
+              (show/tick! runtime (+ t 4000))
+              (is (= held (u-time)))
+              (is (< held (+ before 0.05)))
+              (Thread/sleep 100)
+              (let [renders (count (:renders (log-of r)))]
+                (Thread/sleep 150)
+                (is (= renders (count (:renders (log-of r)))) "Frozen uniforms render nothing new"))
+              (command! runtime {:op :transport/set :transport {:playing? true}} (+ t 4025))
+              (show/tick! runtime (+ t 4050))
+              (is (< (u-time) (+ held 0.1)) "The stopped interval is not caught up"))))
+        (testing "a paused instance holds its clock and resumes without catching up"
+          (let [now (+ t 5000)]
+            (show/tick! runtime now)
+            (let [before (u-time)]
+              (command! runtime {:op :instance/pause :instance-id id} (+ now 25))
+              (let [held (u-time)]
+                (show/tick! runtime (+ now 3000))
+                (is (= held (u-time)))
+                (is (< held (+ before 0.05)))
+                (command! runtime {:op :instance/resume :instance-id id} (+ now 3025))
+                (show/tick! runtime (+ now 3050))
+                (is (< (u-time) (+ held 0.1))))))))
+      (finally (show/stop! runtime)))))
+
+(deftest the-projector-follows-blackout-and-the-grand-master-unless-told-not-to
+  (let [r (test-renderer programs)
+        runtime (start-show r)
+        handler (studio/handler runtime)
+        next! (fn [query] (handler {:request-method :get :uri "/api/video/next" :headers {"host" "localhost"}
+                                    :query-string (str "source=:shader/index-strip&wait=50&" query)}))
+        green #(bit-and 0xff (aget ^bytes (:body %) 1))]
+    (try
+      (publish! runtime (assoc-in strip-effect [:shader :uniforms :u_level :value] 1.0) 0)
+      (launch! runtime :index-strip 25)
+      (let [t (tick-until runtime 50 #(get-in @(:state runtime) [:video-latch :frames :shader/index-strip]))
+            full (next! "after=-1")
+            sequence (get-in full [:headers "X-Frame-Sequence"])]
+        (is (= [255 "1.0"] [(green full) (get-in full [:headers "X-Frame-Gain"])]))
+        (command! runtime {:op :master/set :value 0.5} (+ t 25))
+        (testing "a master change alone sends the same frame again, dimmed in linear light"
+          (let [half (next! (str "after=" sequence "&gain=1.0"))]
+            (is (= 200 (:status half)))
+            (is (= "0.5" (get-in half [:headers "X-Frame-Gain"])))
+            (is (= 188 (green half)) "sRGB 255 at half linear light is 188")))
+        (testing "a per-output opt-out keeps the raw feed"
+          (is (= 255 (green (next! "after=-1&master=ignore")))))
+        (command! runtime {:op :blackout/set :value true} (+ t 50))
+        (let [dark (next! "after=-1")]
+          (is (= ["0.0" 0] [(get-in dark [:headers "X-Frame-Gain"]) (green dark)]))
+          (is (= 255 (bit-and 0xff (aget ^bytes (:body dark) 3))) "Alpha is kept"))
+        (is (= 255 (green (next! "after=-1&master=ignore")))))
+      (finally (show/stop! runtime)))))
+
+(deftest projector-waiters-are-capped-and-woken-by-commits
+  (let [r (test-renderer programs)
+        runtime (start-show r)
+        handler (studio/handler runtime)
+        wait! #(future (handler {:request-method :get :uri "/api/video/next" :headers {"host" "localhost"}
+                                 :query-string (str "source=:shader/index-strip&wait=2000&after=" %)}))]
+    (try
+      (publish! runtime strip-effect 0)
+      (let [id (launch! runtime :index-strip 25)
+            t (tick-until runtime 50 #(get-in @(:state runtime) [:video-latch :frames :shader/index-strip]))
+            sequence (get-in @(:state runtime) [:video-latch :frames :shader/index-strip :sequence])
+            ;; Hold the frame still so every waiter really waits.
+            _ (command! runtime {:op :transport/set :transport {:playing? false}} (+ t 25))
+            sequence (get-in @(:state runtime) [:video-latch :frames :shader/index-strip :sequence])
+            waiters (mapv (fn [_] (wait! sequence)) (range show/max-video-waiters))]
+        (is (eventually #(= show/max-video-waiters (.get ^java.util.concurrent.atomic.AtomicInteger (:video-waiters runtime)))))
+        (is (= 503 (:status @(wait! sequence))) "One page too many is refused at once")
+        (command! runtime {:op :transport/set :transport {:playing? true}} (+ t 50))
+        (command! runtime {:op :param/set :instance-id id :param :level :value 0.9} (+ t 75))
+        (let [started (System/nanoTime)]
+          (tick-until runtime (+ t 100) #(every? realized? waiters))
+          (is (every? #(= 200 (:status @%)) waiters))
+          (is (< (/ (- (System/nanoTime) started) 1.0e6) 1500) "Waiters wake on a commit, not at their deadline"))
+        (is (zero? (.get ^java.util.concurrent.atomic.AtomicInteger (:video-waiters runtime)))))
       (finally (show/stop! runtime)))))
 
 (deftest a-running-shader-cue-saves-and-reloads
@@ -377,8 +543,9 @@
           (let [frame (next! sequence) bytes ^bytes (:body frame)]
             (is (= 200 (:status frame)))
             (is (= 255 (bit-and 0xff (aget bytes 1)))))))
-      (is (= 204 (:status (handler {:request-method :get :uri "/api/video/next" :headers {"host" "localhost"}
-                                    :query-string "source=:shader/none&wait=10"}))))
+      (is (= 404 (:status (handler {:request-method :get :uri "/api/video/next" :headers {"host" "localhost"}
+                                    :query-string "source=:shader/none&wait=1000"})))
+          "An unknown source answers at once")
       (testing "audition compiles on the renderer and publishes nothing"
         (let [revision (get-in @(:state runtime) [:model :registry :revision])]
           (is (= [200 {:compiled? true}] (audition (:shader strip-effect))))
@@ -404,6 +571,13 @@
           (is (= [200 :accepted] [status (:status body)]) (pr-str body))
           (is (= [2 gradient-glsl] ((juxt :version (comp :glsl :shader)) (get-in @(:state runtime) [:model :registry :effects :index-strip]))))
           (is (= 422 (first (save! {:effect-id :index-strip :glsl index-glsl :expected-version 1}))) "A stale version is refused")
+          (is (= 422 (first (save! {:effect-id :index-strip :glsl index-glsl :expected-version 2
+                                    :expected-epoch (+ 7 (get-in @(:state runtime) [:model :epoch]))})))
+              "A save from another show session is refused")
+          (is (= 422 (first (save! {:effect-id :index-strip :glsl index-glsl :expected-version 2
+                                    :runtime-id "some-other-runtime"})))
+              "A save meant for another runtime is refused")
+          (is (= 2 (get-in @(:state runtime) [:model :registry :effects :index-strip :version])))
           (is (= 422 (first (save! {:effect-id :solid-red :glsl index-glsl}))) "Only a shader effect takes GLSL")))
       (testing "the projector page is a static Studio asset"
         (let [page (handler {:request-method :get :uri "/studio/video-output.html" :headers {"host" "localhost"}})]

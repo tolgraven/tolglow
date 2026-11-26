@@ -79,8 +79,9 @@
       (fail! (into path (if (= [:viewport] (:path e)) [:viewport] [:size])) (:message e)))
     (when (and (some? fps) (not (and (number? fps) (<= (first fps-range) fps (second fps-range)))))
       (fail! (conj path :fps) "Frames per second is 1–60"))
-    (when (and (some? feed) (not (keyword? feed)))
-      (fail! (conj path :feed) "A feed id is a keyword"))
+    ;; Feeds live in their own namespace, so a shader never replaces a hub source.
+    (when (and (some? feed) (not (and (keyword? feed) (= "shader" (namespace feed)))))
+      (fail! (conj path :feed) "A feed id is a keyword in the shader namespace, such as :shader/wall"))
     (when (and (some? kind) (not (#{:2d :3d} kind)))
       (fail! (conj path :kind) "Kind is :2d or :3d"))
     (when-not (or (nil? uniforms) (map? uniforms))

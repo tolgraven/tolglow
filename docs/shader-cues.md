@@ -19,7 +19,10 @@ flowchart LR
 
 - The effect step evaluates each uniform once per lighting frame and keeps the values in its instance state. Uniforms freeze when the instance is paused or the transport is stopped, just as every other effect does. They also travel with a saved show.
 - After each commit, the show hands the running shader instances to the **producer**. The producer never runs inside the lighting frame. Each instance has its own cadence, set by `:fps`. At each slot the producer renders the newest committed uniforms on Afterglow's GPU worker, reads the pixels back, and publishes the frame.
-- If the previous render is still running when a slot comes round, that slot is **dropped** and counted. It is never caught up. If a slot's program, uniforms and target are unchanged, the published frame is re-used and nothing is rendered. A frozen or static shader therefore costs nothing.
+- If the previous render is still running when a slot comes round, that slot is **dropped** and counted. It is never caught up.
+- A frame that takes longer than the slot is willing to wait (5 s) is **late**, not a failure. The job keeps running, the slots that pass are dropped, and the frame is published when it lands. The GPU context is replaced only when Afterglow reports it closed (its own 1 s fence timeout or a lost driver), and the old one is closed on its own thread.
+- All cues share one GPU worker, and a draw cannot be interrupted. A cue whose frame takes longer than its own period on that worker (draw plus readback) waits three times that long before its next frame. So one heavy cue uses at most about a quarter of the worker, and the other cues keep most of their rate. Status counts these as `:throttled`.
+- If a slot's program, uniforms and target are unchanged, the published frame is re-used and nothing is rendered. A frozen or static shader therefore costs nothing.
 - The next lighting frame latches the last completed frame. The strip, the projector page and Studio all read that same latch.
 
 GLSL compilation, GPU dispatch and readback belong to Afterglow (`afterglow.render.gpu.shader-frames`, [Afterglow doc](https://github.com/tolgraven/afterglow/blob/master/doc/architecture/shader-frames.md)). Tolglow owns the cue definition, its scheduling, the feeds and Studio.
@@ -39,7 +42,7 @@ GLSL compilation, GPU dispatch and readback belong to Afterglow (`afterglow.rend
           :fps 30                  ; video rate, 1–60, independent of the 40 Hz lighting rate
           :viewport [0 0 640 360]  ; optional: [x y w h] top-down inside the target; the rest is black
           :kind :2d                ; or :3d; a label for Studio
-          :feed :shader/plasma     ; optional; the default is :shader/<effect id>
+          :feed :shader/plasma     ; optional, in the shader namespace; the default is :shader/<effect id>
           :uniforms {:u_level {:type :float :value {:op :param :key :level}}
                      :u_speed {:type :float :value {:op :param :key :speed}}}}
  :outputs {:color {:op :video :mapping :plasma-strip}}}   ; optional
@@ -55,10 +58,12 @@ GLSL compilation, GPU dispatch and readback belong to Afterglow (`afterglow.rend
   `(gl_FragCoord.xy - u_origin) / u_resolution` runs from 0 to 1 across the viewport.
 - **Uniform types.** A uniform is `:float`, `:int`, `:bool`, `:vec2`, `:vec3` or `:vec4`. Its `:value` is an ordinary numeric expression. It can use parameters, `{:op :bar}` and other musical clocks, constants and arithmetic. The expression type must match the uniform: `:float`, `:int` and `:bool` take numbers, an `:int` rounds and a `:bool` is true from 0.5. A `:color` parameter feeds a `:vec3`. A uniform cannot read fixture position, because it has one value per frame.
 - **Validation.** A definition is checked like any effect when it is published. Errors carry paths such as `[:shader :uniforms :u_level :value]`. GLSL errors appear only when the GPU compiles the source.
+- **Memory.** Each frame is a fresh immutable byte array, kept until the latch moves on. Afterglow reads into it directly and keeps no direct buffer per target. One 4096 × 2160 frame is 35 MB.
 - **Limits.**
   - Render target: sides of 1–4096 pixels, 4096 × 2160 pixels in all.
   - At most 32 uniforms and 64 KiB of source.
-  - At most 8 shader instances render at once, taken in launch order. Status lists the rest as refused.
+  - The newest launches render: at most 8 instances, and at most 4096 × 2160 × 30 pixels per second summed over them (about 1 GB/s of frame arrays). Older instances stop rendering and are listed as refused, in status and in Studio. A feed only resolves to an instance that renders.
+  - `:feed` ids live in the `shader` namespace, and hub sources may not use it, so a shader never replaces a camera or Syphon source.
 - **Outputs.** A shader effect may have no outputs and drive only a direct output such as the projector page. With `{:op :video :mapping …}` it also writes fixtures. That output composes by priority and blend, follows opacity and envelopes, and freezes on transport stop, as #672 describes.
 
 ### Feed references
@@ -91,9 +96,18 @@ Each footprint centre falls on a texel centre, so strip pixel *n* reads texel *n
 
 ## The projector output
 
-Open `/studio/video-output.html?source=:shader/plasma` on the projector's screen, in a full-screen or kiosk browser window. For example, use Chrome with `--app=<url> --start-fullscreen`. The page shows only the feed: one canvas, black around the picture, no cursor and no controls. It pulls frames from `GET /api/video/next?source=…&after=<sequence>`. That call waits up to a second for a latched frame other than the one the page shows, and then sends its raw BGRA8 pixels. A 204 means nothing newer arrived, and the page keeps its picture.
+Open `/studio/video-output.html?source=:shader/plasma` on the projector's screen, in a full-screen or kiosk browser window. For example, use Chrome with `--app=<url> --start-fullscreen`. The page shows only the feed: one canvas, black around the picture, no cursor and no controls.
 
-This page is a direct destination. It shows the feed unchanged. The grand master, blackout and cue opacity do not apply, and nothing composites several feeds. The browser QA checked it only in headless Chrome:
+**A projector is a light in the room.** By default the page follows the show's blackout (including a blackout pause look) and the grand master. The light is scaled in linear light, like a dimmer. Add `&master=ignore` to the page URL for an output that should show the raw feed, such as a monitoring screen. Cue opacity does not apply, and nothing composites several feeds.
+
+The page pulls frames from `GET /api/video/next?source=…&after=<sequence>&gain=<gain>`:
+- The call waits up to a second, on the show's per-commit signal (no polling), for a latched frame other than the one the page shows, or for a different blackout/master gain. It then sends BGRA8 pixels scaled by that gain, with `X-Frame-Gain`.
+- 204 means nothing changed, and the page keeps its picture.
+- A source the show does not have answers 404 at once.
+- At most 8 pages wait at the same time; another gets 503. With 60 clients asking at once, `GET /api/video/shaders` stays responsive (see below).
+- Raw BGRA suits a browser on the show's own machine. A 1080p feed at 30 fps is about 250 MB/s, too much for a projector machine on a network.
+
+The browser QA checked it only in headless Chrome:
 
 - a 640 × 360 feed arrived at 29.7 fps from a 30 fps source;
 - a frozen 200 × 1 feed on the page matched the latched frame in all 200 pixels.

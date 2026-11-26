@@ -387,33 +387,36 @@
     "/api/video" (read-action video! :status "Video mapping unavailable")
     "/api/video/syphon" (read-action video! :syphon "Video mapping unavailable")
     "/api/video/shaders" (read-action video! :shaders "Video mapping unavailable")
-    ;; The projector page's frame pump (#673): wait up to `wait` ms for a
-    ;; latched frame other than sequence `after`, then send its BGRA8 pixels. 204 when
-    ;; nothing newer arrived, so a page holds its last picture.
+    ;; The projector page's frame pump (#673): wait up to `wait` ms on the
+    ;; show's frame signal for a latched frame other than sequence `after`
+    ;; (or a changed blackout/master gain, `gain`), then send its BGRA8 pixels
+    ;; scaled by that gain; `master=ignore` sends the raw feed. 204 when
+    ;; nothing changed, 404 for a source the show does not have, 503 when
+    ;; too many pages already wait.
     "/api/video/next" (available video! "Video mapping unavailable"
                         (fn [request]
-                          (let [{:keys [source after wait]} (query-fields request {:source nil :after "-1" :wait "1000"})
+                          (let [{:keys [source after wait gain master]}
+                                (query-fields request {:source nil :after "-1" :wait "1000" :gain nil :master "follow"})
                                 id (when source (if (str/starts-with? source ":") (keyword (subs source 1)) source))
-                                after (or (parse-long after) -1)
-                                deadline (+ (System/nanoTime) (* 1000000 (max 0 (min 2000 (or (parse-long wait) 1000)))))
-                                frame (when id
-                                        (loop []
-                                          (let [f (video! :frame {:source id})]
-                                            ;; Not merely newer: a feed that moves to a newer instance restarts its count.
-                                            (cond (and f (not= (long (:sequence f 0)) after)) f
-                                                  (< (System/nanoTime) deadline) (do (Thread/sleep 4) (recur))
-                                                  :else nil))))]
-                            (if frame
-                              {:status 200
-                               :headers {"Content-Type" "application/octet-stream" "Cache-Control" "no-store"
-                                         "X-Frame-Width" (str (:width frame)) "X-Frame-Height" (str (:height frame))
-                                         "X-Frame-Sequence" (str (:sequence frame))
-                                         "Content-Length" (str (alength ^bytes (:pixels frame)))
-                                         "Access-Control-Expose-Headers" "X-Frame-Width, X-Frame-Height, X-Frame-Sequence"}
-                               ;; One write of the frame's immutable array; a stream body
-                               ;; is copied in small chunks (about 35 ms for 640 × 360).
-                               :body (:pixels frame)}
-                              {:status 204 :headers {"Cache-Control" "no-store"} :body ""}))))
+                                {:keys [status frame pixels] frame-gain :gain}
+                                (when id
+                                  (video! :next-frame {:source id :after (or (parse-long after) -1)
+                                                       :gain-after (some-> gain parse-double)
+                                                       :wait-ms (or (parse-long wait) 1000)
+                                                       :follow-master? (not= "ignore" master)}))]
+                            (case status
+                              :frame {:status 200
+                                      :headers {"Content-Type" "application/octet-stream" "Cache-Control" "no-store"
+                                                "X-Frame-Width" (str (:width frame)) "X-Frame-Height" (str (:height frame))
+                                                "X-Frame-Sequence" (str (:sequence frame)) "X-Frame-Gain" (str frame-gain)
+                                                "Content-Length" (str (alength ^bytes pixels))
+                                                "Access-Control-Expose-Headers" "X-Frame-Width, X-Frame-Height, X-Frame-Sequence, X-Frame-Gain"}
+                                      ;; One write of an immutable array; a stream body
+                                      ;; is copied in small chunks (about 35 ms for 640 × 360).
+                                      :body pixels}
+                              :busy (data-response 503 {:message "Too many video outputs are waiting" :code :video/too-many-waiters})
+                              :none {:status 204 :headers {"Cache-Control" "no-store"} :body ""}
+                              (data-response 404 {:message "The show has no such video source" :code :video/unknown-source})))))
     "/api/video/frame" (available video! "Video mapping unavailable"
                          (fn [request]
                            (let [{:keys [source width]} (query-fields request {:source nil :width "640"})
@@ -471,8 +474,7 @@
    (post-actions "/api/video/shader/" video! ok {"audition" :audition} "Video mapping unavailable")
    {"/api/video/shader/save"
     (available video! "Video mapping unavailable"
-               #(let [receipt (video! :save-glsl (:json-params %))]
-                  (acknowledgement (deref receipt 5000 {:status :rejected :message "The show did not acknowledge the change"}))))}
+               #(await-acknowledgement (video! :save-glsl (:json-params %))))}
    (post-actions "/api/fixtures/" fixture! acknowledgement
                  {"search" :search "refresh" :refresh "fetch" :fetch "import" :import "publish" :publish "patch" :patch})
    (post-actions "/api/rdm/" rdm! acknowledgement

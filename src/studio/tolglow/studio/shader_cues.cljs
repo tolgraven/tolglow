@@ -197,6 +197,10 @@
                            (str "GPU · " r)
                            (or (get-in status [:error :message]) "Rendered on the show's GPU worker"))]]
      [:div.form-body
+      (when (seq (:refused status))
+        [:p.shader-log {:role "status"}
+         (str (count (:refused status)) " older shader instance" (when (< 1 (count (:refused status))) "s")
+              " not rendering: the newest 8 render, within the GPU pixel budget.")])
       (if (empty? effects)
         [:p.small.muted "No shader cues yet. Add an example, or publish an effect with a :shader block from the REPL or the library."]
         [:div.shader-grid

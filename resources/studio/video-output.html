@@ -14,27 +14,33 @@
 <!-- A borderless projector destination for one video feed (#673). Open it as
      /studio/video-output.html?source=:shader/plasma on the projector's
      screen in a full-screen or kiosk browser window. It shows only the feed:
-     no controls, no cursor, black when there is no frame. -->
+     no controls, no cursor, black when there is no frame. It follows blackout
+     and the grand master unless the URL adds &master=ignore. -->
 <canvas id="output" width="1" height="1"></canvas>
 <script>
 (() => {
   const params = new URLSearchParams(location.search);
   const source = params.get('source');
+  // A projector is a light in the room: by default it follows blackout and the
+  // grand master. ?master=ignore shows the raw feed.
+  const master = params.get('master') === 'ignore' ? 'ignore' : 'follow';
   const canvas = document.getElementById('output');
   const context = canvas.getContext('2d', { alpha: false });
-  const stats = { frames: 0, empty: 0, errors: 0, lastSequence: -1, width: 0, height: 0, startedAt: performance.now(), drawMs: [] };
+  const stats = { frames: 0, empty: 0, errors: 0, lastSequence: -1, gain: null, width: 0, height: 0, startedAt: performance.now(), drawMs: [] };
   window.tolglowVideoOutput = stats;
   if (!source) return;
   let image = null;
   async function pump() {
     for (;;) {
       try {
-        const response = await fetch(`/api/video/next?source=${encodeURIComponent(source)}&after=${stats.lastSequence}&wait=1000`, { cache: 'no-store' });
+        const gain = stats.gain === null ? '' : `&gain=${stats.gain}`;
+        const response = await fetch(`/api/video/next?source=${encodeURIComponent(source)}&after=${stats.lastSequence}${gain}&master=${master}&wait=1000`, { cache: 'no-store' });
         if (response.status === 204) { stats.empty++; continue; }
         if (!response.ok) { stats.errors++; await new Promise(r => setTimeout(r, 500)); continue; }
         const width = Number(response.headers.get('X-Frame-Width'));
         const height = Number(response.headers.get('X-Frame-Height'));
         const sequence = Number(response.headers.get('X-Frame-Sequence'));
+        stats.gain = response.headers.get('X-Frame-Gain');
         const bgra = new Uint8Array(await response.arrayBuffer());
         const started = performance.now();
         if (canvas.width !== width || canvas.height !== height || !image) {
