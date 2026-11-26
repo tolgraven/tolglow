@@ -235,9 +235,14 @@
                           (pretty/edn bindings {:column (dec column)
                                                 :tail (count (re-find #"^[\]})]*" (subs source end)))})
                           (subs source end))
-                 :else (str (subs source 0 (dec end)) "\n" (apply str (repeat entry-column " ")) ":blocks "
-                            (pretty/edn bindings {:column (+ entry-column 8) :tail 1})
-                            (subs source (dec end))))]
+                 :else (let [indent #(apply str (repeat % " "))
+                             hung (pretty/edn bindings {:column (+ entry-column 8) :tail 1})]
+                         ;; A map that does not fit after its key starts the next line, as in pretty/edn.
+                         (str (subs source 0 (dec end)) "\n" (indent entry-column) ":blocks"
+                              (if (str/includes? hung "\n")
+                                (str "\n" (indent (+ entry-column 2)) (pretty/edn bindings {:column (+ entry-column 2) :tail 1}))
+                                (str " " hung))
+                              (subs source (dec end)))))]
     (when-not (= (assoc (edn/read-string source) :blocks bindings)
                  (update (edn/read-string result) :blocks #(or % {})))
       (throw (js/Error. "Could not locate the block map in this source.")))

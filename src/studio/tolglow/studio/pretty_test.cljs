@@ -21,21 +21,25 @@
             ["{:id :after-hours"
              " :version 3"
              " :name \"Snow ☃ \\\"quoted\\\"\\nsecond line\\tend\""
-             " :blocks {[:outputs :dimmer] {:stages [{:block :lfo/sine"
-             "                                        :inputs {:phase 0.25}}]}}"
-             " :curve [0 0.125 0.25 0.375 0.5 0.625 0.75 0.875 1 0.875 0.75 0.625 0.5 0.375"
-             "         0.25 0.125 0 0.125 0.25 0.375]"
+             " :blocks"
+             "   {[:outputs :dimmer] {:stages [{:block :lfo/sine :inputs {:phase 0.25}}]}}"
+             " :curve"
+             "   [0 0.125 0.25 0.375 0.5 0.625 0.75 0.875 1 0.875 0.75 0.625 0.5 0.375 0.25"
+             "    0.125 0 0.125 0.25 0.375]"
              " :empty []"
              " :list (a b c)"
-             " :outputs {:color {:op :const :value [0.725 0.5 0.25]}"
-             "           :dimmer {:op :multiply"
-             "                    :args [{:op :param :key :level}"
-             "                           {:op :sin"
-             "                            :args [{:op :multiply"
-             "                                    :args [{:op :beat}"
-             "                                           {:op :param :key :rate}]}]}]}}"
-             " :params {:level {:type :number :default 0.75 :bounds [0 1]}"
-             "          :rate {:type :number :default 2 :bounds [0.5 32] :unit :beats}}"
+             " :outputs"
+             "   {:color {:op :const :value [0.725 0.5 0.25]}"
+             "    :dimmer"
+             "      {:op :multiply"
+             "       :args"
+             "         [{:op :param :key :level}"
+             "          {:op :sin"
+             "           :args"
+             "             [{:op :multiply :args [{:op :beat} {:op :param :key :rate}]}]}]}}"
+             " :params"
+             "   {:level {:type :number :default 0.75 :bounds [0 1]}"
+             "    :rate {:type :number :default 2 :bounds [0.5 32] :unit :beats}}"
              " :tags #{:color :emission :movement}}"]))
 
 (deftest the-browser-and-host-share-one-layout
@@ -61,3 +65,7 @@
 (deftest json-views-indent-two-spaces
   (is (= "{\n  \"a\": [\n    1,\n    \"b\"\n  ]\n}" (pretty/json {:a [1 :b]})))
   (is (= "\"plain\"" (pretty/json "plain"))))
+
+(deftest length-and-level-elide-as-on-the-host
+  (is (= "{:a (0 1 2 ...) :b [1 #] :c #{0 1 2 ...}}"
+         (pretty/edn (array-map :a (range) :b [1 [2 [3 [4]]]] :c (set (range 10))) {:length 3 :level 2}))))

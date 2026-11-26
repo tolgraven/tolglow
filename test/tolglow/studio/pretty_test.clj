@@ -22,21 +22,25 @@
             ["{:id :after-hours"
              " :version 3"
              " :name \"Snow ☃ \\\"quoted\\\"\\nsecond line\\tend\""
-             " :blocks {[:outputs :dimmer] {:stages [{:block :lfo/sine"
-             "                                        :inputs {:phase 0.25}}]}}"
-             " :curve [0 0.125 0.25 0.375 0.5 0.625 0.75 0.875 1 0.875 0.75 0.625 0.5 0.375"
-             "         0.25 0.125 0 0.125 0.25 0.375]"
+             " :blocks"
+             "   {[:outputs :dimmer] {:stages [{:block :lfo/sine :inputs {:phase 0.25}}]}}"
+             " :curve"
+             "   [0 0.125 0.25 0.375 0.5 0.625 0.75 0.875 1 0.875 0.75 0.625 0.5 0.375 0.25"
+             "    0.125 0 0.125 0.25 0.375]"
              " :empty []"
              " :list (a b c)"
-             " :outputs {:color {:op :const :value [0.725 0.5 0.25]}"
-             "           :dimmer {:op :multiply"
-             "                    :args [{:op :param :key :level}"
-             "                           {:op :sin"
-             "                            :args [{:op :multiply"
-             "                                    :args [{:op :beat}"
-             "                                           {:op :param :key :rate}]}]}]}}"
-             " :params {:level {:type :number :default 0.75 :bounds [0 1]}"
-             "          :rate {:type :number :default 2 :bounds [0.5 32] :unit :beats}}"
+             " :outputs"
+             "   {:color {:op :const :value [0.725 0.5 0.25]}"
+             "    :dimmer"
+             "      {:op :multiply"
+             "       :args"
+             "         [{:op :param :key :level}"
+             "          {:op :sin"
+             "           :args"
+             "             [{:op :multiply :args [{:op :beat} {:op :param :key :rate}]}]}]}}"
+             " :params"
+             "   {:level {:type :number :default 0.75 :bounds [0 1]}"
+             "    :rate {:type :number :default 2 :bounds [0.5 32] :unit :beats}}"
              " :tags #{:color :emission :movement}}"]))
 
 (defn- definitions [model]
@@ -79,3 +83,21 @@
 (deftest printing-ignores-the-callers-print-limits
   (binding [*print-length* 2 *print-level* 1]
     (is (= "[1 2 3 [4 [5]]]" (pretty/edn [1 2 3 [4 [5]]])))))
+
+(deftest a-value-that-does-not-fit-after-its-key-starts-the-next-line
+  (let [text (pretty/edn (get-in (demo/model) [:registry :effects :breathe]))
+        lines (str/split-lines text)]
+    (is (some #{" :outputs"} lines))
+    (is (some #{"   {:dimmer"} lines))
+    (testing "deep expressions stay inside the width instead of hanging right"
+      (is (every? #(<= (count %) pretty/default-width) lines)))
+    (testing "values that fit stay after their key"
+      (is (some #{" :envelope {:attack {:beats 1/8} :release {:beats 3/2}}"} lines)))))
+
+(deftest length-and-level-elide-like-print-length-and-print-level
+  (is (= "{:a (0 1 2 ...) :b [1 #] :c #{0 1 2 ...}}"
+         (pretty/edn (array-map :a (range) :b [1 [2 [3 [4]]]] :c (set (range 10))) {:length 3 :level 2})))
+  (is (= "#" (pretty/edn [1] {:level 0})))
+  (binding [*print-length* 3 *print-level* 2]
+    (is (= (pr-str (array-map :a (range) :b [1 [2 [3]]]))
+           (str/replace (pretty/edn (array-map :a (range) :b [1 [2 [3]]]) {:length 3 :level 2}) " :b" ", :b")))))

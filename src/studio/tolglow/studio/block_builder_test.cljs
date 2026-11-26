@@ -28,7 +28,7 @@
   (let [phase {:op :oscillator-phase :phase-reference :transport :period {:beats 1.5} :phase 0.25}
         binding {[:outputs :dimmer] {:stages [{:block :lfo/saw :inputs {:phase phase}}]}}]
     (is (= phase (builder/oscillator-timing phase false)))
-    (is (= (str "{:id :fx :outputs {:dimmer 0.3}\n :blocks " (pretty/edn binding {:column 9 :tail 1}) "}")
+    (is (= (str "{:id :fx :outputs {:dimmer 0.3}\n :blocks\n   " (pretty/edn binding {:column 3 :tail 1}) "}")
            (builder/write-bindings "{:id :fx :outputs {:dimmer 0.3}}" binding)))))
 
 (deftest block-maps-splice-into-pretty-printed-source
@@ -45,7 +45,7 @@
         written (builder/write-bindings source replaced)]
     (testing "the printed source spans lines and holds its block map in the middle"
       (is (< 8 (count lines)))
-      (is (str/starts-with? (nth lines 3) " :blocks ")))
+      (is (= " :blocks" (nth lines 3))))
     (testing "replacing a multi-line block map gives the lines a fresh print would"
       (is (= (pretty/edn (assoc definition :blocks replaced)) written))
       (is (= (assoc definition :blocks replaced) (edn/read-string written)))
@@ -64,7 +64,8 @@
             added-lines (str/split-lines added)]
         (is (= (assoc definition :blocks replaced) (edn/read-string added)))
         (is (= (butlast (str/split-lines bare)) (take (dec (count (str/split-lines bare))) added-lines)))
-        (is (some #(str/starts-with? % " :blocks {[:outputs ") added-lines))
+        (is (some #{" :blocks"} added-lines))
+        (is (some #(str/starts-with? % "   {[:outputs ") added-lines))
         (is (every? #(<= (count %) pretty/default-width) added-lines))))))
 
 (deftest picker-previews-the-materials-in-the-unpublished-draft
