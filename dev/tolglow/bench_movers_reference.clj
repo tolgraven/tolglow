@@ -60,7 +60,7 @@
      (+ 1.2 (* 0.6 (Math/cos (* theta 0.7))))
      (+ (+ 2.0 layer) (* 4.0 (Math/cos theta)))]))
 
-(defn expected-assigned [fixture beat alpha]
+(defn- written-assigned [fixture beat alpha]
   (reduce (fn [values layer]
             (let [gain (nth alpha layer)]
               (if (zero? gain) values
@@ -71,8 +71,19 @@
                              values (assoc (nth layer-values layer) :aim (expected-aim fixture layer beat))))))
           {} (range 3)))
 
+(defn expected-assigned
+  "Expected logical assignment for one head. Every layer writes :aim, so a frame
+  with all opacities at 0 has no position writer: the show then holds the last
+  committed pan/tilt (tolglow.show.position-hold, #690) and nothing else."
+  ([fixture beat alpha] (expected-assigned fixture beat alpha nil))
+  ([fixture beat alpha previous]
+   (if (every? zero? alpha)
+     (into {} (keep (fn [axis] (when-let [v (get previous axis)] [axis v]))) [:pan :tilt])
+     (written-assigned fixture beat alpha))))
+
 (defn check-frame! [fixtures beat alpha previous-preview preview universes]
-  (movement/check-frame! fixtures (mapv #(expected-assigned % beat alpha) fixtures)
+  (movement/check-frame! fixtures (mapv #(expected-assigned %1 beat alpha %2) fixtures
+                                       (concat previous-preview (repeat nil)))
                          previous-preview preview universes))
 
 (defn self-check! []
@@ -83,4 +94,9 @@
         (throw (ex-info "Opaque layer must replace earlier layers" {:layer layer}))))
     (when-not (= {} (expected-assigned fixture 1.0 [0.0 0.0 0.0]))
       (throw (ex-info "Transparent layers must contribute nothing" {})))
+    (when-not (= {:pan 0.25 :tilt 0.75}
+                 (expected-assigned fixture 1.0 [0.0 0.0 0.0] {:id (:id fixture) :pan 0.25 :tilt 0.75 :zoom 0.5}))
+      (throw (ex-info "Without a position writer a head holds only its last pan/tilt" {})))
+    (when (contains? (expected-assigned fixture 1.0 [0.25 0.0 0.0] {:pan 0.25 :tilt 0.75}) :pan)
+      (throw (ex-info "Any positive position writer replaces the hold" {})))
     true))
