@@ -307,6 +307,7 @@ for (const viewport of viewports) {
       await roomPage.setViewportSize({width: 960, height: 240});
       await roomPage.waitForFunction(() => document.querySelector('.panel-window-content[data-panel="room"]')?.dataset.tier === 'compact', null, {timeout: 5000});
       assert.equal(await roomPage.locator('.camera-navigation:visible').count(), 0, 'a short Room window hides camera navigation');
+      await roomPage.screenshot({path: join(directory, `${viewport.name}-6b-room-window-compact.png`)});
       await roomPage.setViewportSize(roomSize);
       await roomPage.waitForFunction(() => document.querySelector('.panel-window-content[data-panel="room"]')?.dataset.tier === 'full', null, {timeout: 5000});
       await page.locator('#view-perform [data-panel="room"] .layout-detach').click();
@@ -479,6 +480,7 @@ for (const viewport of viewports) {
       assert.ok(!cardIds.includes(tileTriggerId), 'no Live card trigger shares the tile trigger ID');
       await tileTrigger.click();
       await tileWindow.waitForSelector('.parameter-tile .live-source-editor', {timeout: 5000});
+      await tileWindow.screenshot({path: join(directory, `${viewport.name}-11b-tile-source.png`)});
       assert.equal(await liveWindow.locator('.live-source-editor').count(), 0, 'the Live window opened no editor');
       assert.equal(await tileTrigger.getAttribute('aria-expanded'), 'true');
       assert.equal(await tileTrigger.getAttribute('aria-controls'),
