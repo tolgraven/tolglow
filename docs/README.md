@@ -102,6 +102,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Push page overview](push-page-overview.md) | Browse cue layouts, authored swatches and type colors |
 | [Live waveform projections](waveform-projections.md) | Current signal parameters, captured PCM history and bounded Push data |
 | [Audio-shaped LFOs](audio-shaped-lfo.md) | A band of the captured input shaped once per window into a live registered waveform that morphs slowly; REPL, Studio and two-tempo measurements |
+| [Instrument stems](stems.md) | Named channels of a multichannel input or recording: per-stem levels and tempo-gated onsets that launch cues and drive parameters through event subscribers and the signal patch |
 | [Dependency upgrades](dependency-upgrades.md) | Registry-verified versions, migrations and updated build/test evidence |
 | [X-Touch](xtouch.md) | Verified MCU/extender protocol, adapter and color research |
 | [Naut hardware qualification](qualification/naut-hardware.md) | Push 3 and X-Touch/XT inventory, operator-attended checks and receipts |

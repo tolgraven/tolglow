@@ -34,7 +34,7 @@
     tolglow.integrations.gdtf-test
     tolglow.venue-fog-test tolglow.fog-optics-test tolglow.fog-calibration-test tolglow.venue-performance-test tolglow.perf.beam-admission-test tolglow.perf.independent-effects-test tolglow.perf.weighted-live-test tolglow.stride-break-even-test
     tolglow.calibration-test tolglow.studio-test tolglow.effects.faults-test tolglow.effects.state-migration-test tolglow.effects.modulation-reload-test tolglow.studio.web-test tolglow.studio.pretty-test tolglow.guest-admission-test tolglow.composition-test tolglow.agents-test tolglow.agents.forms-test
-    tolglow.persistence-test tolglow.show.recovery-test tolglow.expressive-test tolglow.qa.naut-hardware-test tolglow.qa.naut-display-features-test tolglow.audio.capture-test tolglow.audio.shape-test tolglow.audio-lfo-test tolglow.agents.credentials-test
+    tolglow.persistence-test tolglow.show.recovery-test tolglow.expressive-test tolglow.qa.naut-hardware-test tolglow.qa.naut-display-features-test tolglow.audio.capture-test tolglow.audio.shape-test tolglow.audio.stems-test tolglow.audio-lfo-test tolglow.agents.credentials-test
     tolglow.fixtures.definitions-test tolglow.fixtures.library-test
     tolglow.connections-test tolglow.studio.connections-host-test
     tolglow.studio.output-options-test
@@ -45,7 +45,7 @@
     tolglow.integrations.live-connection-test tolglow.integrations.live-capture-roundtrip-test
     tolglow.integrations.live-companion-contract-test tolglow.integrations.phrase-capture-host-test
     tolglow.studio.link-pause-test tolglow.studio.sync-host-test tolglow.studio.modulation-host-test
-    tolglow.studio.display-test tolglow.integrations.patch-test tolglow.studio.routing-host-test
+    tolglow.studio.display-test tolglow.integrations.patch-test tolglow.studio.routing-host-test tolglow.studio.stem-routing-host-test
     tolglow.repl-test tolglow.repl.sessions-test tolglow.studio.repl-host-test
     tolglow.development.workspace-test tolglow.development-test tolglow.studio.restart-host-test tolglow.cue-timing-host-test
     tolglow.development.terminal-test tolglow.sensors-test tolglow.sensors.osc-test tolglow.sensors.audience-test
