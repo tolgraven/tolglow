@@ -5,9 +5,12 @@
   scenario names) as :frozen, :keeps-running or :jumps."
   (:require [afterglow.control.model :as control]
             [afterglow.reactive :as graph]
+            [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
+            [tolglow.demo :as demo]
             [tolglow.persistence :as files]
-            [tolglow.show :as show]))
+            [tolglow.show :as show])
+  (:import [java.net InetAddress ServerSocket]))
 
 (def ^:private frame-ms 100)
 
@@ -315,3 +318,232 @@
             (is (rising-after-play? frames)))
           (finally ((:close! lease)))))
       (finally (show/stop! rt)))))
+
+(deftest a-response-saved-during-the-stop-keeps-its-held-count-after-import
+  (let [rt (runtime)
+        held-count #(get-in (first (vals (:instances %))) [:system :transport-held-ms])]
+    (try
+      (launch! rt 0 :wash)
+      (submit! rt 0 :response {:id :swell :params [:level] :operation :multiply :envelope {:attack {:ms 4000}}})
+      (doseq [t (range 100 2000 100)] (tick! rt t))
+      (set-playing! rt 2000 false)
+      (let [stopped (dmx rt)]
+        (tick! rt 4000)
+        (let [{saved :model frame-output :frame-output} (show/export-show rt)
+              restored (runtime)]
+          (is (= 2000 (held-count saved)))
+          (try
+            (submit! restored 0 :import {:source (files/write-string saved frame-output)})
+            (is (= 2000 (held-count (model restored))) "the backup round trip keeps the held count")
+            (doseq [t (range 4100 7000 100)] (tick! restored t))
+            (is (= stopped (dmx restored)) "the restored response is still held")
+            (set-playing! restored 7000 true)
+            (tick! restored 7100)
+            (is (<= stopped (dmx restored) (+ stopped 12)) (pr-str stopped (dmx restored)))
+            (finally (show/stop! restored)))))
+      (finally (show/stop! rt)))))
+
+(deftest a-show-that-starts-stopped-holds-from-its-first-frame
+  (let [rt (runtime 120.0 (assoc-in (live-model 120.0) [:transport :playing?] false))]
+    (try
+      (launch! rt 0 :ms-tween)
+      (doseq [t (range 100 3001 100)] (tick! rt t))
+      (is (= 0 (dmx rt)) "nothing moves before the first play")
+      (set-playing! rt 3000 true)
+      (tick! rt 5000)
+      (is (< 120 (dmx rt) 135) "half of the tween after two seconds of play")
+      (finally (show/stop! rt)))))
+
+(defn- ramp-end [rt] (:end (first (get-in (model rt) [:event-subscribers :ramps]))))
+
+(defn- ramped [rt]
+  (let [id (launch! rt 0 :wash {:params {:level 0.0}})]
+    (command! rt 0 {:op :param/ramp :event-id "r" :instance-id id :param :level :to 1.0 :over {:ms 4000}})
+    (is (== 4000 (ramp-end rt)))))
+
+(deftest irregular-repeated-and-very-long-stop-frames-hold-exactly-once
+  (let [rt (runtime)]
+    (try
+      (ramped rt)
+      (tick! rt 1000)
+      (set-playing! rt 1000 false)
+      (doseq [t [1000 1000 1001 1500 1500 1733 2999 3000 3000]] (tick! rt t))
+      (is (== 6000 (ramp-end rt)) "held exactly the 2000 ms stopped so far")
+      (testing "an earlier frame time cannot hold or release anything"
+        (tick! rt 2500)
+        (is (== 6000 (ramp-end rt))))
+      (testing "a ten hour stop"
+        (tick! rt (+ 3000 (* 10 3600 1000)))
+        (is (== (+ 6000 (* 10 3600 1000)) (ramp-end rt))))
+      (finally (show/stop! rt)))))
+
+(deftest stop-and-play-in-one-frame-hold-only-committed-stopped-intervals
+  (let [rt (runtime)
+        both! (fn [t first-playing? then-playing?]
+                (let [a (show/submit! rt :command {:op :transport/set :transport {:playing? first-playing?}})
+                      b (show/submit! rt :command {:op :transport/set :transport {:playing? then-playing?}})]
+                  (tick! rt t)
+                  (is (= [:accepted :accepted] (map (comp :status deref) [a b])))))]
+    (try
+      (ramped rt)
+      (both! 500 false true)
+      (tick! rt 1000)
+      (is (== 4000 (ramp-end rt)) "a stop that never committed holds nothing")
+      (set-playing! rt 1000 false)
+      (both! 1300 true false)
+      (tick! rt 1600)
+      (is (== 4600 (ramp-end rt)) "a play that never committed releases nothing")
+      (finally (show/stop! rt)))))
+
+;; A pending hot reload on a held frame (#663): the candidate and the engine's
+;; fallback both read the held model, so a rejected revision leaves the show
+;; exactly as a twin that never published it.
+
+(def ^:private reload-effects
+  {:tween (assoc (:ms-tween effects) :id :tween)
+   :wash (:wash effects)
+   :modulator {:id :modulator :version 1 :params {}
+               :modulation {:params [:level] :ranges {:level [0.6 0.6]} :select {:cue-ids [:wash]}}}})
+
+(defn- reload-run [publications failing]
+  (let [out (atom [])
+        m (assoc (control/new-show {:show-id :pause-reload :transport {:playing? true :beat 0.0 :bpm 120.0}
+                                    :registry {:effects reload-effects
+                                               :cues (into {} (map (fn [id] [id {:id id :effect-id id :version 1
+                                                                                 :reload-policy :preserve-state}]))
+                                                           (keys reload-effects))}})
+                 :rig {:fixtures [{:id :a :universe 1 :address 1 :channels {:dimmer 1}}
+                                  {:id :b :universe 1 :address 2 :channels {:dimmer 1}}]})
+        rt (cond-> (show/create-runtime {:model m :workspace-options nil :effect-log! (fn [_])
+                                         :sink {:send! (fn [u _] (swap! out conj (mapv #(bit-and 255 %) (take 2 (get u 1)))))}})
+             ;; Reject a revision at the compiler boundary, as tolglow.effects.modulation-reload-test does.
+             failing (update :compile (fn [compile-effect]
+                                        (fn [{:keys [id version] :as definition}]
+                                          (if (= failing [id version])
+                                            (throw (ex-info "Compiler rejected this revision" {:effect-id id}))
+                                            (compile-effect definition))))))]
+    (try
+      (let [tween (launch! rt 0 :tween {:targets [:a]})
+            wash (launch! rt 0 :wash {:targets [:b] :params {:level 0.0}})]
+        (launch! rt 0 :modulator {:mode :one-shot :duration {:ms 3000}})
+        (command! rt 0 {:op :param/ramp :event-id "r" :instance-id wash :param :level :to 1.0 :over {:ms 2500}})
+        (vec (for [t (range 100 6001 100)]
+               (do (cond
+                     (= t 1000) (set-playing! rt t false)
+                     (= t 3500) (set-playing! rt t true)
+                     (contains? publications t)
+                     (let [reply (show/submit! rt :definition {:kind :effects :definition (get publications t)})]
+                       (tick! rt t)
+                       (is (= :accepted (:status (deref reply 2000 nil)))))
+                     :else (tick! rt t))
+                   [t (peek @out) (get-in (model rt) [:instances tween :effect-version])]))))
+      (finally (show/stop! rt)))))
+
+(deftest a-reload-pending-on-a-held-frame-reads-the-held-clock-on-both-outcomes
+  (let [control (reload-run {} nil)
+        tween-2 (assoc (:tween reload-effects) :version 2)
+        owner-2 (assoc-in (assoc (:modulator reload-effects) :version 2) [:modulation :ranges :level] [0.2 0.2])
+        at (fn [frames t] (some (fn [[ft v]] (when (= ft t) v)) frames))
+        diff (fn [a b] (pr-str (keep (fn [[[t x] [_ y]]] (when (not= x y) [t x y])) (map vector a b))))]
+    (is (= 1 (count (set (keep (fn [[t v]] (when (< 1000 t 3500) v)) control)))) "the twin holds through the stop")
+    (testing "the timed owner expires on its private clock: 3000 ms plus the 2500 ms stop"
+      (is (= 153 (second (at control 5400))))
+      (is (= 255 (second (at control 5600)))))
+    (doseq [[label failing] [["rejected effect revision" [:tween 2]] ["accepted effect revision" nil]]]
+      (testing label
+        (let [frames (reload-run {2000 tween-2} failing)]
+          (is (= (if failing 1 2) (last (peek frames))) "the reload was attempted")
+          (is (= (map second control) (map second frames)) (diff control frames)))))
+    (testing "a rejected owner revision samples the fallback controllers on the held frame"
+      (let [frames (reload-run {2000 owner-2} [:modulator 2])]
+        (is (= (map second control) (map second frames)) (diff control frames))))
+    (testing "an accepted owner revision applies its range at once and still holds"
+      (let [frames (reload-run {2000 owner-2} nil)]
+        (is (= (map (comp first second) control) (map (comp first second) frames)) "the tween is untouched")
+        (is (= #{51} (set (keep (fn [[t [_ b]]] (when (<= 2000 t 5400) b)) frames))))
+        (is (= 255 (second (at frames 5600))))))))
+
+;; The Room's private audition timeline replays the live holds.
+
+(def ^:private ms-swell
+  {:id :ms-swell :version 1 :outputs {:color {:op :const :value [1.0 1.0 1.0]} :dimmer {:op :const :value 1.0}}
+   :envelope {:attack {:ms 2000}}})
+
+(deftest an-audition-holds-millisecond-progress-with-the-live-show
+  (let [start (fn [] (show/create-runtime {:workspace-options nil :audition {:max-live-share ##Inf} :model (demo/model)
+                                           :sink {:send! (fn [_ _])}}))
+        audition (start) applied (start)
+        send! (fn [rt c] (show/submit! rt (assoc c :source {:adapter :repl :session-id "test"})))
+        both! (fn [t] (doseq [rt [audition applied]] (show/tick! rt t) (is (show/await-audition rt 5000))))
+        playing! (fn [t playing?]
+                   (let [replies (mapv #(send! % {:op :transport/set :transport {:playing? playing?}}) [audition applied])]
+                     (both! t)
+                     (is (every? #(= :accepted (:status @%)) replies))))
+        ops [{:op :registry/publish :kind :effects :definition ms-swell} {:op :effect/launch :effect-id :ms-swell}]
+        sample (fn [t] (both! t) [t (show/snapshot audition) (show/snapshot applied)])]
+    (try
+      (run! both! (range 25 101 25))
+      (let [staged (send! audition {:op :scene-draft/stage :draft-id "scene" :operations ops})
+            _ (send! applied {:op :scene-draft/stage :draft-id "scene" :operations ops})
+            taken (send! applied {:op :scene-draft/apply :draft-id "scene" :expected-draft-revision 0 :command-id "take"})
+            frames (concat (doall (map sample (range 125 1000 25)))
+                           (do (playing! 1000 false) [])
+                           (doall (map sample (range 1025 3000 25)))
+                           (do (playing! 3000 true) [])
+                           (doall (map sample (range 3025 4500 25))))
+            held (set (keep (fn [[t a]] (when (< 1000 t 3000) (get-in a [:draft-output :values :head-1 :emitted-color 0])))
+                            frames))]
+        (is (= [:accepted :accepted] (map (comp :status deref) [staged taken])))
+        (doseq [[t a c] frames]
+          (is (= (get-in c [:output :values]) (get-in a [:draft-output :values])) (str "frame " t)))
+        (is (= 1 (count held)) (pr-str held))
+        (is (< 0 (first held) 1) "held part-way through the attack"))
+      (finally (show/stop! audition) (show/stop! applied)))))
+
+;; Link play/stop following, through a loopback Carabiner peer.
+
+(defn- eventually [pred]
+  (let [deadline (+ (System/nanoTime) 3000000000)]
+    (loop [] (or (pred) (when (< (System/nanoTime) deadline) (Thread/sleep 5) (recur))))))
+
+(deftest a-link-stop-holds-millisecond-progress
+  (with-open [server (ServerSocket. 0 1 (InetAddress/getByName "127.0.0.1"))]
+    (.setSoTimeout server 3000)
+    (let [rt (runtime)
+          clock #(:clock (show/sync-action! rt :status {}))
+          base {:peers 1 :start 123456 :bpm 120.0}
+          run-for! (fn [ms] (let [deadline (+ (System/nanoTime) (* ms 1000000))]
+                              (loop [] (show/tick! rt) (Thread/sleep 20) (when (< (System/nanoTime) deadline) (recur)))))]
+      (try
+        (show/sync-action! rt :configure {:config {:selected-source :ableton-link
+                                                    :link {:enabled? true :follow-transport? true
+                                                           :port (.getLocalPort server)}}})
+        (show/sync-action! rt :start {})
+        (with-open [socket (.accept server) reader (io/reader socket) writer (io/writer socket)]
+          (.setSoTimeout socket 3000)
+          (let [status! (fn [message] (.write writer (str "status " (pr-str message) "\n")) (.flush writer))]
+            (is (= "enable-start-stop-sync" (.readLine reader)))
+            (is (= "status" (.readLine reader)))
+            (status! (assoc base :beat 0.0 :playing true))
+            (is (eventually #(= :locked (:status (clock)))))
+            (show/tick! rt)
+            (let [launch (show/submit! rt :command {:op :cue/launch :cue-id :ms-tween})]
+              (show/tick! rt)
+              (is (= :accepted (:status (deref launch 1000 nil)))))
+            (status! (assoc base :beat 1.0 :playing true))
+            (run-for! 1000)
+            (status! (assoc base :beat 2.0 :playing false))
+            (is (eventually #(= :paused (:status (clock)))))
+            (show/tick! rt)
+            (is (false? (get-in (model rt) [:transport :playing?])))
+            (let [stopped (dmx rt) held (atom #{})]
+              (dotimes [_ 50] (show/tick! rt) (swap! held conj (dmx rt)) (Thread/sleep 20))
+              (is (= #{stopped} @held) "frozen through the Link stop")
+              (status! (assoc base :beat 2.0 :playing true))
+              (is (eventually #(= :locked (:status (clock)))))
+              (show/tick! rt)
+              (is (true? (get-in (model rt) [:transport :playing?])))
+              (is (<= stopped (dmx rt) (+ stopped 8)) "no catch-up on play")
+              (run-for! 500)
+              (is (< stopped (dmx rt)) "continues after play"))))
+        (finally (show/stop! rt))))))
