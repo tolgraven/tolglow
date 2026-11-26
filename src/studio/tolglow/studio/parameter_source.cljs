@@ -219,16 +219,24 @@
         (:result @(rf/subscribe [:studio/remote [:runtime/block-trace (:id instance) (mapv keyword (:path block)) target]])))
       (:effective-value source))))
 
-(defn- result-view [view instance schema sample block?]
-  (if-not block? [view schema sample]
+(defn- result-view [view instance schema sample block? & [options]]
+  (if-not block? [view schema sample options]
     (if-let [{:keys [id name]} @(rf/subscribe [::fixture (:id instance)])]
       [:<> [:span.source-sample-target (str "Fixture · " (or name (events/wire-id id)))]
-       ^{:key (pr-str id)} [view schema sample]]
+       ^{:key (pr-str id)} [view schema sample options]]
       [:span.block-trace-empty "No target fixtures"])))
+
+(defn source-period
+  "Beats in one cycle of the waveform that currently drives an input. The show
+  measures it in the meter the binding follows."
+  [source]
+  (some #(when (and (driving-source? %) (= :lfo (keyword (:type %)))) (:period-beats %)) (:sources source)))
 
 (defn result-visual [view instance param schema]
   (when (driven? instance param)
-    [result-view view instance schema #(native-value instance param) (driving-block (reading instance param))]))
+    (let [source (reading instance param)]
+      [result-view view instance schema #(native-value instance param) (driving-block source)
+       {:period-beats (source-period source)}])))
 
 (defn axes-visual [view instance components schema]
   (let [axis (fn [[param spec]]
@@ -237,7 +245,8 @@
                  (get-in instance [:params param] (:default spec))))
         sample (fn [] (let [values (mapv axis components)] (when (every? some? values) values)))
         block? (some (fn [[k _]] (driving-block (reading instance k))) components)]
-    [result-view view instance schema sample block?]))
+    [result-view view instance schema sample block?
+     {:period-beats (some (fn [[k _]] (source-period (reading instance k))) components)}]))
 
 (defn- close! [id params]
   (rf/dispatch [::close id params]))
