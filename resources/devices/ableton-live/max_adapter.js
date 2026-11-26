@@ -94,6 +94,9 @@ function pair(track, clipSlot, rackDevice) {
 }
 function poll() {
   init();
+  // Refresh the cached host track (one LiveAPI object per poll, not per MIDI
+  // event), so a companion moved to another track tags playback correctly.
+  if (adapter.session) adapter.session.hostTrackId(true);
   var result = adapter.handle({id: "local-inspect-" + (++localId), op: "inspect", payload: {}});
   if (result.status === "executed") outlet(0, "event", JSON.stringify({kind: "status", status: result.result}));
   else outlet(1, "diagnostic", result.error.message);
