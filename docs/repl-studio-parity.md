@@ -808,6 +808,41 @@ boolean and vector destinations are not generated. Close this gap when a Push
 encoder sweeps the same candidate in the Room
 ([issue #667](https://github.com/tolgraven/tolglow/issues/667)).
 
+## Take or dismiss the checkpoint from before the update
+
+A show folder opened in the Mac app keeps its own recovery, named by its
+`.tolglow-folder-id`. The last session that desktop shows autosaved to the
+shared directory before that change is offered to every Mac show folder as the
+`:legacy` checkpoint, and never restored at startup. Both surfaces read
+`show/recovery-status` and call the same functions; Studio reaches them through
+`/api/show/checkpoints`, `/api/show/checkpoints/restore` with `kind legacy` and
+`/api/show/checkpoints/dismiss-legacy`. [Show files](show-files.md#the-checkpoint-from-before-per-folder-recovery) · [Issue #742](https://github.com/tolgraven/tolglow/issues/742)
+
+```clojure
+(select-keys (show/recovery-status runtime) [:checkpoints :folder])
+@(show/load-latest-show! runtime :legacy)   ; restore it into this folder
+(show/dismiss-legacy-recovery! runtime)     ; or stop offering it to every folder
+```
+
+In Studio, **Restore show** lists **Checkpoint from before the update** with
+**Restore** and **Dismiss**, each behind a confirmation, and its **Show folder**
+section explains the identity file. A note above the view says when one is
+waiting and, on a folder's first open, what `.tolglow-folder-id` is. After a
+REPL restore or dismissal the waiting note in an open Studio goes away with the
+next state frame, and the dialog no longer lists the checkpoint once refreshed.
+After a Studio restore, `show/recovery-status` no longer lists `:legacy` in any
+folder. A refusal reads the same: once taken, the REPL restore throws
+`Show checkpoint is unavailable`, a second dismissal returns false, and Studio's
+**Dismiss** shows "The checkpoint from before the update is no longer offered".
+
+Studio's own REPL session (**Open Clojure REPL**, `/api/repl/eval`) binds
+`runtime` to the same show map that now carries its recovery owner; before
+#742 that map lacked it, so `show/recovery-status` returned nil there.
+Checked by `test/tolglow/desktop_test.clj` through the real desktop entry point,
+Studio's routes and the REPL session, by Studio's event tests, and by
+`lein run -m tolglow.qa.show-folder` in headless Chrome. No foreground Mac
+window has shown the note yet.
+
 ## Reviewing a show feature
 
 - **Find it from either side.** Name the view, control label and public REPL entry point. Include the shared command, input units, identifiers and scope so an operator who knows one surface can recognize the other.

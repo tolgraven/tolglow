@@ -97,6 +97,10 @@ private struct StudioCommands: Commands {
                 .keyboardShortcut("t", modifiers: [.command, .shift]).disabled(page?.view == nil)
             Button("Open Show Folder…") { show?.choose() }
                 .keyboardShortcut("o").disabled(show == nil || show?.running == true)
+            // The page's Show checkpoints dialog: the show folder's identity
+            // file and recovery, including a checkpoint from before the update (#742).
+            Button("Show Folder and Checkpoints…") { page?.send("checkpoints") }
+                .disabled(page?.view == nil)
             Divider()
             Button("Close Tab") { page?.send("close") }
                 .keyboardShortcut("w", modifiers: [.command, .option]).disabled((page?.tabCount ?? 0) < 2)

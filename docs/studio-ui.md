@@ -454,11 +454,49 @@ keeps the processes apart (`native/macOS/ShowRegistry.swift`):
   clone of a repository that tracks the identity file) therefore gets a fresh
   identity, whether it is opened beside its original or after it; a moved or
   renamed folder keeps its identity. A folder that cannot be written
-  keeps the shared directory. The first folder opened after this change is
-  offered the shared directory's previous session for `:main` once (a marker
-  stops later folders from offering it; the shared files stay for `lein run`
-  and other hosts). This applies only to Mac windows (`TOLGLOW_DESKTOP_WINDOW`),
-  JVM and compiled; the iOS on-device host keeps the shared directory.
+  keeps the shared directory. This applies only to Mac windows
+  (`TOLGLOW_DESKTOP_WINDOW`), JVM and compiled; the iOS on-device host keeps
+  the shared directory.
+- On a folder's first open, and when a copy was given a new identity, Studio
+  shows a note above the view: what `.tolglow-folder-id` is, that copies are
+  detected and keep separate recovery, and, for a copy, which folder it was
+  copied from. **OK** closes it. The same text stays in **Restore show** under
+  **Show folder**, which the Mac app also opens from **File › Show Folder and
+  Checkpoints…**. The REPL reads the same map from `(:folder
+  (show/recovery-status runtime))`; Studio reads it from `:show-folder` in the
+  show state.
+- **The checkpoint from before the update.** Before per-folder recovery, every
+  desktop window autosaved to the shared directory, so the last session from
+  that time is still there. No folder applies it on its own, including a folder
+  whose `:show-state` restores at startup: startup restore reads only the
+  folder's own `:recovery`, `:named` or `:prior` checkpoint. Instead every Mac
+  show folder lists it in **Restore show** as **Checkpoint from before the
+  update**, beside its own checkpoints, and a note above the view says that one
+  is waiting (**Review checkpoint** opens the dialog, **Later** hides the note
+  for this page). **Restore** loads it into this folder through the ordinary
+  show restore, after a confirmation. **Dismiss** drops the offer without
+  loading it. Either choice writes `legacy-resolution.edn` beside the shared
+  files, recording which folder took it or that it was dismissed, so no folder
+  offers it again; a refused restore leaves it offered. The shared files are
+  never moved or deleted: they are still the recovery of `lein run` and other
+  hosts. From the REPL, see [show files](show-files.md#the-checkpoint-from-before-per-folder-recovery).
+
+  The shared checkpoint is found for the show's current show ID, normally
+  `:main`. If an earlier build already copied it into one folder's recovery
+  (the one-time copy that this replaced), that folder keeps the copy as its own
+  checkpoint, and the shared one is still offered until someone takes it or
+  dismisses it.
+
+**`.tolglow-folder-id` in git.** The file holds a random UUID and nothing else.
+Copies are safe whether or not it is committed. We suggest adding it to the
+show repository's `.gitignore`: the recovery it names lives only on this Mac,
+and a second checkout of a repository that commits it, opened on the same Mac
+while the first exists, is given a new identity and rewrites the file, which
+then shows as a change. Ignoring it has one cost: removing ignored files
+(`git clean -x`) or cloning afresh gives the folder a new identity, so its
+earlier recovery is no longer offered there. Those files stay in
+`~/Library/Application Support/Tolglow/Recovery/folders/<old id>/`, and
+`show/load-show!` can load one by path.
 - Before loading Studio, the window reads its show's runtime ID from
   `GET /api/identity` and binds the page to it
   (`window.tolglowStudioWindow`, `show_window.cljs`). A bound page sends that
@@ -485,7 +523,13 @@ are simulated with the same event and global the app uses.
 `tolglow.desktop/run-show!` and checks that each refuses the other's runtime
 ID, that a failed second launch leaves the others running and that closing one
 releases only its listener; it also checks every preview-only refusal, the
-folder identity and lock, and the one-time legacy offer. `native/Tests/ShowWindows` checks the registry. The
+folder identity and lock, and that the checkpoint from before the update is
+offered, never restored at startup, and applied or dismissed only on request
+(also through Studio's routes and the show's own REPL session).
+`lein run -m tolglow.qa.show-folder target/show-folder` checks the folder note,
+the dialog, a Studio restore read back in the REPL and a REPL dismissal seen in
+an open Studio, in headless Chrome against three folder shows started the way a
+Mac window starts them (`npm run studio:build` first). `native/Tests/ShowWindows` checks the registry. The
 packaged app with two windows has been built but not run.
 
 ## API and lifecycle

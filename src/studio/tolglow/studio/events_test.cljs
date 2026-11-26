@@ -86,6 +86,69 @@
            (get-in accepted [:db :show-checkpoints :feedback])))
     (is (= [:checkpoints/refresh] (:dispatch accepted)))))
 
+(def show-folder {:id "5f0c3c1e-0000-4000-8000-000000000001" :file ".tolglow-folder-id"
+                  :path "/Users/op/Shows/Club" :new? true})
+
+(defn- legacy-checkpoint-db []
+  (let [db (:db (full-frame base (merge (:show base) checkpoint-owner)))
+        loading (transition (:db (transition db [:checkpoints/open])) [:checkpoints/refresh])
+        loaded (conj (get-in loading [:studio/http :on-success])
+                     (assoc checkpoint-owner :enabled? true :folder show-folder
+                            :checkpoints {:legacy {:modified-at-ms 1600000000000}}))]
+    (:db (transition (:db loading) loaded))))
+
+(deftest the-checkpoint-from-before-the-update-is-a-separate-explicit-choice
+  (let [db (legacy-checkpoint-db)
+        markup (renderToStaticMarkup (r/as-element [checkpoints/panel (checkpoints/view-props db)]))
+        restore (transition (:db (transition db [:checkpoints/confirm :restore :legacy])) [:checkpoints/submit])
+        confirming (:db (transition db [:checkpoints/confirm :discard :legacy]))
+        confirm-markup (renderToStaticMarkup (r/as-element [checkpoints/panel (checkpoints/view-props confirming)]))
+        dismissal (transition confirming [:checkpoints/submit])
+        accepted (transition (:db dismissal) (conj (get-in dismissal [:studio/http :on-success]) {:status :accepted}))]
+    (is (every? #(str/includes? markup %)
+                ["Checkpoint from before the update" "data-checkpoint=\"legacy\"" "Restore Checkpoint from before the update"
+                 "Dismiss Checkpoint from before the update" "applies it to this folder only"
+                 "Show folder" ".tolglow-folder-id" "Copies are detected and safe"]))
+    (is (= "/api/show/checkpoints/restore" (get-in restore [:studio/http :path])))
+    (is (= (assoc checkpoint-owner :kind :legacy) (get-in restore [:studio/http :body])))
+    (is (str/includes? confirm-markup "No show folder will offer it again"))
+    (is (str/includes? confirm-markup "Dismiss checkpoint"))
+    (is (= "/api/show/checkpoints/dismiss-legacy" (get-in dismissal [:studio/http :path])))
+    (is (= checkpoint-owner (get-in dismissal [:studio/http :body])))
+    (is (= {:message "Checkpoint from before the update dismissed." :error? false}
+           (get-in accepted [:db :show-checkpoints :feedback])))
+    (testing "a show that does not run from a Mac folder has no such row or folder section"
+      (let [{:keys [db]} (checkpoint-db)
+            markup (renderToStaticMarkup (r/as-element [checkpoints/panel (checkpoints/view-props db)]))]
+        (is (not (str/includes? markup "before the update")))
+        (is (not (str/includes? markup "Show folder")))
+        (is (nil? (get-in (transition db [:checkpoints/confirm :discard :legacy]) [:db :show-checkpoints :confirmation])))))))
+
+(deftest a-new-show-folder-explains-its-identity-file-once
+  (let [render #(renderToStaticMarkup (r/as-element [checkpoints/folder-notice (checkpoints/notice-props %)]))
+        with-folder #(assoc-in base [:show :show-folder] %)
+        fresh (with-folder show-folder)
+        closed (:db (transition fresh [:show-folder/close-notice [(:id show-folder) :identity]]))]
+    (is (str/includes? (render fresh) "This show folder now has its own recovery"))
+    (is (str/includes? (render fresh) ".tolglow-folder-id"))
+    (is (str/includes? (render fresh) "Read this again under Restore show"))
+    (is (= "" (render closed)) "closing it hides it for this folder")
+    (is (= "" (render (with-folder (assoc show-folder :new? false)))) "a folder opened before says nothing")
+    (is (= "" (render base)) "an ordinary show has no folder")
+    (is (str/includes? (render (with-folder (assoc show-folder :copy-of "/Users/op/Shows/Original")))
+                       "This folder is a copy of <code>/Users/op/Shows/Original</code>"))
+    (testing "a waiting checkpoint from before the update is offered, never applied"
+      (let [waiting (with-folder (assoc show-folder :new? false :legacy-checkpoint {:modified-at-ms 1}))
+            markup (render waiting)
+            later (:db (transition waiting [:show-folder/close-notice [(:id show-folder) :legacy]]))]
+        (is (str/includes? markup "A checkpoint from before the update is waiting"))
+        (is (str/includes? markup "Nothing has been applied"))
+        (is (str/includes? markup "Review checkpoint"))
+        (is (= "" (render later)))
+        (is (true? (get-in (transition waiting [:checkpoints/open]) [:db :show-checkpoints :open?])))
+        (is (= [:checkpoints/open] (:dispatch (transition waiting [:view-tabs/host "checkpoints"])))
+            "the Mac app's File menu opens the same dialog")))))
+
 (deftest restore-acknowledgement-follows-the-owner-across-the-matching-new-epoch
   (let [{:keys [db]} (checkpoint-db)
         db (update db :ui assoc :rig-dirty? true :rig-draft {:name "Old unsaved rig"})

@@ -1127,6 +1127,7 @@
        (when (or error (not connected?))
          [:div#connection-banner.connection-banner {:role "status"}
           (or error "Connecting to the studio. Cue controls become available when the show is ready.")])
+       [checkpoints/folder-notice (checkpoints/notice-props db)]
        [perform-view db]
        (when (= :compose (get-in db [:ui :view])) [composition-view {:ui (:ui db) :show (select-keys (:show db) [:cues :effects :compositions])}])
        (when (= :rig (get-in db [:ui :view])) [rig-view (select-keys db [:ui :show :server-presentation :session])])
