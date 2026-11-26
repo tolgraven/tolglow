@@ -274,6 +274,16 @@ open cards update. The same selector supports categories and native layer IDs.
 See [Effect Solo and Mute](effect-selection.md) for the shared policy and
 examples for configuring the default modes.
 
+**Tracked gap.** The X-Touch's CONTROL inverts the configured mode for one
+press, as the operator's Live script does: with an additive default it
+replaces the selection. Studio's **Add once**, Shift-click and the REPL's
+`:additive? true` only make one action additive; nothing in Studio or the
+shared toggle makes one action exclusive while the default is additive, so
+the unit sends two additive toggles in two owner cycles, add first and drop
+second ([X-Touch](xtouch.md#mixer-layout-tolglow-706-slice-2)). They are not
+atomic: a Studio solo that lands between them survives the drop. #749 tracks a
+per-action mode on the shared toggle that closes this gap.
+
 ## Suspend automatic section patterns
 
 When the show starts with an enabled section pattern policy, open **Perform**

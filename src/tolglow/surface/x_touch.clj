@@ -13,14 +13,16 @@
 
   Buttons (main unit; the extender has strip controls only):
     SELECT      select the strip; again: toggle a cue's launch, or clear a group
-    SOLO/MUTE   :effect-selection/toggle on the strip's instances; SHIFT or
-                CONTROL keeps the others (additive)
+    SOLO/MUTE   :effect-selection/toggle on the strip's instances in the
+                configured mode; SHIFT keeps the others (additive), CONTROL
+                inverts the configured exclusive/additive mode
     REC         hold a cue while pressed (exact instance release)
     PAN/SEND/PLUG-IN/USER   encoder mode; the lit mode again returns to PAN
     EQ/INST     previous/next encoder page in PLUG-IN and USER
     FLIP        swap fader and encoder on cue strips in PAN
     BANK/CHANNEL  move the committed window; SHIFT: first/last page
-    transport SOLO  clear and store all solos, restore, or solo the selection
+    transport SOLO  clear and store all solos, restore, or solo the selected
+                strip wherever it is on the linked surface
     PLAY/STOP   local transport only; ignored while an external source
                 (Link with start/stop sync) owns play and stop
   Faders need a finger: a touch captures the strip's target until release,
@@ -80,10 +82,13 @@
         rows (vec ((:rows options) model))
         {:keys [first index span layout]} ((:placement options) model)
         resolved (mapv #(mixer/strip ctx layout (get rows (+ first %))) (range strip-count))
+        ;; The selected row anywhere on the logical surface: another member or page.
+        selected-row (when-let [selected (:selected layout)] (some #(when (= selected (mixer/row-key %)) %) rows))
         items (when (contains? mixer/item-modes (:encoder-mode layout))
-                (mixer/items ctx layout (some #(when (= (:selected layout) (mixer/row-key %)) %) rows)))
+                (mixer/items ctx layout selected-row))
         item-at (fn [x] (get items (+ index x (* span (:page layout 0)))))]
-    {:ctx ctx :layout layout :span span :strips resolved :items items :item-at item-at}))
+    {:ctx ctx :layout layout :span span :strips resolved :selected-row selected-row
+     :items items :item-at item-at}))
 
 (defn- encoder-target [{:keys [items item-at strips]} x]
   (if items (:target (item-at x)) (:encoder (get strips x))))
@@ -99,10 +104,24 @@
 ;; ---------------------------------------------------------------------------
 ;; Input
 
+(defn- selection-commands
+  "An exclusive add marks local state so that :ack, called synchronously in
+  the same dispatch, sends the drop for its accepted acknowledgement. The
+  session assigns command IDs after the profile returns, so the marker is
+  scoped to this input instead: the next input or refresh clears it, as
+  does any Solo/Mute acknowledgement. An add whose receipt never resolves
+  (dispatch fails) therefore leaves nothing pending."
+  [state envelope ctx control s modifier]
+  (let [{:keys [commands exclusive-add?]} (mixer/selection-toggle ctx control s modifier)
+        state (cond-> state
+                exclusive-add? (assoc :exclusive-add (select-keys (first commands) [:control :selector])))]
+    (with-envelope envelope (apply changed state commands))))
+
 (defn- strip-button [options state v envelope x row pressed?]
   (let [s (get (:strips v) x)
         layout (:layout v)
-        additive? (or (modifier? state :shift) (modifier? state :control))]
+        ;; As in the operator's script, CONTROL inverts the configured mode; SHIFT adds.
+        selection (cond (modifier? state :shift) :additive (modifier? state :control) :invert)]
     (case row
       0 (if pressed?
           (if (or (get-in state [:hold-keys x]) (not= :cue (:kind s)))
@@ -114,8 +133,8 @@
             (let [result (bindings/end-hold (:holds state) gesture envelope)]
               {:state (-> state (assoc :holds (:state result)) (update :hold-keys dissoc x)) :commands (:commands result)})
             (changed state)))
-      1 (if pressed? (with-envelope envelope (changed state (mixer/selection-toggle :solo s additive?))) (changed state))
-      2 (if pressed? (with-envelope envelope (changed state (mixer/selection-toggle :mute s additive?))) (changed state))
+      1 (if pressed? (selection-commands state envelope (:ctx v) :solo s selection) (changed state))
+      2 (if pressed? (selection-commands state envelope (:ctx v) :mute s selection) (changed state))
       3 (if pressed?
           (with-envelope envelope (apply changed state (mixer/select (:surface-id options) layout s)))
           (changed state)))))
@@ -159,7 +178,7 @@
       (= :global-solo button)
       (if (modifier? state :shift)
         (changed (assoc state :stored-solo []))
-        (let [selected (some #(when (= (:selected layout) (:key %)) %) (:strips v))
+        (let [selected (mixer/strip ctx layout (:selected-row v))
               {:keys [commands stored]} (mixer/global-solo ctx (:stored-solo state) selected)]
           (with-envelope envelope (apply changed (assoc state :stored-solo stored) commands))))
 
@@ -168,7 +187,8 @@
 (defn input
   "Pure MCU input -> local state and owner command templates."
   [options state raw model envelope]
-  (let [{:keys [group at type value delta] :as event} (descriptor/x-touch-event (:surface-id options) raw)
+  (let [state (dissoc state :exclusive-add)
+        {:keys [group at type value delta] :as event} (descriptor/x-touch-event (:surface-id options) raw)
         [x y] at
         extender? (:extender? options)]
     (if (nil? event)
@@ -184,8 +204,10 @@
                                         (when (and s (= (:key s) (get (:shown state) x))) (:fader s))))))
           :release-touch (changed (-> state (update :touches dissoc x) (update :sent dissoc [:fader x])))
           :move (if-let [captured (get-in state [:touches x])]
-                  (if-let [target (mixer/hydrate model captured)]
-                    (with-envelope envelope (changed state (mixer/write target (mixer/value-at target value))))
+                  (if-some [target (mixer/hydrate model captured)]
+                    (if-some [position (mixer/value-at target value)]
+                      (with-envelope envelope (changed state (mixer/write target position)))
+                      (changed state))
                     (changed state))
                   (changed state))
           (changed state))
@@ -233,9 +255,11 @@
                   fader (:fader s)]
               {:key (:key s)
                :label (if items (:label item "") (:label s ""))
-               :value (if items
-                        (mixer/value-text (:target item))
-                        (mixer/value-text (or encoder fader)))
+               :value (cond
+                        items (mixer/value-text (:target item))
+                        ;; An explicit binding to a number without a range binds nothing.
+                        (:unranged s) "!range"
+                        :else (mixer/value-text (or encoder fader)))
                :color (cond items (if item 6 0) s (match (:color s)) :else 0)
                ;; Empty strips, including those past the last row, park at 0.
                :fader (or (some-> fader mixer/normalized) 0.0)
@@ -300,6 +324,7 @@
                            [x meter])))
                      (map-indexed vector projected))]
     {:state (-> state
+                (dissoc :exclusive-add)
                 (update :sent merge desired)
                 (update :meters into (map (fn [[x level]] [x [level now]])) meters)
                 (assoc :shown (mapv :key projected)))
@@ -345,6 +370,28 @@
                       {:x-touch/error :invalid-profile})))
     channels))
 
+(defn validate-channel-ranges!
+  "Refuse configured cue channels whose :fader or :encoder binding names a
+  number with neither :bounds nor :recommended in the cue's current effect:
+  it gets no guessed range, so it would bind nothing. A later definition edit
+  that removes a range shows \"!range\" on the strip instead.
+  This reads the cue's current registry effect, while a strip reads its
+  running instance's captured definition, so for an instance launched
+  before a definition edit the two can disagree in either direction; the
+  strip then still shows \"!range\" when its own definition has no range."
+  [model channels]
+  (let [unranged (vec (for [{:keys [cue-id] :as channel} channels
+                            :let [effect-id (get-in model [:registry :cues cue-id :effect-id])
+                                  params (get-in model [:registry :effects effect-id :params])]
+                            role [:fader :encoder]
+                            :let [param (mixer/unranged-binding params (get channel role))]
+                            :when param]
+                        {:cue-id cue-id role param}))]
+    (when (seq unranged)
+      (throw (ex-info "X-Touch channels bind numbers without :bounds or a :recommended range; add one to the parameter"
+                      {:x-touch/error :unranged-binding :channels unranged})))
+    channels))
+
 (defn profile
   "Afterglow session profile for one unit. Options:
     :surface-id            the attached surface (the session ID)
@@ -375,10 +422,20 @@
      :input (partial input options)
      :feedback (partial feedback options)
      :ack (fn [state command ack]
-            (if-let [gesture (:gesture-id command)]
-              (let [result (bindings/acknowledge-hold (:holds state) gesture ack)]
+            (cond
+              (:gesture-id command)
+              (let [result (bindings/acknowledge-hold (:holds state) (:gesture-id command) ack)]
                 {:state (assoc state :holds (:state result)) :commands (:commands result)})
-              {:state state :commands []}))
+
+              ;; Any Solo/Mute acknowledgement ends a pending exclusive add.
+              (= :effect-selection/toggle (:op command))
+              {:state (dissoc state :exclusive-add)
+               :commands (if-let [drop (when (= (:exclusive-add state) (select-keys command [:control :selector]))
+                                         (mixer/exclusive-drop ack))]
+                           [(merge drop (select-keys command [:show-id :epoch]))]
+                           [])}
+
+              :else {:state state :commands []}))
      :stop (partial stop options)}))
 
 (defn connect!
