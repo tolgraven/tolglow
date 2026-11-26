@@ -1,0 +1,353 @@
+{
+  "origin": "http://127.0.0.1:4191",
+  "startedAt": "2026-11-26T04:29:34.060Z",
+  "checks": {
+    "past and future split at the centre line": {
+      "nowX": 728.5,
+      "lanesCentreX": 728.5
+    },
+    "events are icons coloured by category in stacked lines": {
+      "categories": [
+        "variable",
+        "instance",
+        "cue",
+        "master",
+        "param"
+      ],
+      "states": [
+        "fired",
+        "rejected",
+        "cancelled",
+        "pending"
+      ],
+      "lines": 5
+    },
+    "a ramp is a bar from start to end with its easing curve and a progress fill": {
+      "eventId": "b362-pull",
+      "drawnProgress": 0.4275813699395373,
+      "ownerSpanBeats": [
+        1466.025801266799,
+        1474.025801266799
+      ],
+      "curve": {
+        "type": "cubic-bezier",
+        "points": [
+          0.1,
+          0.9,
+          0.2,
+          1
+        ]
+      }
+    },
+    "sections: confirmed in the past, predicted ahead, boundaries on the grid": {
+      "causal": [
+        "Bass change76%",
+        "Bass change76%",
+        "Bass change76%"
+      ],
+      "predicted": [
+        "A60%",
+        "B70%",
+        "A80%"
+      ],
+      "match": "Matched recording",
+      "confirmedBoundaryErrorPx": 0,
+      "predictedBoundaryErrorPx": 0.234375
+    },
+    "the playhead is interpolated at display rate": {
+      "frames": 182,
+      "seconds": 3.0165450000000007,
+      "movedFraction": 0.994475138121547,
+      "forward": true,
+      "pixelsPerSecond": 29.868607960431554,
+      "medianStep": 0.47999999999998977,
+      "maxStep": 1.3400000000000034,
+      "speed": {
+        "median": 28.794241151770613,
+        "p95": 49.80498049805066,
+        "max": 80.38392321535679
+      },
+      "frameMs": {
+        "median": 16.664999999999964,
+        "p95": 16.670000000000073
+      },
+      "measuredTempo": 120.60510469827253,
+      "transportTempo": 120,
+      "pixelsPerBeat": 14.859375
+    },
+    "cancel from the timeline sends schedule/cancel and the projection updates": {
+      "eventId": "b370-wash",
+      "command": {
+        "op": "schedule/cancel",
+        "event-ids": [
+          "b370-wash"
+        ],
+        "source": {
+          "adapter": "web",
+          "session-id": "d068713d-799d-4102-9745-31cf1012c186"
+        }
+      },
+      "outcome": {
+        "status": "cancelled",
+        "reason": "operator-cancel",
+        "at-beat": 1476.7258020167994
+      },
+      "detailBefore": "Wash orchidScheduledActioncue/launchDuebar 371 · beat 0Targetorchid (first)Posted byagent · qa-plannerCancel eventClose"
+    },
+    "grid, sections and events stay aligned to the transport across a tempo change": {
+      "bpm": [
+        120,
+        96
+      ],
+      "measuredTempo": [
+        120.60510469827253,
+        95.86834182564125
+      ],
+      "barSpacingPx": [
+        59.453125,
+        59.4375
+      ],
+      "pixelsPerSecond": [
+        29.868607960431554,
+        23.742394030256467
+      ],
+      "sectionErrorPx": 0,
+      "eventErrorPx": 0
+    },
+    "zoom and collapsible lanes": {
+      "windows": [
+        "±8 bars",
+        "±16 bars",
+        "±4 bars"
+      ],
+      "barSpacingPx": [
+        59.4375,
+        29.71875
+      ]
+    },
+    "predicted sections disappear when the simulated match breaks and return with it": {
+      "lost": "No match · expired"
+    },
+    "the feel slot is empty until data fills it, then draws the personality projection shape": {
+      "label": "Track feel: Squares (synthetic)",
+      "icon": true,
+      "swatches": [
+        "rgb(244, 82, 50)",
+        "rgb(221, 166, 71)",
+        "rgb(105, 186, 199)"
+      ]
+    },
+    "meters update": {
+      "samples": 12,
+      "meters": [
+        {
+          "id": "rms",
+          "now": 0.18515043698777395,
+          "text": "19%, -14.6 dBFS",
+          "unavailable": false,
+          "targets": 0
+        },
+        {
+          "id": "energy-now",
+          "now": 0.5983295590041264,
+          "text": "1.197 × recent level",
+          "unavailable": false,
+          "targets": 0
+        },
+        {
+          "id": "audio/energy",
+          "now": 0.22880229477738329,
+          "text": "23%",
+          "unavailable": false,
+          "targets": 0
+        },
+        {
+          "id": "brightness",
+          "now": 0,
+          "text": "0%",
+          "unavailable": false,
+          "targets": 0
+        },
+        {
+          "id": "activity",
+          "now": 0,
+          "text": "0%",
+          "unavailable": false,
+          "targets": 0
+        }
+      ]
+    },
+    "ipad-landscape-1024 layout and touch cancel": {
+      "viewport": {
+        "x": 239,
+        "y": 175,
+        "w": 549,
+        "h": 468,
+        "cx": 513.5
+      },
+      "now": 513.5,
+      "events": 22,
+      "ramps": 12,
+      "smallestTarget": 43.99993896484375,
+      "cancelled": "b378-wash"
+    },
+    "ipad-portrait-820 layout and touch cancel": {
+      "viewport": {
+        "x": 163,
+        "y": 175,
+        "w": 421,
+        "h": 468,
+        "cx": 373.5
+      },
+      "now": 373.5,
+      "events": 21,
+      "ramps": 10,
+      "smallestTarget": 43.999969482421875,
+      "cancelled": "b378-spot"
+    },
+    "phone width layout": {
+      "viewport": {
+        "x": 9,
+        "y": 224,
+        "w": 372,
+        "h": 468,
+        "cx": 195
+      },
+      "now": 195,
+      "events": 22,
+      "ramps": 12,
+      "smallestTarget": 43.99999237060547
+    },
+    "frame cost measured with the Room open": {
+      "viewport": "1440x900 @1x",
+      "roomOpen": true,
+      "timelineOpen": {
+        "frames": 1409,
+        "callbackMs": {
+          "median": 0.09999990463256836,
+          "p95": 2.8949999809265137,
+          "max": 7.049999952316284
+        },
+        "frameIntervalMs": {
+          "median": 16.664999999999964,
+          "p95": 16.670000000000073
+        }
+      },
+      "timelineHidden": {
+        "frames": 1410,
+        "callbackMs": {
+          "median": 0.02500009536743164,
+          "p95": 2.984999895095825,
+          "max": 7.194999933242798
+        },
+        "frameIntervalMs": {
+          "median": 16.665000000000873,
+          "p95": 16.67000000000189
+        }
+      },
+      "addedMedianMs": 0.07499980926513672,
+      "addedP95Ms": -0.08999991416931152
+    },
+    "recording written": {
+      "file": "timeline.mp4",
+      "frames": 986,
+      "seconds": 16.43269681930542,
+      "framesPerSecond": 60.002324076327504
+    }
+  },
+  "measurements": {
+    "gpu": {
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36",
+      "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Pro, Unspecified Version)"
+    },
+    "desktop": {
+      "viewport": {
+        "x": 253,
+        "y": 175,
+        "w": 951,
+        "h": 468,
+        "cx": 728.5
+      },
+      "now": 728.5,
+      "events": 22,
+      "ramps": 12,
+      "smallestTarget": 44
+    },
+    "ipad-landscape-1024": {
+      "viewport": {
+        "x": 239,
+        "y": 175,
+        "w": 549,
+        "h": 468,
+        "cx": 513.5
+      },
+      "now": 513.5,
+      "events": 22,
+      "ramps": 12,
+      "smallestTarget": 43.99993896484375
+    },
+    "ipad-portrait-820": {
+      "viewport": {
+        "x": 163,
+        "y": 175,
+        "w": 421,
+        "h": 468,
+        "cx": 373.5
+      },
+      "now": 373.5,
+      "events": 21,
+      "ramps": 10,
+      "smallestTarget": 43.999969482421875
+    },
+    "phone": {
+      "viewport": {
+        "x": 9,
+        "y": 224,
+        "w": 372,
+        "h": 468,
+        "cx": 195
+      },
+      "now": 195,
+      "events": 22,
+      "ramps": 12,
+      "smallestTarget": 43.99999237060547
+    },
+    "frameBudget": {
+      "viewport": "1440x900 @1x",
+      "roomOpen": true,
+      "timelineOpen": {
+        "frames": 1409,
+        "callbackMs": {
+          "median": 0.09999990463256836,
+          "p95": 2.8949999809265137,
+          "max": 7.049999952316284
+        },
+        "frameIntervalMs": {
+          "median": 16.664999999999964,
+          "p95": 16.670000000000073
+        }
+      },
+      "timelineHidden": {
+        "frames": 1410,
+        "callbackMs": {
+          "median": 0.02500009536743164,
+          "p95": 2.984999895095825,
+          "max": 7.194999933242798
+        },
+        "frameIntervalMs": {
+          "median": 16.665000000000873,
+          "p95": 16.67000000000189
+        }
+      },
+      "addedMedianMs": 0.07499980926513672,
+      "addedP95Ms": -0.08999991416931152
+    },
+    "recording": {
+      "frames": 986,
+      "seconds": 16.43269681930542,
+      "framesPerSecond": 60.002324076327504
+    }
+  },
+  "result": "passed",
+  "finishedAt": "2026-11-26T04:31:09.156Z"
+}
