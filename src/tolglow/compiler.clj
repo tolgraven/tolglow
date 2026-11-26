@@ -263,11 +263,11 @@
                             (when (and (or (nil? targets) (some #{(:id fixture)} targets))
                                        (capability/capable? fixture attribute)
                                        ;; A video output writes only the targets its mapping sampled.
-                                       (or (nil? video) (contains? sampled-value (:id fixture))))
+                                       (or (nil? video) (contains? (:values sampled-value) (:id fixture))))
                               (let [value (try
                                             (cond
                                               frame-only? sampled-value
-                                              video (get sampled-value (:id fixture))
+                                              video (get (:values sampled-value) (:id fixture))
                                               :else
                                                 (evaluate (assoc env :fixture fixture :position (:position fixture [0 0 0])
                                                                  :surface-uv (:surface-uv fixture))))
@@ -281,14 +281,17 @@
                                                 (* (:value envelope-result) value)) value)]
                                 (when-not (normalized-output? attribute value (:hdr? frame))
                                   (fail! [:outputs i :value] "Computed fixture output must be finite and within [0,1]"))
-                                {:target-id (:id fixture) :attribute attribute :value value :blend blend}))) outputs)]
+                                (let [opacity (when video (get (:opacity sampled-value) (:id fixture)))]
+                                  ;; A surface's contact feather writes with partial opacity (#674).
+                                  (cond-> {:target-id (:id fixture) :attribute attribute :value value :blend blend}
+                                    opacity (assoc :opacity opacity)))))) outputs)]
                            (if targets
                              (matching/match-rows (get targets (:id fixture)) (get params matching/target-param) rows)
                              rows))))
                     fixtures))]
         (-> context
             (blocks/observed block-plan env frame (when (identical? rig frame-fixtures) fixture-index))
-            (assoc :state state :done? done?)
+            (assoc :state (if done? state (video/observe state outputs)) :done? done?)
             (update :assignments (fnil into []) assignments)
             (update :intents #(or % [])))))]
     (if (:reactive definition)
