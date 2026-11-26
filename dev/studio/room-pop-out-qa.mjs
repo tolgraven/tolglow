@@ -262,6 +262,23 @@ try {
   assert.equal(afterClose.previewWorkers, 1, 'one preview worker after the window was closed');
   assert.equal(afterClose.webglContexts, 1, 'one WebGL context after the window was closed');
 
+  // Reloading the Room window ends it: Studio redocks and closes the window
+  // instead of leaving an empty page behind.
+  const popupReload = page.waitForEvent('popup');
+  await page.getByRole('button', {name: 'Open the Room in its own window'}).click();
+  const roomReload = await popupReload;
+  await ready(roomReload);
+  const reloadClosed = roomReload.waitForEvent('close', {timeout: 5000}).then(() => true, () => false);
+  await roomReload.reload().catch(() => {});
+  await page.waitForSelector('#preview-panel #preview');
+  results.reloadedWindowClosed = await reloadClosed;
+  assert.ok(results.reloadedWindowClosed, 'a reloaded Room window closes instead of staying empty');
+  await ready(page);
+  await page.waitForTimeout(1000);
+  const afterReload = await census('reloaded-window');
+  assert.equal(afterReload.previewWorkers, 1, 'one preview worker after the Room window reloaded');
+  assert.equal(afterReload.webglContexts, 1, 'one WebGL context after the Room window reloaded');
+
   // Move to display from Studio pops out and places in one action.
   const popup3 = page.waitForEvent('popup');
   await page.getByRole('button', {name: 'Send the Room window to another display'}).click();
@@ -296,6 +313,23 @@ try {
   const final = await census('final');
   assert.equal(final.previewWorkers, 1);
   assert.equal(final.webglContexts, 1);
+
+  // Reloading Studio while popped out closes the Room window with it.
+  const popupStudioReload = page.waitForEvent('popup');
+  await page.getByRole('button', {name: 'Open the Room in its own window'}).click();
+  const roomStudioReload = await popupStudioReload;
+  await ready(roomStudioReload);
+  const studioReloadClosed = roomStudioReload.waitForEvent('close', {timeout: 10000}).then(() => true, () => false);
+  await page.reload({waitUntil: 'domcontentloaded'});
+  await page.waitForFunction(() => document.querySelector('#connection-label')?.textContent === 'Studio connected', null, {timeout: 60000});
+  await page.locator('#preview-panel').scrollIntoViewIfNeeded();
+  await ready(page);
+  results.studioReloadClosedWindow = await studioReloadClosed;
+  assert.ok(results.studioReloadClosedWindow, 'the Room window closes when Studio reloads');
+  await page.waitForTimeout(1000);
+  const afterStudioReload = await census('studio-reloaded');
+  assert.equal(afterStudioReload.previewWorkers, 1, 'one preview worker after Studio reloaded');
+  assert.equal(afterStudioReload.webglContexts, 1, 'one WebGL context after Studio reloaded');
 
   // Pop-up blocked: the browser returns no window.
   await page.evaluate(() => { window.__blockPopups = true; });

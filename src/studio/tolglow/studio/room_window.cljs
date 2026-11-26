@@ -174,6 +174,9 @@
               options #js {:signal (.-signal abort)}
               closed! #(when (current? generation)
                          (release!)
+                         ;; A reload or navigation of the Room window ends it
+                         ;; too: close what would otherwise stay an empty page.
+                         (js/setTimeout (fn [] (try (.close popup) (catch :default _ nil))))
                          (rf/dispatch [:room-window/closed generation]))
               loader (.createElement (.-document popup) "script")]
           (reset! owner {:generation generation :window popup :root root :abort abort

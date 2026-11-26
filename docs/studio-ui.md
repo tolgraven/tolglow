@@ -200,7 +200,8 @@ not hidden simulated functionality.
 **Pop out** moves the Perform Room into a separate window so the cue grid
 keeps the main window; **Move to display** sends that window to another display
 (and pops it out first when the Room is docked). **Redock**, or closing the
-window, brings the Room back. `room_window.cljs` owns the state
+window, brings the Room back; reloading or navigating that window closes it
+and redocks too, and reloading or closing Studio closes it. `room_window.cljs` owns the state
 (`[:ui :room-window]`: docked, popping, popped, redocking) and the window
 handle.
 
