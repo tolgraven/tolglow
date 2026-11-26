@@ -31,6 +31,46 @@ expression using the effect's existing parameter schema.
 Set `:pad-preview false` for a static pad. A missing target, unsupported
 definition or invalid expression falls back to its authored color.
 
+## Breathing pads
+
+On the web grid, a pad whose cue has a running instance breathes once per beat
+over its preview colour, like a playing clip on a Push session view. The
+breath peaks on the downbeat, the same phase convention as Afterglow's
+`snapshot-beat-phase`. A releasing pad blinks bright for the first 40% of each
+beat and dim for the rest, as Afterglow's Push grid blinks an ending cue. A
+queued pad flashes twice per beat, and a pad held in **Hold** mode keeps a
+brighter floor. The preview sample and the light layer are separate, so the
+preview animation keeps playing underneath. With `prefers-reduced-motion` the
+pads show a steady running indicator instead.
+
+Each light layer is a CSS opacity animation lasting one beat, or half a beat
+for the queued flash. No JavaScript runs per frame and there are no per-pad
+timers. One clock per page aligns the animations to the transport. Each new
+projected transport sample (`:beat`, `:bpm`, `:playing?`) gives the local time
+of the last downbeat, and the clock holds every pad animation's start time on
+the document timeline there. Stream and frame latency only ever delay a
+sample, so the clock keeps the least-delayed sample of the last second and
+moves the start time only when that estimate is more than 20 ms away. Samples
+that were delayed longer, and start times a whole beat apart, change nothing.
+A new tempo, a new transport generation (a seek or restart) or a jump of more
+than 100 ms is followed with the next sample. A sample whose server
+`:time-ms` shows it arrived more than 100 ms later than the promptest one in
+that second, because the page's main thread or the stream stalled, changes
+nothing; if every sample stays that late for a second, the clock follows the
+new delay. The clock reads the animations
+when a sample arrives or a pad animation starts. It writes `data-breath` and
+`--beat-duration` (rounded to 0.1 ms) on `#cue-grid` only when they change.
+Pads show the steady indicator when nothing on the page animates, the
+transport is paused or has no tempo, two seconds pass without a sample, the
+page is hidden or motion is reduced. One timer per sample decides that the
+stream is silent. The next sample, visibility change or reduced-motion change
+restarts the pads. The phase functions and the clock live in
+[`pad_breath.cljs`](../src/studio/tolglow/studio/pad_breath.cljs).
+
+From the REPL, the same inputs are `(:transport (show/snapshot runtime))` and
+each instance's `:phase`. The physical Push adapter scales the preview sample
+by state, as described above, and does not breathe yet.
+
 ## Timing and ownership
 
 A worker samples the present and predicted color a quarter beat apart, bounded
