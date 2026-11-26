@@ -730,6 +730,35 @@ appears in the open panel on the next snapshot.
 the audio LFO's band or morph time. Physical input and recorded material are
 open on [issue #676](https://github.com/tolgraven/tolglow/issues/676).
 
+## Route instrument stems to cues
+
+Both surfaces read the capture status (`:features :stems`, `:config :stems`)
+and change ordinary show data: an event subscriber matching
+`{:type :audio/onset :emitter-id :stem/<id>}` for onsets, and a signal patch
+route from `stem/<id>/level` for levels. `tolglow.audio.stem-routes` builds and
+reads both for the REPL and Studio. [Instrument stems](stems.md)
+
+```clojure
+(require '[tolglow.stems :as stems])
+@(:receipt (stems/route-onset! runtime :kick :flash))
+@(:enabled (stems/route-level! runtime :guitar :breathe :level))
+(stems/view runtime)
+```
+
+In Studio, **Connections → Audio input → Instrument stems** shows a card per
+stem with its level, onset lamp, onset and bleed counts, gate and routes.
+**Launch on onset** and **Drive with level** save the same subscriber and
+patch route; a route added from the REPL appears on the card, and a route
+added on the card appears in `(stems/view runtime)` and in the patch bay. An
+unknown cue or a parameter outside its bounds is refused by the subscriber or
+patch save with its reason, and the previous routing stays.
+
+**Tracked gaps.** Studio cannot choose a recording for the `:file` input or
+edit a stem's detector settings beyond its preset (it keeps any set from the REPL); the REPL can. Linked knobs
+are not yet a patch destination, so a stem level reaches a knob's targets only
+by routing each target. Physical interfaces and latency stay open on
+[issue #675](https://github.com/tolgraven/tolglow/issues/675).
+
 ## Generate a knob and keep it
 
 Both surfaces read `:knob-candidates` in the show snapshot and send the same

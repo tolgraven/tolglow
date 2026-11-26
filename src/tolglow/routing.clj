@@ -151,16 +151,44 @@
        :port (cond-> {:signal key :transport :audio}
                pitch? (assoc :range [20.0 180.0] :unit :hz))})))
 
+(defn- stem-observations
+  "Each named stem (#675) publishes two audio ports: stem/<id>/level, its
+  0–1 envelope, open while above the stem's floor; and stem/<id>/onset, a
+  gate that opens for the feature block in which the stem's onset count
+  advanced. Counting, not a flag, keeps an onset that arrived between two
+  coalesced feature blocks. While the transport is stopped (:stems-held?)
+  the level port is not fed, so routes hold, and the onset port only takes
+  the new count with its gate closed, so play never replays a stopped onset."
+  [ports features timestamp run-id]
+  (mapcat (fn [[id {:keys [level onset-count]}]]
+            (let [level-id (str "stem/" (name id) "/level") onset-id (str "stem/" (name id) "/onset")
+                  ;; A new capture run counts from zero again.
+                  seen (when (= run-id (get-in ports [onset-id :port :run-id])) (get-in ports [onset-id :port :onset-count]))
+                  held? (:stems-held? features)
+                  onset? (and (not held?) (integer? onset-count) (some? seen) (> onset-count seen))
+                  event (fn [kind] (str "stem/" run-id "/" timestamp "/" (name id) "/" kind))]
+              (when (and (time/finite-number? level) (integer? onset-count))
+                (cond->> [{:source-id onset-id :event-id (event "onset") :kind :audio :value (if onset? 1.0 0.0) :gate? (boolean onset?)
+                           :confidence 1.0 :origin :audio :observed-at-ms timestamp
+                           :port {:signal :stem/onset :stem id :transport :audio :onset-count onset-count :run-id run-id}}]
+                  (not held?)
+                  (cons {:source-id level-id :event-id (event "level") :kind :audio :value (double level) :gate? (pos? level)
+                         :confidence 1.0 :origin :audio :observed-at-ms timestamp
+                         :port {:signal :stem/level :stem id :transport :audio}})))))
+          (sort-by (comp str key) (:stems features))))
+
 (defn admit-audio
   "Publish measured scalar ports at the captured physical time. The show clock
-  and epoch govern parameter and envelope updates."
+  and epoch govern parameter and envelope updates. Named stems add their own
+  level and onset ports."
   [model features]
   (let [timestamp (:time-ms features) previous (get-in model [:routing :last-audio-time])]
     (if-not (and (time/finite-number? timestamp) (<= 0 timestamp)
                  (or (nil? previous) (> timestamp previous))) model
       (let [run-id (get-in features [:capture :run-id] "analysis")
-            observations (keep #(audio-observation (get-in model [:routing :ports])
-                                                   features timestamp run-id %) audio-keys)]
+            ports (get-in model [:routing :ports])
+            observations (concat (keep #(audio-observation ports features timestamp run-id %) audio-keys)
+                                 (stem-observations ports features timestamp run-id))]
         (assoc-in (admit model observations) [:routing :last-audio-time] timestamp)))))
 
 (defn- bindings [model]
