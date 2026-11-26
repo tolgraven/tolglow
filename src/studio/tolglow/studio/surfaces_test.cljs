@@ -72,3 +72,13 @@
   (let [request (second (first (:fx (transition base [:surfaces/link "a+b" "a" "b" "mirror"]))))]
     (is (= {:op :control-surface/link :mode :mirror} (select-keys (:body request) [:op :mode]))))
   (is (nil? (transition base [:surfaces/link "a+a" "a" "a" "mirror"]))))
+
+(deftest the-encoder-mode-sends-the-shared-layout-command
+  (let [request (second (first (:fx (transition base [:surfaces/layout "desk" :strips {:encoder-mode :plug-in :page 0}]))))]
+    (is (= (merge owner {:op :control-surface/layout :target "desk" :viewport :strips
+                         :set {:encoder-mode :plug-in :page 0}})
+           (select-keys (:body request) [:runtime-id :show-id :epoch :op :target :viewport :set]))))
+  (is (nil? (transition (assoc-in base [:connection :connected?] false) [:surfaces/layout "desk" :strips {:encoder-mode :pan}])))
+  (is (= "Plug-in · page 2 · cue ember · flipped"
+         (surfaces/layout-label {:encoder-mode :plug-in :page 1 :selected [:cue :ember] :flip? true})))
+  (is (= "Pan · group mix" (surfaces/layout-label {:encoder-mode :pan :page 0 :selected [:group [:manual :mix]]}))))

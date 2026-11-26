@@ -54,6 +54,26 @@
                     (keyword? move) (assoc :move move)
                     (map? move) (merge move))))))
 
+(rf/reg-event-fx :surfaces/layout
+  ;; The same :control-surface/layout command the X-Touch mode buttons commit.
+  (fn [{:keys [db]} [_ target viewport patch]]
+    (when (connected? db)
+      (command db {:op :control-surface/layout :target target :viewport viewport :set patch}))))
+
+(def encoder-modes
+  "Encoder modes of the mixer layout (#706 slice 2), as Studio names them."
+  [[:pan "Pan"] [:send "Send"] [:plug-in "Plug-in"] [:user "Knobs"]])
+
+(defn layout-label
+  "Short text for a logical surface's layout state, such as
+  \"Plug-in · page 2 · cue ember\"."
+  [{:keys [encoder-mode page selected flip?]}]
+  (str/join " · " (cond-> [(or (some (fn [[k label]] (when (= k encoder-mode) label)) encoder-modes) "Pan")]
+                    (pos? (or page 0)) (conj (str "page " (inc page)))
+                    selected (conj (str (name (first selected)) " "
+                                        (let [id (second selected)] (if (vector? id) (wire-id (second id)) (wire-id id)))))
+                    flip? (conj "flipped"))))
+
 (def link-choices
   "The Studio link form's choices: the shared :control-surface/link payload
   for a leader and one more surface."
@@ -138,6 +158,11 @@
      [:span.surface-box-name {:title (member-names mode members)}
       (str id (when (not= :single mode) (str " · " (name mode))))]
      [:span.surface-box-range {:role "status"} (range-label logical)]
+     [:label.surface-box-layout {:title (layout-label (:layout logical))}
+      [:select {:value (name (get-in logical [:layout :encoder-mode] :pan)) :disabled disabled?
+                :aria-label (str "Encoder mode on " id)
+                :on-change #(rf/dispatch [:surfaces/layout id viewport {:encoder-mode (keyword (.. % -target -value)) :page 0}])}
+       (for [[k label] encoder-modes] ^{:key k} [:option {:value (name k)} label])]]
      [:span.surface-box-buttons
       [:button.surface-box-button {:type "button" :aria-label (str "First bank on " id)
                                    :disabled (or disabled? (zero? (:x window))) :on-click #(bank :first)} "⏮"]
