@@ -40,6 +40,19 @@
     (is (thrown? Exception (modules/start! registry (assoc-in config [:init :post] [:unknown]))))
     (is (empty? @log))))
 
+(deftest a-failing-module-stop-reports-every-failure-without-reflection
+  ;; The compiled host has no reflection metadata for Throwable.addSuppressed,
+  ;; so these calls must be type-hinted (the iPad host's stop failed on this).
+  (let [setup (fn [_ {:keys [label]}] {:value label :stop! #(throw (ex-info (str label " broke") {}))})
+        registry (-> {} (modules/register :one setup) (modules/register :two setup))
+        result (modules/start! registry {:init {:components [] :modules [:one :two] :post []}
+                                         :one {:label "one"} :two {:label "two"}})
+        failure (try ((:stop! result)) nil (catch clojure.lang.ExceptionInfo e e))]
+    (is (= "Module shutdown failed" (ex-message failure)))
+    (is (= 2 (:failures (ex-data failure))))
+    (is (= #{"one broke" "two broke"} (set (:messages (ex-data failure)))))
+    (is (= #{"one broke" "two broke"} (set (map ex-message (.getSuppressed ^Throwable failure)))))))
+
 (deftest cli-config-starts-a-headless-show-and-restores-its-transit-state
   (let [dir (.toFile (Files/createTempDirectory "tolglow-app-" (make-array java.nio.file.attribute.FileAttribute 0)))
         config-file (io/file dir "config.edn") saved (io/file dir "show.transit")
