@@ -163,6 +163,34 @@
     (catch clojure.lang.ExceptionInfo error
       (rejection model error))))
 
+(defn stage-preview
+  "Stage an audition-only draft (#667): a fresh private copy of the committed
+  show, changed by the pure function edit, with no staged operations. It
+  auditions like any draft but can never be applied; the caller keeps or
+  discards what it previews through its own commands. preview is portable data
+  describing it for Studio and the REPL. Same draft ID and revision rules as
+  stage."
+  [model current {:keys [draft-id preview]} time-ms edit]
+  (try
+    (cond
+      (and current (not= draft-id (:id current)))
+      (fail! :draft-active "Discard the current Room draft first" {:draft-id (:id current)})
+
+      (not (and (valid-id? draft-id) (map? preview) (registry/data? preview)))
+      (fail! :invalid-draft "A preview draft needs an ID and portable preview data" {})
+
+      :else
+      (let [base (private-model model)
+            revision (if current (inc (:revision current)) 0)
+            staged (edit base)]
+        (when-not (registry/data? staged)
+          (fail! :non-portable-model "A preview must leave the private show as data" {}))
+        {:ack (ack base :accepted {:draft-id draft-id :draft-revision revision})
+         :draft {:id draft-id :revision revision :staged-at-ms time-ms :base base :steps [] :preview preview
+                 :model (assoc staged :revision (:revision base))}}))
+    (catch clojure.lang.ExceptionInfo error
+      (rejection model error))))
+
 (def ^:private fences
   [[:show-id :wrong-show] [:epoch :stale-epoch] [:rig :stale-patch] [:registry :stale-registry]])
 
@@ -174,7 +202,10 @@
   (or (some (fn [[field code]] (when-not (= (get base field) (get live field)) code)) fences)
       (when-not (= (prefabs/catalog base) (prefabs/catalog live)) :stale-prefabs)))
 
-(defn- check-current! [live {:keys [base steps id revision] :as draft} expected-revision]
+(defn- check-current! [live {:keys [base steps id revision preview] :as draft} expected-revision]
+  (when preview
+    (fail! :preview-draft "This Room draft only auditions a preview; keep or discard it from its own panel"
+           {:draft-id id :preview (select-keys preview [:kind])}))
   (when-not (and base (seq steps))
     (fail! :empty-draft "Stage at least one operation before applying" {:draft-id id}))
   (when-not (= revision expected-revision)
@@ -262,12 +293,14 @@
         {:time-ms at :beat (if ms-per-beat (- beat (/ (- time-ms at) ms-per-beat)) boundary-beat)}))))
 
 (defn summary
-  "Portable projection of a draft for Studio and the REPL."
-  [{:keys [id revision staged-at-ms steps]}]
-  {:id id :revision revision :staged-at-ms staged-at-ms
-   :operations (mapv (fn [{:keys [request targets]}]
-                       (cond-> (select-keys request [:op :cue-id :effect-id :instance-id :kind])
-                         (:definition request) (assoc :definition-id (get-in request [:definition :id]))
-                         (:cue request) (assoc :cue-id (get-in request [:cue :id]))
-                         (seq targets) (assoc :targets targets)))
-                     steps)})
+  "Portable projection of a draft for Studio and the REPL. An audition-only
+  draft carries its :preview descriptor."
+  [{:keys [id revision staged-at-ms steps preview]}]
+  (cond-> {:id id :revision revision :staged-at-ms staged-at-ms
+           :operations (mapv (fn [{:keys [request targets]}]
+                               (cond-> (select-keys request [:op :cue-id :effect-id :instance-id :kind])
+                                 (:definition request) (assoc :definition-id (get-in request [:definition :id]))
+                                 (:cue request) (assoc :cue-id (get-in request [:cue :id]))
+                                 (seq targets) (assoc :targets targets)))
+                             steps)}
+    preview (assoc :preview preview)))
