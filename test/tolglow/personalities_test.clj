@@ -221,7 +221,9 @@
       (doseq [bad [{:op :select :id :missing} {:op :select :id :squircle :seed 0.5} {:op :blend :mix []}
                    {:op :blend :mix [{:id :squircle :weight -1}]} {:op :put :personality (assoc custom :schema 9)}
                    {:op :put :personality (assoc custom :id personalities/blend-id)}
-                   {:op :remove :id :squircle} {:op :remove :id :missing} {:op :dance}]]
+                   {:op :put :personality (assoc custom :id "tolglow.personalities/blend")}
+                   {:op :remove :id :squircle} {:op :remove :id :missing} {:op :dance}
+                   "select" [:select :squircle]]]
         (is (thrown? clojure.lang.ExceptionInfo (personalities/apply-operation model bad)) (pr-str bad))))))
 
 (deftest current-means-the-library-still-gives-the-captured-feel
@@ -255,7 +257,10 @@
                     (assoc-in model (conj path :active :seed) nil)
                     (assoc-in model (conj path :active :mix 0 :weight) 0.9)
                     (assoc-in model (conj path :active :personality :palette) [])
-                    (update-in model (conj path :active) dissoc :personality)]]
+                    (update-in model (conj path :active) dissoc :personality)
+                    (assoc-in model path "not a map")
+                    (assoc-in model (conj path :definitions :studio/neon-alley) 5)
+                    (assoc-in model (conj path :active :mix) [5 6])]]
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Invalid saved personalities"
                             (personalities/validate-state! broken)))
       (is (thrown? clojure.lang.ExceptionInfo (persistence/validate-model broken))))))

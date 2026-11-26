@@ -360,31 +360,39 @@
 (defn validate-state!
   "Check the saved state of a model. Returns the model."
   [model]
-  (when-let [{:keys [version definitions active] :as saved} (state model)]
-    (let [{:keys [mix seed personality]} active
+  (when-let [saved (state model)]
+    (let [{:keys [version definitions active]} (when (map? saved) saved)
+          {:keys [mix seed personality]} (when (map? active) active)
           problems
-          (concat
-           (when-not (and (map? saved) (every? #{:version :definitions :active} (keys saved))
-                          (= state-version version) (map? (or definitions {})) (<= (count definitions) 64))
-             [(error [] "Saved personalities need a version and at most 64 definitions")])
-           (when (map? definitions)
-             (mapcat (fn [[id definition]]
-                       (concat (when-not (= id (:id definition))
-                                 [(error [:definitions id] "A definition is stored under its own ID")])
-                               (when (contains? definition :blend)
-                                 [(error [:definitions id :blend] "A blend is selected, never stored as a definition")])
-                               (map #(update % :path (partial into [:definitions id])) (errors definition))))
-                     definitions))
-           (when (contains? saved :active)
-             (if-not (and (map? active) (= #{:mix :seed :personality} (set (keys active)))
-                          (vector? mix) (<= 1 (count mix) 4) (integer? seed))
-               [(error [:active] "The active selection needs a mix, an integer seed and its personality")]
-               (concat (mapcat part-errors mix)
-                       (map #(update % :path (partial into [:active :personality])) (errors personality))
-                       (when-not (if (next mix)
-                                   (= mix (:blend personality))
-                                   (= (select-keys (first mix) [:id :version]) (select-keys personality [:id :version])))
-                         [(error [:active :personality] "The active personality does not match its mix")])))))]
+          (if-not (map? saved)
+            [(error [] "Saved personalities are a map")]
+            (concat
+             (when-not (and (every? #{:version :definitions :active} (keys saved))
+                            (= state-version version) (map? (or definitions {})) (<= (count definitions) 64))
+               [(error [] "Saved personalities need a version and at most 64 definitions")])
+             (when (map? definitions)
+               (mapcat (fn [[id definition]]
+                         (if-not (map? definition)
+                           [(error [:definitions id] "A definition is a personality map")]
+                           (concat (when-not (= id (:id definition))
+                                     [(error [:definitions id] "A definition is stored under its own ID")])
+                                   (when (contains? definition :blend)
+                                     [(error [:definitions id :blend] "A blend is selected, never stored as a definition")])
+                                   (map #(update % :path (partial into [:definitions id])) (errors definition)))))
+                       definitions))
+             (when (contains? saved :active)
+               (if-not (and (map? active) (= #{:mix :seed :personality} (set (keys active)))
+                            (vector? mix) (<= 1 (count mix) 4) (integer? seed))
+                 [(error [:active] "The active selection needs a mix, an integer seed and its personality")]
+                 (let [part-problems (mapcat part-errors mix)]
+                   (concat part-problems
+                           (map #(update % :path (partial into [:active :personality])) (errors personality))
+                           (when-not (or (seq part-problems) (not (map? personality))
+                                         (if (next mix)
+                                           (= mix (:blend personality))
+                                           (= (select-keys (first mix) [:id :version])
+                                              (select-keys personality [:id :version]))))
+                             [(error [:active :personality] "The active personality does not match its mix")])))))))]
       (when (seq problems)
         (throw (ex-info "Invalid saved personalities" {:path [:extensions state-key] :errors (vec problems)})))))
   model)
@@ -406,7 +414,7 @@
         personality (assoc personality :id id)
         previous (get entries id)]
     (cond
-      (or (= blend-id id) (contains? personality :blend))
+      (or (= (wire-id blend-id) (wire-id id)) (contains? personality :blend))
       (throw (ex-info "A blend is selected, never stored as a definition" {:id id}))
       (= previous personality) model
       (and previous (<= version (:version previous)))
@@ -477,6 +485,8 @@
   :select and :blend take an optional integer :seed and otherwise keep the
   current one. A rejected operation throws and leaves the model as it was."
   [model {:keys [op id mix seed personality package] :as operation}]
+  (when-not (map? operation)
+    (throw (ex-info "A personality operation is a map with an :op" {})))
   (let [op (if (string? op) (keyword op) op)
         seed (if (contains? operation :seed) seed (get-in (state model) [:active :seed] 0))
         updated (tidy (case op
