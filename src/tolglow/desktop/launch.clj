@@ -4,7 +4,7 @@
             [tolglow.modules :as modules]
             [tolglow.show.recovery :as recovery])
   (:import [java.io File IOException]
-           [java.nio.channels FileChannel OverlappingFileLockException]
+           [java.nio.channels FileChannel FileLock OverlappingFileLockException]
            [java.nio.file CopyOption Files OpenOption Path StandardCopyOption StandardOpenOption]
            [java.util UUID]))
 
@@ -108,7 +108,7 @@
   (.mkdirs directory)
   (let [channel (FileChannel/open (.toPath (io/file directory ".lock"))
                                   (into-array OpenOption [StandardOpenOption/CREATE StandardOpenOption/WRITE]))
-        lock (try (.tryLock channel) (catch OverlappingFileLockException _ nil))]
+        ^FileLock lock (try (.tryLock channel) (catch OverlappingFileLockException _ nil))]
     (if lock
       (fn release! [] (try (.release lock) (finally (.close channel))))
       (do (.close channel) nil))))
@@ -150,10 +150,10 @@
         marker (io/file legacy legacy-marker)]
     (if (and (seq files) (not (.exists marker))
              (not-any? #(.exists (io/file target %)) recovery/checkpoint-names))
-      (do (.mkdirs target)
+      (do (.mkdirs ^File target)
           (doseq [^File file files]
             (Files/copy (.toPath file) (.toPath (io/file target (.getName file)))
-                        (into-array CopyOption [StandardCopyOption/COPY_ATTRIBUTES])))
+                        ^"[Ljava.nio.file.CopyOption;" (into-array CopyOption [StandardCopyOption/COPY_ATTRIBUTES])))
           (spit marker (str (.getName (io/file directory)) "\n"))
           true)
       false)))
