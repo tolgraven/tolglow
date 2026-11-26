@@ -1325,8 +1325,10 @@
   (fn [{:keys [db]} _]
     (try
       (let [source (builder-source db)]
-        ;; Generated text is an edit like any other: its status follows the published baseline.
+        ;; Generated text takes its status from the published baseline, like an edit,
+        ;; but Generate only produces text: it never queues Publish valid edits.
         (-> (edit-definition-source db source)
+            (dissoc :dispatch-later)
             (update :db update-in [:ui :definition] merge {:kind "effects" :mode :source
                                                            :result "Generated EDN from the builder."})
             (assoc :studio/nvim-source source)))
@@ -1344,15 +1346,21 @@
   [db token sent error]
   (when (publication-current? db token)
     (let [definition (get-in db [:ui :definition])
-          newer? (and (some? sent) (not= sent (:source definition)))]
+          newer? (and (some? sent) (not= sent (:source definition)))
+          ;; Edited back to the text the show runs: nothing is unpublished.
+          clean? (and newer? (published-source? definition (:source definition)))]
       (cond-> {:db (update-in db [:ui :definition] merge
-                              {:publishing? false :error? true
-                               :status (if newer? "Unpublished changes" "Publication failed")
-                               :result (if newer?
-                                         (str "The text sent earlier was not published: " (error-message error)
-                                              " Your newer edits are not published yet.")
-                                         (error-message error))})}
-        (and newer? (:auto? definition) (not (published-source? definition (:source definition))))
+                              (cond
+                                clean? {:publishing? false :error? false
+                                        :status (get-in definition [:baseline :status])
+                                        :result (str "The text sent earlier was not published: " (error-message error)
+                                                     " The editor holds the text the show runs.")}
+                                newer? {:publishing? false :error? true :status "Unpublished changes"
+                                        :result (str "The text sent earlier was not published: " (error-message error)
+                                                     " Your newer edits are not published yet.")}
+                                :else {:publishing? false :error? true :status "Publication failed"
+                                       :result (error-message error)}))}
+        (and newer? (not clean?) (:auto? definition))
         (assoc :dispatch-later [{:ms auto-publish-delay-ms
                                  :dispatch [:studio/auto-publish (:edit-revision definition)]}])))))
 

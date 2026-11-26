@@ -956,10 +956,11 @@
         (is (= {:status "Publication failed" :error? true :publishing? false} (status (:db same))))
         (is (= "EOF while reading" (get-in same [:db :ui :definition :result])))
         (is (nil? (:dispatch-later same)))))
-    (testing "an edit back to the published baseline during the request needs no follow-up"
+    (testing "an edit back to the published baseline during the request reads as that baseline, with no follow-up"
       (let [back (:db (transition (:db publish) [:studio/definition-source source]))
             reply (transition back (conj failure "EOF while reading"))]
-        (is (= "Unpublished changes" (get-in reply [:db :ui :definition :status])))
+        (is (= {:status "ember · v2" :error? false :publishing? false} (status (:db reply))))
+        (is (re-find #"EOF while reading.*holds the text the show runs" (get-in reply [:db :ui :definition :result])))
         (is (nil? (:dispatch-later reply)))))
     (testing "a stale failure changes nothing"
       (is (empty? (transition (assoc-in in-flight [:show :epoch] 999) (conj failure "late")))))))
@@ -991,6 +992,9 @@
         (is (= {:status "Unpublished changes" :kind "effects" :mode :source :result "Generated EDN from the builder."}
                (select-keys (get-in generated [:db :ui :definition]) [:status :kind :mode :result])))
         (is (= text (:studio/nvim-source generated)))
+        (is (nil? (:dispatch-later (transition (assoc-in (:db generated) [:ui :definition :auto?] true)
+                                               [:studio/builder-generate])))
+            "Generate never publishes, even with Publish valid edits on")
         (is (= "after-hours · v1" (get-in running [:ui :definition :status])))
         (is (= text (get-in again [:db :ui :definition :source])))
         (is (= "after-hours · v1" (get-in again [:db :ui :definition :status])))))))
