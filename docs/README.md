@@ -44,6 +44,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Studio Debug](studio-debug.md) | Live event and DMX inspection, subscriber editing and musical action sequences |
 | [Event subscribers and musical actions](event-subscribers.md) | Filter registered cues, launch effects on audio or transport events, sequence musical delays and save custom callbacks |
 | [Beat-clock scheduling and ramps](scheduler.md) | Post events ahead on the beat clock, ramp parameters to a target over musical time, cancel, and read the shared schedule projection |
+| [Showcase show](showcase-show.md) | Run, replay and change the showcase venue, its ported and new cues and its recorded 32-bar scheduler timeline |
 | [Event and DMX inspection](studio-event-stream.md) | Committed typed events, actual handler delivery and raw channel data for a selected universe |
 | [Studio state stream](state-stream.md) | Typed show snapshots, acknowledged deltas, backpressure and reconnect |
 | [Codebase survey](codebase-survey.md) | Historical entry points, behavior and coupling |

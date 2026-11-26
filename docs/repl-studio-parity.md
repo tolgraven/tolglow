@@ -361,6 +361,23 @@ dragging on the same projection. Push does not display the schedule yet. Close
 these gaps when an operator can post and move an event from Studio and see it in
 the REPL projection, and when Push shows the same upcoming list.
 
+## Play the showcase timeline
+
+The [showcase show](showcase-show.md) plays its recorded timeline through the
+same scheduler projection. Start it from the config
+(`lein run --config tolglow.showcase/config` autoplays and loops) or from the
+REPL with `(showcase/play! runtime {:loop? true})`. Studio's cue panel lists
+the timeline's upcoming events, labelled **Launch …**, **End …** or with the
+ramp's parameter, and shows each running ramp with **Stop**. Cancelling one
+there records `:operator-cancel` in `(:outcomes (showcase/status player))`.
+
+**Tracked gap.** Studio cannot start, stop or loop the timeline, and its
+waveform binds and spatial-volume launches are direct commands that never
+appear in the Scheduled list. Use `showcase/play!` and `showcase/stop!` from
+the REPL. Close this gap when the Studio timeline in
+[issue #646](https://github.com/tolgraven/tolglow/issues/646) can load and
+play a timeline document.
+
 ## Reviewing a show feature
 
 - **Find it from either side.** Name the view, control label and public REPL entry point. Include the shared command, input units, identifiers and scope so an operator who knows one surface can recognize the other.
