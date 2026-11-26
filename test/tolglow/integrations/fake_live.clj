@@ -30,24 +30,38 @@
   track joins the group is an assumption to verify in Live, and
   `:insert-joins-group? false` models the opposite outcome.
   `:scenes n` bounds the clip slots per track (default unbounded);
-  `:create-scene? true` on write-clip adds a scene when every slot is full."
+  `:create-scene? true` on write-clip adds a scene when every slot is full.
+
+  Cue launcher (#228): the companion's track can hold a Drum Rack
+  (`{:drum-rack {36 \"Kick\"}}` on a track spec: one chain per named pad).
+  `:ensure-launcher` adopts the companion's track like `:ensure-track :host?`
+  and inserts a Drum Rack when none follows the companion, and `:write-pads`
+  inserts a chain for an empty pad; both need Live 12.3's insert calls, which
+  `:device-insert? false` takes away (an older Live). Chain colours are kept
+  exactly; real Live picks the nearest palette entry. `record-input!` and
+  `session-record!` stand in for Live recording a performer's MIDI into a
+  Session clip on an armed track, which Tolglow never does itself."
   (:require [clojure.data.json :as json]))
 
 (defn create
   "tracks: existing musician tracks, e.g. [{:name \"Bass\" :arm? true}]."
   ([] (create {}))
   ([{:keys [tracks tempo exclusive-arm? can-capture-midi? capture-bars companion? envelope-lanes? scenes
-            insert-joins-group?]
+            insert-joins-group? device-insert?]
      :or {tracks [] tempo 120.0 exclusive-arm? false can-capture-midi? true capture-bars 4 companion? true
-          envelope-lanes? false insert-joins-group? true}}]
-   (atom {:tracks (vec (map-indexed (fn [i t] (merge {:track-id (str "track:" (inc i)) :kind :midi :arm? false
-                                                      :monitor :auto :input {:port "Keyboard" :channel 1}
-                                                      :slots {} :history []} t))
+          envelope-lanes? false insert-joins-group? true device-insert? true}}]
+   (atom {:tracks (vec (map-indexed (fn [i t] (cond-> (merge {:track-id (str "track:" (inc i)) :kind :midi :arm? false
+                                                              :monitor :auto :input {:port "Keyboard" :channel 1}
+                                                              :slots {} :history []} (dissoc t :drum-rack))
+                                                  (:drum-rack t) (assoc :rack {:scroll-row 9
+                                                                               :chains (into (sorted-map) (for [[n name] (:drum-rack t)]
+                                                                                                            [n {:name name :color 0x777777}]))})))
                                     (cond-> (vec tracks) companion? (conj {:name "MIDI" :companion? true :arm? false
                                                                            :input {:port "All Ins" :channel nil}}))))
           :next-id 100 :tempo tempo :signature {:beats-per-bar 4 :bars-per-phrase 4}
           :exclusive-arm? exclusive-arm? :can-capture-midi? can-capture-midi? :capture-bars capture-bars
           :envelope-lanes? envelope-lanes? :scenes scenes :insert-joins-group? insert-joins-group?
+          :device-insert? device-insert?
           :watched [] :song-beat 0 :playing {} :selected nil :faults {} :requests []})))
 
 (defn- next-id! [live prefix]
@@ -101,17 +115,18 @@
         rel #(- (rationalize (:song-beat %)) start)
         result (reduce (fn [{:keys [open notes controllers] :as acc} {:keys [type note velocity controller value] :as m}]
                          (case type
-                           :note-on (if (pos? velocity) (update-in acc [:open note] (fnil conj []) (rel m))
+                           ;; Live keeps each note's played velocity.
+                           :note-on (if (pos? velocity) (update-in acc [:open note] (fnil conj []) [(rel m) velocity])
                                         (recur acc (assoc m :type :note-off)))
-                           :note-off (if-let [s (first (get open note))]
+                           :note-off (if-let [[s v] (first (get open note))]
                                        (-> acc (update-in [:open note] subvec 1)
-                                           (update :notes conj {:pitch note :start s :duration (- (rel m) s) :velocity 127}))
+                                           (update :notes conj {:pitch note :start s :duration (- (rel m) s) :velocity v}))
                                        acc)
                            :cc (update acc :controllers conj {:beat (rel m) :controller controller :value value})
                            acc))
                        {:open {} :notes [] :controllers []} in-window)
-        held (for [[pitch starts] (:open result), s starts]
-               {:pitch pitch :start s :duration (- (- end start) s) :velocity 127})]
+        held (for [[pitch starts] (:open result), [s v] starts]
+               {:pitch pitch :start s :duration (- (- end start) s) :velocity v})]
     {:clip/version 1 :length-beats (- end start) :meter {:beats-per-bar 4 :bars-per-phrase 4}
      :notes (vec (sort-by (juxt :start :pitch) (concat (:notes result) held)))
      :controllers (:controllers result)}))
@@ -168,6 +183,57 @@
                                    (fn [ts] (let [at (if group (insert-index {:tracks ts} group) (count ts))]
                                               (into (conj (subvec ts 0 at) track) (subvec ts at)))))
                             {:status :executed :result {:track-id id :created? true :group-track-id joined}}))))
+      :ensure-launcher
+      (let [i (first (keep-indexed (fn [i t] (when (:companion? t) i)) (:tracks state)))
+            t (when i (get-in state [:tracks i]))
+            name (:name payload)]
+        (cond
+          (nil? i) (rejected :no-companion)
+          (not (re-find #"^Tolglow launcher(\s|$)" (str name))) (rejected :track-name)
+          ;; Like the companion: never another Tolglow track (Capture's cue track).
+          (and (not (re-find #"^Tolglow launcher(\s|$)" (str (:name t)))) (re-find #"^Tolglow(\s|$)" (str (:name t))))
+          (rejected :tolglow-track-in-use)
+          (not (or (re-find #"^Tolglow launcher(\s|$)" (str (:name t)))
+                   (and (empty? (:slots t)) (empty? (:arrangement t)) (not (:instrument? t)))))
+          (rejected :host-track-in-use)
+          (and (nil? (:rack t)) (not (:device-insert? state))) (rejected :drum-rack-creation-unavailable)
+          :else (let [created? (nil? (:rack t))
+                      renamed? (not= name (:name t))]
+                  (swap! live update-in [:tracks i]
+                         (fn [t] (cond-> (assoc t :name name)
+                                   created? (assoc :rack {:scroll-row 9 :chains (sorted-map)})
+                                   (:scroll-row payload) (assoc-in [:rack :scroll-row] (:scroll-row payload)))))
+                  {:status :executed :result (cond-> {:track-id (:track-id t) :device-index 1}
+                                               created? (assoc :rack-created? true)
+                                               renamed? (assoc :renamed? true))})))
+      :write-pads
+      (let [[i code] (check-track state payload)
+            t (when i (get-in state [:tracks i]))]
+        (cond
+          code (rejected code)
+          (not (:companion? t)) (rejected :stale-track)
+          (nil? (:rack t)) (rejected :no-drum-rack)
+          :else (let [results (for [{:keys [note name color]} (:pads payload)
+                                    :let [exists? (contains? (get-in t [:rack :chains]) note)]]
+                                (cond exists? {:pad {:note note :name name :color color :chain-created? false}}
+                                      (:device-insert? state) {:pad {:note note :name name :color color :chain-created? true}}
+                                      :else {:skipped {:note note :code :chain-creation-unavailable}}))]
+                  (swap! live update-in [:tracks i :rack :chains]
+                         (fn [chains] (reduce (fn [c {:keys [note name color]}] (assoc c note {:name name :color color}))
+                                              chains (keep :pad results))))
+                  {:status :executed :result {:pads (vec (keep :pad results)) :skipped (vec (keep :skipped results))
+                                              :color-policy "nearest-live-palette"}})))
+      :inspect-launcher
+      (if-let [t (first (filter :companion? (:tracks state)))]
+        {:status :executed
+         :result {:track-id (:track-id t) :name (:name t) :can-insert? (:device-insert? state)
+                  :input (:input t) :routed-from-track? (boolean (:routed-from-track? t))
+                  :arm? (:arm? t) :monitor (:monitor t)
+                  :rack (when-let [rack (:rack t)]
+                          {:device-index 1 :scroll-row (:scroll-row rack)
+                           :pads (vec (for [[note {:keys [name color]}] (:chains rack)]
+                                        {:note note :name name :color color :chains 1}))})}}
+        (rejected :no-companion))
       :ensure-group (let [found (filter #(and (= (:name payload) (:name %)) (= :group (:kind %))) (:tracks state))]
                       (case (count found)
                         0 (rejected :group-creation-unavailable)
@@ -329,6 +395,26 @@
                              (subvec ts at)))))
      id)))
 
+(defn record-input!
+  "MIDI a performer plays on a track at the current song beat: an armed track
+  keeps it, as Live does while recording. messages: note/cc maps."
+  [live track-id messages]
+  (swap! live (fn [s] (update s :tracks (fn [ts] (mapv #(if (and (= track-id (:track-id %)) (:arm? %))
+                                                             (update % :history into (map (fn [m] (assoc m :song-beat (:song-beat s))) messages))
+                                                             %)
+                                                          ts))))))
+
+(defn session-record!
+  "Live recording what an armed track received in song beats [start end) into
+  a new Session clip in its first empty slot. Returns the clip ID."
+  [live track-id start end]
+  (let [i (track-index @live track-id)
+        id (next-id! live "clip")]
+    (swap! live (fn [s] (let [t (get-in s [:tracks i])]
+                          (assoc-in s [:tracks i :slots (first-empty-slot t)]
+                                    {:clip-id id :name "Recorded" :looping? true :clip (history->clip (:history t) start end)}))))
+    id))
+
 (defn delete-clip! [live clip-id]
   (let [{:keys [track-index slot]} (find-clip @live clip-id)]
     (swap! live update-in [:tracks track-index :slots] dissoc slot)))
@@ -348,15 +434,18 @@
     (->> (for [[track-id {:keys [clip-id] :as p}] (:playing state)
                :let [start (:from p)
                      {:keys [track-index entry]} (find-clip state clip-id)
+                     looping? (get entry :looping? true)
                      ;; Live clips keep no channel: playback reaches the companion on
                      ;; channel 1, tagged with the track that played it.
                      channel 1
                      {:keys [length-beats notes controllers]} (:clip entry)]
-               loop (range (long (Math/floor (/ (- from start) length-beats)))
-                           (inc (long (Math/ceil (/ (- to start) length-beats)))))
+               ;; A clip with looping off (Clip.looping 0) plays once.
+               loop (if looping? (range (long (Math/floor (/ (- from start) length-beats)))
+                                        (inc (long (Math/ceil (/ (- to start) length-beats)))))
+                        [0])
                :let [base (+ start (* loop length-beats))]
-               event (concat (for [{:keys [pitch start duration]} notes]
-                               [{:type :note-on :note pitch :velocity 127 :song-beat (+ base start)}
+               event (concat (for [{:keys [pitch start duration velocity]} notes]
+                               [{:type :note-on :note pitch :velocity (or velocity 127) :song-beat (+ base start)}
                                 {:type :note-off :note pitch :velocity 0 :song-beat (+ base start duration)}])
                              (for [{:keys [beat controller value]} controllers]
                                [{:type :cc :controller controller :value value :song-beat (+ base beat)}]))

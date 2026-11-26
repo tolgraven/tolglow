@@ -24,7 +24,8 @@
     return "{" + Object.keys(value).sort().map(function (key) { return JSON.stringify(key) + ":" + canonical(value[key]); }).join(",") + "}";
   }
   var SESSION_OPERATIONS = ["inspect-set", "ensure-track", "ensure-group", "configure-track", "write-clip", "extend-clip", "capture-midi",
-    "read-clip", "show-clip", "fire-clip", "stop-clips", "watch-run-tracks", "place-clip"];
+    "read-clip", "show-clip", "fire-clip", "stop-clips", "watch-run-tracks", "place-clip",
+    "ensure-launcher", "write-pads", "inspect-launcher"];
   function sessionOperation(op) { return SESSION_OPERATIONS.indexOf(op) >= 0; }
   function recordingKey(intent) {
     return canonical([intent["destination-id"], intent["show-id"] || null, intent.epoch, intent["command-id"]]);

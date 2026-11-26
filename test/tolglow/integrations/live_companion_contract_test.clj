@@ -8,6 +8,9 @@
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [tolglow.integrations.live-connection :as live]
+            [tolglow.integrations.live-launcher :as launcher]
+            [tolglow.integrations.live-sync :as live-sync]
+            [afterglow.sync :as sync]
             [tolglow.integrations.live-runs :as runs]
             [tolglow.integrations.live-transport :as transport]
             [tolglow.integrations.phrase-clip :as clip])
@@ -186,3 +189,81 @@
             (is (= :executed (:status r)) (pr-str r))
             (is (= {:watching 2} (:result r)))))))
     "http://127.0.0.1:9/api/live" "groups"))
+
+(defn- bridge-manager
+  "Studio's Live bridge against the companion: its own sync session, polling
+  the companion every 100 ms."
+  [port]
+  (let [manager (live-sync/create-manager
+                 {:config {:live {:enabled? true :endpoint (str "http://127.0.0.1:" port "/live")
+                                  :poll-ms 100 :timeout-ms 3000}}})]
+    (let [inspected (promise)]
+      (sync/start! manager {:events! (fn [event] (when (= :live/status (:type event)) (deliver inspected true)) true)
+                            :commands! (fn [_] true) :envelope! (constantly nil)})
+      (is (true? (deref inspected 5000 false)) "the bridge's handshake and first status"))
+    manager))
+
+(def launcher-pads
+  {:page-id :pads :scroll-row 9
+   :pads [{:note 36 :cue-id :red :label "Red" :live-color 0xff0000}
+          {:note 68 :cue-id :blue :label "Blue" :live-color 0x0000ff}]})
+
+(deftest the-launcher-is-set-up-through-the-running-bridge-while-it-polls
+  (with-companion
+    (fn [port]
+      (let [manager (bridge-manager port)
+            bridge (live-sync/companion-transport manager)
+            polls (atom 0)
+            ;; Besides the bridge's own 100 ms polls, force one between every
+            ;; launcher operation: the bridge's inspect handshake under its session.
+            polled (assoc bridge :request! (fn [handle id op payload]
+                                             ((:request! bridge) handle (str "poll-" (swap! polls inc)) :inspect {})
+                                             ((:request! bridge) handle id op payload)))
+            conn (live/open polled {:session-id "launcher"})]
+        (try
+          (let [setup (launcher/setup! conn (launcher/desired launcher-pads))]
+            (testing "setup inserts a Drum Rack after the companion and names a chain per pad, verified by read-back"
+              (is (:ready? setup) (pr-str (:problems setup)))
+              (is (= [[:ensure-launcher :executed] [:write-pads :executed]] (:applied setup)))
+              (is (= 3 @polls) "a bridge poll landed between every operation")
+              (is (= "Tolglow launcher pads" (get-in setup [:launcher :name])))
+              (is (= {:port "All Ins" :channel nil} (get-in setup [:launcher :input])))
+              (is (= {:device-index 1 :scroll-row 9
+                      :pads [{:note 36 :name "Red" :color 0xff0000 :chains 1} {:note 68 :name "Blue" :color 0x0000ff :chains 1}]}
+                     (get-in setup [:launcher :rack]))))
+            (testing "a rerun over HTTP finds the same track and Drum Rack"
+              (let [again (launcher/setup! conn (launcher/desired launcher-pads))]
+                (is (:ready? again))
+                (is (= (:track-id setup) (:track-id again)))))
+            (testing "a pad clip is written to the launcher track and reads back note for note"
+              (let [record {:take-order ["p.1" "p.2"]
+                            :takes {"p.1" {:take-id "p.1" :cue-id :red :start-beat 1 :release-beat 3 :source {:velocity 90}}
+                                    "p.2" {:take-id "p.2" :cue-id :blue :start-beat 5/2 :release-beat 4}}}
+                    {:keys [clip]} (launcher/pad-clip record launcher-pads)
+                    written (launcher/write-clip! conn setup clip {:name "Pads"})
+                    read (live/request! conn :read-clip {:clip-id (get-in written [:result :clip-id])})]
+                (is (= :executed (:status written)) (pr-str written))
+                (is (= [{:pitch 36 :start 1 :duration 2 :velocity 90} {:pitch 68 :start 5/2 :duration 3/2 :velocity 127}]
+                       (mapv #(select-keys % [:pitch :start :duration :velocity]) (get-in read [:result :clip :notes]))))
+                (is (= 4 (get-in read [:result :clip :length-beats]))))))
+          (testing "a connection with its own session loses the companion at the bridge's next poll"
+            (let [t (transport/transport {:endpoint (str "http://127.0.0.1:" port "/live") :bridge-id "tolglow-m4l"
+                                          :sync-session-id "repl-session" :timeout-ms 3000})
+                  handle ((:open! t) {})
+                  _ (is (= :executed (:status ((:request! t) handle "repl-handshake" :inspect {}))))
+                  _ ((:request! bridge) nil "bridge-poll" :inspect {})
+                  own (live/open (assoc t :open! (constantly handle)) {:session-id "repl"})
+                  r (live/request! own :inspect-launcher {})]
+              (is (= :rejected (:status r)))
+              (is (= :bridge-session-mismatch (get-in r [:error :code])))
+              (is (:ready? (launcher/setup! conn (launcher/desired launcher-pads)))
+                  "the bridge's own connection is unaffected")))
+          (finally (sync/close! manager)))))))
+
+(deftest launcher-setup-without-a-running-bridge-is-refused-as-never-sent
+  (let [manager (live-sync/create-manager {})
+        conn (live/open (live-sync/companion-transport manager) {})
+        setup (launcher/setup! conn (launcher/desired launcher-pads))]
+    (is (= [[:ensure-launcher :rejected]] (:applied setup)))
+    (is (= :not-connected (:code (first (:problems setup)))))
+    (sync/close! manager)))

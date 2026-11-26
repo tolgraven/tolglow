@@ -5,6 +5,7 @@
             [afterglow.sync :as sync]
             [afterglow.sync.session :as session]
             [tolglow.integrations.live-sync :as live-sync]
+            [tolglow.integrations.live-connection :as live-connection]
             [tolglow.integrations.live-transport :as live-transport]
             [tolglow.integrations.live-parameters :as live-params]
             [tolglow.integrations.ableton :as ableton]
@@ -501,3 +502,43 @@
           (is (session/flush! manager))
           (is (= [[:red :live-input] [:blue :live-playback]] (mapv (juxt :cue-id (comp :origin :source)) @commands)))))
       (finally (sync/close! manager)))))
+
+(deftest an-operation-the-stopping-bridge-never-sent-is-refused-at-once
+  ;; The cue launcher's setup shares the bridge's companion connection
+  ;; (companion-transport). One operation is running when the bridge stops; the
+  ;; next is still queued and is discarded with the queue.
+  (let [entered (promise) gate (promise) sent (atom [])
+        manager (live-sync/create-manager
+                 {:now-ms (constantly 0)
+                  :config {:live {:enabled? true :poll-ms 10000 :timeout-ms 2000}}
+                  :live-factory (fn [_] {:open! (fn [_] :live) :close! (fn [_])
+                                         :request! (fn [_ id op _]
+                                                     (swap! sent conj op)
+                                                     (when (= :ensure-launcher op) (deliver entered true) @gate)
+                                                     {:id id :status :executed :result {}})})})]
+    (try
+      (sync/start! manager (callbacks (atom []) (atom [])))
+      (let [deadline (+ (System/currentTimeMillis) 10000)]
+        (while (and (not (live-sync/bridge-connected? manager)) (< (System/currentTimeMillis) deadline))
+          (Thread/sleep 5)))
+      (is (live-sync/bridge-connected? manager))
+      (let [conn (live-connection/open (live-sync/companion-transport manager) {})
+            running (future (live-connection/request! conn :ensure-launcher {:name "Tolglow launcher pads"}))
+            _ (is (true? (deref entered 2000 false)))
+            queued (future (live-connection/request! conn :write-pads {:pads []}))
+            _ (Thread/sleep 100)
+            started (System/nanoTime)
+            _ (sync/stop! manager)
+            receipt (deref queued 3000 ::hung)
+            elapsed-ms (/ (- (System/nanoTime) started) 1e6)]
+        (is (= :rejected (:status receipt)) (pr-str receipt))
+        (is (= :not-sent (get-in receipt [:error :code])) "provably never sent")
+        (is (< elapsed-ms 1000) (str "refused at once, not after the 9 s wait: " elapsed-ms " ms"))
+        (is (not-any? #{:write-pads} @sent) "the queued operation never reached the transport")
+        (deliver gate true)
+        (is (#{:executed :indeterminate} (:status (deref running 3000 ::hung)))
+            "the operation that was running keeps an honest receipt"))
+      (testing "with no bridge at all the refusal says so"
+        (let [r (live-connection/request! (live-connection/open (live-sync/companion-transport manager) {}) :inspect-launcher {})]
+          (is (= [:rejected :not-connected] [(:status r) (get-in r [:error :code])]))))
+      (finally (deliver gate true) (sync/close! manager)))))

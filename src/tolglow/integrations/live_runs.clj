@@ -159,7 +159,8 @@
   (first (remove #(contains? (:lanes record) [cue-id %]) (range))))
 
 (defn- source-summary [source]
-  (select-keys source [:type :adapter :origin :session-id :device-id]))
+  ;; :note and :velocity: the Drum Rack pad and how hard it was hit (#228).
+  (select-keys source [:type :adapter :origin :session-id :device-id :note :velocity]))
 
 (defn- open-take
   [record {:keys [command beat model]}]

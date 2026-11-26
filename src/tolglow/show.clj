@@ -47,6 +47,8 @@
             [tolglow.registry :as registry]
             [tolglow.integrations.ableton :as ableton]
             [tolglow.integrations.live-runs :as live-runs]
+            [tolglow.integrations.live-launcher :as live-launcher]
+            [tolglow.integrations.live-connection :as live-connection]
             [tolglow.integrations.phrase-capture :as phrase-capture]
             [tolglow.integrations.phrase-clip :as phrase-clip]
             [tolglow.aim-paths :as aim-paths]
@@ -611,6 +613,8 @@
       :sync-input (atom {:epoch (:epoch model) :events []})
       :phrase-capture (atom (new-phrase-capture (get options :phrase-capture {})))
       :live-runs (atom (new-live-runs (get options :live-runs {})))
+      ;; The cue launcher's last Live setup and pad-clip write (#228).
+      :live-launcher (atom {})
       :connections owned :devices (atom {}) :device-reconnects (atom {}) :surface-refusals (atom {}) :development development
       :rdm (rdm/create (merge (:rdm-options options)
                              {:state rdm-state :model! #(get @(:state @runtime-ref) :model)
@@ -4003,10 +4007,15 @@
   [runtime]
   (:record @(live-runs-state runtime :record)))
 
+(declare live-bridge-connection)
+
 (defn sync-live-runs!
-  "Mirror the run record into a Live Set over a companion connection
-  (live-connection/open), keep the result for the projection and return it.
+  "Mirror the run record into a Live Set over a companion connection, keep
+  the result for the projection and return it. With no connection it uses the
+  running Live bridge (live-bridge-connection); a connection with its own
+  session would take the companion's callbacks from a running bridge.
   options as live-runs/sync! (:groups?, :arrangement-offset-beats)."
+  ([runtime] (sync-live-runs! runtime (live-bridge-connection runtime) {}))
   ([runtime conn] (sync-live-runs! runtime conn {}))
   ([runtime conn options]
    (let [state (live-runs-state runtime :sync)
@@ -4016,6 +4025,117 @@
        (swap! state (fn [s] (assoc s :mirror mirror
                                    :player (if-let [p (:player s)] (live-runs/with-mirror p mirror) (live-runs/player mirror))))))
      result)))
+
+(defn- wire-name [x] (if (keyword? x) (subs (str x) 1) (str x)))
+
+(defn- launcher-page
+  "The cue page a Live bridge maps: page-id when given, otherwise the first
+  page by ID, as sync-action! :configure chooses it."
+  [model page-id]
+  (let [pages (sort-by (comp str :id) (vals (:pages model)))]
+    (if (some? page-id)
+      (or (some #(when (= (wire-name page-id) (wire-name (:id %))) %) pages)
+          (throw (ex-info "No such cue page" {:page-id page-id :http/status 404})))
+      (first pages))))
+
+(defn- launcher-for [runtime page-id]
+  (let [model (:model @(:state runtime))
+        live (get-in (sync/export-state (connections/sync (:connections runtime))) [:config :live])
+        page (launcher-page model page-id)]
+    (when-not page (throw (ex-info "This show has no cue page" {:http/status 404})))
+    (live-launcher/pads (ableton/bind-registry-ids live (:registry model)) (:registry model) page)))
+
+(defn live-bridge-connection
+  "A live-connection over the runtime's running Live bridge: operations go to
+  the bridge's companion under the bridge's own sync session, in order with
+  its polls, so they never take the companion's callbacks from the bridge.
+  Refused as :not-connected until the bridge is connected (sync-action!
+  :start, or Studio's Connect enabled adapters)."
+  [runtime]
+  (live-connection/open (live-sync/companion-transport (connections/sync (:connections runtime)))
+                        {:session-id (str "tolglow-" (subs (str (UUID/randomUUID)) 0 8))}))
+
+(declare live-launcher-setup! live-launcher-write-clip!)
+
+(defn live-launcher-action!
+  "The cue launcher (#228) for the REPL and Studio: a cue page played from one
+  Drum Rack track in Push's 64 Pads layout.
+    :status     {:page-id id} -> live-launcher/pads for that page (default the
+                first page, as the Live bridge maps it) under the bridge's saved
+                note mappings and :pad-layout, with :setup (the last Live setup)
+                and :clip (the last pad clip written).
+    :setup      {:page-id id} -> live-launcher/setup! on the Live bridge's
+                companion: name its track after the page, insert a Drum Rack
+                after the companion, name and colour one chain per mapped pad,
+                read it back and verify it (input routing included).
+    :write-clip {:page-id :from-beat :to-beat :name :slot-index :looping?} ->
+                the run record as a clip of pad hits on the launcher track.
+  :setup and :write-clip go through the running Live bridge (see
+  live-bridge-connection), so connect it first; Studio's Cue launcher panel
+  and the REPL call the same operations."
+  [runtime operation payload]
+  (case operation
+    :status (let [launcher (launcher-for runtime (:page-id payload))
+                  {:keys [setup clip]} @(:live-launcher runtime)]
+              (cond-> launcher
+                (= (wire-name (:page-id launcher)) (wire-name (:page-id setup))) (assoc :setup (dissoc setup :page-id))
+                (= (wire-name (:page-id launcher)) (wire-name (:page-id clip))) (assoc :clip (dissoc clip :page-id))))
+    :setup (live-launcher-setup! runtime (live-bridge-connection runtime) payload)
+    :write-clip (live-launcher-write-clip! runtime (live-bridge-connection runtime) payload)
+    (throw (ex-info "Unknown launcher operation" {:operation operation :http/status 404}))))
+
+(defn live-launcher
+  "The 64 pads of a cue page as Studio's Cue launcher panel shows them (see
+  live-launcher-action!)."
+  ([runtime] (live-launcher runtime nil))
+  ([runtime page-id] (live-launcher-action! runtime :status {:page-id page-id})))
+
+(defn- live-launcher-setup! [runtime conn {:keys [page-id]}]
+  (let [launcher (launcher-for runtime page-id)]
+    ;; One setup or clip write at a time: Studio and the REPL share the record.
+    (locking (:live-launcher runtime)
+      (let [live (get-in (sync/export-state (connections/sync (:connections runtime))) [:config :live])
+            result (assoc (live-launcher/setup! conn (live-launcher/desired launcher (select-keys live [:feed-port])))
+                          :page-id (:page-id launcher))]
+        (swap! (:live-launcher runtime) assoc :setup result)
+        result))))
+
+(defn- live-launcher-write-clip! [runtime conn options]
+  (let [launcher (launcher-for runtime (:page-id options))]
+    (locking (:live-launcher runtime)
+      (let [setup (:setup @(:live-launcher runtime))
+            _ (when-not (and setup (= (wire-name (:page-id setup)) (wire-name (:page-id launcher))) (:ready? setup))
+                (throw (ex-info "Set the launcher up for this page first"
+                                {:page-id (:page-id launcher) :problems (:problems setup) :http/status 409})))
+            bpb (get-in @(:state runtime) [:model :transport :meter :beats-per-bar] 4)
+            clip (live-launcher/pad-clip (live-runs-record runtime) launcher
+                                         (merge {:beats-per-bar bpb} (select-keys options [:from-beat :to-beat])))
+            receipt (when (:clip clip) (live-launcher/write-clip! conn setup (:clip clip) options))
+            result (cond-> (-> (dissoc clip :clip)
+                               (assoc :page-id (:page-id launcher) :notes (count (get-in clip [:clip :notes]))
+                                      :length-beats (get-in clip [:clip :length-beats])))
+                     receipt (assoc :status (:status receipt) :clip-id (get-in receipt [:result :clip-id])
+                                    :slot-index (get-in receipt [:result :slot-index])
+                                    :error (or (:error receipt) (when (:code receipt) {:code (:code receipt)})))
+                     (nil? receipt) (assoc :status :nothing-to-write))]
+        (swap! (:live-launcher runtime) assoc :clip result)
+        result))))
+
+(defn setup-live-launcher!
+  "Set the cue launcher up in Live through the running Live bridge (the same
+  operation as Studio's Set up in Live). Keeps the result for live-launcher
+  and returns it. options: {:page-id id}."
+  ([runtime] (setup-live-launcher! runtime {}))
+  ([runtime options] (live-launcher-action! runtime :setup options)))
+
+(defn write-live-launcher-clip!
+  "Write the runtime's run record as a clip of pad hits on the launcher track,
+  through the running Live bridge (the same operation as Studio's Write pad
+  clip). options: :page-id, :from-beat/:to-beat (show-transport beats;
+  default the whole bars around the takes), :name, :slot-index, :looping?.
+  Returns the clip ID and the takes it holds and skipped."
+  ([runtime] (write-live-launcher-clip! runtime {}))
+  ([runtime options] (live-launcher-action! runtime :write-clip options)))
 
 (defn sync-action!
   "Explicit synchronization and Live ownership operations for Ring/REPL."

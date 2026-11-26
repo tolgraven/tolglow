@@ -8,7 +8,24 @@
 (def defaults
   {:enabled? false :source-id :ableton-live :bridge-id "tolglow-m4l" :endpoint "http://127.0.0.1:8750/live"
    :poll-ms 500 :timeout-ms 2000 :record-route :bridge :mode :lighting :channel 1
-   :launch-grid :off :mappings {} :parameters {} :pairing nil :automap? true :observed-parameters {}})
+   :launch-grid :off :mappings {} :parameters {} :pairing nil :automap? true :observed-parameters {}
+   ;; nil until chosen: see normalize-pad-layout.
+   :pad-layout nil
+   ;; The MIDI port Tolglow feeds Capture tracks on (live-connection/desired-setup
+   ;; :port). The cue launcher refuses a track that listens to it.
+   :feed-port "Tolglow"})
+
+(defn- normalize-pad-layout
+  "Which Drum Rack layout new automatic pad assignments follow
+  (ableton/pad-layouts). Settings that name none get Push's 64 Pads layout,
+  unless they already hold note mappings: those were allocated in rows and
+  keep that layout, so a reopened show does not mix the two on one page."
+  [layout mappings]
+  (let [layout (if (string? layout) (keyword layout) layout)]
+    (cond (#{:push-64-pads :rows} layout) layout
+          (some? layout) (fail! :invalid-config "Pad layout is push-64-pads or rows")
+          (seq mappings) :rows
+          :else :push-64-pads)))
 
 (defn- bounded-int? [value low high] (and (integer? value) (<= low value high)))
 
@@ -80,8 +97,10 @@
                  (update :mappings #(mappings (into {} (map (fn [[k v]] [k (cond-> v (string? (:mode v)) (update :mode keyword))]) %)) :notes))
                  (update :parameters mappings :parameters)
                  (update :observed-parameters live-params/sources))
+        live (assoc live :pad-layout (normalize-pad-layout (:pad-layout live) (:mappings live)))
         {:keys [automap? mode record-route bridge-id channel poll-ms timeout-ms pairing endpoint]} live
         notes (concat (keys (:mappings live)) (keep :lane-note (vals (:parameters live))))]
+    (check! (text? (:feed-port live) 128) "The Tolglow feed port needs a name")
     (check! (and (boolean? automap?) (#{:lighting :live} mode) (#{:bridge :midi} record-route)
                  (text? bridge-id 128) (bounded-int? channel 1 16)
                  (bounded-int? poll-ms 100 10000) (bounded-int? timeout-ms 50 10000)

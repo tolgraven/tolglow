@@ -8,3 +8,12 @@
 .stage-invitation-qr { display:flex; align-items:center; gap:1rem; flex-wrap:wrap; margin-block:12px; }
 .stage-invitation-qr img { background:white; image-rendering:pixelated; }
 .stage-invitation button, .stage-invitation select, .stage-invitation input { min-height:44px; }
+
+/* Cue launcher (#228): the page as Push's 64 Pads grid, top row first. */
+.launcher-pads { display:grid; gap:4px; margin:14px 0; }
+.launcher-row { display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); gap:4px; }
+.launcher-pad { aspect-ratio:1; min-width:0; display:flex; flex-direction:column; justify-content:space-between; padding:4px; border:2px solid var(--line); border-radius:5px; background:#121a0f; overflow:hidden; }
+.launcher-pad.empty { opacity:.45; border-width:1px; }
+.launcher-note { font-size:8px; color:var(--muted); font-variant-numeric:tabular-nums; }
+.launcher-label { font-size:9px; line-height:1.2; overflow-wrap:anywhere; }
+@media(max-width:600px){ .launcher-pads,.launcher-row { gap:3px; } .launcher-pad { padding:2px; } .launcher-label { font-size:7px; } }

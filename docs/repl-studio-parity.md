@@ -1012,15 +1012,12 @@ REPL:
 ```
 
 Mirroring the record into Live needs a companion connection. Only the REPL
-can run it today:
+can run it today. With the Live bridge connected, use the bridge's own
+connection, so the mirror does not take the companion from the bridge (a
+connection with its own session loses it at the bridge's next poll):
 
 ```clojure
-(require '[tolglow.integrations.live-connection :as live]
-         '[tolglow.integrations.live-transport :as transport])
-(show/sync-live-runs! runtime (live/open (transport/transport {:endpoint "http://127.0.0.1:8750/live"
-                                                              :bridge-id "tolglow-m4l"
-                                                              :sync-session-id "runs"})
-                                        {:session-id "runs"}))
+(show/sync-live-runs! runtime)   ; through the running Live bridge (show/live-bridge-connection)
 ```
 
 After a sync, **Show what ran** marks each take `in Live` with its clip and
@@ -1042,6 +1039,44 @@ Gaps:
   in headless Chrome against Ring. It was not checked on an iPad.
 
 [Run tracks in Live](live-routing.md#mirror-what-ran-as-run-tracks-clips-and-group-tracks) · [Issue #683](https://github.com/tolgraven/tolglow/issues/683)
+
+## Play a cue page from the launcher pads
+
+The cue launcher (#228) has one runtime operation, `show/live-launcher-action!`,
+for both surfaces. In Studio, open **Connections → Cue launcher**:
+- **Show pads** reads `:status`: the selected page as Push's 64 Pads grid,
+  each pad with its note, cue and colour, a summary of the layout, the Live
+  setup and the last pad clip, setup problems and stale-pad warnings.
+- **Set up in Live** runs `:setup` and **Write pad clip** runs `:write-clip`,
+  through the running Live bridge.
+
+**Connections → Ableton Live → Pad layout** sets the bridge's `:pad-layout`,
+saved with **Save configuration** like the rest of the bridge. From the REPL:
+
+```clojure
+(show/live-launcher runtime :pads)                     ; GET /api/live-launcher?page-id=pads
+(show/setup-live-launcher! runtime {:page-id :pads})   ; POST /api/live-launcher/setup
+(show/write-live-launcher-clip! runtime {:page-id :pads})  ; POST /api/live-launcher/write-clip
+```
+
+Both sides use the Live bridge's own companion connection
+(`show/live-bridge-connection`), so neither takes the companion from the
+other. Refusals match: before the bridge connects, setup reports
+`not-connected` on both; an unknown page gives Studio 404 and the REPL an
+exception naming the page. A setup from either side shows on the other
+([test](../test/tolglow/integrations/live_launcher_test.clj)).
+
+Pad hits themselves use the shared commands: a pad launches its cue with
+`:cue/launch` from the Live bridge, as a Studio pad or the REPL would.
+
+Gaps:
+- The panel refreshes on request, not from the state stream.
+- Push has no launcher setup control; playing the pads on Push goes through
+  Live, which is the point of the layout.
+- The panel was checked through server-rendered markup, event tests and
+  headless Chrome against Ring, not on an iPad.
+
+[Live routing](live-routing.md#play-a-cue-page-from-one-drum-rack-track) · [Issue #228](https://github.com/tolgraven/tolglow/issues/228)
 
 Video strip mapping uses one message from both surfaces. In Studio, **Rig & space → Video strips** sends `:video-mapping` edits through `POST /api/video-mapping`. The REPL sends the same edits with `show/video-action! runtime :edit`, using the geometry helpers in `tolglow.video.mapping`. Both read source status and sampled strip colours from the snapshot's `:video` key. A REPL edit redraws the open editor through the state stream. Studio has no control for a video cue's `:placement` parameters beyond the ordinary parameter controls on its card. [Video on LED strips](video-strips.md) · [Issue #672](https://github.com/tolgraven/tolglow/issues/672)
 

@@ -49,6 +49,22 @@
                      Report Session clip starts and stops on these tracks as
                      {:type :clip-started|:clip-stopped :track-id :clip-id :serial}
                      events (live-runs/player decodes them).
+    :ensure-launcher {:name :scroll-row} -> {:track-id :device-index :rack-created? :renamed?}
+                     The cue launcher (#228): adopts the companion's own track
+                     (empty, a Tolglow launcher track, or holding only a Drum
+                     Rack; never another Tolglow track: :tolglow-track-in-use), names
+                     it, inserts a Drum Rack after the companion when none
+                     follows it (Track.insert_device, Live 12.3+; otherwise
+                     refused with :drum-rack-creation-unavailable) and scrolls
+                     the pad overview to :scroll-row.
+    :write-pads      {:track-id :expected-name :pads [{:note :name :color}]}
+                     -> {:pads [{:note :name :color :chain-created?}]
+                         :skipped [{:note :code}]}: names and colours each
+                     pad's first chain, inserting one for an empty pad
+                     (RackDevice.insert_chain + DrumChain.in_note, Live 12.3+).
+    :inspect-launcher {} -> {:track-id :name :can-insert? :input {:port :channel}
+                             :routed-from-track? :arm? :monitor :rack nil |
+                             {:device-index :scroll-row :pads [{:note :name :color :chains}]}}
 
   Clip descriptions are those of `phrase-clip`. Live IDs are session
   identities: every write names the track it expects, and the Live side
@@ -60,7 +76,8 @@
 
 (def operations
   #{:inspect-set :ensure-track :ensure-group :configure-track :write-clip :extend-clip :capture-midi
-    :read-clip :show-clip :fire-clip :stop-clips :watch-run-tracks :place-clip})
+    :read-clip :show-clip :fire-clip :stop-clips :watch-run-tracks :place-clip
+    :ensure-launcher :write-pads :inspect-launcher})
 
 (def request-budget-chars
   "JSON characters of notes and lanes per request. The companion's loopback
@@ -123,6 +140,8 @@
     :inspect-set (update result :tracks #(mapv normalize-track %))
     :configure-track (update result :track normalize-track)
     :read-clip (update result :clip normalize-clip)
+    :write-pads (update result :skipped (partial mapv #(update % :code keywordize)))
+    :inspect-launcher (update result :monitor keywordize)
     result))
 
 (def ^:private refusals
@@ -136,7 +155,7 @@
   reached Max, indeterminate otherwise (it may have been written)."
   [id ^Exception e]
   (let [{:keys [http-status] :as data} (ex-data e)
-        code (or (get refusals http-status) (when (:live/not-sent? data) :not-connected))]
+        code (or (get refusals http-status) (when (:live/not-sent? data) (or (:live/code data) :not-connected)))]
     (if code
       {:id id :status :rejected :error {:code code :message (.getMessage e) :http-status http-status}}
       {:id id :status :indeterminate :error {:code :transport-failure :message (.getMessage e) :http-status http-status}})))
@@ -171,13 +190,18 @@
   tags everything else as playback from its track (see track-channels)."
   [16 15 14 13])
 
+(def default-feed-port
+  "The MIDI port Tolglow feeds capture tracks on unless setup names another
+  (desired-setup :port, the Live bridge's :feed-port setting)."
+  "Tolglow")
+
 (defn desired-setup
   "The tracks a layout needs: one armed MIDI capture track per layout channel,
   fed by the named input port on its own feed channel. Monitoring is Auto so
   recorded clips play back while the track stays armed for the next capture.
   The cue track is the track that hosts the companion device (:host? true):
   setup adopts and renames the track the companion was placed on."
-  [layout {:keys [port route names feed-channels] :or {port "Tolglow" route :tolglow-buffer
+  [layout {:keys [port route names feed-channels] :or {port default-feed-port route :tolglow-buffer
                                                        feed-channels default-feed-channels}}]
   (when-not (contains? capture-routes route) (fail! "Unknown capture route" {:route route}))
   (let [chs (clip/channels layout)
