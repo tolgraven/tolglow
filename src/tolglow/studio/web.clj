@@ -327,9 +327,11 @@
 
 (defn- get-routes
   [{:keys [snapshot! materials! definition! export! heartbeat! provider-get! chat-history! patch! checkpoint!
-           app-agent! fixture! rdm! audio! sync! section-reference! waveform! workspace! terminal! sensor! repl! calibration! photometry! fog-calibration! event-subscribers!]}]
+           app-agent! fixture! rdm! audio! sync! section-reference! waveform! workspace! terminal! sensor! repl! calibration! photometry! fog-calibration! event-subscribers! show-identity!]}]
   (merge
-   {"/api/event-subscribers" (available event-subscribers! "Event subscribers unavailable" (fn [_] (ok (event-subscribers!))))
+   {;; The runtime, show and epoch a window binds to before it loads Studio (#669).
+    "/api/identity" (available show-identity! "Show identity unavailable" (fn [_] (ok (show-identity!))))
+    "/api/event-subscribers" (available event-subscribers! "Event subscribers unavailable" (fn [_] (ok (event-subscribers!))))
     "/api/fog-calibration" (available fog-calibration! "Venue calibration unavailable" (fn [_] (ok (fog-calibration!))))
     "/api/photometry" (available photometry! "Fixture photometry unavailable" (fn [_] (ok (photometry!))))
     "/api/calibration" (available calibration! "Rig calibration unavailable" (fn [_] (ok (calibration!))))

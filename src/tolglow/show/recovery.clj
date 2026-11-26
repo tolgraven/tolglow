@@ -15,7 +15,9 @@
            [javax.crypto Mac]
            [javax.crypto.spec SecretKeySpec]))
 
-(defn- default-directory []
+(defn default-directory
+  "The per-user recovery directory when a show does not choose one."
+  []
   (let [home (System/getProperty "user.home")]
     (if (str/includes? (str/lower-case (System/getProperty "os.name")) "mac")
       (io/file home "Library" "Application Support" "Tolglow" "Recovery")

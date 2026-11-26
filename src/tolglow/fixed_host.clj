@@ -44,7 +44,7 @@
     (when @running (throw (ex-info "This isolate already owns a show." {})))
     (alter-var-root #'math/*rnd* #(or % (java.util.Random.)))
     (let [{:keys [config registry evaluator-factory]} (read-show folder)
-          config (launch/with-application-sources config)
+          config (launch/desktop-config (launch/with-application-sources config) folder (launch/device-options))
           show (application/start! (launch-config home folder config evaluator-factory) registry)
           port (get-in show [:application :modules :web-server :port])]
       (if (pos-int? port)

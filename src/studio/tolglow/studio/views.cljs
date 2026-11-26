@@ -15,6 +15,7 @@
             [tolglow.studio.preview-playback :as playback]
             [tolglow.studio.airplay :as airplay]
             [tolglow.studio.room-window :as room-window]
+            [tolglow.studio.view-tabs :as view-tabs]
             [tolglow.studio.block-builder :as block-builder]
             [tolglow.studio.material-designer :as materials]
             [tolglow.studio.connections :as connections]
@@ -1100,7 +1101,7 @@
     [:<>
      [:a.skip {:href "#main"} "Skip to show controls"]
      [sidebar db]
-     [:div.workspace [topbar db]
+     [:div.workspace [topbar db] [view-tabs/strip db]
       [:main#main {:tab-index -1}
        (when (or error (not connected?))
          [:div#connection-banner.connection-banner {:role "status"}

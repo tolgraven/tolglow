@@ -274,6 +274,72 @@ production build with emulated displays (CDP `Emulation.addScreen`) and a
 granted or denied permission. That is not evidence for physical displays,
 hot-plugging, Safari, the packaged Mac app or real AirPlay receivers.
 
+## Windows and tabs
+
+A window is one show; tabs are views of that show (#669).
+
+**Tabs.** The strip under the top bar holds one tab per open view (Perform, Rig
+& space, Compose, …). **+** opens a tab on the current view, the sidebar and
+the number shortcuts change the active tab's view, **×** closes a tab and
+**Reopen** brings back the last closed view. In the tab list, arrow keys,
+Home and End move between tabs and Delete closes the focused one. Choosing a
+tab navigates to its view, so the address and browser history follow the active
+tab. A deep link to a view that a restored tab already shows selects that tab.
+
+Tabs live in one page. They share its single state connection, its preview
+engine and its Room window, and opening, closing or switching a tab starts
+nothing: no socket, worker, device, command or output. A view keeps its own
+resources as before (the Rig editor runs its preview only while Rig is shown).
+`view_tabs.cljs` owns the model (`:view-tabs` in app-db). Tabs belong to the
+device: a browser keeps them in local storage (`tolglow.studio.view-tabs`) and
+repairs damaged entries on load; restored tabs choose the opening view before
+the show's saved view preference. The document title is the active view and
+the show, which is what a browser tab and the Mac window show.
+
+**Windows.** The Mac app opens one window per show (**File › New Window**,
+⌘N), and each window runs its show in its own process on its own loopback port,
+as before. One Clojure runtime cannot hold two shows: user namespaces such as
+`show` are global and the compiled host's isolate owns one show. So the app
+keeps the processes apart (`native/macOS/ShowRegistry.swift`):
+
+- A folder runs in one window. Opening it again selects that window, because
+  two processes would autosave and restore the same show.
+- The first running show owns devices and physical output. A show opened while
+  another owns them starts preview-only (`TOLGLOW_DESKTOP_DEVICES=none`, see
+  `tolglow.desktop.launch/device-free`): its output, Push 3 display, RDM, OSC,
+  sensor OSC, clock sync and audio input modules are off, and its window says
+  so. Devices go to the next show started after the owner stops. A show's own
+  custom modules are outside this.
+- Each folder autosaves to its own recovery directory. Every new show model has
+  the show ID `:main` and recovery files are keyed by show ID, so two folders
+  would otherwise restore each other's working checkpoint. (A desktop show's
+  earlier recovery files under the shared directory are not migrated.)
+- Before loading Studio, the window reads its show's runtime ID from
+  `GET /api/identity` and binds the page to it
+  (`window.tolglowStudioWindow`, `show_window.cljs`). A bound page sends that
+  runtime ID with every command, which any other runtime refuses, and refuses to
+  install another runtime's state. An ordinary browser tab is unbound and
+  follows its server as before.
+
+The views of one show are Studio tabs, not native window tabs: a native tab
+would be another web view with its own state connection and preview engine.
+The app turns off automatic window tabbing, and its menus drive Studio's tabs:
+**New Tab** ⌘T, **Reopen Closed Tab** ⇧⌘T, **Close Tab** ⌥⌘W (⌘W still closes
+the window and stops its show), **Show Next/Previous Tab** ⌃Tab/⌃⇧Tab. Because
+the loopback port, and with it the page's storage, changes on every launch, the
+app keeps each folder's tabs itself and passes them back to the page. (The
+Perform panel layouts of #668 are kept in page storage and do not yet survive a
+relaunch of the packaged app.)
+
+`dev/studio/view-tabs-qa.mjs` exercises tabs and two bound windows in headless
+Chrome against two runtimes from a production build; the Mac menus and binding
+are simulated with the same event and global the app uses.
+`test/tolglow/desktop_test.clj` runs two desktop shows through
+`tolglow.desktop/run-show!` and checks that each refuses the other's runtime
+ID, that a failed second launch leaves the others running and that closing one
+releases only its listener. `native/Tests/ShowWindows` checks the registry. The
+packaged app with two windows has been built but not run.
+
 ## API and lifecycle
 
 The local Studio listens on loopback. Connected operators can use the show's

@@ -11,6 +11,8 @@
             [tolglow.studio.reactive-editor :as reactive-editor]
             [tolglow.studio.state-socket]
             [tolglow.studio.spatial-drafts :as spatial-drafts]
+            [tolglow.studio.show-window :as show-window]
+            [tolglow.studio.view-tabs :as view-tabs]
             [tolglow.transit :as transit]
             [tolglow.studio.parameter-widgets :as widgets]))
 
@@ -69,7 +71,8 @@
 (defn guard-request [db request]
   (if (and (:body request) (guarded-paths (:path request)))
     (update request :body #(merge {:expected-epoch (get-in db [:show :epoch])}
-                                  (when-let [runtime (get-in db [:show :runtime-id])] {:runtime-id runtime}) %))
+                                  (when-let [runtime (or (get-in db [:show :runtime-id]) (show-window/runtime-id db))]
+                                    {:runtime-id runtime}) %))
     request))
 (rf/reg-global-interceptor
   (rf/->interceptor
@@ -170,7 +173,9 @@
 
 (defn command [db op fields & [on-success epoch beacon? runtime-id]]
   [:studio/send-command {:op op :fields fields :epoch (or epoch (get-in db [:show :epoch]))
-                        :session (:session db) :runtime-id (or runtime-id (get-in db [:show :runtime-id]))
+                        :session (:session db)
+                        ;; A window bound to its show names that runtime even before the first frame (#669).
+                        :runtime-id (or runtime-id (get-in db [:show :runtime-id]) (show-window/runtime-id db))
                         :on-success on-success :beacon? beacon?}])
 
 (defn notice [message] [:dispatch [:studio/toast message]])
@@ -313,7 +318,10 @@
       db)))
 
 (rf/reg-event-fx :studio/initialize
-  (fn [_ [_ session]] {:db (initial-db session) :studio/open-stream session}))
+  [(rf/inject-cofx :show-window/host) (rf/inject-cofx :view-tabs/saved)]
+  (fn [{host :show-window/host saved :view-tabs/saved} [_ session]]
+    (let [db (-> (initial-db session) (show-window/install host) (view-tabs/install saved))]
+      {:db db :studio/open-stream session :fx [[:view-tabs/listen true] (view-tabs/store-fx db)]})))
 
 (defn- settle-connection-drafts [db old-presentation old-typed]
   (let [show (:show db) owner ((juxt :runtime-id :epoch) show)
@@ -438,7 +446,12 @@
             received (if (and (:awaiting-full? db) (not= :full (:kind envelope)))
                        {:status :resync}
                        (projection/receive current envelope))]
-        (case (:status received)
+        (case (if (and (= :accepted (:status received))
+                       (show-window/refuses? db (get-in received [:state :view :runtime-id])))
+                :foreign (:status received))
+          ;; Another show answered on this window's address: never install or acknowledge it.
+          :foreign {:db (assoc db :awaiting-full? true
+                               :connection {:connected? false :error (show-window/refusal-message db)})}
           :accepted (-> (install-show db (:state received))
                         (update :db dissoc :awaiting-full?)
                         (assoc :studio/stream-reply [id {:op :ack :token (:token envelope)}]))
@@ -481,7 +494,8 @@
 (rf/reg-event-db :studio/settings-unavailable (fn [db _] (assoc db :settings-supported? false)))
 (defn apply-ui-preferences [db settings]
   (let [prefs (:ui settings) raw-view (:view prefs)
-        view (when (or (string? raw-view) (keyword? raw-view)) (keyword raw-view))]
+        ;; This device's restored tabs choose the opening view before the show's preference.
+        view (or (view-tabs/restored-view db) (when (or (string? raw-view) (keyword? raw-view)) (keyword raw-view)))]
     (cond-> (assoc db :settings-loaded? true :settings-supported? true)
       (and (contains? #{nil :home} (:route-name db)) (pages/views view)) (assoc-in [:ui :view] view)
       (string? (:page-id prefs)) (assoc-in [:ui :page-id] (:page-id prefs))
@@ -510,12 +524,15 @@
         (:settings-loaded? db) (assoc :studio/navigate [:replace (get-in db [:ui :view])]))
 
       (and (pages/views page) (not= page (:route-name db)))
-      {:db (-> db (assoc :route-name page) (assoc-in [:ui :view] page) (assoc-in [:ui :rig-drag] nil))
-       :fx (cond-> [[:dispatch [:studio/release-pointers]] [:studio/scroll-top true]]
-             ;; Initial deep links and the home preference restore are read-only.
-             (pages/views (:route-name db)) (conj [:dispatch [:studio/persist-ui]])
-             (and (= page :assistant) (not (get-in db [:chat :provider]))) (conj [:dispatch [:chat/load]]))
-       :dispatch-later (when (= page :perform) [{:ms 30 :dispatch [:studio/preview-resize]}])})))
+      (let [updated (-> db (assoc :route-name page) (assoc-in [:ui :view] page) (assoc-in [:ui :rig-drag] nil)
+                        (view-tabs/follow-route page (not (pages/views (:route-name db)))))]
+        {:db updated
+         :fx (cond-> [[:dispatch [:studio/release-pointers]] [:studio/scroll-top true]]
+               (:view-tabs updated) (conj (view-tabs/store-fx updated))
+               ;; Initial deep links and the home preference restore are read-only.
+               (pages/views (:route-name db)) (conj [:dispatch [:studio/persist-ui]])
+               (and (= page :assistant) (not (get-in db [:chat :provider]))) (conj [:dispatch [:chat/load]]))
+         :dispatch-later (when (= page :perform) [{:ms 30 :dispatch [:studio/preview-resize]}])}))))
 
 (rf/reg-event-fx :studio/set-page
   (fn [{:keys [db]} [_ id typed-id]]

@@ -174,6 +174,8 @@
                                  (when (keyword? id) (get definitions (subs (str id) 1))))))
             :export! #(show/export-show-source runtime)
             :checkpoint! (partial checkpoint-action! runtime)
+            :show-identity! #(let [model (:model @(:state runtime))]
+                               {:runtime-id (:id runtime) :show-id (:show-id model) :epoch (:epoch model)})
             :fog-calibration! #(let [model (:model @(:state runtime))]
                                  {:runtime-id (:id runtime) :epoch (:epoch model)
                                   :fixtures (fog-scan/fixtures model)
