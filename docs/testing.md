@@ -162,6 +162,8 @@ See [compatibility repairs](compatibility-progress.md) and the historical/curren
   transport cleanup. Native Wayang/MIDI/OSC activation remains opt-in and was
   not performed in tests. Tethered Push 3 display routing also has a libusb
   recording backend and native-size raster replay. See [physical qualification](push-display-packaging.md#tethered-push-3).
+  The early libusb start is tested with Afterglow's background start replaced, and
+  with the real one pointed at a missing library. Tests never scan USB.
 - **Authoring/integration:** deterministic definitions/compilation/composition,
   constrained seeded policy, schema-aware mappings, provider stream parsing,
   actual local HTTP cancellation/timeout and scripted tool calls against the
