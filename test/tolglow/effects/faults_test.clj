@@ -162,25 +162,41 @@
       (finally (show/stop! runtime)))))
 
 (deftest actual-typed-output-failures-do-not-hide-the-healthy-lighting
-  (doseq [[model effect]
-          [[(update-in (demo/model) [:rig :fixtures 0] assoc :channels {:dimmer 1} :rgbw-policy :none)
-            {:id :unsupported-color :version 1 :params {} :targets [:head-1]
-             :outputs {:color {:op :const :value [1.0 0.2 0.1]}}}]
-           [(demo/model)
-            {:id :overflow :version 1 :params {} :targets [:head-1]
-             :outputs [{:attribute :dimmer :blend :add :value {:op :const :value 0.8}}]}]]]
-    (let [runtime (show/create-runtime {:model (with-effect model effect)
-                                          :workspace-options nil :effect-log! (fn [_])})]
-      (try
-        (apply! runtime {:op :cue/launch :cue-id :breathe} 0.0)
-        (let [id (:instance-id (apply! runtime {:op :cue/launch :cue-id (:id effect)} 500.0))]
-          (is (= :output (get-in @(:state runtime) [:model :instances id :fault :stage])))
-          (is (nil? (get-in (show/snapshot runtime) [:status :error])))
-          (is (pos? (get-in (show/snapshot runtime) [:output :values :head-1 :intensity])))
-          (show/tick! runtime 700.0)
-          (is (= 1 (get-in (show/snapshot runtime) [:effect-events :event-sequence])))
-          (is (= 2 (count (:instances (show/snapshot runtime))))))
-        (finally (show/stop! runtime))))))
+  (let [model (demo/model)
+        effect {:id :overflow :version 1 :params {} :targets [:head-1]
+                :outputs [{:attribute :dimmer :blend :add :value {:op :const :value 0.8}}]}
+        runtime (show/create-runtime {:model (with-effect model effect)
+                                      :workspace-options nil :effect-log! (fn [_])})]
+    (try
+      (apply! runtime {:op :cue/launch :cue-id :breathe} 0.0)
+      (let [id (:instance-id (apply! runtime {:op :cue/launch :cue-id (:id effect)} 500.0))]
+        (is (= :output (get-in @(:state runtime) [:model :instances id :fault :stage])))
+        (is (nil? (get-in (show/snapshot runtime) [:status :error])))
+        (is (pos? (get-in (show/snapshot runtime) [:output :values :head-1 :intensity])))
+        (show/tick! runtime 700.0)
+        (is (= 1 (get-in (show/snapshot runtime) [:effect-events :event-sequence])))
+        (is (= 2 (count (:instances (show/snapshot runtime))))))
+      (finally (show/stop! runtime)))))
+
+(deftest explicit-color-on-a-head-without-it-is-refused-before-any-frame
+  ;; This used to fault at the output stage on every frame (#688).
+  (let [model (update-in (demo/model) [:rig :fixtures 0] assoc :channels {:dimmer 1} :rgbw-policy :none)
+        effect {:id :unsupported-color :version 1 :params {} :targets [:head-1]
+                :outputs {:color {:op :const :value [1.0 0.2 0.1]}}}
+        runtime (show/create-runtime {:model (with-effect model effect)
+                                      :workspace-options nil :effect-log! (fn [_])})]
+    (try
+      (apply! runtime {:op :cue/launch :cue-id :breathe} 0.0)
+      (let [ack (apply! runtime {:op :cue/launch :cue-id (:id effect)} 500.0)]
+        (is (= [:rejected :incapable-target] ((juxt :status :code) ack)))
+        (is (= [{:attribute :color :heads [:head-1] :requires [:red :green :blue]}]
+               (get-in ack [:details :conflicts])))
+        (is (nil? (get-in (show/snapshot runtime) [:status :error])))
+        (is (pos? (get-in (show/snapshot runtime) [:output :values :head-1 :intensity])))
+        (show/tick! runtime 700.0)
+        (is (= 0 (get-in (show/snapshot runtime) [:effect-events :event-sequence] 0)))
+        (is (= 1 (count (:instances (show/snapshot runtime))))))
+      (finally (show/stop! runtime)))))
 
 (deftest diagnostics-reach-the-local-rotating-file
   (let [dir (.toFile (java.nio.file.Files/createTempDirectory "tolglow-log-test" (make-array java.nio.file.attribute.FileAttribute 0)))
