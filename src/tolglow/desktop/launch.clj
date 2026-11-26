@@ -1,7 +1,8 @@
 (ns tolglow.desktop.launch
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [tolglow.modules :as modules])
+            [tolglow.modules :as modules]
+            [tolglow.show.recovery :as recovery])
   (:import [java.io File IOException]
            [java.nio.channels FileChannel FileLock OverlappingFileLockException]
            [java.nio.file CopyOption Files OpenOption Path StandardCopyOption StandardOpenOption]
@@ -155,9 +156,10 @@
   identity. :new? is true when this claim wrote the identity file: the
   folder's first open, or a detected copy.
 
-  Nothing is copied from the shared directory `base`: its checkpoint from
-  before per-folder recovery is offered by the show, never applied, until an
-  operator applies it to one folder or dismisses it (see `claim-options`)."
+  The first claim under `base` freezes the shared directory's checkpoints
+  once (`recovery/freeze-shared!`). The show offers them, never applies them,
+  until an operator applies one to a folder or dismisses them (see
+  `claim-options`)."
   [folder base]
   (let [renew #(try (write-folder-id! folder) (catch IOException _ nil))
         existing (read-folder-id (io/file folder folder-id-name))]
@@ -168,6 +170,7 @@
             (if-let [original (when-not renewed? (copied-from directory folder id))]
               (do (release!) (recur (renew) true original))
               (do (record-folder! directory folder)
+                  (try (recovery/freeze-shared! base) (catch IOException _ nil))
                   (cond-> {:id id :directory directory :release! release! :base base
                            :folder (str (.getCanonicalFile (io/file folder)))
                            :new? (or renewed? (nil? existing))}

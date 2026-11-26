@@ -206,7 +206,7 @@
   [runtime show-id]
   (when-let [folder (:show-folder runtime)]
     (let [legacy (some-> (:recovery runtime) deref (recovery/legacy-offer show-id))]
-      (cond-> folder legacy (assoc :legacy-checkpoint legacy)))))
+      (cond-> folder legacy (assoc :legacy-checkpoints legacy)))))
 
 (declare ^:private audition-projection)
 
@@ -3485,7 +3485,7 @@
           checkpoints (into {} (keep (fn [kind]
                                        (when-let [file (recovery/latest-file owner show-id kind)]
                                          [kind {:modified-at-ms (.lastModified file)}])))
-                            [:recovery :named :prior :legacy])]
+                            (into [:recovery :named :prior] (keys recovery/legacy-kinds)))]
       (cond-> (assoc (merge status identity) :runtime-id (:id runtime)
                      :checkpoints checkpoints :available (set (keys checkpoints)))
         (not= show-id (get-in status [:last-saved :show-id])) (dissoc :last-saved)
@@ -3519,55 +3519,81 @@
   (let [{:keys [id path]} (:show-folder runtime)]
     (cond-> {} id (assoc :folder-id id) path (assoc :folder path))))
 
-(defn- resolve-legacy-on-accept
-  "A reply that carries `reply`'s acknowledgement once the shared checkpoint
-  is recorded as applied to this folder. A refused restore leaves it offered."
-  [runtime owner show-id reply]
-  (let [result (promise)]
-    (future
-      (let [ack @reply]
-        (deliver result
-                 (if (= :accepted (:status ack))
-                   (try (recovery/resolve-legacy! owner show-id :applied (legacy-details runtime))
-                        ack
-                        (catch Exception error
-                          (assoc ack :legacy-resolution-error (ex-message error))))
-                   ack))))
-    result))
+(def ^:private legacy-kinds (set (keys recovery/legacy-kinds)))
+
+(defn- import-checkpoint! [runtime show-id epoch source receipt-id]
+  (enqueue! runtime :import {:runtime-id (:id runtime) :expected-epoch epoch
+                             :expected-source-show-id show-id :source source}
+            nil
+            (when receipt-id {:id receipt-id :identity {:runtime-id (:id runtime) :show-id show-id :epoch epoch}})))
+
+(defn- load-legacy!
+  "Restore a checkpoint from before the update while holding it, so no other
+  window can apply or dismiss it meanwhile. Once the restore is accepted the
+  SHA-256 of the restored bytes is recorded and no folder offers it again; a
+  refused restore releases it, still offered. The reply carries
+  :legacy-resolution-error when the record could not be written."
+  [runtime owner show-id epoch kind receipt-id]
+  (let [reservation (recovery/reserve-legacy! owner show-id)]
+    (try
+      (let [^java.io.File file (recovery/latest-file owner show-id kind)
+            source (some-> file read-checkpoint-source)]
+        (when-not source
+          (throw (ex-info "Show checkpoint is unavailable" {:kind kind :show-id show-id})))
+        (let [reply (import-checkpoint! runtime show-id epoch source receipt-id)
+              details (assoc (legacy-details runtime) :kind kind :file (.getName file)
+                             :sha256 (recovery/source-hash source))
+              result (promise)]
+          (future
+            (let [ack @reply]
+              (deliver result
+                       (if (= :accepted (:status ack))
+                         (try (recovery/finish-legacy! owner reservation :applied details)
+                              ack
+                              (catch Exception error
+                                (assoc ack :legacy-resolution-error (ex-message error))))
+                         (do ((:release! reservation)) ack)))))
+          result))
+      (catch Throwable error
+        ((:release! reservation))
+        (throw error)))))
 
 (defn load-latest-show!
   "Load the active show's latest :recovery, :named, or prior-session checkpoint.
-  In a Mac show folder, :legacy loads the shared checkpoint from before
-  per-folder recovery and, once the restore is accepted, stops offering it to
-  every folder (its files stay). A remote caller can supply the exact
-  runtime/show/epoch it received in status and a receipt ID for the committed
-  result stream."
+  In a Mac show folder, :legacy and :legacy-prior load the working or prior
+  checkpoint frozen from before per-folder recovery and, once the restore is
+  accepted, stop offering both to every folder (their files stay). Another
+  window applying or dismissing them at the same time is refused. A remote
+  caller can supply the exact runtime/show/epoch it received in status and a
+  receipt ID for the committed result stream."
   ([runtime kind] (load-latest-show! runtime kind nil))
   ([runtime kind expected] (load-latest-show! runtime kind expected nil))
   ([runtime kind expected receipt-id]
    (let [{:keys [show-id epoch]} (capture-checkpoint-identity runtime expected)
-         owner (some-> (:recovery runtime) deref)
-         source (when owner
-                  (if (= :prior kind)
-                    (recovery/read-prior owner show-id read-checkpoint-source)
-                    (some-> (recovery/latest-file owner show-id kind) read-checkpoint-source)))]
-     (when-not source (throw (ex-info "Show checkpoint is unavailable" {:kind kind :show-id show-id})))
-     (cond->> (enqueue! runtime :import {:runtime-id (:id runtime) :expected-epoch epoch
-                                         :expected-source-show-id show-id :source source}
-                        nil
-                        (when receipt-id {:id receipt-id :identity {:runtime-id (:id runtime) :show-id show-id :epoch epoch}}))
-       (= :legacy kind) (resolve-legacy-on-accept runtime owner show-id)))))
+         owner (some-> (:recovery runtime) deref)]
+     (if (and owner (contains? legacy-kinds kind))
+       (load-legacy! runtime owner show-id epoch kind receipt-id)
+       (let [source (when owner
+                      (if (= :prior kind)
+                        (recovery/read-prior owner show-id read-checkpoint-source)
+                        (some-> (recovery/latest-file owner show-id kind) read-checkpoint-source)))]
+         (when-not source (throw (ex-info "Show checkpoint is unavailable" {:kind kind :show-id show-id})))
+         (import-checkpoint! runtime show-id epoch source receipt-id))))))
 
 (defn dismiss-legacy-recovery!
-  "Stop offering the shared checkpoint from before per-folder recovery to this
-  and every other Mac show folder, without applying it. Its files stay in the
-  shared recovery directory. Returns true when a checkpoint was offered."
+  "Stop offering the checkpoints from before per-folder recovery to this and
+  every other Mac show folder, without applying them. Their files stay.
+  Returns true when they were offered and are now dismissed, false when none
+  was offered or they were already resolved. Refused on a stopped show and
+  while another window is restoring them."
   ([runtime] (dismiss-legacy-recovery! runtime nil))
   ([runtime expected]
    (let [{:keys [show-id]} (capture-checkpoint-identity runtime expected)]
+     (when-not @(:running runtime)
+       (throw (ex-info "Show stopped" {:code :show-stopped})))
      (boolean
        (when-let [owner (some-> (:recovery runtime) deref)]
-         (recovery/resolve-legacy! owner show-id :dismissed (legacy-details runtime)))))))
+         (recovery/dismiss-legacy! owner show-id (legacy-details runtime)))))))
 
 (defn discard-prior-recovery!
   "Dismiss the active show's prior-session checkpoint. Working and named saves
@@ -3926,6 +3952,6 @@
                                 #(when @(:running runtime) (capture-checkpoint runtime))
                                 (partial publish-checkpoint! runtime)))
        ;; Find the shared checkpoint a Mac show folder offers before Studio asks.
-       (recovery/latest-file @(:recovery runtime) (get-in @(:state runtime) [:model :show-id]) :legacy)
+       (recovery/refresh-legacy! @(:recovery runtime) (get-in @(:state runtime) [:model :show-id]))
        runtime
        (catch Throwable error (stop! runtime) (throw error))))))

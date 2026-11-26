@@ -469,26 +469,37 @@ keeps the processes apart (`native/macOS/ShowRegistry.swift`):
   (show/recovery-status runtime))`; Studio reads it from `:show-folder` in the
   show state.
 - **The checkpoint from before the update.** Before per-folder recovery, every
-  desktop window autosaved to the shared directory, so the last session from
-  that time is still there. No folder applies it on its own, including a folder
-  whose `:show-state` restores at startup: startup restore reads only the
-  folder's own `:recovery`, `:named` or `:prior` checkpoint. Instead every Mac
-  show folder lists it in **Restore show** as **Checkpoint from before the
-  update**, beside its own checkpoints, and a note above the view says that one
-  is waiting (**Review checkpoint** opens the dialog, **Later** hides the note
-  for this page). **Restore** loads it into this folder through the ordinary
-  show restore, after a confirmation. **Dismiss** drops the offer without
-  loading it. Either choice writes `legacy-resolution.edn` beside the shared
-  files, recording which folder took it or that it was dismissed, so no folder
-  offers it again; a refused restore leaves it offered. The shared files are
-  never moved or deleted: they are still the recovery of `lein run` and other
-  hosts. From the REPL, see [show files](show-files.md#the-checkpoint-from-before-per-folder-recovery).
+  desktop window autosaved to the shared directory, which `lein run` and other
+  hosts still use. The first time any Mac folder claims its own recovery, the
+  shared directory's working and prior checkpoints are copied once, with their
+  saved times, into `before-folders/` beside them, which nothing autosaves to
+  (`recovery/freeze-shared!`; a lock makes the copy happen once even when two
+  windows start together). A later `lein run` session therefore never appears
+  under this label. Every Mac show folder offers the frozen files in **Restore
+  show** as **Checkpoint from before the update** and **Previous session from
+  before the update**, beside its own checkpoints, and a note above the view
+  says one is waiting and when each was saved (**Review checkpoint** opens the
+  dialog, **Later** hides the note).
 
-  The shared checkpoint is found for the show's current show ID, normally
-  `:main`. If an earlier build already copied it into one folder's recovery
-  (the one-time copy that this replaced), that folder keeps the copy as its own
-  checkpoint, and the shared one is still offered until someone takes it or
-  dismisses it.
+  Nothing applies them on their own, including a folder whose `:show-state`
+  restores at startup: startup restore reads only the folder's own
+  `:recovery`, `:named` or `:prior` checkpoint. **Restore** loads one into this
+  folder through the ordinary show restore, after a confirmation; **Dismiss**
+  drops both without loading either. While one window restores or dismisses
+  them it holds a lock in the frozen directory, so another window's attempt is
+  refused ("Another show window is restoring or dismissing …"). When the restore
+  is accepted, or on dismissal, `legacy-resolution.edn` records which folder
+  took which file and the SHA-256 of the restored bytes (or of each dismissed
+  file), and no folder offers them again; a refused restore releases them,
+  still offered. If that record cannot be written, Studio says so after the
+  restore. No file is moved or deleted. From the REPL, see
+  [show files](show-files.md#the-checkpoint-from-before-per-folder-recovery).
+
+  The frozen checkpoints are found for the show's current show ID, normally
+  `:main`; after an import changes the show ID, the note follows by the next
+  autosave. If an earlier build already copied the shared checkpoint into one
+  folder (the one-time copy of #739, which left `offered-to-folder` beside it),
+  the freeze records it as applied to that folder, so no folder offers it again.
 
 **`.tolglow-folder-id` in git.** The file holds a random UUID and nothing else.
 Copies are safe whether or not it is committed. We suggest adding it to the
@@ -527,7 +538,8 @@ are simulated with the same event and global the app uses.
 ID, that a failed second launch leaves the others running and that closing one
 releases only its listener; it also checks every preview-only refusal, the
 folder identity and lock, and that the checkpoint from before the update is
-offered, never restored at startup, and applied or dismissed only on request
+frozen once, offered, never restored at startup, and applied or dismissed
+only on request by exactly one folder
 (also through Studio's routes and the show's own REPL session).
 `lein run -m tolglow.qa.show-folder target/show-folder` checks the folder note,
 the dialog, a Studio restore read back in the REPL and a REPL dismissal seen in

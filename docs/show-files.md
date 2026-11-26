@@ -290,12 +290,12 @@ To resume a checkpoint at configured startup, enable `:show-state` and set `:res
 
 ### The checkpoint from before per-folder recovery
 
-A show folder opened in the Mac app autosaves to its own directory, named by the folder's `.tolglow-folder-id` ([windows](studio-ui.md#windows-and-tabs)). Desktop shows from before that change autosaved to the shared directory above, so its checkpoint for the show's ID is offered to every Mac show folder as `:legacy` until one folder takes it or it is dismissed. Startup restore never loads it. `(:folder (show/recovery-status runtime))` describes the folder's identity file, with `:new? true` on its first open and `:copy-of` when it was detected as a copy.
+A show folder opened in the Mac app autosaves to its own directory, named by the folder's `.tolglow-folder-id` ([windows](studio-ui.md#windows-and-tabs)). Desktop shows from before that change autosaved to the shared directory above. The first Mac folder claim freezes that directory's working and prior checkpoints once into `before-folders/`, so later `lein run` sessions are never mistaken for them. Every Mac show folder is offered the frozen working file as `:legacy` and an undiscarded prior slot as `:legacy-prior`, for the show's ID, until one folder takes one or they are dismissed. Startup restore never loads them. `(:folder (show/recovery-status runtime))` describes the folder's identity file, with `:new? true` on its first open and `:copy-of` when it was detected as a copy.
 
 ```clojure
-(:checkpoints (show/recovery-status runtime))   ; {:legacy {:modified-at-ms …} …} while it is offered
-@(show/load-latest-show! runtime :legacy)       ; restore it into this folder; no folder offers it again
-(show/dismiss-legacy-recovery! runtime)         ; or drop the offer; true when one was offered
+(:checkpoints (show/recovery-status runtime))   ; {:legacy {:modified-at-ms …} :legacy-prior {…} …} while offered
+@(show/load-latest-show! runtime :legacy)       ; restore one into this folder; no folder offers either again
+(show/dismiss-legacy-recovery! runtime)         ; or drop both; true when they were offered
 ```
 
-The restore is the same show import as any checkpoint, so a refused restore (a corrupt file, a different show ID) leaves it offered. Restoring or dismissing writes `legacy-resolution.edn` beside the shared files, with the folder ID and path, the time and the SHA-256 of the file. The shared files stay where they are: `lein run` and other hosts still use that directory.
+The restore is the same show import as any checkpoint. While it runs, this show holds the frozen checkpoints, so a restore or dismissal from another window throws with `:code :legacy-busy`; once they are resolved, another attempt throws `:legacy-resolved`, naming the folder that took them. A refused restore (a corrupt file, a different show ID) releases them, still offered. Restoring or dismissing writes `legacy-resolution.edn` beside the frozen files with the folder ID and path, the kind and file, the time and the SHA-256 of the restored bytes or of each dismissed file. Dismissing a stopped show is refused. No file is moved or deleted: `lein run` and other hosts still use the shared directory.

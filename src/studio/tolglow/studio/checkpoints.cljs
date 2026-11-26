@@ -1,15 +1,20 @@
 (ns tolglow.studio.checkpoints
   "File actions for the current owner's saved show checkpoints."
-  (:require [re-frame.core :as rf]
+  (:require [clojure.string :as str]
+            [re-frame.core :as rf]
             [tolglow.studio.projection :as projection]))
 
 (def ^:private checkpoints
   (array-map :recovery "Working autosave" :named "Named save" :prior "Previous session"
-             :legacy "Checkpoint from before the update"))
+             :legacy "Checkpoint from before the update"
+             :legacy-prior "Previous session from before the update"))
+
+(def ^:private legacy-kinds #{:legacy :legacy-prior})
 
 (def ^:private dismissible
   "Checkpoints an operator can drop, and the route that drops each."
-  {:prior "/api/show/checkpoints/discard-prior" :legacy "/api/show/checkpoints/dismiss-legacy"})
+  {:prior "/api/show/checkpoints/discard-prior" :legacy "/api/show/checkpoints/dismiss-legacy"
+   :legacy-prior "/api/show/checkpoints/dismiss-legacy"})
 
 (defn- checkpoint-name [kind] (get checkpoints kind))
 
@@ -44,10 +49,14 @@
     (assoc-in [:show-checkpoints :operation :draft-before-restore] (rig-draft updated))))
 
 (defn- restored [db kind]
-  (let [db (cond-> db
+  (let [error (get-in db [:show-checkpoints :operation :resolution-error])
+        db (cond-> db
              (original-rig-draft? db)
              (update :ui assoc :rig-dirty? false :rig-draft (get-in db [:show :rig])))]
-    (finish db (str "Restored " (checkpoint-name kind) ".") false)))
+    (if error
+      (finish db (str "Restored " (checkpoint-name kind) ", but Tolglow could not record it, so other show "
+                      "folders may still offer it: " error) true)
+      (finish db (str "Restored " (checkpoint-name kind) ".") false))))
 
 (defn- same-show? [a b]
   (= (dissoc a :epoch) (dissoc b :epoch)))
@@ -145,8 +154,11 @@
     (assoc effect :dispatch [:checkpoints/refresh])
     effect))
 
-(defn- restore-result [db {:keys [status epoch message reason]}]
-  (let [{:keys [kind identity]} (get-in db [:show-checkpoints :operation])
+(defn- restore-result [db {:keys [status epoch message reason legacy-resolution-error]}]
+  (let [db (cond-> db
+             (and legacy-resolution-error (get-in db [:show-checkpoints :operation]))
+             (assoc-in [:show-checkpoints :operation :resolution-error] legacy-resolution-error))
+        {:keys [kind identity]} (get-in db [:show-checkpoints :operation])
         current (identity-of db)]
     (if (and (#{:accepted "accepted"} status) (integer? epoch) (< (:epoch identity) epoch))
       (cond
@@ -175,8 +187,8 @@
           (finish db "The show changed before Studio received the checkpoint result." true)
 
           (and (= :discard action) (#{:accepted "accepted"} status))
-          (with-refresh (finish db (if (= :legacy (get-in db [:show-checkpoints :operation :kind]))
-                                     "Checkpoint from before the update dismissed."
+          (with-refresh (finish db (if (legacy-kinds (get-in db [:show-checkpoints :operation :kind]))
+                                     "Checkpoints from before the update dismissed."
                                      "Previous session checkpoint discarded.") false))
 
           :else (finish db (or message "The show did not acknowledge the checkpoint action.") true))))))
@@ -225,16 +237,18 @@
         [:time {:date-time (.toISOString date)} (.toLocaleString date)]))))
 
 (def ^:private legacy-note
-  (str "Tolglow autosaved here before each show folder had its own recovery. Restoring it applies it to "
-       "this folder only, and other folders stop offering it. Its file stays in the shared recovery folder."))
+  (str "Tolglow saved these before each show folder had its own recovery. Restoring one applies it to this "
+       "folder only, and then no folder offers either. Their files stay in the shared recovery folder."))
 
 (defn- confirmation-text [action kind]
   (case [action kind]
     [:discard :prior] "Discard the previous session checkpoint? This cannot be undone."
-    [:discard :legacy] (str "Dismiss the checkpoint from before the update? No show folder will offer it again. "
-                            "Its file stays in the shared recovery folder.")
-    [:restore :legacy] (str "Restore the checkpoint from before the update into this show folder? This replaces "
-                            "the active show, including unsaved changes, and other show folders stop offering it.")
+    ([:discard :legacy] [:discard :legacy-prior])
+    (str "Dismiss the checkpoints from before the update? No show folder will offer them again. "
+         "Their files stay in the shared recovery folder.")
+    ([:restore :legacy] [:restore :legacy-prior])
+    (str "Restore the " (str/lower-case (checkpoint-name kind)) " into this show folder? This replaces the "
+         "active show, including unsaved changes, and no other show folder will offer it.")
     (str "Restore " (checkpoint-name kind) "? This replaces the active show, including unsaved changes.")))
 
 (defn folder-explanation
@@ -252,16 +266,39 @@
       "first time it opens, so neither overwrites the other's recovery. In a git repository you can ignore "
       "the file or commit it."]]))
 
+(def ^:private notice-storage-key "tolglow.show-folder-notices")
+
+(defn- storage [] (try (.-localStorage js/window) (catch :default _ nil)))
+
+(defonce ^:private stored-notices
+  ;; Closed notes survive reloads and new tabs of this page's origin.
+  (delay (try (set (js->clj (js/JSON.parse (or (some-> (storage) (.getItem notice-storage-key)) "[]"))))
+              (catch :default _ #{}))))
+
+(rf/reg-fx :show-folder/remember
+  (fn [closed]
+    (try (some-> (storage) (.setItem notice-storage-key (js/JSON.stringify (clj->js (vec (take-last 64 closed))))))
+         (catch :default _ nil))))
+
 (defn notice-props
   "What the show folder notice needs: the folder this show runs from and the
-  notices already closed on this page."
+  notices already closed here."
   [db]
-  {:folder (get-in db [:show :show-folder]) :closed (get-in db [:ui :show-folder-notices] #{})})
+  {:folder (get-in db [:show :show-folder])
+   :closed (into (get-in db [:ui :show-folder-notices] #{}) @stored-notices)})
 
-(rf/reg-event-db :show-folder/close-notice
-  (fn [db [_ notice]] (update-in db [:ui :show-folder-notices] (fnil conj #{}) notice)))
+(rf/reg-event-fx :show-folder/close-notice
+  (fn [{:keys [db]} [_ notice]]
+    (let [db (update-in db [:ui :show-folder-notices] (fnil conj #{}) notice)]
+      {:db db :fx [[:show-folder/remember (into @stored-notices (get-in db [:ui :show-folder-notices]))]]})))
 
-(defn- notice-key [folder kind] [(:id folder) kind])
+(defn notice-key [folder kind] (str (:id folder) "/" (name kind)))
+
+(defn- saved-times [checkpoints]
+  (let [entries (keep (fn [kind] (when-let [entry (get checkpoints kind)] [kind entry])) [:legacy :legacy-prior])]
+    (into [:ul.small.legacy-times]
+          (for [[kind {:keys [modified-at-ms]}] entries]
+            ^{:key kind} [:li (checkpoint-name kind) ", saved " (or (timestamp modified-at-ms) "at an unknown time")]))))
 
 (defn folder-notice
   "The once-per-folder note about `.tolglow-folder-id` on the folder's first
@@ -270,7 +307,7 @@
   [{:keys [folder closed]}]
   (when (map? folder)
     (let [identity? (and (:new? folder) (not (contains? closed (notice-key folder :identity))))
-          legacy? (and (:legacy-checkpoint folder) (not (contains? closed (notice-key folder :legacy))))]
+          legacy? (and (seq (:legacy-checkpoints folder)) (not (contains? closed (notice-key folder :legacy))))]
       (when (or identity? legacy?)
         [:section.show-folder-notice {:role "region" :aria-label "Show folder"}
          (when identity?
@@ -287,6 +324,7 @@
             [:strong "A checkpoint from before the update is waiting"]
             [:p (str "Tolglow saved it before each show folder had its own recovery. Nothing has been applied. "
                      "Restore it into this folder or dismiss it under Restore show.")]
+            [saved-times (:legacy-checkpoints folder)]
             [:div.button-row
              [:button.button.primary {:type "button" :on-click #(rf/dispatch [:checkpoints/open])} "Review checkpoint"]
              [:button.button {:type "button" :on-click #(rf/dispatch [:show-folder/close-notice (notice-key folder :legacy)])}
@@ -312,7 +350,7 @@
           (cond
             (not connected?) "Connect to the show to view its checkpoints."
             (= :sending (:phase operation)) (cond (= :restore (:action operation)) "Restoring checkpoint…"
-                                                  (= :legacy (:kind operation)) "Dismissing checkpoint…"
+                                                  (legacy-kinds (:kind operation)) "Dismissing checkpoints…"
                                                   :else "Discarding checkpoint…")
             (= :queued (:phase operation)) "Restore is queued."
             (= :awaiting-view (:phase operation)) "Restore accepted. Waiting for Studio to receive the restored show."
@@ -328,28 +366,29 @@
              [:button.button {:type "button" :class (if discard? "danger" "primary")
                               :disabled (or (boolean busy?) (not connected?) (not (get-in current [:checkpoints kind])))
                               :on-click #(rf/dispatch [:checkpoints/submit])}
-              (cond (not discard?) "Restore checkpoint" (= :legacy kind) "Dismiss checkpoint" :else "Discard checkpoint")]]]
+              (cond (not discard?) "Restore checkpoint" (legacy-kinds kind) "Dismiss checkpoints" :else "Discard checkpoint")]]]
            [:<>
             (when current
               [:ul.checkpoint-list
                (for [[kind label] checkpoints
                      :let [entry (get-in current [:checkpoints kind])]
                      ;; Only a Mac show folder can offer the shared checkpoint.
-                     :when (or entry (not= :legacy kind))]
+                     :when (or entry (not (legacy-kinds kind)))]
                  ^{:key kind}
                  [:li.checkpoint-row {:data-checkpoint (name kind)}
                   [:div [:strong label]
-                   [:div.small.muted (if entry (or (timestamp (:modified-at-ms entry)) "Time unavailable") "Unavailable")]
-                   (when (= :legacy kind) [:p.small.muted.checkpoint-note legacy-note])]
+                   [:div.small.muted (if entry (or (timestamp (:modified-at-ms entry)) "Time unavailable") "Unavailable")]]
                   [:div.checkpoint-actions
                    [:button.button {:type "button" :aria-label (str "Restore " label)
                                     :disabled (or (boolean busy?) (not entry) (not connected?))
                                     :on-click #(rf/dispatch [:checkpoints/confirm :restore kind])} "Restore"]
                    (when (and entry (contains? dismissible kind))
-                     (let [verb (if (= :legacy kind) "Dismiss" "Discard")]
+                     (let [verb (if (legacy-kinds kind) "Dismiss" "Discard")]
                        [:button.button.danger {:type "button" :aria-label (str verb " " label)
                                                :disabled (or (boolean busy?) (not connected?))
                                                :on-click #(rf/dispatch [:checkpoints/confirm :discard kind])} verb]))]])])
+            (when (some #(get-in current [:checkpoints %]) legacy-kinds)
+              [:p.small.muted.checkpoint-note legacy-note])
             (when-let [folder (:folder current)]
               [:section.show-folder-info {:aria-labelledby "show-folder-title"}
                [:h3#show-folder-title "Show folder"]

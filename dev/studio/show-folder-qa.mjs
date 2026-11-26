@@ -49,7 +49,7 @@ for (const origin of [originA, originB, originC]) {
   const view = await state(origin);
   assert.equal(view.status.output.type, 'preview', 'the QA shows must not own an output');
   assert.equal(view['show-folder']['new?'], true);
-  assert.ok(view['show-folder']['legacy-checkpoint'], 'every folder is offered the older checkpoint');
+  assert.ok(view['show-folder']['legacy-checkpoints'], 'every folder is offered the older checkpoint');
   assert.equal(view['blackout?'], false, 'and none applied it at startup');
 }
 
@@ -76,6 +76,7 @@ try {
   assert.match(await identity.innerText(), /Copies are detected and safe/);
   await legacy.getByText('A checkpoint from before the update is waiting').waitFor();
   assert.match(await legacy.innerText(), /Nothing has been applied/);
+  assert.match(await legacy.innerText(), /Checkpoint from before the update, saved/);
   await page.screenshot({ path: join(output, 'a-first-open.png') });
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -88,6 +89,9 @@ try {
   await identity.getByRole('button', { name: 'OK' }).click();
   await identity.waitFor({ state: 'detached' });
   assert.equal(await legacy.isVisible(), true, 'closing the identity note keeps the offer');
+  await page.reload();
+  await legacy.waitFor();
+  assert.equal(await identity.count(), 0, 'a closed identity note stays closed after a reload');
 
   // Studio restore in A; the REPL reads the same outcome in A and B.
   await legacy.getByRole('button', { name: 'Review checkpoint' }).click();
@@ -107,7 +111,7 @@ try {
   assert.equal(await offered(originA), 'false');
   assert.equal(await offered(originB), 'false', 'B is no longer offered it');
   assert.equal((await state(originB))['blackout?'], false, 'and B was not changed');
-  await eventually(async () => !(await state(originB))['show-folder']['legacy-checkpoint'],
+  await eventually(async () => !(await state(originB))['show-folder']['legacy-checkpoints'],
     "B's open state stops offering it by its next autosave");
 
   // C: a REPL dismissal removes the open Studio's offer; a second dismissal is refused.

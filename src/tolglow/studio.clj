@@ -136,6 +136,7 @@
                      (:named "named") :named
                      (:prior "prior") :prior
                      (:legacy "legacy") :legacy
+                     (:legacy-prior "legacy-prior") :legacy-prior
                      (throw (ex-info "Unknown show checkpoint kind" {})))
               receipt-id (str (random-uuid))]
           (deref (show/load-latest-show! runtime kind identity receipt-id) checkpoint-wait-ms
@@ -148,6 +149,11 @@
         (if (show/dismiss-legacy-recovery! runtime identity)
           {:status :accepted}
           {:status :rejected :message "The checkpoint from before the update is no longer offered"})))
+    (catch clojure.lang.ExceptionInfo error
+      (let [code (:code (ex-data error))]
+        (if (#{:legacy-busy :legacy-resolved :legacy-unavailable :show-stopped} code)
+          {:status :rejected :code code :message (ex-message error)}
+          (throw error))))
     (catch java.io.IOException error
       (throw (ex-info "Could not access the show checkpoint" {:code :checkpoint-io} error)))))
 
