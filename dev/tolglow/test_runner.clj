@@ -53,7 +53,7 @@
     tolglow.event-subscribers-test tolglow.beat-scheduler-test tolglow.studio.projection-test tolglow.studio.active-preview-test tolglow.push-scene-test
     tolglow.show.scene-draft-test
     tolglow.controllers.content-browser-test tolglow.controllers.content-browser-host-test
-    tolglow.controllers.content-browser-display-test
+    tolglow.controllers.content-browser-display-test tolglow.surface.link-host-test tolglow.surface.descriptor-test
     tolglow.timeline-test
     tolglow.preview.airplay-test
     tolglow.personalities-test tolglow.personalities.icon-test tolglow.personalities-host-test
