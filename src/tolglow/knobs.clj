@@ -129,7 +129,10 @@
 (defn- knob-errors [knob]
   (if-not (map? knob) ["A knob must be a map"]
           (vec (concat
-                (when-not (every? #{:id :name :value :links :order} (keys knob)) ["Unknown knob field"])
+                (when-not (every? #{:id :name :value :links :order :recipe} (keys knob)) ["Unknown knob field"])
+                ;; A generated knob (#667) keeps the recipe it was made from.
+                (when-not (or (nil? (:recipe knob)) (and (map? (:recipe knob)) (registry/data? (:recipe knob))))
+                  ["A knob recipe is a data map"])
                 (when-not (id? (:id knob)) ["A knob needs a stable ID"])
                 (when-not (and (string? (:name knob)) (<= 1 (count (:name knob)) 128)) ["A knob needs a name"])
                 (when-not (unit-fraction? (:value knob)) ["A knob value is between 0 and 1"])
@@ -481,18 +484,20 @@
   (let [knobs (state model)]
     (case op
       :knob/create
-      (let [{:keys [name value links]} command
+      (let [{:keys [name value links recipe]} command
             value (or value 0.0)]
         (check (id? knob-id) "A knob needs a stable ID")
         (check (not (contains? (:knobs knobs) knob-id)) "A knob with that ID already exists" {:knob-id knob-id})
         (check (and (string? name) (<= 1 (count name) 128)) "Give the knob a name")
         (check (unit-fraction? value) "A knob value is between 0 and 1")
         (check (or (nil? links) (vector? links)) "Links are a vector")
+        (check (or (nil? recipe) (and (map? recipe) (registry/data? recipe))) "A knob recipe is a data map")
         (let [links (mapv #(checked-link model %) (or links []))]
           (check (or (empty? links) (apply distinct? (map :id links))) "Link IDs must be distinct within a knob")
           {:model (assoc model :knobs (-> knobs
-                                          (assoc-in [:knobs knob-id] {:id knob-id :name name :value value
-                                                                       :links links :order (:next-order knobs)})
+                                          (assoc-in [:knobs knob-id] (cond-> {:id knob-id :name name :value value
+                                                                                       :links links :order (:next-order knobs)}
+                                                                       recipe (assoc :recipe recipe)))
                                           (update :next-order inc)))
            :events [{:type :knob/created :knob-id knob-id}]
            :result {:knob-id knob-id}}))
@@ -626,7 +631,7 @@
                          (reduce #(update %1 (destination-key %2) (fnil conj #{}) (:id knob)) index (:links knob)))
                        {} knobs)]
     {:knobs (mapv (fn [knob]
-                    (-> (select-keys knob [:id :name :value])
+                    (-> (select-keys knob [:id :name :value :recipe])
                         (assoc :links (mapv #(link-view model knob % shared) (:links knob)))))
                   knobs)}))
 

@@ -50,6 +50,7 @@
             [tolglow.rig.reflections :as reflections]
             [tolglow.rig.surface-aim :as surface-aim]
             [tolglow.modulation :as modulation]
+            [tolglow.knob-candidates :as knob-candidates]
             [tolglow.knobs :as knobs]
             [tolglow.knob-presets :as knob-presets]
             [tolglow.lighting-capacity :as capacity]
@@ -238,6 +239,11 @@
             :cue-launch-outcomes (cue-timing/outcomes model)
             :schedule (subscribers/schedule-view model)
             :knobs (knobs/projection model) ; linked knobs (#666)
+            ;; Generated knob candidates (#667) and their Room audition.
+            :knob-candidates (knob-candidates/projection
+                              model (when-let [preview (get-in audition [:draft :preview])]
+                                      (assoc preview :status (:status audition)
+                                             :draft-revision (get-in audition [:draft :revision]))))
             :knob-presets (knob-presets/projection model) ; knob looks (#547)
             :operator-history (operator-history/project (:id runtime) model)
             :history-command-outcomes (:history-command-outcomes snapshot [])
@@ -689,6 +695,9 @@
                    ;; Linked knobs (#666).
                    (knobs/operations operation)
                    (control/apply-domain-command model envelope knobs/apply-operation)
+                   ;; Generated knob candidates (#667).
+                   (knob-candidates/operations operation)
+                   (control/apply-domain-command model envelope knob-candidates/apply-operation)
                    ;; Knob looks (#547).
                    (knob-presets/operations operation)
                    (control/apply-domain-command model envelope knob-presets/apply-operation)
@@ -930,10 +939,67 @@
                                               :status :applied :time-ms time-ms)}))
         result))))
 
+(defn- stage-candidate-audition
+  "Stage the model's knob candidate (#667) in the Room at knob value: an
+  audition-only draft whose private show has the candidate's links resolved and
+  written in. Returns the staging receipt."
+  [runtime model value time-ms]
+  (let [state (draft-state runtime)
+        {:keys [draft]} @state
+        candidate (knob-candidates/candidate model)
+        {:keys [ack] staged :draft}
+        (scene-draft/stage-preview model draft {:draft-id knob-candidates/draft-id
+                                                :preview (knob-candidates/preview candidate value)}
+                                   time-ms #(knob-candidates/audition-model % candidate value))]
+    (when staged (reset! state (begin-audition runtime staged)))
+    ack))
+
+(defn- knob-candidate-audition
+  "Owner admission for :knob-candidate/audition. Like a Room stage it leaves the
+  show model untouched; the candidate's preview replaces the Room's frame."
+  [runtime model payload time-ms]
+  (let [{:keys [command-id value]} (merge {:command-id (str (UUID/randomUUID))} payload)
+        reply (fn [status details]
+                {:model model :ack (merge (select-keys model [:show-id :epoch :revision])
+                                          {:status status :command-id command-id} details)})
+        reject (fn [code message] (reply :rejected {:code code :message message}))]
+    (cond
+      (not= [(:show-id model) (:epoch model)]
+            [(:show-id payload (:show-id model)) (:epoch payload (:epoch model))])
+      (reject :stale-epoch "The audition belongs to another show session")
+      (nil? (knob-candidates/candidate model)) (reject :no-candidate "Generate a candidate first")
+      (not (and (number? value) (Double/isFinite (double value)) (<= 0 value 1)))
+      (reject :invalid-value "An audition value is between 0 and 1")
+      :else (let [ack (stage-candidate-audition runtime model value time-ms)]
+              {:model model :ack (merge ack {:command-id command-id}
+                                        (when (= :accepted (:status ack))
+                                          {:value (double value)
+                                           :candidate-id (:id (knob-candidates/candidate model))}))}))))
+
+(defn- follow-candidate-audition!
+  "After a candidate command, keep a running candidate audition on the current
+  candidate at its knob value, or end it when no candidate remains."
+  [runtime result time-ms]
+  (let [state (draft-state runtime)
+        {:keys [draft]} @state
+        model (:model result)]
+    (when (and (= :accepted (get-in result [:ack :status])) (= knob-candidates/draft-id (:id draft)))
+      (if (knob-candidates/candidate model)
+        (stage-candidate-audition runtime model (get-in draft [:preview :value] 0.5) time-ms)
+        (reset! state nil)))
+    result))
+
 (defn- dispatch-owner-command [runtime model payload time-ms authority]
   (cond
     (scene-draft/operations (:op payload))
     (scene-draft-command runtime model payload time-ms)
+
+    ;; Generated knob candidates (#667): auditions stage in the Room; edits follow it.
+    (knob-candidates/audition-operations (:op payload))
+    (knob-candidate-audition runtime model payload time-ms)
+
+    (knob-candidates/operations (:op payload))
+    (follow-candidate-audition! runtime (command model payload time-ms authority) time-ms)
 
     (subscribers/schedulable? payload)
     (command model (subscribers/as-post payload) time-ms authority)
@@ -2838,6 +2904,8 @@
           "launch_cue" [:command (merge envelope arguments {:op :cue/launch})]
           "stop_instance" [:command (merge envelope arguments {:op :instance/end})]
           "set_parameter" [:command (merge envelope arguments {:op :param/set})]
+          "knob_candidate" [:command (merge envelope (dissoc arguments :op)
+                                            {:op (keyword "knob-candidate" (name (:op arguments)))})]
           "schedule_events" [:command (merge envelope {:op :schedule/post :events (vec (:events arguments))})]
           "cancel_scheduled" [:command (merge envelope (select-keys arguments [:event-ids :label :destination])
                                               (when (:mine? arguments) {:posted-by (:source envelope)})
