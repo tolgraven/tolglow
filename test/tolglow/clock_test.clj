@@ -215,3 +215,28 @@
     (is (= 1000.0 (get-in state [:sources :sensor :observed-at-ms])))
     (is (= (get-in before [:state :frame]) (:frame state)))
     (is (= (get-in before [:state :receipts]) (:receipts state)))))
+
+(deftest hold-shifts-only-millisecond-show-progress-and-is-pure
+  (let [model {:time-ms 5000 :transport {:beat 4.0 :time-ms 5000 :playing? false}
+               :instances {"0:1" {:id "0:1" :started-at-ms 0 :system {:clock-offset-ms 250 :clock-offset-beats 1.0}}
+                           "0:2" {:id "0:2" :started-at-ms 0 :system {:paused? true :paused-clock {:time-ms 900 :beat 1.0}}}
+                           "0:3" {:id "0:3" :started-at-ms 0}}
+               :responses [{:id :r :state {:started-at-ms 1000 :started-at-beat 2.0}}
+                           {:id :q :state {:started-at-ms 1000 :released-at-ms 3000}}]
+               :event-subscribers {:ramps [{:event-id "a" :unit :ms :start 1000 :end 5000}
+                                           {:event-id "b" :unit :beats :start 1.0 :end 9.0}]}
+               :auto {:state {:interval-timer {:duration {:unit :ms :value 1000} :started-at 4000}
+                              :next-at-ms 5000}}}
+        held (clock/hold model 400)]
+    (is (= model (clock/hold model 0)))
+    (is (= [650 nil 400] (mapv #(get-in held [:instances % :system :clock-offset-ms]) ["0:1" "0:2" "0:3"])))
+    (is (= 1.0 (get-in held [:instances "0:1" :system :clock-offset-beats])))
+    (is (= (assoc-in (get-in model [:instances "0:2"]) [:system :transport-held-ms] 400) (get-in held [:instances "0:2"]))
+        "an explicit pause keeps its own clock")
+    (is (= [400 400 400] (mapv #(get-in held [:instances % :system :transport-held-ms]) ["0:1" "0:2" "0:3"])))
+    (is (= [{:started-at-ms 1400 :started-at-beat 2.0} {:started-at-ms 1400 :released-at-ms 3400}]
+           (mapv :state (:responses held))))
+    (is (= [[1400 5400] [1.0 9.0]] (mapv (juxt :start :end) (get-in held [:event-subscribers :ramps]))))
+    (is (= [4400 5400] [(get-in held [:auto :state :interval-timer :started-at]) (get-in held [:auto :state :next-at-ms])]))
+    (is (= [(:time-ms model) (:transport model)] [(:time-ms held) (:transport held)]) "host time is not show progress")
+    (is (thrown? clojure.lang.ExceptionInfo (clock/hold model -1)))))

@@ -2122,7 +2122,8 @@
 (defn- render-audition!
   "Worker task: render one audition frame from the staged timeline. The
   result installs only while the same draft is staged. Pending clock rebases
-  are applied first, in the order the live show took them. `live` is the
+  and stopped-transport holds are applied first, in the order the live show
+  took them. `live` is the
   committed model of the frame that queued this one: its transport, master,
   blackout, master ramp and track feel reach the private timeline."
   [runtime draft live time-ms]
@@ -2131,7 +2132,11 @@
     (try
       (when-let [{:keys [frame caches next-model rebases]} (let [current @state] (when (same? current) current))]
         (let [;; Shift the private musical anchors by each offset the live model took.
-              model (-> (reduce show-clock/rebase (or next-model (:model frame)) rebases)
+              model (-> (reduce (fn [model step]
+                                  (if (contains? step :held-ms)
+                                    (show-clock/hold model (:held-ms step))
+                                    (show-clock/rebase model step)))
+                                (or next-model (:model frame)) rebases)
                         (merge (select-keys live [:transport :master :blackout?]))
                         ;; A draft cannot stage a feel and applying replays it on the live
                         ;; model, so the Room shows the live track feel.
@@ -2157,14 +2162,15 @@
   audition frame on the audition worker. It runs outside the owner lock, so
   it cannot delay a live slot. A frame is skipped, and counted, while the
   previous one is still rendering or when the live frame used more than
-  :max-live-share (default 0.5) of its period. `rebase` is the clock step the
-  live model took this cycle, if any: {:draft :from-beat :beat}. A timeline
-  staged before the cycle queues it, also when this frame is skipped."
-  [runtime live time-ms elapsed-ms rebase]
+  :max-live-share (default 0.5) of its period. `steps` are the clock steps the
+  live model took this cycle: a beat rebase {:draft :from-beat :beat} and a
+  stopped-transport hold {:draft :held-ms}. A timeline staged before the cycle
+  queues them, also when this frame is skipped."
+  [runtime live time-ms elapsed-ms steps]
   (let [state (:scene-draft runtime)
-        _ (when (and rebase (:draft rebase))
-            (swap! state #(if (identical? (:draft rebase) (:draft %))
-                            (update % :rebases (fnil conj []) (dissoc rebase :draft))
+        _ (doseq [step steps :when (:draft step)]
+            (swap! state #(if (identical? (:draft step) (:draft %))
+                            (update % :rebases (fnil conj []) (dissoc step :draft))
                             %)))
         {:keys [draft error stale in-flight]} @state
         share (get-in runtime [:audition-options :max-live-share] 0.5)
@@ -2254,6 +2260,12 @@
                  physical-now ((:now-ms (:publisher runtime)))
                  clock-generation @(:presentation-clock runtime)
                  [clock-model audio-clock-confidence] (source-clock-model runtime (:model before) time-ms)
+                 ;; Millisecond show progress stands still over an interval that
+                 ;; began stopped, as beat progress does (#699).
+                 held-ms (let [previous (:model before)]
+                           (if (false? (get-in previous [:transport :playing?]))
+                             (max 0 (- time-ms (get-in previous [:transport :time-ms] (:time-ms previous 0)))) 0))
+                 clock-model (show-clock/hold clock-model held-ms)
                  ;; Draft commands edit this cycle's view; it is published only after the frame commits.
                  draft-initial @(:scene-draft runtime)
                  draft-view (atom draft-initial)
@@ -2436,11 +2448,14 @@
                         (cadence/finish (assoc sampling :defer-live-slowdown? defer?) (:model next-state) elapsed)))
                ;; Queued after the live frame's owner time is measured and published.
                (schedule-audition! runtime (:model next-state) (get-in next-state [:model :time-ms]) elapsed
-                                   ;; A transport discontinuity rebased the live model by this beat step.
-                                   (when (not= clock-generation @(:presentation-clock runtime))
-                                     {:draft (:draft draft-initial)
-                                      :from-beat (get-in before [:model :transport :beat])
-                                      :beat (get-in next-state [:model :transport :beat])}))))))
+                                   ;; A transport discontinuity rebased the live model by this beat
+                                   ;; step; a stopped interval held its millisecond progress.
+                                   (cond-> []
+                                     (not= clock-generation @(:presentation-clock runtime))
+                                     (conj {:draft (:draft draft-initial)
+                                            :from-beat (get-in before [:model :transport :beat])
+                                            :beat (get-in next-state [:model :transport :beat])})
+                                     (pos? held-ms) (conj {:draft (:draft draft-initial) :held-ms held-ms})))))))
        (finally
          (when @committed-bound? (pop-thread-bindings))
          (when-let [request @author-request]

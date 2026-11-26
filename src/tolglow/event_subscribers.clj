@@ -1264,6 +1264,16 @@
                           (update :ramps (partial mapv #(if (= :beats (:unit %))
                                                           (-> % (update :start + offset) (update :end + offset)) %)))))))))
 
+(defn hold-clock
+  "Keep millisecond ramps where they were across held-ms of stopped transport.
+  Beat ramps and waits already stand still with the transport beat."
+  [model held-ms]
+  (if (seq (get-in model [:event-subscribers :ramps]))
+    (update-in model [:event-subscribers :ramps]
+               (partial mapv #(if (= :ms (:unit %))
+                                (-> % (update :start + held-ms) (update :end + held-ms)) %)))
+    model))
+
 (defn restart [model]
   (cond-> model (:event-subscribers model) (update :event-subscribers assoc :runs [] :ramps [] :recent [])))
 

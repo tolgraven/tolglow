@@ -6,6 +6,7 @@
   (:require [afterglow.control.model :as control]
             [afterglow.reactive :as graph]
             [clojure.test :refer [deftest is testing]]
+            [tolglow.persistence :as files]
             [tolglow.show :as show]))
 
 (def ^:private frame-ms 100)
@@ -30,21 +31,29 @@
                                                                       {:at {:ms 4000} :value 1.0}]}}})
    :ms-clock (effect :ms-clock {:dimmer {:op :min :args [{:op :divide :args [{:op :time} {:op :const :value 4000.0}]}
                                                          {:op :const :value 1.0}]}})
+   :modulator {:id :modulator :version 1 :params {} :modulation {:params [:level] :ranges {:level [0.6 0.6]}}}
    :quarter (effect :quarter {:dimmer 0.25})
    :three-quarter (effect :three-quarter {:dimmer 0.75})})
 
 (def ^:private cues
   (into {} (map (fn [id] [id {:id id :effect-id id :version 1}])) (keys effects)))
 
-(defn- live-model []
-  (assoc (control/new-show {:show-id :pause-test :transport {:playing? true :beat 0.0 :bpm 120.0}
+(def ^:private tempos
+  "Real show tempos run from 70 to 180 BPM."
+  [70.0 120.0 180.0])
+
+(defn- live-model [bpm]
+  (assoc (control/new-show {:show-id :pause-test :transport {:playing? true :beat 0.0 :bpm bpm}
                             :registry {:effects effects :cues cues}})
          :rig {:fixtures [{:id :left :universe 1 :address 1 :channels {:dimmer 1}}]}))
 
-(defn- runtime []
-  (let [dmx (atom nil)
-        sink {:send! (fn [universes _] (reset! dmx (bit-and 255 (first (get universes 1)))))}]
-    (assoc (show/create-runtime {:model (live-model) :sink sink :workspace-options nil}) ::dmx dmx)))
+(defn- runtime
+  ([] (runtime 120.0))
+  ([bpm] (runtime bpm (live-model bpm)))
+  ([_bpm model]
+   (let [dmx (atom nil)
+         sink {:send! (fn [universes _] (reset! dmx (bit-and 255 (first (get universes 1)))))}]
+     (assoc (show/create-runtime {:model model :sink sink :workspace-options nil}) ::dmx dmx))))
 
 (defn- tick! [rt t]
   (show/tick! rt t)
@@ -103,8 +112,8 @@
 (defn- launch! [rt t cue & [launch]]
   (:instance-id (command! rt t (cond-> {:op :cue/launch :cue-id cue} launch (assoc :launch launch)))))
 
-(defn- scenario [setup]
-  (let [rt (runtime)]
+(defn- scenario [setup & [bpm]]
+  (let [rt (runtime (or bpm 120.0))]
     (try
       (let [frames (run-scenario rt setup)]
         {:frames frames :class (classify frames) :model (model rt)})
@@ -113,55 +122,74 @@
 (defn- rising-after-play? [frames]
   (< (value-at frames (+ play-at frame-ms)) (value-at frames (+ play-at 1000))))
 
+(defn- falling-after-play? [frames]
+  (> (value-at frames (+ play-at frame-ms)) (value-at frames (+ play-at 1000))))
+
+(defn- ramp! [rt unit]
+  (let [id (launch! rt 0 :wash {:params {:level 0.0}})]
+    (command! rt 0 {:op :param/ramp :event-id (str "swell-" (name (key (first unit)))) :instance-id id
+                    :param :level :to 1.0 :over unit})))
+
 (deftest beat-ramp-freezes-on-stop-and-continues-on-play
-  (let [{:keys [frames class]}
-        (scenario {:setup! (fn [rt]
-                             (let [id (launch! rt 0 :wash {:params {:level 0.0}})]
-                               (command! rt 0 {:op :param/ramp :event-id "beat-swell" :instance-id id :param :level
-                                               :to 1.0 :over {:beats 8}})))})]
-    (is (= :frozen class) (pr-str frames))
-    (is (rising-after-play? frames))))
+  (doseq [bpm tempos]
+    (let [{:keys [frames class]} (scenario {:setup! #(ramp! % {:beats 8})} bpm)]
+      (is (= :frozen class) (pr-str bpm frames))
+      (is (rising-after-play? frames) (pr-str bpm)))))
 
 (deftest millisecond-ramp-pauses-with-the-transport
-  (let [{:keys [frames class]}
-        (scenario {:setup! (fn [rt]
-                             (let [id (launch! rt 0 :wash {:params {:level 0.0}})]
-                               (command! rt 0 {:op :param/ramp :event-id "ms-swell" :instance-id id :param :level
-                                               :to 1.0 :over {:ms 4000}})))})]
-    (is (= :keeps-running class) (pr-str frames))))
+  (doseq [bpm tempos]
+    (let [{:keys [frames class]} (scenario {:setup! #(ramp! % {:ms 4000})} bpm)]
+      (is (= :frozen class) (pr-str bpm frames))
+      (is (rising-after-play? frames) (pr-str bpm))
+      (testing "the ramp keeps its remaining two seconds after play"
+        (is (< (value-at frames (+ play-at 1900)) 255) (pr-str frames))
+        (is (= 255 (value-at frames (+ play-at 2100))) (pr-str frames))))))
 
 (deftest millisecond-system-attack-pauses-with-the-transport
   (let [{:keys [frames class]} (scenario {:setup! #(launch! % 0 :wash {:system {:attack {:ms 4000}}})})]
-    (is (= :keeps-running class) (pr-str frames))))
-
-(deftest millisecond-effect-envelope-attack-pauses-with-the-transport
-  (let [{:keys [frames class]} (scenario {:setup! #(launch! % 0 :ms-attack)})]
-    (is (= :keeps-running class) (pr-str frames))))
-
-(deftest beat-effect-envelope-attack-freezes-on-stop
-  (let [{:keys [frames class]} (scenario {:setup! #(launch! % 0 :beat-attack)})]
     (is (= :frozen class) (pr-str frames))
     (is (rising-after-play? frames))))
 
+(deftest millisecond-effect-envelope-attack-pauses-with-the-transport
+  (let [{:keys [frames class]} (scenario {:setup! #(launch! % 0 :ms-attack)})]
+    (is (= :frozen class) (pr-str frames))
+    (is (rising-after-play? frames))))
+
+(deftest beat-effect-envelope-attack-freezes-on-stop
+  (doseq [bpm tempos]
+    (let [{:keys [frames class]} (scenario {:setup! #(launch! % 0 :beat-attack)} bpm)]
+      (is (= :frozen class) (pr-str bpm frames))
+      (is (rising-after-play? frames) (pr-str bpm)))))
+
 (deftest millisecond-release-pauses-with-the-transport
   (let [id (atom nil)
-        {:keys [frames class model]}
-        (scenario {:setup! #(reset! id (launch! % 0 :ms-release))
-                   :at {1000 (fn [rt t] (command! rt t {:op :instance/end :instance-id @id}))}})]
-    (is (= :keeps-running class) (pr-str frames))
-    (is (nil? (get-in model [:instances @id])) "the release finished by the end of the run")))
+        rt (runtime)
+        instance #(get-in (model rt) [:instances @id])]
+    (try
+      (let [frames (run-scenario rt {:setup! #(reset! id (launch! % 0 :ms-release))
+                                     :at {1000 (fn [rt t] (command! rt t {:op :instance/end :instance-id @id}))
+                                          9900 (fn [rt t] (tick! rt t) (is (some? (instance)) "three seconds of release remain after play"))}})]
+        (is (= :frozen (classify frames)) (pr-str frames))
+        (is (falling-after-play? frames))
+        (is (nil? (instance)) "the release still finishes"))
+      (finally (show/stop! rt)))))
 
 (deftest millisecond-timed-launch-pauses-with-the-transport
   (let [{:keys [frames class]} (scenario {:setup! #(launch! % 0 :wash {:mode :timed :duration {:ms 3000}})})]
-    (is (= :keeps-running class) (pr-str frames))))
+    (is (= :frozen class) (pr-str frames))
+    (testing "the remaining second runs after play"
+      (is (= 255 (value-at frames (+ play-at 900))) (pr-str frames))
+      (is (= 0 (value-at frames (+ play-at 1100))) (pr-str frames)))))
 
 (deftest millisecond-output-tween-pauses-with-the-transport
   (let [{:keys [frames class]} (scenario {:setup! #(launch! % 0 :ms-tween)})]
-    (is (= :keeps-running class) (pr-str frames))))
+    (is (= :frozen class) (pr-str frames))
+    (is (rising-after-play? frames))))
 
 (deftest millisecond-time-expression-pauses-with-the-transport
   (let [{:keys [frames class]} (scenario {:setup! #(launch! % 0 :ms-clock)})]
-    (is (= :keeps-running class) (pr-str frames))))
+    (is (= :frozen class) (pr-str frames))
+    (is (rising-after-play? frames))))
 
 (deftest millisecond-response-envelope-pauses-with-the-transport
   (let [{:keys [frames class]}
@@ -169,7 +197,29 @@
                              (launch! rt 0 :wash)
                              (submit! rt 0 :response {:id :swell :params [:level] :operation :multiply
                                                       :envelope {:attack {:ms 4000}}}))})]
-    (is (= :keeps-running class) (pr-str frames))))
+    (is (= :frozen class) (pr-str frames))
+    (is (rising-after-play? frames))))
+
+(deftest a-response-triggered-after-a-stop-starts-at-once-on-held-instances
+  (let [rt (runtime)]
+    (try
+      (launch! rt 0 :wash)
+      (set-playing! rt 500 false)
+      (tick! rt 3000)
+      (set-playing! rt 3000 true)
+      (submit! rt 3100 :response {:id :swell :params [:level] :operation :multiply :envelope {:attack {:ms 1000}}})
+      (tick! rt 3600)
+      (is (< 100 (dmx rt) 155) "half way through the attack, not delayed by the held instance clock")
+      (finally (show/stop! rt)))))
+
+(deftest a-timed-modulation-owner-keeps-its-controller-through-the-stop
+  (let [{:keys [frames class]}
+        (scenario {:setup! (fn [rt]
+                             (launch! rt 0 :wash)
+                             (launch! rt 0 :modulator {:mode :one-shot :duration {:ms 3000}}))})]
+    (is (= :frozen class) (pr-str frames))
+    (is (= 153 (value-at frames (+ play-at 900))) (pr-str frames))
+    (is (= 255 (value-at frames (+ play-at 1100))) (pr-str frames))))
 
 (deftest millisecond-sequence-pauses-with-the-transport
   (let [{:keys [frames class]}
@@ -188,7 +238,63 @@
         (scenario {:setup! #(submit! % 0 :auto {:enabled? true :seed 3 :scope {:cue-ids [:quarter :three-quarter]}
                                                 :interval {:ms 1000} :count 1})
                    :sample #(get-in (model %) [:auto :state :tick] 0)})]
-    (is (= :keeps-running class) (pr-str frames))))
+    (is (= :frozen class) (pr-str frames))
+    (is (rising-after-play? frames))))
+
+(deftest an-explicit-instance-pause-spanning-the-stop-resumes-where-it-paused
+  (let [rt (runtime) id (atom nil)]
+    (try
+      (reset! id (launch! rt 0 :ms-tween))
+      (tick! rt 1000)
+      (command! rt 1000 {:op :instance/pause :instance-id @id})
+      (let [paused (dmx rt)]
+        (set-playing! rt 2000 false)
+        (tick! rt 5000)
+        (set-playing! rt 5000 true)
+        (tick! rt 6000)
+        (is (= paused (dmx rt)) "still explicitly paused")
+        (command! rt 6000 {:op :instance/resume :instance-id @id})
+        (tick! rt 6100)
+        (is (< paused (dmx rt) (+ paused 12)) (pr-str paused (dmx rt))))
+      (finally (show/stop! rt)))))
+
+(deftest an-explicitly-paused-instance-holds-its-response-across-the-stop
+  (let [rt (runtime) id (atom nil)]
+    (try
+      (reset! id (launch! rt 0 :wash))
+      (submit! rt 0 :response {:id :swell :params [:level] :operation :multiply :envelope {:attack {:ms 4000}}})
+      (tick! rt 1000)
+      (command! rt 1000 {:op :instance/pause :instance-id @id})
+      (let [paused (dmx rt)]
+        (set-playing! rt 2000 false)
+        (tick! rt 5000)
+        (set-playing! rt 5000 true)
+        (tick! rt 6000)
+        (is (= paused (dmx rt)))
+        (command! rt 6000 {:op :instance/resume :instance-id @id})
+        (tick! rt 6100)
+        (is (< paused (dmx rt) (+ paused 12)) (pr-str paused (dmx rt))))
+      (finally (show/stop! rt)))))
+
+(deftest a-save-made-during-the-stop-resumes-from-the-held-position
+  (let [rt (runtime)]
+    (try
+      (launch! rt 0 :ms-tween)
+      (doseq [t (range 100 2000 100)] (tick! rt t))
+      (set-playing! rt 2000 false)
+      (let [stopped (dmx rt)]
+        (tick! rt 4000)
+        (let [{saved :model frame-output :frame-output} (show/export-show rt)
+              restored (runtime 120.0)]
+          (try
+            (submit! restored 0 :import {:source (files/write-string saved frame-output)})
+            (doseq [t (range 4100 7000 100)] (tick! restored t))
+            (is (= stopped (dmx restored)) "the restored show is still held")
+            (set-playing! restored 7000 true)
+            (tick! restored 7100)
+            (is (< stopped (dmx restored) (+ stopped 12)) (pr-str stopped (dmx restored)))
+            (finally (show/stop! restored)))))
+      (finally (show/stop! rt)))))
 
 (def ^:private spatial-model
   (assoc (control/new-show {:show-id :pause-spatial :transport {:playing? true :beat 0.0 :bpm 120.0}})

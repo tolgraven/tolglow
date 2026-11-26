@@ -82,8 +82,9 @@ A destination for `:param/set` and `:param/ramp` is chosen with `:target`:
 | `:variable` | `:variable` | A number or a numeric vector (any portable value for a set). Runtime-owned variables are reserved: `:runtime`, `:spatial`, `:sensors`, `:sync`, `:audio`, `:audience`, `:surface-aim` and the `audio/`, `fog/`, `lighting/`, `sensor/`, `sync/` and `spatial/` namespaces |
 
 `:over` takes one positive `{:beats n}`, `{:bars n}` or `{:phrases n}`. `{:ms n}`
-is an explicit boundary unit. It runs on the owner's logical millisecond clock,
-including while the transport is paused. `:curve` takes any
+is an explicit boundary unit. It runs on the owner's millisecond clock and,
+like a beat ramp, stands still while the transport is stopped: play resumes it
+with the time it had left ([transport stop](clock-domains.md#transport-stop)). `:curve` takes any
 `afterglow.render.easing` curve: `:linear` (default), `:ease-in`, `:ease-out`,
 `:ease-in-out`, `:sine`, `:smoothstep`, `:step`, `{:type :power :exponent 3}`,
 `{:type :cubic-bezier :points [x1 y1 x2 y2]}` or `{:type :spring ...}`. A
