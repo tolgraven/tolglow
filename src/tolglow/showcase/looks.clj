@@ -304,7 +304,10 @@
   "Port of `tolglow.fx/sparkle` and the `tolglow.cue/sparkle` pads. Each pixel
   has `:chance` of lighting in every sixteenth and fades over `:fade` beats.
   The original drew from `rand` each frame and kept the sparks in an atom. This
-  one hashes the pixel, the sixteenth and `:seed`."
+  one hashes the pixel, the sixteenth and `:seed`. The original also nudged each
+  spark's hue up to 35 degrees either way. Here each pixel shades between
+  `:tint` and `:accent`, a saturated neighbouring hue, so sparks stay coloured
+  rather than fading toward white."
   (let [slots-per-beat 4.0
         time (fx/multiply beat slots-per-beat)
         slot (floor time)
@@ -319,7 +322,7 @@
         shade (noise (fx/multiply head-hash 1.37) (floor (fx/multiply 0.25 beat)) (p :seed))]
     (look :tube-sparkle
           {:name "Sparkle" :targets rig/pixels :envelope (soft-colour 1/4 1)
-           :params {:tint (fx/parameter [0.81 0.19 0.69]) :accent (fx/parameter [1.0 0.85 0.95])
+           :params {:tint (fx/parameter [0.81 0.19 0.69]) :accent (fx/parameter [0.95 0.08 0.3])
                     :chance [0.385 0.0 1.0] :fade [0.75 0.1 1.5] :level [0.3 0.0 1.0]
                     :seed [656.0 0.0 9999.0]}}
           (fx/color (fx/multiply (fx/mix (p :tint) (p :accent) shade) level (p :level)) {:blend :max}))))

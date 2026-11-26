@@ -186,9 +186,9 @@ Bars are zero-based transport positions, and 32 bars last 60 s.
 | 8–11 | Floor heads orbit, risers climb, the washes weave, beam hue drifts, keyhole |
 | 12–15 | The "mixed movement" macro takes the beams; dimmer sweep narrows |
 | 16–19 | Breakdown: the gather path, the rolling volume, a strobe that speeds up into half a bar of blackout |
-| 20–23 | Drop: blinders at drive 3, the "heavy colour" macro, fast can-can, overdriven risers |
+| 20–23 | Drop: blinders at drive 3, the "heavy colour" macro takes the pixels from the aurora, fast can-can, overdriven risers |
 | 24–27 | Drop B: aim LFO, the ember weave rebinds, then the strobe chase |
-| 28–31 | Outro down to ribbon and haze |
+| 28–31 | Outro: the aurora returns, down to ribbon and haze |
 
 Each event is `{:at {:bar n :beat b} :op …}` in the scheduler's vocabulary:
 `:cue/launch`, `:instance/end`, `:param/set`, `:param/ramp`, `:master/set`,
@@ -196,10 +196,10 @@ Each event is `{:at {:bar n :beat b} :op …}` in the scheduler's vocabulary:
 
 `timeline/prepare` routes the events:
 
-- **Scheduler.** 65 events become `:schedule/post` batches at absolute beats
+- **Scheduler.** 67 events become `:schedule/post` batches at absolute beats
   with event IDs `first-light/<pass>/<index>`. The show owner fires them and
   plays the ramps.
-- **Direct.** 19 events are submitted from the frame observer one frame
+- **Direct.** 21 events are submitted from the frame observer one frame
   before their beat: waveform binds, subscriber save and remove, and the launch
   and end of `:rolling-volume`. The scheduler has no action for the first two.
   It refuses to let a non-human source launch a show-control cue such as a
@@ -224,7 +224,7 @@ its instance ends is recorded as cancelled.
   Attach sources in `looks/sources`.
 - **A different timeline.** Pass `:timeline` to `play!` or `replay`.
 
-`tolglow.showcase-test` pins counts such as the 65 scheduled events and the
+`tolglow.showcase-test` pins counts such as the 67 scheduled events and the
 cues running at given bars. Update them with intentional changes.
 
 ## Capture the Room
@@ -284,3 +284,11 @@ Observed while building the show at `5cf910f6` with Afterglow `d4e6f4c2`.
 4. **The scheduler's `:launch` takes only `:mode`, `:duration` and `:params`,**
    and non-human sources cannot launch show-control cues. This is by design,
    and it is why the timeline has a direct path.
+5. **Pale pixels in the drop came from the show, not from HDR.** The sparkle
+   shaded each spark toward a near-white accent, and the aurora's cool
+   gradient sat under the macro's warm, max-blended layers on the ribbon. The
+   `:drive` gains never push a pixel past full scale, so the HDR whitening of
+   #456 does not take part; disabling HDR leaves the pixel colours unchanged.
+   The sparkle accent is now a saturated neighbouring hue and the aurora steps
+   aside for the drop. `tolglow.showcase-test` keeps the drop's mean emitted
+   saturation above 0.75 on the tubes and 0.6 on the ribbon.

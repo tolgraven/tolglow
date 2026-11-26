@@ -20,8 +20,17 @@
       (.update hash (byte-array (map unchecked-byte data))))
     (.formatHex (HexFormat/of) (.digest hash))))
 
+(defn- saturation
+  "Mean (max - min) / max of the lit heads' emitted colour. 0 is white."
+  [rows ids]
+  (let [lit (filter #(> (apply max %) 0.02) (keep (comp :emitted-color rows) ids))]
+    (when (seq lit)
+      (/ (reduce + (map #(let [high (apply max %)] (/ (- high (apply min %)) high)) lit)) (count lit)))))
+
 (defn- probe [snapshot]
   {:running (into #{} (map :cue-id) (:instances snapshot))
+   :saturation {:tubes (saturation (get-in snapshot [:output :values]) rig/tubes)
+                :ribbon (saturation (get-in snapshot [:output :values]) rig/ribbon)}
    :ramps (into #{} (map (juxt (comp :param :destination) :to)) (get-in snapshot [:schedule :ramps]))
    :upcoming (count (get-in snapshot [:schedule :upcoming]))
    :faults (into [] (keep (fn [instance]
@@ -177,7 +186,7 @@
         (is (empty? (:outcomes status)) "Every scheduled event fired and every ramp completed")
         (is (zero? (:pending status))))
       (testing "the owner runs the ramps"
-        (is (= 62 (:upcoming (first probes))) "The three opening launches fired on frame 0")
+        (is (= 64 (:upcoming (first probes))) "The three opening launches fired on frame 0")
         (is (zero? (:upcoming (peek probes))))
         (is (= #{[:rate 8.0] [:level 1.0] [:saturation 0.95]} (:ramps (bar-frame 18.5))))
         (is (empty? (:ramps (bar-frame 23)))))
@@ -198,6 +207,11 @@
       (is (<= (reduce max (map :lit probes)) 128))
       (is (empty? (:running (peek probes))))
       (is (every? #(< 0.05 (:fog-level %) 0.4) probes) "The room stays hazed without filling up"))
+    (testing "the drop's pixels stay saturated rather than washing out to white"
+      (let [drop (map bar-frame (range 20.5 23.5 0.25))
+            mean (fn [k] (/ (reduce + (map #(get-in % [:saturation k]) drop)) (count drop)))]
+        (is (< 0.75 (mean :tubes)))
+        (is (< 0.6 (mean :ribbon)))))
     (testing "a different seed changes the seeded looks"
       (let [bars {:from-bar 2 :to-bar 6}]
         (is (not= (digest (:dmx (showcase/replay (assoc bars :seed 7))))

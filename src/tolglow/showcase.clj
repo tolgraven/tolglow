@@ -232,8 +232,10 @@
       {:at {:bar 19 :beat 2} :op :master/set :value 0.0}
       ;; Phrase 6, bars 20-23: the drop. Blinders past full scale, the "heavy
       ;; colour" macro on the pixels, a fast can-can and overdriven risers.
+      ;; The aurora steps aside so its cool gradient does not mix the ribbon
+      ;; toward white under the macro's warm layers.
       {:at {:bar 20} :op :master/set :value 1.0}
-      (end 20 :gather-path :rolling-volume :beam-shafts :tube-sparkle)
+      (end 20 :gather-path :rolling-volume :beam-shafts :tube-sparkle :aurora)
       (launch 20 :blinder-hit {:params {:drive 3.0 :decay 1.2} :mode :one-shot :duration {:beats 3}})
       {:at {:bar 20} :op :macro/run :macro-id :heavy-colour}
       (launch 20 :pinstripes {:params {:color-1 [1.0 0.06 0.02] :color-2 [1.0 0.5 0.04] :beats 1.0 :fade 0.3}})
@@ -256,6 +258,7 @@
       (end 28 :pinstripes :aim-lfo :riser-chase :mover-orbit :wash-ember)
       (launch 28 :beam-shafts {:sources? true :params {:hue 0.62 :saturation 0.6}})
       (launch 28 :bloom-halo {:params {:beats 16.0 :width 0.35 :halo 1.2 :tint [0.3 0.1 0.9]}})
+      (launch 28 :aurora {:sources? true})
       (ramp 28 :aurora :wavelength 14.0 {:bars 2} :ease-in-out)
       (end 30 :beam-shafts :bloom-halo)
       (end 31 :aurora :wash-tide :haze)]))})
