@@ -6,6 +6,8 @@
             [afterglow.control.system :as system]
             [afterglow.render.ir :as ir]
             [afterglow.time :as time]
+            [tolglow.audio.shape :as audio-shape]
+            [tolglow.audio-lfo :as audio-lfo]
             [tolglow.modulation :as modulation]
             [tolglow.oscillator :as oscillator]
             [tolglow.signals :as signals]))
@@ -155,8 +157,12 @@
                        (or (nil? bound-at) (and (vector? bound-at) (= 2 (count bound-at)) (every? nat-int? bound-at)))
                        (integer? waveform-version) (pos? waveform-version))
                   "Invalid captured target schema or waveform revision")
-        (checked-binding schema (get-in (waveforms model) [:versions [(:waveform binding) waveform-version]]) binding
-                         (= priority-param param))))))
+        (checked-binding schema (let [registry (waveforms model)
+                                      current (get-in registry [:waveforms (:waveform binding)])]
+                                  ;; A live waveform keeps only its newest version.
+                                  (or (get-in registry [:versions [(:waveform binding) waveform-version]])
+                                      (when (:live? current) current)))
+                         binding (= priority-param param))))))
 
 (defn committed-outcomes [previous epoch message-receipts]
   (let [completed (keep (fn [[{:keys [type expected-epoch payload]} [_ ack]]]
@@ -240,10 +246,11 @@
                        (interpolate (if (= lo hi) 0.0 (min 1.0 (max 0.0 (/ (- value lo) (- hi lo))))))))
           pulse (pulse-cycle waveform schema binding interpolate evaluate)
           triangle (triangle-cycle waveform schema binding interpolate evaluate)]
-      (cond
-        pulse {:evaluate pulse :cycle :pulse}
-        triangle {:evaluate triangle :cycle :triangle}
-        :else {:evaluate evaluate}))
+      (assoc (cond
+               pulse {:evaluate pulse :cycle :pulse}
+               triangle {:evaluate triangle :cycle :triangle}
+               :else {:evaluate evaluate})
+             :interpolate interpolate))
     (catch Exception error {:error (.getMessage error)})))
 
 (defn quantize-priority
@@ -299,6 +306,14 @@
                    waveform schema binding]
         plan (or (get-in previous [:plans cache-key]) (get-in result [:plans cache-key])
                  (prepare registry waveform schema binding priority?))
+        ;; A live audio-shaped waveform samples its morphing table at this
+        ;; frame's transport beat; the compiled template is its latest target.
+        live (when-not (:error plan)
+               (audio-lfo/live-table model waveform (:beat transport-clock)))
+        sampled (if live
+                  (let [interpolate (:interpolate plan)]
+                    (assoc plan :evaluate #(interpolate (min 1.0 (max 0.0 (audio-shape/table-value live %))))))
+                  plan)
         hold (get-in model [:modulation :holds id param])
         held? (boolean (and hold (or (nil? (:until-beat hold))
                                       (< (get-in model [:transport :beat] (:beat private-clock)) (:until-beat hold)))))
@@ -315,14 +330,14 @@
         (cond
           held? result
           priority? (try (sample-priority instance transport-clock private-clock (:priorities previous)
-                                          plan source result binding)
+                                          sampled source result binding)
                          (catch Exception error (diagnostic result (.getMessage error))))
           :else
           (try
             (let [elapsed (when (= :launch (:phase-reference binding :launch))
                             (- (:beat private-clock) (or (:started-at-beat instance) 0.0)))
                   phase (oscillator/phase binding transport-clock elapsed (:timing-meter instance))
-                  value ((:evaluate plan) phase)]
+                  value ((:evaluate sampled) phase)]
               (require! (params/valid-value? schema value) "Waveform produced an invalid parameter value")
               (assoc-in result [:overrides id param] value))
             (catch Exception error (diagnostic result (.getMessage error)))))))))

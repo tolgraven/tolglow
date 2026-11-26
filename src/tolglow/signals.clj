@@ -74,6 +74,28 @@
       :else (-> state (assoc-in [:waveforms id] definition)
                 (assoc-in [:versions [id version]] definition) (update :revision inc)))))
 
+(defn publish-live
+  "Publish a live waveform (`:live? true`), such as an audio-shaped LFO whose
+  table follows captured audio. Changed content takes the next version and
+  replaces the waveform's history, so a shape that changes every bar does not
+  grow the registry. A lowered effect keeps its own copy of the body; parameter
+  bindings follow the current version."
+  [state definition]
+  (when-not (true? (:live? definition)) (fail! [:live?] "Only live waveforms replace their history"))
+  (let [id (:id definition) previous (get-in state [:waveforms id])]
+    (when (and previous (not (:live? previous)))
+      (fail! [:id] "A live waveform cannot replace a versioned waveform"))
+    (if (= (dissoc previous :version) (dissoc definition :version))
+      state
+      (let [definition (assoc definition :version (inc (:version previous 0)))
+            errors (validate-waveform definition)]
+        (when (seq errors) (throw (ex-info "Invalid waveform" {:errors errors})))
+        (-> state
+            (assoc-in [:waveforms id] definition)
+            (update :versions #(into {[id (:version definition)] definition}
+                                     (remove (fn [[[entry-id _] _]] (= id entry-id))) %))
+            (update :revision inc))))))
+
 (defn builtin-waveforms []
   (let [inputs {:phase (fx/param phase-input)}
         from-block (fn [id params]

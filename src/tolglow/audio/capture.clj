@@ -3,6 +3,7 @@
   bounded worker owns each manager's stream and analyzer state. Requiring this
   namespace, creating a manager and listing inputs never open a device."
   (:require [tolglow.audio.pcm :as pcm]
+            [tolglow.audio.shape :as shape]
             [tolglow.integrations.analysis :as analysis]
             [tolglow.waveforms :as waveforms])
   (:import [javax.sound.sampled AudioSystem AudioFormat DataLine$Info TargetDataLine]
@@ -232,10 +233,36 @@
              (swap! (:state manager) #(if (identical? run (:run %)) (assoc % :run nil) %)))
            (deliver (:result run) result)))))
 
+(defn advance-shapes
+  "Advance one audio-shape extractor per requested spec over a captured block
+  (#676). specs maps an LFO ID to an extractor spec with its :digest; a changed
+  digest or sample rate starts that extractor fresh, and a spec that fails
+  validation is skipped. Returns [extractors latest], where latest maps an LFO
+  ID to its newest extraction tagged with :run-id and :spec-digest."
+  [extractors specs block run-id]
+  (if-not (and (map? specs) (seq specs))
+    [{} {}]
+    (reduce-kv
+     (fn [[out latest] id {:keys [digest] :as spec}]
+       (if-let [extractor (let [current (get extractors id)]
+                            (if (and current (= digest (:digest current))
+                                     (= (double (:sample-rate block)) (get-in current [:extractor :sample-rate])))
+                              (:extractor current)
+                              (try (shape/new-extractor (dissoc spec :digest) (:sample-rate block))
+                                   (catch clojure.lang.ExceptionInfo _ nil))))]
+         (let [{:keys [state extractions]} (shape/advance extractor block)]
+           [(assoc out id {:digest digest :extractor state})
+            (if-let [extraction (peek extractions)]
+              (assoc latest id (assoc extraction :run-id run-id :spec-digest digest))
+              latest)])
+         [out latest]))
+     [{} {}] specs)))
+
 (defn- capture! [manager run config]
   (let [last-analyzer (volatile! (analysis/new-analyzer (:analyzer-options config)))
         capture-state (volatile! (waveforms/new-capture))
         history-state (volatile! (waveforms/new-capture history-options))
+        shape-state (volatile! {})
         result
         (try
           (if @(:cancelled? run)
@@ -288,6 +315,9 @@
                                    :source-id (:run-id run)
                                    :started-at-ms started :clock clock :timing-valid? timing-valid?
                                    :discontinuity? (or possible-overflow? (pos? lost) (pos? discarded))}
+                            specs (when-let [specs! (:shape-specs! callbacks)]
+                                    (try (specs!) (catch Exception _ nil)))
+                            [extractors shapes] (advance-shapes @shape-state specs block (:run-id run))
                             captured (waveforms/capture-block @capture-state block)
                             history (waveforms/capture-block @history-state block)
                             waveform (waveforms/capture-view captured)
@@ -307,6 +337,7 @@
                         (vreset! last-analyzer state)
                         (vreset! capture-state captured)
                         (vreset! history-state history)
+                        (vreset! shape-state extractors)
                         (swap! (:state manager)
                                (fn [state]
                                  (if (identical? run (:run state))
@@ -320,6 +351,7 @@
                         (when-not @(:cancelled? run)
                           (when (seq events) (callback! manager run :events! (:events! callbacks) events))
                           (when features (callback! manager run :features! (:features! callbacks) features))
+                          (when (seq shapes) (callback! manager run :shapes! (:shapes! callbacks) shapes))
                           (when-let [subscriptions (:subscriptions callbacks)]
                             (let [published (analysis/publish! subscriptions events)]
                               (update-public! manager run update-in [:metrics :subscriber-errors] + (count (:errors published))))))
@@ -332,7 +364,7 @@
 
 (defn- validate-callbacks! [callbacks]
   (when-not (and (map? callbacks) (ifn? (:events! callbacks))
-                 (every? #(or (nil? %) (ifn? %)) ((juxt :clock! :features! :done!) callbacks))
+                 (every? #(or (nil? %) (ifn? %)) ((juxt :clock! :features! :done! :shape-specs! :shapes!) callbacks))
                  (or (nil? (:subscriptions callbacks)) (map? (:subscriptions callbacks))))
     (throw (failure :invalid-callbacks "Capture requires an event handler and optional callable callbacks")))
   callbacks)
@@ -355,6 +387,8 @@
   :events! receives an event vector and must enqueue quickly (false means queue
   rejection, counted as dropped events). Optional :clock! [] returns canonical
   transport, :features! receives latest features, :done! receives final result,
+  :shape-specs! [] returns audio-shape extractor specs and :shapes! receives the
+  newest extraction per LFO when a window completes (#676),
   :subscriptions is a fixed caller-owned analysis subscription map.
 
   Returns {:run-id :stop! :result promise}. Busy/closed/config errors are immediate;

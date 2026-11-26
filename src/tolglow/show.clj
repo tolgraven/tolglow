@@ -49,6 +49,7 @@
             [tolglow.rig.surface-aim :as surface-aim]
             [tolglow.modulation :as modulation]
             [tolglow.knobs :as knobs]
+            [tolglow.audio-lfo :as audio-lfo]
             [tolglow.lighting-capacity :as capacity]
             [tolglow.lighting-scenes :as lighting-scenes]
             [tolglow.lighting-levels :as lighting-levels]
@@ -233,6 +234,7 @@
             :cue-launch-outcomes (cue-timing/outcomes model)
             :schedule (subscribers/schedule-view model)
             :knobs (knobs/projection model) ; linked knobs (#666)
+            :audio-lfos (audio-lfo/projection model) ; audio-shaped LFOs (#676)
             :operator-history (operator-history/project (:id runtime) model)
             :history-command-outcomes (:history-command-outcomes snapshot [])
             :parameter-source-outcomes (:parameter-source-outcomes snapshot [])
@@ -485,7 +487,7 @@
                                   (newThread [_ task]
                                     (doto (Thread. ^Runnable task "tolglow-room-audition") (.setDaemon true))))))
       :capacity-plan (volatile! nil) :capacity-audio (volatile! nil)
-      :audio-input (atom {:epoch (:epoch model) :events [] :features nil})
+      :audio-input (atom {:epoch (:epoch model) :events [] :features nil :shapes {}})
       :section-patterns music
       :section-player section-player
       :section-reference (when initial-position
@@ -676,6 +678,9 @@
                    ;; Linked knobs (#666).
                    (knobs/operations operation)
                    (control/apply-domain-command model envelope knobs/apply-operation)
+                   ;; Audio-shaped LFOs (#676).
+                   (audio-lfo/operations operation)
+                   (control/apply-domain-command model envelope audio-lfo/apply-operation)
                    :else (spatial/apply-command model envelope authority)))
          ;; A gesture takes over a ramped parameter from the ramp's current frame
          ;; value. Its begin writes nothing, so without this the parameter would
@@ -1426,6 +1431,17 @@
                       (when (= epoch (:epoch @(:audio-input runtime)))
                         (swap! (:audio-input runtime) assoc :features features
                                :arrived-at-ms ((get-in runtime [:publisher :now-ms])))))))
+     ;; Audio-shaped LFOs (#676): the worker reads the specs and returns the
+     ;; newest extraction per LFO. The mailbox keeps the newest per LFO.
+     :shape-specs! (fn []
+                     (let [model (get-in @(:state runtime) [:model])]
+                       (when (and @(:running runtime) (= epoch (:epoch model)))
+                         (audio-lfo/extractor-specs model))))
+     :shapes! (fn [shapes]
+                (when (current?)
+                  (locking (:audio-input runtime)
+                    (when (= epoch (:epoch @(:audio-input runtime)))
+                      (swap! (:audio-input runtime) update :shapes merge shapes)))))
      :done! (fn [result]
               (when (current?)
                 (swap! (:state runtime)
@@ -1435,7 +1451,7 @@
 (defn- consume-audio! [runtime model time-ms]
   (let [captured (locking (:audio-input runtime)
                    (let [before @(:audio-input runtime)]
-                     (reset! (:audio-input runtime) {:epoch (:epoch model) :events [] :features nil})
+                     (reset! (:audio-input runtime) {:epoch (:epoch model) :events [] :features nil :shapes {}})
                      before))]
     (when (and (:features captured) (= (:epoch model) (:epoch captured)))
       (let [age (max 0 (- ((get-in runtime [:publisher :now-ms])) (:arrived-at-ms captured)))]
@@ -1443,6 +1459,7 @@
                                            :audio/energy (get-in captured [:features :audio/energy])})))
     (if (= (:epoch model) (:epoch captured))
       (cond-> model
+        (seq (:shapes captured)) (audio-lfo/admit (:shapes captured))
         (:features captured) (routing/admit-audio (:features captured))
         (:features captured) (analysis/publish-features (:features captured))
         (seq (:events captured)) (as-> m (reduce
