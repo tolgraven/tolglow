@@ -62,7 +62,7 @@
   "The fixed files a show keeps in its recovery directory."
   ["recovery.transit" "prior.checkpoint" "manual.edn"])
 
-(defn- checkpoint-file [directory show-id name]
+(defn- checkpoint-file ^java.io.File [directory show-id name]
   (io/file (show-directory directory show-id) name))
 
 (defn- prepare-file! [path write! publish!]
@@ -85,7 +85,7 @@
   ([path ^String source publish!]
    (prepare-file! path
      (fn [temp]
-       (with-open [stream (FileOutputStream. (.toFile temp))]
+       (with-open [stream (FileOutputStream. (.toFile ^Path temp))]
          (.write stream (.getBytes source StandardCharsets/UTF_8))
          (.force (.getChannel stream) true)))
      publish!)))
@@ -105,7 +105,7 @@
   (with-open [reader (io/reader (io/file path) :encoding "UTF-8")]
     (read-document reader)))
 
-(def ^:private link-options (make-array LinkOption 0))
+(def ^:private ^"[Ljava.nio.file.LinkOption;" link-options (make-array LinkOption 0))
 
 (def ^:private source-open-options (into-array OpenOption [LinkOption/NOFOLLOW_LINKS]))
 
@@ -117,7 +117,7 @@
 (defn- source-identity [file]
   (when file
     (let [path (.toRealPath (.toPath (io/file file)) link-options)
-          attrs (Files/readAttributes path BasicFileAttributes link-options)]
+          ^BasicFileAttributes attrs (Files/readAttributes path BasicFileAttributes link-options)]
       (when (and (.isRegularFile attrs) (.fileKey attrs))
         {:path path :identity [(str path) (str (.fileKey attrs)) (.size attrs)
                                (str (.creationTime attrs)) (str (.lastModifiedTime attrs))]}))))
@@ -154,7 +154,7 @@
       (.transferTo input (OutputStream/nullOutputStream)))
     (.formatHex (HexFormat/of) (.digest digest))))
 
-(defn- discarded-hash [prior]
+(defn- discarded-hash [^java.io.File prior]
   (let [length (+ (count discard-prefix) 64)]
     (when (= length (.length prior))
       (with-open [input (io/input-stream prior)]
@@ -208,11 +208,12 @@
               (when @open?
                 (replace-settled! settled-shows show-id replace!)))))))))
 
-(defn- preserve-prior! [working prior publish!]
+(defn- preserve-prior! [^java.io.File working prior publish!]
   (prepare-file! prior
     (fn [temp]
-      (Files/copy (.toPath working) temp (into-array CopyOption [StandardCopyOption/REPLACE_EXISTING
-                                                               StandardCopyOption/COPY_ATTRIBUTES]))
+      (Files/copy (.toPath working) ^Path temp
+                  ^"[Ljava.nio.file.CopyOption;" (into-array CopyOption [StandardCopyOption/REPLACE_EXISTING
+                                                                       StandardCopyOption/COPY_ATTRIBUTES]))
       (with-open [channel (FileChannel/open temp (into-array OpenOption [StandardOpenOption/WRITE]))]
         (.force channel true)))
     publish!))
@@ -277,15 +278,15 @@
 (defn status [owner]
   (merge (select-keys owner [:enabled? :interval-ms]) (some-> owner :status deref)))
 
-(defn- fixed-checkpoint-path? [directory file]
-  (when-let [parent (some-> file .getParentFile)]
+(defn- fixed-checkpoint-path? [directory ^java.io.File file]
+  (when-let [^java.io.File parent (some-> file .getParentFile)]
     (and (contains? #{"recovery.transit" "manual.edn" prior-name} (.getName file))
          (re-matches #"[0-9a-f]{64}" (.getName parent))
          (= directory (.getParentFile parent)))))
 
 (defn manual-path! [{:keys [directory]} path]
   (let [file (.getAbsoluteFile (io/file path))
-        directory (.getCanonicalFile directory)
+        directory (.getCanonicalFile ^java.io.File directory)
         ;; An atomic move replaces the final directory entry, even if it is a symlink.
         destination (when-let [parent (.getParentFile file)]
                       (io/file (.getCanonicalFile parent) (.getName file)))]
@@ -362,7 +363,7 @@
         [before _] (swap-vals! held-locks conj path)]
     (when-not (contains? before path)
       (let [forget! #(swap! held-locks disj path)
-            channel (try (FileChannel/open (.toPath (io/file path))
+            ^FileChannel channel (try (FileChannel/open (.toPath (io/file path))
                                            (into-array OpenOption [StandardOpenOption/CREATE StandardOpenOption/WRITE]))
                          (catch Throwable error (forget!) (throw error)))
             ^FileLock lock (try (.tryLock channel)
@@ -447,7 +448,7 @@
   [owner show-id]
   (some-> (legacy-show-directory owner show-id) (io/file legacy-resolution-name) read-resolution))
 
-(defn- legacy-file [owner show-id kind]
+(defn- legacy-file ^java.io.File [owner show-id kind]
   (when-let [directory (legacy-show-directory owner show-id)]
     (when-not (.exists (io/file directory legacy-resolution-name))
       (let [file (io/file directory (get legacy-kinds kind))]
@@ -536,7 +537,7 @@
         (do ((:release! reservation)) nil)))))
 
 (defn latest-file [{:keys [directory] :as owner} show-id kind]
-  (let [file (case kind
+  (let [^java.io.File file (case kind
                :recovery (checkpoint-file directory show-id "recovery.transit")
                :named (named-file directory show-id)
                :prior (prior-file owner show-id)
