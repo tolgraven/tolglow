@@ -41,6 +41,7 @@ share a link ID.
 | A bound waveform's gain (`:to`), period and registered inputs such as `:duty` | `:modulated`: the base value of a parameter a waveform drives (writing it would hold the waveform; its waveform fields are offered instead) |
 | | `:knob-driven`: an existing knob already drives it (see below) |
 | | `:unbounded`, `:seed-parameter`, `:no-role`, `:no-parameters`, `:not-running`, `:cue-missing` |
+| | `:too-few-steps`: an integer whose range holds fewer than two whole values (generator version 3 and later; `generate` lists it under `:excluded`) |
 
 #### Destinations an existing knob drives
 
@@ -109,7 +110,10 @@ Picking one makes its partner three times as likely to be picked next.
 - An integer parameter gets whole-number endpoints inside its bounds, at least
   one step apart, and `:quantize :integer`, so the knob steps through whole
   values. Its range is drawn like a number parameter's and then rounded; an
-  integer with a beat unit steps through whole beats, not ratios.
+  integer with a beat unit steps through whole beats, not ratios, centred on
+  its default or, when that is not positive, on a beat as a waveform period
+  is. An integer whose range holds fewer than two whole values is left out
+  with reason `:too-few-steps`.
 - A colour runs from its default to a palette colour of the track feel that is
   clearly different from it, or to a fallback colour when no feel is selected.
 - Curves follow the feel: a smooth feel eases (`:ease-in-out`, `:sine`,
@@ -223,8 +227,9 @@ correlated pairs and owner variety) use the cue's plain name (`feel-level` for
 Version 3 (#747) links integer parameters with whole-number endpoints; versions
 1 and 2 drafted fractional endpoints that the knob API refused, so their
 candidates never drove an integer parameter. A version 1 or 2 recipe still
-replays that way, leaving integer parameters out, and a show without integer
-parameters generates the same links under versions 2 and 3.
+replays that way, leaving integer parameters out (and keeping integers that
+cannot step in the pool, whose size feeds the draws), and a show without
+integer parameters generates the same links under versions 2 and 3.
 
 ## Room audition
 

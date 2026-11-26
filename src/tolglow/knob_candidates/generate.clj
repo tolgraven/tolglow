@@ -416,6 +416,17 @@
   (let [{:keys [param field input]} destination]
     (str (or id-group group) "-" (id-text param) (when (or field input) (str "-" (id-text (or field input)))))))
 
+(defn- too-few-steps?
+  "Whether an integer destination's range holds fewer than two whole values."
+  [{:keys [schema]}]
+  (and (= :integer (:type schema))
+       (let [[lo hi] (range-of schema)]
+         (< (- (Math/floor (double hi)) (Math/ceil (double lo))) 1.0))))
+
+(defn- too-few-steps-exclusion [{:keys [group destination label]}]
+  {:owner group :param (:param destination) :reason :too-few-steps :label label :destination destination
+   :message "The range holds fewer than two whole values, so an integer knob link cannot step"})
+
 (defn- version-1-ids
   "Version 1 named an owner by its plain name: :rig/feel gave link IDs such as
   \"feel-level\", and cues sharing a plain name across namespaces counted as
@@ -429,7 +440,9 @@
 (defn- build-link
   "[seed link-or-nil] for one destination in a character and feel. From
   version 3 an integer destination gets whole-number endpoints and steps
-  through them; its draws are the same as a number destination's."
+  through them. Its range is drawn like a number destination's, except that
+  an integer with a beat unit takes the period path instead of ratio steps,
+  centred like a waveform period, and so also draws a curve."
   [seed {:keys [role schema default] :as entry} character {:keys [speed jitter smoothness palette] :as feel} version]
   (let [whole? (and (>= version 3) (= :integer (:type schema)))
         direction (get-in character [:polarity role] :up)
@@ -439,18 +452,22 @@
                                    (if (and (> smoothness 0.8) (< speed 0.3)) 0.75 1.0))))
         [seed factor] (random/choose seed (if (> speed 0.6) [4 4 2] [2 2 4]))
         bounds (range-of schema)
+        centre (cond (> speed 0.6) 1/2 (< speed 0.3) 2 :else 1)
         [seed range quantize]
         (cond
           (= :colour role) (let [[seed r] (colour-range seed default palette)] [seed r nil])
           (and (#{:period :rate} role) (ratio-schema? schema) (not whole?))
           ;; A waveform period centres on a beat, earlier for a fast feel.
-          (let [centre (cond (> speed 0.6) 1/2 (< speed 0.3) 2 :else 1)]
-            [seed (musical-range (or (when (rational? default) default) centre) factor (:bounds schema))
-             {:ratios :preferred}])
+          [seed (musical-range (or (when (rational? default) default) centre) factor (:bounds schema))
+           {:ratios :preferred}]
           ;; Periods, and rates counted per beat, land on musical values. A rate
           ;; that is a 0–1 amount (density, chance) stays continuous.
           (or (= :period role) (and (= :rate role) (> (double (second bounds)) 1.0)))
-          [seed (some-> (musical-range (or default 1) factor bounds) (->> (mapv double))) nil]
+          ;; A whole-number period with no positive default centres like a waveform's.
+          [seed (some-> (musical-range (if whole? (if (and default (pos? default)) default centre) (or default 1))
+                                       factor bounds)
+                        (->> (mapv double)))
+           nil]
           :else [seed (continuous-range role bounds default width) nil])
         [range quantize] (if whole? [(some-> range (integer-range bounds)) :integer] [range quantize])
         [seed curve] (if (:ratios quantize) [seed :linear] (random/choose seed (curve-choices role feel)))]
@@ -625,6 +642,13 @@
              {:character character :known (mapv :id characters)}))
   (let [version (or generator generator-version)
         eligible (if (= 1 version) (mapv version-1-ids eligible) eligible)
+        ;; Version 3 leaves out integers that cannot step, with a reason. Earlier
+        ;; versions kept them in the pool, whose size feeds the draws, so their
+        ;; replays keep them too.
+        [eligible excluded] (if (>= version 3)
+                              [(filterv (complement too-few-steps?) eligible)
+                               (into (vec excluded) (map too-few-steps-exclusion) (filter too-few-steps? eligible))]
+                              [eligible excluded])
         feel (feel personality)
         [low high] (cond (nil? size) default-size (and (sequential? size) (= 2 (count size))) size)
         _ (when-not (and (integer? low) (integer? high) (<= min-links low high max-links))
