@@ -150,6 +150,13 @@
             {released :commands} (clip/release-all p (envelope "stop"))]
         (is (= [[:param/set "0:1"]] (mapv (juxt :op :instance-id) sets)))
         (is (= [[:instance/end "0:1"]] (mapv (juxt :op :instance-id) released)))))
+    (testing "with a track map, playback tagged with another track is not a capture track"
+      (let [p (clip/player layout {:bridge-id "b"} {"track:7" 1})
+            launches #(mapv :cue-id (:commands (clip/play p [(merge {:type :note-on :note 36 :velocity 127 :channel 1} %)]
+                                                          (envelope "m"))))]
+        (is (= [:wash] (launches {:track-id "track:7"})))
+        (is (= [] (launches {:track-id "track:9"})) "the companion moved onto a musician's track")
+        (is (= [:wash] (launches {})) "untagged events keep their channel")))
     (testing "a rejected launch drops its run"
       (let [{p :player} (clip/play p0 [{:type :note-on :note 36 :velocity 127 :channel 1}] (envelope "r"))]
         (is (empty? (:runs (:player (clip/acknowledge p {:command-id "r/0" :status :rejected} (envelope "x"))))))))))

@@ -2525,7 +2525,6 @@
                                            (:events committed) fired-outcomes)
                     (catch Exception error
                       (swap! (:state runtime) assoc-in [:status :sync-error] (error-data error)))))
-             (when-not restored? (observe-phrase-capture! runtime (:model next-state)))
              (try (if (:independent-output? runtime)
                     (when-not (get-in next-state [:status :error])
                       (output-scheduler/complete! (:publisher runtime)
@@ -2537,6 +2536,8 @@
                                   (get-in next-state [:output :fog-demands])))
                   (catch Exception error
                     (swap! (:state runtime) assoc-in [:status :output-error] (error-data error))))
+             ;; After the frame is handed to output, so the fold never delays it.
+             (when-not restored? (observe-phrase-capture! runtime (:model next-state)))
              (let [observers (vals @(:observers runtime))
                    publication (try (connections/publish! (:connections runtime) (effect-keyframes/source (block-trace/source next-state) (:keyframes next-state))
                                             (boolean (some (fn [observer] ((:tracing? observer))) observers)))
@@ -3388,7 +3389,13 @@
                         :max-us (/ (:max-ns cost) 1000.0) :last-us (/ (:last-ns cost) 1000.0)}
                  :captures captures :last (some-> last capture-summary)})
       :capture (let [{:keys [buffer layout captures]} @state
-                     phrase (phrase-capture/capture buffer (select-keys payload [:bars :end-beat]))
+                     {:keys [bars end-beat] :as options} (select-keys payload [:bars :end-beat])
+                     _ (when-not (and (or (nil? bars) (and (pos-int? bars) (<= bars (:bars buffer))))
+                                      (or (nil? end-beat) (and (number? end-beat) (Double/isFinite (double end-beat))
+                                                               (not (neg? end-beat)))))
+                         (throw (ex-info (str "Capture takes 1-" (:bars buffer) " bars and a non-negative end beat")
+                                         {:bars bars :end-beat end-beat})))
+                     phrase (phrase-capture/capture buffer options)
                      registry (:registry (:model @(:state runtime)))
                      layout (phrase-clip/allocate-layout layout registry (phrase-clip/phrase-targets phrase))
                      entry {:id (inc captures) :phrase phrase :layout layout}]

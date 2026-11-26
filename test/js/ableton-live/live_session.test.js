@@ -161,6 +161,24 @@ test("echo rule: the feed channel is dropped, playback is tagged with its track,
   assert.deepEqual(live.adapter.lane(1, 0.5), [], "Live mode forwards nothing");
 });
 
+test("echo rule survives a device reload: the feed channel is read back from the companion's track", () => {
+  // A configured Set with a freshly loaded companion: setup's rerun writes nothing.
+  const live = liveSet({ tracks: [{ name: "Tolglow Capture", arm: true, port: PORTS[1], channel: CHANNELS[16] }] });
+  const track = "track:" + live.song.tracks[0].id;
+  live.request("handoff", { mode: "lighting" });
+  assert.equal(live.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 16 }), null, "feed dropped without configure-track");
+  assert.equal(live.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 })["track-id"], track);
+  // Input on channel 1 is clip playback's channel and never treated as the feed.
+  const ch1 = liveSet({ tracks: [{ name: "Keys", port: PORTS[2], channel: CHANNELS[1] }] });
+  ch1.request("handoff", { mode: "lighting" });
+  assert.ok(ch1.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 }));
+  // A routing change made in Live is picked up by the next inspect-set.
+  live.entities[live.song.tracks[0].id].props.input_routing_channel = CHANNELS[15];
+  live.request("inspect-set");
+  assert.equal(live.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 15 }), null);
+  assert.ok(live.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 16 }));
+});
+
 test("an adapter without the session refuses the new operations and keeps the old ones", () => {
   const adapter = new Adapter({ api: () => ({ id: 0 }), dictionaryCall() {}, readDictionary: JSON.parse });
   assert.equal(adapter.handle({ id: "x", op: "inspect-set", payload: {} }).error.code, "session-unavailable");

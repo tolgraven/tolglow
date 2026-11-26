@@ -73,9 +73,11 @@
       (is (thrown? clojure.lang.ExceptionInfo (show/capture-action! rt :status {})))
       (finally (show/stop! rt)))))
 
-(defn- request [app method uri]
-  (app (cond-> {:request-method method :uri uri :headers {"host" "localhost"}}
-         (= :post method) (assoc :body (ByteArrayInputStream. (.getBytes "{}" "UTF-8"))))))
+(defn- request
+  ([app method uri] (request app method uri "{}"))
+  ([app method uri body]
+   (app (cond-> {:request-method method :uri uri :headers {"host" "localhost"}}
+          (= :post method) (assoc :body (ByteArrayInputStream. (.getBytes ^String body "UTF-8")))))))
 
 (defn- data [response] (json/read-str (:body response) :key-fn keyword))
 
@@ -95,4 +97,8 @@
         (is (= 200 (:status midi)))
         (is (= "audio/midi" (get-in midi [:headers "Content-Type"])))
         (is (java.util.Arrays/equals ^bytes (:bytes (show/capture-action! rt :smf {})) ^bytes (:body midi))))
+      (testing "bars beyond the buffer and malformed options are refused, and the last capture is kept"
+        (doseq [body ["{\"bars\":1000000}" "{\"bars\":0}" "{\"bars\":\"x\"}" "{\"end-beat\":-1}" "{\"end-beat\":\"q\"}"]]
+          (is (= 400 (:status (request app :post "/api/capture/capture" body))) body))
+        (is (= 1 (get-in (data (request app :get "/api/capture")) [:last :capture-id]))))
       (finally (show/stop! rt)))))

@@ -40,6 +40,9 @@
     return Number(m[1]);
   }
   function laneOf(controller) { var i = COARSE.indexOf(controller); return i < 0 ? null : i + 1; }
+  // Clip playback reaches the companion on channel 1, so channel 1 (or "All
+  // Channels") on the companion's track is never treated as Tolglow's feed.
+  function feedOf(channel) { return integer(channel, 2, 16) ? channel : null; }
 
   function Session(options) {
     if (!options || typeof options.api !== "function" || typeof options.dictionaryCall !== "function" ||
@@ -50,7 +53,10 @@
     this.hostPath = options.hostPath || "this_device canonical_parent";
     this.devicePath = options.devicePath || "this_device";
     this.sampleBeats = options.sampleBeats || 0.25;
-    this.feedChannel = null;
+    // {host, channel}: the feed channel of the companion's track. Re-read from
+    // the track's input routing when the device reloads or moves, because a
+    // rerun of setup on a configured Set writes (and so tells us) nothing.
+    this.feed = null;
   }
 
   Session.prototype.object = function (path) {
@@ -100,7 +106,7 @@
       kind: midi ? "midi" : "audio", "arm?": armable && !!this.read(track, "arm"),
       monitor: MONITOR[Number(this.read(track, "current_monitoring_state"))] || null,
       input: this.routing(track), clips: clips};
-    if (id === this.hostTrackId()) result["companion?"] = true;
+    if (id === this.hostTrackId()) { result["companion?"] = true; this.feed = {host: id, channel: feedOf(result.input.channel)}; }
     return result;
   };
   Session.prototype.slotPathByIndex = function (index, slot) { return "live_set tracks " + index + " clip_slots " + slot; };
@@ -155,7 +161,9 @@
     if (monitor !== undefined && monitor < 0) fault("monitor", "Monitoring is in, auto or off");
     if (payload["arm?"] && !this.read(track, "can_be_armed")) fault("not-armable", "This track cannot be armed");
     var type, channel;
-    // Resolve every routing before the first write, so a missing port changes nothing.
+    // Resolve the port before the first write, so a missing port changes nothing.
+    // The channel list depends on the port, so a missing channel is found only
+    // after the port was set and is reported as indeterminate.
     if (input) {
       if (typeof input.port !== "string" || !integer(input.channel, 1, 16)) fault("input", "Input needs a port name and a channel 1-16");
       type = this.findRouting(track, "available_input_routing_types", input.port, function (o) { return o.display_name === input.port; });
@@ -166,7 +174,7 @@
         var m = /(\d+)\s*$/.exec(String(o.display_name)); return m && Number(m[1]) === input.channel;
       });
       mark(); this.setDictionary(track, "input_routing_channel", {identifier: channel.identifier});
-      if (host) this.feedChannel = input.channel;
+      if (host) this.feed = {host: Number(track.id), channel: feedOf(input.channel)};
     }
     if (monitor !== undefined) { mark(); track.set("current_monitoring_state", monitor); }
     if (payload["arm?"] !== undefined) { mark(); track.set("arm", payload["arm?"] ? 1 : 0); }
@@ -358,9 +366,18 @@
   // is dropped. Everything else on the companion's track is clip playback,
   // which carries no MIDI channel in Live, so it is tagged with the source
   // track; Tolglow maps that track to its layout channel.
+  Session.prototype.feedChannel = function (host) {
+    if (!host) return null;
+    if (!this.feed || this.feed.host !== host) {
+      var channel = null;
+      try { channel = feedOf(this.routing(this.object({id: host})).channel); } catch (e) { channel = null; }
+      this.feed = {host: host, channel: channel};
+    }
+    return this.feed.channel;
+  };
   Session.prototype.route = function (event) {
-    if (this.feedChannel !== null && event.channel === this.feedChannel) return null;
-    var host = this.hostTrackId();
+    var host = this.hostTrackId(), feed = this.feedChannel(host);
+    if (feed !== null && event.channel === feed) return null;
     if (host) event["track-id"] = "track:" + host;
     return event;
   };

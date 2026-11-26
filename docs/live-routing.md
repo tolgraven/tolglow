@@ -246,12 +246,17 @@ Capture MIDI.
 
 Choice of transport: the operations go to the **Max for Live companion** over
 its loopback HTTP endpoint, which already has request identity, run ownership
-and the three-state receipts. Every operation maps to documented Live Object
+and the three-state receipts. The operations use these documented Live Object
 Model calls: `Song.create_midi_track`, `Track.arm`,
-`Track.current_monitoring_state`, `Track.input_routing_type`/`_channel`,
-`ClipSlot.create_clip`, `Clip.add_new_notes`, `Song.capture_midi` with
+`Track.input_routing_type`/`_channel`, `ClipSlot.create_clip`,
+`Clip.add_new_notes`/`get_all_notes_extended`, `Song.capture_midi` with
 `can_capture_midi`, and `Song.view.detail_clip` with
-`Application.view.focus_view`. `resources/devices/ableton-live/live_session.js`
+`Application.view.focus_view`. `Track.current_monitoring_state`,
+`Clip.automation_envelope`/`create_automation_envelope` and the
+`AutomationEnvelope` methods (`insert_step`, `value_at_time`) are names from
+Live's Python API. They are not in Cycling '74's Live Object Model reference
+(checked 2026-11-26), so whether Max's `LiveAPI` reaches them is a question for
+the licensed run. `resources/devices/ableton-live/live_session.js`
 implements them behind the adapter's `deferlow` path. A Max device has to be in
 the Set before it can answer, so an empty Set needs one manual step: drop the
 companion on any MIDI track. Setup adopts that track as the cue capture track
@@ -264,7 +269,11 @@ installation and has no receipts.
 
 Echo rule: each capture track is fed on its own channel (16, 15, …), which clip
 playback never uses. The companion drops MIDI arriving on its feed channel
-(Tolglow's own monitored input) and forwards everything else as playback.
+(Tolglow's own monitored input) and forwards everything else as playback. It
+reads the feed channel back from its track's input routing, so a reloaded or
+moved companion keeps dropping the feed although a rerun of setup writes
+nothing. The playback decoder drops events tagged with a track that is not a
+capture track.
 
 The loopback endpoint accepts request bodies up to 64 KiB. A `write-clip` for a
 few bars fits; a long phrase dense with controller moves needs a larger limit
@@ -279,7 +288,10 @@ that parameter's clip envelope
 When the clip plays, the moving parameter is forwarded as its controller pair.
 `read-clip` samples each lane envelope with `value_at_time` on a quarter-beat
 grid (`:sample-beats`) and reports a value wherever it changes. Before its first
-step an envelope is assumed to hold its first value. Lanes therefore need the
+step an envelope is assumed to hold its first value, so a lane whose first step
+is after beat 0 reads back from beat 0; a cue launched after the clip start
+then loses its launch values on import (they arrive before its note, as
+orphans). Beats off the quarter grid read back on the next grid point. Lanes therefore need the
 companion on the same track as the clip: a two-track layout needs a second
 companion on the lane track, and the companion refuses controllers on any
 other track. Capture MIDI remains the alternative route; the licensed run

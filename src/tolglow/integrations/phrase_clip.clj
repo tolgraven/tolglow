@@ -444,8 +444,12 @@
   [player events envelope-fn]
   (let [chs (set (channels (:layout player)))
         by-track (:track-channels player)
+        ;; With a track map, playback from any other track (the companion moved
+        ;; onto a musician's track) is not a capture track and is dropped.
         events (->> events
-                    (map #(if-let [ch (get by-track (:track-id %))] (assoc % :channel ch) %))
+                    (keep #(if-let [ch (get by-track (:track-id %))]
+                             (assoc % :channel ch)
+                             (when-not (and (seq by-track) (:track-id %)) %)))
                     (filter #(contains? chs (:channel %))))
         rank #(case (:type %) :note-off 0 :cc 1 :note-on (if (pos? (or (:velocity %) 0)) 2 0) 3)
         n (volatile! 0)
