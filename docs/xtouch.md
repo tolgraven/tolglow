@@ -220,25 +220,18 @@ they can disagree; the strip's `!range` follows the instance. An encoder detent 
 the hard bounds, so a value outside a recommended range is not pulled into
 it.
 
-**CONTROL with additive Solo or Mute.** The shared
-`:effect-selection/toggle` has an additive flag but no per-action exclusive
-mode, so with an additive default CONTROL takes two additive toggles in two
-owner cycles, and the pair is **not atomic**:
-
-- If the strip is already wholly selected among others, one toggle drops
-  the others.
-- Otherwise the first toggle adds the strip through its own selector (the
-  cue, or the group's members). Only when its acknowledgement shows it was
-  accepted and left the strip selected does the unit send the second, which
-  drops every other instance that acknowledgement lists as selected. Solo or
-  Mute therefore stays active in every committed frame (the strip joins one
-  cycle early), and a refused or empty add, for example when the strip's
-  instance ended meanwhile, drops nothing.
-- A selection another client (Studio, another surface) makes between the
-  two cycles survives the drop, so the result is then not exclusive.
-
-#749 tracks a per-action `:mode` on the shared toggle, which makes this one
-command and gives Studio and the REPL a single-press exclusive gesture (see
+**CONTROL with additive Solo or Mute.** CONTROL sends one
+`:effect-selection/toggle` whose `:mode` is the opposite of the configured
+mode (#749). With an additive default that is `:mode :exclusive`, which the
+owner applies in one commit: the strip's instances replace the selection, or
+clear it when they already are the whole selection. No committed frame shows
+a partial selection, a selection another client queued in the same owner
+cycle is replaced rather than kept, and nothing waits for an
+acknowledgement. If the strip's instance ends first, its cue selector matches
+nothing and the selection stays as it was. A group strip whose member ended
+is refused as a stale instance, so the selection again stays as it was. A
+plain press sends no `:mode`, so the owner applies its configured mode, and
+SHIFT sends `:mode :additive`. Studio and the REPL use the same field (see
 [parity](repl-studio-parity.md#solo-or-mute-running-effects)).
 
 **Input cost.** The session runs a full feedback refresh after every

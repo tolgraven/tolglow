@@ -349,41 +349,54 @@
     ;; Consecutive ticks that commit the same selection count as one frame.
     (vec (dedupe @frames))))
 
-(deftest control-keeps-solo-and-mute-active-in-every-committed-frame
+(deftest control-commits-an-exclusive-solo-or-mute-in-one-frame
   (let [{:keys [runtime input!] :as h} (harness)]
     (try
       (desk! h)
       (doseq [cue [:c0 :c1 :c2 :c3 :c4 :c5]] (launch! h cue))
       (accepted! h {:op :effect-selection/configure :modes {:solo :additive :mute :additive}})
       (let [[i0 i1 i2 i3 i4 i5] (map #(:id (latest h %)) [:c0 :c1 :c2 :c3 :c4 :c5])
-            control! (fn [note] (selection-frames runtime #(input! :main [0x90 72 127] [0x90 note 127] [0x80 note 0] [0x80 72 0])))
+            revision #(:revision (model-of h))
+            control! (fn [note]
+                       (let [before (revision)
+                             frames (selection-frames runtime #(input! :main [0x90 72 127] [0x90 note 127] [0x80 note 0] [0x80 72 0]))]
+                         (is (= (inc before) (revision)) "One command, one owner commit")
+                         frames))
             press! (fn [note] (input! :main [0x90 note 127] [0x80 note 0]))
             toggle! (fn [control ids] (accepted! h {:op :effect-selection/toggle :control control
-                                                    :selector {:instance-ids ids} :additive? true}))]
-        (testing "c0 and c3 soloed, c4 and c5 running: CONTROL+SOLO on c4 adds it, then drops the others"
+                                                    :selector {:instance-ids ids} :mode :additive}))]
+        (testing "c0 and c3 soloed, c4 and c5 running: CONTROL+SOLO on c4 replaces the selection in one frame"
           (press! 9)
           (press! 12)
           (let [frames (control! 13)]
-            (is (= [#{i0 i3 i4} #{i4}] (mapv :solo frames)))
+            (is (= [#{i4}] (mapv :solo frames)))
             (is (every? :solo-active? frames) "Solo stays active in every committed frame")
             (is (not-any? #(contains? (:included %) i5) frames) "c5, which nobody soloed, never plays")))
         (testing "a strip whose instances partly overlap the selection: the group (c1, c2) with c0 and c1 soloed"
           (toggle! :solo [i4])
           (toggle! :solo [i0 i1])
-          (is (= [#{i0 i1 i2} #{i1 i2}] (mapv :solo (control! 8)))))
-        (testing "a strip wholly selected among others needs only the drop"
+          (is (= [#{i1 i2}] (mapv :solo (control! 8)))))
+        (testing "a strip wholly selected among others"
           (toggle! :solo [i0 i3])
-          (is (= [#{i1 i2}] (mapv :solo (control! 8))) "One owner cycle")
-          (toggle! :solo [i1 i2]))
-        (testing "Mute: the other muted strips stay muted until the strip is muted"
+          (is (= [#{i1 i2}] (mapv :solo (control! 8))))
+          (testing "and CONTROL again on the whole selection clears it"
+            (is (= [#{}] (mapv :solo (control! 8))))))
+        (testing "Mute: c0 and c3 stay muted until c4 replaces them"
           (press! 17)
           (press! 20)
           (let [frames (control! 21)]
-            (is (= [#{i0 i3 i4} #{i4}] (mapv :mute frames)))
-            (is (every? #(not-any? (:included %) [i0 i3]) (butlast frames)) "c0 and c3 never unmute early"))))
+            (is (= [#{i4}] (mapv :mute frames)))
+            (is (every? #(and (contains? (:included %) i0) (not (contains? (:included %) i4))) frames))))
+        (testing "a selection another client queued in the same owner cycle is replaced, not kept"
+          (toggle! :mute [i4])
+          (press! 9)
+          (show/submit! runtime :command {:op :effect-selection/toggle :control :solo :selector {:instance-ids [i5]}
+                                          :mode :additive :source {:adapter :repl :session-id "xt-test"}})
+          (input! :main [0x90 72 127] [0x90 13 127] [0x80 13 0] [0x80 72 0])
+          (is (= #{i4} (into #{} (keep #(when (:soloed? %) (:id %))) (:instances (:effect-selection (show/snapshot runtime))))))))
       (finally (show/stop! runtime)))))
 
-(deftest control-drops-nothing-when-its-add-fails
+(deftest control-changes-nothing-when-its-strip-ends-first
   (let [{:keys [runtime input!] :as h} (harness)]
     (try
       (desk! h)
@@ -392,63 +405,57 @@
       (let [[i0 i1 _ i3 i4] (map #(:id (latest h %)) [:c0 :c1 :c2 :c3 :c4])
             soloed #(into #{} (keep (fn [i] (when (:soloed? i) (:id i)))) (:instances (:effect-selection (show/snapshot runtime))))
             ;; The end is queued before the press, so the unit still sees the instance
-            ;; but the owner applies the end before the unit's add.
+            ;; but the owner applies the end before the unit's exclusive toggle.
             ending! (fn [id note]
                       (show/submit! runtime :command {:op :instance/end :instance-id id :force? true
                                                       :source {:adapter :repl :session-id "xt-test"}})
                       (input! :main [0x90 72 127] [0x90 note 127] [0x80 note 0] [0x80 72 0]))]
         (input! :main [0x90 9 127] [0x80 9 0] [0x90 12 127] [0x80 12 0])
         (is (= #{i0 i3} (soloed)))
-        (testing "a cue strip whose instance ends first: the add matches nothing, so nothing is dropped"
+        (testing "a cue strip whose instance ends first: the toggle matches nothing"
           (ending! i4 13)
           (is (nil? (get-in (model-of h) [:instances i4])))
           (is (= #{i0 i3} (soloed))))
-        (testing "a group strip whose member ends first: the add is refused, so nothing is dropped"
+        (testing "a group strip whose member ends first: the toggle is refused"
           (ending! i1 8)
           (is (nil? (get-in (model-of h) [:instances i1])))
           (is (= #{i0 i3} (soloed)))))
       (finally (show/stop! runtime)))))
 
-(deftest an-add-whose-receipt-never-resolves-leaves-no-pending-drop
+(deftest solo-and-mute-send-one-toggle-with-the-pressed-mode
   (let [{:keys [runtime] :as h} (harness)]
     (try
       (desk! h)
       (doseq [cue [:c0 :c3 :c4]] (launch! h cue))
       (accepted! h {:op :effect-selection/configure :modes {:solo :additive}})
-      (let [hang? (atom true)
-            dispatched (atom [])
+      (let [dispatched (atom [])
             receiver (atom nil)
-            ;; A second session on the attached main surface; its owner receipts
-            ;; never resolve while hang? is set, as after a device-command timeout.
-            unit (x-touch/connect! {:session-id "xt-hang" :surface-id "xt-main" :schedule! nil
+            ;; A second session on the attached main surface whose dispatch is captured.
+            unit (x-touch/connect! {:session-id "xt-capture" :surface-id "xt-main" :schedule! nil
                                     :rows #(surface/strip-channels % "xt-main" {:type :mixer-strips :effect-group-view :manual
                                                                                :cue-strips (:channels main-options)})
                                     :placement #(surface/strip-placement % "xt-main")
                                     :model! #(model-of h)
                                     :now-ms! (constantly 0)
                                     :dispatch! (fn [command]
-                                                 (swap! dispatched conj (select-keys command [:op :selector]))
-                                                 (if @hang?
-                                                   {:status :pending :command-id (:command-id command)}
-                                                   (submit! h (dissoc command :source :command-id))))
+                                                 (swap! dispatched conj (select-keys command [:op :control :selector :mode :additive?]))
+                                                 (submit! h (dissoc command :source :command-id)))
                                     :transport {:open! (fn [r] (reset! receiver r) :t) :send! (fn [_ _]) :close! (fn [_])}})
             input! (fn [& messages] (doseq [bytes messages] (@receiver bytes)))
-            marker #(get-in (device-session/snapshot unit) [:local :exclusive-add])
-            soloed #(into #{} (keep (fn [i] (when (:soloed? i) (:id i)))) (:instances (:effect-selection (show/snapshot runtime))))]
+            soloed #(into #{} (keep (fn [i] (when (:soloed? i) (:id i)))) (:instances (:effect-selection (show/snapshot runtime))))
+            [i0 i3 i4] (map #(:id (latest h %)) [:c0 :c3 :c4])
+            toggle (fn [selector & [mode]] (cond-> {:op :effect-selection/toggle :control :solo :selector selector}
+                                             mode (assoc :mode mode)))]
         (try
-          (input! [0x90 72 127] [0x90 13 127])
-          (is (= [{:op :effect-selection/toggle :selector {:cue-ids [:c4]}}] @dispatched) "Only the add was sent")
-          (is (some #(str/includes? % "synchronous") (:errors (device-session/snapshot unit))) "The pending receipt failed the dispatch")
-          (device-session/refresh! unit)
-          (is (nil? (marker)) "A refresh clears the pending add")
-          (input! [0x80 13 0] [0x80 72 0])
-          (is (nil? (marker)))
-          (reset! hang? false)
-          (testing "a later matching toggle drops nothing"
-            (input! [0x90 70 127] [0x90 9 127] [0x80 9 0] [0x90 12 127] [0x80 12 0] [0x90 13 127] [0x80 13 0] [0x80 70 0])
-            (is (= #{(:id (latest h :c0)) (:id (latest h :c3)) (:id (latest h :c4))} (soloed)))
-            (is (= [{:cue-ids [:c0]} {:cue-ids [:c3]} {:cue-ids [:c4]}] (mapv :selector (rest @dispatched)))
-                "Three additive toggles and no drop"))
+          (input! [0x90 9 127] [0x80 9 0] [0x90 70 127] [0x90 12 127] [0x80 12 0] [0x80 70 0])
+          (is (= #{i0 i3} (soloed)))
+          (input! [0x90 72 127] [0x90 13 127] [0x80 13 0] [0x80 72 0])
+          (is (= #{i4} (soloed)))
+          (is (= [(toggle {:cue-ids [:c0]}) (toggle {:cue-ids [:c3]} :additive) (toggle {:cue-ids [:c4]} :exclusive)]
+                 @dispatched)
+              "A plain press leaves the mode to the owner; SHIFT adds; CONTROL inverts it in the same command")
+          (is (not-any? #{:exclusive-add} (keys (:local (device-session/snapshot unit))))
+              "No local marker waits for an acknowledgement")
           (finally (device-session/close! unit))))
       (finally (show/stop! runtime)))))
 
