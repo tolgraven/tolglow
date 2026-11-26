@@ -1,7 +1,8 @@
 (ns tolglow.studio.rdm
   "RDM fixture management through guarded re-frame actions and owned host jobs."
   (:require [clojure.string :as str] [re-frame.core :as rf]
-            [tolglow.studio.events]))
+            [tolglow.studio.events]
+            [tolglow.studio.pretty :as pretty]))
 
 (def defaults {:generation 0 :busy? false :error nil :notice nil :form {}
                :universe "1" :uid "" :sub-device "0" :fixture-id ""
@@ -250,7 +251,7 @@
                (for [[i sensor] (map-indexed vector (:sensors observation))]
                  ^{:key i} [:div [:strong (get-in sensor [:definition :value :description] (str "Sensor " i))]
                             [:span [value-view (:value sensor)]]])])
-            [:details [:summary "Supported parameters & raw readback"] [:pre (pr-str observation)]]])
+            [:details [:summary "Supported parameters & raw readback"] [:pre (pretty/edn observation)]]])
          [:details.rdm-advanced [:summary "Advanced GET / SET"]
           [:p.small.muted "Use the fixture's documented PID and raw hexadecimal payload. SET sends a real device command."]
           [:div.rdm-fields [field s :pid "Parameter ID" "text"]
@@ -271,7 +272,7 @@
              (when-let [reason (get-in job [:result :reason])] [:p.rdm-error (str "Device response: " (name reason))])
              (when-let [verification (get-in job [:result :verification :status])]
                [:p {:class (when (not= :verified verification) "rdm-error")} (str "Readback: " (name verification))])
-             (when (:result job) [:details [:summary "Result"] [:pre (pr-str (:result job))]])]))]
+             (when (:result job) [:details [:summary "Result"] [:pre (pretty/edn (:result job))]])]))]
        [:p.rdm-footer.small.muted (if (= :art-net (:transport s))
                                    "Direct Art-Net uses universes 1–32768. Read device list uses the gateway’s cache. Discover starts a physical scan."
                                    "Choose an OLA universe patched to an RDM-capable interface.")]]))

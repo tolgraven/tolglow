@@ -33,7 +33,7 @@
     tolglow.integrations.mpv-observations-test tolglow.integrations.mpv-player-test tolglow.studio.section-reference-host-test
     tolglow.integrations.gdtf-test
     tolglow.venue-fog-test tolglow.fog-optics-test tolglow.fog-calibration-test tolglow.venue-performance-test tolglow.perf.beam-admission-test tolglow.perf.independent-effects-test tolglow.perf.weighted-live-test tolglow.stride-break-even-test
-    tolglow.calibration-test tolglow.studio-test tolglow.effects.faults-test tolglow.effects.state-migration-test tolglow.effects.modulation-reload-test tolglow.studio.web-test tolglow.guest-admission-test tolglow.composition-test tolglow.agents-test tolglow.agents.forms-test
+    tolglow.calibration-test tolglow.studio-test tolglow.effects.faults-test tolglow.effects.state-migration-test tolglow.effects.modulation-reload-test tolglow.studio.web-test tolglow.studio.pretty-test tolglow.guest-admission-test tolglow.composition-test tolglow.agents-test tolglow.agents.forms-test
     tolglow.persistence-test tolglow.show.recovery-test tolglow.expressive-test tolglow.audio.capture-test tolglow.agents.credentials-test
     tolglow.fixtures.definitions-test tolglow.fixtures.library-test
     tolglow.connections-test tolglow.studio.connections-host-test
@@ -52,7 +52,7 @@
     tolglow.studio.sensor-host-test tolglow.output.scheduler-test tolglow.perf.output-deadlines-test
     tolglow.waveforms-test tolglow.development.agents-test tolglow.studio.application-agent-host-test
     tolglow.render.workers-test tolglow.request-archive-test
-    tolglow.knobs-test tolglow.knob-sweep-test
+    tolglow.knobs-test tolglow.knob-sweep-test tolglow.knob-presets-test
     tolglow.event-subscribers-test tolglow.beat-scheduler-test tolglow.studio.projection-test tolglow.studio.active-preview-test tolglow.push-scene-test
     tolglow.show.scene-draft-test
     tolglow.controllers.content-browser-test tolglow.controllers.content-browser-host-test
@@ -60,12 +60,12 @@
     tolglow.timeline-test
     tolglow.preview.airplay-test
     tolglow.personalities-test tolglow.personalities.icon-test tolglow.personalities-host-test
-    tolglow.showcase-test])
+    tolglow.showcase-test tolglow.venues.gig-2023-test])
 
 (def suites
   {"pure" pure-tests
    "parity" (into pure-tests '[tolglow.fixtures.patch-parity-test tolglow.fixtures-test tolglow.parity-test
-                             tolglow.showcase-parity-test])})
+                             tolglow.showcase-parity-test tolglow.venues.gig-2023-parity-test])})
 
 (defn -main [& [suite & extra]]
   (let [namespaces (get suites (or suite "pure"))]
