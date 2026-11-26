@@ -147,3 +147,26 @@
     padding-inline-start: calc(var(--group-depth, 0) * 8px);
   }
 }
+
+/* Control surfaces and session boxes (#705, #706). */
+.surface-panel { display: grid; gap: 6px; margin: 0 0 12px; padding: 8px 0; border-block-end: 1px solid var(--line); }
+.surface-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.surface-panel-heading h3 { margin: 0; font-size: 13px; }
+.surface-panel-error { margin: 0; color: var(--danger, #e5484d); font-size: 12px; }
+.surface-panel-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.surface-box { display: flex; flex: 1 1 260px; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0;
+  padding: 4px 8px; border: 1px dashed var(--accent); border-radius: 6px; }
+.surface-box-name { font-weight: 600; font-size: 12px; overflow-wrap: anywhere; }
+.surface-box-range { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.surface-box-buttons { display: inline-flex; gap: 4px; margin-inline-start: auto; }
+.surface-box-button { min-width: 32px; min-height: 32px; border: 1px solid var(--line); border-radius: 4px;
+  background: transparent; color: inherit; cursor: pointer; }
+.surface-box-button:disabled { opacity: 0.4; cursor: default; }
+.surface-box-button:focus-visible, .surface-unlink:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.surface-unlink { min-height: 32px; border: 1px solid var(--line); border-radius: 4px; background: transparent; color: inherit; }
+.surface-link-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
+.surface-link-form select { min-height: 32px; max-width: 100%; }
+.surface-strip-badge { display: inline-block; padding: 0 5px; border: 1px solid var(--accent); border-radius: 999px;
+  color: var(--accent); font-size: 11px; line-height: 16px; white-space: nowrap; }
+.effect-group-mixer-channel[data-on-surface="true"] { box-shadow: inset 2px 0 0 var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.live-effect-card[data-on-surface="true"] { outline: 1px dashed var(--accent); outline-offset: 2px; }
