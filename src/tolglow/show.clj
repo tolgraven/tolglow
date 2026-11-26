@@ -254,8 +254,9 @@
             ;; Generated knob candidates (#667) and their Room audition.
             :knob-candidates (knob-candidates/projection
                               model (when-let [preview (get-in audition [:draft :preview])]
-                                      (assoc preview :status (:status audition)
-                                             :draft-revision (get-in audition [:draft :revision]))))
+                                      (cond-> (assoc preview :status (:status audition)
+                                                     :draft-revision (get-in audition [:draft :revision]))
+                                        (:frame-revision audition) (assoc :frame-revision (:frame-revision audition)))))
             :knob-presets (knob-presets/projection model) ; knob looks (#547)
             :operator-history (operator-history/project (:id runtime) model)
             :history-command-outcomes (:history-command-outcomes snapshot [])
@@ -283,6 +284,7 @@
             :draft-output (when-let [frame (:output audition)]
                             {:values (reflections/with-footprints optics (preview/values frame fixtures gains))
                              :draft (select-keys (:draft audition) [:id :revision])
+                             :frame-revision (:frame-revision audition)
                              :time-ms (:time-ms audition)})
             :output {:values (reflections/with-footprints optics (preview/values output fixtures gains))
                      :edge-tracking (:edge-tracking output [])
@@ -992,25 +994,27 @@
   retune that the audition worker writes into its running private model before
   its next frame. The private compile caches and timeline are kept, instead of
   copying the show and recompiling on every encoder step. Another candidate, an
-  edit or any committed live change stages a fresh private copy."
+  edit or any committed live change stages a fresh private copy. A retune is
+  data (the candidate, the value and a sequence number), which the worker
+  resolves with `knob-candidates/audition-model`."
   [runtime model value time-ms]
   (let [state (draft-state runtime)
         {:keys [draft retune] :as current} @state
         candidate (knob-candidates/candidate model)
-        preview (knob-candidates/preview candidate value)
-        edit #(knob-candidates/audition-model % candidate value)]
+        preview (knob-candidates/preview candidate value)]
     (if (retunable? model current candidate)
       (let [revision (inc (:revision draft))]
         (swap! state assoc
                :draft (assoc draft :revision revision :preview preview)
-               :retune {:seq (inc (:seq retune)) :candidate candidate :value (double value) :edit edit})
+               :retune {:seq (inc (:seq retune)) :candidate candidate :value (double value)})
         (merge (select-keys (:base draft) [:show-id :epoch :revision])
                {:status :accepted :draft-id (:id draft) :draft-revision revision :retuned? true}))
       (let [{:keys [ack] staged :draft}
-            (scene-draft/stage-preview model draft {:draft-id knob-candidates/draft-id :preview preview} time-ms edit)]
+            (scene-draft/stage-preview model draft {:draft-id knob-candidates/draft-id :preview preview} time-ms
+                                       #(knob-candidates/audition-model % candidate value))]
         (when staged
           (reset! state (assoc (begin-audition runtime staged)
-                               :retune {:seq 0 :candidate candidate :value (double value) :edit edit} :retuned 0)))
+                               :retune {:seq 0 :candidate candidate :value (double value)} :retuned 0)))
         ack))))
 
 (defn- knob-candidate-audition
@@ -2346,13 +2350,15 @@
                (merge (apply dissoc current owner-draft-keys) (select-keys view owner-draft-keys))
                :else view)))))
 
-(defn- audition-projection [{:keys [draft frame pending-apply last-outcome error stale skipped rendered]}]
+(defn- audition-projection [{:keys [draft frame pending-apply last-outcome error stale skipped rendered frame-revision]}]
   (cond-> {}
     draft (assoc :draft (scene-draft/summary draft) :time-ms (get-in frame [:model :time-ms])
                  :status (cond error :error stale :stale pending-apply :scheduled :else :auditioning)
                  :frames {:rendered (or rendered 0) :skipped (or skipped 0)})
     (and draft (not error) (not stale) (pos? (or rendered 0)) (:output frame))
-    (assoc :output (select-keys (:output frame) [:values :compact :target-order]))
+    (assoc :output (select-keys (:output frame) [:values :compact :target-order])
+           ;; Compare with the draft revision to tell whether the frame shows the current value.
+           :frame-revision frame-revision)
     pending-apply (assoc :pending-apply (assoc (select-keys pending-apply [:due-beat :grid :requested-at])
                                                :command-id (get-in pending-apply [:command :command-id])))
     last-outcome (assoc :last-outcome last-outcome)
@@ -2394,7 +2400,7 @@
   (let [state (:scene-draft runtime)
         same? #(identical? timeline (:timeline %))]
     (try
-      (when-let [{:keys [frame caches next-model rebases retune retuned]} (let [current @state] (when (same? current) current))]
+      (when-let [{:keys [draft frame caches next-model rebases retune retuned]} (let [current @state] (when (same? current) current))]
         (let [retune? (and retune (not= (:seq retune) retuned))
               ;; Shift the private musical anchors by each offset the live model took.
               model (-> (reduce (fn [model step]
@@ -2402,7 +2408,7 @@
                                     (show-clock/hold model (:held-ms step))
                                     (show-clock/rebase model step)))
                                 (or next-model (:model frame)) rebases)
-                        (cond-> retune? ((:edit retune)))
+                        (cond-> retune? (knob-candidates/audition-model (:candidate retune) (:value retune)))
                         (merge (select-keys live [:transport :master :blackout?]))
                         ;; A draft cannot stage a feel and applying replays it on the live
                         ;; model, so the Room shows the live track feel.
@@ -2414,6 +2420,9 @@
                         (-> % (dissoc :next-model)
                             (taken-rebases (count rebases))
                             (cond-> retune? (assoc :retuned (:seq retune)))
+                            ;; The draft revision this frame rendered: a retune bumps the
+                            ;; revision before the worker renders the new value.
+                            (assoc :frame-revision (:revision draft))
                             (update :rendered (fnil inc 0))
                             (assoc :frame (assoc (select-keys rendered audition-state-keys)
                                                  :model (staging/finish (:model rendered))

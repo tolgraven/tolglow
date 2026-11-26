@@ -13,7 +13,12 @@
 
   Prints both modes: :coalesced (current) and :restage-every-value, which
   forces the earlier behaviour of a fresh private copy and compile caches per
-  value through the same code path."
+  value through the same code path.
+
+  Best case: the showcase commits no live revisions between values, so every
+  value retunes. With routing, audio returns, compositions, auto launches or a
+  second encoder committing, values restage and cost what :restage-every-value
+  shows; :retuned-values reports how many retuned."
   (:require [clojure.pprint :as pprint]
             [tolglow.show :as show]
             [tolglow.showcase :as showcase]

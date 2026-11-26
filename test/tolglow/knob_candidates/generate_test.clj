@@ -5,6 +5,7 @@
   (:require [afterglow.control.model :as control]
             [clojure.test :refer [deftest is testing]]
             [tolglow.effects.parameter-sources :as parameter-sources]
+            [tolglow.knob-candidates :as knob-candidates]
             [tolglow.knob-candidates.generate :as generate]
             [tolglow.knobs :as knobs]
             [tolglow.personalities :as personalities]))
@@ -331,3 +332,62 @@
       (is (= [:a/pulse] (get-in (generate/eligibility model {:cue-ids ["a/pulse"]}) [:selection :cue-ids])))
       (is (= #{:a/pulse} (set (map #(get-in % [:destination :cue-id]) (:eligible (generate/eligibility model {:cue-ids ["a/pulse"]}))))))
       (is (= [:cue-missing] (map :reason (:excluded (generate/eligibility model {:cue-ids ["pulse"]}))))))))
+
+(defn- rig-show
+  "pulse, wash and aim running under namespaced cue IDs with distinct names."
+  []
+  (let [cues (into {} (for [id [:pulse :wash :aim]] [(keyword "rig" (name id)) {:id (keyword "rig" (name id)) :effect-id id :version 1}]))
+        base (control/new-show {:show-id :gen :rig rig :transport {:playing? true :beat 0.0 :bpm 120.0}
+                                :registry {:effects effects :cues cues}})]
+    (reduce (fn [model cue] (first (launch model cue))) base (sort (keys cues)))))
+
+(defn- candidate-command [model command]
+  (let [{:keys [model ack]} (control/apply-domain-command
+                             model (merge {:command-id (str (gensym "k")) :show-id :gen :epoch (:epoch model)
+                                           :source {:adapter :test}} command)
+                             knob-candidates/apply-operation)]
+    [model ack (get-in model [:knob-candidates :candidate])]))
+
+(deftest version-1-recipes-replay-with-their-own-link-ids-and-stale-edits-are-refused
+  (let [model (rig-show)
+        [_ fresh-ack fresh] (candidate-command model {:op :knob-candidate/generate :seed 4 :size [4 6]})
+        [_ v1-ack v1] (candidate-command model {:op :knob-candidate/generate :recipe {:generator 1 :seed 4 :size [4 6]}})
+        plain #(subs % 4)]
+    (is (= [:accepted :accepted] [(:status fresh-ack) (:status v1-ack)]))
+    (is (= [:ready :ready] [(:status fresh) (:status v1)]))
+    (is (<= 4 (count (:links fresh))))
+    (testing "a fresh recipe is version 2 with namespaced link IDs"
+      (is (= 2 generate/generator-version (get-in fresh [:recipe :generator])))
+      (is (every? #(re-find #"^rig/" %) (map :id (:links fresh)))))
+    (testing "a version 1 recipe regenerates the same links under its plain-name IDs"
+      (is (= 1 (get-in v1 [:recipe :generator])))
+      (is (= (map plain (map :id (:links fresh))) (map :id (:links v1))))
+      (is (= (map #(dissoc % :id) (:links fresh)) (map #(dissoc % :id) (:links v1)))))
+    (let [[dropped kept] (:links v1)]
+      (testing "its recorded edits still apply"
+        (let [edits [{:op :unlink :link-id (:id dropped)} {:op :link :link (assoc kept :curve :sine)}]
+              [_ ack c] (candidate-command model {:op :knob-candidate/generate
+                                                  :recipe {:generator 1 :seed 4 :size [4 6] :edits edits}})]
+          (is (= :accepted (:status ack)) (pr-str ack))
+          (is (not-any? #(= (:id dropped) (:id %)) (:links c)))
+          (is (= :sine (:curve (some #(when (= (:id kept) (:id %)) %) (:links c)))))))
+      (testing "an edit naming a link the recipe does not make is refused, not dropped or doubled"
+        (let [refusal (fn [recipe] ((juxt :status :code) (second (candidate-command model {:op :knob-candidate/generate :recipe recipe}))))]
+          (is (= [:rejected :unknown-link]
+                 (refusal {:generator 2 :seed 4 :size [4 6] :edits [{:op :unlink :link-id (:id dropped)}]}))
+              "a plain-name unlink against version 2 IDs")
+          (is (= [:rejected :duplicate-destination]
+                 (refusal {:generator 2 :seed 4 :size [4 6] :edits [{:op :link :link (assoc kept :curve :sine)}]}))
+              "a plain-name link on a destination the candidate already drives")
+          (is (= [:rejected :unsupported-generator] (refusal {:generator 3 :seed 4}))))))
+    (testing "live edits follow the same rules"
+      (let [[model] (candidate-command model {:op :knob-candidate/generate :seed 4 :size [4 6]})
+            [_ ack] (candidate-command model {:op :knob-candidate/unlink :link-id "nope"})
+            [_ dup] (candidate-command model {:op :knob-candidate/link :link (assoc (first (:links fresh)) :id "again")})]
+        (is (= [:rejected :unknown-link] ((juxt :status :code) ack)))
+        (is (= [:rejected :duplicate-destination] ((juxt :status :code) dup)))))
+    (testing "a recipe's reversed size is normalised like a command's"
+      (let [[_ ack c] (candidate-command model {:op :knob-candidate/generate :recipe {:generator 2 :seed 4 :size [6 4]}})]
+        (is (= :accepted (:status ack)))
+        (is (= [4 6] (get-in c [:recipe :size])))
+        (is (= (:links fresh) (:links c)))))))

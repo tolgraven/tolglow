@@ -792,8 +792,8 @@ refusal reads the same from both sides: auditioning with no candidate returns
 `:status :rejected :code :no-candidate`, and applying the candidate's Room
 draft as a scene returns `:code :preview-draft`.
 
-Destinations an existing knob drives are left out of a fresh candidate on both
-sides. Only the REPL and the agent tool can opt in with
+Destinations an existing knob drives are left out of a fresh candidate and of
+every reroll on both sides. Only the REPL and the agent tool can opt in with
 `:include-knob-driven? true`. A restart drops the candidate everywhere, and an
 audition whose cues were all released is refused with `:no-running-cues`.
 
@@ -802,7 +802,9 @@ linked-knob Push binding, which waits on an Afterglow adapter change). Enum,
 boolean and vector destinations are not generated. Close this gap when a Push
 encoder sweeps the same candidate in the Room
 ([issue #667](https://github.com/tolgraven/tolglow/issues/667)). Studio has no
-`:include-knob-driven?` control and does not show a link's `:shared-with`
+`:include-knob-driven?` control and does not show a link's `:shared-with`, and
+its Room view does not yet compare `:frame-revision` with `:draft-revision`, so
+it can show the previous value's frame for a frame or two during a sweep
 ([issue #737](https://github.com/tolgraven/tolglow/issues/737)).
 
 ## Reviewing a show feature

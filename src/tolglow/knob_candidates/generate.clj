@@ -18,8 +18,15 @@
             [tolglow.registry :as registry]))
 
 (def generator-version
-  "Bump when a change makes a saved recipe resolve to different links."
-  1)
+  "Bump when a change makes a saved recipe resolve to different links.
+  2 (#737): link IDs keep the cue's namespace, and a recipe may carry :avoid.
+  A build that only knows 1 refuses such a recipe instead of misreplaying it."
+  2)
+
+(def generator-versions
+  "Recipe versions this build replays. A version 1 recipe regenerates with
+  version 1 link IDs (the cue's plain name), so its recorded edits still match."
+  #{1 2})
 
 (def min-links 2)
 
@@ -385,10 +392,18 @@
 
 (defn- link-id
   "Stable link ID from the full cue (or launch) ID and the destination, so cues
-  that differ only by namespace never share a link ID."
-  [{:keys [destination group]}]
+  that differ only by namespace never share a link ID. :id-group replaces the
+  cue part when a version 1 recipe is replayed."
+  [{:keys [destination group id-group]}]
   (let [{:keys [param field input]} destination]
-    (str group "-" (id-text param) (when (or field input) (str "-" (id-text (or field input)))))))
+    (str (or id-group group) "-" (id-text param) (when (or field input) (str "-" (id-text (or field input)))))))
+
+(defn- version-1-ids
+  "Version 1 link IDs used the cue's plain name: :rig/feel gave \"feel-level\"."
+  [entry]
+  (let [{:keys [cue-id instance-id]} (:destination entry)
+        id (or cue-id instance-id)]
+    (assoc entry :id-group (if (keyword? id) (name id) (str id)))))
 
 (defn- build-link
   "[seed link-or-nil] for one destination in a character and feel."
@@ -567,16 +582,22 @@
 (defn generate
   "One candidate from eligibility data, a personality (or nil) and options:
   :seed (integer, required), :character (pin one of `characters`), :size
-  [min max] links. Returns {:status :ready ...} with :links, :score, :explain
-  and :recipe, or {:status :insufficient ...} explaining which parameters were
-  left out and why."
-  [{:keys [eligible excluded selection]} personality {:keys [seed character size] :as options}]
+  [min max] links, :generator (a version in `generator-versions`, default the
+  current one; only a recipe replay passes an older one). Returns
+  {:status :ready ...} with :links, :score, :explain and :recipe, or
+  {:status :insufficient ...} explaining which parameters were left out and why."
+  [{:keys [eligible excluded selection]} personality {:keys [seed character size generator] :as options}]
   (when-not (integer? seed) (refuse! :invalid-seed "A generation seed must be an integer" {:seed seed}))
+  (when-not (generator-versions (or generator generator-version))
+    (refuse! :unsupported-generator "The recipe was made by a generator version this build does not know"
+             {:generator generator :known generator-versions}))
   (when (and character (not (character-index character)))
     (refuse! :unknown-character (str "Unknown character; choose one of "
                                      (str/join ", " (map (comp name :id) characters)))
              {:character character :known (mapv :id characters)}))
-  (let [feel (feel personality)
+  (let [version (or generator generator-version)
+        eligible (if (= 1 version) (mapv version-1-ids eligible) eligible)
+        feel (feel personality)
         [low high] (cond (nil? size) default-size (and (sequential? size) (= 2 (count size))) size)
         _ (when-not (and (integer? low) (integer? high) (<= min-links low high max-links))
             (refuse! :invalid-size (str "Size is [min max] links within " min-links "–" max-links) {:size size}))
@@ -619,17 +640,19 @@
           (insufficient pool excluded selection
                         (str "No playable mapping was found for the " (:name chosen) " character with seed " seed
                              "; reroll or widen the selection."))
-          {:status :ready :generator generator-version :seed seed :character (:id chosen)
+          {:status :ready :generator version :seed seed :character (:id chosen)
            :character-name (:name chosen) :name (str "Generated " (:name chosen))
            :links (:links best) :score (:score best)
            :explain (mapv #(explain-link % ((:entries best) (:id %)) chosen (:pairs best)) (:links best))
            :roles (into {} (map (fn [[id e]] [id (:role e)])) (:entries best))
-           :recipe (cond-> {:generator generator-version :seed seed :character (:id chosen)}
+           :recipe (cond-> {:generator version :seed seed :character (:id chosen)}
                      size (assoc :size size)
                      (:cue-ids selection) (assoc :cue-ids (:cue-ids selection))
                      ;; Exactly the knob-driven destinations this show left out, so the
                      ;; recipe repeats after this candidate's own knob drives them too.
                      (seq avoided) (assoc :avoid avoided)
+                     ;; Rerolls after a repeat of this recipe share knob-driven destinations too.
+                     (:include-knob-driven? options) (assoc :include-knob-driven? true)
                      personality (assoc :personality (select-keys personality [:id :version])))})))))
 
 (defn candidate-signature

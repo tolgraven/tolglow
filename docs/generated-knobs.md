@@ -55,7 +55,10 @@ such link's explanation then carries `:shared-with` and the knob IDs.
 The recipe records the destinations a generation left out (`:avoid`), and a
 repeat avoids exactly those whatever knobs exist now. Without that, the knob a
 candidate is kept as would drive its own destinations and the recipe could not
-repeat.
+repeat. `:avoid` only replays the recipe's own candidate: rerolls after a
+repeat leave out the destinations the current knobs drive, like a fresh
+generation, and share them only when the recipe was made with
+`:include-knob-driven? true` (which it then records).
 
 A **role** says what a destination does musically. It comes from the schema
 first (a colour type, a beat-ratio or beat-unit period) and otherwise from the
@@ -157,7 +160,9 @@ All surfaces send the same owner commands with the usual receipts.
   `:candidate-status` `:ready` or `:insufficient`. `:size` is the two link-count
   bounds (2–8) in either order and is kept as `[min max]`.
 - **Refusals** carry a `:code`: `:invalid-seed`, `:unknown-character`,
-  `:invalid-size`, or `:invalid-knob-candidate` for other malformed input.
+  `:invalid-size`, `:unknown-link`, `:duplicate-destination`,
+  `:unsupported-generator`, or `:invalid-knob-candidate` for other malformed
+  input.
 - **Reroll** tries the next seeds until the character or destination set
   differs from every candidate of this session, up to sixteen seeds. It stops
   at a seed with no playable mapping. When the candidate it returns repeats an
@@ -165,7 +170,11 @@ All surfaces send the same owner commands with the usual receipts.
   `:repeated? true`.
 - **Edits** are validated against the running show by the knob API, recorded
   in the recipe and replayed when it is regenerated. A candidate keeps at least
-  two links.
+  two links. An unlink names an existing link (`:unknown-link`). A link with a
+  new ID adds one, but never a second link on a destination the candidate
+  already drives (`:duplicate-destination`): replace that link by its ID. A
+  replayed edit gets the same checks, so an edit recorded against other link
+  IDs is refused instead of silently dropped or doubled.
 - **Keep** sends `:knob/create` through `tolglow.knobs` with the candidate's
   links and its recipe. The new knob writes nothing until it moves, like any
   knob created at a value.
@@ -181,9 +190,10 @@ All surfaces send the same owner commands with the usual receipts.
 A kept knob stores `:recipe`:
 
 ```clojure
-{:generator 1 :seed 13 :character :colour
+{:generator 2 :seed 13 :character :colour
  :size [3 6] :cue-ids [...]              ; when given
  :avoid [{:kind :param :cue-id :strobe :param :rate}] ; knob-driven destinations left out
+ :include-knob-driven? true              ; when made with sharing
  :personality {:id :squircle :version 1} ; when a feel shaped it
  :edits [{:op :unlink :link-id "..."} {:op :link :link {...}}]}
 ```
@@ -191,8 +201,14 @@ A kept knob stores `:recipe`:
 `{:op :knob-candidate/generate :from-knob id}` regenerates the same links
 against the same running cues and definitions, also after a save and reload.
 The recipe names its personality, which is looked up in the show's library at
-that version whatever feel is active now. A recipe from a different generator
-version is refused rather than silently resolving to other links.
+that version whatever feel is active now. A recipe from an unknown generator
+version is refused (`:unsupported-generator`) rather than silently resolving to
+other links.
+
+Version 2 (#737) keeps the cue's namespace in link IDs and may carry `:avoid`,
+so a build that only knows version 1 refuses it. This build still replays
+version 1 recipes with version 1 link IDs (the cue's plain name, `feel-level`
+for `:rig/feel`), so their recorded edits match.
 
 ## Room audition
 
@@ -216,7 +232,16 @@ the knobs and every destination are untouched.
   running private model before its next frame, keeping the private compile
   caches and timeline. The receipt says `:retuned? true`. Any committed live
   change (a new show revision), another candidate, an edit, or a stale or failed
-  audition stages a fresh copy instead, as before.
+  audition stages a fresh copy instead, as before. The saving therefore applies
+  only while the committed show is quiet: a routing patch writing changed
+  values, audio returns, composition steps, auto launches or a second encoder
+  all commit revisions, and with any of them running, every value still
+  restages.
+- Each Room frame records the draft revision it rendered. `:frame-revision`
+  appears next to `:draft-revision` in `:knob-candidates :audition`, in
+  `show/scene-draft` and on the snapshot's `:draft-output`. Until the worker has
+  rendered a new value, the Room output is the previous value's frame, and the
+  two revisions differ.
 - An audition is refused with `:no-running-cues` when none of the candidate's
   cues is running (after their launches were released); there is nothing of
   the knob to show. A restart drops the candidate, so an audition after it is
@@ -287,7 +312,12 @@ explanation or why too few parameters were eligible the same way.
   model holding exactly the resolved values while the live parameters,
   waveform bindings, knobs and variables stay unchanged; apply refused; keep,
   turn, save, reload and regenerate from the recipe; edits replayed; too few
-  parameters; discard; command replay; the agent tool.
+  parameters; discard; command replay; the agent tool. For #737: retuned sweeps
+  checked on the private model, the rendered packets and `:frame-revision`;
+  two retunes behind a slowed in-flight frame (the last value wins, and the
+  in-flight frame keeps its own revision); a reroll racing an in-flight frame;
+  a stopped transport holding across retunes; a restart; and rerolls after a
+  recipe repeat leaving out knob-driven destinations.
 - `dev/tolglow/bench_knob_candidate_sweep.clj` measures the owner tick and the
   Room frame while a candidate is swept on the showcase rig (below).
 - `dev/tolglow/qa/knob_candidates_browser.clj` drives the production Studio
@@ -305,15 +335,20 @@ CHROMIUM_PATH=... lein with-profile +dev run -m tolglow.qa.knob-candidates-brows
 five cues and their waveforms, seed 11: one new audition value every fourth
 logical 23 ms owner tick, 300 values after 40 warm-up values, each audition
 frame awaited with a spin. Apple M4 Pro (14 cores), JDK 25, pooled REPL, load
-average 3.2 from other work. Software CPU frames only; no output, GPU or
+average 3.9 from other work. Software CPU frames only; no output, GPU or
 display costs are included.
+
+This is the best case: the showcase has no live writer committing revisions
+between values, so all 300 values retuned. In a show with routing, audio
+returns, compositions or auto launches running, values restage and cost what
+the "before" column shows.
 
 | Median (p90), ms | Restage every value (before) | Coalesced |
 | --- | --- | --- |
-| Owner tick that takes an audition value | 2.09 (2.46) | 0.39 (0.47) |
-| Owner tick without one | 0.40 (0.56) | 0.38 (0.44) |
-| Room frame right after a value | 6.57 (7.12) | 0.41 (0.48) |
-| Room frame otherwise | 0.38 (0.45) | 0.37 (0.42) |
+| Owner tick that takes an audition value | 2.26 (2.56) | 0.43 (0.52) |
+| Owner tick without one | 0.45 (0.61) | 0.40 (0.48) |
+| Room frame right after a value | 6.68 (7.36) | 0.43 (0.53) |
+| Room frame otherwise | 0.40 (0.48) | 0.37 (0.43) |
 
 "Before" forces the previous path (a fresh private copy and compile caches per
 value) through the same code. A sleeping wait for each Room frame instead of a
@@ -335,4 +370,5 @@ the show.
   candidates yet; the score is a fixed heuristic.
 - Studio has no control for `:include-knob-driven?` and does not show a link's
   `:shared-with`; the REPL and the agent tool have both. Knob-driven exclusions
-  appear in Studio only in the too-few-parameters explanation.
+  appear in Studio only in the too-few-parameters explanation. Studio's Room
+  view does not yet compare `:frame-revision` with `:draft-revision`.

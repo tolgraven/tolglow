@@ -84,6 +84,20 @@
                                    nil (get-in binding [:inputs (:input destination)])))
                      (:id link))))))))
 
+(defn- room-bytes [rt]
+  (into {} (map (fn [[u b]] [u (vec b)])) (get-in @(:scene-draft rt) [:frame :output :universes])))
+
+(defn- frames! [rt t0 n]
+  (doseq [t (range t0 (+ t0 (* 20 n)) 20)]
+    (show/tick! rt t)
+    (is (show/await-audition rt 5000))))
+
+(defn- slow-audition
+  "The real audition frame, ms later, so a test can act while a frame is in flight."
+  [ms]
+  (let [render @#'show/render-audition-frame]
+    (fn [& args] (Thread/sleep (long ms)) (apply render args))))
+
 (defn- audition-frames! [rt t0]
   (doseq [t (range t0 (+ t0 100) 20)]
     (show/tick! rt t)
@@ -317,13 +331,19 @@
         (is (= :accepted (:status (submit! rt 110 {:op :knob-candidate/audition :value 0.2}))))
         (audition-frames! rt 120)
         (let [staged @(:scene-draft rt)
-              revision (get-in staged [:draft :revision])]
+              revision (get-in staged [:draft :revision])
+              outputs (atom [(room-bytes rt)])]
           (doseq [[i value] (map-indexed vector [0.4 0.6 0.8 1.0])
                   :let [t (+ 300 (* 200 i))
                         ack (submit! rt t {:op :knob-candidate/audition :value value})]]
             (is (= [:accepted true (+ revision i 1) value] ((juxt :status :retuned? :draft-revision :value) ack)))
             (audition-frames! rt (+ t 10))
-            (room-shows! rt value))
+            (room-shows! rt value)
+            (testing "the rendered Room output is a frame of the new value"
+              (is (= (+ revision i 1) (:frame-revision @(:scene-draft rt))
+                     (get-in (view rt) [:audition :frame-revision]) (get-in (show/snapshot rt) [:draft-output :frame-revision])))
+              (is (not= (peek @outputs) (room-bytes rt)) "the Room packets change with the value")
+              (swap! outputs conj (room-bytes rt))))
           (let [swept @(:scene-draft rt)]
             (is (identical? (:timeline staged) (:timeline swept)) "one private timeline for the whole sweep")
             (is (identical? (:caches staged) (:caches swept)) "the private compile caches are kept")
@@ -412,4 +432,111 @@
             (is (every? (fn [[_ e]] (some #{"generated-1" "generated-2"} (:shared-with e))) shared))
             (is (= [:rejected :invalid-knob-candidate]
                    ((juxt :status :code) (submit! rt 300 {:op :knob-candidate/generate :include-knob-driven? "yes"})))))))
+      (finally (show/stop! rt)))))
+
+(deftest retunes-behind-an-in-flight-frame-land-on-the-last-value
+  (let [rt (runtime)]
+    (try
+      (setup! rt)
+      (submit! rt 100 {:op :knob-candidate/generate :seed 11})
+      (submit! rt 110 {:op :knob-candidate/audition :value 0.2})
+      (frames! rt 120 3)
+      (let [revision (get-in @(:scene-draft rt) [:draft :revision])]
+        (with-redefs [show/render-audition-frame (slow-audition 150)]
+          (show/tick! rt 300)
+          (is (:in-flight @(:scene-draft rt)) "a slow frame at 0.2 is rendering")
+          (let [a (submit! rt 310 {:op :knob-candidate/audition :value 0.4})
+                b (submit! rt 320 {:op :knob-candidate/audition :value 0.9})]
+            (is (= [true true] [(:retuned? a) (:retuned? b)]))
+            (is (:in-flight @(:scene-draft rt)) "both retunes queued behind the in-flight frame"))
+          (is (show/await-audition rt 5000))
+          (room-shows! rt 0.2)
+          (testing "the in-flight frame is labelled with the revision it rendered, not the new one"
+            (is (= revision (:frame-revision @(:scene-draft rt))))
+            (is (= [(+ revision 2) revision]
+                   ((juxt :draft-revision :frame-revision) (:audition (view rt))))))
+          (frames! rt 400 2))
+        (room-shows! rt 0.9)
+        (is (= (+ revision 2) (get-in (view rt) [:audition :frame-revision])) "the last value wins")
+        (is (= (get-in @(:scene-draft rt) [:retune :seq]) (:retuned @(:scene-draft rt)))))
+      (finally (show/stop! rt)))))
+
+(deftest a-reroll-racing-an-in-flight-sweep-frame-never-installs-the-old-candidate
+  (let [rt (runtime)]
+    (try
+      (setup! rt)
+      (submit! rt 100 {:op :knob-candidate/generate :seed 11})
+      (submit! rt 110 {:op :knob-candidate/audition :value 0.3})
+      (frames! rt 120 3)
+      (is (:retuned? (submit! rt 200 {:op :knob-candidate/audition :value 0.6})))
+      (let [timeline (:timeline @(:scene-draft rt))]
+        (with-redefs [show/render-audition-frame (slow-audition 150)]
+          (show/tick! rt 300)
+          (is (:in-flight @(:scene-draft rt)))
+          (submit! rt 310 {:op :knob-candidate/reroll})
+          (is (not (identical? timeline (:timeline @(:scene-draft rt)))))
+          (Thread/sleep 300)
+          (is (zero? (or (:rendered @(:scene-draft rt)) 0)) "the old timeline's frame did not install")
+          (frames! rt 400 2))
+        (room-shows! rt 0.6))
+      (finally (show/stop! rt)))))
+
+(deftest a-stopped-transport-holds-the-room-across-retunes
+  (let [rt (runtime)]
+    (try
+      (setup! rt)
+      (submit! rt 100 {:op :knob-candidate/generate :seed 11})
+      (frames! rt 120 5)
+      (submit! rt 300 {:op :transport/set :transport {:playing? false}})
+      (frames! rt 310 3)
+      (submit! rt 370 {:op :knob-candidate/audition :value 0.3})
+      (frames! rt 375 10)
+      (let [held (room-bytes rt)
+            beat (get-in @(:scene-draft rt) [:frame :model :transport :beat])]
+        (frames! rt 600 10)
+        (is (= held (room-bytes rt)) "a stopped Room holds without a value change")
+        (is (:retuned? (submit! rt 900 {:op :knob-candidate/audition :value 0.8})))
+        (frames! rt 910 3)
+        (let [retuned (room-bytes rt)]
+          (is (not= held retuned) "the value reaches the stopped Room")
+          (frames! rt 1000 10)
+          (is (= retuned (room-bytes rt)) "and the Room stays held after the retune")
+          (is (= beat (get-in @(:scene-draft rt) [:frame :model :transport :beat])) "no catch-up")
+          (is (:retuned? (submit! rt 1300 {:op :knob-candidate/audition :value 0.3})))
+          (frames! rt 1310 3)
+          ;; Back at the first value the Room model matches it again. The packets may
+          ;; differ by a moving head's pan wrapping 360°: pan continuity follows the
+          ;; previous packet, as it would on a live sweep.
+          (room-shows! rt 0.3)
+          (is (= beat (get-in @(:scene-draft rt) [:frame :model :transport :beat])))))
+      (finally (show/stop! rt)))))
+
+(deftest rerolls-after-a-recipe-repeat-still-leave-out-knob-driven-destinations
+  (let [rt (runtime)]
+    (try
+      (setup! rt)
+      (submit! rt 100 {:op :knob-candidate/generate :seed 21})
+      (let [kept-destinations (set (map knobs/destination-key (:links (candidate rt))))]
+        (submit! rt 110 {:op :knob-candidate/keep :name "Lift"})
+        (is (nil? (get-in (model rt) [:knobs :knobs "generated-1" :recipe :avoid])) "the first knob's recipe avoided nothing")
+        (is (= [:accepted :ready] ((juxt :status :candidate-status)
+                                   (submit! rt 120 {:op :knob-candidate/generate :from-knob "generated-1"}))))
+        (is (= kept-destinations (set (map knobs/destination-key (:links (candidate rt))))) "the repeat is the kept knob")
+        (doseq [i (range 6)
+                :let [ack (submit! rt (+ 130 (* 10 i)) {:op :knob-candidate/reroll})
+                      c (candidate rt)]]
+          (is (= [:accepted :ready] ((juxt :status :candidate-status) ack)))
+          (is (not-any? kept-destinations (map knobs/destination-key (:links c))) (str "reroll " i))
+          (is (not-any? :shared-with (:explain c)))
+          (is (= (sort-by pr-str kept-destinations) (sort-by pr-str (get-in c [:recipe :avoid])))))
+        (testing "a recipe made with sharing keeps sharing on its rerolls"
+          (submit! rt 300 {:op :knob-candidate/generate :seed 5 :include-knob-driven? true})
+          (is (true? (get-in (candidate rt) [:recipe :include-knob-driven?])))
+          (submit! rt 310 {:op :knob-candidate/keep :name "Shared"})
+          (submit! rt 320 {:op :knob-candidate/generate :from-knob "generated-2"})
+          (is (true? (get-in (view rt) [:session :options :include-knob-driven?])))
+          (is (some :shared-with (for [i (range 12)
+                                       :let [_ (submit! rt (+ 330 (* 10 i)) {:op :knob-candidate/reroll})]
+                                       e (:explain (candidate rt))]
+                                   e)))))
       (finally (show/stop! rt)))))

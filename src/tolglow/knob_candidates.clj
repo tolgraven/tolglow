@@ -70,18 +70,31 @@
     include-knob-driven? (assoc :include-knob-driven? true)))
 
 (defn- knob-driven-options
-  "Eligibility options for destinations existing knobs drive. A recipe avoids
-  exactly the destinations it recorded, whatever knobs exist now (including
-  the knob it was kept as), so it repeats. A fresh generation avoids every
-  knob-driven destination unless :include-knob-driven? shares them."
-  [model options recipe]
+  "Eligibility options for destinations existing knobs drive, from the current
+  knobs: every knob-driven destination is avoided unless
+  :include-knob-driven? shares them. A fresh generation and every reroll use
+  this, also a reroll after a recipe repeat."
+  [model options]
   (let [driven (generate/knob-driven model)]
     (cond
-      recipe (when-let [avoid (seq (:avoid recipe))]
-               {:avoid (into {} (map (fn [d] [d (get driven d [])])) avoid)})
       (empty? driven) nil
       (:include-knob-driven? options) {:shared driven}
       :else {:avoid driven})))
+
+(defn- recipe-avoid
+  "Eligibility options that replay a recipe's own candidate: it avoids exactly
+  the destinations it recorded, whatever knobs exist now (including the knob it
+  was kept as), so it repeats. Only the replay uses this."
+  [model recipe]
+  (when-let [avoid (seq (:avoid recipe))]
+    (let [driven (generate/knob-driven model)]
+      {:avoid (into {} (map (fn [d] [d (get driven d [])])) avoid)})))
+
+(defn- recipe-options
+  "Generation options a recipe carries. A size is normalised as a command's is."
+  [recipe]
+  (cond-> (select-keys recipe [:character :size :cue-ids :include-knob-driven?])
+    (and (sequential? (:size recipe)) (every? integer? (:size recipe))) (update :size #(vec (sort %)))))
 
 (defn- default-seed
   "A seed from the command ID when none is given. Replaying the command ID
@@ -132,13 +145,29 @@
 ;; ---------------------------------------------------------------------------
 ;; Recipes
 
-(defn- replay-edits [candidate edits]
+(defn- replay-edits
+  "Apply link edits, live or recorded. An unlink names an existing link. A link
+  with a new ID adds a link, but never a second one on a destination the
+  candidate already drives: replace that link by its ID instead. So an edit
+  recorded against other link IDs is refused rather than silently dropped or
+  doubled."
+  [candidate edits]
   (reduce (fn [c {:keys [op link link-id]}]
             (case op
-              :link (update c :links (fn [links]
-                                       (let [i (first (keep-indexed #(when (= (:id link) (:id %2)) %1) links))]
-                                         (if i (assoc links i link) (conj links link)))))
-              :unlink (update c :links #(vec (remove (fn [l] (= link-id (:id l))) %)))))
+              :link (update c :links
+                            (fn [links]
+                              (let [i (first (keep-indexed #(when (= (:id link) (:id %2)) %1) links))
+                                    same (some #(when (= (knobs/destination-key %) (knobs/destination-key link)) %) links)]
+                                (cond
+                                  i (assoc links i link)
+                                  same (fail! :duplicate-destination
+                                              (str "Link " (:id link) " drives the destination of link " (:id same)
+                                                   "; replace that link by its ID")
+                                              {:link-id (:id link) :existing (:id same)})
+                                  :else (conj links link)))))
+              :unlink (do (when-not (some #(= link-id (:id %)) (:links c))
+                            (fail! :unknown-link "Unknown link" {:link-id link-id}))
+                          (update c :links #(vec (remove (fn [l] (= link-id (:id l))) %))))))
           candidate edits))
 
 (defn- check-edits!
@@ -153,17 +182,20 @@
 (defn- from-recipe
   "Regenerate a candidate exactly from a saved recipe against the current show.
   Replayed edits pass the same checks as a live edit."
-  [model recipe personality driven]
+  [model recipe personality]
   (when-not (and (map? recipe) (integer? (:seed recipe)) (registry/data? recipe))
     (fail! "A recipe needs an integer :seed"))
   (when-not (or (nil? (:avoid recipe)) (and (vector? (:avoid recipe)) (every? map? (:avoid recipe))))
     (fail! "A recipe's :avoid is a vector of knob destinations"))
-  (when-not (= generate/generator-version (:generator recipe generate/generator-version))
-    (fail! "The recipe was made by a different generator version" {:generator (:generator recipe)}))
+  (when-not (generate/generator-versions (:generator recipe generate/generator-version))
+    (fail! :unsupported-generator "The recipe was made by a generator version this build does not know"
+           {:generator (:generator recipe)}))
   (check-edits! (:edits recipe))
-  (let [options (select-keys recipe [:character :size :cue-ids])
-        eligibility (generate/eligibility model (merge options driven))
-        generated (generate/generate eligibility personality (assoc options :seed (:seed recipe)))]
+  (let [options (recipe-options recipe)
+        eligibility (generate/eligibility model (merge options (recipe-avoid model recipe)))
+        generated (generate/generate eligibility personality
+                                     (assoc options :seed (:seed recipe)
+                                            :generator (:generator recipe generate/generator-version)))]
     (if-not (and (= :ready (:status generated)) (seq (:edits recipe)))
       generated
       (let [edited (replay-edits generated (:edits recipe))]
@@ -210,11 +242,13 @@
           _ (when (and (contains? command :seed) (not (integer? (:seed command))))
               (fail! :invalid-seed "A seed is an integer" {:seed (:seed command)}))
           personality (personality-for model recipe)
-          options (if recipe (select-keys recipe [:character :size :cue-ids]) (options-of command))
-          driven (knob-driven-options model options recipe)
+          options (if recipe (recipe-options recipe) (options-of command))
+          ;; The session's exclusion comes from the current knobs, so rerolls after a
+          ;; recipe repeat leave out knob-driven destinations like a fresh generation.
+          driven (knob-driven-options model options)
           seed (cond recipe (:seed recipe) (contains? command :seed) (:seed command) :else (default-seed command))
           candidate (if recipe
-                      (from-recipe model recipe personality driven)
+                      (from-recipe model recipe personality)
                       (generate/generate (generate/eligibility model (merge options driven)) personality
                                          (assoc options :seed seed)))
           candidate (cond-> candidate (= :ready (:status candidate)) (assoc :name (generated-name command candidate)))]
@@ -242,8 +276,6 @@
           edit (if (= op :knob-candidate/link)
                  {:op :link :link (text-link (:link command))}
                  {:op :unlink :link-id (:link-id command)})
-          _ (when (and (= :unlink (:op edit)) (not-any? #(= (:link-id edit) (:id %)) (:links current)))
-              (fail! "Unknown link" {:link-id (:link-id command)}))
           edited (replay-edits current [edit])
           _ (when (< (count (:links edited)) generate/min-links)
               (fail! (str "A candidate keeps at least " generate/min-links " links; discard it instead")))
@@ -308,7 +340,9 @@
   Only the private copy changes; nothing here reaches the live show. A sweep
   writes into the same running private model again (see the show's audition
   retune), so the private copy's command receipts are cleared first: a write
-  with an earlier write's command ID would otherwise replay as a duplicate."
+  reusing an earlier write's command ID with a new value would be refused as a
+  command-ID conflict and never land. The private revision is kept, as staging
+  keeps it at the live show's."
   [private candidate value]
   (let [knob {:id draft-id :name "Candidate" :value (double value) :links (:links candidate) :order 0}
         staged (-> private
@@ -326,7 +360,8 @@
                                      {next-model :model ack :ack} (control/apply-command model command)]
                                  (if (= :accepted (:status ack)) next-model model))))
                 resolved (map-indexed vector (:writes result)))
-        (dissoc :knobs))))
+        (dissoc :knobs)
+        (cond-> (contains? private :revision) (assoc :revision (:revision private))))))
 
 (defn preview
   "Descriptor a candidate audition carries on its Room draft."
@@ -360,4 +395,4 @@
                (select-keys candidate [:id :status :message :eligible :needed :eligible-labels :excluded :selection])))
       session (assoc :session (select-keys session [:seed :options]))
       (and audition (= (:candidate-id audition) (:id candidate)))
-      (assoc :audition (select-keys audition [:value :status :draft-revision])))))
+      (assoc :audition (select-keys audition [:value :status :draft-revision :frame-revision])))))
