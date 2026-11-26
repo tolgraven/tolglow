@@ -104,18 +104,8 @@
 ;; ---------------------------------------------------------------------------
 ;; Input
 
-(defn- selection-commands
-  "An exclusive add marks local state so that :ack, called synchronously in
-  the same dispatch, sends the drop for its accepted acknowledgement. The
-  session assigns command IDs after the profile returns, so the marker is
-  scoped to this input instead: the next input or refresh clears it, as
-  does any Solo/Mute acknowledgement. An add whose receipt never resolves
-  (dispatch fails) therefore leaves nothing pending."
-  [state envelope ctx control s modifier]
-  (let [{:keys [commands exclusive-add?]} (mixer/selection-toggle ctx control s modifier)
-        state (cond-> state
-                exclusive-add? (assoc :exclusive-add (select-keys (first commands) [:control :selector])))]
-    (with-envelope envelope (apply changed state commands))))
+(defn- selection-commands [state envelope ctx control s modifier]
+  (with-envelope envelope (apply changed state (mixer/selection-toggle ctx control s modifier))))
 
 (defn- strip-button [options state v envelope x row pressed?]
   (let [s (get (:strips v) x)
@@ -187,8 +177,7 @@
 (defn input
   "Pure MCU input -> local state and owner command templates."
   [options state raw model envelope]
-  (let [state (dissoc state :exclusive-add)
-        {:keys [group at type value delta] :as event} (descriptor/x-touch-event (:surface-id options) raw)
+  (let [{:keys [group at type value delta] :as event} (descriptor/x-touch-event (:surface-id options) raw)
         [x y] at
         extender? (:extender? options)]
     (if (nil? event)
@@ -324,7 +313,6 @@
                            [x meter])))
                      (map-indexed vector projected))]
     {:state (-> state
-                (dissoc :exclusive-add)
                 (update :sent merge desired)
                 (update :meters into (map (fn [[x level]] [x [level now]])) meters)
                 (assoc :shown (mapv :key projected)))
@@ -422,20 +410,10 @@
      :input (partial input options)
      :feedback (partial feedback options)
      :ack (fn [state command ack]
-            (cond
-              (:gesture-id command)
+            (if (:gesture-id command)
               (let [result (bindings/acknowledge-hold (:holds state) (:gesture-id command) ack)]
                 {:state (assoc state :holds (:state result)) :commands (:commands result)})
-
-              ;; Any Solo/Mute acknowledgement ends a pending exclusive add.
-              (= :effect-selection/toggle (:op command))
-              {:state (dissoc state :exclusive-add)
-               :commands (if-let [drop (when (= (:exclusive-add state) (select-keys command [:control :selector]))
-                                         (mixer/exclusive-drop ack))]
-                           [(merge drop (select-keys command [:show-id :epoch]))]
-                           [])}
-
-              :else {:state state :commands []}))
+              {:state state :commands []}))
      :stop (partial stop options)}))
 
 (defn connect!

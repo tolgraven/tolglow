@@ -60,7 +60,7 @@
   display:flex; align-items:center; justify-content:center; list-style:none; cursor:pointer;
 }
 .effect-selection-defaults>summary::-webkit-details-marker { display:none; }
-.effect-selection-defaults[open]>summary,.effect-selection-add[aria-pressed=true] {
+.effect-selection-defaults[open]>summary,.effect-selection-once[aria-pressed=true] {
   background:var(--raised); color:var(--accent); border-color:var(--accent);
 }
 .effect-selection-modes {

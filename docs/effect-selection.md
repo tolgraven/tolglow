@@ -11,9 +11,16 @@ model. Each command gets the normal show epoch, revision and retry receipt.
 - An exclusive action selects exactly its current targets. Repeating the action
   when exactly those targets are selected clears that control.
 - An additive action adds the targets when any are missing and removes them
-  when all are selected. Send `:additive? true` with the toggle to use additive
-  mode for that action. The owner receives a fresh modifier value on every
-  action. A held key or pad lives in the input adapter's session.
+  when all are selected.
+- Send `:mode :exclusive` or `:mode :additive` with a toggle to override the
+  configured mode for that action only ([#749](https://github.com/tolgraven/tolglow/issues/749)).
+  An exclusive toggle replaces the whole selection in one commit, so no frame
+  shows a partial result. `:additive? true` remains shorthand for
+  `:mode :additive`, and Tolglow's adapters keep sending it for additive
+  actions. `:additive? true` with `:mode :exclusive` is rejected;
+  `:additive? false` means no modifier and agrees with either mode. Without either, the owner applies the
+  configured mode when the command lands. The owner receives a fresh modifier
+  value on every action. A held key or pad lives in the input adapter's session.
 - The selection gate includes every unmuted instance when no instance is soloed.
   With Solo active, it includes only soloed instances that are unmuted. If every
   soloed instance is muted, the selection gate includes zero instances. A row
@@ -54,6 +61,8 @@ model can pass the same payload and a command envelope to
  :selector {:instance-ids ["0:1"]}}
 {:op :effect-selection/toggle :control :solo
  :selector {:layer-id layer-id} :additive? true}
+{:op :effect-selection/toggle :control :mute
+ :selector {:instance-ids ["0:2"]} :mode :exclusive}
 ```
 
 The toggle acknowledgement lists targeted, changed, and selected instance IDs
@@ -96,8 +105,8 @@ that a preceding additive action has no effect on later commands.
 [Replay and lifecycle tests](../test/tolglow/effects/selection_test.clj)
 
 Studio Perform provides Solo and Mute for individual running effects, category
-filters, and compound layers. Use Shift for an additive click or Add once on a
-touchscreen. The header exposes both defaults and each row displays its own
+filters, and compound layers. Use Shift for an additive click and Alt/Option
+for an exclusive one, or **Add once** and **Exclusive once** on a touchscreen. The header exposes both defaults and each row displays its own
 selection and suppression state. Push bindings, modifier release, and device
 disconnect still need controller verification.
 [REPL and Studio parity](repl-studio-parity.md) · [Issue #532](https://github.com/tolgraven/tolglow/issues/532)

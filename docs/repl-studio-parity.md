@@ -255,7 +255,9 @@ In **Perform → In the mix**, use **Solo** or **Mute** on a running card.
 contribution. The action buttons show which controls are selected. A mixed
 button means some of the selected category or layer members have that flag.
 
-Use **Add once** before an action or hold Shift while clicking to use additive mode. The
+Use **Add once** before an action or hold Shift while clicking to use additive
+mode for that action. Use **Exclusive once** or hold Alt/Option to make that
+action replace the selection, even while the default is additive. The
 **Defaults** control sets the normal mode for Solo and Mute independently.
 Choose a category or **All running** to act on that group. Expand **Layers**
 when a native composition is playing to act on a particular layer.
@@ -271,18 +273,35 @@ open cards update. The same selector supports categories and native layer IDs.
                             :additive? true})))
 ```
 
+To solo one running effect exclusively while the Solo default is additive,
+send `:mode :exclusive`. The acknowledgement's `:selected-instance-ids` holds
+only that instance, and the open Studio cards show every other card as
+**Excluded by Solo** after the same commit. Clicking **Exclusive once** and then
+**Solo** in Studio sends the same command; read it back with the snapshot above.
+
+```clojure
+(let [{:keys [effect-selection]} (show/snapshot runtime)]
+  (when-let [instance-id (first (:included-instance-ids effect-selection))]
+    (select-keys @(show/submit! runtime {:op :effect-selection/toggle :control :solo
+                                         :selector {:instance-ids [instance-id]}
+                                         :mode :exclusive})
+                 [:status :mode :selected-instance-ids])))
+```
+
 See [Effect Solo and Mute](effect-selection.md) for the shared policy and
 examples for configuring the default modes.
 
-**Tracked gap.** The X-Touch's CONTROL inverts the configured mode for one
-press, as the operator's Live script does: with an additive default it
-replaces the selection. Studio's **Add once**, Shift-click and the REPL's
-`:additive? true` only make one action additive; nothing in Studio or the
-shared toggle makes one action exclusive while the default is additive, so
-the unit sends two additive toggles in two owner cycles, add first and drop
-second ([X-Touch](xtouch.md#mixer-layout-tolglow-706-slice-2)). They are not
-atomic: a Studio solo that lands between them survives the drop. #749 tracks a
-per-action mode on the shared toggle that closes this gap.
+The X-Touch's CONTROL inverts the configured mode for one press, as the
+operator's Live script does. It sends the same single toggle with the inverted
+`:mode` ([X-Touch](xtouch.md#mixer-layout-tolglow-706-slice-2)), so Studio,
+the REPL and the unit share one atomic command (#749).
+
+After `npm run studio:build`, `lein with-profile +dev run -m
+tolglow.qa.effect-selection-browser 18890 target/effect-selection-qa` checks both directions against the production
+Studio build in headless Chrome: Studio shows a REPL exclusive Solo, and
+`show/snapshot` shows the result of **Exclusive once**, Alt-click and a plain
+click. Remaining gap: these gestures have not been tried on an iPad or other
+real touchscreen.
 
 ## Suspend automatic section patterns
 
@@ -892,6 +911,44 @@ reads which instances were handed over only from the reasons of the decision
 that noticed it. Push has no auto-mode control. Close these when a performer can
 build a plan in Studio and start or stop auto mode from Push, both reading the
 same projection ([issue #217](https://github.com/tolgraven/tolglow/issues/217)).
+
+## Rehearse a passage with the agent
+
+A rehearsal uses no command of its own: the recorded agent sends
+`configure_auto` and `schedule_events` through `show/dispatch-tool!`, stems
+enter through `show/audio-callbacks` and are routed with `tolglow.stems`, and
+Push gestures are ordinary commands with a Push 3 source. Whatever reads those
+reads the rehearsal. [Rehearsal](rehearsal.md)
+
+From the REPL, review both modes, or play one in real time on a running show:
+
+```clojure
+(require '[tolglow.rehearsal :as rehearsal] '[tolglow.rehearsal.passage :as passage])
+(println (:report (rehearsal/club 670)))
+(println (:report (rehearsal/concert 670)))
+;; On a show started with (rehearsal/room-model p), Studio open:
+(rehearsal/play! runtime (passage/concert 670 :b))
+```
+
+In Studio, during `play!` (or `tolglow.qa.rehearsal room <port> …`) the show
+is an ordinary running show: the Room renders its committed frames, **Perform →
+Tools → Let it wander** reads the agent's mood as the running auto config and
+section, and the schedule lists the posted anchors and the chorus build. A
+Studio action meanwhile (Stop auto, a cue launch) goes through the same owner;
+the agent's next section line reconfigures auto again. A refusal reads the
+same: an anchor posted after its bar comes back from `schedule_events` with the
+scheduler's "has already passed" message in the agent log. Checked so far
+through Studio's own projection only: `tolglow.qa.rehearsal room 18871 club 670`
+sampled `/api/state` every 4 s and read the auto section (drive, lift, none in
+the breakdown and quiet) and the running looks while the agent's four changes
+were accepted 0–0.1 beats after their lines. The Studio page was not opened in
+a browser for this.
+
+**Tracked gaps.** Studio cannot start a rehearsal, choose a passage or take,
+or read the review and its flags; the review is REPL and file output. Push
+cannot start one. Close these when an operator can start a Room rehearsal and
+read its review in Studio, from the same `tolglow.rehearsal` operations
+([issue #670](https://github.com/tolgraven/tolglow/issues/670)).
 
 ## Reviewing a show feature
 

@@ -102,6 +102,11 @@
   (is (= "{3 :c 2 :b 1 :a}" (pretty/edn (sorted-map-by > 1 :a 2 :b 3 :c))))
   (is (= "{:id :x :a 1}" (pretty/edn (sorted-map :a 1 :id :x)))))
 
+(deftest an-infinite-width-keeps-everything-on-one-line
+  (let [value [1 [2 3] (map inc (range 3))]]
+    (is (= "[1 [2 3] (1 2 3)]" (pretty/edn value {:width ##Inf})))
+    (is (= {:text "[1 [2 3] (1 2 3)]" :truncated? false} (pretty/edn-within value {:width ##Inf :max-chars 100})))))
+
 (deftest printing-ignores-the-callers-print-limits
   (binding [*print-length* 2 *print-level* 1]
     (is (= "[1 2 3 [4 [5]]]" (pretty/edn [1 2 3 [4 [5]]])))))
@@ -156,6 +161,32 @@
           (is (<= (count text) max-chars))
           (is (every? #{\( \space \newline} text))))
       (is (<= @realized (* 64 1025)))))
+  (testing "a deep but finite lazy value prints the whole budget (#760)"
+    ;; Elements already realized are not charged again by each ancestor's
+    ;; one-line probe, so depth no longer eats into the allowance.
+    (doseq [depth [1 8 12 16]]
+      (let [{:keys [realized tick!]} (guarded (* 64 8193))
+            nest (fn nest [d] (if (zero? d) 0 (map (fn [_] (tick!) (nest (dec d))) (range 20000))))
+            {:keys [text truncated?]} (pretty/edn-within (nest depth) {:max-chars 8192})]
+        (is truncated? (str "depth " depth))
+        (is (= 8192 (count text)) (str "depth " depth))
+        (is (= (str (apply str (repeat depth "(")) "0 0") (subs text 0 (+ depth 3))))
+        (is (<= @realized (* 64 8193)) (str "depth " depth " realized " @realized)))))
+  (testing "a chunked tail behind cons cells is charged for what it realizes"
+    (let [{:keys [realized tick!]} (guarded (+ (* 64 11) 32))
+          chain (fn chain [d] (if (zero? d) 0 (cons (chain (dec d)) (map (fn [i] (tick!) i) (range 1 1000)))))
+          {:keys [truncated?]} (pretty/edn-within (chain 3000) {:max-chars 10})]
+      (is truncated?)
+      (is (<= @realized (* 64 11)) (str "realized " @realized))))
+  (testing "a finished sequence walked again costs nothing, even with no allowance left"
+    ;; Sized so the allowance (64 × 4) runs out exactly as the inner levels are
+    ;; walked; re-walking the finished first element then must not stop the text.
+    (let [plain (fn plain [xs] (lazy-seq (when (seq xs) (cons (first xs) (plain (rest xs))))))
+          level (fn level [d width] (if (zero? d)
+                                      (plain (range 1 (inc width)))
+                                      (plain (cons (level (dec d) 6) (range 2 (inc width))))))]
+      (is (= {:text "[(1" :truncated? true}
+             (pretty/edn-within [(plain [1 2 3]) (level 50 3)] {:max-chars 3 :width 400})))))
   (testing "a record holding an infinite seq is cut by the budget too"
     (let [{:keys [text truncated?]} (pretty/edn-within [(->Holder (range))] {:max-chars 200})]
       (is truncated?)

@@ -242,7 +242,7 @@
             :autopilot (get-in model [:variables :lighting/autopilot] {:enabled? false})
             :audio/energy (get-in model [:variables :audio/energy])
             :lighting-scenes (lighting-scenes/snapshot model (scene-eligible-ids runtime fixtures))
-            :video (let [shaders (when (seq @(get-in runtime [:shader-video :entries]))
+            :video (let [shaders (when (shader-producer/active? (:shader-video runtime))
                                    (shader-producer/status (:shader-video runtime)))]
                      (when (or shaders (seq (get-in model [:settings :video :sources])) (seq (get-in model [:settings :video :mappings]))
                                (seq (get-in model [:settings :video :surfaces])))
