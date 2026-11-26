@@ -96,10 +96,12 @@ steps: step `floor(u × n)` of the `n` values from `from` to `to`.
 - An **enum** steps through its declared values between the two endpoints.
   A **boolean** switches at the halfway point.
 
-**No hysteresis.** A position exactly on a boundary `k/n` selects step `k`, the
-upper step, in either sweep direction. A position a hair below selects step
-`k − 1`. Positions within 10⁻⁹ below a boundary count as on it, so a decimal
-`3/7` behaves like the exact fraction. The knob is the operator's own position,
+**No hysteresis.** A knob position exactly on a boundary selects the step that
+a slightly higher position selects, in either sweep direction. A position a
+hair below selects the previous step. Boundaries are placed before the
+direction is applied, so `:direction :down` over `[a b]` steps exactly like
+`:up` over `[b a]`, boundaries included. Positions within 10⁻⁹ below a boundary
+count as on it, so a decimal `3/7` behaves like the exact fraction. The knob is the operator's own position,
 so the same value must give the same step on Studio, Push, the REPL and after a
 reload. Hysteresis would make the step depend on the path taken. Layer priority
 uses hysteresis because it follows a free-running waveform; a knob does not.

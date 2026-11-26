@@ -205,7 +205,7 @@
 
 (defn- exact [x] (if (decimal? x) (rationalize x) x))
 
-(defn- ratio-steps
+(defn- compute-ratio-steps
   "Ascending exact beat ratios between the link endpoints and schema bounds."
   [mode schema [a b]]
   (let [low (min (exact a) (exact b)) high (max (exact a) (exact b))
@@ -217,6 +217,20 @@
                                  n (range (max 1 (long (Math/floor (* low d)))) (inc (long (Math/ceil (* high d)))))]
                              (/ n d)))]
     (vec (sort (distinct (filter within? candidates))))))
+
+(def ^:private ratio-step-cache
+  "Pure memo of ratio step lists. A free-ratio link over a wide range has
+  thousands of exact fractions, and one knob turn or projection asks for the
+  same list several times per link; recomputing it each time costs
+  milliseconds on the show owner."
+  (atom {}))
+
+(defn- ratio-steps [mode schema [a b]]
+  (let [key [mode (:bounds schema) (exact a) (exact b)]]
+    (or (get @ratio-step-cache key)
+        (let [steps (compute-ratio-steps mode schema [a b])]
+          (swap! ratio-step-cache #(assoc (if (>= (count %) 256) {} %) key steps))
+          steps))))
 
 (defn- discrete-steps
   "Ordered discrete values a link steps through, from its first endpoint to its
@@ -296,12 +310,17 @@
 ;; ---------------------------------------------------------------------------
 ;; Resolution: knob value -> destination value
 
+(defn- curved
+  "Knob position through the link's input window and curve, in 0–1, before direction."
+  [{:keys [input curve]} value]
+  (let [[low high] (or input [0 1])
+        x (cond (<= value low) 0.0 (>= value high) 1.0 :else (/ (- value low) (- high low)))]
+    (min 1.0 (max 0.0 (double (easing/sample (or curve :linear) x))))))
+
 (defn shaped
   "Knob position through the link's input window, curve and direction, in 0–1."
-  [{:keys [input curve direction]} value]
-  (let [[low high] (or input [0 1])
-        x (cond (<= value low) 0.0 (>= value high) 1.0 :else (/ (- value low) (- high low)))
-        y (min 1.0 (max 0.0 (double (easing/sample (or curve :linear) x))))]
+  [{:keys [direction] :as link} value]
+  (let [y (curved link value)]
     (if (= :down direction) (- 1.0 y) y)))
 
 (defn step-index
@@ -310,6 +329,15 @@
   direction. The same knob value always resolves to the same step."
   [u n]
   (max 0 (min (dec n) (long (Math/floor (+ (* (double u) n) boundary-tolerance))))))
+
+(defn link-step
+  "Step of n a knob value selects on a stepped link. Boundaries are placed in
+  knob space before direction: a knob position on a boundary selects the step
+  a slightly higher position selects, so :direction :down over [a b] steps
+  exactly like :up over [b a], boundaries included."
+  [{:keys [direction] :as link} value n]
+  (let [k (step-index (curved link value) n)]
+    (if (= :down direction) (- (dec n) k) k)))
 
 (defn- constrain [schema value]
   (let [[low high] (or (:bounds schema) (when (= :color (:type schema)) [0 1]))
@@ -325,7 +353,7 @@
   (let [u (shaped link value)
         [a b] range]
     (if-let [steps (discrete-steps link schema)]
-      (nth steps (step-index u (count steps)))
+      (nth steps (link-step link value (count steps)))
       (let [lerp #(+ % (* u (- %2 %)))
             continuous (if (#{:color :vector} (:type schema)) (mapv lerp a b) (lerp a b))
             continuous (if (and (= :integer quantize) (= :number (:type schema)))
@@ -588,7 +616,7 @@
       (some? current) (assoc :current (display current schema unit))
       (seq targets) (assoc :targets targets)
       diverged? (assoc :diverged? true)
-      steps (assoc :steps (count steps) :step (step-index (shaped link (:value knob)) (count steps))))))
+      steps (assoc :steps (count steps) :step (link-step link (:value knob) (count steps))))))
 
 (defn projection
   "Knobs in creation order with every link resolved at the knob's value."

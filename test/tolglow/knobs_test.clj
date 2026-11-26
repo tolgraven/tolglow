@@ -88,6 +88,21 @@
       (is (= 1 (knobs/step-index 1/2 2)))
       (is (= 0 (knobs/step-index 0.4999 2)))
       (is (= 3 (knobs/step-index (/ 3.0 7) 7)) "a decimal boundary behaves like its exact fraction")))
+  (testing ":direction :down over [a b] steps exactly like :up over [b a], boundaries included"
+    (let [period {:type :number :bounds [1/64 64] :semantic/type :beat-ratio}
+          reversed (param :rate :range [2 1/2] :quantize {:ratios :preferred})
+          down (param :rate :range [1/2 2] :direction :down :quantize {:ratios :preferred})
+          positions (sort (distinct (concat (map #(/ % 7.0) (range 8)) (map #(- (/ % 7.0) 1e-6) (range 1 8))
+                                            (map #(+ (/ % 7.0) 1e-6) (range 7)) (map #(/ % 100.0) (range 101)))))]
+      (doseq [k positions]
+        (is (= (knobs/resolve-value reversed period k) (knobs/resolve-value down period k)) (str "knob " k)))
+      (is (= 3/2 (knobs/resolve-value down period (/ 1 7.0))) "a boundary selects the step above it")
+      (is (= 2 (knobs/resolve-value down period (- (/ 1 7.0) 1e-6))))
+      (testing "booleans and enums too"
+        (is (= [false true true] (mapv #(knobs/resolve-value (param :strobe? :range [true false] :direction :down)
+                                                            (schema :strobe?) %) [0.4999 0.5 1])))
+        (is (= (mapv #(knobs/resolve-value (param :mode :range [:d :b]) (schema :mode) %) [0 1/3 2/3 1])
+               (mapv #(knobs/resolve-value (param :mode :range [:b :d] :direction :down) (schema :mode) %) [0 1/3 2/3 1]))))))
   (testing "display text keeps ratios exact and adds units"
     (is (= {:value 3/2 :text "3/2 beats" :unit :beats :ratio [3 2]}
            (knobs/display 3/2 knobs/period-schema nil)))
