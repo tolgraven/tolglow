@@ -10,6 +10,7 @@
             [afterglow.spatial.field :as field]
             [afterglow.time :as time]
             [tolglow.autopilot.signal :as signal]
+            [tolglow.compiler.capability :as capability]
             [tolglow.rig.surfaces :as surfaces]
             [tolglow.spatial.actions :as actions]
             [tolglow.spatial.cues :as cues]
@@ -101,7 +102,9 @@
   "Resolve a cue's selected fixture scope on every Tolglow control surface,
   including subscriber callbacks, composition steps and simulated admissions.
   Every such launch also passes the synchronized aim path launch checks and
-  stretches a musical arrival the current tempo makes too fast for the heads."
+  stretches a musical arrival the current tempo makes too fast for the heads.
+  Explicit targets that name a head lacking a written attribute are refused,
+  and heads the capability filter skips are reported (#688)."
   ([model command] (apply-command model command nil))
   ([model command authority]
    (if-not (#{:cue/launch :effect/launch} (:op command))
@@ -120,7 +123,8 @@
                                        {:command-id (:command-id command) :status :rejected :code :invalid-target
                                         :message (ex-message error) :details (ex-data error)})})))]
        (if-let [scoped (:command prepared)]
-         (targets/remember (aim-paths/stretch-launch (control/apply-command model scoped) model scoped) scoped)
+         (let [admitted (capability/admit-launch model scoped (control/apply-command model scoped))]
+           (targets/remember (aim-paths/stretch-launch admitted model scoped) scoped))
          {:model model :events [] :ack (:ack prepared)})))))
 
 (defn- stage [model events]

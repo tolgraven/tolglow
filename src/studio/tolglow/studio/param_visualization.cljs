@@ -257,9 +257,7 @@
 (defn history-chart [schema history window & [attach lead push? grid]]
   (let [{:keys [bounds paths]} (chart-paths history window schema lead)
         values (:values (peek history))
-        labels (when (> (count paths) 1)
-                 (or (:component-labels schema)
-                     (if (= :color (views/color-kind schema)) ["R" "G" "B" "A"] ["X" "Y" "Z" "W"])))]
+        labels (when (> (count paths) 1) (views/component-labels schema))]
     [:figure.parameter-history {:aria-label "Observed parameter history" :data-dmx-bits (:dmx-bits schema)}
      [:div.history-reading {:class (when push? "push-reading") :data-components (count values)}
       (for [[i v] (map-indexed vector values)]
@@ -358,7 +356,7 @@
 (defn push [view {:keys [schema effective-value value param id preview-samples] :as parameter} & [touched?]]
   (let [shown (if (some? effective-value) effective-value value)]
     (case (push-mode parameter (:parameter-view view))
-      :color [widgets/color-view shown {:selected (:component-label parameter)}]
+      :color [widgets/color-view shown {:selected (:component-label parameter) :schema schema}]
       :spatial [space schema shown
                 (if-let [keyframe (get-in view [:parameter-observations (or param id)])]
                   (spatial-value schema keyframe (get-in view [:visualization-clock :time-ms]))
@@ -406,7 +404,7 @@
   [mode schema value clock observed window & [options]]
   (case mode
     :spatial [space schema value (spatial-value schema @observed (:time-ms clock))]
-    :color [widgets/color-view value]
+    :color [widgets/color-view value {:schema schema}]
     [scrolling-history schema @observed window (:timing clock) (:period-beats options)]))
 
 (def observed-visual

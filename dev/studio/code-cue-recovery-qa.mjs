@@ -171,32 +171,25 @@ try {
   assert.deepEqual(studioStart, {version: 1, instances: [[studioInstance, 1]], color: [0, 1, 0]});
   await page.reload({waitUntil: 'domcontentloaded'});
   await page.locator('.definition-item').filter({hasText: studioName}).filter({hasText: 'Effect · v1'}).click();
-  await page.locator('#definition-status').filter({hasText: `${studioId} · v1`}).waitFor();
-  // Record what the Definitions editor's Neovim delivers through onChange. Each change
-  // replaces the publication feedback with "Unpublished changes", including the echo of
-  // the initial load and an edit that arrives after its own publication reply.
+  const loadedStatus = `${studioId} · v1`;
+  await page.locator('#definition-status').filter({hasText: loadedStatus}).waitFor();
+  // Record what the Definitions editor's Neovim delivers through onChange, and keep the
+  // engine so the proof can read its buffer. Neovim echoes the initial load and delivers
+  // each edit 200 ms after it; neither may replace the editor's status by itself (#696).
   await page.evaluate(async () => {
     const {NeovimEngine} = await globalThis.tolglowLoadEngine('neovim');
     const start = NeovimEngine.prototype.start;
     NeovimEngine.prototype.start = function (source) {
       const deliver = this.onChange;
       globalThis.definitionDeliveries = [];
+      globalThis.definitionEngine = this;
       this.onChange = (text, ...rest) => { globalThis.definitionDeliveries.push(text); deliver(text, ...rest); };
       return start.call(this, source);
     };
   });
-  await page.locator('#editor-engine').selectOption('neovim');
-  await page.locator('#neovim-status').filter({hasText: 'running in WebAssembly'}).waitFor();
-  const loaded = (await request(`/api/definition?kind=effects&id=${studioId}`)).body.source;
-  const reached = text => page.waitForFunction(expected => globalThis.definitionDeliveries.at(-1) === expected, text);
-  const publish = async () => {
-    const response = page.waitForResponse(r => r.url().endsWith('/api/definition') && r.request().method() === 'POST');
-    await page.getByRole('button', {name: 'Validate & publish'}).click();
-    return (await response).status();
-  };
+  const read = () => page.evaluate(() => ({status: document.querySelector('#definition-status')?.textContent,
+    result: document.querySelector('#validation-result')?.textContent, error: document.querySelector('#validation-result')?.classList.contains('error')}));
   const feedback = async (ready, what) => {
-    const read = () => page.evaluate(() => ({status: document.querySelector('#definition-status')?.textContent,
-      result: document.querySelector('#validation-result')?.textContent, error: document.querySelector('#validation-result')?.classList.contains('error')}));
     for (let wait = 0; wait < 100; wait++) {
       const current = await read();
       if (ready(current)) return current;
@@ -204,26 +197,77 @@ try {
     }
     throw new Error(`Studio did not show ${what}: ${JSON.stringify(await read())}`);
   };
-  await page.locator('#neovim-host .nvim-input').focus();
-  await page.keyboard.type('$x');
-  await reached(loaded.slice(0, -1));
-  assert.equal(await publish(), 400);
-  const error = (await feedback(current => current.error, 'the rejection')).result;
+  // Once a delivery has been dispatched, give re-frame and the render well over a frame.
+  const settled = async () => { await new Promise(resolve => setTimeout(resolve, 400)); return read(); };
+  const deliveryCount = () => page.evaluate(() => globalThis.definitionDeliveries.length);
+  const statuses = {};
+
+  await page.locator('#editor-engine').selectOption('neovim');
+  await page.locator('#neovim-status').filter({hasText: 'running in WebAssembly'}).waitFor();
+  const loaded = (await request(`/api/definition?kind=effects&id=${studioId}`)).body.source;
+  await page.waitForFunction(() => globalThis.definitionDeliveries.length > 0, null, {timeout: 10000});
+  assert.equal(await page.evaluate(() => globalThis.definitionDeliveries[0]), loaded, 'Neovim echoes the loaded text');
+  statuses.neovimSelected = await settled();
+  assert.deepEqual(statuses.neovimSelected, {status: loadedStatus, result: 'Loaded from the running show.', error: false});
+
+  const reached = text => page.waitForFunction(expected => globalThis.definitionDeliveries.at(-1) === expected, text);
+  const publish = async () => {
+    const response = page.waitForResponse(r => r.url().endsWith('/api/definition') && r.request().method() === 'POST');
+    await page.getByRole('button', {name: 'Validate & publish'}).click();
+    return (await response).status();
+  };
+  // Edit, wait until Neovim's buffer holds the edit, then publish before the 200 ms change
+  // delivery where the machine allows. Publishing reads the buffer itself. Whichever of the
+  // reply and the delivery lands first, the reply's status must survive the delivery.
+  const editAndPublish = async (type, expected) => {
+    const before = await deliveryCount();
+    await page.locator('#neovim-host .nvim-input').focus();
+    await type();
+    for (let wait = 0; ; wait++) {
+      if (await page.evaluate(() => globalThis.definitionEngine.text()) === expected) break;
+      assert.ok(wait < 500, 'Neovim did not apply the edit');
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    const status = await publish();
+    return {status, deliveredBeforeReply: (await deliveryCount()) > before};
+  };
+
+  const brokenPublish = await editAndPublish(() => page.keyboard.type('$x'), loaded.slice(0, -1));
+  assert.equal(brokenPublish.status, 400);
+  statuses.rejected = await feedback(current => current.error, 'the rejection');
+  assert.equal(statuses.rejected.status, 'Publication failed');
+  const error = statuses.rejected.result;
   assert.match(error, /EOF|delimiter|Unmatched/i);
+  await reached(loaded.slice(0, -1));
+  statuses.rejectedAfterDelivery = await settled();
+  assert.deepEqual(statuses.rejectedAfterDelivery, statuses.rejected);
   assert.deepEqual(await show(studioId), studioStart);
   await page.screenshot({path: join(output, 'studio-rejected.png')});
-  await page.locator('#neovim-host .nvim-input').focus();
-  await page.keyboard.type(`:undo | s/${green.slice(1, -1)}/${blue.slice(1, -1)}/`);
-  await page.keyboard.press('Enter');
-  await reached(loaded.replace(green, blue));
-  assert.equal(await publish(), 200);
-  await feedback(current => /Published/.test(current.status) && !current.error, 'the publication');
+
+  const fixedSource = loaded.replace(green, blue);
+  const fixedPublish = await editAndPublish(async () => {
+    await page.keyboard.type(`:undo | s/${green.slice(1, -1)}/${blue.slice(1, -1)}/`);
+    await page.keyboard.press('Enter');
+  }, fixedSource);
+  assert.equal(fixedPublish.status, 200);
+  statuses.published = await feedback(current => current.status === 'Published' && !current.error, 'the publication');
+  await reached(fixedSource);
+  statuses.publishedAfterDelivery = await settled();
+  assert.deepEqual(statuses.publishedAfterDelivery, statuses.published);
   const studioEnd = await show(studioId);
-  const deliveries = await page.evaluate(() => globalThis.definitionDeliveries.length);
   assert.deepEqual(studioEnd, {version: 2, instances: [[studioInstance, 2]], color: [0, 0, 1]});
   await page.screenshot({path: join(output, 'studio-recovered.png')});
-  assert.equal((await feedback(() => true, 'the final status')).status, 'Published');
-  report.studio = {instance: studioInstance, start: studioStart, rejected: error, end: studioEnd, deliveries};
+
+  // A genuinely different delivery still marks the definition unpublished.
+  await page.locator('#neovim-host .nvim-input').focus();
+  await page.keyboard.type('GA ;more');
+  await page.keyboard.press('Escape');
+  await reached(fixedSource + ' ;more');
+  statuses.edited = await feedback(current => current.status === 'Unpublished changes', 'unpublished changes');
+  assert.deepEqual(statuses.edited, {status: 'Unpublished changes', result: '', error: false});
+  const deliveries = await deliveryCount();
+  report.studio = {instance: studioInstance, start: studioStart, rejected: error, end: studioEnd, deliveries, statuses,
+    deliveredBeforeReply: {rejected: brokenPublish.deliveredBeforeReply, published: fixedPublish.deliveredBeforeReply}};
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({status: 'passed', ...report}, null, 2));
 } finally {
