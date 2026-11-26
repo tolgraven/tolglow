@@ -21,6 +21,7 @@
             [tolglow.studio.events :as events]
             [tolglow.studio.keyframe-editor :as keyframes]
             [tolglow.studio.knobs :as knobs]
+            [tolglow.studio.knob-presets :as knob-presets]
             [tolglow.studio.reactive-editor :as reactive-editor]
             [tolglow.studio.expressive-mapping :as expressive]
             [tolglow.studio.effect-group-mixer :as effect-group-mixer]
@@ -620,7 +621,7 @@
      [:div.performance-layout {:class (when (get-in db [:ui :preview-expanded?]) "preview-expanded")}
       [:div.performance-launch [cue-grid db]]
       [:div.performance-live [section-pattern-panel db] [personality/panel] [performance/board db parameter-control]
-       [effect-group-mixer/panel] [knobs/panel db]
+       [effect-group-mixer/panel] [knobs/panel db] [knob-presets/panel db] ; knob looks (#547)
        [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
       [:div.performance-room [room-window/room db preview-panel]]
       [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]]]))
