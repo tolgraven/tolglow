@@ -20,11 +20,15 @@ echo '8240639e54a1270fbc11cd56b5f5f0d0ea4aab839a9b80c791978aef4522e01e  sqlite.j
 # thirds of the heap and runs out during layout.
 heap="${TOLGLOW_NATIVE_IMAGE_HEAP:-5g}"
 # Report the builder's resident memory, the compressor and swap once a minute,
-# so a slow phase shows whether it is paging rather than deadlocked.
+# so a slow phase shows whether it is paging rather than deadlocked. The
+# heartbeat reaps its own sleep when stopped, so no orphan keeps the step's
+# output open after the build.
 descendants() { local child; for child in $(pgrep -P "$1"); do echo "$child"; descendants "$child"; done; }
 (
+  nap=
+  trap 'kill $nap 2>/dev/null; exit 0' TERM
   start=$SECONDS
-  while sleep 60; do
+  while sleep 60 & nap=$!; wait "$nap"; do
     pids=$(descendants $$ | paste -sd, -)
     rss=$(ps -o rss= -p "${pids:-$$}" | awk '{kb += $1} END {printf "%.2f", kb / 1048576}')
     compressed=$(vm_stat | awk '/page size of/ {size = $8} /occupied by compressor/ {gsub(/\./, "", $5); printf "%.2f", $5 * size / 1073741824}')
