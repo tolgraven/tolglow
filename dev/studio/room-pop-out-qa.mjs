@@ -182,11 +182,12 @@ try {
     return {revision: s?.revision, frame: s?.['frame-number'], output: JSON.stringify(s?.output?.values ?? null)};
   });
   const before = await roomState();
-  const instancesBefore = await page.locator('[data-live-instance]').count();
+  const instancesBefore = await page.locator('[data-live-instance]:not(.releasing)').count();
   const cue = page.locator('#cue-grid [data-cue-id]').first();
   const cueId = await cue.getAttribute('data-cue-id');
   await cue.click();
-  await page.waitForFunction(n => document.querySelectorAll('[data-live-instance]').length > n, instancesBefore, {timeout: 10000});
+  // The cue toggles: it starts, or stops when an earlier run left it running.
+  await page.waitForFunction(n => document.querySelectorAll('[data-live-instance]:not(.releasing)').length !== n, instancesBefore, {timeout: 10000});
   await room.waitForFunction(previous => {
     const s = document.querySelector('#preview').tolglowPreview.snapshot;
     return JSON.stringify(s?.output?.values ?? null) !== previous;
