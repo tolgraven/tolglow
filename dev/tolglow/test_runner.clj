@@ -57,6 +57,7 @@
     tolglow.show.scene-draft-test
     tolglow.controllers.content-browser-test tolglow.controllers.content-browser-host-test
     tolglow.controllers.content-browser-display-test tolglow.surface.link-host-test tolglow.surface.descriptor-test
+    tolglow.surface.x-touch-host-test
     tolglow.timeline-test
     tolglow.preview.airplay-test
     tolglow.personalities-test tolglow.personalities.icon-test tolglow.personalities-host-test

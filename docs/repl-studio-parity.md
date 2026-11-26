@@ -682,8 +682,25 @@ a REPL move and a Studio move all update the open session boxes and both units.
 A refused move (an unknown surface, a cell that is not on it) shows its reason;
 a follow move for a cell a surface does not hold is ignored quietly.
 
+Each logical surface also carries a committed layout state (#706 slice 2):
+the encoder mode, its page, the selected strip and flip, under `:layout` in
+each `:logical` entry. The X-Touch PAN, SEND, PLUG-IN, USER, EQ/INST, SELECT
+and FLIP buttons, `show/surface-layout!` and Studio's encoder mode menu in the
+session box all commit `:control-surface/layout`:
+
+```clojure
+@(show/surface-layout! runtime "desk" {:encoder-mode :plug-in :selected [:cue :ember]})
+(:layout (first (:logical (:control-surfaces (show/snapshot runtime)))))
+;; => {:encoder-mode :plug-in, :page 0, :selected [:cue :ember], :flip? false}
+```
+
+The session box's menu shows the mode that a button press on the unit
+selected, and its tooltip names the page, the selected strip and flip.
+
 **Tracked gaps.** Studio has no form for up/down links, follow offsets other
-than one page, or a member's non-default viewport; the REPL accepts all three. A Studio page component is not yet a surface of its
+than one page, or a member's non-default viewport; the REPL accepts all three.
+Studio shows the selected strip only in the menu's tooltip and cannot select a
+strip or page the encoders itself (the REPL and the unit can). A Studio page component is not yet a surface of its
 own (#706 slice 5). Close these gaps when Studio can place a member anywhere and
 a Studio grid can mirror or follow a Push page.
 
