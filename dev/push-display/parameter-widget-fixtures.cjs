@@ -83,6 +83,13 @@ const shapeGlyphs = {...base, cue: {name: 'Shape glyphs', active: true},
                choice('Waveform', selector, 2),
                choice('Volume', {type: 'enum', values: ['sphere', 'rounded-box']}, 'sphere'),
                choice('Osc mode', {type: 'enum', values: ['sine', 'random']}, 'random')]};
+// One known value in each colour layout (#698); the touched RGBW one shows its white track.
+const layout = (type, value) => ({id: type, param: type, name: type.toUpperCase(), component: 0,
+  schema: {type: 'vector', size: value.length, bounds: [0, 1], 'semantic/type': type}, value});
+const rgbw = layout('rgbw', [0.5, 0, 0, 0.5]);
+const colourLayouts = {...base, cue: {name: 'Colour layouts', active: true},
+  parameters: [layout('rgb', [1, 0.5, 0]), layout('rgba', [0, 0, 1, 0.5]), rgbw, layout('hsl', [1 / 3, 1, 0.5]),
+               layout('hsla', [2 / 3, 1, 0.25, 0.5]), layout('hsv', [0, 1, 1]), null, null]};
 const scenarios = {
   untouched: base,
   'single-touch': {...base, 'touched-parameter': {'instance-id': 'a', param: 'level', component: 0}},
@@ -92,7 +99,10 @@ const scenarios = {
   'spatial-touch': {...base, 'touched-parameter': {'instance-id': 'a', param: 'position', component: 0}},
   'grid-periods': periods,
   'vector-magnitudes': magnitudes,
-  'shape-glyphs': shapeGlyphs
+  'shape-glyphs': shapeGlyphs,
+  'colour-layouts': colourLayouts,
+  'colour-layout-touch': {...colourLayouts, parameters: [rgbw, null, null, null, null, null, null, null],
+    'touched-parameter': {'instance-id': 'a', param: 'rgbw', component: 0}}
 };
 
 server.listen(Number(process.env.PORT || 0), '127.0.0.1', async () => {
