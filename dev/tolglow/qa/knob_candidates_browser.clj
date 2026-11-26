@@ -32,7 +32,9 @@
         repl! #(accepted! @(show/submit! host :command (merge {:source {:adapter :repl :session-id "qa"}} %)) (pr-str %))]
     (try
       (.mkdirs (io/file directory))
-      (doseq [cue [:beam-shafts :strobe :can-can :mover-orbit :wash-tide :gather-path :colour-drift]
+      ;; No colour strobe here: it gates the whole coloured rig, so a Room
+      ;; screenshot would land on a dark phase two times in three.
+      (doseq [cue [:beam-shafts :aurora :can-can :mover-orbit :wash-tide :gather-path :colour-drift]
               :let [id (:instance-id (repl! {:op :cue/launch :cue-id cue :launch {:mode :persistent}}))]
               [param binding] (get looks/sources cue)]
         (accepted! @(show/submit! host :modulation-bind {:instance-id id :param param :binding binding})

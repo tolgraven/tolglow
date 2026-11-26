@@ -64,6 +64,8 @@ async function browserPhase(page) {
   const params = show => Object.fromEntries(show.instances.map(i => [i.id, i.params]));
   assert.deepEqual(params(auditioned), params(before), 'live parameters unchanged');
   assert.equal(await banner.getByRole('button', {name: 'Apply'}).count(), 0, 'a candidate cannot be applied as a scene');
+  // Let the Room draw a few audition frames before the picture.
+  await page.waitForTimeout(1500);
   await page.locator('#preview-panel').screenshot({path: join(directory, 'room-candidate-audition.png')});
   await panel.screenshot({path: join(directory, 'candidate-panel-seed-11.png')});
 
