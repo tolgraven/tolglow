@@ -231,3 +231,157 @@
         (is (< (abs (- 190.0 (committed-pan-deg runtime head))) 1.0e-3)
             "Frame 0 commands the prepositioned wrap, not a full-turn jump"))
       (finally (show/stop! runtime)))))
+
+(def ^:private head-words
+  "Packed [coarse fine] channel positions of each paired head's pan and tilt."
+  {:far-travel {:pan [[1 510] [2 0]] :tilt [[1 511] [2 1]]}
+   :slow-motor {:pan [[2 4] [2 5]] :tilt [[2 6] [2 7]]}})
+
+(def ^:private frame-ms 25)
+
+(defn- commanded-move
+  "Publish the two-bar paired move at 120 BPM, launch it at 0 ms on a capture
+  sink and tick every 25 ms. `changes` maps a frame time to transport changes
+  admitted in that owner cycle; a change at 0 follows the launch command.
+  Returns one {:t :packet :words} per frame and the launched instance.
+  :twin? launches the same outputs as an ordinary effect, which has no
+  synchronized-path launch handling and reads the beat clock alone."
+  [changes & {:keys [twin? until-ms] :or {until-ms 4500}}]
+  (let [captured (atom nil)
+        runtime (show/create-runtime
+                 {:workspace-options nil
+                  :model (control/new-show {:rig {:fixtures paths/paired-heads}})
+                  :sink {:send! (fn [universes _]
+                                  (reset! captured (update-vals universes #(mapv (partial bit-and 255) %))))}})
+        frame (fn [t]
+                {:t t :packet @captured
+                 :words (update-vals head-words (fn [axes] (update-vals axes #(apply word @captured %))))})
+        change! (fn [t] (when-let [transport (get changes t)]
+                          (show/submit! runtime :command {:op :transport/set :transport transport})))]
+    (try
+      (let [spec (assoc paths/synchronized-spec :targets ["far-travel" "slow-motor"] :duration {:bars 2})
+            published (post! runtime "/api/aim-path" spec 0)
+            definition (get-in @(:state runtime) [:model :registry :effects :paired])
+            _ (when twin?
+                (submit-at! runtime :command {:op :registry/publish :kind :effects
+                                              :definition (-> definition (dissoc :editor) (assoc :id :twin :version 1))} 0))
+            launch (show/submit! runtime :command (if twin? {:op :effect/launch :effect-id :twin}
+                                                      {:op :cue/launch :cue-id :paired}))
+            changed (change! 0)
+            _ (show/tick! runtime 0)
+            launch (deref launch 1000 ::missing)
+            first-frame (frame 0)
+            instance (get-in @(:state runtime) [:model :instances (:instance-id launch)])
+            frames (into [first-frame]
+                         (map (fn [t]
+                                (let [changed (change! t)]
+                                  (show/tick! runtime t)
+                                  (when changed
+                                    (assert (= :accepted (:status (deref changed 1000 ::missing)))))
+                                  (frame t))))
+                         (range frame-ms (inc until-ms) frame-ms))]
+        (assert (= "accepted" (get-in published [:data :status])))
+        (assert (= :accepted (:status launch)))
+        (assert (or (nil? changed) (= :accepted (:status (deref changed 1000 ::missing)))))
+        (assert (nil? (get-in (show/snapshot runtime) [:status :error])))
+        {:frames frames :instance instance})
+      (finally (show/stop! runtime)))))
+
+(defn- degrees [fixture words]
+  (frame/fixture-pose fixture (update-vals words #(/ % 65535.0))))
+
+(defn- commanded-rates
+  "Largest commanded mechanical rate in degrees per second between consecutive
+  captured frames, per head and axis, with the rate one 16-bit step adds."
+  [frames]
+  (into {}
+        (for [fixture paths/paired-heads [axis degree] [[:pan :pan-deg] [:tilt :tilt-deg]]]
+          (let [id (:id fixture)
+                value #(get (degrees fixture (get-in % [:words id])) degree)
+                span (abs (- (get (degrees fixture {:pan 65535 :tilt 65535}) degree)
+                             (get (degrees fixture {:pan 0 :tilt 0}) degree)))]
+            [[id axis] {:max (reduce max 0.0 (map (fn [a b] (/ (abs (- (value b) (value a))) (/ (- (:t b) (:t a)) 1000.0)))
+                                                  frames (rest frames)))
+                        :step (/ (/ span 65535.0) (/ frame-ms 1000.0))
+                        :calibrated (get-in fixture [:calibration :motor-rate-deg-per-sec axis])}]))))
+
+(defn- rate-violations
+  "Head axes whose largest commanded rate exceeds the calibrated rate by more
+  than one 16-bit step, as [[id axis] degrees-per-second calibrated]."
+  [frames]
+  (vec (for [[axis {:keys [max step calibrated]}] (commanded-rates frames)
+             :when (> max (+ calibrated step))]
+         [axis max calibrated])))
+
+(defn- pan-arrivals
+  "First frame time at which each head's packed pan word is its final word."
+  [frames]
+  (into {} (for [id (keys head-words)]
+             (let [pan #(get-in % [:words id :pan])]
+               [id (:t (first (filter #(= (pan (peek frames)) (pan %)) frames)))]))))
+
+(defn- frames-apart
+  "Frame times at which two captures differ: in any packet byte, or with a
+  word tolerance, in any pan or tilt word by more than that many 16-bit steps."
+  ([expected actual] (vec (keep (fn [[a b]] (when (not= (:packet a) (:packet b)) (:t a))) (map vector expected actual))))
+  ([expected actual steps]
+   (vec (keep (fn [[a b]]
+                (when (some (fn [[id axis]] (> (abs (- (get-in a [:words id axis]) (get-in b [:words id axis]))) steps))
+                            (for [id (keys head-words) axis [:pan :tilt]] [id axis]))
+                  (:t a)))
+              (map vector expected actual)))))
+
+(def ^:private pan-ends
+  "Packed pan words of the published endpoint: +45 and +2.5 degrees."
+  {:far-travel 40959 :slow-motor 33223})
+
+(def ^:private arrive-together {:far-travel 4000 :slow-motor 4000})
+
+(deftest raising-the-tempo-during-a-musical-synchronized-move-keeps-calibrated-rates
+  (let [{:keys [frames]} (commanded-move {2000 {:bpm 480}})]
+    (is (= [] (rate-violations frames))
+        "No frame commands pan or tilt faster than a head's calibrated rate")
+    (is (< (get-in (commanded-rates frames) [[:slow-motor :pan] :max]) 11.5)
+        "The slow head keeps the 11.25 degrees per second of its launch-tempo interval")
+    (is (= arrive-together (pan-arrivals frames))
+        "Both heads arrive on the frame that ends the launch-tempo interval")
+    (is (= pan-ends (update-vals (:words (peek frames)) :pan)))))
+
+(deftest lowering-the-tempo-during-a-musical-synchronized-move-keeps-its-launch-interval
+  (let [{:keys [frames]} (commanded-move {2000 {:bpm 60}})]
+    (is (= [] (rate-violations frames)))
+    (is (= arrive-together (pan-arrivals frames)))
+    (is (= pan-ends (update-vals (:words (peek frames)) :pan)))))
+
+(deftest tempo-changes-on-the-launch-and-arrival-frames-keep-calibrated-rates
+  (let [unchanged (:frames (commanded-move {}))]
+    (doseq [[label changes] {"raised in the launch cycle, after the launch" {0 {:bpm 480}}
+                             "raised on the last frame before arrival" {3975 {:bpm 480}}
+                             "raised on the arrival frame" {4000 {:bpm 480}}
+                             "lowered on the arrival frame" {4000 {:bpm 30}}
+                             "raised, lowered and raised again" {1000 {:bpm 480} 1500 {:bpm 40} 3000 {:bpm 1000}}}]
+      (let [{:keys [frames]} (commanded-move changes)]
+        (is (= [] (rate-violations frames)) label)
+        (is (= arrive-together (pan-arrivals frames)) label)
+        (is (= [] (frames-apart unchanged frames 1))
+            (str label ": every frame commands the unchanged-tempo pan and tilt within one 16-bit step"))))))
+
+(deftest meter-change-during-a-musical-synchronized-move-leaves-its-frames-unchanged
+  (let [unchanged (:frames (commanded-move {}))
+        {:keys [frames]} (commanded-move {2000 {:meter {:beats-per-bar 3 :bars-per-phrase 4}}})]
+    (is (= [] (frames-apart unchanged frames)))
+    (is (= arrive-together (pan-arrivals frames)))))
+
+(deftest unchanged-tempo-synchronized-move-emits-the-beat-clock-bytes
+  (let [{:keys [frames instance]} (commanded-move {})
+        twin (commanded-move {} :twin? true)]
+    (is (= {:beats 8 :ms 4000.0} (get-in instance [:state :tolglow.compiler/launch-tempo]))
+        "The launched instance carries the interval its two bars took at launch")
+    (is (nil? (get-in twin [:instance :state :tolglow.compiler/launch-tempo])))
+    (is (= 181 (count frames) (count (:frames twin))))
+    (is (= [] (frames-apart (:frames twin) frames))
+        "Without a tempo change every captured packet equals the plain beat-clock tween")
+    (is (= [] (rate-violations frames)))
+    (is (= arrive-together (pan-arrivals frames)))
+    (is (= {:far-travel 32767 :slow-motor 29127} (update-vals (:words (nth frames 80)) :pan))
+        "The midpoint frame keeps the words master captured before the launch-tempo hold")))
