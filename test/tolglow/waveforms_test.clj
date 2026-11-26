@@ -1,6 +1,7 @@
 (ns tolglow.waveforms-test
   (:require [clojure.test :refer [deftest is testing]]
             [afterglow.runtime :as runtime]
+            [afterglow.time :as time]
             [clojure.data.json :as json]
             [tolglow.clock :as clock]
             [tolglow.composition.response :as response]
@@ -40,6 +41,16 @@
               :waveforms registered :instances {"0:1" instance}
               :registry {:effects {:shape effect} :cues {:shape {:id :shape :effect-id :shape}}}}
       :modulation-view {:overrides {}}})))
+
+(defn- with-phase
+  "Drive the fixture selector from another musical phase."
+  [snapshot phase]
+  (let [registered (get-in snapshot [:model :waveforms])
+        schema (get-in snapshot [:model :instances "0:1" :definition :params :waveform])
+        effect (fx/effect :shape {:params {:waveform schema :width (fx/parameter 0.25 {:bounds [0 1]})}}
+                          (fx/intensity (signals/select-waveform registered (fx/param :waveform) (:choices schema)
+                                                                 {:phase phase})))]
+    (assoc-in snapshot [:model :instances "0:1" :definition] effect)))
 
 (deftest live-waveform-uses-captured-parameters-and-the-real-effect-ir
   (let [snapshot (fixture) request {:instance-id "0:1" :parameter "waveform" :options {:samples 9}}
@@ -84,6 +95,41 @@
     (is (= #{0.0} (into #{} (map :value) (:samples static))))
     (is (nil? (project (assoc-in snapshot [:model :instances "0:1" :definition :outputs] {:dimmer 0.5}))))
     (is (nil? (:timeline (waveforms/preview snapshot {:id :pulse :options {:live-timing? true}}))))))
+
+(deftest previews-and-push-views-carry-the-timing-and-grid-of-their-signal
+  (let [snapshot (fixture 4)
+        request {:instance-id "0:1" :parameter :waveform :options {:samples 9 :cycles 2}}
+        result (waveforms/preview snapshot request)
+        seven-eight {:beats-per-bar 3.5 :bars-per-phrase 4}
+        bar (fn [state] (waveforms/preview (with-phase state (fx/cycles {:bars 1}))
+                                           (assoc-in request [:options :cycles] 1)))
+        view (push/display-view {:selected-instance "0:1" :selected-cue :shape :page-id :main :origin [0 0]} (:model snapshot))
+        projected (waveforms/project-display (waveforms/create-cache)
+                                             (assoc-in snapshot [:model :transport :meter] seven-eight) view nil)
+        waveform (first (filter #(= :waveform (:param %)) (:parameters projected)))]
+    (is (= {:period-beats 4.0 :meter time/default-meter :start-beat 0.0 :span-beats 8.0} (:signal-timing result)))
+    (is (= [:beat :bar] (get-in result [:grid :units])))
+    (is (= [:bar :beat :beat :beat :bar :beat :beat :beat :bar] (mapv :unit (get-in result [:grid :lines]))))
+    (is (= (mapv #(/ % 8.0) (range 9)) (mapv :position (get-in result [:grid :lines]))))
+    (is (= {:unit :bar :count 1.0 :beats 4.0} (get-in result [:grid :period])))
+    (testing "a bar period follows the meter the launch captured"
+      (let [captured (bar (assoc-in snapshot [:model :instances "0:1" :timing-meter] seven-eight))]
+        (is (= 3.5 (get-in captured [:signal-timing :period-beats])))
+        (is (= seven-eight (get-in captured [:signal-timing :meter])))
+        (is (= [0.0 1.0 2.0 3.0 3.5] (mapv :beat (get-in captured [:grid :lines]))))
+        (is (= 4.0 (get-in (bar snapshot) [:signal-timing :period-beats])))))
+    (testing "a draft or an output without one musical phase has no grid"
+      (is (nil? (:grid (waveforms/preview snapshot {:id :pulse}))))
+      (is (nil? (:signal-timing (waveforms/preview snapshot {:id :pulse}))))
+      (is (nil? (:grid (waveforms/preview (assoc-in snapshot [:model :instances "0:1" :definition :outputs] {:dimmer 0.5})
+                                          request)))))
+    (testing "the Push view carries the transport meter and the previewed cycle"
+      (is (= {:meter seven-eight} (:musical-timing projected)))
+      (is (= {:period-beats 4.0 :meter time/default-meter :start-beat 0.0 :span-beats 4.0} (:signal-timing waveform)))
+      (is (= {:meter time/default-meter :bar-origin-beat 1.0}
+             (:musical-timing (waveforms/project-display (waveforms/create-cache)
+                                                         (assoc-in snapshot [:model :transport :bar-origin-beat] 1.0)
+                                                         view nil)))))))
 
 (deftest compact-timeline-keeps-refreshing-through-a-flat-part-of-a-long-cycle
   (let [snapshot (fixture 16)

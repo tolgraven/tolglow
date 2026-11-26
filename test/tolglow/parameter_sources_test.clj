@@ -138,6 +138,23 @@
       (is (= [0.875 0.875] (sample {:phrases 1} :transport new-meter)))
       (is (= (sample {:bars 1} :launch frame) (sample {:bars 1} :launch new-meter))))))
 
+(deftest a-sampled-waveform-reports-its-period-in-the-meter-it-follows
+  (let [old (fixture/instance "0:1" fixture/effect)
+        recent (assoc (fixture/instance "0:2" fixture/effect) :timing-meter {:beats-per-bar 7/2 :bars-per-phrase 2})
+        model (assoc (fixture/model) :instances {"0:1" old "0:2" recent})
+        frame {:time-ms 3000 :transport {:beat 6 :meter {:beats-per-bar 3 :bars-per-phrase 2}}}
+        periods (fn [period reference]
+                  (let [binding (assoc saw :period period :phase-reference reference)
+                        bound (reduce (fn [m id] (sources/bind m {:instance-id id :param :level :binding binding}))
+                                      model ["0:1" "0:2"])
+                        {:keys [sources]} (sources/sample bound frame {})]
+                    (mapv #(get-in sources [% :level :period-beats]) ["0:1" "0:2"])))]
+    (is (= [0.25 0.25] (periods {:beats 1/4} :launch)))
+    (is (= [3.0 3.0] (periods {:bars 1} :transport)) "the shared beat follows the current meter")
+    (is (= [4.0 3.5] (periods {:bars 1} :launch)) "a launch keeps the meter it captured")
+    (is (= [6.0 6.0] (periods {:phrases 1} :transport)))
+    (is (= [16.0 7.0] (periods {:phrases 1} :launch)))))
+
 (deftest phase-reference-follows-pause-resume-and-seek-in-its-own-clock
   (doseq [[reference expected] [[:launch [0.25 0.25 0.5 0.5]]
                                 [:transport [0.5 0.75 0.0 0.25]]]]

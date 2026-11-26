@@ -140,6 +140,12 @@ evaluation. The pinned ordering is part of the definition; changing that order
 changes the meaning of numeric controller values and should be an explicit
 revision.
 
+`(signal/glyph waveforms :saw)` returns one cycle of the registered waveform as
+49 values normalised by its `:range`, for shape pickers. It samples the same
+compiled expression as `preview`; `:params`, `:version` and `:samples` options
+apply. The parameter waveform catalog carries each glyph, and Studio and the Push
+display draw selector and shape-enum choices from it.
+
 Waveform categories and effect category/modifier tags are separate from cue grid
 swatches. A UI may color type/category tags without changing an operator's cue
 color choices.

@@ -19,6 +19,7 @@
             [tolglow.studio.connections :as connections]
             [tolglow.studio.events :as events]
             [tolglow.studio.keyframe-editor :as keyframes]
+            [tolglow.studio.knobs :as knobs]
             [tolglow.studio.reactive-editor :as reactive-editor]
             [tolglow.studio.expressive-mapping :as expressive]
             [tolglow.studio.effect-group-mixer :as effect-group-mixer]
@@ -357,7 +358,8 @@
 (defn- parameter-control [instance parameter schema & [handlers options]]
   (let [value (get-in instance [:params parameter] (:default schema))
         choices (:choices schema)
-        type (cond (waveform/waveform-schema? schema) "waveform" (seq choices) "choice" :else (:type schema "number"))
+        shapes (when-not (waveform/waveform-schema? schema) (waveform/shape-choices schema))
+        type (cond (waveform/waveform-schema? schema) "waveform" shapes "shape" (seq choices) "choice" :else (:type schema "number"))
         change! (or (:change handlers) #(input! [:studio/param-set (:id instance) parameter %]))
         component! (or (:component handlers) #(input! [:studio/param-component (:id instance) parameter %1 %2]))
         source (when-not handlers (sources/reading instance parameter))
@@ -370,6 +372,7 @@
      (case type
        "waveform" [waveform/picker (:id instance) parameter schema value change!
                    {:params (:params instance) :live? (nil? handlers)}]
+       "shape" [widgets/shape-picker title shapes value change!]
        "choice" (let [selected (or (first (keep-indexed #(when (= value (:value %2)) %1) choices)) 0)]
                   [:select {:aria-label title :value selected :on-change #(change! (:value (get choices (js/parseInt (input-value %) 10))))}
                    (for [[index choice] (map-indexed vector choices)]
@@ -612,7 +615,7 @@
      [:div.performance-layout {:class (when (get-in db [:ui :preview-expanded?]) "preview-expanded")}
       [:div.performance-launch [cue-grid db]]
       [:div.performance-live [section-pattern-panel db] [personality/panel] [performance/board db parameter-control]
-       [effect-group-mixer/panel]
+       [effect-group-mixer/panel] [knobs/panel db]
        [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
       [:div.performance-room [preview-panel db]]
       [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]]]))

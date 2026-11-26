@@ -49,6 +49,7 @@
             [afterglow.output.scheduler :as output-scheduler]
             [tolglow.output.pause-look :as pause-look]
             [tolglow.routing :as routing]
+            [tolglow.knobs :as knobs]
             [tolglow.integrations.audio-return :as audio-return]
             [tolglow.integrations.section-patterns :as section-patterns]
             [tolglow.integrations.ableton :as ableton])
@@ -67,7 +68,8 @@
   #{:show-id :epoch :revision :time-ms :registry :instances :pages :variables
     :master :blackout? :event-subscribers :transport :control :rig :compositions :composition-runs
     :composition-tokens :auto :responses :integrations :extensions :frame-number
-    :last-frame-time-ms :last-frame-beat :macros :sequences :reactive :settings :modulation :waveforms :routing :sensors})
+    :last-frame-time-ms :last-frame-beat :macros :sequences :reactive :settings :modulation :waveforms :routing :sensors
+    :knobs})
 
 (def ^:private secret-keys
   #{"api-key" "api_key" "apikey" "authorization" "password" "secret"
@@ -422,6 +424,9 @@
   (when (contains? model :waveforms) (signals/validate-registry (:waveforms model)))
   (when (contains? model :routing) (routing/validate-state (:routing model)))
   (when (contains? model :sensors) (sensors/validate-state (:sensors model)))
+  (when (contains? model :knobs)
+    (try (knobs/validate-state (:knobs model))
+         (catch clojure.lang.ExceptionInfo error (fail! (:path (ex-data error) [:knobs]) (ex-message error)))))
   (when-let [integrations (:integrations model)]
     (check! (map? integrations) [:integrations] "Integration configuration must be a map")
     (when-let [bridge (:ableton integrations)] (validate-ableton! bridge [:integrations :ableton])))
@@ -620,6 +625,7 @@
                                              {:show-id (:show-id model) :epoch epoch :instance-ids ids})
                 (:event-subscribers saved) (update :event-subscribers event-subscribers/restore ids)
                 (:routing saved) (update :routing routing/restore-state {:epoch epoch :instance-ids ids})
+                (:knobs saved) (update :knobs knobs/restore ids epoch)
                 (:sensors saved) (update :sensors #(remap-references % ids owners))
                 (:reactive saved) (update :reactive #(remap-references % ids owners)))
         ;; Historical chat/tool results are evidence, not live references.

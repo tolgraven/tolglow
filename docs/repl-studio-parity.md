@@ -71,6 +71,15 @@ The REPL reads the identical map from the snapshot or the durable subscription:
 @(reactive/subscribe (show/reactions runtime) [:runtime/effect-faults])
 ```
 
+A rejected revision does not disturb modulation. A controller owned by the cue,
+or one that modulates it, keeps its seed and schedule, and a bound waveform
+keeps its value. Both surfaces read the same controller projection, so its
+`:ticks` and `:next-beat` continue across the rejected publication:
+
+```clojure
+(get-in (show/snapshot runtime) [:modulation :controllers])
+```
+
 Gaps: Studio has no control that sets a cue's reload policy; author it in cue
 EDN or the REPL. The diagnostics summary does not print `:from-version`, which
 is present in the projected fault data. The automated check compares the REPL
@@ -505,6 +514,49 @@ action. The Studio timeline in
 dragging on the same projection. Push does not display the schedule yet. Close
 these gaps when an operator can post and move an event from Studio and see it in
 the REPL projection, and when Push shows the same upcoming list.
+
+## Turn one knob across several cues
+
+Both surfaces read one projection, `:knobs` in the show snapshot, and send the
+same owner commands: `:knob/create`, `:knob/link`, `:knob/unlink`,
+`:knob/set`, `:knob/nudge`, `:knob/rename` and `:knob/remove`. Each link in the
+projection carries its `:resolved` value with `:text`, `:unit` and, for beat
+ratios, the exact `:ratio`, plus the destination's `:current` value, `:status`
+and `:shared-with`. [Linked knobs](linked-knobs.md)
+
+From the REPL, link a knob to two running cues and turn it:
+
+```clojure
+(require '[tolglow.knobs :as knobs])
+@(show/submit! runtime :command
+   {:op :knob/create :knob-id :look :name "Look"
+    :links [{:id "sat" :destination {:kind :param :cue-id :ember :param :level} :range [0.2 1.0]}
+            {:id "rate" :destination {:kind :lfo :cue-id :ice :param :level :field :period}
+             :range [2 1/2] :quantize {:ratios :preferred}}]})
+(:links @(show/submit! runtime :command {:op :knob/set :knob-id :look :value 3/7}))
+(map (juxt :id (comp :text :resolved)) (:links (knobs/knob-view (:model @(:state runtime)) :look)))
+;; => (["sat" "0.543"] ["rate" "1 beats"])
+```
+
+A refusal reads the same from both sides: linking a missing parameter returns
+`:status :rejected :code :invalid-knob` with the reason, and the knob keeps its
+previous links. A destination that disappears later stays in the projection as
+`:status :dangling` with a `:reason`.
+
+In Studio, **Perform → Live → Knobs** shows the same knob: the slider, and per
+link the label, resolved text and status. Moving the slider sends `:knob/set`;
+**Add destination**, the range fields, **Direction**, **Curve** and **Remove**
+send `:knob/link`, `:knob/unlink` and `:knob/remove`. After the REPL turns the
+knob, the open slider and values follow from the projection. A refused link
+shows its reason in the panel. [Studio walkthrough](linked-knobs.md#using-it-from-studio)
+
+**Tracked gaps.** The Studio picker links numeric destinations only. Colour,
+enum and boolean links are created from the REPL. Push needs an Afterglow
+adapter change before an encoder can be bound to a knob; the Tolglow command and
+display data are ready ([Push](linked-knobs.md#push),
+[issue #666](https://github.com/tolgraven/tolglow/issues/666)). Close this gap
+when Studio can set non-numeric endpoints and a Push encoder turns the same knob
+and shows the same resolved values.
 
 ## Reviewing a show feature
 
