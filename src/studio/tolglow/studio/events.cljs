@@ -1189,7 +1189,12 @@
      :dispatch-later (when (get-in db [:ui :definition :auto?]) [{:ms 850 :dispatch [:studio/auto-publish revision]}])}))
 
 (rf/reg-event-fx :studio/definition-source
-  (fn [{:keys [db]} [_ source]] (edit-definition-source db source)))
+  ;; Neovim echoes text it was given (the initial load) and delivers its last edit up to
+  ;; 200 ms late, possibly after that text was published. Neither is a new edit, so keep
+  ;; the status, result and pending auto-publish of the text Studio already holds.
+  (fn [{:keys [db]} [_ source]]
+    (when (not= source (get-in db [:ui :definition :source]))
+      (edit-definition-source db source))))
 (rf/reg-event-fx :studio/auto-publish
   (fn [{:keys [db]} [_ revision]]
     (when (and (get-in db [:ui :definition :auto?]) (= revision (get-in db [:ui :definition :edit-revision])))

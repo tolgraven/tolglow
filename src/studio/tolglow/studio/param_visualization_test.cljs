@@ -36,17 +36,58 @@
       (if history?
         (is (= visual/history-chart component))
         (do (is (= widgets/color-view component))
-            (is (= [value {:selected "hue"}] args)))))
+            (is (= [value {:selected "hue" :schema schema}] args)))))
     (doseq [schema schemas]
       (is (= :color (visual/monitor-kind schema)))
       (is (= [:color :history] (views/studio-choices schema)))
       (doseq [choice [:auto :spatial :controls]]
         (let [mode (views/studio-view schema choice)]
           (is (= :color mode))
-          (is (= [widgets/color-view value] (visual/observed-view mode schema value {} (atom nil) 4)))))
+          (is (= [widgets/color-view value {:schema schema}] (visual/observed-view mode schema value {} (atom nil) 4)))))
       (is (= :history (views/studio-view schema :history))))
     (is (= visual/space (first (visual/push {} {:schema {:type :vector :size 3 :bounds [-1 1]} :value [0 0 0]}))))
     (is (= [:spatial :history] (views/studio-choices {:type :vector :size 3})))))
+
+(def colour-layout-samples
+  "A known value in each colour layout, the swatch it draws and its track letters."
+  [[:rgb [1 0.5 0] "rgb(255,128,0)" ["R" "G" "B"]]
+   [:rgba [0 0 1 0.5] "rgb(0,0,255)" ["R" "G" "B"]]
+   [:rgbw [0.5 0 0 0.5] "rgb(255,128,128)" ["R" "G" "B" "W"]]
+   [:hsl [(/ 1 3) 1 0.5] "rgb(0,255,0)" ["H" "S" "L"]]
+   [:hsla [(/ 2 3) 1 0.25 0.5] "rgb(0,0,128)" ["H" "S" "L"]]
+   [:hsv [0 1 1] "rgb(255,0,0)" ["H" "S" "V"]]])
+
+(defn- swatch-and-labels [form]
+  (let [nodes (tree-seq sequential? seq form)
+        tagged (fn [tag] (filter #(and (vector? %) (= tag (first %))) nodes))
+        swatch (first (tagged :div.color-swatch))]
+    {:background (get-in swatch [1 :style :background])
+     :tag (some #(when (and (vector? %) (= :small (first %))) (second %)) swatch)
+     :labels (mapv second (tagged :span.color-channel-name))}))
+
+(deftest each-colour-layout-draws-its-own-colour-on-studio
+  (doseq [[layout value css letters] colour-layout-samples
+          :let [schema {:type :vector :size (count value) :semantic/type layout :bounds [0 1]}
+                [view & args] (visual/observed-view :color schema value {} (atom nil) 4)
+                drawn (swatch-and-labels (apply view args))]]
+    (is (= css (:background drawn)) (str layout))
+    (is (= letters (:labels drawn)) (str layout))
+    (is (= (when (#{:rgba :hsla} layout) "α 0.5") (:tag drawn)) (str layout))
+    (is (= (get {:rgb ["R" "G" "B"] :rgba ["R" "G" "B" "A"] :rgbw ["R" "G" "B" "W"]
+                 :hsl ["H" "S" "L"] :hsla ["H" "S" "L" "A"] :hsv ["H" "S" "V"]} layout)
+           (views/component-labels schema)) (str layout)))
+  (is (= ["R" "G" "B" "A"] (views/component-labels {:type :color})))
+  (is (= {:background "rgb(255,128,128)" :tag "W 0.5" :labels ["H" "S" "V"]}
+         (swatch-and-labels (widgets/color-view [0.5 0 0 0.5] {:schema {:semantic/type "rgbw"} :selected "hue"})))
+      "a Push hue encoder on an RGBW colour keeps the white amount on the swatch")
+  (let [hsl (widgets/color-tracks [(/ 1 3) 0.5 0.5] "lightness" :hsl)]
+    (is (= [:hue :saturation :lightness] (mapv :id hsl)))
+    (is (= [false false true] (mapv :selected? hsl)))
+    (is (= "linear-gradient(90deg,rgb(0,0,0),rgb(64,191,64),rgb(255,255,255))" (:gradient (last hsl)))
+        "the lightness track passes through the colour at one half")
+    (is (= 0.5 (widgets/component-amount [(/ 1 3) 0.5 0.5] "l" 0 :hsl)))
+    (is (= 0.25 (widgets/component-amount [0.25 1 1] "hue" 0 :hsv)) "an HSV hue is read, not derived from RGB")
+    (is (= 0.75 (widgets/component-amount [-0.25 1 1] "hue" 0 :hsv)) "a hue track marks the wrapped hue the swatch draws")))
 
 (deftest colour-tracks-follow-the-component-a-control-edits
   (let [orange [1 0.5 0]
