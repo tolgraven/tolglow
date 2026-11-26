@@ -197,7 +197,10 @@
                  :else :wrap)]
       {:mode mode
        :position (if (= :spread mode) (inc (long (Math/round (* 5.0 n)))) (inc (long (Math/round (* 10.0 n)))))
-       :center? (boolean (and (some? default) (= default (:value target))))})))
+       ;; Numeric equality: a definition's integer default (0) matches its double value (0.0).
+       :center? (let [value (:value target)]
+                  (boolean (if (and (number? default) (number? value)) (== default value)
+                               (and (some? default) (= default value)))))})))
 
 (defn- trim-number [x]
   (let [x (double x) a (Math/abs x)]
@@ -210,7 +213,8 @@
     (nil? target) ""
     (nil? value) ""
     (= :boolean (:type schema)) (if value "On" "Off")
-    (= :enum (:type schema)) (name value)
+    ;; Enum values are any portable data, not only keywords.
+    (= :enum (:type schema)) (if (keyword? value) (name value) (str value))
     (= :integer (:type schema)) (str value)
     (and (number? value) (let [[low high] (bounds schema)] (and (== 0 low) (== 1 high))) (not= :param kind))
     (str (Math/round (* 100.0 (double value))) "%")

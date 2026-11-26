@@ -237,7 +237,8 @@
                         (mixer/value-text (:target item))
                         (mixer/value-text (or encoder fader)))
                :color (cond items (if item 6 0) s (match (:color s)) :else 0)
-               :fader (when s (or (some-> fader mixer/normalized) 0.0))
+               ;; Empty strips, including those past the last row, park at 0.
+               :fader (or (some-> fader mixer/normalized) 0.0)
                :ring (mixer/ring encoder)
                :rec (if (contains? (:hold-keys state) x) :on :off)
                :solo (if (contains? #{:all :some} (:solo s)) :on :off)

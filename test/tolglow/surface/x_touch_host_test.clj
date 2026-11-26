@@ -329,6 +329,21 @@
   (is (= 7 (mixer/palette-index [0.3 0 0] :off 0.19)))
   (is (= 1 (mixer/palette-index [0.6 0.1 0.1] :rgb 0.19))))
 
+(deftest rings-values-and-empty-strips-read-any-definition
+  (testing "an integer default lights the centre LED at the equal double value"
+    (is (= {:mode :boost-cut :position 6 :center? true}
+           (mixer/ring {:kind :param :param :x :schema {:type :number :bounds [-1 1] :default 0} :value 0.0}))))
+  (testing "enum values that are not keywords show as text"
+    (is (= ["2" "b"] (mapv #(mixer/value-text {:kind :param :schema {:type :enum :values [1 2 "b"]} :value %}) [2 "b"]))))
+  (testing "strips past the last row park their motors at zero"
+    (let [placement (constantly {:first 0 :index 0 :span 8 :layout surface/layout-defaults})
+          options {:surface-id "xt" :extender? false :rows (constantly [{:cue-id :c0}]) :placement placement
+                   :external-transport? (constantly false) :color-match :hue :color-cutoff 0.19 :meter-refresh-ms 200}
+          {:keys [midi]} (x-touch/feedback options {:touches {3 nil} :sent {} :meters {}} (model) {:time-ms 0})]
+      (is (= (into [[0xe0 0 0]] (map #(vector (+ 0xe0 %) 0 0)) [1 2 4 5 6 7])
+             (filterv #(<= 0xe0 (first %) 0xe7) midi))
+          "Every strip but the touched one gets a zero motor message"))))
+
 (deftest layout-state-is-validated-saved-and-survives-unlinking
   (let [attach (fn [m id d]
                  (:model (surface/apply-operation m {:op :control-surface/attach :surface-id id :descriptor d :role :unit
