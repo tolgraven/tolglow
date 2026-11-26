@@ -92,6 +92,29 @@
     (is (= 6 (get-in next [:state :next-at-beat])))
     (is (empty? (:commands (policy/advance (assoc-in show [:transport :playing?] false) config state 0))))))
 
+(deftest beat-decisions-stay-on-the-grid-when-frames-miss-the-beat
+  ;; #670 rehearsal finding: at 124 BPM a 125 ms frame is 0.258 beats, so a
+  ;; one-beat decision lands up to a frame after its beat. The next interval
+  ;; used to start from that late frame, and every later decision slid
+  ;; further off the beat until a section boundary re-anchored it.
+  (let [config {:interval {:beats 1} :intent :darkness}
+        beats (map #(* % (/ 124.0 60000.0) 125.0) (range 0 200))
+        decided (loop [state (policy/initial-state 1000 0 :grid) [beat & more] beats out []]
+                  (if-not beat out
+                    (let [result (policy/advance (assoc-in (model) [:transport :beat] beat) config state 0)]
+                      (recur (:state result) more (cond-> out (seq (:commands result)) (conj beat))))))]
+    (is (= (count decided) (inc (long (Math/floor (last beats))))) "one decision per beat, none skipped or doubled")
+    (is (every? (fn [[i beat]] (<= i beat (+ i 0.2584))) (map-indexed vector decided))
+        (pr-str (take 12 decided))))
+  (testing "a decision taken off the grid starts the next interval on the grid"
+    (let [state (:state (policy/advance (assoc-in (model) [:transport :beat] 64.07) {:interval {:bars 1} :intent :darkness}
+                                        (policy/initial-state 1 0 :grid) 0))]
+      (is (= 68.0 (:next-at-beat state)))))
+  (testing "a half-beat interval aligns to half beats and is not due at once"
+    (let [state (:state (policy/advance (assoc-in (model) [:transport :beat] 64.6) {:interval {:beats 1/2} :intent :darkness}
+                                        (policy/initial-state 1 0 :grid) 0))]
+      (is (= 65.0 (double (:next-at-beat state)))))))
+
 (deftest musical-emission-attacks-participate-in-real-prediction
   (let [show (update (model) :registry registry/publish :effects
                      (assoc emission :version 2 :envelope {:attack {:beats 1/2} :release {:beats 1/4}}))

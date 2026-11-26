@@ -550,6 +550,31 @@
        (and (nil? (:randomize config)) previous-random (not enabled?)) (assoc :randomize previous-random)
        (and (nil? (:randomize config)) (seq domains) enabled?) (assoc :randomize (assoc domains :params :none))))))
 
+(defn- decision-timer
+  "The interval timer after a decision at clock. A musical interval stays on
+  its grid: the next timer starts where the previous one fell due, so a
+  decision taken on the first frame after a beat does not push every later
+  decision later by that frame's remainder. Without a previous due point
+  still within one interval (a start, a new section, a long gap) the timer
+  starts on the last grid line of its unit (beat, bar or phrase). Millisecond
+  intervals keep their physical start."
+  [duration clock previous]
+  (let [timer (time/start duration clock)
+        {:keys [unit value]} (:duration timer)]
+    (if-not (= :beats unit) timer
+      (let [now (:started-at timer)
+            due (when (and previous (= :beats (get-in previous [:duration :unit])))
+                  (+ (:started-at previous) (get-in previous [:duration :value])))
+            ;; A sub-beat interval aligns to its own length, so the aligned
+            ;; timer never falls due at once.
+            step (min value (time/duration->beats {(ffirst duration) 1} (get-in timer [:duration :meter])))]
+        (assoc timer :started-at
+               (let [line (* step (Math/floor (/ (+ now 1e-9) step)))]
+                 (cond (and due (<= due now) (< (- now due) value)) due
+                       ;; Already on the grid: keep the exact coordinate.
+                       (< (abs (- line now)) 1e-9) now
+                       :else line)))))))
+
 (defn- end-commands [model state ids force? time-ms]
   (mapv (fn [i id] (command model state :instance/end (cond-> {:instance-id id} force? (assoc :force? true)) i time-ms))
         (range) ids))
@@ -666,7 +691,7 @@
                 randomized (into (sorted-map-by #(compare (str %1) (str %2)))
                                  (keep (fn [cue] (when-let [r (::randomized cue)] [(:id cue) r])))
                                  (:cues result))
-                timer (time/start duration clock)
+                timer (decision-timer duration clock (:interval-timer state))
                 next-at (+ (:started-at timer) (get-in timer [:duration :value]))]
             {:state (cond-> (assoc state :seed seed :epoch (:epoch model) :interval-timer timer
                                    :tick (inc (:tick state)))
