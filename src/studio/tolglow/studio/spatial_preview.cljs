@@ -3,6 +3,7 @@
             [re-frame.core :as rf]
             [tolglow.studio.interop :as interop]
             [tolglow.studio.observations :as observations]
+            [tolglow.studio.video-surfaces :as video-surfaces]
             [tolglow.studio.volume-sculpt :as sculpt]
             [tolglow.studio.volume-geometry :as geometry]
             [tolglow.studio.volume-optics :as optics]))
@@ -45,7 +46,7 @@
 (defn scene
   ([show config] (scene show config :rig))
   ([show config owner]
-   (r/with-let [cache (volatile! nil) visible (r/atom false) changed #(reset! visible %)]
+   (r/with-let [cache (volatile! nil) surface-cache (volatile! nil) visible (r/atom false) changed #(reset! visible %)]
      (let [enabled? (:enabled? config)
            saved? (and (= owner :rig) enabled? (seq (:volumes config)))
            moving? (and enabled? (some #(= :ball (:shape %)) (vals (:volumes config))))
@@ -59,5 +60,12 @@
                           (and @visible saved?)
                           (assoc :spatial-volumes (bodies config signals) :volume-guides @(rf/subscribe [::fields]))
                           (:limited? optics) (assoc :visible-spatial-limit optics/max-visible)
+                          ;; Video surfaces (#674): running ones everywhere, authored ones in the rig editor.
+                          ;; Read the typed projection: the presentation show carries enums as strings.
+                          @visible
+                          (as-> s (let [video @(rf/subscribe [::video-surfaces/status])]
+                                    (cond-> s (:surfaces video)
+                                      (assoc :video-surfaces (video-surfaces/room-surfaces-cached
+                                                              surface-cache video @(rf/subscribe [::video-surfaces/rig]) (= owner :rig))))))
                           (seq (:objects optics))
                           (assoc :glass-meshes (:meshes optics) :glass-volumes (:objects optics))) owner changed (when @visible (observations/grant owner))]))))

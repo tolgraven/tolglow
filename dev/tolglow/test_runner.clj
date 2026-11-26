@@ -20,7 +20,8 @@
     tolglow.composition.sequence-test tolglow.composition.macro-test
     tolglow.composition.sequence-edit-test
     tolglow.composition.response-test tolglow.native-composition-test
-    tolglow.automation.random-test tolglow.automation.policy-test
+    tolglow.automation.random-test tolglow.automation.policy-test tolglow.automation.launch-params-test
+    tolglow.automation.sections-test tolglow.automation.r1o-scenario-test
     tolglow.integrations.fixtures-test tolglow.integrations.ableton-test
     tolglow.integrations.audio-test tolglow.studio.audio-return-test tolglow.integrations.providers-test
     tolglow.integrations.agent-test
@@ -44,6 +45,7 @@
     tolglow.integrations.live-sync-test tolglow.integrations.phrase-capture-test tolglow.integrations.phrase-clip-test
     tolglow.integrations.live-connection-test tolglow.integrations.live-capture-roundtrip-test
     tolglow.integrations.live-companion-contract-test tolglow.integrations.phrase-capture-host-test
+    tolglow.integrations.live-runs-test
     tolglow.studio.link-pause-test tolglow.studio.sync-host-test tolglow.studio.modulation-host-test
     tolglow.studio.display-test tolglow.integrations.patch-test tolglow.studio.routing-host-test tolglow.studio.stem-routing-host-test
     tolglow.repl-test tolglow.repl.sessions-test tolglow.studio.repl-host-test
@@ -63,7 +65,8 @@
     tolglow.preview.airplay-test
     tolglow.personalities-test tolglow.personalities.icon-test tolglow.personalities-host-test
     tolglow.showcase-test tolglow.venues.gig-2023-test
-    tolglow.video-strips-test tolglow.studio.video-strips-host-test])
+    tolglow.video-strips-test tolglow.studio.video-strips-host-test
+    tolglow.video-surfaces-test tolglow.studio.video-surfaces-host-test])
 
 (def suites
   {"pure" pure-tests

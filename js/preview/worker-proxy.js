@@ -9,7 +9,7 @@ import {LatestStateChannel} from './mailbox.js';
 import {presentFrame, showIdentity} from './presentation.js';
 import {clamp, roomDimensions} from './math.js';
 
-const sceneFields = ['rig', 'editor', 'sculpt-guide', 'spatial-volumes', 'volume-guides', 'glass-meshes', 'glass-volumes'];
+const sceneFields = ['rig', 'editor', 'sculpt-guide', 'spatial-volumes', 'volume-guides', 'glass-meshes', 'glass-volumes', 'video-surfaces'];
 
 export function workerSupported() {
   return typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined'
@@ -169,7 +169,8 @@ export class WorkerRoomPreview {
       'blackout?': snapshot['blackout?'], master: snapshot.master, 'cut?': snapshot['cut?'], editor: snapshot.editor ?? null, 'show-id': snapshot['show-id'], epoch: snapshot.epoch, revision: snapshot.revision,
       'frame-number': snapshot['frame-number'], rig: snapshot.rig, 'spatial-volumes': snapshot['spatial-volumes'],
       'glass-meshes': snapshot['glass-meshes'] ?? null, 'glass-volumes': snapshot['glass-volumes'] ?? null,
-      'sculpt-guide': snapshot['sculpt-guide'] ?? null, 'volume-guides': snapshot['volume-guides'] ?? null, output: {values: snapshot.output?.values, atmosphere: snapshot.output?.atmosphere}};
+      'sculpt-guide': snapshot['sculpt-guide'] ?? null, 'volume-guides': snapshot['volume-guides'] ?? null,
+      'video-surfaces': snapshot['video-surfaces'] ?? null, output: {values: snapshot.output?.values, atmosphere: snapshot.output?.atmosphere}};
     this.room = roomDimensions(snapshot.rig?.room);
     this.camera.far = Math.max(100, 3 * Math.hypot(...this.room)); this.camera.updateProjectionMatrix();
     this.sendState();

@@ -18,15 +18,28 @@
   parameters on every capture track (the real companion has them only on its
   own track; see live-companion-contract-test).
   `json-transport` is the same as `(transport live {:json? true})` with the
-  receipt read exactly as live-transport reads it."
+  receipt read exactly as live-transport reads it.
+
+  Group Tracks (#683): the documented Live Object Model reads membership
+  (`Track.group_track`, `is_foldable`) but has no call that creates a Group
+  Track or moves a track into one. Like the companion, `:ensure-group` here
+  only finds a Group Track a performer or template placed (`add-group-track!`)
+  and refuses with :group-creation-unavailable otherwise. `:ensure-track` with
+  a :group-track-id inserts the new track after the group's last direct member
+  that is not a group (or right after the Group Track); that the inserted
+  track joins the group is an assumption to verify in Live, and
+  `:insert-joins-group? false` models the opposite outcome.
+  `:scenes n` bounds the clip slots per track (default unbounded);
+  `:create-scene? true` on write-clip adds a scene when every slot is full."
   (:require [clojure.data.json :as json]))
 
 (defn create
   "tracks: existing musician tracks, e.g. [{:name \"Bass\" :arm? true}]."
   ([] (create {}))
-  ([{:keys [tracks tempo exclusive-arm? can-capture-midi? capture-bars companion? envelope-lanes?]
+  ([{:keys [tracks tempo exclusive-arm? can-capture-midi? capture-bars companion? envelope-lanes? scenes
+            insert-joins-group?]
      :or {tracks [] tempo 120.0 exclusive-arm? false can-capture-midi? true capture-bars 4 companion? true
-          envelope-lanes? false}}]
+          envelope-lanes? false insert-joins-group? true}}]
    (atom {:tracks (vec (map-indexed (fn [i t] (merge {:track-id (str "track:" (inc i)) :kind :midi :arm? false
                                                       :monitor :auto :input {:port "Keyboard" :channel 1}
                                                       :slots {} :history []} t))
@@ -34,8 +47,8 @@
                                                                            :input {:port "All Ins" :channel nil}}))))
           :next-id 100 :tempo tempo :signature {:beats-per-bar 4 :bars-per-phrase 4}
           :exclusive-arm? exclusive-arm? :can-capture-midi? can-capture-midi? :capture-bars capture-bars
-          :envelope-lanes? envelope-lanes?
-          :song-beat 0 :playing {} :selected nil :faults {} :requests []})))
+          :envelope-lanes? envelope-lanes? :scenes scenes :insert-joins-group? insert-joins-group?
+          :watched [] :song-beat 0 :playing {} :selected nil :faults {} :requests []})))
 
 (defn- next-id! [live prefix]
   (str prefix ":" (:next-id (swap! live update :next-id inc))))
@@ -44,7 +57,13 @@
   (first (keep-indexed (fn [i t] (when (= track-id (:track-id t)) i)) (:tracks state))))
 
 (defn- public-track [track]
-  (-> (select-keys track [:track-id :name :kind :arm? :monitor :input :companion?])
+  (-> (if (= :group (:kind track))
+        (assoc (select-keys track [:track-id :name :kind]) :arm? false :monitor nil :input nil)
+        (select-keys track [:track-id :name :kind :arm? :monitor :input :companion?]))
+      (assoc :group-track-id (:group-track-id track))
+      (assoc :arrangement-clips (vec (for [{:keys [clip-id start length]} (:arrangement track)]
+                                       {:name (get-in (first (filter #(= clip-id (:clip-id %)) (vals (:slots track)))) [:name])
+                                        :start-beat start :end-beat (+ start length)})))
       (assoc :clips (vec (for [[slot c] (sort-by key (:slots track))]
                            {:clip-id (:clip-id c) :slot-index slot :name (:name c)
                             :length-beats (get-in c [:clip :length-beats])})))))
@@ -62,6 +81,18 @@
           :else [i nil])))
 
 (defn- first-empty-slot [track] (first (remove (set (keys (:slots track))) (range))))
+
+(defn- insert-index
+  "Like the companion: after the group's last direct member that is not a
+  group itself, or right after the Group Track."
+  [state group-id]
+  (inc (last (keep-indexed (fn [i t] (when (or (= group-id (:track-id t))
+                                               (and (= group-id (:group-track-id t)) (not= :group (:kind t))))
+                                       i))
+                           (:tracks state)))))
+
+(defn- overlaps? [arrangement start length]
+  (some (fn [{s :start l :length}] (and (< start (+ s l)) (< s (+ start length)))) arrangement))
 
 (defn- history->clip
   "Build a clip from received MIDI in [start end), as Capture MIDI would."
@@ -119,13 +150,31 @@
                             :else (do (swap! live assoc-in [:tracks i :name] (:name payload))
                                       {:status :executed :result {:track-id (:track-id t) :created? false :adopted? true}})))
                         (rejected :no-companion))
-                      (if-let [t (first (filter #(and (= (:name payload) (:name %)) (= :midi (:kind %))) (:tracks state)))]
-                        {:status :executed :result {:track-id (:track-id t) :created? false}}
-                        (let [id (next-id! live "track")]
-                          (swap! live update :tracks conj {:track-id id :name (:name payload) :kind :midi :arm? false
-                                                           :monitor :auto :input {:port "All Ins" :channel nil}
-                                                           :slots {} :history []})
-                          {:status :executed :result {:track-id id :created? true}})))
+                      (let [found (filter #(and (= (:name payload) (:name %)) (= :midi (:kind %))) (:tracks state))
+                            group (:group-track-id payload)]
+                        (cond
+                          (> (count found) 1) (rejected :duplicate-tracks)
+                          (= 1 (count found)) {:status :executed :result {:track-id (:track-id (first found)) :created? false
+                                                                           :group-track-id (:group-track-id (first found))}}
+                          (and group (not= :group (:kind (first (filter #(= group (:track-id %)) (:tracks state))))))
+                          (rejected :not-a-group)
+                          :else
+                          (let [id (next-id! live "track")
+                                joined (when (and group (:insert-joins-group? state)) group)
+                                track {:track-id id :name (:name payload) :kind :midi :arm? false
+                                       :monitor :auto :input {:port "All Ins" :channel nil}
+                                       :slots {} :history [] :group-track-id joined}]
+                            (swap! live update :tracks
+                                   (fn [ts] (let [at (if group (insert-index {:tracks ts} group) (count ts))]
+                                              (into (conj (subvec ts 0 at) track) (subvec ts at)))))
+                            {:status :executed :result {:track-id id :created? true :group-track-id joined}}))))
+      :ensure-group (let [found (filter #(and (= (:name payload) (:name %)) (= :group (:kind %))) (:tracks state))]
+                      (case (count found)
+                        0 (rejected :group-creation-unavailable)
+                        1 {:status :executed :result {:track-id (:track-id (first found)) :created? false}}
+                        (rejected :duplicate-tracks)))
+      :watch-run-tracks (do (swap! live assoc :watched (vec (:track-ids payload)))
+                            {:status :executed :result {:watching (count (:track-ids payload))}})
       :configure-track (let [[i code] (check-track state payload)]
                          (if code (rejected code)
                              (do (swap! live (fn [s]
@@ -145,12 +194,29 @@
                            (not (:envelope-lanes? state)))
                       (rejected :controllers-unsupported)
                       :else
-                        (let [slot (or (:slot-index payload) (first-empty-slot (get-in state [:tracks i])))]
-                          (if (get-in state [:tracks i :slots slot]) (rejected :slot-occupied)
-                              (let [id (next-id! live "clip")]
-                                (swap! live assoc-in [:tracks i :slots slot]
-                                       {:clip-id id :name (:name payload) :clip (with-lanes (:clip payload) (:lanes payload) nil)})
-                                {:status :executed :result {:clip-id id :slot-index slot}})))))
+                        (let [slot (or (:slot-index payload) (first-empty-slot (get-in state [:tracks i])))
+                              scenes (:scenes state)
+                              full? (and scenes (>= slot scenes))]
+                          (cond
+                            (get-in state [:tracks i :slots slot]) (rejected :slot-occupied)
+                            (and full? (not (and (nil? (:slot-index payload)) (:create-scene? payload)))) (rejected :no-empty-slot)
+                            :else
+                            (let [id (next-id! live "clip")]
+                              (when full? (swap! live update :scenes inc))
+                              (swap! live assoc-in [:tracks i :slots slot]
+                                     {:clip-id id :name (:name payload) :looping? (get payload :looping? true)
+                                      :clip (with-lanes (:clip payload) (:lanes payload) nil)})
+                              {:status :executed :result {:clip-id id :slot-index slot :scene-created? (boolean full?)}})))))
+      :place-clip (let [[i code] (check-track state payload)
+                        found (find-clip state (:clip-id payload))
+                        length (get-in found [:entry :clip :length-beats])]
+                    (cond
+                      code (rejected code)
+                      (or (nil? found) (not= i (:track-index found))) (rejected :stale-clip)
+                      (overlaps? (get-in state [:tracks i :arrangement]) (:arrangement-beat payload) length) (rejected :placement-overlap)
+                      :else (do (swap! live update-in [:tracks i :arrangement] (fnil conj [])
+                                       {:clip-id (:clip-id payload) :start (:arrangement-beat payload) :length length})
+                                {:status :executed :result {:arrangement-beat (:arrangement-beat payload)}})))
       :extend-clip (let [[i code] (check-track state payload)
                          found (find-clip state (:clip-id payload))]
                      (cond
@@ -249,6 +315,23 @@
   [live clip-id f]
   (let [{:keys [track-index slot]} (find-clip @live clip-id)]
     (swap! live update-in [:tracks track-index :slots slot :clip] f)))
+
+(defn add-group-track!
+  "Place a Group Track, as a performer or a packaged template would, at the
+  end of the Set or inside parent-group-track-id. Returns its track ID."
+  ([live name] (add-group-track! live name nil))
+  ([live name parent]
+   (let [id (next-id! live "track")]
+     (swap! live update :tracks
+            (fn [ts] (let [at (if parent (insert-index {:tracks ts} parent) (count ts))]
+                       (into (conj (subvec ts 0 at) {:track-id id :name name :kind :group :slots {} :history []
+                                                     :group-track-id parent})
+                             (subvec ts at)))))
+     id)))
+
+(defn delete-clip! [live clip-id]
+  (let [{:keys [track-index slot]} (find-clip @live clip-id)]
+    (swap! live update-in [:tracks track-index :slots] dissoc slot)))
 
 (defn rename-track! [live track-id name]
   (swap! live update :tracks (fn [ts] (mapv #(if (= track-id (:track-id %)) (assoc % :name name) %) ts))))

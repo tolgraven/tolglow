@@ -1,4 +1,5 @@
-/* Live Set operations for automatic setup, Capture and clip writes (#680, #671).
+/* Live Set operations for automatic setup, Capture, clip writes (#680, #671)
+ * and the run-track mirror of what Tolglow ran (#683).
  * ES5 for Max's [js]. Runs behind [deferlow] inside the companion's adapter.
  * The Tolglow side of this protocol is tolglow.integrations.live-connection;
  * docs/live-routing.md#capture-the-last-phrase-into-live lists the operations.
@@ -7,6 +8,14 @@
  * boundary, dictionaries through `dictionaryCall`/`readDictionary`, and
  * dictionary-valued properties through `setDictionary`. Writes call `mark()`
  * first so a later failure is reported as indeterminate, never as rejected.
+ * Run-track playback is watched through the injected `observe(id, property,
+ * changed)` boundary and reported through `emit(event)`.
+ *
+ * Group Tracks: the LOM documents Track.group_track, is_foldable and
+ * is_grouped for reading membership, and no call that creates a Group Track or
+ * moves a track into one. ensure-group therefore only finds a Group Track by
+ * name. ensure-track inserts a new track after a group's last member and reads
+ * back where Live put it; that such an insert joins the group is unverified.
  */
 (function (root, factory) {
   var exported = factory();
@@ -21,8 +30,8 @@
   var MAX14 = 16383;
   var MONITOR = ["in", "auto", "off"];
   var CAPTURE_DESTINATION = {auto: 0, session: 1, arrangement: 2};
-  var OPERATIONS = ["inspect-set", "ensure-track", "configure-track", "write-clip", "extend-clip", "capture-midi",
-    "read-clip", "show-clip", "fire-clip", "stop-clips"];
+  var OPERATIONS = ["inspect-set", "ensure-track", "ensure-group", "configure-track", "write-clip", "extend-clip", "capture-midi",
+    "read-clip", "show-clip", "fire-clip", "stop-clips", "watch-run-tracks", "place-clip"];
   // Envelope read-back: scan at this step, then bisect each change to one
   // Standard MIDI File tick (1/960 beat).
   var TICK = 1 / 960;
@@ -58,6 +67,26 @@
     this.hostPath = options.hostPath || "this_device canonical_parent";
     this.devicePath = options.devicePath || "this_device";
     this.sampleBeats = options.sampleBeats || 0.0625;
+    this.observe = options.observe || null;
+    this.emit = options.emit || null;
+    // Run-track watches: {trackId: {close, slot}}, replaced as a whole. Events
+    // carry this session's ID with their serial, so a reloaded companion that
+    // counts from 1 again is not taken for a repeat.
+    this.watches = {};
+    this.watchSerial = 0;
+    this.watchSession = options.watchSession || (String(new Date().getTime()) + "-" + Math.floor(Math.random() * 1e9));
+    // What the companion's own track is playing, for origin marking:
+    // {host, slot, fired, changedAt, closers}. hostArrangement and hostRouted
+    // are refreshed with the host track.
+    this.hostWatch = null;
+    this.hostArrangement = null;
+    this.hostRouted = null;
+    this.now = options.now || function () { return new Date().getTime(); };
+    // MIDI within this many milliseconds after a launch, start or stop on the
+    // companion's track was noted counts as playback. It only helps notes
+    // handled after the notification stored the change; a note handled
+    // before it (launch quantization None) still reads the old slot.
+    this.transitionMs = options.transitionMs === undefined ? 250 : options.transitionMs;
     // The companion's own track id, cached: MIDI events and lane moves must not
     // build a LiveAPI object each. Refreshed by every Set operation, so moving
     // the device to another track is picked up at the next setup or write.
@@ -84,8 +113,80 @@
     if (refresh || this.host === undefined) {
       var host = this.api(this.hostPath);
       this.host = host && Number(host.id) ? Number(host.id) : null;
+      if (this.host) {
+        try { this.hostArrangement = ids(host.get("arrangement_clips")).length > 0; } catch (e) { this.hostArrangement = null; }
+        this.hostRouted = this.routedFromTrack(this.host);
+      }
+      this.watchHost();
     }
     return this.host;
+  };
+  // Whether MIDI from another track reaches the companion's track: its input
+  // names another track ("MIDI From: <track>"), or another track's output
+  // names the companion's track ("MIDI To: <companion track>"). That track's
+  // clips then arrive as input. Routing is readable in the LOM; a routing
+  // display name equal to a track name is taken as that track, which errs
+  // toward playback. Unknown counts as routed.
+  Session.prototype.routedFromTrack = function (hostId) {
+    var self = this;
+    try {
+      var host = this.object({id: hostId}), hostName = String(this.read(host, "name"));
+      var port = this.routing(host).port, others = this.trackIds().filter(function (id) { return id !== hostId; });
+      return others.some(function (id) {
+        var t = self.object({id: id});
+        if (port !== null && String(self.read(t, "name")) === port) return true;
+        // Only a MIDI track can send MIDI; Group and audio tracks are skipped.
+        if (self.foldable(t) || !self.read(t, "has_midi_input")) return false;
+        var out = self.dict(t, "output_routing_type");
+        return !!out && out.display_name === hostName;
+      });
+    } catch (e) { return true; }
+  };
+  // Follow the companion track's Session playback: playing_slot_index and
+  // fired_slot_index (a launched clip waiting for its quantized start). The
+  // notification stores the value at once (a plain assignment, not a Set
+  // change), so MIDI forwarded after it is already classified correctly.
+  Session.prototype.watchHost = function () {
+    var self = this, host = this.host;
+    if (!this.observe || (this.hostWatch && this.hostWatch.host === host)) return;
+    if (this.hostWatch) this.hostWatch.closers.forEach(function (close) { close(); });
+    this.hostWatch = null;
+    if (!host) return;
+    var watch = {host: host, slot: null, fired: null, changedAt: null, closers: []};
+    var noted = function (key) {
+      return function (v) {
+        var n = Number(scalar(v));
+        if (n !== watch[key]) watch.changedAt = self.now();
+        watch[key] = n;
+      };
+    };
+    try {
+      var track = this.object({id: host});
+      watch.slot = Number(this.read(track, "playing_slot_index"));
+      watch.fired = Number(this.read(track, "fired_slot_index"));
+      watch.closers.push(this.observe(host, "playing_slot_index", null, noted("slot")));
+      watch.closers.push(this.observe(host, "fired_slot_index", null, noted("fired")));
+    } catch (e) { watch.slot = null; }
+    this.hostWatch = watch;
+  };
+  // Live input only when that is known: the track plays and has launched no
+  // Session clip, holds no Arrangement clip, takes no MIDI from another track,
+  // and nothing changed on it within transitionMs. Anything else, unknown
+  // included, is playback.
+  Session.prototype.origin = function () {
+    var w = this.hostWatch;
+    if (!w || w.slot === null || !finite(w.slot) || w.slot >= 0) return "live-playback";
+    if (finite(w.fired) && w.fired >= 0) return "live-playback";
+    if (this.hostArrangement !== false || this.hostRouted !== false) return "live-playback";
+    if (w.changedAt !== null && this.now() - w.changedAt < this.transitionMs) return "live-playback";
+    return "live-input";
+  };
+  Session.prototype.closeWatches = function () {
+    var self = this;
+    Object.keys(this.watches).forEach(function (id) { self.watches[id].close(); });
+    this.watches = {};
+    if (this.hostWatch) this.hostWatch.closers.forEach(function (close) { close(); });
+    this.hostWatch = null;
   };
   // Empty: no Session or Arrangement clip and no device other than the companion.
   Session.prototype.emptyTrack = function (track) {
@@ -111,8 +212,21 @@
     return {port: type.display_name === undefined ? null : String(type.display_name), channel: m ? Number(m[1]) : null};
   };
 
+  Session.prototype.groupOf = function (track) {
+    var group = ids(track.get("group_track"));
+    return group.length ? group[0] : null;
+  };
+  Session.prototype.foldable = function (track) { return !!this.read(track, "is_foldable"); };
+
   Session.prototype.describeTrack = function (id, index) {
-    var track = this.object({id: id}), midi = !!this.read(track, "has_midi_input"), self = this, clips = [];
+    var track = this.object({id: id}), self = this, clips = [], group = this.groupOf(track);
+    if (this.foldable(track)) {
+      // A Group Track has no input, arm or monitoring of its own; reading them
+      // is not attempted, so a Set containing groups can always be inspected.
+      return {"track-id": "track:" + id, index: index, name: String(this.read(track, "name")), kind: "group",
+        "arm?": false, monitor: null, input: null, clips: [], "group-track-id": group ? "track:" + group : null};
+    }
+    var midi = !!this.read(track, "has_midi_input");
     var armable = !!this.read(track, "can_be_armed");
     ids(track.get("clip_slots")).forEach(function (slotId, slot) {
       var clipSlot = self.object({id: slotId});
@@ -124,7 +238,11 @@
     var result = {"track-id": "track:" + id, index: index, name: String(this.read(track, "name")),
       kind: midi ? "midi" : "audio", "arm?": armable && !!this.read(track, "arm"),
       monitor: MONITOR[Number(this.read(track, "current_monitoring_state"))] || null,
-      input: this.routing(track), clips: clips};
+      input: this.routing(track), clips: clips, "group-track-id": group ? "track:" + group : null,
+      "arrangement-clips": ids(track.get("arrangement_clips")).map(function (clipId) {
+        var c = self.object({id: clipId});
+        return {name: String(self.read(c, "name")), "start-beat": Number(self.read(c, "start_time")), "end-beat": Number(self.read(c, "end_time"))};
+      })};
     if (id === this.hostTrackId()) { result["companion?"] = true; this.feed = {host: id, channel: feedOf(result.input.channel)}; }
     return result;
   };
@@ -162,16 +280,56 @@
     }
     var found = this.trackIds().filter(function (id) {
       var t = self.object({id: id});
-      return String(self.read(t, "name")) === name && !!self.read(t, "has_midi_input");
+      return String(self.read(t, "name")) === name && !self.foldable(t) && !!self.read(t, "has_midi_input");
     });
     if (found.length > 1) fault("duplicate-tracks", "Several MIDI tracks have that name; choose one in Live");
-    if (found.length === 1) return {"track-id": "track:" + found[0], "created?": false};
+    if (found.length === 1) {
+      var existing = {"track-id": "track:" + found[0], "created?": false}, in_ = this.groupOf(this.object({id: found[0]}));
+      if (in_) existing["group-track-id"] = "track:" + in_;
+      return existing;
+    }
+    var index = -1, groupId = null;
+    if (payload["group-track-id"] !== undefined && payload["group-track-id"] !== null) {
+      groupId = idOf(payload["group-track-id"], "track");
+      index = this.afterGroup(groupId);
+    }
     var before = this.trackIds();
-    mark(); this.object("live_set").call("create_midi_track", -1);
+    mark(); this.object("live_set").call("create_midi_track", index);
     var created = this.trackIds().filter(function (id) { return before.indexOf(id) < 0; });
     if (created.length !== 1) fault("track-not-created", "Live did not report exactly one new track; inspect the Set before retrying");
-    this.object({id: created[0]}).set("name", name);
-    return {"track-id": "track:" + created[0], "created?": true};
+    var track = this.object({id: created[0]});
+    track.set("name", name);
+    var result = {"track-id": "track:" + created[0], "created?": true};
+    if (groupId !== null) { var joined = this.groupOf(track); result["group-track-id"] = joined ? "track:" + joined : null; }
+    return result;
+  };
+
+  // Where a new member of a Group Track goes, validated before any write:
+  // just after the group's last direct member that is not itself a group, or
+  // just after the Group Track when it has none. Right after a nested group's
+  // members would be ambiguous between the two groups, so it is never chosen.
+  Session.prototype.afterGroup = function (groupId) {
+    var all = this.trackIds(), self = this, last = all.indexOf(groupId);
+    if (last < 0) fault("stale-track", "That Group Track is no longer in the Set");
+    if (!this.foldable(this.object({id: groupId}))) fault("not-a-group", "That track is not a Group Track");
+    all.forEach(function (id, i) {
+      var t = self.object({id: id});
+      if (i > last && self.groupOf(t) === groupId && !self.foldable(t)) last = i;
+    });
+    return last + 1;
+  };
+
+  Session.prototype.ensureGroup = function (payload) {
+    var name = payload.name, self = this;
+    if (typeof name !== "string" || !name.length || name.length > 128) fault("track-name", "A Group Track needs a name");
+    var found = this.trackIds().filter(function (id) {
+      var t = self.object({id: id});
+      return self.foldable(t) && String(self.read(t, "name")) === name;
+    });
+    if (found.length > 1) fault("duplicate-tracks", "Several Group Tracks have that name; choose one in Live");
+    if (found.length === 1) return {"track-id": "track:" + found[0], "created?": false};
+    fault("group-creation-unavailable", "Live's API has no documented call that creates a Group Track. Group a track and name the group \"" +
+      name + "\", or load the Tolglow group template, then sync again");
   };
 
   Session.prototype.findRouting = function (track, list, wanted, describe) {
@@ -326,20 +484,49 @@
     var length = clip["length-beats"];
     if (!finite(length) || length <= 0 || length > 4096) fault("clip-length", "A clip needs a positive length in beats");
     var content = this.clipContent(track, payload, length);
-    var slotIds = ids(track.get("clip_slots")), slot = payload["slot-index"];
+    var slotIds = ids(track.get("clip_slots")), slot = payload["slot-index"], newScene = false;
     if (slot === undefined || slot === null) {
       slot = -1;
       slotIds.some(function (id, i) { if (!self.read(self.object({id: id}), "has_clip")) { slot = i; return true; } return false; });
-      if (slot < 0) fault("no-empty-slot", "The capture track has no empty clip slot; add a scene");
+      if (slot < 0 && !payload["create-scene?"]) fault("no-empty-slot", "The capture track has no empty clip slot; add a scene");
+      if (slot < 0) newScene = true;
     } else if (!integer(slot, 0, slotIds.length - 1)) fault("slot-index", "No such clip slot");
+    if (newScene) {
+      mark(); this.object("live_set").call("create_scene", -1);
+      slotIds = ids(track.get("clip_slots"));
+      slot = slotIds.length - 1;
+      if (slot < 0 || this.read(this.object({id: slotIds[slot]}), "has_clip")) fault("scene-not-created", "Live did not add an empty clip slot");
+    }
     var clipSlot = this.object({id: slotIds[slot]});
     if (this.read(clipSlot, "has_clip")) fault("slot-occupied", "That clip slot already holds a clip");
     mark();
     clipSlot.call("create_clip", length);
     var created = this.object(this.slotPath(track, slot) + " clip");
     if (payload.name) created.set("name", String(payload.name).slice(0, 128));
+    // Run clips play once (Clip.looping); Capture clips keep Live's default.
+    if (payload["looping?"] === false) created.set("looping", 0);
     var filled = this.fill(created, content, length, mark);
-    return {"clip-id": "clip:" + Number(created.id), "slot-index": slot, notes: filled.notes, "envelope-steps": filled["envelope-steps"]};
+    return {"clip-id": "clip:" + Number(created.id), "slot-index": slot, notes: filled.notes, "envelope-steps": filled["envelope-steps"],
+      "scene-created?": newScene};
+  };
+
+  // Copy a Session clip on this track into its Arrangement. An overlap or a
+  // clip no longer on the track is refused before the write.
+  Session.prototype.placeClip = function (payload, mark) {
+    var track = this.track(payload["track-id"], payload["expected-name"]), clip = this.clip(payload["clip-id"]), self = this;
+    var beat = payload["arrangement-beat"], length = Number(this.read(clip, "length"));
+    if (!finite(beat) || beat < 0) fault("placement-range", "Use a nonnegative arrangement beat");
+    var onTrack = ids(track.get("clip_slots")).some(function (id, i) {
+      return !!self.read(self.object({id: id}), "has_clip") && Number(self.object(self.slotPath(track, i) + " clip").id) === Number(clip.id);
+    });
+    if (!onTrack) fault("stale-clip", "That clip is no longer on the named track");
+    ids(track.get("arrangement_clips")).forEach(function (id) {
+      var c = self.object({id: id}), start = Number(self.read(c, "start_time")), end = Number(self.read(c, "end_time"));
+      if (!finite(start) || !finite(end) || (start < beat + length && beat < end))
+        fault("placement-overlap", "That range of the track's Arrangement already holds a clip");
+    });
+    mark(); track.call("duplicate_clip_to_arrangement", "id " + Number(clip.id), beat);
+    return {"arrangement-beat": beat};
   };
 
   // Add notes and lane steps to a clip this connection wrote, for phrases too
@@ -428,10 +615,48 @@
     return {"clip-id": payload["clip-id"], view: "Detail/Clip"};
   };
 
+  // Watch Session playback on run tracks: playing_slot_index (documented,
+  // observable) changes to a slot when a clip starts and below 0 when the
+  // track stops. Each change is emitted once with its own serial. Replaces
+  // the previous set of watches; writes nothing to the Set.
+  Session.prototype.watchRunTracks = function (payload) {
+    var self = this, wanted = payload["track-ids"];
+    if (!this.observe || !this.emit) fault("watch-unavailable", "This companion cannot observe track playback");
+    if (!Array.isArray(wanted) || wanted.length > 512) fault("track-ids", "Name up to 512 run tracks");
+    var tracks = wanted.map(function (id) { return self.track(id); });
+    Object.keys(this.watches).forEach(function (id) { self.watches[id].close(); });
+    this.watches = {};
+    this.hostTrackId();
+    tracks.forEach(function (track) {
+      var id = Number(track.id), entry = {slot: Number(self.read(track, "playing_slot_index"))};
+      entry.close = self.observe(id, "playing_slot_index", function (value) { self.playingChanged(id, value); }, null);
+      self.watches[id] = entry;
+    });
+    return {watching: tracks.length};
+  };
+  Session.prototype.playingChanged = function (trackId, value) {
+    var entry = this.watches[trackId], slot = Number(scalar(value)), event;
+    if (!entry || !finite(slot) || slot === entry.slot) return;
+    entry.slot = slot;
+    event = {type: slot >= 0 ? "clip-started" : "clip-stopped", "track-id": "track:" + trackId,
+      "watch-session": this.watchSession, serial: ++this.watchSerial};
+    if (slot >= 0) {
+      var track = this.object({id: trackId}), clip = this.api(this.slotPath(track, slot) + " clip");
+      event["slot-index"] = slot;
+      event["clip-id"] = clip && Number(clip.id) ? "clip:" + Number(clip.id) : null;
+    }
+    var song = this.api("live_set");
+    if (song && Number(song.id)) event["song-beat"] = Number(this.read(song, "current_song_time"));
+    this.emit(event);
+  };
+
   Session.prototype.run = function (op, payload, mark) {
     switch (op) {
       case "inspect-set": return this.inspectSet();
       case "ensure-track": return this.ensureTrack(payload, mark);
+      case "ensure-group": return this.ensureGroup(payload);
+      case "watch-run-tracks": return this.watchRunTracks(payload);
+      case "place-clip": return this.placeClip(payload, mark);
       case "configure-track": return this.configureTrack(payload, mark);
       case "write-clip": return this.writeClip(payload, mark);
       case "extend-clip": return this.extendClip(payload, mark);
@@ -466,6 +691,7 @@
     var host = this.hostTrackId(), feed = this.feedChannel(host);  // cached host, no LiveAPI per event
     if (feed !== null && event.channel === feed) return null;
     if (host) event["track-id"] = "track:" + host;
+    event.origin = this.origin();
     return event;
   };
 

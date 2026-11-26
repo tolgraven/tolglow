@@ -722,6 +722,31 @@
     (is (= 0 (:activity-target (start edited))))
     (is (not (contains? (start (assoc-in edited [:ui :auto-form :target-activity?] false)) :activity-target)))))
 
+(deftest auto-start-varies-parameters-and-keeps-a-repl-plan
+  (let [start #(get-in (transition % [:studio/auto-start]) [:studio/http :body])
+        planned (assoc base :show (assoc (:show base) :auto
+                                         {:enabled? true :section :quiet
+                                          :config {:sections [{:id :red :length {:bars 2}} {:id :quiet :length {:bars 2}}]
+                                                   :activity-target {:waveform :sine :period {:bars 4}}}
+                                          :reasons [{:reason :performer-took-over :instance-ids ["1:4"]}
+                                                    {:reason :intentional-darkness :section :quiet :lit 1}]}))]
+    (is (not (contains? (start base) :randomize)))
+    (is (not (contains? (start base) :keep-plan?)) "nothing to keep without a plan")
+    (is (= {:params "marked"} (:randomize (start (assoc-in base [:ui :auto-form :randomize?] true)))))
+    (is (true? (:keep-plan? (start planned))))
+    (is (not (contains? (start planned) :activity-target)) "a signal target stays with the plan, not the slider")
+    (is (not (contains? (start (assoc-in planned [:ui :auto-form :keep-plan?] false)) :keep-plan?)))
+    (is (true? (get-in (transition planned [:studio/auto-stop]) [:studio/http :body :keep-plan?])) "stopping keeps the plan for the next start")
+    (is (= {:enabled? false :expected-epoch 7} (get-in (transition base [:studio/auto-stop]) [:studio/http :body])))
+    (is (= "Section quiet · Moving in darkness · handed 1 to a performer" (events/auto-summary planned)))
+    (is (= "" (events/auto-summary base)))
+    (testing "Vary follows a saved randomizing config until the form chooses"
+      (let [varied (assoc-in planned [:show :auto :config :randomize] {:params :marked :palette [{:color [1 0 0]}]})
+            kept (assoc-in planned [:show :auto :config :randomize] {:params :none :palette [{:color [1 0 0]}]})]
+        (is (= {:params "marked"} (:randomize (start varied))))
+        (is (not (contains? (start kept) :randomize)))
+        (is (not (contains? (start (assoc-in varied [:ui :auto-form :randomize?] false)) :randomize)))))))
+
 (deftest musical-authoring-remains-data
   (let [definition (events/builder-definition (get-in base [:ui :builder]) 3)
         added (transition base [:studio/composition-add "ember"])
@@ -1871,6 +1896,41 @@
     (is (str/includes? (markup (:db done)) "Download MIDI clip"))
     (is (str/includes? (markup (:db done)) "/api/capture/last.mid"))
     (is (not (str/includes? (markup base) "Download MIDI clip")))))
+
+(deftest the-live-runs-panel-reads-the-run-record-projection
+  (let [requested (transition base [:connections/live-runs-refresh])
+        [effect request] (first (:fx requested))
+        token (connections/token (:db requested))
+        projection {:takes 3 :running 1
+                    :channels [{:cue-id "a" :name "Amber sweep" :group-path ["stage" "warm"]
+                                :lanes [{:lane 0 :track-name "Tolglow run a"
+                                         :takes [{:take-id "r.1" :run 1 :start-beat 1 :length-beats 3 :phase "ended" :clip {:status "in-live"}}
+                                                 {:take-id "r.3" :run 2 :start-beat 6 :phase "running" :clip {:status "recording"}}]}]}
+                               {:cue-id "b" :name "Blue wash" :group-path ["stage"]
+                                :lanes [{:lane 0 :track-name "Tolglow run b"
+                                         :takes [{:take-id "r.2" :run 1 :start-beat 2 :length-beats 5 :phase "ended" :clip {:status "not-in-live"}}]}]}]
+                    :mirror {:complete? false :pending 1 :problems [{:code "not-in-group" :name "Tolglow run b"}]}}
+        done (transition (:db requested) [:connections/live-runs-loaded token :live-runs projection])
+        stale (transition (:db requested) [:connections/live-runs-loaded [:other] :live-runs projection])
+        html (renderToStaticMarkup (r/as-element [connections/connection-view (:db done) (connections/state (:db done))]))]
+    (is (= :studio/http effect))
+    (is (= ["/api/live-runs" nil] [(:path request) (:body request)]))
+    (is (= projection (get-in done [:db :connections :live-runs])))
+    (is (not (contains? (get-in done [:db :connections :pending]) :live-runs)))
+    (is (nil? stale) "a reply for another show session is ignored")
+    (is (= "2 launched cues · 3 takes (1 running) · 1 of 3 in Live" (connections/live-runs-text projection)))
+    (is (= "Nothing has run yet" (connections/live-runs-text {:takes 0 :channels []})))
+    (is (= "2 launched cues · 300 takes · 1 of 3 in Live · newest 3 shown"
+           (connections/live-runs-text (assoc projection :takes 300 :running 0 :truncated? true :shown 3))))
+    (is (= "2 launched cues · 3 takes (1 running) · 1 of 3 in Live · 44 playback events dropped"
+           (connections/live-runs-text (assoc projection :playback-events {:queued 0 :dropped 44}))))
+    (is (= "run 1 · beat 1.00 · held 3.00 · in Live" (connections/take-text (get-in projection [:channels 0 :lanes 0 :takes 0]))))
+    (is (= "run 2 · beat 6.00 · running · recording" (connections/take-text (get-in projection [:channels 0 :lanes 0 :takes 1]))))
+    (is (str/includes? html "Amber sweep"))
+    (is (str/includes? html "in stage / warm"))
+    (is (str/includes? html "Tolglow run b"))
+    (is (str/includes? html "not-in-group · Tolglow run b"))
+    (is (not (str/includes? (renderToStaticMarkup (r/as-element [connections/connection-view base (connections/state base)])) "Amber sweep")))))
 
 (deftest an-edit-after-new-is-what-publishes
   ;; Studio dispatches New synchronously, so an edit typed straight after it lands on the

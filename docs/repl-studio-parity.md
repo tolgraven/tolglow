@@ -802,11 +802,57 @@ refusal reads the same from both sides: auditioning with no candidate returns
 `:status :rejected :code :no-candidate`, and applying the candidate's Room
 draft as a scene returns `:code :preview-draft`.
 
+Destinations an existing knob drives are left out of a fresh candidate and of
+every reroll on both sides. Only the REPL and the agent tool can opt in with
+`:include-knob-driven? true`. A restart drops the candidate everywhere, and an
+audition whose cues were all released is refused with `:no-running-cues`.
+
 **Tracked gaps.** A Push encoder cannot sweep a candidate yet (it reuses the
 linked-knob Push binding, which waits on an Afterglow adapter change). Enum,
 boolean and vector destinations are not generated. Close this gap when a Push
 encoder sweeps the same candidate in the Room
-([issue #667](https://github.com/tolgraven/tolglow/issues/667)).
+([issue #667](https://github.com/tolgraven/tolglow/issues/667)). Studio has no
+`:include-knob-driven?` control and does not show a link's `:shared-with`, and
+its Room view does not yet compare `:frame-revision` with `:draft-revision`, so
+it can show the previous value's frame for a frame or two during a sweep
+([issue #737](https://github.com/tolgraven/tolglow/issues/737)).
+
+## Let the show wander with a section plan
+
+Both surfaces send the same `:auto` request (`POST /api/auto` from Studio,
+`show/submit! runtime :auto …` at the REPL, `configure_auto` for agents) and
+read the same `:auto` projection in the snapshot: `:enabled?`, `:config`, the
+current `:section` and the last decision's `:reasons`. [Auto show](auto-show.md)
+
+From the REPL, start the R1o example's plan, read the section and the last
+decision, then hand one look to yourself:
+
+```clojure
+(require '[tolglow.automation.red-show :as red-show])
+@(show/submit! runtime :auto (red-show/auto-config 217))
+(select-keys (:auto (show/snapshot runtime)) [:section :reasons])
+;; Any edit of an auto look hands it over; auto never ends it again.
+@(show/submit! runtime :command {:op :param/set :instance-id "<auto instance>" :param :level :value 0.4})
+```
+
+In Studio, **Perform → Tools → Let it wander** shows **Keep the section plan
+(red, purple, quiet, strobe)** for a plan started at the REPL and a status line
+such as **Section quiet · Moving in darkness**. Ticking **Vary marked
+parameters within their ranges** and pressing **Start auto** sends
+`:randomize {:params :marked}` with `:keep-plan? true`; the REPL then reads the
+same four sections with the palette kept. A REPL stop turns the header to
+**Auto mode · off** and the plan stays on offer. A refusal reads the same from
+both sides: a count of 70 returns `:status :rejected` with `Invalid auto config:
+Count must be an integer from 1 to 64 at [:count]`, Studio shows that message,
+and the committed config is unchanged. Checked in headless Chrome by
+`tolglow.qa.auto-show-browser`.
+
+**Tracked gaps.** Studio cannot author or edit a section plan, palette, ranges,
+category filters or a lit limit; it keeps the ones the REPL saved. The REPL
+reads which instances were handed over only from the reasons of the decision
+that noticed it. Push has no auto-mode control. Close these when a performer can
+build a plan in Studio and start or stop auto mode from Push, both reading the
+same projection ([issue #217](https://github.com/tolgraven/tolglow/issues/217)).
 
 ## Reviewing a show feature
 
@@ -855,4 +901,52 @@ The remaining gaps are tracked in issue #481. Studio has no editor for `:calibra
 
 Retrospective Capture has a shared operation. The runtime owns the capture buffer. `show/capture-phrase!` at the REPL and **Connections → Capture** in Studio both call `show/capture-action!` with `:capture`. The REPL receives the phrase; Studio receives its summary and a MIDI clip download of the same capture (`:smf`). `(show/capture-action! rt :status {})` reads the buffer and the last capture that both surfaces show. Two gaps remain. Writing the capture into Live from Studio (`live-connection/capture!` over the configured bridge) is REPL-only, and Push has no Capture button: the uniform surface layer lives with the Push controllers, outside this change. Close them when Studio and Push both send the last capture to Live and the REPL can read the resulting clip identities. [Capture into Live](live-routing.md#capture-the-last-phrase-into-live) · [Issue #671](https://github.com/tolgraven/tolglow/issues/671) · [Issue #680](https://github.com/tolgraven/tolglow/issues/680)
 
+## See what ran as Live runs
+
+The runtime keeps a run record (#683). It has one channel per launched cue,
+one take per run, a lane for each overlapping run and the effect-group path.
+Both surfaces read the same projection, `show/live-runs-action!` with
+`:status`. In Studio, open **Connections → Live runs** and choose **Show what
+ran**. It lists each launched cue with its group, lanes and takes. From the
+REPL:
+
+```clojure
+(show/live-runs runtime)          ; the projection Studio shows
+(show/live-runs-record runtime)   ; exact beats, launch values and moves
+```
+
+Mirroring the record into Live needs a companion connection. Only the REPL
+can run it today:
+
+```clojure
+(require '[tolglow.integrations.live-connection :as live]
+         '[tolglow.integrations.live-transport :as transport])
+(show/sync-live-runs! runtime (live/open (transport/transport {:endpoint "http://127.0.0.1:8750/live"
+                                                              :bridge-id "tolglow-m4l"
+                                                              :sync-session-id "runs"})
+                                        {:session-id "runs"}))
+```
+
+After a sync, **Show what ran** marks each take `in Live` with its clip and
+lists the problems the read-back found, such as a run track outside its Group
+Track. The automated check compares the Ring projection with the REPL's
+projection, before and after a sync
+([test](../test/tolglow/integrations/live_runs_test.clj)).
+
+Run-clip playback reaches the show through the Live bridge. The REPL can feed
+the same event to `show/live-run-clip!`. The panel and
+`/api/live-runs?limit=n` list the newest 256 takes by default.
+
+Gaps:
+- Studio cannot start a sync, because the runtime does not own a companion
+  connection.
+- The panel refreshes on request, not from the state stream.
+- Push has no run view.
+- The panel was checked through server-rendered markup and event tests and
+  in headless Chrome against Ring. It was not checked on an iPad.
+
+[Run tracks in Live](live-routing.md#mirror-what-ran-as-run-tracks-clips-and-group-tracks) · [Issue #683](https://github.com/tolgraven/tolglow/issues/683)
+
 Video strip mapping uses one message from both surfaces. In Studio, **Rig & space → Video strips** sends `:video-mapping` edits through `POST /api/video-mapping`. The REPL sends the same edits with `show/video-action! runtime :edit`, using the geometry helpers in `tolglow.video.mapping`. Both read source status and sampled strip colours from the snapshot's `:video` key. A REPL edit redraws the open editor through the state stream. Studio has no control for a video cue's `:placement` parameters beyond the ordinary parameter controls on its card. [Video on LED strips](video-strips.md) · [Issue #672](https://github.com/tolgraven/tolglow/issues/672)
+
+Video surfaces use the same message. **Rig & space → Video surfaces** sends `{:op :put-surface}`, `{:op :delete-surface}` and `{:op :surface-cue}` through `POST /api/video-mapping`; the REPL sends them with `show/video-action! runtime :edit`. Both read the heads in contact and each running surface's evaluated pose from the snapshot's `:video :surfaces`, and a REPL edit redraws the editor and the Room. A spawned surface cue's crop, position, rotation, scale, wave and contact parameters use the ordinary parameter controls on its card. Remaining gap: the Room has no drag handles for a surface; its pose is edited with numbers. [Video on 3D surfaces](video-surfaces.md) · [Issue #674](https://github.com/tolgraven/tolglow/issues/674)

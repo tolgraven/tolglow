@@ -60,6 +60,22 @@
           (is (= before (update (select-keys (state rt) [:registry :pages :instances]) :instances keys)))))
       (finally (show/stop! rt)))))
 
+(deftest a-full-page-is-reported-after-the-volume-validates
+  ;; Spawned cues place through tolglow.cue-spawn after their own checks, so
+  ;; an invalid request names its own problem even on a full page.
+  (let [rt (host/runtime true)]
+    (try
+      (host/submit rt 0 :command {:op :page/put :page {:id :full :name "Full" :columns 1 :rows 1 :cells {[0 0] :blue}}})
+      (let [full (show/submit! rt :spatial-cue (assoc request :page-id :full :cell nil))
+            invalid (show/submit! rt :spatial-cue (assoc request :id :other :page-id :full :cell nil :paint {}))]
+        (host/tick rt 5)
+        (is (= :rejected (:status @full)))
+        (is (re-find #"empty cell" (str (:message @full))) (pr-str @full))
+        (is (= :rejected (:status @invalid)))
+        (is (re-find #"native paint" (str (:message @invalid))) (pr-str @invalid))
+        (is (nil? (get-in (state rt) [:registry :cues :orb])) "nothing was published"))
+      (finally (show/stop! rt)))))
+
 (deftest saved-volume-scene-keeps-head-scopes-and-owned-activations
   (let [rt (host/runtime true)]
     (try

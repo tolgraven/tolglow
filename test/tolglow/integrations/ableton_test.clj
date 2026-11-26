@@ -95,6 +95,8 @@
     (is (empty? (:intents (live/record-command (bridge) cmd ack (assoc recording :track-armed? false)))))
     (is (empty? (:intents (live/record-command (bridge) cmd (assoc ack :status :rejected) recording))))
     (is (empty? (:intents (live/record-command (bridge) (assoc cmd :source {:origin :live-playback}) ack recording))))
+    (is (empty? (:intents (live/record-command (bridge) (assoc cmd :source {:origin :live-input}) ack recording)))
+        "a performer playing through Live is already in Live (#683)")
     (let [param (merge envelope {:command-id "knob" :op :param/set :instance-id "0:1" :param :level :value 5})
           ack {:command-id "knob" :status :accepted}]
       (is (= 64 (-> (live/record-command (:state first-write) param ack recording) :midi first :value)))

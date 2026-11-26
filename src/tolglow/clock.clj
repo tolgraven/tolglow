@@ -59,7 +59,10 @@
     (assoc auto :state
            (cond-> (shift-fields state [:next-at-beat] offset [:auto :state])
              (:interval-timer state)
-             (update :interval-timer shift-timer offset [:auto :state :interval-timer]))) auto))
+             (update :interval-timer shift-timer offset [:auto :state :interval-timer])
+             ;; Section plans are musical only (#217), so a rebase moves their boundary too.
+             (get-in state [:section :timer])
+             (update-in [:section :timer] shift-timer offset [:auto :state :section :timer]))) auto))
 
 (defn- hold-timer [timer held-ms]
   (cond-> timer (= :ms (get-in timer [:duration :unit])) (update :started-at + held-ms)))
