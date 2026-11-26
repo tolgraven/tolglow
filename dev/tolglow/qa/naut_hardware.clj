@@ -10,12 +10,15 @@
             [afterglow.control.devices.push-3.usb :as push3-usb]
             [afterglow.control.devices.session :as device-session]
             [afterglow.control.devices.transports :as transports]
+            [afterglow.control.effect-selection :as effect-selection]
             [afterglow.control.model :as control]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.pprint :as pprint]
             [clojure.string :as str]
-            [tolglow.show :as show])
+            [tolglow.show :as show]
+            [tolglow.surface.descriptor :as descriptor]
+            [tolglow.surface.link :as surface-link])
   (:import [java.time Instant]
            [java.util.concurrent LinkedBlockingQueue TimeUnit]
            [javax.sound.midi MidiDevice MidiMessage MidiSystem Receiver]))
@@ -119,19 +122,24 @@
 
 (defn recording-transport
   "Wrap transport so host output and device input are both logged, in order,
-  with monotonic milliseconds since the wrapper was created."
-  [transport]
-  (let [log (atom []) start (System/nanoTime)
-        stamp #(/ (- (System/nanoTime) start) 1e6)]
-    {:log log
-     :transport (assoc transport
-                       :open! (fn [receive!]
-                                ((:open! transport) (fn [bytes]
-                                                      (swap! log conj {:ms (stamp) :in (vec bytes)})
-                                                      (receive! bytes))))
-                       :send! (fn [handle messages]
-                                (swap! log into (map #(hash-map :ms (stamp) :out (vec %)) messages))
-                                ((:send! transport) handle messages)))}))
+  with monotonic milliseconds since start (default: when the wrapper was
+  created). Several units can share one :log and :start; :unit tags entries.
+  :stamp returns the current time on the same clock."
+  ([transport] (recording-transport transport {}))
+  ([transport {:keys [log start unit]}]
+   (let [log (or log (atom [])) start (or start (System/nanoTime))
+         stamp #(/ (- (System/nanoTime) start) 1e6)
+         entry (fn [k bytes] (cond-> {:ms (stamp) k (vec bytes)} unit (assoc :unit unit)))]
+     {:log log
+      :stamp stamp
+      :transport (assoc transport
+                        :open! (fn [receive!]
+                                 ((:open! transport) (fn [bytes]
+                                                       (swap! log conj (entry :in bytes))
+                                                       (receive! bytes))))
+                        :send! (fn [handle messages]
+                                 (swap! log into (map #(entry :out %) messages))
+                                 ((:send! transport) handle messages)))})))
 
 ;; ---------------------------------------------------------------------------
 ;; Receipts
@@ -485,16 +493,34 @@
       :button-up [[(+ 0xb0 (:channel button)) (:controller button) 0]]
       :strip (let [raw (long (* value 16383))] [[(+ 0xe0 (get-in layout [:touch-strip :channel])) (bit-and raw 0x7f) (bit-shift-right raw 7)]]))))
 
+(def x-touch-units
+  "Unit roles an X-Touch action may name first, as in [:x-touch-ext :select 0]."
+  #{:x-touch :x-touch-ext})
+
 (defn x-touch-bytes
-  "Translate one operator action to the MCU bytes an X-Touch or XT sends."
-  [_ [action strip value]]
-  (case action
-    :select [[0x90 (+ 24 strip) 127] [0x90 (+ 24 strip) 0]]
-    :mute [[0x90 (+ 16 strip) 127] [0x90 (+ 16 strip) 0]]
-    :touch [[0x90 (+ 104 strip) 127]]
-    :untouch [[0x90 (+ 104 strip) 0]]
-    :fader (let [raw (long (* value 16383))] [[(+ 0xe0 strip) (bit-and raw 0x7f) (bit-shift-right raw 7)]])
-    :turn (repeat (Math/abs (long value)) [0xb0 (+ 16 strip) (if (neg? value) 0x41 0x01)])))
+  "Translate one operator action to the MCU bytes an X-Touch or XT sends. A
+  press is note-on velocity 127 and a release note-on velocity 0, as the units
+  send. Named buttons use tolglow.surface.descriptor/mcu-named-buttons. A
+  leading unit role (see x-touch-units) is ignored here; replay-operator routes
+  on it."
+  [layout [action strip value :as step]]
+  (if (x-touch-units action)
+    (x-touch-bytes layout (vec (rest step)))
+    (let [press (fn [note] [[0x90 note 127] [0x90 note 0]])
+          named #(or (get descriptor/mcu-named-buttons %) (throw (ex-info "Unknown X-Touch button" {:button %})))]
+      (case action
+        :rec (press strip)
+        :solo (press (+ 8 strip))
+        :mute (press (+ 16 strip))
+        :select (press (+ 24 strip))
+        :push (press (+ 32 strip))
+        :button (press (named strip))
+        :button-down [[0x90 (named strip) 127]]
+        :button-up [[0x90 (named strip) 0]]
+        :touch [[0x90 (+ 104 strip) 127]]
+        :untouch [[0x90 (+ 104 strip) 0]]
+        :fader (let [raw (long (* value 16383))] [[(+ 0xe0 strip) (bit-and raw 0x7f) (bit-shift-right raw 7)]])
+        :turn (repeat (Math/abs (long value)) [0xb0 (+ 16 strip) (if (neg? value) 0x41 0x01)])))))
 
 ;; ---------------------------------------------------------------------------
 ;; Scenarios. Each step has a prompt for the operator, the equivalent replay
@@ -504,17 +530,102 @@
 (defn- level-of [model cue-id]
   (some #(get-in % [:params :level]) (filter #(= :running (:phase %)) (instances model cue-id))))
 
+(defn- param-of [model cue-id param]
+  (some #(get-in % [:params param]) (filter #(= :running (:phase %)) (instances model cue-id))))
+
+(defn- opacity-of [model cue-id]
+  (some #(get-in % [:system :opacity] 1.0) (filter #(= :running (:phase %)) (instances model cue-id))))
+
+(defn- latest-id [model cue-id]
+  (:id (last (sort-by :order (filter #(= :running (:phase %)) (instances model cue-id))))))
+
 (defn- group-level [runtime id]
   (let [channel-id [:manual id]]
     (some (fn [root] (if (= channel-id (:id root)) (:level root)
                        (some #(when (= channel-id (:id %)) (:level %)) (:groups root))))
           (get-in (show/effect-group-channels runtime) [:manual]))))
 
-(defn- fader-feedback [log strip]
-  (filterv #(= (+ 0xe0 strip) (first (:out %))) log))
+(defn- selection-flags
+  "Solo/Mute state (#532) of each running cue: {cue-id {:soloed? :muted? :suppressed-by}}."
+  [model]
+  (let [rows (into {} (map (juxt :id identity)) (:instances (effect-selection/projection model)))]
+    (into {} (keep (fn [{:keys [id cue-id phase]}] (when (= :running phase) [cue-id (get rows id)])))
+          (vals (:instances model)))))
 
-(defn- text-writes [log]
-  (filterv #(= [0xf0 0 0 0x66] (take 4 (:out %))) log))
+;; What a unit was sent and sent back, from the scenario's shared MIDI log.
+
+(defn- outs [log unit since] (filterv #(and (:out %) (= unit (:unit %)) (>= (:ms %) since)) log))
+
+(defn- ins [log unit since] (filterv #(and (:in %) (= unit (:unit %)) (>= (:ms %) since)) log))
+
+(defn- sent? [log unit since message] (boolean (some #(= message (:out %)) (outs log unit since))))
+
+(defn- received-at [log unit since message] (some #(when (= message (:in %)) (:ms %)) (ins log unit since)))
+
+(defn lcd-strips
+  "The seven-column slots a unit shows on LCD row 0 or 1 (its last row write),
+  trimmed."
+  [log unit row]
+  (some->> (outs log unit 0)
+           (filter #(let [m (:out %)] (and (= [0xf0 0 0 0x66] (take 4 m)) (= 0x12 (nth m 5 nil)) (= (* 56 row) (nth m 6 nil)))))
+           last :out (drop 7) butlast (map char) (partition-all 7) (mapv #(str/trim (apply str %)))))
+
+(defn- colours [log unit]
+  (some->> (outs log unit 0) (filter #(= 0x72 (nth (:out %) 5 nil))) last :out (drop 6) butlast vec))
+
+(defn- fader-raw [[_ lsb msb]] (+ lsb (* 128 msb)))
+
+(defn- motor-out [log unit strip since] (filterv #(= (+ 0xe0 strip) (first (:out %))) (outs log unit since)))
+
+(defn- meters-out [log unit strip since]
+  (keep #(let [[status data] (:out %)] (when (and (= 0xd0 status) (= strip (quot data 16))) (mod data 16)))
+        (outs log unit since)))
+
+(defn- meter-now [log unit strip] (last (meters-out log unit strip 0)))
+
+(defn- touch-window
+  "One fader gesture on strip since ms: when its touch and release arrived,
+  the motor messages sent while touched and the first one after release."
+  [log unit strip since]
+  (when-let [touched (received-at log unit since [0x90 (+ 104 strip) 127])]
+    (when-let [released (received-at log unit touched [0x90 (+ 104 strip) 0])]
+      {:touched touched :released released
+       :during (filterv #(< touched (:ms %) released) (motor-out log unit strip touched))
+       :after (first (motor-out log unit strip released))})))
+
+(defn- reasserted?
+  "A fader gesture whose motor stayed quiet while touched and was reasserted
+  at the committed value (normalized) after release."
+  [log unit strip since value]
+  (let [{:keys [during after]} (touch-window log unit strip since)]
+    (boolean (and after (empty? during) value
+                  (<= (Math/abs (- (fader-raw (:out after)) (* (double value) 16383))) 2)))))
+
+(def main-session "naut-x-touch")
+
+(def ext-session "naut-x-touch-ext")
+
+(def desk-link "naut-desk")
+
+(defn- placement [model] (surface-link/strip-placement model main-session))
+
+(defn- encoder-mode [model] (get-in (placement model) [:layout :encoder-mode]))
+
+(defn- selected [model] (get-in (placement model) [:layout :selected]))
+
+(def ^:private desk-cues (mapv #(keyword (format "s%02d" %)) (range 1 15)))
+
+(defn desk-model
+  "The qualification model plus fourteen filler cues S01..S14, so main unit and
+  extender have 20 strips to page through."
+  []
+  (reduce (fn [m id] (assoc-in m [:registry :cues id] {:id id :version 1 :effect-id :wash :name (str/upper-case (name id))}))
+          (qualification-model) desk-cues))
+
+(def ^:private cue-channels
+  [{:cue-id :tap :label "Tap" :color [1 0 0]} {:cue-id :expr :label "Expr" :color [0 1 0]}])
+
+(def ^:private blank-row (vec (repeat 8 "")))
 
 (def scenarios
   {:push-3/pads
@@ -554,17 +665,30 @@
       :actions [[:button :mute]]
       :expect (fn [{:keys [model]}] (false? (:blackout? model)))}]}
 
+   ;; The Tolglow mixer layout (#706 slice 2, docs/xtouch.md) on the main unit.
    :x-touch/strips
-   {:issues [310 553] :device :x-touch
-    :about "Committed group levels on the main X-Touch: scribble strips, SELECT, touch-owned faders and motor feedback."
+   {:issues [310 553 532 706]
+    :units [[:x-touch {:session-id main-session :effect-group-view :manual :channels cue-channels}]]
+    :about (str "The Tolglow mixer layout on the main X-Touch: scribble colours, SELECT then launch, touch-owned "
+                "faders with motor reassert, PAN/SEND/PLUG-IN/USER encoders, Solo/Mute, meters and PLAY/STOP.")
     :steps
-    [{:id :scribble :prompt "Look at the LCD."
+    [{:id :scribble :prompt "Look at the LCD and the scribble-strip backlights."
       :actions []
-      :expect (fn [{:keys [log]}] (seq (text-writes log)))
-      :confirm "Does strip 1 read 'All' and strip 2 'Flat' (group strips), followed by the cue strips 'Tap', 'Expr'? Are strip colors cyan, blue, then the cue colors?"}
-     {:id :select :prompt "Press SELECT on strip 3 (labelled Tap)."
+      :expect (fn [{:keys [log]}]
+                (and (= ["All" "Flat" "Tap" "Expr" "" "" "" ""] (lcd-strips log :x-touch 0))
+                     (= [6 4 1 2 0 0 0 0] (colours log :x-touch))))
+      :confirm (str "Does row 1 read All, Flat, Tap, Expr with strips 5-8 blank, does row 2 show 100% under All "
+                    "and Flat, and are the backlights cyan, blue, red, green, then dark on strips 5-8?")}
+     {:id :select :prompt "Press SELECT on strip 3 (Tap) once. The first press only selects the strip; Tap does not start."
       :actions [[:select 2]]
-      :expect (fn [{:keys [model]}] (running? model :tap))}
+      :expect (fn [{:keys [model log step-ms]}]
+                (and (= [:cue :tap] (selected model)) (not (running? model :tap))
+                     (sent? log :x-touch step-ms [0x90 26 127])))
+      :confirm "Is strip 3's SELECT lit while its row 2 stays blank (Tap not running)?"}
+     {:id :launch :prompt "Press SELECT on strip 3 again. A second press on the selected cue strip launches it."
+      :actions [[:select 2]]
+      :expect (fn [{:keys [model]}] (and (running? model :tap) (= [:cue :tap] (selected model))))
+      :confirm "Did strip 3's row 2 change to 5 (Tap's count, the PAN parameter) and its meter light up?"}
      {:id :group-fader :prompt "Touch the strip 1 fader (group All), pull it fully down, then let go."
       :actions [[:touch 0] [:fader 0 0.4] [:fader 0 0.0] [:wait 50] [:untouch 0]]
       :expect (fn [{:keys [runtime]}] (when-let [l (group-level runtime :all)] (< l 0.05)))}
@@ -572,56 +696,239 @@
       :before (fn [{:keys [runtime]}]
                 (submit-and-wait! runtime {:op :effect-groups/level-set :channel-id [:manual :all] :value 0.75}))
       :actions []
-      :expect (fn [{:keys [runtime log]}]
+      :expect (fn [{:keys [runtime log step-ms]}]
                 (and (= 0.75 (group-level runtime :all))
-                     (some #(let [[_ lsb msb] (:out %)] (< 12000 (+ lsb (* 128 msb)) 12600)) (fader-feedback log 0))))
+                     (some #(< 12000 (fader-raw (:out %)) 12600) (motor-out log :x-touch 0 step-ms))))
       :confirm "Did the strip 1 fader travel to about three quarters on its own and stop there?"}
-     {:id :cue-fader :prompt "Touch the strip 3 fader (Tap), move it to the top, then let go."
+     {:id :cue-fader :prompt "Touch the strip 3 fader (Tap), push it to the top, then let go."
       :actions [[:touch 2] [:fader 2 0.5] [:fader 2 1.0] [:wait 50] [:untouch 2]]
-      :expect (fn [{:keys [model]}] (when-let [l (level-of model :tap)] (> l 0.95)))}
-     {:id :untouched :prompt "Without touching the capacitive cap, nudge the strip 3 fader by its edge (or skip if impossible)."
+      :expect (fn [{:keys [model log step-ms]}]
+                (let [level (level-of model :tap)]
+                  (and level (> level 0.95) (reasserted? log :x-touch 2 step-ms level))))}
+     {:id :untouched :prompt "Optional: nudge the strip 3 fader by its edge without touching the cap (skip if it cannot be done). Untouched moves are ignored."
       :actions [[:fader 2 0.2]]
-      :expect (fn [{:keys [model]}] (when-let [l (level-of model :tap)] (> l 0.95)))
+      :expect (fn [{:keys [model start-model log step-ms]}]
+                (and (some #(= 0xe2 (first (:in %))) (ins log :x-touch step-ms))
+                     (= (level-of start-model :tap) (level-of model :tap))))
       :optional? true}
-     {:id :mute :prompt "Press MUTE on strip 3 to release Tap."
+     {:id :touch-hold
+      :prompt (str "Touch the strip 3 fader and keep your finger still on it for two seconds, then let go. "
+                   "While you hold it the kit sets Tap's level to 60%.")
+      :actions [[:touch 2] [:wait 800] [:untouch 2]]
+      :watch (fn [{:keys [runtime model log step-ms]}]
+               (when (received-at log :x-touch step-ms [0x90 106 127])
+                 (submit-and-wait! runtime {:op :param/set :instance-id (latest-id model :tap) :param :level :value 0.6})
+                 true))
+      :expect (fn [{:keys [model log step-ms]}]
+                (reasserted? log :x-touch 2 step-ms (level-of model :tap)))
+      :confirm "Did the fader stay under your finger, then move by itself to about 60% when you let go?"}
+     {:id :pan :prompt "PAN is lit (the default encoder mode). Turn the strip 3 encoder two clicks clockwise."
+      :actions [[:turn 2 2]]
+      :expect (fn [{:keys [model start-model log]}]
+                (and (= :pan (encoder-mode model)) (sent? log :x-touch 0 [0x90 42 127])
+                     (> (param-of model :tap :count) (param-of start-model :tap :count))))
+      :confirm "Did strip 3's row 2 count up from 5 (to 7 for two clicks) with its ring following?"}
+     {:id :send :prompt "Press SEND. Then turn the strip 3 encoder about ten clicks counter-clockwise."
+      :actions [[:button :send] [:wait 150] [:turn 2 -10]]
+      :expect (fn [{:keys [model log step-ms]}]
+                (and (= :send (encoder-mode model))
+                     (sent? log :x-touch step-ms [0x90 41 127]) (sent? log :x-touch step-ms [0x90 42 0])
+                     (some-> (opacity-of model :tap) (< 0.97))))
+      :confirm "Is SEND lit and PAN dark, and did strip 3's row 2 fall from 100% to about 90% with the ring shrinking?"}
+     {:id :encoder-push :prompt "Push the strip 3 encoder down once. It restores unity (100%)."
+      :actions [[:push 2]]
+      :expect (fn [{:keys [model]}] (= 1.0 (opacity-of model :tap)))}
+     {:id :plug-in
+      :prompt (str "Press PLUG-IN. The encoders now edit the selected strip (Tap): encoder 1 is count, encoder 2 "
+                   "is level. Turn encoder 1 two clicks counter-clockwise.")
+      :actions [[:button :plug-in] [:wait 150] [:turn 0 -2]]
+      :expect (fn [{:keys [model start-model log]}]
+                (and (= :plug-in (encoder-mode model))
+                     (= ["count" "level" "" "" "" "" "" ""] (lcd-strips log :x-touch 0))
+                     (= [6 6 0 0 0 0 0 0] (colours log :x-touch))
+                     (< (param-of model :tap :count) (param-of start-model :tap :count))))
+      :confirm (str "Is PLUG-IN lit, do strips 1-2 read count and level on cyan backlights with the rest dark and "
+                    "blank, and did count go down?")}
+     {:id :user
+      :prompt "Press USER. The encoders now drive linked knobs; the kit has created one, Knob A. Turn encoder 1 about ten clicks clockwise."
+      :before (fn [{:keys [runtime]}] (submit-and-wait! runtime {:op :knob/create :knob-id :naut-knob :name "Knob A"}))
+      :actions [[:button :user] [:wait 150] [:turn 0 10]]
+      :expect (fn [{:keys [model log step-ms]}]
+                (and (= :user (encoder-mode model)) (sent? log :x-touch step-ms [0x90 69 127])
+                     (some-> (get-in model [:knobs :knobs :naut-knob :value]) (>= 0.05))))
+      :confirm "Is USER lit, does strip 1 read Knob A with its value rising to about 10%, and are the other strips blank?"}
+     {:id :pan-again :prompt "Press USER again. Pressing the lit mode returns to PAN."
+      :actions [[:button :user]]
+      :expect (fn [{:keys [model]}] (= :pan (encoder-mode model)))}
+     {:id :solo :prompt "The kit launches Expr (strip 4). Press SOLO on strip 3 (Tap)."
+      :before (fn [{:keys [runtime]}] (submit-and-wait! runtime {:op :cue/launch :cue-id :expr :launch {:mode :persistent}}))
+      :actions [[:solo 2]]
+      :expect (fn [{:keys [model log step-ms]}]
+                (let [flags (selection-flags model)]
+                  (and (get-in flags [:tap :soloed?]) (= :solo (get-in flags [:expr :suppressed-by]))
+                       (sent? log :x-touch step-ms [0x90 10 127])
+                       (sent? log :x-touch step-ms [0x90 19 1])
+                       (sent? log :x-touch step-ms [0x90 90 127])
+                       (= 0 (meter-now log :x-touch 3)))))
+      :confirm (str "Is SOLO lit on strip 3 (and on strip 1, the All group that holds Tap), is MUTE blinking on "
+                    "strip 4 (Expr, silenced by the solo) with its meter down, and is the transport SOLO button lit?")}
+     {:id :unsolo :prompt "Press SOLO on strip 3 again to clear the solo."
+      :actions [[:solo 2]]
+      :expect (fn [{:keys [model log step-ms]}]
+                (let [flags (vals (selection-flags model))]
+                  (and (not-any? :soloed? flags) (not-any? :suppressed-by flags)
+                       (sent? log :x-touch step-ms [0x90 19 0]))))
+      :confirm "Did the SOLO buttons go dark and strip 4's MUTE stop blinking?"}
+     {:id :mute :prompt "Press MUTE on strip 3. Tap keeps running but is muted."
       :actions [[:mute 2]]
-      :expect (fn [{:keys [model]}] (not (running? model :tap)))}]}
-
-   :x-touch-ext/strips
-   {:issues [310 553] :device :x-touch-ext
-    :about "The extender as the second unit: offset strips, touch and motor feedback."
-    :steps
-    [{:id :scribble :prompt "Look at the extender LCD."
+      :expect (fn [{:keys [model log step-ms]}]
+                (and (running? model :tap) (get-in (selection-flags model) [:tap :muted?])
+                     (sent? log :x-touch step-ms [0x90 18 127])
+                     (= 0 (meter-now log :x-touch 2))))
+      :confirm "Is strip 3's MUTE lit and its meter down, while its row 2 still shows Tap's value?"}
+     {:id :unmute :prompt "Press MUTE on strip 3 again."
+      :actions [[:mute 2]]
+      :expect (fn [{:keys [model log step-ms]}]
+                (and (running? model :tap) (not (get-in (selection-flags model) [:tap :muted?]))
+                     (sent? log :x-touch step-ms [0x90 18 0])))}
+     {:id :meters :prompt "Hands off for a couple of seconds and watch the meters above the faders."
       :actions []
-      :expect (fn [{:keys [log]}] (seq (text-writes log)))
-      :confirm "Does extender strip 1 read 'Spare' (the ninth channel) and are the other strips blank?"}
-     {:id :select :prompt "Press SELECT on extender strip 1."
-      :actions [[:select 0]]
-      :expect (fn [{:keys [model]}] (running? model :spare))}
-     {:id :motor :prompt "Hands off. Watch extender strip 2: nothing should move (it has no channel)."
-      :actions [] :expect (fn [{:keys [log]}] (empty? (fader-feedback log 1)))
-      :confirm "Did extender fader 2 stay still?"}
-     {:id :mute :prompt "Press MUTE on extender strip 1 to release Spare."
-      :actions [[:mute 0]]
-      :expect (fn [{:keys [model]}] (not (running? model :spare)))}]}})
+      :expect (fn [{:keys [log step-ms]}]
+                (and (every? #(<= 2 (count (filter pos? (meters-out log :x-touch % step-ms)))) [0 2 3])
+                     (every? #(= 0 (meter-now log :x-touch %)) [1 4 5 6 7])))
+      :confirm "Do the meters on strips 1, 3 and 4 (All, Tap, Expr) hold a steady level while strips 2 and 5-8 stay dark?"}
+     {:id :play :prompt "Press PLAY. With no external clock the X-Touch runs the show's own transport."
+      ;; Stop first and give the unit a few refreshes to show it, so the PLAY LED
+      ;; visibly changes on the press.
+      :before (fn [{:keys [runtime]}]
+                (submit-and-wait! runtime {:op :transport/set :transport {:playing? false}})
+                (Thread/sleep 200))
+      :actions [[:button :play]]
+      :expect (fn [{:keys [model log step-ms]}]
+                (and (true? (get-in model [:transport :playing?])) (sent? log :x-touch step-ms [0x90 94 127])))}
+     {:id :stop :prompt "Press STOP."
+      :actions [[:button :stop]]
+      :expect (fn [{:keys [model log step-ms]}]
+                (and (false? (get-in model [:transport :playing?])) (sent? log :x-touch step-ms [0x90 93 127])))
+      :confirm "Did PLAY light on the previous press, and is STOP lit now with PLAY dark?"}
+     {:id :play-external
+      :prompt (str "The kit selects MIDI clock as the show's sync source (configuration only, no clock port is "
+                   "opened), so an external clock owns play and stop. Press PLAY: nothing should start.")
+      :before (fn [{:keys [runtime]}] (show/sync-action! runtime :source {:source-id :midi-clock}))
+      :after (fn [{:keys [runtime]}] (show/sync-action! runtime :source {:source-id :manual}))
+      :actions [[:button :play]]
+      :expect (fn [{:keys [model log step-ms now-ms device start-ack]}]
+                (let [pressed (received-at log :x-touch step-ms [0x90 94 127])]
+                  (and pressed (> (- (now-ms) pressed) 500)
+                       (false? (get-in model [:transport :playing?]))
+                       (= start-ack (:last-ack (device-session/snapshot device)))
+                       (not (sent? log :x-touch step-ms [0x90 94 127])))))
+      :confirm "Did PLAY stay dark and STOP stay lit?"}]}
 
-(defn- connect-options [scenario layout transport]
-  (case (:device scenario)
-    ;; Afterglow owns the MIDI-only hold cadence since afterglow#162 (#694), so the
-    ;; kit no longer supplies a :schedule!.
-    :push-3 {:session-id "naut-push-3" :user-mode? true :expression-mode :poly-aftertouch
-             :cue-gestures? true
-             :layout layout :midi transport
-             :encoder-bindings {:encoder-1 {:param :level} :master {:target :master}}
-             :button-bindings {:mute :blackout :right :page-right :left :page-left :select :cue-gesture}
-             :pressure-param :level :touch-strip-param :count}
-    :x-touch {:session-id "naut-x-touch" :transport transport :refresh-ms 40 :effect-group-view :manual
-              :channels [{:cue-id :tap :label "Tap" :color [1 0 0] :fader :level}
-                         {:cue-id :expr :label "Expr" :color [0 1 0] :fader :level}]}
-    :x-touch-ext {:session-id "naut-x-touch-ext" :transport transport :refresh-ms 40 :extender? true
-                  :channel-offset 8
-                  :channels (into [{:cue-id :tap :label "Tap"}] (concat (repeat 7 {:cue-id :hold :label "Hold"})
-                                                                         [{:cue-id :spare :label "Spare" :color [1 1 0]}]))}))
+   ;; Main unit and extender as one desk through the surface link (#705, #706).
+   :x-touch/desk
+   {:issues [310 553 705 706] :model desk-model
+    :units [[:x-touch {:session-id main-session :effect-group-view :manual
+                       :channels (into (conj cue-channels {:cue-id :hold :label "Hold"} {:cue-id :spare :label "Spare" :color [1 1 0]})
+                                       (map #(hash-map :cue-id %) desk-cues))}]
+            [:x-touch-ext {:session-id ext-session :extender? true}]]
+    :about (str "Main X-Touch and X-Touch-Ext as one desk: an extend link and a mirror link, session box paging "
+                "from the main unit's BANK and CHANNEL buttons, extender SELECT and touch-owned faders.")
+    :steps
+    [{:id :unlinked :prompt "Both units are attached but not linked. Look at both LCDs."
+      :actions []
+      :expect (fn [{:keys [log]}]
+                (and (= ["All" "Flat" "Tap" "Expr" "Hold" "Spare" "S01" "S02"] (lcd-strips log :x-touch 0))
+                     (= blank-row (lcd-strips log :x-touch-ext 0))))
+      :confirm "Does the main unit read All, Flat, Tap, Expr, Hold, Spare, S01, S02 while the extender is blank and dark?"}
+     {:id :extend :prompt "The kit links the two units as one 16-strip desk (extend to the right). Look at the extender."
+      :before (fn [{:keys [runtime]}] (deref (show/link-surfaces! runtime desk-link [main-session ext-session]) 3000 ::timeout))
+      :actions []
+      :expect (fn [{:keys [model log]}]
+                (and (= 16 (:span (placement model)))
+                     (= ["S03" "S04" "S05" "S06" "S07" "S08" "S09" "S10"] (lcd-strips log :x-touch-ext 0))))
+      :confirm "Does the extender now continue the main unit with S03 to S10?"}
+     {:id :bank-next :prompt "Press BANK RIGHT on the main unit. The session box moves by the whole 16-strip desk."
+      :actions [[:button :bank-right]]
+      :expect (fn [{:keys [model log]}]
+                (and (= 16 (:first (placement model)))
+                     (= ["S11" "S12" "S13" "S14" "" "" "" ""] (lcd-strips log :x-touch 0))
+                     (= blank-row (lcd-strips log :x-touch-ext 0))))
+      :confirm "Does the main unit read S11 to S14 with four blank strips, and is the extender blank?"}
+     {:id :bank-first :prompt "Hold SHIFT and press BANK LEFT: back to the first page."
+      :actions [[:button-down :shift] [:button :bank-left] [:button-up :shift]]
+      :expect (fn [{:keys [model log]}]
+                (and (zero? (:first (placement model))) (= "S03" (first (lcd-strips log :x-touch-ext 0)))))}
+     {:id :channel-right :prompt "Press CHANNEL RIGHT once: both units shift by one strip."
+      :actions [[:button :channel-right]]
+      :expect (fn [{:keys [model log]}]
+                (and (= 1 (:first (placement model))) (= "Flat" (first (lcd-strips log :x-touch 0)))
+                     (= "S04" (first (lcd-strips log :x-touch-ext 0)))))
+      :confirm "Does the main unit now start at Flat and the extender at S04?"}
+     {:id :channel-left :prompt "Press CHANNEL LEFT once to come back."
+      :actions [[:button :channel-left]]
+      :expect (fn [{:keys [model]}] (zero? (:first (placement model))))}
+     {:id :ext-select :prompt "On the extender, press SELECT on strip 1 (S03) twice: the first press selects it, the second launches it."
+      :actions [[:x-touch-ext :select 0] [:wait 200] [:x-touch-ext :select 0]]
+      :expect (fn [{:keys [model log step-ms]}]
+                (and (running? model :s03) (= [:cue :s03] (selected model))
+                     (sent? log :x-touch-ext step-ms [0x90 24 127])))
+      :confirm "Is the extender's strip 1 SELECT lit, with its row 2 showing S03's value?"}
+     {:id :ext-fader :prompt "Touch the extender's strip 1 fader (S03), move it to about 80%, then let go."
+      :actions [[:x-touch-ext :touch 0] [:x-touch-ext :fader 0 0.5] [:x-touch-ext :fader 0 0.8] [:wait 50]
+                [:x-touch-ext :untouch 0]]
+      :expect (fn [{:keys [model log step-ms]}]
+                (let [level (level-of model :s03)]
+                  (and level (> level 0.6) (reasserted? log :x-touch-ext 0 step-ms level))))}
+     {:id :mirror :prompt "The kit relinks the units as a mirror: both show the same eight strips."
+      :before (fn [{:keys [runtime]}]
+                (deref (show/link-surfaces! runtime desk-link [main-session ext-session] {:mode :mirror}) 3000 ::timeout))
+      :actions []
+      :expect (fn [{:keys [model log]}]
+                (let [row (lcd-strips log :x-touch 0)]
+                  (and (= 8 (:span (placement model)))
+                       (= ["All" "Flat" "Tap" "Expr" "Hold" "Spare" "S01" "S02"] row (lcd-strips log :x-touch-ext 0))
+                       (= (colours log :x-touch) (colours log :x-touch-ext)))))
+      :confirm "Do both units read All to S02 with the same backlight colours?"}
+     {:id :mirror-fader
+      :prompt "Touch the extender's strip 1 fader (group All), pull it down to about a quarter, then let go. Watch the main unit's fader 1."
+      :actions [[:x-touch-ext :touch 0] [:x-touch-ext :fader 0 0.5] [:x-touch-ext :fader 0 0.25] [:wait 50]
+                [:x-touch-ext :untouch 0]]
+      :expect (fn [{:keys [runtime log step-ms]}]
+                (let [level (group-level runtime :all)]
+                  (and level (< 0.1 level 0.4) (reasserted? log :x-touch-ext 0 step-ms level)
+                       (some #(<= (Math/abs (- (fader-raw (:out %)) (* level 16383))) 2) (motor-out log :x-touch 0 step-ms)))))
+      :confirm "Did the main unit's fader 1 move by itself to match the extender's?"}
+     {:id :mirror-bank :prompt "Press BANK RIGHT on the main unit. A mirror pages by one unit's width and both units follow."
+      :actions [[:button :bank-right]]
+      :expect (fn [{:keys [model log]}]
+                (and (= 8 (:first (placement model)))
+                     (= ["S03" "S04" "S05" "S06" "S07" "S08" "S09" "S10"] (lcd-strips log :x-touch 0)
+                        (lcd-strips log :x-touch-ext 0))))
+      :confirm "Do both units now read S03 to S10?"}
+     {:id :unlink :prompt "The kit unlinks the units. The extender has no strips of its own and goes blank; the main unit keeps its page."
+      :before (fn [{:keys [runtime]}] (deref (show/unlink-surfaces! runtime desk-link) 3000 ::timeout))
+      :actions []
+      :expect (fn [{:keys [log]}]
+                (and (= blank-row (lcd-strips log :x-touch-ext 0)) (= "S03" (first (lcd-strips log :x-touch 0)))))
+      :confirm "Is the extender blank and dark while the main unit still shows S03 to S10?"}]}})
+
+(defn scenario-units
+  "The unit roles a scenario connects, in order: its :units, or its :device."
+  [scenario-id]
+  (let [{:keys [units device] :as scenario} (or (get scenarios scenario-id)
+                                                (throw (ex-info "Unknown scenario" {:scenario scenario-id})))]
+    (if (:units scenario) (mapv first units) [device])))
+
+(defn- push-3-options [layout transport]
+  ;; Afterglow owns the MIDI-only hold cadence since afterglow#162 (#694), so the
+  ;; kit no longer supplies a :schedule!.
+  {:session-id "naut-push-3" :user-mode? true :expression-mode :poly-aftertouch
+   :cue-gestures? true
+   :layout layout :midi transport
+   :encoder-bindings {:encoder-1 {:param :level} :master {:target :master}}
+   :button-bindings {:mute :blackout :right :page-right :left :page-left :select :cue-gesture}
+   :pressure-param :level :touch-strip-param :count})
 
 (defn console-operator
   "Prompts on *out*; :confirm questions read y/n from *in*."
@@ -635,9 +942,13 @@
 
 (defn replay-operator
   "Emits each step's actions through emit! as device bytes, answers every
-  confirm question yes, and records prompts."
+  confirm question yes, and records prompts. emit! is one function, or a map
+  of unit role to function for a scenario with several units: an action that
+  starts with a unit role (x-touch-units) goes to that unit, any other to
+  :x-touch."
   [emit! encode]
-  (let [prompts (atom [])]
+  (let [prompts (atom [])
+        route (fn [action] (if (map? emit!) (get emit! (if (x-touch-units (first action)) (first action) :x-touch)) emit!))]
     {:prompts prompts
      :prompt! #(swap! prompts conj (:prompt %))
      :confirm! (fn [_] true)
@@ -645,56 +956,90 @@
                  (doseq [action actions]
                    (if (= :wait (first action))
                      (Thread/sleep (long (second action)))
-                     (doseq [bytes (encode layout action)] (emit! bytes) (Thread/sleep 5)))))}))
+                     (let [emit! (route action)]
+                       (doseq [bytes (encode layout action)] (emit! bytes) (Thread/sleep 5))))))}))
+
+(defn- run-step!
+  "Prompt one step, perform it and poll its expectation until it holds or
+  step-timeout-ms passes. :before runs first, :watch on every poll until it
+  returns true, :after last."
+  [step {:keys [runtime log stamp device devices operator layout step-timeout-ms]}]
+  (let [model! #(:model @(:state runtime))
+        step-ms (stamp)
+        context! (fn [extra] (merge {:runtime runtime :model (model!) :log @log :device device :devices devices
+                                     :step-ms step-ms :now-ms stamp}
+                                    extra))]
+    (when-let [before (:before step)] (before (context! {})))
+    (let [start-model (model!) history (atom [start-model])
+          start-ack (:last-ack (device-session/snapshot device))
+          context (fn [] (context! {:start-model start-model :history @history :start-ack start-ack}))
+          watched? (atom (nil? (:watch step)))]
+      ((:prompt! operator) step)
+      (let [performing (future ((:perform! operator) step layout))
+            t0 (System/nanoTime)
+            passed? (loop []
+                      (let [model (model!)]
+                        (when-not (identical? model (peek @history)) (swap! history conj model))
+                        (when (and (not @watched?) ((:watch step) (context))) (reset! watched? true))
+                        (cond ((:expect step) (context)) true
+                              (> (/ (- (System/nanoTime) t0) 1e6) step-timeout-ms) false
+                              :else (do (Thread/sleep 20) (recur)))))
+            _ (deref performing 10000 nil)
+            answer (when (:confirm step) ((:confirm! operator) (:confirm step)))]
+        (when-let [after (:after step)] (after (context)))
+        (cond-> {:step (:id step) :verdict (cond (not passed?) (if (:optional? step) :skipped :failed)
+                                                 (false? answer) :operator-rejected
+                                                 :else :passed)
+                 :elapsed-ms (/ (- (System/nanoTime) t0) 1e6)}
+          (:confirm step) (assoc :question (:confirm step) :answer answer))))))
 
 (defn run-scenario!
-  "Run one scenario against transport. The show is an in-memory runtime with no
-  output sink. Returns a receipt with one entry per step."
-  [scenario-id {:keys [transport layout operator step-timeout-ms port] :or {step-timeout-ms 30000}}]
-  (let [scenario (or (get scenarios scenario-id) (throw (ex-info "Unknown scenario" {:scenario scenario-id})))
-        {recorded :transport log :log} (recording-transport transport)
-        runtime (show/create-runtime {:model (qualification-model) :workspace-options nil})
-        stop-ticker! (start-ticker! runtime)]
+  "Run one scenario. A one-unit scenario takes :transport; a scenario with
+  several units (see scenario-units) takes :transports, a map of unit role to
+  transport. The show is an in-memory runtime with no output sink. Returns a
+  receipt with one entry per step and every MIDI message, tagged by unit."
+  [scenario-id {:keys [transport transports layout operator step-timeout-ms port] :or {step-timeout-ms 30000}}]
+  (let [scenario (get scenarios scenario-id)
+        roles (scenario-units scenario-id)
+        transports (or transports {(first roles) transport})
+        log (atom []) start (System/nanoTime)
+        recorded (into {} (for [role roles]
+                            [role (recording-transport (or (get transports role) (throw (ex-info "No transport for unit" {:unit role})))
+                                                       {:log log :start start :unit role})]))
+        stamp (:stamp (get recorded (first roles)))
+        runtime (show/create-runtime {:model ((:model scenario qualification-model)) :workspace-options nil})
+        stop-ticker! (start-ticker! runtime)
+        connected (atom [])]
     (try
-      (when (#{:x-touch :x-touch-ext} (:device scenario))
+      (when (:units scenario)
         (submit-and-wait! runtime {:op :effect-groups/configure :config manual-groups}))
-      (let [kind (if (= :push-3 (:device scenario)) :push-3 :x-touch)
-            device (show/connect-device! runtime kind (connect-options scenario layout recorded))]
-        (try
-          (Thread/sleep 300)
-          (let [steps
-                (reduce
-                  (fn [results step]
-                    (let [model! #(:model @(:state runtime))
-                          start-model (model!) history (atom [start-model])
-                          context (fn [] {:runtime runtime :model (model!) :start-model start-model
-                                          :history @history :log @log :device device})]
-                      (when-let [before (:before step)] (before (context)))
-                      ((:prompt! operator) step)
-                      (let [performing (future ((:perform! operator) step layout))
-                            t0 (System/nanoTime)
-                            passed? (loop []
-                                      (let [model (model!)]
-                                        (when-not (identical? model (peek @history)) (swap! history conj model))
-                                        (cond ((:expect step) (context)) true
-                                              (> (/ (- (System/nanoTime) t0) 1e6) step-timeout-ms) false
-                                              :else (do (Thread/sleep 20) (recur)))))
-                            _ (deref performing 10000 nil)
-                            answer (when (:confirm step) ((:confirm! operator) (:confirm step)))]
-                        (conj results
-                              (cond-> {:step (:id step) :verdict (cond (not passed?) (if (:optional? step) :skipped :failed)
-                                                                       (false? answer) :operator-rejected
-                                                                       :else :passed)
-                                       :elapsed-ms (/ (- (System/nanoTime) t0) 1e6)}
-                                (:confirm step) (assoc :question (:confirm step) :answer answer))))))
-                  [] (:steps scenario))]
-            {:check scenario-id :issues (:issues scenario) :about (:about scenario) :port port
-             :at (str (Instant/now)) :steps steps
-             :verdict (if (every? #(#{:passed :skipped} (:verdict %)) steps) :passed :failed)
-             :session (select-keys (device-session/snapshot device) [:status :errors])
-             :midi (mapv #(cond-> {:ms (:ms %)} (:in %) (assoc :in (hex (:in %))) (:out %) (assoc :out (hex (:out %)))) @log)})
-          (finally (show/disconnect-device! runtime (:session-id (connect-options scenario layout recorded))))))
-      (finally (stop-ticker!) (show/stop! runtime)))))
+      (doseq [role roles]
+        (let [transport (:transport (get recorded role))
+              [kind options] (if (:units scenario)
+                               [:x-touch (assoc (some (fn [[r options]] (when (= r role) options)) (:units scenario))
+                                                :transport transport :refresh-ms 40)]
+                               [:push-3 (push-3-options layout transport)])]
+          (swap! connected conj [role (:session-id options) (show/connect-device! runtime kind options)])))
+      (Thread/sleep 300)
+      (let [devices (into {} (map (juxt first peek)) @connected)
+            device (get devices (first roles))
+            steps (reduce (fn [results step]
+                            (conj results (run-step! step {:runtime runtime :log log :stamp stamp :device device
+                                                           :devices devices :operator operator :layout layout
+                                                           :step-timeout-ms step-timeout-ms})))
+                          [] (:steps scenario))]
+        {:check scenario-id :issues (:issues scenario) :about (:about scenario) :port port
+         :units roles :at (str (Instant/now)) :steps steps
+         :verdict (if (every? #(#{:passed :skipped} (:verdict %)) steps) :passed :failed)
+         :session (select-keys (device-session/snapshot device) [:status :errors])
+         :sessions (into {} (map (fn [[role d]] [role (select-keys (device-session/snapshot d) [:status :errors])])) devices)
+         :midi (mapv #(cond-> {:ms (:ms %)} (:unit %) (assoc :unit (:unit %))
+                        (:in %) (assoc :in (hex (:in %))) (:out %) (assoc :out (hex (:out %))))
+                     @log)})
+      (finally
+        (doseq [[_ session-id _] (rseq @connected)] (show/disconnect-device! runtime session-id))
+        (stop-ticker!)
+        (show/stop! runtime)))))
 
 ;; ---------------------------------------------------------------------------
 ;; X-Touch LCD/color rate and flicker (#310). Bounded and explicitly started;
@@ -986,7 +1331,7 @@
    ... probe all | probe CHECK   (push-3/identity, push-3/identity-live-port, x-touch/firmware,
                                   x-touch/device-query, x-touch/identity and the x-touch-ext ones)
    ... capture-layout [pad-rows]
-   ... scenario push-3/pads LAYOUT.edn | scenario x-touch/strips | scenario x-touch-ext/strips
+   ... scenario push-3/pads LAYOUT.edn | scenario x-touch/strips | scenario x-touch/desk (both units)
    ... motor x-touch|x-touch-ext [--unattended]
    ... lcd x-touch|x-touch-ext [--unattended]
    ... rate x-touch|x-touch-ext [--unattended]
@@ -1021,12 +1366,17 @@
                                               :port (role-port :push-3 :input) :verdict (if (empty? (:skipped result)) :passed :partial))
                                        [:skipped])])
           "scenario" (let [id (keyword target)
-                           device (:device (get scenarios id))
-                           transport (if (= :push-3 device) (input-transport :push-3) (midi-transport device))]
-                       [(report! (run-scenario! id {:transport transport :operator operator
-                                                    :layout (when (and extra (not= "--unattended" extra)) (read-layout extra))
-                                                    :port (role-port device :input)})
-                                 [:verdict :steps :session])])
+                           roles (scenario-units id)
+                           push? (= [:push-3] roles)
+                           listing (when-not push? (ports))]
+                       [(report! (run-scenario! id (merge {:operator operator
+                                                           :layout (when (and extra (not= "--unattended" extra)) (read-layout extra))
+                                                           :port (if push? (role-port :push-3 :input)
+                                                                     (into {} (map (juxt identity #(role-port % :input))) roles))}
+                                                          (if push?
+                                                            {:transport (input-transport :push-3)}
+                                                            {:transports (into {} (map (juxt identity #(midi-transport % listing))) roles)})))
+                                 [:verdict :steps :sessions])])
           "motor" (let [role (unit-role target)]
                     [(report! (motor-check! {:transport (midi-transport role) :extender? (= :x-touch-ext role)
                                              :operator confirming :port (role-port role :output)})

@@ -105,18 +105,32 @@
     (is (= [] @sent) "the Push 3 session emits no bytes")
     (is (empty? (get-in receipt [:session :errors])))))
 
+(def ^:private x-touch-steps
+  {:x-touch/strips [:scribble :select :launch :group-fader :motor :cue-fader :untouched :touch-hold :pan :send
+                    :encoder-push :plug-in :user :pan-again :solo :unsolo :mute :unmute :meters :play :stop
+                    :play-external]
+   :x-touch/desk [:unlinked :extend :bank-next :bank-first :channel-right :channel-left :ext-select :ext-fader
+                  :mirror :mirror-fader :mirror-bank :unlink]})
+
 (deftest x-touch-scenarios-pass-on-replay
-  (doseq [id [:x-touch/strips :x-touch-ext/strips]]
+  (doseq [id [:x-touch/strips :x-touch/desk]]
     (testing id
-      (let [{:keys [transport emit! sent]} (kit/virtual-peer)
-            receipt (kit/run-scenario! id {:transport transport :step-timeout-ms 3000
-                                           :operator (kit/replay-operator emit! kit/x-touch-bytes)})]
-        (is (= :passed (:verdict receipt)) (pr-str (:steps receipt) (:session receipt)))
+      (let [roles (kit/scenario-units id)
+            peers (into {} (map (juxt identity (fn [_] (kit/virtual-peer)))) roles)
+            receipt (kit/run-scenario! id {:transports (update-vals peers :transport) :step-timeout-ms 3000
+                                           :operator (kit/replay-operator (update-vals peers :emit!) kit/x-touch-bytes)})
+            verdicts (into {} (map (juxt :step :verdict)) (:steps receipt))]
+        (is (= (x-touch-steps id) (mapv :step (:steps receipt))))
+        ;; The optional :untouched step passes too: the replay sends the untouched
+        ;; pitch bend a motor echo or an edge nudge would, and the level ignores it.
+        (is (every? #{:passed} (vals verdicts)) (pr-str (:steps receipt) (:sessions receipt)))
         (is (every? #(= true (:answer %)) (filter :question (:steps receipt))))
-        (is (seq @sent) "feedback reached the virtual unit")
-        (is (every? #(= (if (= id :x-touch-ext/strips) 0x15 0x14) (nth % 4))
-                    (filter #(= 0xf0 (first %)) @sent))
-            "each unit's SysEx carries its own device ID")))))
+        (is (every? (comp empty? :errors) (vals (:sessions receipt))))
+        (doseq [[role {:keys [sent]}] peers]
+          (is (seq @sent) (str "feedback reached the virtual " (name role)))
+          (is (every? #(= (if (= role :x-touch-ext) 0x15 0x14) (nth % 4)) (filter #(= 0xf0 (first %)) @sent))
+              "each unit's SysEx carries its own device ID"))))))
+
 
 (deftest motor-check-sweeps-and-records-silence-as-no-readback
   (let [{:keys [transport sent]} (kit/virtual-peer device-answers)

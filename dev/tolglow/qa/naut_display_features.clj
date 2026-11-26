@@ -229,7 +229,14 @@
      {:id :variation-rows :issues [547] :hold-ms short-hold
       :about "#547 Cue parameter rows overlay (Up again)"
       :enter! (fn [ctx] (button! ctx :up) {})
-      :expect #(= :rows (get-in % [:pad-overlay :layout]))
+      :expect #(= :rows (get-in % [:pad-overlay :layout]))}
+
+     ;; Since #729 the cycle button opens knob looks after the rows; one more
+     ;; press closes the overlay.
+     {:id :knob-looks :issues [547] :hold-ms short-hold
+      :about "#547 Knob looks overlay (Up after the rows): eight top-row slots; Up again closes it"
+      :enter! (fn [ctx] (button! ctx :up) {})
+      :expect #(= :knob-presets (get-in % [:pad-overlay :layout]))
       :after! (fn [ctx _] (button! ctx :up)
                 {:closed? (some? (wait-presented ctx (System/nanoTime) #(nil? (:pad-overlay %)) 10000))})}
 

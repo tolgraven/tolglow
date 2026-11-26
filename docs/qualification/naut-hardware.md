@@ -27,12 +27,14 @@ K="lein run -m tolglow.qa.naut-hardware"
 | 4 | `$K lcd x-touch-ext` | Answer y/n | The same with `XT1`…`XT8` |
 | 5 | `$K rate x-touch` | Wait 20 s, answer y/n | The last 5 s alternate red/blue every 20 ms: a steady magenta, or visible flicker? |
 | 6 | `dev/qa/naut-hardware/push3-display.sh show-chart 12` | Wait about 25 s for the claim, then 12 s of chart; say what you saw in chat | `RED` `GREEN` `BLUE` `WHITE` left to right, `BOTTOM RIGHT` in the corner, a one-pixel outline, nothing wrapped or cut off |
-| 7 | `$K scenario x-touch/strips` | Follow the prompts (touch and move faders, SELECT, MUTE) | The motor step: strip 1 moves to 3/4 by itself |
-| 8 | `$K push-3-mode user` then `$K capture-layout 1` | Press each prompted control once (8 pads, 9 encoder touches and turns, arrows, Mute, Select, touch strip) | Nothing on the display; the prompts |
-| 9 | `$K scenario push-3/pads target/qa/naut-hardware/push-3-layout-<time>.edn` then `$K push-3-mode live` | Follow the prompts: tap, hold, lean on a pad, Select+pad, encoder, Mute twice | Nothing; the receipt records each step |
+| 7 | `$K scenario x-touch/strips` | Follow 22 prompts on the main unit: SELECT twice, touch and move faders, PAN/SEND/PLUG-IN/USER with encoder turns and a push, SOLO and MUTE twice each, PLAY, STOP, PLAY again (check 4) | Scribble names and colours, fader motors reasserting on release, mode LEDs, the blinking MUTE, meters, PLAY/STOP LEDs |
+| 8 | `$K scenario x-touch/desk` | Follow 12 prompts across both units: BANK and CHANNEL on the main unit, SELECT twice and a fader on the extender (check 5) | Both LCDs through an extend link, paging, a mirror link and the unlink; the main fader following the extender's |
+| 9 | `$K push-3-mode user` then `$K capture-layout 1` | Press each prompted control once (8 pads, 9 encoder touches and turns, arrows, Mute, Select, touch strip) | Nothing on the display; the prompts |
+| 10 | `$K scenario push-3/pads target/qa/naut-hardware/push-3-layout-<time>.edn` then `$K push-3-mode live` | Follow the prompts: tap, hold, lean on a pad, Select+pad, encoder, Mute twice | Nothing; the receipt records each step |
 
-Steps 1 to 7 fit in ten minutes. Steps 8 and 9 add about five. `push-3-mode live`
-restores Live Mode and MPE aftertouch as found; run it even if step 9 is skipped.
+Steps 1 to 6 fit in ten minutes; steps 7 and 8 take about eight more and steps 9
+and 10 about five. `push-3-mode live` restores Live Mode and MPE aftertouch as
+found; run it even if step 10 is skipped.
 The automatic checks (`$K probe all`, the unattended motor, LCD and rate
 receipts and the chart receipt) already ran on 2026-11-26 and need nobody.
 Check 8 (display-dependent Push 3 features) ran unattended on 2026-11-26 with
@@ -134,15 +136,22 @@ script's behaviours:
 
 | Script behaviour | Exercised here | How |
 | --- | --- | --- |
-| Coloured scribble strips (8 native colours, black only on purpose) | Wire only | `lcd`: all 8 indices on all strips, then one per strip (`F0 00 00 66 dd 72 …`) |
+| Coloured scribble strips (8 native colours, black only on purpose) | Wire, and the mixer's colour rules | `lcd`: all 8 indices on all strips, then one per strip (`F0 00 00 66 dd 72 …`). Check 4: cyan and blue group strips, cue colours by hue, dark empty strips, cyan item strips in PLUG-IN |
 | Colour mix mode (rapid colour cycling, flicker warning, 2 s bursts) | Rate only | `rate`: 5 s red/blue every 20 ms, 50 Hz achieved; flicker not yet judged |
-| Two-row 56-character display text | Wire only | `lcd`, `rate`: rows 0 and 1 (`… 12 …`) |
-| Encoder rings (pan/send modes) | Single mode only | `lcd`: positions 0–11 in single mode; boost-cut/wrap/spread not run |
+| Two-row 56-character display text | Wire, and the mixer's rows | `lcd`, `rate`: rows 0 and 1 (`… 12 …`). Checks 4–5: names on row 1, values on row 2 |
+| Encoder modes PAN, SEND, PLUG-IN, USER; rings | Check 4 | PAN edits a cue parameter, SEND its opacity, PLUG-IN the selected strip's parameters, USER a linked knob; encoder push restores unity. `lcd` sweeps single-mode ring positions; the mixer drives wrap and single modes in check 4 |
+| Select, press again | Check 4, check 5 | SELECT selects; a second press launches the cue |
+| Solo/Mute, "indicate tracks muted via solo", global Solo | Check 4 | SOLO and MUTE are #532 effect selection; the suppressed strip's MUTE blinks; transport SOLO lights |
+| Faders need a finger touch | Check 4, check 5 | Untouched moves are ignored, a touched fader gets no motor message and is reasserted on release |
+| Level meters | Check 4 | Effective mixer gain per strip, resent while above zero; no clip indication yet |
+| Extender as more strips; session box | Check 5 | Extend and mirror links, BANK, SHIFT+BANK and CHANNEL paging |
 | Faders at 0 dB with calibrated zero point | No | Raw positions only; the script's dB mapping is not in the kit |
-| Clipping level meters, metronome blink, settings menu, chains-as-groups, single-send mode | No | Not in the kit |
+| Clip indication, metronome blink, settings menu, chains-as-groups | No | Not in the mixer layout yet ([X-Touch](../xtouch.md#mixer-layout-tolglow-706-slice-2)) |
 
-A separate lane is writing the feature-map issue. Nothing in this kit assumes
-plain MCU is the product target.
+Since #738 the kit's X-Touch scenarios run the Tolglow mixer layout
+(`tolglow.surface.x-touch` over `tolglow.surface.mixer` and the surface link),
+which is what `show/connect-device! :x-touch` connects. Nothing in this kit
+assumes plain MCU is the product target.
 
 ### Push 3 tethered display
 
@@ -355,8 +364,8 @@ The times assume the operator is at the controllers with this page open.
 | 1 | Identity and firmware probes | #219, #310, #553 | Live quit (Push 3 did not answer with Live running) | 1 min |
 | 2 | Push 3 layout capture | #219 | User Mode, Poly Aftertouch | 4 min |
 | 3 | Push 3 pads, pressure, encoder, modifier | #219, #543 | Captured layout from 2 | 3 min |
-| 4 | X-Touch strips, group fader, motor | #553, #310 | Slots 4 and 5 set to None | 3 min |
-| 5 | X-Touch-Ext strips | #553, #310 | Slots 4 and 5 set to None | 2 min |
+| 4 | X-Touch mixer layout on the main unit | #553, #310, #532, #706 | Slots 4 and 5 set to None | 5 min |
+| 5 | Main unit and extender as one desk (links, session box) | #553, #310, #705, #706 | Slots 4 and 5 set to None | 3 min |
 | 6 | LCD/color rate and flicker | #310 | Slots 4 and 5 set to None | 2 min per unit |
 | 7 | Tethered display chart and descriptor receipt | #219, push-display-packaging | libusb; Live quit | 2 min |
 | 8 | Display-dependent Push 3 features | #529, #547, #552, #530 | Check 7 passed; Live quit | 10 min |
@@ -418,7 +427,7 @@ expected result within 30 s.
 Receipt: per-step verdict and latency, the session status, and every MIDI byte
 received with a timestamp. The session sends no bytes to the Push 3. The test checks this.
 
-### 4. X-Touch strips, group fader and motor (#553, #310)
+### 4. X-Touch mixer layout on the main unit (#553, #310, #532, #706)
 
 Set slots 4 and 5 to None, then run:
 
@@ -426,32 +435,74 @@ Set slots 4 and 5 to None, then run:
 lein run -m tolglow.qa.naut-hardware scenario x-touch/strips
 ```
 
-The show has a manual group `All` with the child group `Flat`. Group strips come
-first, followed by the cue strips `Tap` and `Expr`.
+This connects the main unit through `show/connect-device! :x-touch`, so it runs
+the Tolglow mixer layout ([X-Touch](../xtouch.md#mixer-layout-tolglow-706-slice-2)).
+The show has a manual group `All` (cues Tap and Expr) with the child group
+`Flat` (Hold and Spare). Group strips come first, then the cue strips `Tap`
+(red) and `Expr` (green). Each step passes when the committed model and the
+bytes sent to the unit show the expected result within 30 s; a `[y/n]` question
+follows where only eyes can tell.
 
-1. Look at the LCD and answer y/n: strips read `All`, `Flat`, `Tap`, `Expr`, with cyan, blue,
-   red and green strips.
-2. Press SELECT on strip 3. Expect `:tap` running.
-3. Touch the strip 1 fader, pull it down and release. Expect the committed level of group `All` below 0.05.
-4. Hands off. The kit commits group `All` = 0.75. Expect the fader feedback pitch bend to be sent,
-   then answer y/n whether the motor moved the fader to about three quarters.
-5. Touch the strip 3 fader and push it to the top. Expect `:tap` level above 0.95.
-6. Optional: move the strip 3 fader without touching its cap. Expect no change (untouched input is ignored).
-7. Press MUTE on strip 3. Expect `:tap` released.
+| # | Step | You do | The kit expects |
+| --- | --- | --- | --- |
+| 1 | `scribble` | Look | Row 1 `All Flat Tap Expr`, strips 5–8 blank; colours cyan, blue, red, green, black ×4 (`F0 00 00 66 14 72 06 04 01 02 00 00 00 00 F7`). y/n also asks for `100%` under the groups |
+| 2 | `select` | SELECT strip 3 once | Tap selected, not running; SELECT LED `90 1A 7F` |
+| 3 | `launch` | SELECT strip 3 again | Tap running, still selected |
+| 4 | `group-fader` | Touch fader 1, pull it down, let go | Group `All` below 0.05 |
+| 5 | `motor` | Hands off | The kit sets `All` to 0.75; motor message raw 12000–12600 on strip 1. y/n: did it travel |
+| 6 | `cue-fader` | Touch fader 3, push it to the top, let go | Tap level above 0.95; no motor message to strip 3 between touch and release; one after release at the committed value |
+| 7 | `untouched` (optional) | Nudge fader 3 by its edge without touching the cap | A pitch bend arrives and the level does not change. MCU units are expected to send no position untouched, so this is normally skipped |
+| 8 | `touch-hold` | Touch fader 3 and hold still for two seconds, let go | While touched the kit sets Tap to 60%: no motor message while touched, then the fader is driven to the committed level on release. y/n: did it move to about 60% when you let go |
+| 9 | `pan` | Turn encoder 3 two clicks clockwise | PAN (LED `90 2A 7F`) edits Tap's first other parameter, `count`, upwards |
+| 10 | `send` | Press SEND, turn encoder 3 ten clicks anticlockwise | SEND lit, PAN off; Tap's opacity below 0.97 (row 2 about 90%) |
+| 11 | `encoder-push` | Push encoder 3 | Opacity back to 1.0 |
+| 12 | `plug-in` | Press PLUG-IN, turn encoder 1 two clicks anticlockwise | Row 1 `count level`, colours cyan, cyan, black ×6; Tap's count down |
+| 13 | `user` | Press USER, turn encoder 1 ten clicks clockwise | The kit creates knob `Knob A`; USER lit; the knob at 0.05 or more |
+| 14 | `pan-again` | Press USER again | Back to PAN |
+| 15 | `solo` | SOLO strip 3 (the kit launches Expr first) | Tap soloed, Expr suppressed by solo; SOLO strip 3 `90 0A 7F`, strip 4 MUTE blinking `90 13 01`, transport SOLO `90 5A 7F`, strip 4 meter 0. Strip 1 (All) also lights SOLO |
+| 16 | `unsolo` | SOLO strip 3 again | No solo, strip 4 MUTE off |
+| 17 | `mute` | MUTE strip 3 | Tap muted and still running; MUTE LED `90 12 7F`; strip 3 meter 0 |
+| 18 | `unmute` | MUTE strip 3 again | Tap unmuted, MUTE LED off |
+| 19 | `meters` | Hands off | Strips 1, 3, 4 resend a nonzero meter (`D0` channel pressure) at least twice; strips 2 and 5–8 at 0 |
+| 20 | `play` | Press PLAY (the kit stops the transport first) | Playing; PLAY LED `90 5E 7F` |
+| 21 | `stop` | Press STOP | Stopped; STOP LED `90 5D 7F` |
+| 22 | `play-external` | Press PLAY | The kit selects MIDI clock as the sync source (configuration only; no clock port opens), so an external clock owns play and stop. The press arrives, no command is dispatched (the session's last acknowledgement is unchanged after 0.5 s), the transport stays stopped and PLAY stays dark. The kit then selects manual again |
 
-### 5. X-Touch-Ext strips (#553, #310)
+Semantics that changed with #738 and that the old kit asserted: SELECT no
+longer launches on the first press, MUTE no longer releases a cue, and the
+extender is no longer configured with its own channel offset.
+
+### 5. Main unit and extender as one desk (#553, #310, #705, #706)
 
 ```sh
-lein run -m tolglow.qa.naut-hardware scenario x-touch-ext/strips
+lein run -m tolglow.qa.naut-hardware scenario x-touch/desk
 ```
 
-1. Extender strip 1 shows `Spare` (channel offset 8). Answer y/n.
-2. SELECT on extender strip 1 launches `:spare`.
-3. Hands off. Answer y/n whether extender fader 2 stayed still (no channel is assigned).
-4. MUTE on extender strip 1 releases `:spare`.
+Both units attach as their own surfaces (`naut-x-touch`, `naut-x-touch-ext`),
+the main unit with 20 strips (the two groups, Tap, Expr, Hold, Spare and
+fillers S01–S14), the extender with none of its own. The kit links and unlinks
+them as `show/link-surfaces!` does from the REPL or Studio.
 
-The receipts carry all LCD, color and fader bytes. Every SysEx message uses device ID 15 on the extender
-and 14 on the main unit.
+| # | Step | You do | The kit expects |
+| --- | --- | --- | --- |
+| 1 | `unlinked` | Look | Main `All Flat Tap Expr Hold Spare S01 S02`; extender blank |
+| 2 | `extend` | Look (the kit links extend right) | Span 16; extender `S03`…`S10` |
+| 3 | `bank-next` | BANK RIGHT on the main unit | Window at strip 17: main `S11`…`S14` and four blank, extender blank |
+| 4 | `bank-first` | SHIFT + BANK LEFT | Window back at strip 1 |
+| 5 | `channel-right` | CHANNEL RIGHT | Window at strip 2: main starts at `Flat`, extender at `S04` |
+| 6 | `channel-left` | CHANNEL LEFT | Window at strip 1 |
+| 7 | `ext-select` | SELECT extender strip 1 twice | S03 selected on the shared layout, then launched; extender SELECT LED `90 18 7F` (device 15's port) |
+| 8 | `ext-fader` | Touch extender fader 1, move it to about 80%, let go | S03 level above 0.6; no motor message while touched, one on release |
+| 9 | `mirror` | Look (the kit relinks as a mirror) | Span 8; both units `All`…`S02` with the same colours |
+| 10 | `mirror-fader` | Touch extender fader 1 (All), pull it to about a quarter, let go | `All` between 0.1 and 0.4; the main unit's fader 1 is sent the same position |
+| 11 | `mirror-bank` | BANK RIGHT on the main unit | Window at strip 9 on both: `S03`…`S10` |
+| 12 | `unlink` | Look (the kit unlinks) | Extender blank; main keeps `S03`… |
+
+The receipts carry every LCD, colour, LED, meter and fader byte with the unit
+it went to or came from (`:unit`). Every SysEx message uses device ID 15 on the
+extender and 14 on the main unit. Disconnecting at the end blanks both LCDs,
+colours, rings, meters and lit LEDs; the faders stay where they are, so run
+`rest x-touch` and `rest x-touch-ext` afterwards to park them.
 
 ### 4a. Motor sweep and LCD/LED pattern (#553, #310)
 
@@ -550,7 +601,11 @@ dev/qa/naut-hardware/push3-display.sh show-features 15 4310   # seconds per stat
 ```
 
 It claims the display once (about 25 s), then holds each state in the order of
-the table under "Push 3 display-dependent states" and writes one receipt with a
+the table under "Push 3 display-dependent states", with one state added since
+that run: since #729 the variation cycle opens a knob-look overlay (eight
+top-row slots, `:knob-presets`) after the parameter rows, so the run now holds
+`knob-looks` after `variation-rows` and presses Up once more to close the
+overlay. It writes one receipt with a
 per-state entry (input, presented view, frames captured, transfers, PNG and its
 SHA-256). Input is a virtual Push 3 with synthetic addresses, so the operator
 only watches. `tolglow.qa.naut-display-features-test` runs the same sequence
@@ -560,8 +615,8 @@ layout.
 
 ## Not covered
 
-- **#532:** Push and X-Touch have no effect Solo/Mute adapter at this revision. The X-Touch SOLO
-  button only selects a local strip focus. No hardware check can be written until an adapter exists.
+- **#532 on Push:** check 4 exercises X-Touch SOLO and MUTE as #532 effect selection; this kit
+  has no Push Solo/Mute step.
 - **#545:** the Select and Reorder grids are implemented for Push 2 only. Push 3 needs the
   adapter first.
 - MPE expression (the operator's current Push setting) is not part of this kit. The kit uses
@@ -598,5 +653,6 @@ lein test :only tolglow.qa.naut-hardware-test tolglow.qa.naut-display-features-t
 ```
 
 This runs every probe, the full 89-control layout capture, the Push 3 pad scenario on the captured layout, both
-X-Touch scenarios and the rate check against virtual peers. `dev/qa/naut-hardware/push3-display.sh status`
+X-Touch scenarios (`x-touch/strips` on one virtual unit, `x-touch/desk` on a virtual main unit and extender,
+every step including the optional one) and the rate check against virtual peers. `dev/qa/naut-hardware/push3-display.sh status`
 and its refusal paths were run against the live IORegistry.

@@ -32,7 +32,7 @@
     (is (true? (get-in by-id [:variation-full :early-press :params-unchanged?]))
         "a pad pressed before the overlay was presented changes nothing")
     (is (seq (get-in by-id [:variation-full :presented-press :changed])) "the presented pad applies a variation")
-    (is (true? (get-in by-id [:variation-rows :closed?])))
+    (is (true? (get-in by-id [:knob-looks :closed?])) "Up after knob looks closes the overlay")
     (is (not= (get-in by-id [:ratio-chooser :chosen :period-before])
               (get-in by-id [:ratio-chooser :chosen :period-after])))
     (is (= ["Naut rehearsal" "Naut tour"]
