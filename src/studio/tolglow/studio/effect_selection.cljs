@@ -45,8 +45,8 @@
      :fx [[effect (assoc request :on-failure (conj result false))]]}))
 
 (defn click-mode
-  "The one-action mode a click's modifier keys ask for: Shift adds, Alt
-  (Option) makes it exclusive, otherwise nil."
+  "The one-action mode a click's modifier keys ask for: Shift adds,
+  Alt/Option makes it exclusive, otherwise nil."
   [event]
   (cond (.-shiftKey event) :additive (.-altKey event) :exclusive))
 
@@ -56,8 +56,11 @@
           mode (or clicked-mode (:once interaction))]
       (when (available? view expected)
         ;; Without a mode the owner applies the configured one when the command lands.
+        ;; Additive keeps the :additive? shorthand; only exclusive needs the newer :mode.
         (send-selection db (update view :interaction dissoc :once) :effect-selection/toggle
-                        (cond-> {:control control :selector selector} mode (assoc :mode mode)))))))
+                        (cond-> {:control control :selector selector}
+                          (= :additive mode) (assoc :additive? true)
+                          (= :exclusive mode) (assoc :mode :exclusive)))))))
 
 (rf/reg-event-fx :effect-selection/configure
   (fn [{:keys [db]} [_ expected control mode]]
@@ -94,7 +97,7 @@
     [:button.button.effect-selection-action
      {:type "button" :data-selection-control (name control) :disabled pending?
       :aria-pressed (case flag :partial "mixed" :all true false)
-      :title (str label " · Shift-click to add, Alt-click to replace the selection")
+      :title (str label " · Shift-click to add, Alt/Option-click to replace the selection")
       :on-click #(rf/dispatch [:effect-selection/toggle identity control selector (click-mode %)])}
      label]))
 

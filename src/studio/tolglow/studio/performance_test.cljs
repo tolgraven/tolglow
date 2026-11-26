@@ -51,14 +51,14 @@
         newer (assoc-in (:db sent) [:server-projection :view :epoch] 5)]
     (is (= :additive (get-in armed [:db :ui :effect-selection :once])))
     (is (= :effect-selection/toggle (:op payload)))
-    (is (= {:control :solo :selector selector :mode :additive} (dissoc (:fields payload) :command-id)))
+    (is (= {:control :solo :selector selector :additive? true} (dissoc (:fields payload) :command-id)))
     (is (nil? (get-in sent [:db :ui :effect-selection :once])) "Sending consumes the one-action mode")
     (is (= [4 "runtime-a" "performance-session"] ((juxt :epoch :runtime-id :session) payload)))
     (is (= (:server-projection db) (get-in sent [:db :server-projection])))
     (is (nil? (:fx (transition (:db accepted) [:effect-selection/toggle identity :solo selector nil]))))
     (is (= {:control :mute :selector {:layer-id :layer/test}} (fields normal))
         "A plain click leaves the configured mode to the owner")
-    (is (= {:control :mute :selector (:selector group-target) :mode :additive} (fields shifted)))
+    (is (= {:control :mute :selector (:selector group-target) :additive? true} (fields shifted)))
     (is (= {:control :mute :selector (:selector group-target) :mode :exclusive} (fields alt))
         "Alt-click makes one action exclusive while the default is additive")
     (is (= :exclusive (get-in exclusive-armed [:ui :effect-selection :once])))
@@ -72,7 +72,7 @@
                              [:db :ui :effect-selection :once]))
         "Arming the other one-action mode replaces it")
     (is (= ready (:db (transition ready [:effect-selection/once identity :replace]))) "Unknown modes are ignored")
-    (is (= {:control :solo :selector selector :mode :additive}
+    (is (= {:control :solo :selector selector :additive? true}
            (fields (transition exclusive-armed [:effect-selection/toggle identity :solo selector :additive])))
         "A click modifier wins over the armed mode")
     (is (= :effect-selection/configure (:op configured)))

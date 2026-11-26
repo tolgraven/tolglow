@@ -256,7 +256,7 @@ contribution. The action buttons show which controls are selected. A mixed
 button means some of the selected category or layer members have that flag.
 
 Use **Add once** before an action or hold Shift while clicking to use additive
-mode for that action. Use **Exclusive once** or hold Alt (Option) to make that
+mode for that action. Use **Exclusive once** or hold Alt/Option to make that
 action replace the selection, even while the default is additive. The
 **Defaults** control sets the normal mode for Solo and Mute independently.
 Choose a category or **All running** to act on that group. Expand **Layers**
@@ -270,7 +270,7 @@ open cards update. The same selector supports categories and native layer IDs.
   (when-let [instance-id (first (:included-instance-ids effect-selection))]
     @(show/submit! runtime {:op :effect-selection/toggle :control :mute
                             :selector {:instance-ids [instance-id]}
-                            :mode :additive})))
+                            :additive? true})))
 ```
 
 To solo one running effect exclusively while the Solo default is additive,

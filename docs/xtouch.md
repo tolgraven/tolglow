@@ -225,13 +225,16 @@ it.
 mode (#749). With an additive default that is `:mode :exclusive`, which the
 owner applies in one commit: the strip's instances replace the selection, or
 clear it when they already are the whole selection. No committed frame shows
-a partial selection, a selection another client queued in the same owner
-cycle is replaced rather than kept, and nothing waits for an
-acknowledgement. If the strip's instance ends first, its cue selector matches
+a partial selection and nothing waits for an acknowledgement. A selection
+another client queued before the press is replaced; one sent after the press
+applies on top of it. If the strip's instance ends first, its cue selector matches
 nothing and the selection stays as it was. A group strip whose member ended
 is refused as a stale instance, so the selection again stays as it was. A
-plain press sends no `:mode`, so the owner applies its configured mode, and
-SHIFT sends `:mode :additive`. Studio and the REPL use the same field (see
+plain press sends neither field, so the owner applies its configured mode.
+SHIFT, and CONTROL under an exclusive default, send the `:additive? true`
+shorthand; only an exclusive press needs `:mode`, so an Afterglow without it
+loses that press's exclusivity rather than turning additive presses
+exclusive. Studio and the REPL use the same field (see
 [parity](repl-studio-parity.md#solo-or-mute-running-effects)).
 
 **Input cost.** The session runs a full feedback refresh after every

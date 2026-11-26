@@ -422,9 +422,14 @@
                {:op :instance/end :instance-id (:id instance) :force? (= :releasing (:phase instance))}
                {:op :cue/launch :cue-id (:cue-id s) :launch {:mode :persistent}})])))
 
-(defn- toggle-command [control selector mode]
+(defn- toggle-command
+  "Additive actions keep the :additive? true shorthand and only exclusive ones
+  send :mode, so a peer without the per-action :mode (#749) loses the
+  exclusive press rather than turning additive presses exclusive."
+  [control selector mode]
   (cond-> {:op :effect-selection/toggle :control control :selector selector}
-    mode (assoc :mode mode)))
+    (= :additive mode) (assoc :additive? true)
+    (= :exclusive mode) (assoc :mode :exclusive)))
 
 (defn- selected-instance-ids [ctx control]
   (let [field (case control :solo :soloed? :mute :muted?)]
@@ -435,9 +440,11 @@
   vector, or none when the strip has no instances. modifier picks the mode,
   as the operator's Live script does:
     nil        the owner's configured mode (:effect-selection/configure);
-               the command carries no :mode
-    :additive  :mode :additive, keeping the other selected strips (SHIFT)
-    :invert    the opposite of the configured mode (CONTROL)
+               the command carries neither :mode nor :additive?
+    :additive  :additive? true, keeping the other selected strips (SHIFT)
+    :invert    the opposite of the configured mode (CONTROL): :additive?
+               true under an exclusive default, :mode :exclusive under an
+               additive one
   With a configured :additive mode, :invert sends :mode :exclusive, which the
   owner applies in one commit: it replaces the selection with this strip's
   instances, or clears them when they are the whole selection (#749)."

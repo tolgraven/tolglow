@@ -16,8 +16,9 @@ model. Each command gets the normal show epoch, revision and retry receipt.
   configured mode for that action only ([#749](https://github.com/tolgraven/tolglow/issues/749)).
   An exclusive toggle replaces the whole selection in one commit, so no frame
   shows a partial result. `:additive? true` remains shorthand for
-  `:mode :additive`. A command that sets both must agree; `:additive? true`
-  with `:mode :exclusive` is rejected. Without either, the owner applies the
+  `:mode :additive`, and Tolglow's adapters keep sending it for additive
+  actions. `:additive? true` with `:mode :exclusive` is rejected;
+  `:additive? false` means no modifier and agrees with either mode. Without either, the owner applies the
   configured mode when the command lands. The owner receives a fresh modifier
   value on every action. A held key or pad lives in the input adapter's session.
 - The selection gate includes every unmuted instance when no instance is soloed.
@@ -59,7 +60,7 @@ model can pass the same payload and a command envelope to
 {:op :effect-selection/toggle :control :solo
  :selector {:instance-ids ["0:1"]}}
 {:op :effect-selection/toggle :control :solo
- :selector {:layer-id layer-id} :mode :additive}
+ :selector {:layer-id layer-id} :additive? true}
 {:op :effect-selection/toggle :control :mute
  :selector {:instance-ids ["0:2"]} :mode :exclusive}
 ```
@@ -104,7 +105,7 @@ that a preceding additive action has no effect on later commands.
 [Replay and lifecycle tests](../test/tolglow/effects/selection_test.clj)
 
 Studio Perform provides Solo and Mute for individual running effects, category
-filters, and compound layers. Use Shift for an additive click and Alt (Option)
+filters, and compound layers. Use Shift for an additive click and Alt/Option
 for an exclusive one, or **Add once** and **Exclusive once** on a touchscreen. The header exposes both defaults and each row displays its own
 selection and suppression state. Push bindings, modifier release, and device
 disconnect still need controller verification.

@@ -364,7 +364,7 @@
                          frames))
             press! (fn [note] (input! :main [0x90 note 127] [0x80 note 0]))
             toggle! (fn [control ids] (accepted! h {:op :effect-selection/toggle :control control
-                                                    :selector {:instance-ids ids} :mode :additive}))]
+                                                    :selector {:instance-ids ids} :additive? true}))]
         (testing "c0 and c3 soloed, c4 and c5 running: CONTROL+SOLO on c4 replaces the selection in one frame"
           (press! 9)
           (press! 12)
@@ -387,13 +387,16 @@
           (let [frames (control! 21)]
             (is (= [#{i4}] (mapv :mute frames)))
             (is (every? #(and (contains? (:included %) i0) (not (contains? (:included %) i4))) frames))))
-        (testing "a selection another client queued in the same owner cycle is replaced, not kept"
+        (testing "a selection another client queued before the press is replaced; one sent after applies on top"
           (toggle! :mute [i4])
           (press! 9)
-          (show/submit! runtime :command {:op :effect-selection/toggle :control :solo :selector {:instance-ids [i5]}
-                                          :mode :additive :source {:adapter :repl :session-id "xt-test"}})
-          (input! :main [0x90 72 127] [0x90 13 127] [0x80 13 0] [0x80 72 0])
-          (is (= #{i4} (into #{} (keep #(when (:soloed? %) (:id %))) (:instances (:effect-selection (show/snapshot runtime))))))))
+          (let [soloed #(into #{} (keep (fn [i] (when (:soloed? i) (:id i)))) (:instances (:effect-selection (show/snapshot runtime))))]
+            (show/submit! runtime :command {:op :effect-selection/toggle :control :solo :selector {:instance-ids [i5]}
+                                            :additive? true :source {:adapter :repl :session-id "xt-test"}})
+            (input! :main [0x90 72 127] [0x90 13 127] [0x80 13 0] [0x80 72 0])
+            (is (= #{i4} (soloed)) "c5, queued before the press, is replaced")
+            (toggle! :solo [i5])
+            (is (= #{i4 i5} (soloed)) "c5, sent after the press, is added to the strip's Solo"))))
       (finally (show/stop! runtime)))))
 
 (deftest control-changes-nothing-when-its-strip-ends-first
@@ -445,7 +448,8 @@
             soloed #(into #{} (keep (fn [i] (when (:soloed? i) (:id i)))) (:instances (:effect-selection (show/snapshot runtime))))
             [i0 i3 i4] (map #(:id (latest h %)) [:c0 :c3 :c4])
             toggle (fn [selector & [mode]] (cond-> {:op :effect-selection/toggle :control :solo :selector selector}
-                                             mode (assoc :mode mode)))]
+                                             (= :additive mode) (assoc :additive? true)
+                                             (= :exclusive mode) (assoc :mode :exclusive)))]
         (try
           (input! [0x90 9 127] [0x80 9 0] [0x90 70 127] [0x90 12 127] [0x80 12 0] [0x80 70 0])
           (is (= #{i0 i3} (soloed)))
@@ -454,8 +458,12 @@
           (is (= [(toggle {:cue-ids [:c0]}) (toggle {:cue-ids [:c3]} :additive) (toggle {:cue-ids [:c4]} :exclusive)]
                  @dispatched)
               "A plain press leaves the mode to the owner; SHIFT adds; CONTROL inverts it in the same command")
-          (is (not-any? #{:exclusive-add} (keys (:local (device-session/snapshot unit))))
-              "No local marker waits for an acknowledgement")
+          (testing "under an exclusive default CONTROL adds with the :additive? shorthand"
+            (accepted! h {:op :effect-selection/configure :modes {:solo :exclusive}})
+            (reset! dispatched [])
+            (input! [0x90 72 127] [0x90 9 127] [0x80 9 0] [0x80 72 0])
+            (is (= [(toggle {:cue-ids [:c0]} :additive)] @dispatched))
+            (is (= #{i0 i4} (soloed))))
           (finally (device-session/close! unit))))
       (finally (show/stop! runtime)))))
 
