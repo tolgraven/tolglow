@@ -53,6 +53,7 @@ final class RoomWindows: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptM
               action.request.url.map({ $0.absoluteString.isEmpty || $0.absoluteString == "about:blank" }) ?? true
         else { return nil }
         close()
+        placeAfterFullScreen = false
         let size = NSSize(width: windowFeatures.width?.doubleValue ?? 960, height: windowFeatures.height?.doubleValue ?? 640)
         let view = WKWebView(frame: NSRect(origin: .zero, size: size), configuration: configuration)
         view.uiDelegate = self
@@ -79,6 +80,7 @@ final class RoomWindows: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptM
     func windowWillClose(_ notification: Notification) {
         guard let current = room, notification.object as? NSWindow === current.window else { return }
         room = nil
+        placeAfterFullScreen = false
         current.view.stopLoading()
         current.window.contentView = nil
         reply(["status": "closed"])
