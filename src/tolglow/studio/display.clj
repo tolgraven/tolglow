@@ -51,7 +51,7 @@
 (defn- remove-script! [{:keys [^File script-file temporary-script?]}]
   (when temporary-script? (Files/deleteIfExists (.toPath script-file))))
 
-(defn- worker-file! [worker-script]
+(defn- worker-file! [worker-script extraction-directory]
   (let [resource (when-not worker-script (io/resource "devices/push-display/worker.cjs"))]
     (if (or worker-script (= "file" (some-> resource .getProtocol)))
       (let [file (io/file (or worker-script resource))]
@@ -60,8 +60,10 @@
         {:script-file (.getAbsoluteFile file) :temporary-script? false})
       (do
         (when-not resource (throw (ex-info "Packaged display worker script is unavailable" {})))
-        (let [file (.toFile (Files/createTempFile "tolglow-display-" ".cjs"
-                                                (make-array java.nio.file.attribute.FileAttribute 0)))]
+        (let [attributes (make-array java.nio.file.attribute.FileAttribute 0)
+              file (.toFile (if extraction-directory
+                              (Files/createTempFile (.toPath (io/file extraction-directory)) "tolglow-display-" ".cjs" attributes)
+                              (Files/createTempFile "tolglow-display-" ".cjs" attributes)))]
           (try
             (with-open [input (io/input-stream resource) output (io/output-stream file)]
               (io/copy input output))
@@ -113,12 +115,13 @@
 (defn process-capture
   "Construct an inert Node/Chromium capture backend. :browser-executable is
   required. :url defaults to the studio's loopback /push-display page. The bundled
-  worker is extracted lazily when inside a JAR and removed with its process.
+  worker is extracted lazily when inside a JAR and removed with its process; it
+  goes to the system temporary directory unless :extraction-directory names one.
   :worker-script overrides the resource without transferring file ownership.
   Configure :node-executable and optionally an installed :playwright-module.
   For authenticated Studio, :auth-token-env names its operator token variable.
   No resource lookup, extraction, browser download or process occurs before :open!."
-  [{:keys [url browser-executable node-executable worker-script playwright-module no-sandbox? auth-token-env
+  [{:keys [url browser-executable node-executable worker-script extraction-directory playwright-module no-sandbox? auth-token-env
            startup-timeout-ms capture-timeout-ms scene-startup-timeout-ms scene-capture-timeout-ms shutdown-timeout-ms]
     :or {url "http://127.0.0.1:8500/push-display" node-executable "node"
          startup-timeout-ms 10000 capture-timeout-ms 2000 scene-startup-timeout-ms 45000
@@ -137,7 +140,7 @@
                  auth-token-env (assoc :authTokenEnv auth-token-env))]
     {:open!
      (fn []
-       (let [owned (atom (merge (worker-file! worker-script)
+       (let [owned (atom (merge (worker-file! worker-script extraction-directory)
                                {:lock (Object.) :request-lock (Object.) :closed? (atom false)
                                 :ipc-thread (atom nil) :scene-mode? (volatile! false) :opened-at (System/nanoTime)
                                 :shutdown-timeout-ms shutdown-timeout-ms}))]

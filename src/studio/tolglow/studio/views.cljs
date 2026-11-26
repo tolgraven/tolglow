@@ -904,7 +904,7 @@
            (when (and (= :library (get-in db [:ui :view])) (= :form (get-in db [:ui :definition :mode])))
              [block-builder/field {:id (some-> builder :id not-empty keyword) :params {:level {}}
                                    :outputs {:color nil :dimmer nil}}
-              (or (:blocks builder) {}) #(set-ui! [:builder :blocks] %)])])
+              (or (:blocks builder) {}) (fn [f] (input! [:studio/ui-update [:builder :blocks] #(f (or % {}))]))])])
         [:label.checkbox-label [:input#builder-cue {:type "checkbox" :checked (boolean (:cue? builder)) :on-change #(set-ui! [:builder :cue?] (checked? %))}]
          "Create matching cue"]])
      [button "builder-preview" "Generate EDN ↗" [:studio/builder-generate]]]))
@@ -928,7 +928,8 @@
      [:div.registry-toolbar
       [:label.search-label [:input#definition-search {:type "search" :placeholder "Search registry" :aria-label "Search definitions"
                                                      :value search :on-change #(set-ui! [:definition-search] (input-value %))}]]
-      [:button#new-definition.text-button {:aria-label "New definition" :on-click #(send! [:studio/definition-new])} "New"]]
+      ;; Replace the source before the next input event, which would otherwise be overwritten.
+      [:button#new-definition.text-button {:aria-label "New definition" :on-click #(input! [:studio/definition-new])} "New"]]
      [:div#definition-list.definition-list
       (if (seq results)
         (for [[kind item] results]
@@ -984,7 +985,7 @@
                                                             (.preventDefault event) (send! [:studio/definition-publish])))}]])
          [:p#source-help.muted.small "EDN is data. Publishing validates the definition and compiles its effect expressions; arbitrary Clojure is not evaluated."]]
         (when (and (= :library (:view ui)) (= :source (:mode definition)) (= "effects" (:kind definition)))
-          [block-builder/source-field (:source definition) #(send! [:studio/apply-block-source (:source definition) %])])
+          [block-builder/source-field (:source definition) #(input! [:studio/apply-block-source (:source definition) %])])
         [visual-builder db]]]]]))
 
 (defn- dialog [attrs & children]
