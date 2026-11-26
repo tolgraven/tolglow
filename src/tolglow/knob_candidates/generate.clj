@@ -399,11 +399,14 @@
     (str (or id-group group) "-" (id-text param) (when (or field input) (str "-" (id-text (or field input)))))))
 
 (defn- version-1-ids
-  "Version 1 link IDs used the cue's plain name: :rig/feel gave \"feel-level\"."
+  "Version 1 named an owner by its plain name: :rig/feel gave link IDs such as
+  \"feel-level\", and cues sharing a plain name across namespaces counted as
+  one owner for correlated pairs and owner variety. A replay does the same."
   [entry]
   (let [{:keys [cue-id instance-id]} (:destination entry)
-        id (or cue-id instance-id)]
-    (assoc entry :id-group (if (keyword? id) (name id) (str id)))))
+        id (or cue-id instance-id)
+        plain (if (keyword? id) (name id) (str id))]
+    (assoc entry :id-group plain :group plain)))
 
 (defn- build-link
   "[seed link-or-nil] for one destination in a character and feel."

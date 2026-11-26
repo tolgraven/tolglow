@@ -382,12 +382,45 @@
           (is (= [:rejected :unsupported-generator] (refusal {:generator 3 :seed 4}))))))
     (testing "live edits follow the same rules"
       (let [[model] (candidate-command model {:op :knob-candidate/generate :seed 4 :size [4 6]})
+            [x y] (:links fresh)
             [_ ack] (candidate-command model {:op :knob-candidate/unlink :link-id "nope"})
-            [_ dup] (candidate-command model {:op :knob-candidate/link :link (assoc (first (:links fresh)) :id "again")})]
+            [_ dup] (candidate-command model {:op :knob-candidate/link :link (assoc x :id "again")})
+            [_ onto] (candidate-command model {:op :knob-candidate/link
+                                                :link (assoc y :id (:id x))})
+            [_ same] (candidate-command model {:op :knob-candidate/link :link (assoc x :curve :sine)})]
         (is (= [:rejected :unknown-link] ((juxt :status :code) ack)))
-        (is (= [:rejected :duplicate-destination] ((juxt :status :code) dup)))))
+        (is (= [:rejected :duplicate-destination] ((juxt :status :code) dup)))
+        (is (= [:rejected :duplicate-destination] ((juxt :status :code) onto))
+            "replacing a link by its ID onto another link's destination")
+        (is (= :accepted (:status same)) "replacing a link on its own destination")))
+    (testing "a recipe's sharing flag is a boolean"
+      (is (= [:rejected :invalid-knob-candidate]
+             ((juxt :status :code) (second (candidate-command model {:op :knob-candidate/generate
+                                                                     :recipe {:generator 2 :seed 4 :include-knob-driven? "yes"}}))))))
     (testing "a recipe's reversed size is normalised like a command's"
       (let [[_ ack c] (candidate-command model {:op :knob-candidate/generate :recipe {:generator 2 :seed 4 :size [6 4]}})]
         (is (= :accepted (:status ack)))
         (is (= [4 6] (get-in c [:recipe :size])))
         (is (= (:links fresh) (:links c)))))))
+
+(deftest a-version-1-recipe-groups-cues-by-plain-name-as-version-1-did
+  ;; Version 1 named owners by plain name, so :a/pulse and :b/pulse were one
+  ;; owner for correlated pairs and owner variety, and shared link-ID prefixes.
+  ;; The reference is the generator run on entries grouped that way.
+  (let [model (namespaced-show)
+        eligibility (generate/eligibility model)
+        plain (update eligibility :eligible
+                      (partial mapv #(assoc % :group (name (get-in % [:destination :cue-id])))))
+        compared (for [seed (range 60) size [nil [2 4] [4 6]]
+                       :let [options (cond-> {:seed seed} size (assoc :size size))
+                             replayed (generate/generate eligibility nil (assoc options :generator 1))
+                             reference (generate/generate plain nil options)]]
+                   [(select-keys replayed [:status :links :score :explain :character])
+                    (select-keys reference [:status :links :score :explain :character])])]
+    (is (every? (fn [[a b]] (= a b)) compared))
+    (is (some (fn [[a]] (some :correlated-with (:explain a))) compared) "correlations are exercised")
+    (is (not= (map first compared)
+              (for [seed (range 60) size [nil [2 4] [4 6]]]
+                (select-keys (generate/generate eligibility nil (cond-> {:seed seed} size (assoc :size size)))
+                             [:status :links :score :explain :character])))
+        "version 2 groups the two cues apart")))

@@ -91,8 +91,11 @@
       {:avoid (into {} (map (fn [d] [d (get driven d [])])) avoid)})))
 
 (defn- recipe-options
-  "Generation options a recipe carries. A size is normalised as a command's is."
+  "Generation options a recipe carries. A size is normalised and the sharing
+  flag checked as a command's are."
   [recipe]
+  (when-not (or (nil? (:include-knob-driven? recipe)) (boolean? (:include-knob-driven? recipe)))
+    (fail! "A recipe's include-knob-driven? is true or false"))
   (cond-> (select-keys recipe [:character :size :cue-ids :include-knob-driven?])
     (and (sequential? (:size recipe)) (every? integer? (:size recipe))) (update :size #(vec (sort %)))))
 
@@ -147,23 +150,26 @@
 
 (defn- replay-edits
   "Apply link edits, live or recorded. An unlink names an existing link. A link
-  with a new ID adds a link, but never a second one on a destination the
-  candidate already drives: replace that link by its ID instead. So an edit
-  recorded against other link IDs is refused rather than silently dropped or
-  doubled."
+  replaces the link with its ID or adds one, but never leaves two links on one
+  destination: a replace or an add onto a destination another link drives is
+  refused (replace that link by its ID instead). So an edit recorded against
+  other link IDs is refused rather than silently dropped or doubled."
   [candidate edits]
   (reduce (fn [c {:keys [op link link-id]}]
             (case op
               :link (update c :links
                             (fn [links]
                               (let [i (first (keep-indexed #(when (= (:id link) (:id %2)) %1) links))
-                                    same (some #(when (= (knobs/destination-key %) (knobs/destination-key link)) %) links)]
+                                    same (first (keep-indexed #(when (and (not= i %1)
+                                                                          (= (knobs/destination-key %2) (knobs/destination-key link)))
+                                                                 %2)
+                                                              links))]
                                 (cond
-                                  i (assoc links i link)
                                   same (fail! :duplicate-destination
                                               (str "Link " (:id link) " drives the destination of link " (:id same)
                                                    "; replace that link by its ID")
                                               {:link-id (:id link) :existing (:id same)})
+                                  i (assoc links i link)
                                   :else (conj links link)))))
               :unlink (do (when-not (some #(= link-id (:id %)) (:links c))
                             (fail! :unknown-link "Unknown link" {:link-id link-id}))

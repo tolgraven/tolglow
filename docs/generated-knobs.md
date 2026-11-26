@@ -174,7 +174,12 @@ All surfaces send the same owner commands with the usual receipts.
   new ID adds one, but never a second link on a destination the candidate
   already drives (`:duplicate-destination`): replace that link by its ID. A
   replayed edit gets the same checks, so an edit recorded against other link
-  IDs is refused instead of silently dropped or doubled.
+  IDs is refused instead of silently dropped or doubled. Replacing a link by
+  its ID onto a destination another link drives is refused the same way. The
+  knob API itself still allows two links on one destination; a candidate does
+  not, because the later link would overwrite the earlier one on every turn. A
+  recipe kept before #737 whose recorded edit added such a duplicate therefore
+  no longer repeats: it is refused with `:duplicate-destination`.
 - **Keep** sends `:knob/create` through `tolglow.knobs` with the candidate's
   links and its recipe. The new knob writes nothing until it moves, like any
   knob created at a value.
@@ -207,8 +212,9 @@ other links.
 
 Version 2 (#737) keeps the cue's namespace in link IDs and may carry `:avoid`,
 so a build that only knows version 1 refuses it. This build still replays
-version 1 recipes with version 1 link IDs (the cue's plain name, `feel-level`
-for `:rig/feel`), so their recorded edits match.
+version 1 recipes as version 1 did: link IDs and owner grouping (for
+correlated pairs and owner variety) use the cue's plain name (`feel-level` for
+`:rig/feel`), so their links and recorded edits match.
 
 ## Room audition
 
