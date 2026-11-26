@@ -283,7 +283,12 @@
       (is (near? (val (first expected)) span))
       (is (= #{{unit span}} (set (map #(get-in % [:value :spec :keyframes 1 :at]) (get-in instance [:definition :outputs])))))
       (is (= effect (paths/published-definition instance)))
-      (is (map? (persistence/validate-model (:model result))) "A show saved mid-move validates"))))
+      (is (map? (persistence/validate-model (:model result))) "A show saved mid-move validates")
+      (let [restored (persistence/thaw (:model result) (persistence/read-string (persistence/write-string (:model result) nil)))
+            [again] (vals (:instances restored))]
+        (is (= (:definition instance) (:definition again)) "A Transit checkpoint restores the stretched move")
+        (is (= (:arrival-stretch instance) (:arrival-stretch again)))
+        (is (= effect (get-in restored [:registry :effects :paired])) "and the published move")))))
 
 (deftest room-audition-stretches-only-its-private-copy-and-apply-stretches-at-the-live-tempo
   (let [rig (control/new-show {:rig {:fixtures paired-heads}})
