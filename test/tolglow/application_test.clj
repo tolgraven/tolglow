@@ -53,6 +53,15 @@
     (is (= #{"one broke" "two broke"} (set (:messages (ex-data failure)))))
     (is (= #{"one broke" "two broke"} (set (map ex-message (.getSuppressed ^Throwable failure)))))))
 
+(deftest stop-path-namespaces-compile-without-reflection
+  ;; The JVM resolves reflective calls at run time, so only the compiler's
+  ;; warnings show what the compiled host would fail on during shutdown.
+  (doseq [ns '[tolglow.modules tolglow.studio.query-stream]]
+    (let [warnings (java.io.StringWriter.)]
+      (binding [*warn-on-reflection* true *err* warnings]
+        (require ns :reload))
+      (is (= "" (str warnings)) (str ns)))))
+
 (deftest cli-config-starts-a-headless-show-and-restores-its-transit-state
   (let [dir (.toFile (Files/createTempDirectory "tolglow-app-" (make-array java.nio.file.attribute.FileAttribute 0)))
         config-file (io/file dir "config.edn") saved (io/file dir "show.transit")
