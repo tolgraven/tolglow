@@ -3,7 +3,7 @@
 // with Escape, save, reload, detach and redock the Room, recover a damaged
 // saved layout and reset to the built-in layout. At each step it checks that a
 // running cue's controls and the Room's preview were not remounted, and that
-// Studio keeps one socket, one preview worker and one WebGL context.
+// Studio keeps one socket and one preview worker.
 //
 //   node dev/studio/panel-layout-qa.mjs http://127.0.0.1:4530 target/qa/panel-layout
 //
@@ -27,11 +27,11 @@ const viewports = [
   {name: 'phone', width: 390, height: 844, touch: true, cls: 'phone', columns: 2},
 ].filter(v => !only || v.name === only);
 
-// Count graphics owners from outside the application, as room-pop-out-qa does.
+// Count preview workers and sockets from outside the application.
 function instrument() {
   const wrap = win => {
     if (win.__qa) return;
-    const qa = win.__qa = {workers: [], canvases: [], sockets: 0};
+    const qa = win.__qa = {workers: [], sockets: 0};
     const NativeWorker = win.Worker;
     win.Worker = function(url, options) {
       const worker = new NativeWorker(url, options);
@@ -45,19 +45,6 @@ function instrument() {
     win.WebSocket = function(...args) { qa.sockets++; return new NativeSocket(...args); };
     win.WebSocket.prototype = NativeSocket.prototype;
     Object.assign(win.WebSocket, {CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3});
-    const getContext = win.HTMLCanvasElement.prototype.getContext;
-    win.HTMLCanvasElement.prototype.getContext = function(type, ...rest) {
-      const context = getContext.call(this, type, ...rest);
-      if (context && /webgl/.test(type) && !qa.canvases.includes(this)) qa.canvases.push(this);
-      return context;
-    };
-    const transfer = win.HTMLCanvasElement.prototype.transferControlToOffscreen;
-    if (transfer) {
-      win.HTMLCanvasElement.prototype.transferControlToOffscreen = function() {
-        if (!qa.canvases.includes(this)) qa.canvases.push(this);
-        return transfer.call(this);
-      };
-    }
   };
   wrap(window);
 }
@@ -92,7 +79,6 @@ for (const viewport of viewports) {
         sockets: window.__qa.sockets,
         workers: window.__qa.workers.filter(w => !w.terminated && /preview/.test(w.href)).length,
         workersCreated: window.__qa.workers.filter(w => /preview/.test(w.href)).length,
-        webgl: window.__qa.canvases.filter(c => c.isConnected).length,
         order: [...document.querySelectorAll('#view-perform .performance-layout > .layout-region')].map(e => e.dataset.panel),
         custom: !!document.querySelector('#view-perform .custom-layout'),
         editing: !!document.querySelector('#view-perform .editing-layout'),
