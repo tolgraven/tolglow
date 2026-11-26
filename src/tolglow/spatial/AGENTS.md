@@ -11,6 +11,12 @@ weights and blends native groups. The host supplies immutable previous-frame
 observations and keeps the optical reader out of saved state. A faulty shape
 affects only its own cue. [Volume cue regressions](../../../test/tolglow/spatial_cues_test.clj)
 
+A static sphere or rounded-box cue may declare a `:personality` input. Resolve
+it from the frame's model with `tolglow.personalities/input-choice` and keep
+the authored shape when it returns nil. The draw uses the cue ID, never an
+instance ID, so a restored show renders the same bytes.
+[Personality input regressions](../../../test/tolglow/personalities_host_test.clj)
+
 `sampling.clj` owns the show's field-sampling workers. It slices a large patch
 into contiguous ranges, runs Afterglow's public samplers on each range and
 replays the hits in the serial insertion order. Keep per-head arithmetic in
