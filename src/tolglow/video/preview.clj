@@ -49,7 +49,8 @@
 
 (defn- surface-view [cache fixtures resolved]
   (let [contacts (cache [:contacts resolved fixtures] #(surface/contacts resolved fixtures))]
-    {:resolved resolved :count (count contacts)
+    ;; :frame-source is the source as the frame route's query reads it.
+    {:resolved resolved :frame-source (str (:source resolved)) :count (count contacts)
      :contacts (if (> (count contacts) max-projected-contacts) (subvec contacts 0 max-projected-contacts) contacts)}))
 
 (defn surface-views

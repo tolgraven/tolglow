@@ -52,3 +52,5 @@
 .video-surface-contacts li { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end }
 @media (max-width: 600px) { #video-surfaces .form-row > *, #video-surfaces fieldset > * { flex: 1 1 120px }
   #video-surfaces select, #video-surfaces input { font-size: 16px } }
+#video-surfaces .form-row > label, #video-surfaces .video-surface-contacts label { flex: 0 0 auto }
+#video-surfaces .form-row select { min-width: 12em }

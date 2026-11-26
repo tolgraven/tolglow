@@ -28,6 +28,7 @@
     (is (= "authored/ball" (:id ball)))
     (is (= (:positions (surface/mesh resolved)) (:positions running)) "the same mesh the JVM sampler's geometry yields")
     (is (= [[0 2 0.1 1.0] [1 2 0.2 0.5]] (:contacts running)) "heads without a position are skipped")
+    (is (= ["h1" "h2"] (:contact-ids running)) "ids as the Room's output values are keyed")
     (is (= "/api/video/frame?source=%3Agrid&width=512&v=7" (:texture running)))
     (testing "every mesh vertex lies on the surface at its own source coordinate"
       (let [{:keys [positions uvs]} running]
@@ -35,6 +36,11 @@
           (let [{:keys [uv distance]} (surface/project resolved (subvec positions (* 3 i) (* 3 (inc i))))]
             (is (< distance 1e-9))
             (is (close? (surface/source-uv resolved uv) (subvec uvs (* 2 i) (* 2 (inc i)))))))))
+    (testing "enumerated values that arrive as strings still draw the right shape"
+      (let [stringly (-> resolved (assoc :shape "wave") (assoc-in [:wave :axis] "u"))
+            [drawn] (video-surfaces/room-surfaces (assoc-in video [:surfaces :running 0 :resolved] stringly) rig tokens false)]
+        (is (= (:positions running) (:positions drawn)))
+        (is (= 48 (:columns drawn)))))
     (testing "the performance Room shows only running surfaces"
       (is (= ["i-1/0"] (mapv :id (video-surfaces/room-surfaces video rig tokens false)))))))
 

@@ -40,10 +40,10 @@
        vec))
 
 (defn frame-url
-  "The latched frame route for a source at a token that changes when the
-  Room should fetch a newer frame."
-  [source token]
-  (str "/api/video/frame?source=" (js/encodeURIComponent (str source)) "&width=512&v=" token))
+  "The latched frame route for a source (as the route's query reads it) at a
+  token that changes when the Room should fetch a newer frame."
+  [frame-source token]
+  (str "/api/video/frame?source=" (js/encodeURIComponent frame-source) "&width=512&v=" token))
 
 (defn- texture-tokens
   "Throttle each source's frame token to two refreshes a second."
@@ -55,24 +55,39 @@
                                  {:token sequence :at now}))))
           {} sources))
 
+(defn- js-id [id] (if (keyword? id) (subs (str id) 1) (str id)))
+
+(defn- enum [v] (if (string? v) (keyword v) v))
+
+(defn normalize-resolved
+  "A resolved surface as the shared geometry reads it. The Room's show
+  snapshot can carry enumerated values as strings."
+  [resolved]
+  (cond-> (update resolved :shape enum)
+    (:wave resolved) (update-in [:wave :axis] enum)
+    (:contact resolved) (update-in [:contact :curve] enum)))
+
 (defn room-surfaces
   "Engine data for the Room overlay: one entry per running surface output,
   plus authored surfaces nobody is running when show-authored? (the rig
   editor). positions/uvs/indices come from the shared surface mesh;
-  contacts are [x y z weight] for each head the show reports in contact."
+  contacts are [x y z weight] for each head the show reports in contact,
+  with its output id in the same place of contact-ids."
   [video rig tokens show-authored?]
   (let [positions (into {} (map (juxt :id :position)) (:fixtures rig))
         running (:running (:surfaces video))
         live (set (map :surface running))
+        position #(or (get positions %) (get positions (keyword %)))
         entry (fn [id view]
-                (let [resolved (:resolved view)
+                (let [resolved (normalize-resolved (:resolved view))
+                      placed (filterv (comp position :id) (:contacts view))
                       token (get-in tokens [(:source resolved) :token])]
                   (merge (surface/mesh resolved)
                          {:id id
-                          :texture (when (some? token) (frame-url (:source resolved) token))
-                          :contacts (into [] (keep (fn [{:keys [id weight]}]
-                                                     (when-let [p (get positions id)] (conj (vec p) weight))))
-                                          (:contacts view))})))]
+                          :texture (when (some? token) (frame-url (or (:frame-source view) (str (:source resolved))) token))
+                          :contacts (mapv (fn [{:keys [id weight]}] (conj (vec (position id)) weight)) placed)
+                          ;; Output values reach the Room keyed like this.
+                          :contact-ids (mapv (comp js-id :id) placed)})))]
     (vec (concat (for [view running]
                    (entry (str (:instance-id view) "/" (:output view)) view))
                  (when show-authored?
@@ -169,8 +184,10 @@
     [:label "Shape"
      [:select {:value (name (:shape s))
                :on-change #(let [shape (keyword (.. % -target -value))]
+                             ;; Keep placement, crop, contact and a sheet's size across the change.
                              (put! (merge (new-surface (:id s) (:source s) shape)
-                                          (select-keys s [:position :rotation-deg :crop :contact :footprint :strips :targets]))))}
+                                          (select-keys s [:position :rotation-deg :crop :contact :footprint :strips :targets])
+                                          (when (and (#{:plane :wave} shape) (:size-m s)) {:size-m (:size-m s)}))))}
       [:option {:value "plane"} "Plane"] [:option {:value "wave"} "Wavy sheet"] [:option {:value "sphere"} "Sphere"]]]]
    [fields/xyz "Position · m" (:position s) #(put! (assoc s :position %))]
    [:fieldset.spatial-xyz [:legend "Rotation · degrees"]

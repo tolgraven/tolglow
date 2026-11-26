@@ -4,11 +4,22 @@ import * as THREE from 'three';
  * Studio builds each mesh with the same tolglow.video.surface functions the
  * JVM samples with, so the Room draws the geometry the heads read. This file
  * only uploads it: the latched frame as a texture on the mesh, and a marker
- * on every head in contact, brighter with its contact weight. Fixture colours
- * themselves stay the committed output drawn by the scene. */
+ * on every head in contact. The ring brightens with the contact weight; the
+ * disc inside shows that head's committed emitted colour, so the Room can be
+ * read against the picture behind it; a head the Room has no value for
+ * keeps an empty ring. Nothing here samples video. */
 
 export function surfaceKey(surface) {
   return `${surface.id}|${surface.columns}x${surface.rows}`;
+}
+
+/** Display bytes in [0,1] for a committed linear emitted colour. */
+export function displayColor(linear) {
+  if (!Array.isArray(linear) || linear.length < 3) return [0, 0, 0, 0];
+  return [...linear.slice(0, 3).map(v => {
+    const c = Math.min(1, Math.max(0, Number(v) || 0));
+    return c <= .0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - .055;
+  }), 1];
 }
 
 export function contactColors(weights) {
@@ -22,6 +33,21 @@ export function contactColors(weights) {
 
 function finiteArray(values, size) {
   return Array.isArray(values) && values.length % size === 0 && values.every(Number.isFinite);
+}
+
+/** Ring markers keep the head's own colour visible inside them. */
+function markerMaterial() {
+  return new THREE.ShaderMaterial({
+    transparent: true, depthTest: false, depthWrite: false, toneMapped: false,
+    uniforms: {size: {value: 16}},
+    vertexShader: `attribute vec3 markerColor; attribute vec4 headColor; varying vec3 vColor; varying vec4 vHead;
+      uniform float size;
+      void main() { vColor = markerColor; vHead = headColor;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_PointSize = size; }`,
+    fragmentShader: `varying vec3 vColor; varying vec4 vHead;
+      void main() { float r = length(gl_PointCoord - .5) * 2.; if (r > 1. || (r <= .62 && vHead.a < .5)) discard;
+        gl_FragColor = vec4(r > .62 ? vColor : vHead.rgb, 1.); }`
+  });
 }
 
 async function loadBitmap(url) {
@@ -71,15 +97,14 @@ export class VideoSurfaceOverlay {
   build(surface) {
     const root = new THREE.Group();
     const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({
-      color: 0x58636e, side: THREE.DoubleSide, transparent: true, opacity: .82, toneMapped: false, depthWrite: false}));
+      color: 0x58636e, side: THREE.DoubleSide, transparent: true, opacity: .5, toneMapped: false, depthWrite: false}));
     const edge = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({
       color: 0x8fd9cb, transparent: true, opacity: .7, toneMapped: false}));
-    const markers = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({
-      size: 9, sizeAttenuation: false, vertexColors: true, depthTest: false, toneMapped: false}));
+    const markers = new THREE.Points(new THREE.BufferGeometry(), markerMaterial());
     root.add(mesh, edge, markers); this.group.add(root);
     return {root, mesh, edge, markers, wantUrl: null, shownUrl: null};
   }
-  update(surfaces = []) {
+  update(surfaces = [], values = null) {
     const seen = new Set();
     for (const surface of surfaces || []) {
       if (!surface || !finiteArray(surface.positions, 3) || !finiteArray(surface.uvs, 2)) continue;
@@ -93,15 +118,25 @@ export class VideoSurfaceOverlay {
         geometry.setAttribute('uv', new THREE.Float32BufferAttribute(surface.uvs, 2));
         geometry.setIndex(surface.indices);
         geometry.computeBoundingSphere();
-        obj.edge.geometry.dispose(); obj.edge.geometry = new THREE.EdgesGeometry(geometry, 1);
+        obj.edge.geometry.dispose(); obj.edge.geometry = new THREE.EdgesGeometry(geometry, 30);
       }
       if (obj.contacts !== surface.contacts) {
         obj.contacts = surface.contacts;
         const points = (surface.contacts || []).filter(c => finiteArray(c, 4));
         const geometry = obj.markers.geometry;
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(points.flatMap(c => c.slice(0, 3)), 3));
-        geometry.setAttribute('color', new THREE.BufferAttribute(contactColors(points.map(c => c[3])), 3));
+        geometry.setAttribute('markerColor', new THREE.BufferAttribute(contactColors(points.map(c => c[3])), 3));
+        geometry.setAttribute('headColor', new THREE.BufferAttribute(new Float32Array(points.length * 4), 4));
         geometry.computeBoundingSphere();
+        obj.ids = (surface['contact-ids'] || []).filter((_, i) => finiteArray(surface.contacts[i], 4));
+        obj.colored = null;
+      }
+      if (obj.colored !== values) {
+        obj.colored = values;
+        const head = obj.markers.geometry.getAttribute('headColor');
+        // A head outside the Room's projected values keeps an empty ring.
+        (obj.ids || []).forEach((id, i) => head.array.set(displayColor(values?.[id]?.['emitted-color']), i * 4));
+        head.needsUpdate = true;
       }
       if (obj.wantUrl !== surface.texture) {
         // Keep showing the previous frame until the next one has loaded.

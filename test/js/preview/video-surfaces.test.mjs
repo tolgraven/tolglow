@@ -8,6 +8,7 @@ const quad = (z = 0) => ({
   uvs: [0, 0, 1, 0, 0, 1, 1, 1],
   indices: [0, 2, 1, 1, 2, 3],
   contacts: [[0, 0, .1, 1], [1, 0, .2, .5]],
+  'contact-ids': ['a', 'b'],
   texture: '/api/video/frame?source=:grid&width=512&sequence=1'
 });
 
@@ -55,6 +56,17 @@ test('a surface mesh carries the projected geometry, source uvs and contact mark
   let freed = false; obj.mesh.geometry.addEventListener('dispose', () => {freed = true;});
   overlay.update([]);
   assert.ok(freed); assert.equal(overlay.byId.size, 0); assert.equal(overlay.textures.size, 0);
+});
+
+test('each marker disc shows its head\'s committed emitted colour', () => {
+  const overlay = new VideoSurfaceOverlay(() => new Promise(() => {}));
+  const surface = quad();
+  overlay.update([surface], {a: {'emitted-color': [1, 0, 0]}, b: {'emitted-color': [0, .214, 0]}});
+  const head = overlay.byId.get(':sheet').markers.geometry.getAttribute('headColor').array;
+  assert.deepEqual([...head.slice(0, 4)], [1, 0, 0, 1]);
+  assert.ok(Math.abs(head[5] - .5) < .01, 'linear 0.214 displays near half');
+  overlay.update([surface], {a: {'emitted-color': [0, 0, 1]}});
+  assert.deepEqual([...head.slice(0, 8)], [0, 0, 1, 1, 0, 0, 0, 0], 'a head without a projected value leaves its disc empty');
 });
 
 test('contact markers brighten with their weight and invalid data is skipped', () => {

@@ -15,7 +15,7 @@ export class RigOverlay {
   update(snapshot) {
     this.volumes.update(snapshot?.['spatial-volumes'], snapshot?.['volume-guides']);
     this.sculpt.update(snapshot?.['sculpt-guide']);
-    this.videoSurfaces.update(snapshot?.['video-surfaces']);
+    this.videoSurfaces.update(snapshot?.['video-surfaces'], snapshot?.output?.values);
     const editor = snapshot?.editor, selection = editor?.selection;
     if (!editor) {if (this.key !== null) {this.clear(); this.key = null;} return;}
     if (this.markerRig !== snapshot.rig) {
