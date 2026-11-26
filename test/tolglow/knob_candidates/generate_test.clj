@@ -356,8 +356,8 @@
     (is (= [:accepted :accepted] [(:status fresh-ack) (:status v1-ack)]))
     (is (= [:ready :ready] [(:status fresh) (:status v1)]))
     (is (<= 4 (count (:links fresh))))
-    (testing "a fresh recipe is version 2 with namespaced link IDs"
-      (is (= 2 generate/generator-version (get-in fresh [:recipe :generator])))
+    (testing "a fresh recipe is the current version with namespaced link IDs"
+      (is (= 3 generate/generator-version (get-in fresh [:recipe :generator])))
       (is (every? #(re-find #"^rig/" %) (map :id (:links fresh)))))
     (testing "a version 1 recipe regenerates the same links under its plain-name IDs"
       (is (= 1 (get-in v1 [:recipe :generator])))
@@ -379,7 +379,7 @@
           (is (= [:rejected :duplicate-destination]
                  (refusal {:generator 2 :seed 4 :size [4 6] :edits [{:op :link :link (assoc kept :curve :sine)}]}))
               "a plain-name link on a destination the candidate already drives")
-          (is (= [:rejected :unsupported-generator] (refusal {:generator 3 :seed 4}))))))
+          (is (= [:rejected :unsupported-generator] (refusal {:generator 4 :seed 4}))))))
     (testing "live edits follow the same rules"
       (let [[model] (candidate-command model {:op :knob-candidate/generate :seed 4 :size [4 6]})
             [x y] (:links fresh)
@@ -424,3 +424,103 @@
                 (select-keys (generate/generate eligibility nil (cond-> {:seed seed} size (assoc :size size)))
                              [:status :links :score :explain :character])))
         "version 2 groups the two cues apart")))
+
+(defn- integer-show
+  "One cue whose number level and rate sit beside integer parameters, as in #747."
+  []
+  (let [effect {:id :scatter :version 1
+                :params {:level {:type :number :default 0.8 :bounds [0.0 1.0]}
+                         :rate {:type :number :default 4.0 :bounds [0.5 8.0]}
+                         :spread {:type :integer :default 2 :bounds [0 16]}
+                         :gain {:type :integer :default 3 :bounds [1 4]}
+                         :step {:type :integer :default 2 :bounds [1 16] :unit :beats}
+                         :pace {:type :integer :default 0 :bounds [0 8] :unit :beats}}
+                :outputs {:dimmer {:op :param :key :level}}}
+        base (control/new-show {:show-id :gen :rig rig :transport {:playing? true :beat 0.0 :bpm 120.0}
+                                :registry {:effects {:scatter effect}
+                                           :cues {:scatter {:id :scatter :effect-id :scatter :version 1}}}})]
+    (first (launch base :scatter))))
+
+(deftest integer-parameters-link-with-whole-endpoints-inside-their-bounds
+  (let [eligibility (generate/eligibility (integer-show))
+        schemas (into {} (map (juxt #(get-in % [:destination :param]) :schema)) (:eligible eligibility))
+        candidates (mapv #(generate/generate eligibility nil {:seed % :size [4 4]}) (range 200))
+        integer-links (for [c candidates link (:links c)
+                            :when (= :integer (:type (schemas (get-in link [:destination :param]))))]
+                        link)
+        params (set (map #(get-in % [:destination :param]) integer-links))]
+    (is (= #{:spread :gain :step :pace} (set (keep #(when (= :integer (:type (val %))) (key %)) schemas))))
+    (is (every? #(= :ready (:status %)) candidates) "integer parameters fill out the four links")
+    (is (= #{:spread :gain :step :pace} params) "every eligible integer parameter is linked by some seed")
+    (doseq [{[a b] :range :keys [destination quantize] :as link} integer-links
+            :let [{:keys [bounds default] :as schema} (schemas (:param destination))]]
+      (is (and (int? a) (int? b) (< a b)) (pr-str link))
+      (is (<= (first bounds) a b (second bounds)) "whole endpoints inside the bounds")
+      (when-not (#{:step :pace} (:param destination))
+        (is (<= a default b) "the authored value lies inside the range"))
+      (is (= :integer quantize))
+      (is (generate/playable? link schema))
+      (let [values (map #(knobs/resolve-value link schema (/ % 32.0)) (range 33))]
+        (is (every? int? values))
+        (is (= #{a b} (set [(first values) (last values)])) "the knob's ends reach both endpoints")))
+    (is (some #(re-find #", in whole steps" (:why %)) (mapcat :explain candidates)) "explained as whole steps")
+    (testing "one number and one integer intensity make a knob"
+      (let [effect {:id :pair :version 1
+                    :params {:level {:type :number :default 0.5 :bounds [0.0 1.0]}
+                             :dimmer {:type :integer :default 100 :bounds [0 255]}}
+                    :outputs {:dimmer {:op :param :key :level}}}
+            model (first (launch (control/new-show {:show-id :gen :rig rig :transport {:playing? true :beat 0.0 :bpm 120.0}
+                                                    :registry {:effects {:pair effect}
+                                                               :cues {:pair {:id :pair :effect-id :pair :version 1}}}})
+                                 :pair))
+            pair (generate/eligibility model)]
+        (is (every? #(= :ready (:status (generate/generate pair nil {:seed %}))) (range 100)))
+        (testing "a version 2 recipe still leaves the integer out, as version 2 did"
+          (is (every? #(= :insufficient (:status (generate/generate pair nil {:seed % :generator 2}))) (range 100))))))
+    (testing "older recipes replay without integer links"
+      (doseq [version [1 2]
+              seed (range 60)
+              :let [c (generate/generate eligibility nil {:seed seed :size [2 4] :generator version})]]
+        (is (not-any? #(= :integer (:type (schemas (get-in % [:destination :param])))) (:links c)))))))
+
+(deftest version-3-drafts-number-and-colour-links-exactly-as-version-2
+  ;; The integer change consumes the same draws, so a show without integer
+  ;; parameters generates the same candidate under either version.
+  (let [eligibility (generate/eligibility (show))]
+    (doseq [seed (range 60) size [nil [2 4] [4 8]]
+            :let [options (cond-> {:seed seed} size (assoc :size size))
+                  strip #(-> % (dissoc :generator) (update :recipe dissoc :generator))]]
+      (is (= (strip (generate/generate eligibility nil (assoc options :generator 2)))
+             (strip (generate/generate eligibility nil options)))))))
+
+(deftest integers-that-cannot-step-are-left-out-with-a-reason-from-version-3
+  (let [effect {:id :narrow :version 1
+                :params {:level {:type :number :default 0.5 :bounds [0.0 1.0]}
+                         :gain {:type :integer :default 1 :bounds [1 4] :recommended [1.2 1.8]}
+                         :spread {:type :integer :default 1 :bounds [0.5 1.5]}
+                         :rate {:type :number :default 2.0 :bounds [0.5 8.0]}}
+                :outputs {:dimmer {:op :param :key :level}}}
+        model (first (launch (control/new-show {:show-id :gen :rig rig :transport {:playing? true :beat 0.0 :bpm 120.0}
+                                                :registry {:effects {:narrow effect}
+                                                           :cues {:narrow {:id :narrow :effect-id :narrow :version 1}}}})
+                             :narrow))
+        eligibility (generate/eligibility model)
+        integer? #(#{:gain :spread} (get-in % [:destination :param]))]
+    (is (= 4 (count (:eligible eligibility))) "eligibility itself is unversioned and still lists them")
+    (doseq [seed (range 40)
+            :let [c (generate/generate eligibility nil {:seed seed :size [2 4]})]]
+      (is (= :ready (:status c)))
+      (is (not-any? integer? (:links c))))
+    (let [only-level (update eligibility :eligible (partial filterv #(not= :rate (get-in % [:destination :param]))))
+          result (generate/generate only-level nil {:seed 1})]
+      (is (= :insufficient (:status result)))
+      (is (= 1 (:eligible result)) "they no longer count as eligible")
+      (is (re-find #"Only one parameter" (:message result)))
+      (is (= #{["narrow · gain" :too-few-steps] ["narrow · spread" :too-few-steps]}
+             (set (map (juxt :label :reason) (:excluded result))))))
+    (testing "version 2 kept them in the pool, and its replays still do"
+      (let [only-level (update eligibility :eligible (partial filterv #(not= :rate (get-in % [:destination :param]))))
+            result (generate/generate only-level nil {:seed 1 :generator 2})]
+        (is (= :insufficient (:status result)))
+        (is (= 3 (:eligible result)))
+        (is (empty? (:excluded result)))))))

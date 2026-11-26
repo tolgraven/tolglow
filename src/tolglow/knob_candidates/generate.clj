@@ -20,13 +20,17 @@
 (def generator-version
   "Bump when a change makes a saved recipe resolve to different links.
   2 (#737): link IDs keep the cue's namespace, and a recipe may carry :avoid.
-  A build that only knows 1 refuses such a recipe instead of misreplaying it."
-  2)
+  A build that only knows 1 refuses such a recipe instead of misreplaying it.
+  3 (#747): integer destinations get whole-number endpoints and :quantize
+  :integer, so they can be linked at all; versions 1 and 2 drafted fractional
+  endpoints the knob API refused, and their replays still leave them out."
+  3)
 
 (def generator-versions
   "Recipe versions this build replays. A version 1 recipe regenerates with
-  version 1 link IDs (the cue's plain name), so its recorded edits still match."
-  #{1 2})
+  version 1 link IDs (the cue's plain name), so its recorded edits still match.
+  Versions 1 and 2 replay without integer links, as they were made."
+  #{1 2 3})
 
 (def min-links 2)
 
@@ -363,6 +367,20 @@
             :hue (centred (* 0.25 width span))
             [(- d (* width (- d lo))) (+ d (* width (- hi d)))]))))
 
+(defn- integer-range
+  "Whole-number [low high] for an integer destination: each endpoint of an
+  ascending range rounded to the nearest whole value inside the bounds, one
+  step apart at least, or nil when the bounds hold fewer than two whole values."
+  [[a b] [lo hi]]
+  (let [lo (long (Math/ceil (double lo))) hi (long (Math/floor (double hi)))
+        fit #(max lo (min hi (Math/round (double %))))
+        a (fit a) b (fit b)]
+    (cond
+      (>= lo hi) nil
+      (< a b) [a b]
+      (< a hi) [a (inc a)]
+      :else [(dec a) a])))
+
 (def ^:private fallback-colours
   "Targets for a colour link when no track feel supplies a palette."
   [[1.0 0.55 0.1] [0.9 0.15 0.7] [0.1 0.9 0.8] [1.0 0.15 0.1] [0.1 0.3 1.0] [0.3 1.0 0.3]])
@@ -398,6 +416,17 @@
   (let [{:keys [param field input]} destination]
     (str (or id-group group) "-" (id-text param) (when (or field input) (str "-" (id-text (or field input)))))))
 
+(defn- too-few-steps?
+  "Whether an integer destination's range holds fewer than two whole values."
+  [{:keys [schema]}]
+  (and (= :integer (:type schema))
+       (let [[lo hi] (range-of schema)]
+         (< (- (Math/floor (double hi)) (Math/ceil (double lo))) 1.0))))
+
+(defn- too-few-steps-exclusion [{:keys [group destination label]}]
+  {:owner group :param (:param destination) :reason :too-few-steps :label label :destination destination
+   :message "The range holds fewer than two whole values, so an integer knob link cannot step"})
+
 (defn- version-1-ids
   "Version 1 named an owner by its plain name: :rig/feel gave link IDs such as
   \"feel-level\", and cues sharing a plain name across namespaces counted as
@@ -409,29 +438,39 @@
     (assoc entry :id-group plain :group plain)))
 
 (defn- build-link
-  "[seed link-or-nil] for one destination in a character and feel."
-  [seed {:keys [role schema default] :as entry} character {:keys [speed jitter smoothness palette] :as feel}]
-  (let [direction (get-in character [:polarity role] :up)
+  "[seed link-or-nil] for one destination in a character and feel. From
+  version 3 an integer destination gets whole-number endpoints and steps
+  through them. Its range is drawn like a number destination's, except that
+  an integer with a beat unit takes the period path instead of ratio steps,
+  centred like a waveform period, and so also draws a curve."
+  [seed {:keys [role schema default] :as entry} character {:keys [speed jitter smoothness palette] :as feel} version]
+  (let [whole? (and (>= version 3) (= :integer (:type schema)))
+        direction (get-in character [:polarity role] :up)
         [seed x] (draw seed)
         width (min 1.0 (max 0.3 (* (between x 0.45 0.85)
                                    (+ 1.0 (* 0.2 jitter))
                                    (if (and (> smoothness 0.8) (< speed 0.3)) 0.75 1.0))))
         [seed factor] (random/choose seed (if (> speed 0.6) [4 4 2] [2 2 4]))
         bounds (range-of schema)
+        centre (cond (> speed 0.6) 1/2 (< speed 0.3) 2 :else 1)
         [seed range quantize]
         (cond
           (= :colour role) (let [[seed r] (colour-range seed default palette)] [seed r nil])
-          (and (#{:period :rate} role) (ratio-schema? schema))
+          (and (#{:period :rate} role) (ratio-schema? schema) (not whole?))
           ;; A waveform period centres on a beat, earlier for a fast feel.
-          (let [centre (cond (> speed 0.6) 1/2 (< speed 0.3) 2 :else 1)]
-            [seed (musical-range (or (when (rational? default) default) centre) factor (:bounds schema))
-             {:ratios :preferred}])
+          [seed (musical-range (or (when (rational? default) default) centre) factor (:bounds schema))
+           {:ratios :preferred}]
           ;; Periods, and rates counted per beat, land on musical values. A rate
           ;; that is a 0–1 amount (density, chance) stays continuous.
           (or (= :period role) (and (= :rate role) (> (double (second bounds)) 1.0)))
-          [seed (some-> (musical-range (or default 1) factor bounds) (->> (mapv double))) nil]
+          ;; A whole-number period with no positive default centres like a waveform's.
+          [seed (some-> (musical-range (if whole? (if (and default (pos? default)) default centre) (or default 1))
+                                       factor bounds)
+                        (->> (mapv double)))
+           nil]
           :else [seed (continuous-range role bounds default width) nil])
-        [seed curve] (if quantize [seed :linear] (random/choose seed (curve-choices role feel)))]
+        [range quantize] (if whole? [(some-> range (integer-range bounds)) :integer] [range quantize])
+        [seed curve] (if (:ratios quantize) [seed :linear] (random/choose seed (curve-choices role feel)))]
     [seed (when (and range (not= (first range) (second range)))
             (cond-> {:id (link-id entry) :destination (:destination entry) :range range
                      :direction direction :curve curve :input [0 1]}
@@ -551,18 +590,21 @@
              :why (str (str/capitalize (role-names role)) " "
                        (if (= :up (:direction link)) (str (text a) " → " (text b)) (str (text b) " → " (text a)))
                        " as the knob rises (" (:name character) ")"
-                       (when (:quantize link) ", in preferred beat ratios")
+                       (case (:quantize link)
+                         nil nil
+                         :integer ", in whole steps"
+                         ", in preferred beat ratios")
                        (when (= [0.5 1.0] (:input link)) ", over the knob's upper half"))}
       partner (assoc :correlated-with (first (remove #{(:id link)} (:links partner))) :correlation (:why partner))
       ;; Offered on request although an existing knob drives it: the last committed write wins.
       (:driven-by entry) (assoc :shared-with (:driven-by entry)))))
 
-(defn- draft [seed pool character feel [low high]]
+(defn- draft [seed pool character feel [low high] version]
   (let [[seed x] (draw seed)
         k (min max-links (count pool) (+ low (long (Math/floor (* x (inc (- high low)))))))
         [seed chosen] (pick-destinations seed pool character k)
         [seed built] (reduce (fn [[seed acc] entry]
-                               (let [[seed link] (build-link seed entry character feel)]
+                               (let [[seed link] (build-link seed entry character feel version)]
                                  [seed (if (and link (playable? link (:schema entry))) (conj acc [entry link]) acc)]))
                              [seed []] chosen)
         chosen (mapv first built)
@@ -600,6 +642,13 @@
              {:character character :known (mapv :id characters)}))
   (let [version (or generator generator-version)
         eligible (if (= 1 version) (mapv version-1-ids eligible) eligible)
+        ;; Version 3 leaves out integers that cannot step, with a reason. Earlier
+        ;; versions kept them in the pool, whose size feeds the draws, so their
+        ;; replays keep them too.
+        [eligible excluded] (if (>= version 3)
+                              [(filterv (complement too-few-steps?) eligible)
+                               (into (vec excluded) (map too-few-steps-exclusion) (filter too-few-steps? eligible))]
+                              [eligible excluded])
         feel (feel personality)
         [low high] (cond (nil? size) default-size (and (sequential? size) (= 2 (count size))) size)
         _ (when-not (and (integer? low) (integer? high) (<= min-links low high max-links))
@@ -631,7 +680,7 @@
       (let [entries-of (fn [chosen] (into {} (map (juxt link-id identity)) chosen))
             avoided (vec (sort-by pr-str (keep #(when (= :knob-driven (:reason %)) (:destination %)) excluded)))
             [_ drafts] (reduce (fn [[seed acc] _]
-                                 (let [[seed d] (draft seed pool chosen feel [low high])] [seed (conj acc d)]))
+                                 (let [[seed d] (draft seed pool chosen feel [low high] version)] [seed (conj acc d)]))
                                [seed* []] (range attempts))
             scored (for [{:keys [links] picked :chosen :as d} drafts
                          :let [entries (entries-of picked)
