@@ -113,6 +113,28 @@
       (fn release! [] (try (.release lock) (finally (.close channel))))
       (do (.close channel) nil))))
 
+(def ^:private folder-record-name
+  "The file in a folder's recovery directory naming the folder that last claimed it."
+  "folder-path")
+
+(defn- copied-folder?
+  "True when `directory` was last claimed from another folder that still exists
+  and still carries identity `id`: `folder` is then a copy of it (a Finder
+  duplicate, a backup or a clone of a repository that tracks the identity
+  file), not the same folder moved or renamed, and must not share its recovery."
+  [directory folder id]
+  (let [record (io/file directory folder-record-name)
+        recorded (when (.isFile record) (str/trim (slurp record :encoding "UTF-8")))]
+    (boolean
+     (and (seq recorded)
+          (= id (read-folder-id (io/file recorded folder-id-name)))
+          (not (try (Files/isSameFile (.toPath (io/file recorded)) (.toPath (io/file folder)))
+                    (catch IOException _ false)))))))
+
+(defn- record-folder! [directory folder]
+  (try (spit (io/file directory folder-record-name) (str (.getCanonicalFile (io/file folder)) "\n") :encoding "UTF-8")
+       (catch IOException _ nil)))
+
 (def ^:private legacy-marker "offered-to-folder")
 
 (defn offer-legacy-recovery!
@@ -140,19 +162,24 @@
   "Claim this show folder's own recovery directory under `base` for this
   process: {:id :directory :release!}, or nil to keep the shared directory when
   the folder cannot hold an identity. A copied folder carries its original's
-  identity, so when that identity's directory is already claimed by a running
-  show the copy gets a new identity. The first claim of a new directory offers
-  the shared directory's previous session for `show-id` once."
+  identity, so the copy gets a new identity when that identity's directory is
+  claimed by a running show, or was last claimed from the original folder,
+  which still exists with the same identity. A moved or renamed folder keeps
+  its identity. The first claim of a new directory offers the shared
+  directory's previous session for `show-id` once."
   ([folder base] (claim-folder-recovery! folder base :main))
   ([folder base show-id]
-   (loop [id (folder-id! folder) renewed? false]
-     (when id
-       (let [directory (folder-recovery-directory base id)]
-         (if-let [release! (try-lock directory)]
-           (do (offer-legacy-recovery! base directory show-id)
-               {:id id :directory directory :release! release!})
-           (when-not renewed?
-             (recur (try (write-folder-id! folder) (catch IOException _ nil)) true))))))))
+   (let [renew #(try (write-folder-id! folder) (catch IOException _ nil))]
+     (loop [id (folder-id! folder) renewed? false]
+       (when id
+         (let [directory (folder-recovery-directory base id)]
+           (if-let [release! (try-lock directory)]
+             (if (and (not renewed?) (copied-folder? directory folder id))
+               (do (release!) (recur (renew) true))
+               (do (record-folder! directory folder)
+                   (offer-legacy-recovery! base directory show-id)
+                   {:id id :directory directory :release! release!}))
+             (when-not renewed? (recur (renew) true)))))))))
 
 (defn desktop-config
   "The configuration a Mac window starts for its folder: recovery in the

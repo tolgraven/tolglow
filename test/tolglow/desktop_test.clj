@@ -133,7 +133,25 @@
           (finally ((:release! claim-a)) ((:release! claim-b))))
         (let [again (launch/claim-folder-recovery! moved base)]
           (try (is (= id-a (:id again)) "a released folder is claimed again under the same identity")
-               (finally ((:release! again)))))))
+               (finally ((:release! again)))))
+        (testing "a copied folder opened while its original is closed still gets its own identity"
+          (let [copy (temp-dir)]
+            (io/copy (io/file moved launch/folder-id-name) (io/file copy launch/folder-id-name))
+            (let [claim-copy (launch/claim-folder-recovery! copy base)]
+              (try (is (not= id-a (:id claim-copy)) "the copy does not take the original's recovery")
+                   (finally ((:release! claim-copy)))))
+            (let [claim-a (launch/claim-folder-recovery! moved base)]
+              (try (is (= id-a (:id claim-a)) "the original keeps its identity and directory")
+                   (finally ((:release! claim-a)))))))
+        (testing "a folder moved after its last claim keeps its identity"
+          (let [moved-again (io/file (temp-dir) "moved again")]
+            (Files/move (.toPath moved) (.toPath moved-again) (make-array java.nio.file.CopyOption 0))
+            (let [claim (launch/claim-folder-recovery! moved-again base)]
+              (try (is (= id-a (:id claim)))
+                   (finally ((:release! claim)))))
+            (let [claim (launch/claim-folder-recovery! (io/file (str moved-again "/")) base)]
+              (try (is (= id-a (:id claim)) "another spelling of the same folder is not a copy")
+                   (finally ((:release! claim)))))))))
     (testing "a folder that cannot hold an identity keeps the shared directory"
       (let [locked (temp-dir)]
         (.setWritable locked false)

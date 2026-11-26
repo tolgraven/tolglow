@@ -374,8 +374,11 @@ keeps the processes apart (`native/macOS/ShowRegistry.swift`):
   would otherwise restore each other's working checkpoint. The directory is
   named by a UUID kept in the folder's `.tolglow-folder-id`, written on first
   open, so renaming or moving the folder keeps its recovery. A process holds a
-  lock on its folder's directory while it runs; a copied folder opened beside
-  its original therefore gets a fresh identity. A folder that cannot be written
+  lock on its folder's directory while it runs, and the directory records the
+  folder that last claimed it. A copied folder (a Finder duplicate, a backup, a
+  clone of a repository that tracks the identity file) therefore gets a fresh
+  identity, whether it is opened beside its original or after it; a moved or
+  renamed folder keeps its identity. A folder that cannot be written
   keeps the shared directory. The first folder opened after this change is
   offered the shared directory's previous session for `:main` once (a marker
   stops later folders from offering it; the shared files stay for `lein run`
