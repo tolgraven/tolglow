@@ -343,6 +343,39 @@
 
 (def ^:private freeze-lock (Object.))
 
+(defonce ^:private held-locks
+  ;; Canonical paths of the file locks this process holds through
+  ;; `try-file-lock`. An OS file lock belongs to the whole process, and on
+  ;; macOS closing any channel on the file drops it, so a second caller in
+  ;; this JVM must be refused before it opens a channel of its own.
+  (atom #{}))
+
+(defn try-file-lock
+  "Take an exclusive lock on `file` for this process: {:release! :valid?},
+  or nil while this process or another holds it. A refused caller in this
+  JVM never opens the file, so it cannot drop the holder's lock. The lock is
+  released by `:release!` or when the process ends."
+  [file]
+  (let [file (io/file file)
+        _ (io/make-parents file)
+        path (str (.getCanonicalFile file))
+        [before _] (swap-vals! held-locks conj path)]
+    (when-not (contains? before path)
+      (let [forget! #(swap! held-locks disj path)
+            channel (try (FileChannel/open (.toPath (io/file path))
+                                           (into-array OpenOption [StandardOpenOption/CREATE StandardOpenOption/WRITE]))
+                         (catch Throwable error (forget!) (throw error)))
+            ^FileLock lock (try (.tryLock channel)
+                                (catch OverlappingFileLockException _ nil)
+                                (catch Throwable error (.close channel) (forget!) (throw error)))]
+        (if lock
+          (let [released (atom false)]
+            {:valid? #(.isValid lock)
+             :release! (fn [] (when (compare-and-set! released false true)
+                                (try (.release lock) (finally (.close channel) (forget!)))))})
+          ;; Another process holds it; this process held no lock on the file.
+          (do (.close channel) (forget!) nil))))))
+
 (defn- delete-tree! [^java.io.File file]
   (when (.isDirectory file) (run! delete-tree! (.listFiles file)))
   (.delete file))
@@ -358,8 +391,12 @@
     (when (seq files)
       (.mkdirs frozen)
       (doseq [^java.io.File file files]
-        (Files/copy (.toPath file) (.toPath (io/file frozen (.getName file)))
-                    ^"[Ljava.nio.file.CopyOption;" (into-array CopyOption [StandardCopyOption/COPY_ATTRIBUTES])))
+        (let [copy (.toPath (io/file frozen (.getName file)))]
+          (Files/copy (.toPath file) copy
+                      ^"[Ljava.nio.file.CopyOption;" (into-array CopyOption [StandardCopyOption/COPY_ATTRIBUTES]))
+          ;; Durable before the directory move publishes it.
+          (with-open [channel (FileChannel/open copy (into-array OpenOption [StandardOpenOption/WRITE]))]
+            (.force channel true))))
       (when copied-to
         ;; That folder already holds this session as its own checkpoint.
         (spit (io/file frozen legacy-resolution-name)
@@ -458,21 +495,15 @@
   (let [^java.io.File directory (legacy-show-directory owner show-id)]
     (when-not (and directory (.isDirectory directory))
       (throw (ex-info "No checkpoint from before the update is offered" {:code :legacy-unavailable})))
-    (let [channel (FileChannel/open (.toPath (io/file directory legacy-lock-name))
-                                    (into-array OpenOption [StandardOpenOption/CREATE StandardOpenOption/WRITE]))
-          ^FileLock lock (try (.tryLock channel) (catch OverlappingFileLockException _ nil))]
-      (when-not lock
-        (.close channel)
-        (throw (ex-info "Another show window is restoring or dismissing the checkpoint from before the update"
-                        {:code :legacy-busy})))
-      (let [released (atom false)
-            release! (fn [] (when (compare-and-set! released false true)
-                              (try (.release lock) (finally (.close channel)))))]
-        (if-let [resolution (read-resolution (io/file directory legacy-resolution-name))]
-          (do (release!)
-              (throw (ex-info (resolved-message resolution)
-                              {:code :legacy-resolved :resolution (select-keys resolution [:resolution :folder-id])})))
-          {:directory directory :show-id show-id :release! release!})))))
+    (let [{:keys [release! valid?]}
+          (or (try-file-lock (io/file directory legacy-lock-name))
+              (throw (ex-info "Another show window is restoring or dismissing the checkpoint from before the update"
+                              {:code :legacy-busy})))]
+      (if-let [resolution (read-resolution (io/file directory legacy-resolution-name))]
+        (do (release!)
+            (throw (ex-info (resolved-message resolution)
+                            {:code :legacy-resolved :resolution (select-keys resolution [:resolution :folder-id])})))
+        {:directory directory :show-id show-id :release! release! :valid? valid?}))))
 
 (defn finish-legacy!
   "Record a held reservation as :applied or :dismissed with `details`, stop

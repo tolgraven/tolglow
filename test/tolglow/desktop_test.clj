@@ -4,6 +4,7 @@
   loopback listener, and check that they stay apart."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
+            [clojure.java.shell]
             [clojure.test :refer :all]
             [tolglow.desktop :as desktop]
             [tolglow.desktop.launch :as launch]
@@ -363,6 +364,52 @@
       (is (= :legacy-resolved (:code (ex-data (is (thrown? clojure.lang.ExceptionInfo (show/load-latest-show! b :legacy-prior))))))
           "the loser is told, never silently accepted")
       (finally (show/stop! a) (show/stop! b)))))
+
+(defn- lock-held-by-another-process?
+  "Ask a separate JVM whether it can lock `file`: true when it cannot."
+  [file]
+  (let [dir (temp-dir)
+        probe (io/file dir "Probe.java")]
+    (spit probe (str "import java.nio.channels.*; import java.nio.file.*;\n"
+                     "public class Probe { public static void main(String[] a) throws Exception {\n"
+                     "  try (FileChannel c = FileChannel.open(Path.of(a[0]), StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {\n"
+                     "    FileLock l = c.tryLock(); System.out.print(l == null ? \"held\" : \"free\"); } } }\n"))
+    (let [java (str (io/file (System/getProperty "java.home") "bin" "java"))
+          {:keys [out exit err]} (clojure.java.shell/sh java (str probe) (str file))]
+      (is (zero? exit) err)
+      (= "held" out))))
+
+(deftest a-refused-caller-in-the-same-process-keeps-the-holders-lock
+  (testing "the reservation of the checkpoint from before the update"
+    (let [base (temp-dir)
+          _ (write-legacy! base (legacy-source))
+          _ (recovery/freeze-shared! base)
+          a (folder-show base "folder-a")
+          b (folder-show base "folder-b")]
+      (try
+        (let [held (recovery/reserve-legacy! @(:recovery a) :main)
+              lock-file (io/file (:directory held) ".resolution.lock")]
+          (try
+            (is (= :legacy-busy (:code (ex-data @(future (try (recovery/reserve-legacy! @(:recovery b) :main)
+                                                               (catch clojure.lang.ExceptionInfo error error)))))))
+            (is (true? ((:valid? held))) "the refused caller did not close the holder's lock")
+            (is (lock-held-by-another-process? lock-file) "another process still cannot take it")
+            (finally ((:release! held))))
+          (is (not (lock-held-by-another-process? lock-file)) "released, another process can take it"))
+        (finally (show/stop! a) (show/stop! b)))))
+  (testing "a folder's recovery directory, claimed again by a copy in the same process"
+    (let [base (temp-dir)
+          original (temp-dir)
+          claim (launch/claim-folder-recovery! original base)
+          lock-file (io/file (:directory claim) ".lock")]
+      (try
+        (let [copy (temp-dir)]
+          (io/copy (io/file original launch/folder-id-name) (io/file copy launch/folder-id-name))
+          (let [copy-claim (launch/claim-folder-recovery! copy base)]
+            (try (is (not= (:id claim) (:id copy-claim)))
+                 (finally ((:release! copy-claim))))))
+        (is (lock-held-by-another-process? lock-file) "the original's claim still holds its directory")
+        (finally ((:release! claim)))))))
 
 (deftest a-dismissed-or-refused-checkpoint-from-before-the-update-keeps-its-files
   (testing "dismissing it stops the offer and keeps the files"

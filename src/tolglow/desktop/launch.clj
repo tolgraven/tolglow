@@ -4,8 +4,7 @@
             [tolglow.modules :as modules]
             [tolglow.show.recovery :as recovery])
   (:import [java.io File IOException]
-           [java.nio.channels FileChannel FileLock OverlappingFileLockException]
-           [java.nio.file CopyOption Files OpenOption Path StandardCopyOption StandardOpenOption]
+           [java.nio.file CopyOption Files Path StandardCopyOption]
            [java.util UUID]))
 
 (defn publish-port!
@@ -107,14 +106,12 @@
   [base id]
   (io/file base "folders" id))
 
-(defn- try-lock [^File directory]
+(defn- try-lock
+  "This process's lock on a folder's recovery directory, or nil while any
+  show holds it (see `recovery/try-file-lock`)."
+  [^File directory]
   (.mkdirs directory)
-  (let [channel (FileChannel/open (.toPath (io/file directory ".lock"))
-                                  (into-array OpenOption [StandardOpenOption/CREATE StandardOpenOption/WRITE]))
-        ^FileLock lock (try (.tryLock channel) (catch OverlappingFileLockException _ nil))]
-    (if lock
-      (fn release! [] (try (.release lock) (finally (.close channel))))
-      (do (.close channel) nil))))
+  (:release! (recovery/try-file-lock (io/file directory ".lock"))))
 
 (def ^:private folder-record-name
   "The file in a folder's recovery directory naming the folder that last claimed it."
