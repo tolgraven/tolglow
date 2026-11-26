@@ -112,7 +112,8 @@
      (when (contains? inputs id) [:button.text-button {:type "button" :on-click clear!} "Reset"])]))
 
 (defn- stage-controls
-  "One stage's controls. `change!` takes a function of the stage's current value."
+  "One stage's controls. `change!` takes a function of the stage's current value and
+  `move!` a step (-1 earlier, 1 later); both find the stage wherever it is now."
   [i stage template params change! move! remove! total transport-only?]
   (let [coordinates (or (:coordinates stage) :world)
         title (or (:name template) (trace/path-label [(:block stage)]))
@@ -121,9 +122,9 @@
      [:header [:strong (str (inc i) " · " title)]
       [:span.block-stage-order
        [:button.text-button {:type "button" :aria-label (str "Move " title " earlier") :disabled (zero? i)
-                             :on-click #(move! (dec i))} "↑"]
+                             :on-click #(move! -1)} "↑"]
        [:button.text-button {:type "button" :aria-label (str "Move " title " later") :disabled (= i (dec total))
-                             :on-click #(move! (inc i))} "↓"]
+                             :on-click #(move! 1)} "↓"]
        [:button.text-button {:type "button" :aria-label (str "Remove " title) :on-click remove!} "Remove"]]]
      [:div.block-stage-blend
       [options "Blend" [:replace :add :multiply] (or (:mode stage) (:mode template)) widget/label #(change! assoc :mode %)]
@@ -144,18 +145,52 @@
 (defn remove-stage [stages i]
   (if (< -1 i (count stages)) (into (subvec stages 0 i) (subvec stages (inc i))) stages))
 
+;; Stage identity. Edits can reach the stages before the next render (a field
+;; committed on blur, then the tap that blurred it, or two quick taps), so a stage
+;; is addressed by a stable ID, never by the index it was rendered at. The ID is
+;; metadata: it never reaches the EDN (pr-str and pretty/edn omit metadata) and
+;; never affects equality. A stage without one, as loaded from source, is known by
+;; its position, and the first edit to its list records that position as its ID.
+
+(defn stage-id
+  "The ID of stage `stage` rendered at index `i`."
+  [i stage]
+  (or (::id (meta stage)) [::position i]))
+
+(defn- identified [stages]
+  (into [] (map-indexed (fn [i stage]
+                          (if (or (::id (meta stage)) (not (satisfies? IWithMeta stage)))
+                            stage
+                            (vary-meta stage assoc ::id [::position i]))))
+        stages))
+
+(defn new-stage
+  "A stage to append, with an ID of its own."
+  [block]
+  (with-meta {:block block} {::id (random-uuid)}))
+
+(defn edit-stage
+  "Apply `(f stages index)` to the current stages, where index is where the stage
+  with `id` is now. A stage that is gone changes nothing."
+  [stages id f]
+  (let [stages (identified stages)]
+    (if-let [i (first (keep-indexed (fn [i stage] (when (= id (stage-id i stage)) i)) stages))]
+      (f stages i)
+      stages)))
+
 (defn- stage-list
   "Every edit reaches `save!` as a function of the current stages, not a copy of the
-  rendered ones: a field committed on blur and the tap that caused the blur run before
-  the next render, and the second must not discard the first."
+  rendered ones, and finds its stage by ID: edits made before the next render must
+  compose, and none may land on whichever stage now sits at a rendered index."
   [catalog stages params save! transport-only?]
   [:div.block-stage-list
-   (for [[i stage] (map-indexed vector stages)]
-     ^{:key [i (:block stage)]}
+   (for [[i stage] (map-indexed vector stages)
+         :let [id (stage-id i stage)]]
+     ^{:key (pr-str id)}
      [stage-controls i stage (get catalog (:block stage)) params
-      (fn [f & args] (save! #(apply update-stage % i f args)))
-      (fn [to] (save! #(move-stage % i to)))
-      #(save! (fn [current] (remove-stage current i))) (count stages) transport-only?])])
+      (fn [f & args] (save! #(edit-stage % id (fn [stages i] (apply update-stage stages i f args)))))
+      (fn [delta] (save! #(edit-stage % id (fn [stages i] (move-stage stages i (+ i delta))))))
+      #(save! (fn [current] (edit-stage current id remove-stage))) (count stages) transport-only?])])
 
 (defn private-path [kind text]
   (let [parts (str/split (str/trim text) #"\s+")
@@ -194,7 +229,8 @@
          [:div.block-stage-add
           [options "New block" ids id #(get-in library [% :name] (str %)) #(reset! chosen %)]
           [:button.button.secondary {:type "button" :disabled (>= (count stages) 32)
-                              :on-click #(on-change (fn [current] (conj (vec current) {:block id})))} "Add stage"]]
+                              :on-click #(let [stage (new-stage id)]
+                                           (on-change (fn [current] (conj (identified current) stage))))} "Add stage"]]
          [:p.muted {:role "status"} "Waiting for the block library…"])])))
 
 (defn draft-catalog [library {:keys [prefabs imported-prefabs]}]
