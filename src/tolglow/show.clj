@@ -48,6 +48,7 @@
             [tolglow.rig.reflections :as reflections]
             [tolglow.rig.surface-aim :as surface-aim]
             [tolglow.modulation :as modulation]
+            [tolglow.knobs :as knobs]
             [tolglow.lighting-capacity :as capacity]
             [tolglow.lighting-scenes :as lighting-scenes]
             [tolglow.lighting-levels :as lighting-levels]
@@ -230,6 +231,7 @@
             :pending-cue-launches (cue-timing/pending model)
             :cue-launch-outcomes (cue-timing/outcomes model)
             :schedule (subscribers/schedule-view model)
+            :knobs (knobs/projection model) ; linked knobs (#666)
             :operator-history (operator-history/project (:id runtime) model)
             :history-command-outcomes (:history-command-outcomes snapshot [])
             :parameter-source-outcomes (:parameter-source-outcomes snapshot [])
@@ -670,6 +672,9 @@
                    (control/apply-domain-command model envelope group-channels/apply-operation)
                    (subscribers/operations operation)
                    (control/apply-domain-command model envelope subscribers/apply-operation)
+                   ;; Linked knobs (#666).
+                   (knobs/operations operation)
+                   (control/apply-domain-command model envelope knobs/apply-operation)
                    :else (spatial/apply-command model envelope authority)))
          ;; A gesture takes over a ramped parameter from the ramp's current frame
          ;; value. Its begin writes nothing, so without this the parameter would
@@ -933,6 +938,10 @@
     (and (= :gesture/end (:op payload)) (push-gesture-terminal? payload authority))
     (let [gesture (open-push-gesture model (push-gesture-key payload authority))]
       (command model (cond-> payload gesture (assoc :last-sequence (:last-sequence gesture))) time-ms authority))
+
+    ;; Linked knobs (#666): the knob value commits, then each linked write uses `command`.
+    (knobs/value-operations (:op payload))
+    (knobs/set-value model payload time-ms authority command)
 
     :else (command model payload time-ms authority)))
 
