@@ -74,10 +74,13 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
 
     // Block the page thread outright. A worker that waits for the page to show
     // each bitmap stops after its bounded queue; one that owns the canvas goes on.
+    // Software rendering presents one frame about every 300-400 ms here, and CI
+    // presented exactly 4 in a 1.5 s block, so the block is 3 s for some margin.
+    // A worker held by its queue stays at that bound however long the block.
     const starved = await page.evaluate(async () => {
       const reports = [], listener = event => {if (event.data.type === 'frame') reports.push(event.data);};
       engine.worker.addEventListener('message', listener);
-      const end = performance.now() + 1500; while (performance.now() < end);
+      const end = performance.now() + 3000; while (performance.now() < end);
       await new Promise(resolve => setTimeout(resolve, 100));
       engine.worker.removeEventListener('message', listener);
       const copy = document.createElement('canvas'); copy.width = copy.height = 16;
