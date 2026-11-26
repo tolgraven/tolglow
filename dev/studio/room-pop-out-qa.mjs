@@ -1,6 +1,8 @@
 // Pop the Room out of Studio, play a cue in the main window, move the Room
 // window between emulated displays and redock it, counting preview workers and
-// WebGL contexts at every step.
+// WebGL contexts at every step. Later steps lose the Room's own display while
+// two remain, keep the Room following the show while Studio is hidden
+// (emulated), and share video from the popped-out Room to a recorded receiver.
 //
 //   node dev/studio/room-pop-out-qa.mjs http://127.0.0.1:4290 target/qa/room-pop-out
 //
@@ -9,6 +11,11 @@
 // real GPU. Displays come from CDP Emulation.addScreen/removeScreen and the
 // window-management permission from Browser.setPermission, so this is not
 // evidence of physical displays, hot-plugging, Safari or the packaged app.
+// Headless Chrome cannot hide a page, so a hidden Studio is emulated: its
+// document reports hidden and its animation frames are held. Sharing runs the
+// real encoder on the Room's canvas, but the receiver endpoints under
+// /api/preview/airplay/ are answered by this script, so no LAN listener is
+// bound and no AirPlay receiver is involved.
 import assert from 'node:assert/strict';
 import {mkdir, rm, writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
@@ -57,6 +64,19 @@ function instrument() {
     };
   };
   wrap(window);
+  // Emulated hidden Studio: hold its animation frames (Reagent schedules on
+  // them) and report the document hidden, as a background window would.
+  const frame = window.requestAnimationFrame.bind(window);
+  const held = [];
+  window.requestAnimationFrame = callback => {
+    if (!window.__holdFrames) return frame(callback);
+    held.push(callback);
+    return 0;
+  };
+  window.__releaseFrames = () => { window.__holdFrames = false; held.splice(0).forEach(frame); };
+  const hidden = Object.getOwnPropertyDescriptor(Document.prototype, 'hidden');
+  Object.defineProperty(document, 'hidden', {configurable: true,
+    get() { return window.__emulateHidden === true || hidden.get.call(this); }});
 }
 
 const context = await chromium.launchPersistentContext(profile, {
@@ -331,6 +351,147 @@ try {
   assert.equal(afterStudioReload.previewWorkers, 1, 'one preview worker after Studio reloaded');
   assert.equal(afterStudioReload.webglContexts, 1, 'one WebGL context after Studio reloaded');
 
+  // Three displays: losing the display the Room is on is noticed even though
+  // two displays remain, and Move to display then uses the other free one.
+  const third = (await cdp.send('Emulation.addScreen', {left: 3840, top: 0, width: 1920, height: 1080, label: 'Emulated projector B'})).screenInfo;
+  const popup5 = page.waitForEvent('popup');
+  await page.getByRole('button', {name: 'Send the Room window to another display'}).click();
+  const room5 = await popup5;
+  room5.on('pageerror', e => errors.push('room: ' + e.message));
+  await room5.waitForFunction(() => /The Room is on/.test(document.querySelector('.room-window-notice')?.textContent || ''), null, {timeout: 15000});
+  await ready(room5);
+  const firstPlace = await room5.evaluate(() => ({screenX, screenY}));
+  const placedOn = firstPlace.screenX >= third.left ? third : again;
+  const other = placedOn === third ? again : third;
+  await cdp.send('Emulation.removeScreen', {screenId: placedOn.id});
+  await room5.waitForFunction(() => /disconnected/.test(document.querySelector('.room-window-notice')?.textContent || ''), null, {timeout: 5000});
+  results.ownDisplayLost = {placedAt: firstPlace, removed: placedOn.label, notice: await notice(room5)};
+  const move5 = room5.getByRole('button', {name: 'Send the Room window to another display'});
+  await move5.click();
+  await room5.waitForFunction(() => /The Room is on/.test(document.querySelector('.room-window-notice')?.textContent || ''), null, {timeout: 5000});
+  results.ownDisplayLost.replaced = await room5.evaluate(() => ({screenX, screenY}));
+  assert.ok(results.ownDisplayLost.replaced.screenX >= other.left && results.ownDisplayLost.replaced.screenX < other.left + other.width,
+    'Move to display uses the remaining free display');
+  await census('own-display-lost');
+
+  // Hidden Studio (emulated): Reagent's frames stop, so the Room window
+  // flushes renders from its own frames and keeps following the show: its
+  // committed frame advances and a cue played from Studio reaches it.
+  const roomShow = () => room5.evaluate(() => {
+    const s = document.querySelector('#preview').tolglowPreview.snapshot;
+    return {revision: s?.revision, frame: s?.['frame-number']};
+  });
+  const cueButton = page.locator(`#cue-grid [data-cue-id="${cueId}"]`);
+  await page.evaluate(() => { window.__holdFrames = true; window.__emulateHidden = false; });
+  await room5.waitForTimeout(300);
+  const heldStart = await roomShow();
+  await room5.waitForTimeout(1500);
+  const heldEnd = await roomShow();
+  await page.evaluate(() => { window.__emulateHidden = true; });
+  await room5.waitForTimeout(300);
+  const hiddenStart = await roomShow();
+  await cueButton.click({force: true});
+  const cueReached = await room5.waitForFunction(previous => document.querySelector('#preview').tolglowPreview.snapshot?.revision !== previous,
+    hiddenStart.revision, {timeout: 10000}).then(() => true, () => false);
+  const hiddenEnd = await roomShow();
+  await page.evaluate(() => { window.__emulateHidden = false; window.__releaseFrames(); });
+  results.hiddenStudio = {heldVisible: {start: heldStart, end: heldEnd}, hidden: {start: hiddenStart, end: hiddenEnd}, cueReached};
+  console.log('hidden-studio', JSON.stringify(results.hiddenStudio));
+  assert.equal(heldEnd.frame, heldStart.frame, 'control: with Studio frames held and Studio visible, the Room does not advance');
+  assert.ok(hiddenEnd.frame > hiddenStart.frame, 'the Room keeps advancing while Studio is hidden');
+  assert.ok(cueReached, 'a cue played in Studio reaches the Room while Studio is hidden');
+
+  // Share video from the popped-out Room. The receiver endpoints are recorded
+  // here: the real encoder runs on the Room canvas and uploads HLS segments.
+  const receiver = {starts: [], stops: [], uploads: []};
+  const transit = 'application/transit+json';
+  await page.route(/\/api\/preview\/airplay\//, async route => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname.replace('/api/preview/airplay/', '');
+    const reply = body => route.fulfill({status: 200, contentType: transit, body: JSON.stringify(body)});
+    if (path === 'interfaces') return reply([['^ ', '~:address', '192.0.2.10', '~:interface', 'qa0']]);
+    if (path === 'start') {
+      const writer = 'writer-' + (receiver.starts.length + 1);
+      receiver.starts.push({writer, at: Date.now()});
+      return reply(['^ ', '~:writer', writer, '~:url', 'http://192.0.2.10:9/cap/master.m3u8',
+        '~:playback-path', '/api/preview/airplay/watch/cap/master.m3u8']);
+    }
+    if (path === 'stop') {
+      receiver.stops.push({body: request.postData(), at: Date.now()});
+      return reply(['^ ', '~:status', '~:closed']);
+    }
+    const [writer, file] = path.split('/');
+    if (request.method() === 'PUT' && file) {
+      receiver.uploads.push({writer, file, bytes: (request.postDataBuffer() || []).length, at: Date.now()});
+      return route.fulfill({status: 204, body: ''});
+    }
+    return route.fulfill({status: 404, body: ''});
+  });
+  const uploadsBy = writer => receiver.uploads.filter(u => u.writer === writer && /segment/.test(u.file)).length;
+  const waitUploads = async (writer, count, timeout = 20000) => {
+    const deadline = Date.now() + timeout;
+    while (uploadsBy(writer) < count) {
+      if (Date.now() > deadline) throw new Error(`expected ${count} segments from ${writer}, saw ${uploadsBy(writer)}`);
+      await room5.waitForTimeout(250);
+    }
+  };
+  const share = async () => {
+    await room5.getByRole('button', {name: 'Share video'}).click();
+    await room5.getByRole('button', {name: 'Start sharing'}).click();
+    await room5.getByRole('button', {name: 'Stop sharing'}).waitFor({timeout: 30000});
+  };
+  await share();
+  await waitUploads('writer-1', 2);
+  results.sharing = {size: await room5.locator('#preview-panel a.text-button').first().textContent()};
+  await room5.getByRole('button', {name: 'Stop sharing'}).click();
+  await room5.getByRole('button', {name: 'Share video'}).waitFor({timeout: 5000});
+  const stoppedAt = Date.now();
+  await room5.waitForTimeout(2500);
+  results.sharing.stop = {stops: receiver.stops.length, stopBody: receiver.stops[0]?.body,
+    segments: uploadsBy('writer-1'), afterStop: receiver.uploads.filter(u => u.writer === 'writer-1' && u.at > stoppedAt + 500).length};
+  assert.equal(receiver.stops.length, 1, 'Stop sharing ends the receiver session');
+  assert.match(receiver.stops[0].body, /writer-1/);
+  assert.equal(results.sharing.stop.afterStop, 0, 'no segments arrive after Stop sharing');
+
+  // Changing destination while sharing: moving the Room window to another
+  // display keeps one encoder and one session.
+  await share();
+  await waitUploads('writer-2', 2);
+  const readd = (await cdp.send('Emulation.addScreen', {left: placedOn.left, top: 0, width: 1920, height: 1080, label: placedOn.label})).screenInfo;
+  await room5.waitForTimeout(500);
+  const beforeMove = uploadsBy('writer-2');
+  await move5.click();
+  // The notice already reads "The Room is on …", so wait for the window itself.
+  await room5.waitForFunction(x => screenX !== x, results.ownDisplayLost.replaced.screenX, {timeout: 5000});
+  await room5.waitForFunction(() => /The Room is on/.test(document.querySelector('.room-window-notice')?.textContent || ''), null, {timeout: 5000});
+  await waitUploads('writer-2', beforeMove + 2);
+  results.sharing.moved = {at: await room5.evaluate(() => ({screenX, screenY})), starts: receiver.starts.length,
+    segmentsBefore: beforeMove, segmentsAfter: uploadsBy('writer-2')};
+  assert.equal(receiver.starts.length, 2, 'moving the window starts no second session');
+  await census('sharing-moved');
+
+  // Redocking ends the share: the capture belonged to the Room window's canvas.
+  const closed5 = room5.waitForEvent('close');
+  await page.getByRole('button', {name: 'Return the Room to Studio'}).click();
+  await closed5;
+  const redockedAt = Date.now();
+  await page.waitForFunction(() => document.querySelector('#preview-panel')?.textContent.includes('Share video'), null, {timeout: 10000});
+  await ready(page);
+  await page.waitForTimeout(3000);
+  results.sharing.redock = {stops: receiver.stops.length, stopBody: receiver.stops[1]?.body,
+    afterRedock: receiver.uploads.filter(u => u.at > redockedAt + 500).length, starts: receiver.starts.length};
+  assert.equal(receiver.stops.length, 2, 'redocking ends the receiver session');
+  assert.match(receiver.stops[1].body, /writer-2/);
+  assert.equal(results.sharing.redock.afterRedock, 0, 'no encoder keeps uploading after redock');
+  const afterShare = await census('shared-and-redocked');
+  assert.equal(afterShare.previewWorkers, 1, 'one preview worker after sharing and redocking');
+  assert.equal(afterShare.webglContexts, 1, 'one WebGL context after sharing and redocking');
+  results.receiver = {starts: receiver.starts, stops: receiver.stops.length,
+    uploads: receiver.uploads.length, files: [...new Set(receiver.uploads.map(u => u.file.replace(/-\d+\.ts$/, '-N.ts')))]};
+  await page.unroute(/\/api\/preview\/airplay\//);
+  await cdp.send('Emulation.removeScreen', {screenId: readd.id});
+  await cdp.send('Emulation.removeScreen', {screenId: other.id});
+
   // Pop-up blocked: the browser returns no window.
   await page.evaluate(() => { window.__blockPopups = true; });
   await page.getByRole('button', {name: 'Open the Room in its own window'}).click();
@@ -354,7 +515,9 @@ try {
   await writeFile(join(directory, 'result.json'), JSON.stringify(results, null, 2));
   console.log(JSON.stringify({pass: results.pass, failure: results.failure, cue: results.cue, single: results.single,
     denied: results.denied, placed: results.placed, unplugged: results.unplugged, reconnected: results.reconnected,
-    oneAction: results.oneAction, pip: results.pipPrepared, pipOpened: results.pipOpened, dockedPip: results.dockedPip, blocked: results.blocked, errors}, null, 2));
+    oneAction: results.oneAction, pip: results.pipPrepared, pipOpened: results.pipOpened, dockedPip: results.dockedPip,
+    ownDisplayLost: results.ownDisplayLost, hiddenStudio: results.hiddenStudio, sharing: results.sharing,
+    receiver: results.receiver, blocked: results.blocked, errors}, null, 2));
   await context.close();
   await rm(profile, {recursive: true, force: true});
 }

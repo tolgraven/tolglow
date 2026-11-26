@@ -31,6 +31,7 @@
             [tolglow.effects.block-trace :as block-trace]
             [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.controllers.page-overview :as page-overview]
+            [tolglow.controllers.push-knobs :as push-knobs]
             [tolglow.controllers.push-variations :as push-variations]
             [tolglow.surface.link :as surface]
             [tolglow.surface.x-touch :as x-touch]
@@ -3097,6 +3098,7 @@
             (fn [view]
               (let [snapshot (assoc @(:state runtime) :runtime-id (:id runtime))
                     model (:model snapshot)
+                    view (push-knobs/project-display model view)
                     mode (if (:pad-overlay view) :parameters
                              (or (:display-mode view) (get-in model [:settings :controllers :push-display :mode]) :parameters))
                     view (cond-> (assoc view :display-mode mode)
@@ -3121,7 +3123,8 @@
     (leasing-response-samples runtime
       (display/native-display
         {:project! (fn [view]
-                     (project-parameters @(:state runtime) view nil))}))))
+                     (let [snapshot @(:state runtime)]
+                       (project-parameters snapshot (push-knobs/project-display (:model snapshot) view) nil)))}))))
 
 (def ^:private device-command-wait-ms 5000)
 
@@ -3188,7 +3191,10 @@
   Tolglow mixer layout (tolglow.surface.x-touch): encoder modes, selection,
   Solo/Mute and the other layout state are committed per logical surface,
   see surface-layout!. :color-match (:hue, :rgb or :off) picks how strip
-  colours map to the eight scribble colours."
+  colours map to the eight scribble colours.
+  Linked knobs: on Push 3 bind a captured encoder with :encoder-bindings
+  {id {:target :knob :knob-id k}}; on Push 2 set :knob-page {:button cc
+  :knob-ids [k ...]} to toggle the track encoders onto up to eight knobs."
   [runtime kind {:keys [session-id ::restore-lease ::reconnect-lease] :as options}]
   (require-devices! runtime [:connect-device kind])
   (let [id session-id epoch (get-in @(:state runtime) [:model :epoch])]
@@ -3204,6 +3210,10 @@
       (let [effect-group-view (when (= :x-touch kind) (:effect-group-view options))
             _ (when (and (some? effect-group-view) (not (#{:manual :overlay} effect-group-view)))
                 (throw (ex-info "X-Touch effect-group view must be :manual or :overlay" {:view effect-group-view})))
+            ;; Linked knobs (#666): validated before any port opens.
+            knob-page (when (and (= :push-2 kind) (contains? options :knob-page))
+                        (push-knobs/push-2-encoder-overlay (:knob-page options) options))
+            options (cond-> options (= :push-3 kind) push-knobs/push-3-options)
             push-source (when (#{:push-2 :push-3} kind)
                           {:adapter kind :session-id id})
             operator-id (when push-source (str (name kind) "/" id "/" (UUID/randomUUID)))
@@ -3218,7 +3228,8 @@
             surface-content (when x-touch?
                               {:type :mixer-strips :effect-group-view effect-group-view
                                :cue-strips (vec (:channels options []))})
-            options (cond-> (dissoc options ::restore-lease ::reconnect-lease)
+            options (cond-> (dissoc options ::restore-lease ::reconnect-lease :knob-page)
+                      knob-page (assoc :encoder-overlay knob-page)
                       x-touch?
                       ;; The Tolglow mixer layout (#706 slice 2) reads strips, window and
                       ;; layout state from the committed surface link.

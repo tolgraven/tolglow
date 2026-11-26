@@ -80,3 +80,17 @@
     (is (= 0 (room/target-screen screens 1 nil)))
     (is (= 1 (room/target-screen (subvec screens 0 2) 0 1)) "one free display: stay and refill it")
     (is (nil? (room/target-screen (subvec screens 0 1) 0 0)) "no free display")))
+
+(deftest losing-the-rooms-own-display-is-noticed-while-others-remain
+  (let [placed (run [[:pop-out true] [:opened 1] [:placing 1] [:placed 1 "Projector A"]])]
+    (testing "another display going away leaves the Room placed"
+      (is (= placed (room/step placed [:screens 1 {:count 2 :present? true}]))))
+    (testing "its own display going away is a loss even with two displays left"
+      (let [lost (room/step placed [:screens 1 {:count 2 :present? false}])]
+        (is (= :lost (get-in lost [:display :status])))
+        (is (= lost (room/step lost [:screens 1 {:count 2 :present? false}]))
+            "an unrelated change does not claim the display came back")
+        (is (= :available (get-in (room/step lost [:screens 1 {:count 3 :present? true}]) [:display :status])))))
+    (testing "without presence information the display count decides, as before"
+      (is (= placed (room/step placed [:screens 1 {:count 2 :present? nil}])))
+      (is (= :lost (get-in (room/step placed [:screens 1 {:count 1 :present? nil}]) [:display :status]))))))
