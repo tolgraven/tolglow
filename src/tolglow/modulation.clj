@@ -4,6 +4,7 @@
   Canonical instance parameters, IO and wall clocks are never changed here."
   (:require [afterglow.control.instance-order :as instance-order]
             [afterglow.control.params :as params]
+            [afterglow.control.system :as system]
             [afterglow.time :as time]
             [tolglow.registry :as registry]
             [tolglow.automation.random :as random]
@@ -288,12 +289,15 @@
   [model instance]
   (or (reload-candidate model instance) (:definition instance)))
 
-(defn- owner-active? [instance definition clock]
-  (and (= :running (:phase instance))
-       (not= (:version definition) (get-in instance [:fault :effect-version]))
-       (if-let [timer (:duration-timer instance)] (not (:done? (time/sample timer clock)))
-         (if-let [duration (:duration-ms instance)]
-           (< (:time-ms clock) (+ (:started-at-ms instance) duration)) true))))
+(defn- owner-active? [instance definition global-clock]
+  ;; Duration timers run on the instance's private clock, as in the engine, so
+  ;; a held or paused owner keeps its controller for its whole duration.
+  (let [clock (system/private-clock instance global-clock)]
+    (and (= :running (:phase instance))
+         (not= (:version definition) (get-in instance [:fault :effect-version]))
+         (if-let [timer (:duration-timer instance)] (not (:done? (time/sample timer clock)))
+           (if-let [duration (:duration-ms instance)]
+             (< (:time-ms clock) (+ (:started-at-ms instance) duration)) true)))))
 
 (defn- prepared-owner [instance definition clock]
   ;; Match engine reload-before-expiry ordering, including revival during release.
