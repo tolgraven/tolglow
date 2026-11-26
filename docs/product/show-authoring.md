@@ -343,6 +343,8 @@ excludes locked parameters; a human edit survives an expired temporary change.
 
 ## Auto-show playback
 
+Implemented behavior and its limits: [auto show](../auto-show.md).
+
 Auto mode is a deterministic planner plus scheduler over the registry, rig,
 running state, operator constraints, and explicit clock/seed. It selects one or
 more cues at configurable intervals and launches them persistently, for a bounded
