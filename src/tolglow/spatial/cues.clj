@@ -8,6 +8,7 @@
             [afterglow.time :as time]
             [thi.ng.color.core :as color]
             [tolglow.autopilot.signal :as signal]
+            [tolglow.cue-spawn :as cue-spawn]
             [tolglow.personalities :as personalities]
             [tolglow.personalities.forms :as forms]
             [tolglow.registry :as registry]))
@@ -88,20 +89,7 @@
     (when transforms (layers/validate-transforms! transforms))
     member))
 
-(defn available-cell
-  "The preferred grid cell when it is free, else the first free one; throws
-  when the page has none. Shared by every spawned cue (#407, #674)."
-  [page preferred]
-  (let [w (:columns page 8) h (:rows page 8) cells (:cells page {})
-        available? (fn [p] (and (vector? p) (= 2 (count p)) (every? nat-int? p)
-                                (< (first p) w) (< (second p) h) (not (contains? cells p))))]
-    (or (if (some? preferred) (when (available? preferred) preferred)
-            (first (for [y (range h) x (range w) :when (available? [x y])] [x y])))
-        (fail! "Choose an empty cell on this page" {:page-id (:id page) :cell preferred}))))
-
-(defn accept
-  "Apply one owner command and throw unless it was accepted."
-  [model command payload now]
+(defn- accept [model command payload now]
   (let [result (command model payload now)]
     (when-not (= :accepted (get-in result [:ack :status]))
       (fail! (get-in result [:ack :message] "Spatial cue command rejected") {:ack (:ack result)}))
@@ -114,8 +102,6 @@
   [model {:keys [op id name page-id cell volume paint members scene-id sources launch priority personality]} now command]
   (let [id (or id (str "volume-" (:epoch model) "-" (:revision model)))
         page-id (or page-id :spatial)
-        page (get-in model [:pages page-id] {:id page-id :name "Spatial" :cells {}})
-        pos (available-cell page cell)
         volume (cond-> volume (vector? (:selection volume)) (update :selection set))
         aim-volume? (= :volume (:aim paint))
         paint (cond-> (or paint {}) aim-volume? (dissoc :aim))
@@ -144,11 +130,9 @@
     (physics/validate! (assoc (select-keys (get-in model [:settings :spatial]) [:bounds :gravity]) :volumes {id volume}))
     (when-let [errors (seq (registry/validate-definition :effects effect))]
       (fail! "Invalid spatial effect parameters" {:errors errors}))
-    (let [model (:model (accept model command {:op :registry/publish :kind :effects :definition effect} now))
-          model (:model (accept model command {:op :cue/put :cue cue} now))
-          model (:model (accept model command {:op :page/put :page (assoc-in page [:cells pos] id)} now))
-          launched (accept model command {:op :cue/launch :cue-id id :launch (or launch {})} now)]
-      (update launched :ack assoc :cue-id id :page-id page-id :cell pos))))
+    (cue-spawn/place-and-launch model {:effect effect :cue cue :page-id page-id :page-name "Spatial" :cell cell
+                                       :launch (or launch {}) :label "Spatial cue"}
+                                now command)))
 
 (defn controls? [instance] (boolean (get-in instance [:definition :spatial-volume])))
 

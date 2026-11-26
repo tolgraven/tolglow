@@ -57,33 +57,26 @@
 
 (defn- js-id [id] (if (keyword? id) (subs (str id) 1) (str id)))
 
-(defn- enum [v] (if (string? v) (keyword v) v))
-
-(defn normalize-resolved
-  "A resolved surface as the shared geometry reads it. The Room's show
-  snapshot can carry enumerated values as strings."
-  [resolved]
-  (cond-> (update resolved :shape enum)
-    (:wave resolved) (update-in [:wave :axis] enum)
-    (:contact resolved) (update-in [:contact :curve] enum)))
-
 (defn room-surfaces
   "Engine data for the Room overlay: one entry per running surface output,
   plus authored surfaces nobody is running when show-authored? (the rig
   editor). positions/uvs/indices come from the shared surface mesh;
   contacts are [x y z weight] for each head the show reports in contact,
-  with its output id in the same place of contact-ids."
+  with its output id in the same place of contact-ids. video and rig are
+  the typed server projection (keywords intact), not the form presentation."
   [video rig tokens show-authored?]
   (let [positions (into {} (map (juxt :id :position)) (:fixtures rig))
         running (:running (:surfaces video))
         live (set (map :surface running))
-        position #(or (get positions %) (get positions (keyword %)))
+        position #(get positions %)
         entry (fn [id view]
-                (let [resolved (normalize-resolved (:resolved view))
+                (let [resolved (:resolved view)
                       placed (filterv (comp position :id) (:contacts view))
                       token (get-in tokens [(:source resolved) :token])]
                   (merge (surface/mesh resolved)
                          {:id id
+                          ;; A sphere has no open edge to outline.
+                          :outline (not= :sphere (:shape resolved))
                           :texture (when (some? token) (frame-url (or (:frame-source view) (str (:source resolved))) token))
                           :contacts (mapv (fn [{:keys [id weight]}] (conj (vec (position id)) weight)) placed)
                           ;; Output values reach the Room keyed like this.
@@ -95,26 +88,26 @@
                          :when (not (live id))]
                      (entry (str "authored/" (wire-id id)) view)))))))
 
-(defonce ^:private room-cache (volatile! nil))
-
 (defn room-surfaces-cached
-  "room-surfaces, reusing the previous value while the projection and rig
-  are unchanged, so the Room uploads geometry only when it moves."
-  [video rig show-authored?]
-  (let [old @room-cache
+  "room-surfaces, reusing the previous value in cache (a volatile owned by
+  one Room) while the projection and rig are unchanged, so the Room uploads
+  geometry only when it moves."
+  [cache video rig show-authored?]
+  (let [old @cache
         now (.now js/Date)
         tokens (texture-tokens (:tokens old) (:sources video) now)]
     (if (and old (identical? (:surfaces video) (:surfaces old)) (identical? rig (:rig old))
              (= show-authored? (:show-authored? old)) (= tokens (:tokens old)))
       (:value old)
       (let [value (room-surfaces video rig tokens show-authored?)]
-        (vreset! room-cache {:surfaces (:surfaces video) :rig rig :show-authored? show-authored? :tokens tokens :value value})
+        (vreset! cache {:surfaces (:surfaces video) :rig rig :show-authored? show-authored? :tokens tokens :value value})
         value))))
 
 ;; Editor --------------------------------------------------------------------
 
 (rf/reg-sub ::settings (fn [db _] (get-in db [:server-projection :view :settings :video])))
 (rf/reg-sub ::status (fn [db _] (get-in db [:server-projection :view :video])))
+(rf/reg-sub ::rig (fn [db _] (get-in db [:server-projection :view :rig])))
 (rf/reg-sub ::selected (fn [db _] (get-in db [:video-surfaces-ui :selected])))
 (rf/reg-event-db ::select (fn [db [_ id]] (assoc-in db [:video-surfaces-ui :selected] id)))
 

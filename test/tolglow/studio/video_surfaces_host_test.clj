@@ -158,7 +158,13 @@
               (show/tick! runtime 1500)
               (show/tick! runtime 2500)
               (is (= held (set (filter lit? (range 8)))))
-              (is (= pose (get-in (show/snapshot runtime) [:video :surfaces :running 0 :resolved :wave :phase])))))))
+              (is (= pose (get-in (show/snapshot runtime) [:video :surfaces :running 0 :resolved :wave :phase])))
+              (testing "play resumes from the held phase without catching up"
+                (send! runtime :command {:op :transport/set :transport {:playing? true}} 2600)
+                (show/tick! runtime 3100)
+                (let [resumed (get-in (show/snapshot runtime) [:video :surfaces :running 0 :resolved :wave :phase])]
+                  ;; One beat after play: a quarter cycle on, not the 3.2 beats of wall time since the stop.
+                  (is (< 0.2 (- resumed pose) 0.3) (str "held " pose " resumed " resumed))))))))
       (finally (show/stop! runtime)))))
 
 (deftest a-sphere-seam-and-two-overlapping-feeds
@@ -211,4 +217,31 @@
             (is (= before-dmx (vec (for [address [1 101] n (range 8)] (dmx reloaded address n))))
                 "the same heads take the same captured values"))
           (finally (show/stop! reloaded))))
+      (finally (show/stop! runtime)))))
+
+(deftest two-feeds-add-where-a-cue-blends-with-add
+  (let [runtime (start (model))
+        launch! (fn [cue t] (:instance-id (send! runtime :command {:op :cue/launch :cue-id cue} t)))
+        end! (fn [id t] (send! runtime :command {:op :instance/end :instance-id id :force? true} t))
+        add-ball {:id :ball-add :version 1
+                  :outputs [{:attribute :color :blend :add :value {:op :video :surface :ball}}]}]
+    (try
+      (send! runtime :definition {:kind :effects :definition add-ball} 0)
+      (send! runtime :definition {:kind :cues :definition {:id :ball-add :effect-id :ball-add :priority 20}} 0)
+      (spawn! runtime :sheet 0 {:priority 10 :launch false})
+      (let [ball (launch! :ball-add 25)]
+        (show/tick! runtime 50)
+        (let [ball-only (mapv #(dmx runtime 1 %) [5 6])]
+          (end! ball 75)
+          (let [sheet (launch! :video-surface-sheet 100)]
+            (show/tick! runtime 125)
+            (let [sheet-only (mapv #(dmx runtime 1 %) [5 6])]
+              (launch! :ball-add 150)
+              (show/tick! runtime 175)
+              (is (every? (fn [c] (some pos? c)) ball-only) "the ball alone lights the overlap")
+              (doseq [[i n] [[0 5] [1 6]]]
+                (is (near? (mapv #(min 255 (+ %1 %2)) (nth ball-only i) (nth sheet-only i)) (dmx runtime 1 n) 2.01)
+                    (str "pixel " n " sums both feeds")))
+              (is (near? (grid-dmx 4 1) (dmx runtime 1 4)) "outside the ball the sheet alone")
+              sheet))))
       (finally (show/stop! runtime)))))

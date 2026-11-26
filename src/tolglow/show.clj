@@ -221,7 +221,8 @@
             :lighting-scenes (lighting-scenes/snapshot model (scene-eligible-ids runtime fixtures))
             :video (when (or (seq (get-in model [:settings :video :sources])) (seq (get-in model [:settings :video :mappings]))
                              (seq (get-in model [:settings :video :surfaces])))
-                     (video-preview/project (:video runtime) (:video-latch snapshot) fixtures (:video-preview-plans runtime) model))
+                     (video-preview/project (:video runtime) (:video-latch snapshot) fixtures (:video-preview-plans runtime) model
+                                           (:video-surface-views runtime)))
             :personalities (:projection (personality-views runtime model))
             :receiver-surfaces (:receivers optics)
             :surface-aim (get-in model [:variables :surface-aim] {})
@@ -549,7 +550,8 @@
       :compile (cached-compile compiler-context)
       ;; Video sources open on their own thread, outside the lighting frame (#672).
       :video (video-hub/create (:video-options options {}))
-      :video-preview-plans (video-sampler/plan-cache 16)}]
+      :video-preview-plans (video-sampler/plan-cache 16)
+      :video-surface-views (video-preview/surface-cache)}]
        (reset! runtime-ref runtime)
        runtime)))
 
@@ -3697,7 +3699,7 @@
   (case operation
     :status (let [state @(:state runtime)]
               (video-preview/project (:video runtime) (:video-latch state) (get-in state [:model :rig :fixtures])
-                                     (:video-preview-plans runtime) (:model state)))
+                                     (:video-preview-plans runtime) (:model state) (:video-surface-views runtime)))
     :edit (let [receipt (submit! runtime :video-mapping (dissoc payload :runtime-id :expected-epoch))]
             receipt)
     :syphon (video-hub/list-syphon (:video runtime))

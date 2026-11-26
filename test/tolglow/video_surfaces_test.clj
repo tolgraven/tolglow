@@ -228,3 +228,97 @@
                           :instance {:id "i" :started-at-ms 0} :assignments [] :intents []})]
         (is (= [] (:assignments result)))
         (is (some? (get-in result [:state video-output/observation-key 0])))))))
+
+(defn- brute-wave-distance
+  "Nearest distance from (x, z) to z = a·sin(2π(s/λ + φ)) by dense sampling
+  and local refinement: the reference the wave search is checked against."
+  [a lam phase x z]
+  (let [d (fn [s] (* a (Math/sin (* 2 Math/PI (+ (/ s lam) phase)))))
+        dist (fn [s] (Math/hypot (- s x) (- (d s) z)))
+        coarse (apply min-key dist (map #(+ (- x 2.0) (* % 5e-4)) (range 8001)))]
+    (loop [lo (- coarse 5e-4) hi (+ coarse 5e-4) i 0]
+      (if (= i 60)
+        (dist (/ (+ lo hi) 2))
+        (let [m1 (+ lo (/ (- hi lo) 3)) m2 (- hi (/ (- hi lo) 3))]
+          (if (< (dist m1) (dist m2)) (recur lo m2 (inc i)) (recur m1 hi (inc i))))))))
+
+(deftest wave-distance-matches-a-brute-force-reference-off-the-crest-and-on-steep-waves
+  (let [rng (java.util.Random. 674)]
+    (doseq [[a lam] [[0.05 4.0] [0.3 2.0] [0.3 0.5] [0.3 0.25] [0.3 0.1]]
+            :let [spec (assoc sheet :shape :wave :wave {:amplitude-m a :wavelength-m lam :phase 0.13})
+                  resolved (surface/resolve-surface spec nil 0)]]
+      (let [points (repeatedly 120 #(vector (- (* 6.0 (.nextDouble rng)) 3.0) (- (* 1.6 (.nextDouble rng)) 0.8)))
+            errors (for [[x z] points
+                         :let [truth (brute-wave-distance a lam 0.13 x z)
+                               got (:distance (surface/project resolved [x 0.3 z]))]
+                         :when (< truth 0.6)]
+                     (Math/abs (- truth got)))]
+        (is (seq errors))
+        (is (< (apply max errors) 2e-4) (str "amplitude " a " wavelength " lam " worst " (apply max errors))))
+      (testing "near the threshold contacts classify as the reference does"
+        (let [contact (assoc spec :contact {:distance-m 0.25})
+              resolved (surface/resolve-surface contact nil 0)
+              heads (vec (for [i (range 400)
+                               :let [x (- (* 6.0 (.nextDouble rng)) 3.0) z (- (* 1.2 (.nextDouble rng)) 0.6)
+                                     truth (brute-wave-distance a lam 0.13 x z)]
+                               :when (and (< 0.15 truth 0.35) (> (Math/abs (- truth 0.25)) 1e-3))]
+                           (assoc (head (keyword (str "h" i)) [x 0.3 z]) :truth truth)))
+              found (set (map :id (surface/contacts resolved heads)))]
+          (is (seq heads))
+          (doseq [{:keys [id truth]} heads]
+            (is (= (<= truth 0.25) (contains? found id)) (str "wave " a "/" lam " head at " truth " m"))))))))
+
+(deftest a-short-wavelength-never-reaches-heads-far-from-the-sheet
+  (let [default-wave (assoc sheet :shape :wave :wave {:amplitude-m 0.3 :wavelength-m 2.0})
+        row (fn [z] (mapv #(head (keyword (str "f" %)) [(- (* 0.04 %) 2.0) 0.2 z]) (range 101)))]
+    (doseq [multiplier [0.25 0.1]]
+      (let [resolved (surface/resolve-surface default-wave {:wavelength multiplier} 0)]
+        (is (empty? (surface/contacts resolved (row 1.0))) (str "wavelength × " multiplier " at 1 m"))
+        (is (every? #(< 0.69 (:distance (surface/project resolved (:position %)))) (row 1.0)))))
+    (let [steep (surface/resolve-surface (assoc default-wave :wave {:amplitude-m 0.3 :wavelength-m 0.1}) nil 0)]
+      (is (empty? (surface/contacts steep (row 3.0))) "heads 3 m away")
+      (is (empty? (surface/contacts steep (row -3.0)))))
+    (testing "the candidate box no longer widens with the slope"
+      (let [resolved (surface/resolve-surface default-wave {:wavelength 0.1} 0)]
+        (is (< (Math/abs (- (+ (* 0.5 (Math/hypot 8 4)) 0.3 0.25) (surface/reach-m resolved))) 1e-9))))))
+
+(deftest a-negative-scale-mirrors-the-surface-and-keeps-distances-unsigned
+  (let [resolved (surface/resolve-surface sheet {:scale -1.0} 0)
+        far (head :far [0 0 5])
+        near (head :near [1 0.5 0.1])]
+    (is (== 5.0 (:distance (surface/project resolved [0 0 5]))))
+    (is (= [:near] (mapv :id (surface/contacts resolved [far near]))))
+    (is (close? [0.375 0.625] (:uv (first (surface/contacts resolved [near]))) 1e-9) "mirrored uv")
+    (is (< (:min-x (let [b (surface/bounds resolved)] {:min-x (first (:min b))})) 0) "bounds are not inverted")
+    (is (every? true? (map < (:min (surface/bounds resolved)) (:max (surface/bounds resolved)))))
+    (testing "a negative amplitude keeps the reach"
+      (let [wave (surface/resolve-surface (assoc sheet :shape :wave :wave {:amplitude-m 0.5 :wavelength-m 4}) {:amplitude -1.0} 0)]
+        (is (< (Math/abs (- (surface/reach-m wave) (+ (* 0.5 (Math/hypot 8 4)) 0.5 0.25))) 1e-9))))
+    (testing "an authored {:op :sin} scale: the frame path writes exactly the heads the projection lists"
+      (let [definition {:id :mirror :version 1 :params {:t {:type :number :default 0.0 :bounds [-4.0 4.0]}}
+                        :outputs {:color {:op :video :surface :sheet
+                                          :placement {:scale {:op :sin :args [{:op :param :key :t}]}}}}}
+            heads (into [far near] (for [i (range 40)] (head (keyword (str "g" i)) [(- (* 0.2 i) 4.0) 0.0 (- (* 0.02 i) 0.4)])))
+            step (compiler/compile-effect definition)
+            frame {:time-ms 0 :fixtures heads video-output/input-key {:frames {:grid grid} :surfaces {:sheet sheet}}}
+            result (step {:frame frame :instance {:id "i" :started-at-ms 0 :params {:t (- (/ Math/PI 2))}} :assignments [] :intents []})
+            recorded (get-in result [:state video-output/observation-key 0 :resolved])]
+        (is (< (Math/abs (+ 1.0 (:scale recorded))) 1e-12))
+        (is (seq (:assignments result)))
+        (is (= (set (map :id (surface/contacts recorded heads))) (set (map :target-id (:assignments result)))))))))
+
+(deftest one-surface-output-samples-the-frame-once-per-step
+  (let [calls (atom 0)
+        sample sampler/sample
+        definition (update (surface/cue-effect :wall :sheet {}) :outputs
+                           (fn [outputs] (let [[attr value] (first outputs)]
+                                           [{:attribute attr :value value}
+                                            {:attribute :dimmer :value (assoc value :channel :luma)}])))
+        heads (mapv #(head (keyword (str "h" %)) (cell-centre (mod % 8) (quot % 8) 0.1)) (range 32))
+        frame {:time-ms 0 :fixtures heads video-output/input-key {:frames {:grid grid} :surfaces {:sheet sheet}}}
+        step (compiler/compile-effect definition)]
+    (with-redefs [sampler/sample (fn [plan f] (swap! calls inc) (sample plan f))]
+      (step {:frame frame :instance {:id "i" :started-at-ms 0} :assignments [] :intents []})
+      (is (= 2 @calls) "one sample per output for 32 heads, not one per head")
+      (step {:frame frame :instance {:id "i" :started-at-ms 0} :assignments [] :intents []})
+      (is (= 4 @calls)))))

@@ -4,7 +4,9 @@
   placement, and a downscaled JPEG of a latched frame for the 2D editor. All
   of it reads the latch the lighting frame already took; nothing here pulls a
   new frame from a source."
-  (:require [tolglow.video.hub :as hub]
+  (:require [afterglow.spatial.geometry :as geometry]
+            [tolglow.compiler.video :as video-output]
+            [tolglow.video.hub :as hub]
             [tolglow.video.sampler :as sampler]
             [tolglow.video.surface :as surface])
   (:import [java.awt.image BufferedImage]
@@ -47,8 +49,16 @@
   "Contacts listed per surface view; :count still gives the whole number."
   4096)
 
+(defn surface-cache
+  "The projection's own cache of surface contacts and the spatial rig index,
+  apart from the strip mapping plans so neither evicts the other."
+  []
+  (sampler/plan-cache 48))
+
 (defn- surface-view [cache fixtures resolved]
-  (let [contacts (cache [:contacts resolved fixtures] #(surface/contacts resolved fixtures))]
+  (let [rig (cache [:rig fixtures] #(try (geometry/prepare-rig fixtures) (catch clojure.lang.ExceptionInfo _ nil)))
+        {:keys [contacts]} (cache [:contacts (video-output/contact-key resolved) fixtures]
+                                  #(video-output/surface-contacts resolved fixtures rig))]
     ;; :frame-source is the source as the frame route's query reads it.
     {:resolved resolved :frame-source (str (:source resolved)) :count (count contacts)
      :contacts (if (> (count contacts) max-projected-contacts) (subvec contacts 0 max-projected-contacts) contacts)}))
@@ -70,13 +80,14 @@
                           (surface-view cache fixtures resolved))))})
 
 (defn project
-  "The :video key of the show snapshot. model, when given, adds :surfaces."
-  ([video-hub latch fixtures cache] (project video-hub latch fixtures cache nil))
-  ([video-hub latch fixtures cache model]
+  "The :video key of the show snapshot. model, when given, adds :surfaces,
+  using surfaces (a `surface-cache`)."
+  ([video-hub latch fixtures cache] (project video-hub latch fixtures cache nil nil))
+  ([video-hub latch fixtures cache model surfaces]
    (cond-> {:sources (hub/status video-hub latch)
             :frozen? (boolean (:frozen? latch))
             :mappings (mapping-samples latch fixtures cache)}
-     model (assoc :surfaces (surface-views model fixtures cache)))))
+     model (assoc :surfaces (surface-views model fixtures (or surfaces (surface-cache)))))))
 
 (def max-jpeg-dimension
   "Largest served preview width or height, whatever the caller asks for."

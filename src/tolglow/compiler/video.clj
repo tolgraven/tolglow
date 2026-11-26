@@ -55,15 +55,41 @@
     (let [ids (geometry/reduce-box-candidates rig (surface/bounds resolved) (fn [s [id _]] (conj! s id)) (transient #{}))]
       (persistent! ids))))
 
+(defn contact-key
+  "What a surface's contacts depend on: pose, shape, size, wave and contact.
+  Crop, footprint, strip heights and filter only change the plan."
+  [resolved]
+  (dissoc resolved :id :source :crop :footprint :strips :filter))
+
+(defn layout-key
+  "What a plan depends on besides the contact ids and frame size. Surface uv
+  is where a head sits across the surface, which no wave phase, amplitude or
+  contact distance changes, so a travelling wave with a steady contact set
+  keeps its plan."
+  [resolved]
+  (dissoc resolved :id :source :contact :wave))
+
+(defn surface-contacts
+  "Contacts of a resolved surface, their ids and their feather opacities.
+  rig is an optional `afterglow.spatial.geometry/prepare-rig`."
+  [resolved fixtures rig]
+  (let [contacts (surface/contacts resolved fixtures (candidate-filter rig resolved))]
+    {:contacts contacts
+     :ids (mapv :id contacts)
+     :opacity (into {} (keep (fn [{:keys [id weight]}] (when (< weight 1.0) [id weight]))) contacts)}))
+
+(defn contact-plan
+  "The sampling plan for contacts on a resolved surface and a frame size."
+  [resolved contacts width height]
+  (sampler/plan-footprints (map :id contacts) (surface/footprints resolved contacts width height) (:filter resolved)
+                           (surface/wrap-span resolved width) width height))
+
 (defn surface-plan
   "Contacts and a sampling plan for a resolved surface over the rig and a
-  frame size. rig is an optional `afterglow.spatial.geometry/prepare-rig`."
+  frame size, uncached. rig is an optional `afterglow.spatial.geometry/prepare-rig`."
   [resolved fixtures rig width height]
-  (let [contacts (surface/contacts resolved fixtures (candidate-filter rig resolved))
-        prints (surface/footprints resolved contacts width height)]
-    {:contacts contacts
-     :plan (sampler/plan-footprints (map :id contacts) prints (:filter resolved)
-                                    (surface/wrap-span resolved width) width height)}))
+  (let [{:keys [contacts]} (surface-contacts resolved fixtures rig)]
+    {:contacts contacts :plan (contact-plan resolved contacts width height)}))
 
 (defn- spatial-rig [fixtures]
   (try (geometry/prepare-rig fixtures) (catch clojure.lang.ExceptionInfo _ nil)))
@@ -85,8 +111,12 @@
                 colors (sampler/colors plan (sampler/sample plan f))]
             {:values (if (= :luma channel) (update-vals colors sampler/luma) colors)}))))))
 
-(defn- surface-sampler [surface-id channel placement-fns]
-  (let [plans (sampler/plan-cache) rigs (sampler/plan-cache 2)]
+(defn- surface-sampler
+  "Two caches: contacts by `contact-key`, plans by `layout-key`, contact ids
+  and frame size. A sliding crop reuses the contacts; a travelling wave
+  whose contact set holds reuses the plan."
+  [surface-id channel placement-fns]
+  (let [contact-cache (sampler/plan-cache) plans (sampler/plan-cache) rigs (sampler/plan-cache 2)]
     (fn [env frame instance]
       (let [input (get frame input-key)
             spec (get-in input [:surfaces surface-id])
@@ -100,13 +130,14 @@
             (if-not f
               {:values {} :observation observation}
               (let [fixtures (:fixtures frame [])
-                    {:keys [contacts plan]}
-                    (plans [resolved fixtures (:width f) (:height f)]
-                           #(surface-plan resolved fixtures (rigs fixtures (fn [] (spatial-rig fixtures)))
-                                          (:width f) (:height f)))
+                    {:keys [contacts ids opacity]}
+                    (contact-cache [(contact-key resolved) fixtures]
+                                   #(surface-contacts resolved fixtures (rigs fixtures (fn [] (spatial-rig fixtures)))))
+                    plan (plans [(layout-key resolved) ids (:width f) (:height f)]
+                                #(contact-plan resolved contacts (:width f) (:height f)))
                     colors (sampler/colors plan (sampler/sample plan f))]
                 {:values (if (= :luma channel) (update-vals colors sampler/luma) colors)
-                 :opacity (into {} (keep (fn [{:keys [id weight]}] (when (< weight 1.0) [id weight]))) contacts)
+                 :opacity opacity
                  :observation observation}))))))))
 
 (defn observe

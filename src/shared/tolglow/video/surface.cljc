@@ -21,11 +21,10 @@
   - World = position + R · (scale · local), with R = Ry(yaw) · Rx(pitch) ·
     Rz(roll) from :rotation-deg [pitch yaw roll].
 
-  Contact distance is the unsigned distance from a head to the surface: exact
-  for the plane and sphere; for the wave, the first-order normal distance
-  |z − d(s)| / √(1 + d′(s)²), which is exact on the crests and troughs and
-  within a few percent while amplitude · 2π / wavelength stays below ½. A
-  head within :distance-m takes full weight; the weight then fades to zero
+  Contact distance is the unsigned distance from a head to the nearest
+  surface point, in venue metres, for every shape (see `wave-distance` for
+  the wave's search). A negative scale mirrors a surface; distances stay
+  unsigned. A head within :distance-m takes full weight; the weight then fades to zero
   over :feather-m with the spatial volumes' :linear or :smoothstep curve
   (#407). The weight is the head's write opacity, so a lower look shows
   through the feather.
@@ -201,15 +200,8 @@
 (defn- mat* [[r0 r1 r2] [x y z]]
   (let [row (fn [[a b c]] (+ (* a x) (* b y) (* c z)))] [(row r0) (row r1) (row r2)]))
 
-(defn- mat-t* [[[a b c] [d e f] [g h i]] [x y z]]
-  [(+ (* a x) (* d y) (* g z)) (+ (* b x) (* e y) (* h z)) (+ (* c x) (* f y) (* i z))])
-
 (defn- wave-height [{:keys [amplitude-m wavelength-m phase]} s]
   (* (double amplitude-m) (math/sin (* 2.0 math/PI (+ (/ (double s) wavelength-m) phase)))))
-
-(defn- wave-slope [{:keys [amplitude-m wavelength-m phase]} s]
-  (* (double amplitude-m) (/ (* 2.0 math/PI) wavelength-m)
-     (math/cos (* 2.0 math/PI (+ (/ (double s) wavelength-m) phase)))))
 
 (defn local-point
   "Surface-local metres (before scale) of surface coordinates [u v]."
@@ -226,31 +218,132 @@
   (let [r (rotation rotation-deg) s (double scale)]
     (mapv + position (mat* r (mapv #(* s %) (local-point resolved uv))))))
 
+(def ^:private max-wave-samples
+  "Coarse samples across the search window before refinement."
+  256)
+
+(defn wave-distance
+  "Distance in local metres from the point (t, z) to the curve
+  z = amplitude · sin(2π(s / wavelength + phase)), where t runs along the
+  wave axis. A result above limit may be returned as a lower bound that is
+  still above limit.
+
+  The sheet stays within |z| ≤ |amplitude|, so |z| − |amplitude| is a lower
+  bound that rejects far heads without searching. The foot point lies
+  within the vertical gap |z − d(t)| of t, and within
+  √((wavelength / 2)² + lower²), since every level the curve takes occurs
+  within half a wavelength of t. That window is sampled at most every
+  wavelength / 32 (up to 256 samples). Newton steps with backtracking on
+  (s − t)² + (d(s) − z)² then refine the best sample and every crest,
+  trough and crossing of the head's level in the window, where a steep
+  wave's nearest point hides between samples."
+  [amplitude wavelength phase t z limit]
+  (let [amp (double amplitude) lam (double wavelength) t (double t) z (double z)
+        a (abs amp)
+        lower (max 0.0 (- (abs z) a))]
+    (if (or (zero? a) (> lower (double limit)))
+      (if (zero? a) (abs z) lower)
+      (let [k (/ (* 2.0 math/PI) lam)
+            p0 (* 2.0 math/PI (double phase))
+            d (fn [s] (* amp (math/sin (+ (* k s) p0))))
+            f (fn [s] (let [ds (- s t) dz (- (d s) z)] (+ (* ds ds) (* dz dz))))
+            ;; Upper bounds on the distance, so on the foot point's offset
+            ;; from t: the vertical gap, and reaching the level clamp(z) that
+            ;; the curve passes within half a wavelength either side of t.
+            v (min (abs (- z (d t))) (math/hypot (* 0.5 lam) lower))
+            n (long (max 1 (min max-wave-samples (math/ceil (/ (* 2.0 v) (/ lam 32.0))))))
+            step (/ (* 2.0 v) n)
+            [best fbest] (loop [i 0 best t fbest (* v v)]
+                           (if (> i n)
+                             [best fbest]
+                             (let [s (+ (- t v) (* i step)) fs (f s)]
+                               (if (< fs fbest) (recur (inc i) s fs) (recur (inc i) best fbest)))))
+            ;; Newton steps with backtracking; where the curvature term is
+            ;; not positive (beside a sharp crest) step downhill instead.
+            newton (fn [s fs]
+                     (loop [i 0 s s fs fs]
+                       (if (= i 12)
+                         fs
+                         (let [theta (+ (* k s) p0)
+                               ds (* amp (math/sin theta))
+                               d1 (* amp k (math/cos theta))
+                               d2 (* -1.0 k k ds)
+                               g (+ (- s t) (* (- ds z) d1))
+                               g1 (+ 1.0 (* d1 d1) (* (- ds z) d2))
+                               delta (max (- step) (min step (if (pos? g1) (- (/ g g1)) (if (pos? g) (- step) step))))
+                               [s' fs'] (when (> (abs delta) 1e-10)
+                                          (loop [j 0 delta delta]
+                                            (let [s' (+ s delta) fs' (f s')]
+                                              (cond (< fs' fs) [s' fs']
+                                                    (= j 20) nil
+                                                    :else (recur (inc j) (* 0.5 delta))))))]
+                           (if s' (recur (inc i) s' fs') fs)))))
+            ;; On a steep wave the nearest point sits by a crossing of the
+            ;; head's level or by a crest or trough, narrower than any
+            ;; sampling step: seed Newton at each of those in the window too.
+            crossings (let [base (when (<= (abs z) a) (math/asin (max -1.0 (min 1.0 (/ z amp)))))
+                            m0 (math/floor (/ (- (* k (- t v)) p0) (* 2.0 math/PI)))
+                            m1 (math/ceil (/ (- (* k (+ t v)) p0) (* 2.0 math/PI)))]
+                        (for [m (range (long m0) (inc (long m1)))
+                              theta (cond-> [(* 0.5 math/PI) (* 1.5 math/PI)] base (conj base (- math/PI base)))
+                              :let [cs (/ (- (+ theta (* 2.0 math/PI m)) p0) k)]
+                              :when (<= (- t v) cs (+ t v))]
+                          cs))
+            refined (reduce (fn [best-f cs] (min best-f (newton cs (f cs)))) (newton best fbest) crossings)]
+        (max lower (math/sqrt refined))))))
+
+(defn- measurer
+  "A function of venue x, y, z returning [u v distance inside?] on a resolved
+  surface, or nil when the head cannot be within limit metres of it (off a
+  sheet's edge, or farther). Distances are venue metres: a negative scale
+  mirrors the surface and never makes a distance negative; a zero scale
+  touches nothing."
+  [{:keys [shape position scale rotation-deg size-m radius-m wave]} limit]
+  (let [[[a b c] [d e f] [g h i]] (rotation rotation-deg)
+        [px py pz] position
+        px (double px) py (double py) pz (double pz)
+        s (double scale) as (abs s)
+        bounded? (not (#?(:clj Double/isInfinite :cljs (complement js/isFinite)) (double limit)))
+        local-limit (if (pos? as) (/ (double limit) as) 0.0)
+        [w hgt] size-m
+        radius (double (or radius-m 0.0))
+        {:keys [amplitude-m wavelength-m phase axis]} wave]
+    (fn [x y z]
+      (when-not (zero? s)
+        (let [dx (- (double x) px) dy (- (double y) py) dz (- (double z) pz)
+              lx (/ (+ (* a dx) (* d dy) (* g dz)) s)
+              ly (/ (+ (* b dx) (* e dy) (* h dz)) s)
+              lz (/ (+ (* c dx) (* f dy) (* i dz)) s)]
+          (case shape
+            :sphere (let [len (math/sqrt (+ (* lx lx) (* ly ly) (* lz lz)))
+                          dist (abs (- len radius))]
+                      (cond
+                        (zero? len) [0.5 0.5 (* as radius) false]
+                        (and bounded? (> dist local-limit)) nil
+                        :else [(let [u (+ 0.5 (/ (math/atan2 lx lz) (* 2.0 math/PI)))] (if (>= u 1.0) 0.0 u))
+                               (/ (math/acos (max -1.0 (min 1.0 (/ ly len)))) math/PI)
+                               (* as dist) true]))
+            (let [u (+ 0.5 (/ lx w)) v (- 0.5 (/ ly hgt))
+                  inside? (and (<= 0.0 u 1.0) (<= 0.0 v 1.0))]
+              (when (or inside? (not bounded?))
+                (let [dist (if (= :wave shape)
+                             (wave-distance amplitude-m wavelength-m phase (if (= :v axis) ly lx) lz
+                                            (if bounded? local-limit ##Inf))
+                             (abs lz))]
+                  (when (or (not bounded?) (<= dist local-limit))
+                    [u v (* as dist) inside?]))))))))))
+
 (defn project
   "Nearest surface coordinates and unsigned contact distance (venue metres) of
-  a venue point: {:uv [u v] :distance d :inside? bool}. Sheets report
-  :inside? false off their edges; spheres are inside everywhere but their
-  centre."
-  ([resolved point] (project resolved (rotation (:rotation-deg resolved)) point))
-  ([{:keys [shape position scale size-m radius-m wave]} r point]
-   (let [s (double scale)
-         [x y z] (mapv #(/ % s) (mat-t* r (mapv - point position)))]
-     (case shape
-       :sphere (let [len (math/sqrt (+ (* x x) (* y y) (* z z)))]
-                 (if (zero? len)
-                   {:uv [0.5 0.5] :distance (* s radius-m) :inside? false}
-                   {:uv [(let [u (+ 0.5 (/ (math/atan2 x z) (* 2.0 math/PI)))] (if (>= u 1.0) 0.0 u))
-                         (/ (math/acos (max -1.0 (min 1.0 (/ y len)))) math/PI)]
-                    :distance (* s (abs (- len radius-m)))
-                    :inside? true}))
-       (let [[w h] size-m
-             u (+ 0.5 (/ x w)) v (- 0.5 (/ y h))
-             d (if (= :wave shape)
-                 (let [t (if (= :v (:axis wave)) y x)
-                       slope (wave-slope wave t)]
-                   (/ (abs (- z (wave-height wave t))) (math/sqrt (+ 1.0 (* slope slope)))))
-                 (abs z))]
-         {:uv [u v] :distance (* s d) :inside? (and (<= 0.0 u 1.0) (<= 0.0 v 1.0))})))))
+  a venue point: {:uv [u v] :distance d :inside? bool}. uv is where the head
+  sits across the surface (for a wave, from its position along the sheet,
+  whatever the phase); distance is to the nearest surface point. Sheets
+  report :inside? false off their edges; spheres are inside everywhere but
+  their centre."
+  [resolved point]
+  (if-let [[u v dist inside?] (apply (measurer resolved ##Inf) point)]
+    {:uv [u v] :distance dist :inside? inside?}
+    {:uv [0.5 0.5] :distance ##Inf :inside? false}))
 
 (defn contact-weight
   "Write opacity of a head at distance d: 1 up to :distance-m, fading to 0
@@ -271,16 +364,11 @@
 (defn reach-m
   "How far from its origin a resolved surface can put a qualifying head."
   [{:keys [shape scale size-m radius-m wave contact]}]
-  (+ (* (double scale)
+  (+ (* (abs (double scale))
         (if (= :sphere shape) (double radius-m)
             (+ (* 0.5 (math/hypot (first size-m) (second size-m)))
-               (if (= :wave shape) (double (:amplitude-m wave)) 0.0))))
-     ;; A wave's first-order distance is the vertical gap shrunk by at most
-     ;; √(1 + max slope²), so a qualifying head can sit that much farther out.
-     (* (+ (double (:distance-m contact)) (double (:feather-m contact)))
-        (if (= :wave shape)
-          (math/sqrt (+ 1.0 (math/pow (/ (* 2.0 math/PI (:amplitude-m wave)) (:wavelength-m wave)) 2)))
-          1.0))))
+               (if (= :wave shape) (abs (double (:amplitude-m wave))) 0.0))))
+     (double (:distance-m contact)) (double (:feather-m contact))))
 
 (defn bounds
   "Axis-aligned venue box containing every head the surface can touch."
@@ -292,66 +380,95 @@
   "Heads in contact with a resolved surface, in fixture order: {:id :uv
   :distance :weight} plus :layout and :pixel-index for pixel heads.
   candidate? optionally prunes ids first (the JVM passes the spatial rig's
-  box candidates)."
+  box candidates). Heads out of contact allocate nothing."
   ([resolved fixtures] (contacts resolved fixtures nil))
   ([resolved fixtures candidate?]
-   (let [r (rotation (:rotation-deg resolved))
-         contact (:contact resolved)
+   (let [contact (:contact resolved)
+         limit (+ (double (:distance-m contact)) (double (:feather-m contact)))
+         measure (measurer resolved limit)
          allowed (some-> (:targets resolved) set)]
-     (into []
-           (keep (fn [{:keys [id position pixel-layout-id pixel-index]}]
-                   (when (and (vec3? position)
-                              (or (nil? allowed) (allowed id))
-                              (or (nil? candidate?) (candidate? id)))
-                     (let [{:keys [uv distance inside?]} (project resolved r position)
-                           w (if inside? (contact-weight contact distance) 0.0)]
-                       (when (pos? w)
-                         (cond-> {:id id :uv uv :distance distance :weight w}
-                           pixel-layout-id (assoc :layout pixel-layout-id :pixel-index pixel-index)))))))
-           fixtures))))
+     (if (neg? limit)
+       []
+       (into []
+             (keep (fn [{:keys [id position pixel-layout-id pixel-index]}]
+                     (when (and (vec3? position)
+                                (or (nil? allowed) (allowed id))
+                                (or (nil? candidate?) (candidate? id)))
+                       (when-let [[u v dist inside?] (measure (nth position 0) (nth position 1) (nth position 2))]
+                         (let [w (if inside? (contact-weight contact dist) 0.0)]
+                           (when (pos? w)
+                             (cond-> {:id id :uv [u v] :distance dist :weight w}
+                               pixel-layout-id (assoc :layout pixel-layout-id :pixel-index pixel-index))))))))
+             fixtures)))))
 
-(defn- wrap-delta [shape du]
-  (if (= :sphere shape) (- du (math/round du)) du))
+(defn- strip-neighbours
+  "For each contact index, [previous next] contact indices of the same pixel
+  layout in pixel-index order (nil at the ends and for single heads)."
+  [contacts]
+  (let [groups (persistent!
+                (reduce-kv (fn [m i {:keys [layout]}]
+                             (if layout (assoc! m layout (conj (get m layout []) i)) m))
+                           (transient {}) contacts))
+        index #(:pixel-index (nth contacts %) 0)]
+    (persistent!
+     (reduce-kv (fn [out _ members]
+                  (let [members (if (apply <= (map index members)) members (vec (sort-by index members)))
+                        n (count members)]
+                    (loop [k 0 out out]
+                      (if (= k n)
+                        out
+                        (recur (inc k) (assoc! out (nth members k)
+                                               [(when (pos? k) (nth members (dec k)))
+                                                (when (< (inc k) n) (nth members (inc k)))]))))))
+                (transient {}) groups))))
 
 (defn footprints
   "Pixel-space sampling footprints, one per contact, in the sampler's shape
   ({:center :direction :along :across}) for a frame of width × height.
   A pixel strip's along extent and direction follow its neighbouring pixels
   in contact, per pixel index step (across the sphere seam by the short
-  way); its across extent is
-  the layout's :strips height, else :footprint :height. Other heads use the
-  :footprint width and height."
+  way); its across extent is the layout's :strips height, else
+  :footprint :height. Other heads use the :footprint width and height."
   [{:keys [shape crop footprint strips]} contacts width height]
-  (let [sx (* (double width) (:width crop)) sy (* (double height) (:height crop))
+  (let [contacts (vec contacts)
+        width (double width) height (double height)
+        cx (double (:x crop)) cy (double (:y crop))
+        sx (* width (:width crop)) sy (* height (:height crop))
         default-across (* sy (:height footprint))
-        by-layout (group-by :layout (filter :layout contacts))
-        neighbours (into {}
-                         (mapcat (fn [[_ pixels]]
-                                   (let [sorted (vec (sort-by :pixel-index pixels))]
-                                     (map-indexed (fn [i c]
-                                                    [(:id c) [(when (pos? i) (nth sorted (dec i)))
-                                                              (when (< (inc i) (count sorted)) (nth sorted (inc i)))]])
-                                                  sorted))))
-                         by-layout)
-        ;; Per-pixel step between two contacts of one strip. Pixels out of
-        ;; contact between them divide the step evenly.
-        delta (fn [a b]
-                (let [[ua va] (:uv a) [ub vb] (:uv b)
-                      gap (double (max 1 (abs (- (long (:pixel-index b 0)) (long (:pixel-index a 0))))))]
-                  [(/ (* sx (wrap-delta shape (- ub ua))) gap) (/ (* sy (- vb va)) gap)]))]
-    (mapv (fn [{:keys [id uv layout] :as contact}]
-            (let [[su sv] (source-uv {:crop crop} uv)
-                  center [(* (double width) su) (* (double height) sv)]]
-              (if-let [[prev next] (when layout (get neighbours id))]
-                (let [steps (keep identity [(when prev (delta prev contact)) (when next (delta contact next))])
-                      [dx dy] (if (seq steps) (mapv + (first steps) (or (second steps) [0 0])) [1 0])
-                      len (math/hypot dx dy)
-                      along (if (seq steps) (/ (reduce + (map #(apply math/hypot %) steps)) (count steps)) 0.0)]
-                  {:center center :direction (if (pos? len) [(/ dx len) (/ dy len)] [1.0 0.0])
-                   :along along
-                   :across (if-let [h (get-in strips [layout :height])] (* sy h) default-across)})
-                {:center center :direction [1.0 0.0] :along (* sx (:width footprint)) :across default-across})))
-          contacts)))
+        single-along (* sx (:width footprint))
+        sphere? (= :sphere shape)
+        neighbours (strip-neighbours contacts)]
+    (persistent!
+     (reduce-kv
+      (fn [out i {:keys [uv layout pixel-index]}]
+        (let [u (double (nth uv 0)) v (double (nth uv 1))
+              center [(* width (+ cx (* u (:width crop)))) (* height (+ cy (* v (:height crop))))]
+              [prev next] (when layout (get neighbours i))]
+          (conj! out
+                 (if-not (or prev next)
+                   {:center center :direction [1.0 0.0]
+                    :along (if layout 0.0 single-along)
+                    :across (if-let [h (and layout (get-in strips [layout :height]))] (* sy h) default-across)}
+                   ;; Per-pixel step to a neighbour of the same strip. Pixels
+                   ;; out of contact between them divide the step evenly.
+                   (let [step (fn [j sign]
+                                (if (nil? j)
+                                  nil
+                                  (let [{[uj vj] :uv pj :pixel-index} (nth contacts j)
+                                        gap (double (max 1 (abs (- (long (or pj 0)) (long (or pixel-index 0))))))
+                                        du (* sign (- (double uj) u)) dv (* sign (- (double vj) v))
+                                        du (if sphere? (- du (math/round du)) du)]
+                                    [(/ (* sx du) gap) (/ (* sy dv) gap)])))
+                         a (step prev -1.0) b (step next 1.0)
+                         dx (+ (if a (nth a 0) 0.0) (if b (nth b 0) 0.0))
+                         dy (+ (if a (nth a 1) 0.0) (if b (nth b 1) 0.0))
+                         len (math/hypot dx dy)
+                         along (/ (+ (if a (math/hypot (nth a 0) (nth a 1)) 0.0) (if b (math/hypot (nth b 0) (nth b 1)) 0.0))
+                                  (if (and a b) 2.0 1.0))]
+                     {:center center :direction (if (pos? len) [(/ dx len) (/ dy len)] [1.0 0.0])
+                      :along along
+                      :across (if-let [h (get-in strips [layout :height])] (* sy h) default-across)})))))
+      (transient []) contacts))))
 
 (defn wrap-span
   "For a sphere, the crop's pixel columns [x0 x1) that sampling wraps

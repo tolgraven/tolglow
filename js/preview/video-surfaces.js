@@ -10,7 +10,17 @@ import * as THREE from 'three';
  * keeps an empty ring. Nothing here samples video. */
 
 export function surfaceKey(surface) {
-  return `${surface.id}|${surface.columns}x${surface.rows}`;
+  return `${surface.columns}x${surface.rows}|${surface.outline === false ? 'closed' : 'open'}`;
+}
+
+/** Vertex indices around a columns × rows grid's edge, in order. */
+export function borderIndices(columns, rows) {
+  const stride = columns + 1, out = [];
+  for (let i = 0; i <= columns; i++) out.push(i);
+  for (let j = 1; j <= rows; j++) out.push(j * stride + columns);
+  for (let i = columns - 1; i >= 0; i--) out.push(rows * stride + i);
+  for (let j = rows - 1; j > 0; j--) out.push(j * stride);
+  return out;
 }
 
 /** Display bytes in [0,1] for a committed linear emitted colour. */
@@ -98,11 +108,35 @@ export class VideoSurfaceOverlay {
     const root = new THREE.Group();
     const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({
       color: 0x58636e, side: THREE.DoubleSide, transparent: true, opacity: .5, toneMapped: false, depthWrite: false}));
-    const edge = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({
+    const edge = new THREE.LineLoop(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({
       color: 0x8fd9cb, transparent: true, opacity: .7, toneMapped: false}));
     const markers = new THREE.Points(new THREE.BufferGeometry(), markerMaterial());
     root.add(mesh, edge, markers); this.group.add(root);
     return {root, mesh, edge, markers, wantUrl: null, shownUrl: null};
+  }
+  /** Same grid: write the arrays in place. New grid: dispose and replace the
+   * geometries, so no GPU buffer is left to garbage collection. */
+  shape(obj, surface) {
+    const key = surfaceKey(surface), vertices = surface.positions.length / 3;
+    if (obj.key !== key || obj.mesh.geometry.getAttribute('position')?.count !== vertices) {
+      obj.key = key;
+      obj.mesh.geometry.dispose(); obj.edge.geometry.dispose();
+      const geometry = obj.mesh.geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertices * 3), 3));
+      geometry.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(vertices * 2), 2));
+      geometry.setIndex(surface.indices);
+      obj.border = surface.outline === false ? [] : borderIndices(surface.columns, surface.rows);
+      obj.edge.geometry = new THREE.BufferGeometry();
+      obj.edge.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(obj.border.length * 3), 3));
+    }
+    const geometry = obj.mesh.geometry, position = geometry.getAttribute('position'), uv = geometry.getAttribute('uv');
+    position.array.set(surface.positions); uv.array.set(surface.uvs);
+    position.needsUpdate = uv.needsUpdate = true;
+    geometry.computeBoundingSphere();
+    const edge = obj.edge.geometry.getAttribute('position');
+    obj.border.forEach((v, i) => edge.array.set(surface.positions.slice(v * 3, v * 3 + 3), i * 3));
+    edge.needsUpdate = true;
+    obj.edge.geometry.computeBoundingSphere();
   }
   update(surfaces = [], values = null) {
     const seen = new Set();
@@ -111,22 +145,21 @@ export class VideoSurfaceOverlay {
       const id = String(surface.id); seen.add(id);
       let obj = this.byId.get(id);
       if (!obj) {obj = this.build(surface); this.byId.set(id, obj);}
-      if (obj.positions !== surface.positions) {
-        obj.positions = surface.positions;
-        const geometry = obj.mesh.geometry;
-        geometry.setAttribute('position', new THREE.Float32BufferAttribute(surface.positions, 3));
-        geometry.setAttribute('uv', new THREE.Float32BufferAttribute(surface.uvs, 2));
-        geometry.setIndex(surface.indices);
-        geometry.computeBoundingSphere();
-        obj.edge.geometry.dispose(); obj.edge.geometry = new THREE.EdgesGeometry(geometry, 30);
-      }
+      if (obj.positions !== surface.positions) {obj.positions = surface.positions; this.shape(obj, surface);}
       if (obj.contacts !== surface.contacts) {
         obj.contacts = surface.contacts;
         const points = (surface.contacts || []).filter(c => finiteArray(c, 4));
-        const geometry = obj.markers.geometry;
-        geometry.setAttribute('position', new THREE.Float32BufferAttribute(points.flatMap(c => c.slice(0, 3)), 3));
-        geometry.setAttribute('markerColor', new THREE.BufferAttribute(contactColors(points.map(c => c[3])), 3));
-        geometry.setAttribute('headColor', new THREE.BufferAttribute(new Float32Array(points.length * 4), 4));
+        let geometry = obj.markers.geometry;
+        if (geometry.getAttribute('position')?.count !== points.length) {
+          geometry.dispose(); geometry = obj.markers.geometry = new THREE.BufferGeometry();
+          geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(points.length * 3), 3));
+          geometry.setAttribute('markerColor', new THREE.BufferAttribute(new Float32Array(points.length * 3), 3));
+          geometry.setAttribute('headColor', new THREE.BufferAttribute(new Float32Array(points.length * 4), 4));
+        }
+        const position = geometry.getAttribute('position'), marker = geometry.getAttribute('markerColor');
+        points.forEach((c, i) => position.array.set(c.slice(0, 3), i * 3));
+        marker.array.set(contactColors(points.map(c => c[3])));
+        position.needsUpdate = marker.needsUpdate = true;
         geometry.computeBoundingSphere();
         obj.ids = (surface['contact-ids'] || []).filter((_, i) => finiteArray(surface.contacts[i], 4));
         obj.colored = null;
