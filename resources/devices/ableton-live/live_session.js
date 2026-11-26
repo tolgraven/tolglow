@@ -1,4 +1,5 @@
-/* Live Set operations for automatic setup, Capture, clip writes (#680, #671)
+/* Live Set operations for automatic setup, Capture, clip writes (#680, #671),
+ * the cue launcher's Drum Rack (#228)
  * and the run-track mirror of what Tolglow ran (#683).
  * ES5 for Max's [js]. Runs behind [deferlow] inside the companion's adapter.
  * The Tolglow side of this protocol is tolglow.integrations.live-connection;
@@ -31,7 +32,8 @@
   var MONITOR = ["in", "auto", "off"];
   var CAPTURE_DESTINATION = {auto: 0, session: 1, arrangement: 2};
   var OPERATIONS = ["inspect-set", "ensure-track", "ensure-group", "configure-track", "write-clip", "extend-clip", "capture-midi",
-    "read-clip", "show-clip", "fire-clip", "stop-clips", "watch-run-tracks", "place-clip"];
+    "read-clip", "show-clip", "fire-clip", "stop-clips", "watch-run-tracks", "place-clip",
+    "ensure-launcher", "write-pads", "inspect-launcher"];
   // Envelope read-back: scan at this step, then bisect each change to one
   // Standard MIDI File tick (1/960 beat).
   var TICK = 1 / 960;
@@ -650,9 +652,135 @@
     this.emit(event);
   };
 
+  // ---------------------------------------------------------------------
+  // Cue launcher (#228): the companion's own track holds a Drum Rack whose
+  // pads play a cue page. Track.insert_device, RackDevice.insert_chain and
+  // DrumChain.in_note are documented "since Live 12.3"; on an older Live a
+  // missing rack or chain is refused and left for the performer. Labels and
+  // colors go on chains (Chain.name/color): DrumPad has no color setter and
+  // its name is read-only.
+  Session.prototype.liveVersion = function () {
+    var app = this.api("live_app");
+    if (!app || !Number(app.id)) return null;
+    return [app.call("get_major_version"), app.call("get_minor_version"), app.call("get_bugfix_version")].map(function (v) { return Number(scalar(v)); });
+  };
+  Session.prototype.canInsert = function () {
+    var v = this.liveVersion();
+    return !!v && (v[0] > 12 || (v[0] === 12 && v[1] >= 3));
+  };
+  // The companion's track and the index of the first Drum Rack after the companion.
+  Session.prototype.launcherTrack = function () {
+    var hostId = this.hostTrackId(true);
+    if (!hostId) fault("no-companion", "The companion is not on a track");
+    var track = this.object({id: hostId}), index = this.trackIndex(track), self = this;
+    var device = this.api(this.devicePath), deviceIds = ids(track.get("devices"));
+    var own = device && Number(device.id) ? deviceIds.indexOf(Number(device.id)) : -1, rack = -1;
+    deviceIds.forEach(function (id, i) {
+      if (rack < 0 && i > own && !!self.read(self.object({id: id}), "can_have_drum_pads")) rack = i;
+    });
+    return {id: hostId, track: track, index: index, own: own, rack: rack, devices: deviceIds.length};
+  };
+  Session.prototype.rackPath = function (where) { return "live_set tracks " + where.index + " devices " + where.rack; };
+  Session.prototype.ensureLauncher = function (payload, mark) {
+    var name = payload.name, row = payload["scroll-row"];
+    if (typeof name !== "string" || !TOLGLOW_NAME.test(name) || name.length > 128)
+      fault("track-name", "A launcher track name starts with Tolglow");
+    if (row !== undefined && row !== null && !integer(row, 0, 28)) fault("scroll-row", "The pad overview scrolls to rows 0-28");
+    var where = this.launcherTrack(), current = String(this.read(where.track, "name")), result = {};
+    if (!this.read(where.track, "has_midi_input")) fault("track-kind", "Place the companion on a MIDI track");
+    // Adopt only an empty track, one already Tolglow's, or one holding just the
+    // companion and a Drum Rack: never take over a musician's instrument.
+    var self = this, clipless = !ids(where.track.get("arrangement_clips")).length &&
+      !ids(where.track.get("clip_slots")).some(function (id) { return !!self.read(self.object({id: id}), "has_clip"); });
+    var bare = where.devices <= 1 || (where.rack >= 0 && where.devices === 2);
+    if (current !== name && !TOLGLOW_NAME.test(current) && !(clipless && bare))
+      fault("host-track-in-use", "The companion is on a track with clips or instruments. Put it on a new, empty MIDI track and run setup again");
+    if (where.rack < 0) {
+      if (!this.canInsert()) fault("drum-rack-creation-unavailable", "This Live cannot insert devices (Track.insert_device needs Live 12.3). Drop a Drum Rack after the companion and run setup again");
+      if (where.own < 0) fault("no-companion", "The companion is not in its track's device chain");
+      mark(); where.track.call("insert_device", "Drum Rack", where.own + 1);
+      where = this.launcherTrack();
+      if (where.rack < 0) fault("drum-rack-not-created", "Live did not report a Drum Rack after the companion; inspect the track before retrying");
+      result["rack-created?"] = true;
+    }
+    var rack = this.object(this.rackPath(where));
+    if (!this.read(rack, "has_drum_pads")) fault("not-drum-rack", "The Drum Rack after the companion has no pads (a nested Drum Rack?)");
+    if (current !== name) { mark(); where.track.set("name", name); result["renamed?"] = true; }
+    if (row !== undefined && row !== null) {
+      var view = this.object(this.rackPath(where) + " view");
+      if (Number(this.read(view, "drum_pads_scroll_position")) !== row) { mark(); view.set("drum_pads_scroll_position", row); }
+    }
+    result["track-id"] = "track:" + where.id; result["device-index"] = where.rack;
+    return result;
+  };
+  Session.prototype.launcherRack = function (payload) {
+    var where = this.launcherTrack();
+    if (payload && payload["track-id"] !== undefined) {
+      this.track(payload["track-id"], payload["expected-name"]);
+      if ("track:" + where.id !== payload["track-id"]) fault("stale-track", "The companion is no longer on that launcher track");
+    }
+    if (where.rack < 0) fault("no-drum-rack", "No Drum Rack follows the companion; run launcher setup");
+    return {where: where, rack: this.object(this.rackPath(where))};
+  };
+  Session.prototype.padsByNote = function (rack) {
+    var self = this, byNote = {};
+    ids(rack.get("drum_pads")).forEach(function (id) { var pad = self.object({id: id}); byNote[Number(self.read(pad, "note"))] = pad; });
+    return byNote;
+  };
+  Session.prototype.writePads = function (payload, mark) {
+    var pads = payload.pads, self = this;
+    if (!Array.isArray(pads) || pads.length > 128) fault("pads", "Name up to 128 pads");
+    pads.forEach(function (p) {
+      if (!p || !integer(p.note, 0, 127) || typeof p.name !== "string" || !p.name.length || !integer(p.color, 0, 0xffffff))
+        fault("pad", "A pad needs a MIDI note, a name and a packed RGB color");
+    });
+    var found = this.launcherRack(payload), rack = found.rack, byNote = this.padsByNote(rack), insert = this.canInsert();
+    var written = [], skipped = [];
+    pads.forEach(function (p) {
+      var pad = byNote[p.note], chains = pad ? ids(pad.get("chains")) : [], created = false, chain;
+      if (!pad) { skipped.push({note: p.note, code: "no-such-pad"}); return; }
+      if (!chains.length) {
+        if (!insert) { skipped.push({note: p.note, code: "chain-creation-unavailable"}); return; }
+        var before = ids(rack.get("chains"));
+        mark(); rack.call("insert_chain");
+        var added = ids(rack.get("chains")).filter(function (id) { return before.indexOf(id) < 0; });
+        if (added.length !== 1) fault("chain-not-created", "Live did not report exactly one new chain; inspect the Drum Rack before retrying");
+        chain = self.object({id: added[0]});
+        chain.set("in_note", p.note);
+        created = true;
+      } else chain = self.object({id: chains[0]});
+      var name = p.name.slice(0, 128);
+      if (String(self.read(chain, "name")) !== name || !!self.read(chain, "is_auto_colored") || Number(self.read(chain, "color")) !== p.color) {
+        mark(); chain.set("is_auto_colored", 0); chain.set("name", name); chain.set("color", p.color);
+      }
+      written.push({note: p.note, name: String(self.read(chain, "name")), color: Number(self.read(chain, "color")), "chain-created?": created});
+    });
+    return {pads: written, skipped: skipped, "color-policy": "nearest-live-palette"};
+  };
+  // Read back the launcher: the companion's track, its Drum Rack, the pad
+  // overview's scroll row and every filled pad's first chain. Writes nothing.
+  Session.prototype.inspectLauncher = function () {
+    var where = this.launcherTrack(), self = this, out = {"track-id": "track:" + where.id, name: String(this.read(where.track, "name")),
+      "can-insert?": this.canInsert(), rack: null};
+    if (where.rack < 0) return out;
+    var rack = this.object(this.rackPath(where)), pads = [];
+    if (!this.read(rack, "has_drum_pads")) return out;
+    ids(rack.get("drum_pads")).forEach(function (id) {
+      var pad = self.object({id: id}), chains = ids(pad.get("chains"));
+      if (!chains.length) return;
+      var chain = self.object({id: chains[0]});
+      pads.push({note: Number(self.read(pad, "note")), name: String(self.read(chain, "name")), color: Number(self.read(chain, "color")), chains: chains.length});
+    });
+    out.rack = {"device-index": where.rack, "scroll-row": Number(this.read(this.object(this.rackPath(where) + " view"), "drum_pads_scroll_position")), pads: pads};
+    return out;
+  };
+
   Session.prototype.run = function (op, payload, mark) {
     switch (op) {
       case "inspect-set": return this.inspectSet();
+      case "ensure-launcher": return this.ensureLauncher(payload, mark);
+      case "write-pads": return this.writePads(payload, mark);
+      case "inspect-launcher": return this.inspectLauncher();
       case "ensure-track": return this.ensureTrack(payload, mark);
       case "ensure-group": return this.ensureGroup(payload);
       case "watch-run-tracks": return this.watchRunTracks(payload);

@@ -17,7 +17,15 @@ const CHANNELS = [{ display_name: "All Channels", identifier: 100 }].concat(
 // the property; "deferred" delivers each one later (a timer, as LiveAPI does),
 // with the observer's deferred task later still, as max_adapter.js schedules
 // it. now: the Session's millisecond clock.
-function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGroup = true, notify = "sync", now } = {}) {
+// Cue launcher (#228): launcher: true puts the companion device in its
+// track's device chain; { drumRack: { 36: "Kick" } } on a track adds a Drum
+// Rack after it with one chain per named pad. version: [12, 2, 0] models a
+// Live without Track.insert_device / RackDevice.insert_chain (both 12.3).
+// A chain belongs to the pad whose note equals its in_note; insert_chain adds
+// a chain with in_note -1 ("All Notes"), which belongs to no pad until set:
+// an assumption about Live to verify on a real Set.
+function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGroup = true, notify = "sync", now,
+  launcher = false, version = [12, 4, 5] } = {}) {
   const entities = {}, writes = [], calls = [], observers = [], emitted = []; let next = 10;
   const add = (o) => { o.id = o.id || ++next; entities[o.id] = o; return o; };
   function makeClip(length) {
@@ -44,7 +52,20 @@ function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGro
   const inGroup = (track, groupId) => { for (let g = groupOf(track); g; g = groupOf(entities[g])) if (g === groupId) return true; return false; };
   const view = add({ kind: "view", props: {} }), appView = add({ kind: "app-view", props: {} });
   const app = add({ kind: "app", props: {} });
-  const device = add({ kind: "device", params: COARSE.map((_, i) => add({ kind: "param", props: { name: "Tolglow lane " + (i + 1) } })) });
+  const device = add({ kind: "device", props: { name: "Tolglow", can_have_drum_pads: 0 },
+    params: COARSE.map((_, i) => add({ kind: "param", props: { name: "Tolglow lane " + (i + 1) } })) });
+  function makeRack(named = {}) {
+    const rack = add({ kind: "rack", props: { name: "Drum Rack", can_have_drum_pads: 1, has_drum_pads: 1 }, chains: [], pads: [] });
+    rack.view = add({ kind: "rack-view", props: { drum_pads_scroll_position: 9 } });
+    for (let note = 0; note < 128; note++) rack.pads.push(add({ kind: "pad", props: { note, name: "" }, rack }));
+    for (const [note, name] of Object.entries(named))
+      rack.chains.push(add({ kind: "chain", props: { name, color: 0x777777, is_auto_colored: 1, in_note: Number(note) } }));
+    return rack;
+  }
+  tracks.forEach((t, i) => {
+    if (launcher && i === host) song.tracks[i].props.devices = ["id", device.id];
+    if (t.drumRack) song.tracks[i].props.devices = song.tracks[i].props.devices.concat(["id", makeRack(t.drumRack).id]);
+  });
   let hostIndex = host;
   const hostTrack = () => song.tracks[hostIndex];
   const moveCompanion = (index) => { hostIndex = index; };
@@ -60,6 +81,9 @@ function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGro
         if (o.kind === "track" && key === "clip_slots") return o.slots.flatMap(s => ["id", s.id]);
         if (o.kind === "slot" && key === "has_clip") return [o.clip ? 1 : 0];
         if (o.kind === "device" && key === "parameters") return o.params.flatMap(p => ["id", p.id]);
+        if (o.kind === "rack" && key === "drum_pads") return o.pads.flatMap(p => ["id", p.id]);
+        if (o.kind === "rack" && key === "chains") return o.chains.flatMap(c => ["id", c.id]);
+        if (o.kind === "pad" && key === "chains") return o.rack.chains.filter(c => c.props.in_note === o.props.note).flatMap(c => ["id", c.id]);
         if (key === "input_routing_type" || key === "input_routing_channel" || key === "output_routing_type") return JSON.stringify({ [key]: o.props[key] });
         if (key === "available_input_routing_types") return JSON.stringify({ [key]: PORTS });
         if (key === "available_input_routing_channels") return JSON.stringify({ [key]: CHANNELS });
@@ -73,6 +97,20 @@ function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGro
           const track = makeTrack({ name: "MIDI" }), before = o.tracks[index - 1];
           if (joinsGroup && before) track.props.group_track = ["id", before.props.is_foldable ? before.id : groupOf(before) || 0];
           o.tracks.splice(index, 0, track);
+          return null;
+        }
+        if (o.kind === "track" && method === "insert_device") {
+          if (version[0] < 12 || (version[0] === 12 && version[1] < 3)) throw new Error("Invalid syntax: insert_device");
+          if (args[0] !== "Drum Rack") throw new Error("Only the Drum Rack is simulated");
+          const list = o.props.devices.slice(), at = args[1] === undefined ? list.length / 2 : args[1];
+          if (at > list.length / 2) throw new Error("Invalid device index");
+          list.splice(at * 2, 0, "id", makeRack().id);
+          o.props.devices = list;
+          return null;
+        }
+        if (o.kind === "rack" && method === "insert_chain") {
+          if (version[0] < 12 || (version[0] === 12 && version[1] < 3)) throw new Error("Invalid syntax: insert_chain");
+          o.chains.push(add({ kind: "chain", props: { name: "", color: 0x777777, is_auto_colored: 1, in_note: -1 } }));
           return null;
         }
         if (o.kind === "song" && method === "create_scene") { for (const t of o.tracks) t.slots.push(add({ kind: "slot", clip: null })); return null; }
@@ -103,7 +141,7 @@ function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGro
           const step = o.steps.filter(s => s.time <= args[0] + 1e-12).pop() || o.steps[0];
           return [step ? step.value : 0];
         }
-        if (o.kind === "app" && method.startsWith("get_")) return [{ get_major_version: 12, get_minor_version: 4, get_bugfix_version: 5 }[method]];
+        if (o.kind === "app" && method.startsWith("get_")) return [{ get_major_version: version[0], get_minor_version: version[1], get_bugfix_version: version[2] }[method]];
         if (o.kind === "app-view" && method === "focus_view") { o.props.focused = args[0]; return null; }
         if (o.kind === "track" && method === "stop_all_clips") { o.props.stopped = true; return null; }
         throw new Error("Unexpected Live method " + method);
@@ -118,6 +156,11 @@ function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGro
     if (p === "live_app view") return appView;
     if (p === "this_device") return device;
     if (p === "this_device canonical_parent") return hostTrack();
+    const d = /^live_set tracks (\d+) devices (\d+)( view)?$/.exec(p);
+    if (d) {
+      const track = song.tracks[Number(d[1])], id = track && track.props.devices[Number(d[2]) * 2 + 1], dev = entities[id];
+      return d[3] ? dev && dev.view : dev;
+    }
     const m = /^live_set tracks (\d+)(?: clip_slots (\d+)( clip)?)?$/.exec(p);
     if (!m) return undefined;
     const track = song.tracks[Number(m[1])];
@@ -166,7 +209,8 @@ function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGro
   const adapter = new Adapter({ api, session, dictionaryCall: (o, m, d) => o.call(m, d), readDictionary: JSON.parse });
   let n = 0;
   const request = (op, payload = {}) => adapter.handle({ id: "r" + (++n), op, payload });
-  return { song, device, view, appView, entities, writes, calls, request, adapter, session, api, setDictionary, moveCompanion,
+  const rackOf = (index) => song.tracks[index].props.devices.filter((x, i) => i % 2 === 1).map(id => entities[id]).find(e => e && e.kind === "rack");
+  return { song, device, view, appView, entities, writes, calls, request, adapter, session, api, setDictionary, moveCompanion, rackOf,
     observers, emitted, play, fire, inGroup };
 }
 
@@ -183,7 +227,10 @@ if (require.main === module) {
     // argv[3] "groups" adds two placed Group Tracks for the run mirror (#683).
     const groups = process.argv[3] === "groups"
       ? [{ name: "Tolglow group stage", group: true }, { name: "Tolglow group warm", group: true, parent: "Tolglow group stage" }] : [];
-    const live = liveSet({ tracks: [{ name: "Bass", arm: true, port: PORTS[2], channel: CHANNELS[1] }, { name: "MIDI" }].concat(groups), host: 1 });
+    // The companion is in its track's device chain, so the cue launcher (#228)
+    // can insert a Drum Rack after it.
+    const live = liveSet({ tracks: [{ name: "Bass", arm: true, port: PORTS[2], channel: CHANNELS[1] }, { name: "MIDI" }].concat(groups), host: 1,
+      launcher: true });
     const max = vm.createContext({
       include() {}, TolglowLive: require("../../../resources/devices/ableton-live/live_api"),
       TolglowSession: require("../../../resources/devices/ableton-live/live_session"),
