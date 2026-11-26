@@ -118,7 +118,7 @@
 
 (deftest length-and-level-elide-like-print-length-and-print-level
   (is (= "{:a (0 1 2 ...) :b [1 #] :c #{0 1 2 ...}}"
-         (pretty/edn (array-map :a (range) :b [1 [2 [3 [4]]]] :c (set (range 10))) {:length 3 :level 2})))
+         (pretty/edn (array-map :a (range) :b [1 [2 [3 [4]]]] :c (into (sorted-set) (range 10))) {:length 3 :level 2})))
   (is (= "#" (pretty/edn [1] {:level 0})))
   (binding [*print-length* 3 *print-level* 2]
     (is (= (pr-str (array-map :a (range) :b [1 [2 [3]]]))
@@ -137,3 +137,17 @@
             full (pretty/edn definition)]
         (is (= {:text full :truncated? false} (pretty/edn-within definition {:max-chars (count full)})))
         (is (= (str (subs full 0 40) "...") (pretty/edn definition {:max-chars 40})))))))
+
+(deftest an-elided-huge-map-or-set-sorts-only-what-it-shows
+  (let [m (into {} (map (fn [i] [(keyword (str "k" i)) i])) (range 1000000))
+        s (set (keys m))
+        timed (fn [f] (let [started (System/nanoTime) r (f)] [r (/ (- (System/nanoTime) started) 1e6)]))
+        [{:keys [text]} map-ms] (timed #(pretty/edn-within m {:length 64 :level 10 :max-chars 8192}))
+        [set-text set-ms] (timed #(pretty/edn s {:length 3}))]
+    (is (< map-ms 500) (str "map took " map-ms " ms"))
+    (is (< set-ms 500) (str "set took " set-ms " ms"))
+    (testing "the entries *print-length* would show, in sorted order"
+      (let [shown (re-seq #":k\d+" text)]
+        (is (= 64 (count shown)))
+        (is (= (sort (map str (take 64 (keys m)))) shown))))
+    (is (= (str "#{" (str/join " " (sort (map str (take 3 s)))) " ...}") set-text))))

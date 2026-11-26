@@ -57,15 +57,30 @@
     :else (compare (pr-str a) (pr-str b))))
 
 (defn- leading-entry
-  "The entry for `k`. A sorted map is searched rather than looked up, because
-  its comparator may not accept a keyword (a map keyed by numbers or strings)."
+  "The entry for `k`. A sorted map whose comparator cannot compare `k` with its
+  keys (a map keyed by numbers or strings) cannot hold `k`."
   [m k]
-  (if (sorted? m) (some #(when (= k (key %)) %) m) (find m k)))
+  (if (sorted? m)
+    (try (find m k) (catch #?(:clj ClassCastException :cljs :default) _ nil))
+    (find m k)))
+
+(defn- sort-shown
+  "Items of a hash map or set in print order, sorted by `keyfn`. Under a length
+  limit only the first `shown` items in the collection's own order can print,
+  the items *print-length* would show, so only those are sorted; the next
+  item stays to mark the elision. An elided view of a huge map or set then
+  costs as little as the text it shows."
+  [keyfn items shown]
+  (if shown
+    (let [head (take (inc shown) items)]
+      (concat (sort-by keyfn compare-printed (take shown head)) (drop shown head)))
+    (sort-by keyfn compare-printed items)))
 
 (defn- map-entries [m]
   (let [lead (keep #(leading-entry m %) leading-keys)
-        others (remove #(some #{(key %)} leading-keys) m)]
-    (concat lead (if (ordered-map? m) others (sort-by key compare-printed others)))))
+        others (remove #(some #{(key %)} leading-keys) m)
+        shown (some-> (:length *limits*) (- (count lead)) (max 0))]
+    (concat lead (if (ordered-map? m) others (sort-shown key others shown)))))
 
 (defn- collection-kind [x]
   (cond
@@ -104,7 +119,7 @@
              :else (shown item child)))
          (limited (case kind
                     :map (map-entries x)
-                    :set (sort compare-printed x)
+                    :set (sort-shown identity x (:length *limits*))
                     (seq x))))))
 
 (defn- items
@@ -265,8 +280,9 @@
   the text is spliced into other text, `:column`, the column its first line
   starts at (later lines are indented to match), and `:tail`, the number of
   characters that follow it on its last line; `:length` and `:level` elide
-  long and deep collections as *print-length* and *print-level* do, and
-  `:max-chars` stops after that many characters and appends \"...\" (the text
+  long and deep collections as *print-length* and *print-level* do (a hash
+  map or set longer than `:length` shows the first items in its own order,
+  sorted, as *print-length* would choose them), and `:max-chars` stops after that many characters and appends \"...\" (the text
   then no longer reads back to the whole value)."
   ([value] (edn value nil))
   ([value options]

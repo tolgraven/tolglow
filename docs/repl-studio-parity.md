@@ -117,7 +117,9 @@ locations, RDM readback and job results) use the same printer, and tool-call
 JSON in the Assistant is indented by two spaces. The Develop REPL console
 pretty-prints a data result or error data with the same printer, inside the
 REPL's existing bounds (64 items per collection, 10 levels, 8192 characters per
-result); strings and other values print as `pr` prints them.
+result). Printing stops at the character bound, and a map or set longer than
+64 items shows the first 64 that `pr` would show, sorted, so a huge result costs
+no more than the text shown. Strings and other values print as `pr` prints them.
 
 ## View recent cues
 

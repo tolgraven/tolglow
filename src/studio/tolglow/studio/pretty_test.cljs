@@ -80,7 +80,7 @@
 
 (deftest length-and-level-elide-as-on-the-host
   (is (= "{:a (0 1 2 ...) :b [1 #] :c #{0 1 2 ...}}"
-         (pretty/edn (array-map :a (range) :b [1 [2 [3 [4]]]] :c (set (range 10))) {:length 3 :level 2}))))
+         (pretty/edn (array-map :a (range) :b [1 [2 [3 [4]]]] :c (into (sorted-set) (range 10))) {:length 3 :level 2}))))
 
 (deftest a-character-budget-stops-the-layout-as-on-the-host
   (let [row (vec (range 64)) value (vec (repeat 64 (vec (repeat 64 row))))
