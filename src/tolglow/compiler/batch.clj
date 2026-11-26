@@ -179,14 +179,15 @@
    (let [definition (or (when (and enabled? (matching/active? definition))
                           (matching/static-definition definition fixtures (registry/output-entries (:outputs definition))))
                         definition)
-         {:keys [schemas defaults outputs selected block-plan envelope-fn envelope-attributes]} (compiler/compile-plan definition)
+         {:keys [schemas defaults outputs selected block-plan envelope-fn envelope-attributes] :as plan} (compiler/compile-plan definition)
          selected-outputs (into [] (keep (partial select-targets fixtures selected)) outputs)
          numeric (numeric-contract selected-outputs)
          reasons (cond-> (:reasons numeric)
                    (matching/active? definition) (conj :matched-chroma)
                    (not enabled?) (conj :disabled)
                    (some :frame-only? outputs) (conj :tween)
-                   (some :video outputs) (conj :video))]
+                   (some :video outputs) (conj :video)
+                   (:shader plan) (conj :shader))]
      (if (seq reasons)
        (vary-meta (compiler/compile-effect definition bind-pure
                     (when (matching/active? definition) (matching/prepare fixtures selected))

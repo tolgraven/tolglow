@@ -94,13 +94,20 @@
 (defn- spatial-rig [fixtures]
   (try (geometry/prepare-rig fixtures) (catch clojure.lang.ExceptionInfo _ nil)))
 
+(defn- source-frame
+  "The frame a video output reads from source: a shader cue's own instance
+  frame first (#673), then the frames held for a paused instance, then the
+  latched frame by source id (hub sources and shader feeds alike)."
+  [input instance source]
+  (or (get-in input [:instance-frames (:id instance) source])
+      (get (or (get-in input [:held (:id instance)]) (:frames input)) source)))
+
 (defn- mapping-sampler [mapping channel placement-fns]
   (let [cache (sampler/plan-cache)]
     (fn [env frame instance]
       (let [input (get frame input-key)
             mapping-spec (get-in input [:mappings mapping])
-            frames (or (get-in input [:held (:id instance)]) (:frames input))
-            f (get frames (:source mapping-spec))]
+            f (source-frame input instance (:source mapping-spec))]
         (if-not (and mapping-spec f)
           {:values {}}
           (let [placed (into mapping/default-placement
@@ -120,8 +127,7 @@
     (fn [env frame instance]
       (let [input (get frame input-key)
             spec (get-in input [:surfaces surface-id])
-            frames (or (get-in input [:held (:id instance)]) (:frames input))
-            f (get frames (:source spec))]
+            f (source-frame input instance (:source spec))]
         (if-not spec
           {:values {}}
           (let [placed (into {} (map (fn [[k evaluate]] [k (double (evaluate env))])) placement-fns)

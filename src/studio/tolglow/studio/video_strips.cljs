@@ -156,7 +156,10 @@
     [:div.video-sources
      [:ul.video-source-list
       (for [[id _] (sort-by (comp str key) (:sources settings))]
-        ^{:key (str id)} [source-row (merge {:id id} (get statuses id)) (= id (:source ui))])]
+        ^{:key (str id)} [source-row (merge {:id id} (get statuses id)) (= id (:source ui))])
+      ;; A running shader cue's feed (#673) can carry strips too.
+      (for [{:keys [id] :as row} (:sources status) :when (= :shader (:kind row))]
+        ^{:key (str id)} [source-row row (= id (:source ui))])]
      [:div.video-source-actions
       [:button.text-button {:type "button"
                             :on-click #(edit! {:op :put-source :id :test-grid :source {:kind :test-pattern :width 640 :height 360}})}

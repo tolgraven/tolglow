@@ -45,6 +45,22 @@
                                                   (range (count (:targets strip))))})
                                  (:strips plan) offsets)}))])))
 
+(defn shader-sources
+  "Status rows for the shader feeds in the latch (#673), in the same shape as
+  hub sources, so strips can be mapped onto a running shader cue's feed."
+  [latch shader-status now-ms]
+  (vec (for [[feed rows] (sort-by (comp str key) (group-by :feed (:instances shader-status)))
+             :let [f (get-in latch [:frames feed])
+                   errors (keep :error rows)
+                   age (when-let [t (:captured-at-ms f)] (max 0 (- now-ms t)))]]
+         (merge {:id feed :kind :shader :label (str "Shader · " (name feed)) :connected? (some? f)
+                 :instances (mapv :instance-id rows) :fps (:fps (first rows))
+                 :frozen? (boolean (:frozen? latch))
+                 ;; A static shader publishes once; it is not stale while its cue runs.
+                 :stale? (nil? f) :age-ms age}
+                (when f {:width (:width f) :height (:height f) :sequence (:sequence f)})
+                (when (seq errors) {:error (:message (first errors)) :code (:code (first errors))})))))
+
 (def max-projected-contacts
   "Contacts listed per surface view; :count still gives the whole number."
   4096)
@@ -81,13 +97,18 @@
 
 (defn project
   "The :video key of the show snapshot. model, when given, adds :surfaces,
-  using surfaces (a `surface-cache`)."
-  ([video-hub latch fixtures cache] (project video-hub latch fixtures cache nil nil))
-  ([video-hub latch fixtures cache model surfaces]
-   (cond-> {:sources (hub/status video-hub latch)
+  using surfaces (a `surface-cache`). shader-status, when given, adds the
+  shader producer's status and lists each running shader feed as a source
+  (#673), so strips and surfaces can be placed on it."
+  ([video-hub latch fixtures cache] (project video-hub latch fixtures cache nil nil nil))
+  ([video-hub latch fixtures cache model surfaces] (project video-hub latch fixtures cache model surfaces nil))
+  ([video-hub latch fixtures cache model surfaces shader-status]
+   (cond-> {:sources (into (hub/status video-hub latch)
+                           (when shader-status (shader-sources latch shader-status ((:now-ms video-hub)))))
             :frozen? (boolean (:frozen? latch))
             :mappings (mapping-samples latch fixtures cache)}
-     model (assoc :surfaces (surface-views model fixtures (or surfaces (surface-cache)))))))
+     model (assoc :surfaces (surface-views model fixtures (or surfaces (surface-cache))))
+     shader-status (assoc :shaders shader-status))))
 
 (def max-jpeg-dimension
   "Largest served preview width or height, whatever the caller asks for."

@@ -5,6 +5,7 @@
             [tolglow.compiler.blocks :as blocks]
             [tolglow.compiler.capability :as capability]
             [tolglow.compiler.video :as video]
+            [tolglow.video.shader :as shader]
             [tolglow.effects.reactive :as reactive]
             [afterglow.runtime.keyframes :as keyframes]
             [afterglow.runtime.keyframes.values :as keyframe-values]
@@ -145,14 +146,17 @@
         envelope-spec (:envelope definition)
         envelope-fn (when (contains? definition :envelope)
                       (with-path [:envelope] #(envelope/compile-envelope envelope-spec)))
-        envelope-attributes (:attributes envelope-spec [:dimmer])]
+        envelope-attributes (:attributes envelope-spec [:dimmer])
+        shader-plan (when (shader/shader? definition)
+                      (when reactive-inputs (fail! [:shader] "A reactive effect cannot run a shader"))
+                      (shader/compile-shader definition #(prepare-expression %1 schemas reactive-inputs %2)))]
     (when (and envelope-fn
                (not (and (vector? envelope-attributes)
                           (every? (into registry/emitter-attributes [:dimmer :color :strobe :fog])
                                   envelope-attributes))))
       (fail! [:envelope :attributes] "Envelope targets must be intensity/color attributes"))
     {:schemas schemas :defaults defaults :outputs outputs :block-plan block-plan :selected selected
-     :envelope-fn envelope-fn :envelope-attributes envelope-attributes})))
+     :envelope-fn envelope-fn :envelope-attributes envelope-attributes :shader shader-plan})))
 
 (defn- validate-frame-fixtures! [fixtures]
   (when-not (and (vector? fixtures) (every? #(and (map? %) (some? (:id %))) fixtures))
@@ -168,10 +172,12 @@
         (select (validate-frame-fixtures! fixtures))))))
 
 (defn predictable-outputs?
-  "Video outputs follow received frames, never an interpolated forecast."
+  "Video outputs follow received frames, never an interpolated forecast, and
+  a shader cue evaluates its uniforms on every frame."
   [definition]
   (let [outputs (registry/output-entries (:outputs definition))]
     (and (seq outputs) (every? (comp keyframe-values/continuous :attribute) outputs)
+         (not (shader/shader? definition))
          (not-any? (comp video/video-output? :value) outputs))))
 
 (defn- compile-reactive-effect [definition outputs rig]
@@ -207,7 +213,8 @@
   ([definition bind-pure] (compile-effect definition bind-pure nil))
   ([definition bind-pure match-plan] (compile-effect definition bind-pure match-plan nil))
   ([definition bind-pure match-plan rig]
-  (let [{:keys [schemas defaults outputs selected block-plan envelope-fn envelope-attributes]}
+  (let [{:keys [schemas defaults outputs selected block-plan envelope-fn envelope-attributes]
+         shader-plan :shader}
         (compile-plan definition bind-pure)
         fixture-index (when block-plan (blocks/fixture-index rig))
         select-fixtures (fixture-selector rig selected)
@@ -291,7 +298,14 @@
                     fixtures))]
         (-> context
             (blocks/observed block-plan env frame (when (identical? rig frame-fixtures) fixture-index))
-            (assoc :state (if done? state (video/observe state outputs)) :done? done?)
+            ;; Surface outputs record their evaluated pose (#674), and a shader
+            ;; cue's uniforms are evaluated once here and committed with the
+            ;; instance; its producer renders from them (#673).
+            (assoc :state (cond-> state
+                            (not done?) (video/observe outputs)
+                            (and shader-plan (not done?))
+                            (shader/with-uniforms (with-path [:shader] #((:evaluate shader-plan) env))))
+                   :done? done?)
             (update :assignments (fnil into []) assignments)
             (update :intents #(or % [])))))]
     (if (:reactive definition)
