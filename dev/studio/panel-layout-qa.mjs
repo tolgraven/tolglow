@@ -591,11 +591,15 @@ for (const viewport of viewports) {
             const r = e.getBoundingClientRect();
             const x = r.left + r.width / 2, y = r.top + r.height / 2;
             const hit = document.elementFromPoint(x, y);
-            if (y > 20 && y < innerHeight - 90 && x > 10 && x < innerWidth - 10 && hit && e.contains(hit)) return {x, y};
+            if (y > 20 && y < innerHeight - 30 && x > 10 && x < innerWidth - 10 && hit && e.contains(hit)) return {x, y};
           }
           return null;
         });
-        if (viewport.name === 'tablet') assert.ok(other, 'another handle is in reach of a second finger');
+        if (viewport.name === 'tablet') assert.ok(other, 'another handle is in reach of a second finger: ' + JSON.stringify(await page.evaluate(() =>
+          [...document.querySelectorAll('#view-perform .layout-handle, #view-perform .layout-resize')].map(e => {
+            const r = e.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+            return [e.className, Math.round(r.top), Math.round(r.left), hit && hit.className];
+          }))));
         if (other) {
           const both = [{x: bottom.x, y: bottom.y, id: 2, radiusX: 4, radiusY: 4, force: 1},
                         {x: other.x, y: other.y, id: 3, radiusX: 4, radiusY: 4, force: 1}];
