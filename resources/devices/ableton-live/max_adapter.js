@@ -66,7 +66,23 @@ function init() {
     session: new TolglowSession.Session({
       api: liveObject,
       dictionaryCall: function (object, method, data) { return object.call(method, data); },
-      readDictionary: readDictionary
+      readDictionary: readDictionary,
+      // Run-track and host-track playback (#683). `immediate` only stores the
+      // value and runs inside the notification; `changed` may read LiveAPI, so
+      // it runs in a deferred task, never inside the callback.
+      observe: function (id, property, changed, immediate) {
+        var open = true, handle = new LiveAPI(function (args) {
+          if (!args || args[0] !== property) return;
+          var value = args[1];
+          if (immediate) immediate(value);
+          // Every change is delivered in order; the Session drops repeats.
+          if (changed) new Task(function () { if (open) changed(value); }).schedule(0);
+        }, "live_set");
+        handle.id = id;
+        handle.property = property;
+        return function () { open = false; handle.property = ""; handle.id = 0; };
+      },
+      emit: function (event) { outlet(0, "event", JSON.stringify({kind: "run-clip", event: event})); }
     }),
     // Live's note methods take a dictionary. Keep the host-specific serialization
     // isolated; do not retry a mutating method with a different encoding.
@@ -124,6 +140,8 @@ function stopped() {
   if (adapter) {
     adapter.handle({id: "local-stopped-" + (++localId), op: "handoff", payload: {mode: "live"}});
     if (adapter.parameters) adapter.parameters.close();
+    // Run-track and host-track playback watches end with the device.
+    if (adapter.session) adapter.session.closeWatches();
     outlet(1, "thru", 1);
   }
 }

@@ -901,4 +901,50 @@ The remaining gaps are tracked in issue #481. Studio has no editor for `:calibra
 
 Retrospective Capture has a shared operation. The runtime owns the capture buffer. `show/capture-phrase!` at the REPL and **Connections → Capture** in Studio both call `show/capture-action!` with `:capture`. The REPL receives the phrase; Studio receives its summary and a MIDI clip download of the same capture (`:smf`). `(show/capture-action! rt :status {})` reads the buffer and the last capture that both surfaces show. Two gaps remain. Writing the capture into Live from Studio (`live-connection/capture!` over the configured bridge) is REPL-only, and Push has no Capture button: the uniform surface layer lives with the Push controllers, outside this change. Close them when Studio and Push both send the last capture to Live and the REPL can read the resulting clip identities. [Capture into Live](live-routing.md#capture-the-last-phrase-into-live) · [Issue #671](https://github.com/tolgraven/tolglow/issues/671) · [Issue #680](https://github.com/tolgraven/tolglow/issues/680)
 
+## See what ran as Live runs
+
+The runtime keeps a run record (#683). It has one channel per launched cue,
+one take per run, a lane for each overlapping run and the effect-group path.
+Both surfaces read the same projection, `show/live-runs-action!` with
+`:status`. In Studio, open **Connections → Live runs** and choose **Show what
+ran**. It lists each launched cue with its group, lanes and takes. From the
+REPL:
+
+```clojure
+(show/live-runs runtime)          ; the projection Studio shows
+(show/live-runs-record runtime)   ; exact beats, launch values and moves
+```
+
+Mirroring the record into Live needs a companion connection. Only the REPL
+can run it today:
+
+```clojure
+(require '[tolglow.integrations.live-connection :as live]
+         '[tolglow.integrations.live-transport :as transport])
+(show/sync-live-runs! runtime (live/open (transport/transport {:endpoint "http://127.0.0.1:8750/live"
+                                                              :bridge-id "tolglow-m4l"
+                                                              :sync-session-id "runs"})
+                                        {:session-id "runs"}))
+```
+
+After a sync, **Show what ran** marks each take `in Live` with its clip and
+lists the problems the read-back found, such as a run track outside its Group
+Track. The automated check compares the Ring projection with the REPL's
+projection, before and after a sync
+([test](../test/tolglow/integrations/live_runs_test.clj)).
+
+Run-clip playback reaches the show through the Live bridge. The REPL can feed
+the same event to `show/live-run-clip!`. The panel and
+`/api/live-runs?limit=n` list the newest 256 takes by default.
+
+Gaps:
+- Studio cannot start a sync, because the runtime does not own a companion
+  connection.
+- The panel refreshes on request, not from the state stream.
+- Push has no run view.
+- The panel was checked through server-rendered markup and event tests and
+  in headless Chrome against Ring. It was not checked on an iPad.
+
+[Run tracks in Live](live-routing.md#mirror-what-ran-as-run-tracks-clips-and-group-tracks) · [Issue #683](https://github.com/tolgraven/tolglow/issues/683)
+
 Video strip mapping uses one message from both surfaces. In Studio, **Rig & space → Video strips** sends `:video-mapping` edits through `POST /api/video-mapping`. The REPL sends the same edits with `show/video-action! runtime :edit`, using the geometry helpers in `tolglow.video.mapping`. Both read source status and sampled strip colours from the snapshot's `:video` key. A REPL edit redraws the open editor through the state stream. Studio has no control for a video cue's `:placement` parameters beyond the ordinary parameter controls on its card. [Video on LED strips](video-strips.md) · [Issue #672](https://github.com/tolgraven/tolglow/issues/672)
