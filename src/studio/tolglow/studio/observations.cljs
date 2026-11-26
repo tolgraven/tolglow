@@ -124,7 +124,8 @@
                   (or current
                       (assoc (controller) :visible?
                              #(let [renderer (or (aget engine "fallback") engine)]
-                                (and (not (.-hidden js/document)) (aget renderer "visible")
+                                (and (not (.-hidden (or (some-> (aget renderer "canvas") .-ownerDocument) js/document)))
+                                     (aget renderer "visible")
                                      (not (or (aget renderer "disposed") (aget renderer "lost") (aget renderer "paused"))))))))]
     (aset component "observationControl" (when request control))
     (aset engine "observedFrame"

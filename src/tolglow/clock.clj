@@ -1,6 +1,7 @@
 (ns tolglow.clock
-  "Pure musical-clock rebasing at an explicit source/loop/seek boundary.
-  Shift known local beat anchors, not durations or arbitrary user state. No
+  "Pure musical-clock rebasing at an explicit source/loop/seek boundary, and
+  millisecond holds across a stopped transport (#699). Shift known local
+  anchors, not durations or arbitrary user state. No
   clocks, subscriptions, devices, commands or random generators are owned here."
   (:require [afterglow.time :as time]
             [afterglow.control.sensors :as sensors]
@@ -58,6 +59,61 @@
            (cond-> (shift-fields state [:next-at-beat] offset [:auto :state])
              (:interval-timer state)
              (update :interval-timer shift-timer offset [:auto :state :interval-timer]))) auto))
+
+(defn- hold-timer [timer held-ms]
+  (cond-> timer (= :ms (get-in timer [:duration :unit])) (update :started-at + held-ms)))
+
+(defn- hold-instance [instance held-ms]
+  ;; :transport-held-ms counts every held interval since launch, so show-level
+  ;; response envelopes can tell transport holds from an explicit pause. An
+  ;; explicitly paused instance already has a frozen private clock; its resume
+  ;; recomputes the offset, absorbing the stop as well.
+  (cond-> (update-in instance [:system :transport-held-ms] (fnil + 0) held-ms)
+    (not (get-in instance [:system :paused?])) (update-in [:system :clock-offset-ms] (fnil + 0) held-ms)))
+
+(defn- hold-response [response held-ms]
+  (if (:state response)
+    (update response :state #(cond-> %
+                               (some? (:started-at-ms %)) (update :started-at-ms + held-ms)
+                               (some? (:released-at-ms %)) (update :released-at-ms + held-ms)))
+    response))
+
+(defn- hold-auto [auto held-ms]
+  (if-let [state (:state auto)]
+    (assoc auto :state (cond-> state
+                         (:interval-timer state) (update :interval-timer hold-timer held-ms)
+                         (some? (:next-at-ms state)) (update :next-at-ms + held-ms)))
+    auto))
+
+(defn hold
+  "Keep millisecond show progress where it was across held-ms of stopped
+  transport. Beat progress already stands still with the transport beat; this is
+  its millisecond counterpart. Call it once per frame for the interval whose
+  preceding transport state was stopped, before commands and advancement.
+
+  Each running instance's private clock offset grows by held-ms, so every
+  millisecond timer it owns (system attack/release, authored envelopes and
+  release tails, timed durations, output tweens, :time expressions and step
+  deltas) reads the same private time it had when the transport stopped.
+  Explicitly paused instances keep their own frozen clock. Every instance also
+  counts the held time in :system :transport-held-ms. Millisecond scheduler
+  ramps, response envelopes and the auto planner's millisecond interval shift
+  by the same amount. Millisecond sequences keep their own
+  pause-aware logical clock, and spatial physics already reads :playing?.
+  Host :time-ms, deadlines, leases, observation ages, sensor and routing input
+  envelopes, fog estimates and physical output timing are not show progress and
+  stay on the wall clock. The function is pure and persisted state carries the
+  result, so a save made during a stop resumes from the held position."
+  [model held-ms]
+  (when-not (and (time/finite-number? held-ms) (<= 0 held-ms))
+    (fail! "Held time must be finite nonnegative milliseconds" {:path [:held-ms]}))
+  (if (zero? held-ms) model
+      (cond-> model
+        (map? (:instances model))
+        (update :instances #(into {} (map (fn [[id instance]] [id (hold-instance instance held-ms)])) %))
+        (seq (:responses model)) (update :responses #(mapv (fn [r] (hold-response r held-ms)) %))
+        (seq (get-in model [:event-subscribers :ramps])) (subscribers/hold-clock held-ms)
+        (:auto model) (update :auto hold-auto held-ms))))
 
 (defn rebase
   "Rebase known musical domains to a captured external clock, preserving local

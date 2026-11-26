@@ -8,6 +8,8 @@
             [tolglow.event-subscribers :as sub]
             [tolglow.spatial :as spatial]
             [tolglow.registry :as registry]
+            [tolglow.persistence :as persistence]
+            [tolglow.show.scene-draft :as draft]
             [tolglow.composition.tween :as tween]))
 
 (def model {:rig {:fixtures [{:id :mover :channels {:pan [1 2] :tilt [3 4]}}
@@ -163,7 +165,7 @@
 
 (def launch {:op :cue/launch :cue-id "paired-cue"})
 
-(deftest musical-minimum-uses-the-show-tempo-and-motor-rates-remain-a-bound
+(deftest musical-minimum-uses-the-show-tempo-and-launch-never-refuses-for-tempo
   (let [rig (-> model (assoc-in [:rig :fixtures] paired-heads) (assoc :transport transport))
         bars (paths/definition rig (assoc synchronized-spec :duration {:bars 2}))
         beat (paths/definition rig (assoc synchronized-spec :duration {:beats 1}))]
@@ -174,10 +176,144 @@
            (into [] (comp (map #(mapv :at (get-in % [:value :spec :keyframes]))) (distinct)) (:outputs bars))))
     (is (near? 2000.0 (get-in beat [:editor :arrival-duration :ms])) "One beat is shorter than the motor limit")
     (is (nil? (paths/launch-problem (registered rig bars) launch nil)))
-    (is (= :tempo-exceeds-motor-rate
-           (first (paths/launch-problem (assoc-in (registered rig bars) [:transport :bpm] 480) launch nil))))
+    (doseq [bpm [70 120 180 480]]
+      (is (nil? (paths/launch-problem (assoc-in (registered rig bars) [:transport :bpm] bpm) launch nil))
+          "A tempo that outruns the motors stretches the launch instead of refusing it"))
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"finite, positive show tempo"
                           (paths/definition (assoc-in rig [:transport :bpm] 0) (assoc synchronized-spec :duration {:bars 2}))))))
+
+(defn- launch-at-bpm
+  "Launch the cue through the real spatial and control command path."
+  [model bpm launch-options]
+  (spatial/apply-command (assoc-in model [:transport :bpm] bpm)
+                         (cond-> {:op :cue/launch :cue-id :paired-cue :command-id (str "launch-" bpm)
+                                  :show-id (:show-id model) :epoch (:epoch model) :time-ms 0
+                                  :source {:adapter :test}}
+                           launch-options (assoc :launch launch-options))))
+
+(deftest launch-stretches-a-musical-arrival-the-tempo-makes-too-fast-across-the-dance-range
+  (let [rig (control/new-show {:rig {:fixtures paired-heads}})
+        effect (paths/definition rig (assoc synchronized-spec :duration {:beats 5}))
+        model (-> rig
+                  (assoc-in [:registry :effects (:id effect)] effect)
+                  (assoc-in [:registry :cues :paired-cue] {:id :paired-cue :effect-id (:id effect) :version 1}))]
+    (is (= {:beats 5} (:duration effect)) "Five beats at the publishing 120 BPM outlast the 2 s motor minimum")
+    (doseq [bpm [70 90 120 140 170 180]
+            :let [result (launch-at-bpm model bpm nil)
+                  {:keys [ack]} result
+                  instance (get-in result [:model :instances (:instance-id ack)])
+                  musical-ms (* 5 (/ 60000.0 bpm))]]
+      (is (= :accepted (:status ack)) (str bpm " BPM launches"))
+      (if (>= musical-ms 2000.0)
+        (do (is (nil? (:arrival-stretch ack)) (str bpm " BPM needs no stretch"))
+            (is (identical? effect (:definition instance)) "An unstretched launch runs the published definition"))
+        (let [{:keys [duration duration-ms stretched-by-ms] :as report} (:arrival-stretch ack)
+              beats (:beats duration)]
+          (is (= report (:arrival-stretch instance)))
+          (is (near? 2000.0 duration-ms))
+          (is (near? (- 2000.0 musical-ms) stretched-by-ms))
+          (is (near? 2000.0 (* beats (/ 60000.0 bpm))) "The stretched span lasts the motor minimum at the launch tempo")
+          (is (= duration (get-in instance [:definition :duration])))
+          (is (= [[{:beats 0} duration]]
+                 (into [] (comp (map #(mapv :at (get-in % [:value :spec :keyframes]))) (distinct))
+                       (get-in instance [:definition :outputs])))
+              "Every head shares the stretched keyframes on the beat clock, so all arrive together")
+          (is (= (mapv #(mapv :value (get-in % [:value :spec :keyframes])) (:outputs effect))
+                 (mapv #(mapv :value (get-in % [:value :spec :keyframes])) (get-in instance [:definition :outputs])))
+              "Stretching changes timing, not the solved endpoints")
+          (is (= effect (get-in result [:model :registry :effects :paired])) "The published definition is unchanged"))))
+    (let [one-shot (launch-at-bpm model 170 {:mode :one-shot})
+          instance (get-in one-shot [:model :instances (get-in one-shot [:ack :instance-id])])
+          beats (* 5 (/ 2000.0 (* 5 (/ 60000.0 170))))]
+      (is (near? beats (get-in instance [:duration :beats])) "A one-shot lives until the stretched arrival")
+      (is (near? beats (get-in instance [:duration-timer :duration :value])))
+      (is (= :beats (get-in instance [:duration-timer :duration :unit]))))
+    (let [timed (launch-at-bpm model 170 {:mode :timed :duration {:beats 2}})
+          instance (get-in timed [:model :instances (get-in timed [:ack :instance-id])])]
+      (is (= {:beats 2} (:duration instance)) "An explicit launch lifetime is the operator's, not the stretch's")
+      (is (some? (:arrival-stretch instance))))))
+
+(deftest retried-launch-never-stretches-an-instance-that-is-already-running
+  (let [rig (control/new-show {:rig {:fixtures paired-heads}})
+        effect (paths/definition rig (assoc synchronized-spec :duration {:beats 5}))
+        model (-> rig
+                  (assoc-in [:registry :effects (:id effect)] effect)
+                  (assoc-in [:registry :cues :paired-cue] {:id :paired-cue :effect-id (:id effect) :version 1}))
+        command {:op :cue/launch :cue-id :paired-cue :command-id "once" :show-id (:show-id model)
+                 :epoch (:epoch model) :time-ms 0 :source {:adapter :test} :launch {:mode :one-shot}}
+        first-launch (spatial/apply-command model command)
+        id (get-in first-launch [:ack :instance-id])
+        running (get-in first-launch [:model :instances id])
+        faster (assoc-in (:model first-launch) [:transport :bpm] 170)
+        retried (spatial/apply-command faster command)]
+    (is (nil? (:arrival-stretch running)) "Five beats at 120 BPM launch unstretched")
+    (is (= (:ack first-launch) (:ack retried)) "A retry returns the original receipt")
+    (is (= faster (:model retried)) "A retry after the tempo rose leaves the running instance alone")
+    (is (empty? (:events retried)))
+    (let [stretched (launch-at-bpm model 170 nil)
+          again (spatial/apply-command (:model stretched) (assoc command :command-id "launch-170" :launch nil))]
+      (is (some? (get-in stretched [:ack :arrival-stretch])))
+      (is (= (:model stretched) (:model (spatial/apply-command (:model stretched)
+                                                               {:op :cue/launch :cue-id :paired-cue :command-id "launch-170"
+                                                                :show-id (:show-id model) :epoch (:epoch model) :time-ms 0
+                                                                :source {:adapter :test}})))
+          "A retried stretched launch is not stretched twice")
+      (is (= :rejected (get-in again [:ack :status])) "Reusing the ID with other data is still a conflict")
+      (is (= (:ack stretched)
+             (:ack (spatial/apply-command (:model stretched)
+                                          {:op :cue/launch :cue-id :paired-cue :command-id "launch-170"
+                                           :show-id (:show-id model) :epoch (:epoch model) :time-ms 0
+                                           :source {:adapter :test}})))
+          "A retried stretched launch returns the same receipt, stretch report included"))))
+
+(deftest stretched-instances-of-every-musical-unit-pass-show-validation
+  (let [rig (control/new-show {:rig {:fixtures paired-heads}})]
+    (doseq [[duration bpm expected] [[{:beats 5} 170 {:beats (/ 17.0 3)}]
+                                     [{:bars 1} 180 {:bars 1.5}]
+                                     [{:phrases 1} 960 {:phrases 2.0}]]
+            :let [effect (paths/definition rig (assoc synchronized-spec :duration duration))
+                  model (-> rig
+                            (assoc-in [:registry :effects (:id effect)] effect)
+                            (assoc-in [:registry :cues :paired-cue] {:id :paired-cue :effect-id (:id effect) :version 1}))
+                  result (launch-at-bpm model bpm {:mode :one-shot})
+                  instance (get-in result [:model :instances (get-in result [:ack :instance-id])])
+                  [unit span] (first (get-in instance [:definition :duration]))]]
+      (is (= duration (:duration effect)) (str duration " is published unstretched at 120 BPM"))
+      (is (= (key (first expected)) unit))
+      (is (near? (val (first expected)) span))
+      (is (= #{{unit span}} (set (map #(get-in % [:value :spec :keyframes 1 :at]) (get-in instance [:definition :outputs])))))
+      (is (= effect (paths/published-definition instance)))
+      (is (map? (persistence/validate-model (:model result))) "A show saved mid-move validates")
+      (let [restored (persistence/thaw (:model result) (persistence/read-string (persistence/write-string (:model result) nil)))
+            [again] (vals (:instances restored))]
+        (is (= (:definition instance) (:definition again)) "A Transit checkpoint restores the stretched move")
+        (is (= (:arrival-stretch instance) (:arrival-stretch again)))
+        (is (= effect (get-in restored [:registry :effects :paired])) "and the published move")))))
+
+(deftest room-audition-stretches-only-its-private-copy-and-apply-stretches-at-the-live-tempo
+  (let [rig (control/new-show {:rig {:fixtures paired-heads}})
+        effect (paths/definition rig (assoc synchronized-spec :duration {:beats 5}))
+        live (-> rig
+                 (assoc-in [:registry :effects (:id effect)] effect)
+                 (assoc-in [:registry :cues :paired-cue] {:id :paired-cue :effect-id (:id effect) :version 1}))
+        fast (assoc-in live [:transport :bpm] 170)
+        staged (:draft (draft/stage fast nil {:draft-id "room" :operations [{:op :cue/launch :cue-id :paired-cue}]} 0))
+        auditioned (first (vals (get-in staged [:model :instances])))
+        apply-at (fn [model] (draft/apply-draft model staged {:command-id "apply" :show-id (:show-id model) :epoch (:epoch model)
+                                                              :source {:adapter :test} :time-ms 0
+                                                              :expected-draft-revision 0}))
+        applied-fast (apply-at fast)
+        applied-slow (apply-at live)
+        instance #(first (vals (get-in % [:model :instances])))]
+    (is (some? (:arrival-stretch auditioned)) "The audition frame shows the stretched move")
+    (is (empty? (:instances fast)) "Staging commits nothing live")
+    (is (= effect (get-in staged [:model :registry :effects :paired])))
+    (is (= :accepted (get-in applied-fast [:ack :status])))
+    (is (= (:definition auditioned) (:definition (instance applied-fast))) "Apply stretches at the live tempo")
+    (is (= effect (get-in applied-fast [:model :registry :effects :paired])))
+    (is (= :accepted (get-in applied-slow [:ack :status])))
+    (is (nil? (:arrival-stretch (instance applied-slow))) "Applied after the tempo fell, the move needs no stretch")
+    (is (identical? effect (:definition (instance applied-slow))))))
 
 (deftest launch-refuses-a-path-solved-against-another-mount-or-calibration
   (let [rig (assoc-in model [:rig :fixtures] paired-heads)
