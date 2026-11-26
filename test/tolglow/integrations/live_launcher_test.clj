@@ -119,9 +119,16 @@
               :sync-options {:live-factory (bridge-factory ls requests)}})]
      {:rt rt :ls ls :requests requests :manager (connections/sync (:connections rt)) :serial (atom 0)})))
 
-(defn- start-bridge! [{:keys [rt]} & [live]]
+(defn- start-bridge!
+  "Save the bridge settings, start it and wait (bounded) until it has opened
+  its companion connection: the connection opens on the bridge's own thread."
+  [{:keys [rt manager]} & [live]]
   (let [configured (show/sync-action! rt :configure {:config {:live (merge {:enabled? true} live)} :page-id "pads"})]
     (show/sync-action! rt :start {})
+    (let [deadline (+ (System/currentTimeMillis) 10000)]
+      (while (and (not (live-sync/bridge-connected? manager)) (< (System/currentTimeMillis) deadline))
+        (Thread/sleep 5)))
+    (is (live-sync/bridge-connected? manager) "the bridge opened its companion connection")
     configured))
 
 (defn- at! [{:keys [rt manager]} beat]

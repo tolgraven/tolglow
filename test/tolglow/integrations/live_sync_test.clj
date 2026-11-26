@@ -518,7 +518,10 @@
                                                      {:id id :status :executed :result {}})})})]
     (try
       (sync/start! manager (callbacks (atom []) (atom [])))
-      (is (session/flush! manager))
+      (let [deadline (+ (System/currentTimeMillis) 10000)]
+        (while (and (not (live-sync/bridge-connected? manager)) (< (System/currentTimeMillis) deadline))
+          (Thread/sleep 5)))
+      (is (live-sync/bridge-connected? manager))
       (let [conn (live-connection/open (live-sync/companion-transport manager) {})
             running (future (live-connection/request! conn :ensure-launcher {:name "Tolglow launcher pads"}))
             _ (is (true? (deref entered 2000 false)))

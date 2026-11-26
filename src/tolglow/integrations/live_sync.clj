@@ -121,6 +121,13 @@
                                             :status-version status-version})
                        (when (= op :inspect) (reset! (:poll-pending? run) false))))))))
 
+(defn bridge-connected?
+  "Has the running Live bridge opened its companion connection? Until then,
+  companion-transport refuses operations as :not-connected."
+  [manager]
+  (let [{:keys [active]} @(:state manager)]
+    (boolean (and active (get-in @(:resources active) [:live :transport])))))
+
 (defn companion-transport
   "A live-connection transport ({:open! :request! :close!}) that sends each
   operation through the running Live bridge's own companion connection, under
