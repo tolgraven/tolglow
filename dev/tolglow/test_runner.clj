@@ -41,7 +41,9 @@
     tolglow.studio.fixture-host-test tolglow.rig-test tolglow.pixel-layout-test tolglow.pixel-layout-host-test tolglow.rig-surfaces-test
     tolglow.reflected-surfaces-test tolglow.fixture-photometry-test
     tolglow.rig.rdm-test tolglow.studio.rdm-host-test
-    tolglow.integrations.live-sync-test tolglow.studio.link-pause-test tolglow.studio.sync-host-test tolglow.studio.modulation-host-test
+    tolglow.integrations.live-sync-test tolglow.integrations.phrase-capture-test tolglow.integrations.phrase-clip-test
+    tolglow.integrations.live-connection-test tolglow.integrations.live-capture-roundtrip-test
+    tolglow.studio.link-pause-test tolglow.studio.sync-host-test tolglow.studio.modulation-host-test
     tolglow.studio.display-test tolglow.integrations.patch-test tolglow.studio.routing-host-test
     tolglow.repl-test tolglow.repl.sessions-test tolglow.studio.repl-host-test
     tolglow.development.workspace-test tolglow.development-test tolglow.studio.restart-host-test tolglow.cue-timing-host-test
