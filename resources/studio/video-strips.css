@@ -33,3 +33,22 @@
 .video-strip-editor h3 { margin: 0; font-size: 13px; font-weight: 500 }
 .video-strip-editor output { font-size: 11px; color: var(--text) }
 @media (max-width: 600px) { #video-strips .form-row > * { flex: 1 1 140px } #video-strips select { font-size: 16px } }
+
+/* Video on 3D surfaces (#674) */
+#video-surfaces { margin-top: 24px; overflow: hidden }
+#video-surfaces .form-body { display: grid; gap: 16px }
+#video-surfaces .form-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: end }
+#video-surfaces label { display: grid; gap: 6px; font-size: 11px; color: var(--muted) }
+#video-surfaces button, #video-surfaces select { min-height: 44px }
+#video-surfaces input[type=number] { width: 7em; min-height: 44px }
+#video-surfaces fieldset { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 12px; margin: 0 }
+#video-surfaces legend { font-size: 11px; color: var(--muted); padding: 0 4px }
+#video-surfaces button[aria-pressed=true] { color: var(--accent) }
+.video-surface-editor { border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 12px }
+.video-surface-editor h3 { margin: 0; font-size: 13px; font-weight: 500 }
+.video-surface-contacts h4 { margin: 0 0 6px; font-size: 12px; font-weight: 500 }
+.video-surface-contacts ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; font-size: 12px }
+.video-surface-contacts li { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end }
+@media (max-width: 600px) { #video-surfaces .form-row > *, #video-surfaces fieldset > * { flex: 1 1 120px }
+  #video-surfaces select, #video-surfaces input { font-size: 16px } }
