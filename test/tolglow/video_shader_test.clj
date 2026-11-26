@@ -8,15 +8,19 @@
   native tests, and `tolglow.bench-shader-cues` measures it."
   (:require [clojure.test :refer [deftest is testing]]
             [tolglow.compiler :as compiler]
+            [tolglow.data :as data]
             [tolglow.demo :as demo]
             [tolglow.persistence :as persistence]
             [tolglow.rig.pixel-layout :as layout]
             [tolglow.show :as show]
+            [tolglow.studio :as studio]
+            [tolglow.transit :as transit]
             [tolglow.video.hub :as video-hub]
             [tolglow.video.shader :as shader]
             [tolglow.video.shader-producer :as producer]
             [tolglow.video.source :as source])
-  (:import [java.util.concurrent Callable Executors ExecutorService]))
+  (:import [java.io ByteArrayInputStream]
+           [java.util.concurrent Callable Executors ExecutorService]))
 
 ;; A deterministic renderer -------------------------------------------------
 
@@ -260,11 +264,11 @@
     (accepted! reply)))
 
 (defn- tick-until [runtime t pred]
-  (loop [t t]
-    (show/tick! runtime t)
-    (cond (pred) t
-          (> t 100000) (throw (ex-info "Condition never held" {}))
-          :else (do (Thread/sleep 10) (recur (+ t 25))))))
+  (loop [t' t]
+    (show/tick! runtime t')
+    (cond (pred) t'
+          (> t' (+ t 10000)) (throw (ex-info "Condition never held" {}))
+          :else (do (Thread/sleep 10) (recur (+ t' 25))))))
 
 (deftest a-200-by-1-shader-target-drives-a-strip-pixel-for-pixel
   (let [r (test-renderer programs)
@@ -339,4 +343,74 @@
               (tick-until restored 100 #(get-in @(:state restored) [:video-latch :instance-frames restored-id])))
             (is (= 191 (second (source/rgb-at (get-in @(:state restored) [:video-latch :frames :shader/index-strip]) 0 0))))
             (finally (show/stop! restored)))))
+      (finally (show/stop! runtime)))))
+
+(deftest studio-routes-pump-projector-frames-and-audition-compiles
+  (let [r (test-renderer programs)
+        runtime (start-show r)
+        handler (studio/handler runtime)
+        transit-headers {"host" "localhost" "content-type" "application/transit+json" "accept" "application/transit+json"}
+        audition (fn [shader]
+                   (let [response (handler {:request-method :post :uri "/api/video/shader/audition" :headers transit-headers
+                                            :body (ByteArrayInputStream. (.getBytes (transit/encode {:shader shader :params (:params strip-effect)}) "UTF-8"))})]
+                     [(:status response) (transit/decode (:body response))]))]
+    (try
+      (publish! runtime strip-effect 0)
+      (let [id (launch! runtime :index-strip 25)
+            t (tick-until runtime 50 #(get-in @(:state runtime) [:video-latch :frames :shader/index-strip]))
+            next! #(handler {:request-method :get :uri "/api/video/next" :headers {"host" "localhost"}
+                             :query-string (str "source=:shader/index-strip&wait=50&after=" %)})
+            frame (next! -1)
+            sequence (parse-long (get-in frame [:headers "X-Frame-Sequence"]))
+            bytes (.readAllBytes ^java.io.InputStream (:body frame))]
+        (is (= 200 (:status frame)))
+        (is (= ["200" "1"] (mapv #(get-in frame [:headers %]) ["X-Frame-Width" "X-Frame-Height"])))
+        (is (= 800 (alength bytes)))
+        (is (= [0 128 199] (mapv #(bit-and 0xff (aget bytes %)) [2 1 (+ 2 (* 4 199))]))
+            "BGRA: red of pixel n is n, green the level")
+        (testing "nothing newer within the wait answers 204, so the page holds its picture"
+          (is (= 204 (:status (next! sequence)))))
+        (testing "a new committed value arrives as the next frame"
+          (command! runtime {:op :param/set :instance-id id :param :level :value 1.0} (+ t 25))
+          (tick-until runtime (+ t 50) #(= 255 (second (source/rgb-at (get-in @(:state runtime) [:video-latch :frames :shader/index-strip]) 0 0))))
+          (let [frame (next! sequence) bytes (.readAllBytes ^java.io.InputStream (:body frame))]
+            (is (= 200 (:status frame)))
+            (is (= 255 (bit-and 0xff (aget bytes 1)))))))
+      (is (= 204 (:status (handler {:request-method :get :uri "/api/video/next" :headers {"host" "localhost"}
+                                    :query-string "source=:shader/none&wait=10"}))))
+      (testing "audition compiles on the renderer and publishes nothing"
+        (let [revision (get-in @(:state runtime) [:model :registry :revision])]
+          (is (= [200 {:compiled? true}] (audition (:shader strip-effect))))
+          (let [[status body] (audition (assoc (:shader strip-effect) :glsl "void main() { fragColor = vec4(oops); }"))]
+            (is (= 200 status))
+            (is (false? (:compiled? body)))
+            (is (re-find #"oops" (:log body))))
+          (let [[_ body] (audition (assoc-in (:shader strip-effect) [:uniforms :u_level :value :key] :gone))]
+            (is (= [:shader :uniforms :u_level :value :key] (get-in body [:errors 0 :path]))
+                "Uniform expressions are checked against the cue's parameters first"))
+          (is (= revision (get-in @(:state runtime) [:model :registry :revision])))))
+      (testing "the projector page is a static Studio asset"
+        (let [page (handler {:request-method :get :uri "/studio/video-output.html" :headers {"host" "localhost"}})]
+          (is (= 200 (:status page)))
+          (is (re-find #"api/video/next" (slurp (:body page))))))
+      (finally (show/stop! runtime)))))
+
+(deftest an-agent-proposed-shader-cue-uses-the-same-validated-command
+  ;; The agent tool `publish_effect` sends JSON-shaped data through the
+  ;; ordinary :definition command; enum strings normalize as for any effect.
+  (let [proposal (data/normalize-json
+                  {:id "agent-glow" :version 1 :name "Agent glow"
+                   :params {:level {:type "number" :default 0.4 :bounds [0 1]}}
+                   :shader {:glsl index-glsl :size [200 1] :fps 25 :kind "2d"
+                            :uniforms {:u_level {:type "float" :value {:op "param" :key "level"}}}}
+                   :outputs {:color {:op "video" :mapping "strip-200"}}})
+        r (test-renderer programs)
+        runtime (start-show r)]
+    (try
+      (is (= [] (compiler/definition-errors :effects (update-in proposal [:outputs :color :mapping] keyword))))
+      (let [reply (show/submit! runtime :definition {:kind :effects :definition (update-in proposal [:outputs :color :mapping] keyword)
+                                                     :source {:adapter :agent :session-id "run-1"}})]
+        (show/tick! runtime 0)
+        (accepted! reply)
+        (is (= :shader/agent-glow (shader/feed-id (get-in @(:state runtime) [:model :registry :effects :agent-glow])))))
       (finally (show/stop! runtime)))))

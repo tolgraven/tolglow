@@ -445,7 +445,7 @@
 (defn- post-routes [{:keys [material-preview! variable-sources! spatial-search! submit! submit-history! heartbeat! provider-put! chat! chat-select!
                              app-agent! checkpoint! cue-variation-preview!
                              sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync! section-reference!
-                             capture!]
+                             capture! video!]
                      :or {material-preview! materials/preview}}]
   (merge
    (into {} (for [[path op] operations]
