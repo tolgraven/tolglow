@@ -3,6 +3,7 @@
   (:require [cljs.tools.reader.edn :as edn]
             [cljs.tools.reader.reader-types :as readers]
             [clojure.string :as str]
+            [reagent.core :as r]
             [tolglow.studio.fixture-picker :as fixtures]
             [tolglow.studio.keyframe-editor :as keyframes]))
 
@@ -94,7 +95,11 @@
                :on-change (fn [event]
                             (let [enabled? (.. event -target -checked)
                                   initial (when-not draft (new-draft))]
-                              (edit! #(assoc (or % initial) :enabled? enabled?))))}]
+                              (edit! #(assoc (or % initial) :enabled? enabled?))
+                              ;; React restores a controlled checkbox to its rendered state when the
+                              ;; event ends. Render now so it keeps the new state instead of showing
+                              ;; the old one until the next frame.
+                              (r/flush)))}]
       "Evaluate when inputs change"]
      (when (and base (not enabled?))
        [:p.small.muted "Update this definition’s output expressions in EDN to turn off reactive evaluation."])

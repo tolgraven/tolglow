@@ -145,7 +145,9 @@ test("late older inspect acknowledgement cannot replace a newer sync owner", asy
 test("stop resolves outstanding host execution as indeterminate and closes ownership", async () => {
   const arrived = deferred(); const bridge = testBridge({ sendToMax: () => arrived.resolve() }); const { port } = await startTestBridge(bridge);
   const response = post(port, scoped({ id: "stop-me", op: "record-event", payload: {} })); await arrived.promise;
-  await bridge.stop(); assert.equal((await response).body.status, "indeterminate");
+  await bridge.stop(); const stopped = await response;
+  assert.equal(stopped.body.status, "indeterminate");
+  assert.equal(stopped.status, 504, "a delivered request is not answered with 503, which Tolglow reads as never sent");
   await assert.rejects(bridge.forward({ kind: "midi", event: {} }), /Start the bridge/);
 });
 

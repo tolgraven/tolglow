@@ -173,7 +173,7 @@
             last-id (launch! runtime (swap! time inc) :last)]
         (is (some #{[224 127 127]} @sent))
         (device-session/refresh! device)
-        (is (some #{[144 25 127]} @sent) "Nested group member lights its strip")
+        (is (some #{[208 28]} @sent) "Nested group member drives its strip's meter (#706 slice 2)")
         (is (= 191 (dmx runtime)))
         (input! [225 0 0])
         (is (= 1.0 (get-in (mixer) [:manual 0 :groups 0 :level])))
@@ -215,7 +215,8 @@
         (accepted! runtime (swap! time inc) {:op :instance/end :instance-id last-id :force? true})
         (reset! sent [])
         (device-session/refresh! device)
-        (is (some #{[144 25 0]} @sent))
+        (is (= 0 (first (get-in (device-session/snapshot device) [:local :meters 1])))
+            "The accent strip's meter stays at zero (its level is 0) after the member ends")
         (is (= [:manual :accent] (get-in (mixer) [:manual 0 :groups 0 :id])))
         (input! [144 104 127])
         (device-session/suspend! device)

@@ -758,6 +758,1581 @@
             22
           ]
         }
+      },
+      {
+        "box": {
+          "id": "lane-comment",
+          "maxclass": "comment",
+          "numinlets": 1,
+          "numoutlets": 0,
+          "patching_rect": [
+            620,
+            20,
+            420,
+            48
+          ],
+          "text": "Tolglow lanes 1-30: automatable parameters for captured controller lanes. Clip envelopes on these play back as coarse/fine CC pairs (lane k = CC n / n+32)."
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-1",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            620,
+            80,
+            40,
+            48
+          ],
+          "varname": "lane-1",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 1",
+              "parameter_shortname": "Lane 1",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-1",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            620,
+            134,
+            40,
+            22
+          ],
+          "text": "prepend lane 1"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-2",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            664,
+            80,
+            40,
+            48
+          ],
+          "varname": "lane-2",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 2",
+              "parameter_shortname": "Lane 2",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-2",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            664,
+            134,
+            40,
+            22
+          ],
+          "text": "prepend lane 2"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-3",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            708,
+            80,
+            40,
+            48
+          ],
+          "varname": "lane-3",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 3",
+              "parameter_shortname": "Lane 3",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-3",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            708,
+            134,
+            40,
+            22
+          ],
+          "text": "prepend lane 3"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-4",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            752,
+            80,
+            40,
+            48
+          ],
+          "varname": "lane-4",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 4",
+              "parameter_shortname": "Lane 4",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-4",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            752,
+            134,
+            40,
+            22
+          ],
+          "text": "prepend lane 4"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-5",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            796,
+            80,
+            40,
+            48
+          ],
+          "varname": "lane-5",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 5",
+              "parameter_shortname": "Lane 5",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-5",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            796,
+            134,
+            40,
+            22
+          ],
+          "text": "prepend lane 5"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-6",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            840,
+            80,
+            40,
+            48
+          ],
+          "varname": "lane-6",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 6",
+              "parameter_shortname": "Lane 6",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-6",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            840,
+            134,
+            40,
+            22
+          ],
+          "text": "prepend lane 6"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-7",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            884,
+            80,
+            40,
+            48
+          ],
+          "varname": "lane-7",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 7",
+              "parameter_shortname": "Lane 7",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-7",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            884,
+            134,
+            40,
+            22
+          ],
+          "text": "prepend lane 7"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-8",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            928,
+            80,
+            40,
+            48
+          ],
+          "varname": "lane-8",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 8",
+              "parameter_shortname": "Lane 8",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-8",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            928,
+            134,
+            40,
+            22
+          ],
+          "text": "prepend lane 8"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-9",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            972,
+            80,
+            40,
+            48
+          ],
+          "varname": "lane-9",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 9",
+              "parameter_shortname": "Lane 9",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-9",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            972,
+            134,
+            40,
+            22
+          ],
+          "text": "prepend lane 9"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-10",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            1016,
+            80,
+            40,
+            48
+          ],
+          "varname": "lane-10",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 10",
+              "parameter_shortname": "Lane 10",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-10",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            1016,
+            134,
+            40,
+            22
+          ],
+          "text": "prepend lane 10"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-11",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            620,
+            170,
+            40,
+            48
+          ],
+          "varname": "lane-11",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 11",
+              "parameter_shortname": "Lane 11",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-11",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            620,
+            224,
+            40,
+            22
+          ],
+          "text": "prepend lane 11"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-12",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            664,
+            170,
+            40,
+            48
+          ],
+          "varname": "lane-12",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 12",
+              "parameter_shortname": "Lane 12",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-12",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            664,
+            224,
+            40,
+            22
+          ],
+          "text": "prepend lane 12"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-13",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            708,
+            170,
+            40,
+            48
+          ],
+          "varname": "lane-13",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 13",
+              "parameter_shortname": "Lane 13",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-13",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            708,
+            224,
+            40,
+            22
+          ],
+          "text": "prepend lane 13"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-14",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            752,
+            170,
+            40,
+            48
+          ],
+          "varname": "lane-14",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 14",
+              "parameter_shortname": "Lane 14",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-14",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            752,
+            224,
+            40,
+            22
+          ],
+          "text": "prepend lane 14"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-15",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            796,
+            170,
+            40,
+            48
+          ],
+          "varname": "lane-15",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 15",
+              "parameter_shortname": "Lane 15",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-15",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            796,
+            224,
+            40,
+            22
+          ],
+          "text": "prepend lane 15"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-16",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            840,
+            170,
+            40,
+            48
+          ],
+          "varname": "lane-16",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 16",
+              "parameter_shortname": "Lane 16",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-16",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            840,
+            224,
+            40,
+            22
+          ],
+          "text": "prepend lane 16"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-17",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            884,
+            170,
+            40,
+            48
+          ],
+          "varname": "lane-17",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 17",
+              "parameter_shortname": "Lane 17",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-17",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            884,
+            224,
+            40,
+            22
+          ],
+          "text": "prepend lane 17"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-18",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            928,
+            170,
+            40,
+            48
+          ],
+          "varname": "lane-18",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 18",
+              "parameter_shortname": "Lane 18",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-18",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            928,
+            224,
+            40,
+            22
+          ],
+          "text": "prepend lane 18"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-19",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            972,
+            170,
+            40,
+            48
+          ],
+          "varname": "lane-19",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 19",
+              "parameter_shortname": "Lane 19",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-19",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            972,
+            224,
+            40,
+            22
+          ],
+          "text": "prepend lane 19"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-20",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            1016,
+            170,
+            40,
+            48
+          ],
+          "varname": "lane-20",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 20",
+              "parameter_shortname": "Lane 20",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-20",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            1016,
+            224,
+            40,
+            22
+          ],
+          "text": "prepend lane 20"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-21",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            620,
+            260,
+            40,
+            48
+          ],
+          "varname": "lane-21",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 21",
+              "parameter_shortname": "Lane 21",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-21",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            620,
+            314,
+            40,
+            22
+          ],
+          "text": "prepend lane 21"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-22",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            664,
+            260,
+            40,
+            48
+          ],
+          "varname": "lane-22",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 22",
+              "parameter_shortname": "Lane 22",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-22",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            664,
+            314,
+            40,
+            22
+          ],
+          "text": "prepend lane 22"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-23",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            708,
+            260,
+            40,
+            48
+          ],
+          "varname": "lane-23",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 23",
+              "parameter_shortname": "Lane 23",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-23",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            708,
+            314,
+            40,
+            22
+          ],
+          "text": "prepend lane 23"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-24",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            752,
+            260,
+            40,
+            48
+          ],
+          "varname": "lane-24",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 24",
+              "parameter_shortname": "Lane 24",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-24",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            752,
+            314,
+            40,
+            22
+          ],
+          "text": "prepend lane 24"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-25",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            796,
+            260,
+            40,
+            48
+          ],
+          "varname": "lane-25",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 25",
+              "parameter_shortname": "Lane 25",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-25",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            796,
+            314,
+            40,
+            22
+          ],
+          "text": "prepend lane 25"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-26",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            840,
+            260,
+            40,
+            48
+          ],
+          "varname": "lane-26",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 26",
+              "parameter_shortname": "Lane 26",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-26",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            840,
+            314,
+            40,
+            22
+          ],
+          "text": "prepend lane 26"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-27",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            884,
+            260,
+            40,
+            48
+          ],
+          "varname": "lane-27",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 27",
+              "parameter_shortname": "Lane 27",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-27",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            884,
+            314,
+            40,
+            22
+          ],
+          "text": "prepend lane 27"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-28",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            928,
+            260,
+            40,
+            48
+          ],
+          "varname": "lane-28",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 28",
+              "parameter_shortname": "Lane 28",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-28",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            928,
+            314,
+            40,
+            22
+          ],
+          "text": "prepend lane 28"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-29",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            972,
+            260,
+            40,
+            48
+          ],
+          "varname": "lane-29",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 29",
+              "parameter_shortname": "Lane 29",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-29",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            972,
+            314,
+            40,
+            22
+          ],
+          "text": "prepend lane 29"
+        }
+      },
+      {
+        "box": {
+          "id": "lane-dial-30",
+          "maxclass": "live.dial",
+          "numinlets": 1,
+          "numoutlets": 2,
+          "outlettype": [
+            "",
+            "float"
+          ],
+          "parameter_enable": 1,
+          "patching_rect": [
+            1016,
+            260,
+            40,
+            48
+          ],
+          "varname": "lane-30",
+          "saved_attribute_attributes": {
+            "valueof": {
+              "parameter_longname": "Tolglow lane 30",
+              "parameter_shortname": "Lane 30",
+              "parameter_type": 0,
+              "parameter_mmin": 0.0,
+              "parameter_mmax": 1.0,
+              "parameter_initial_enable": 1,
+              "parameter_initial": [
+                0.0
+              ],
+              "parameter_unitstyle": 1
+            }
+          }
+        }
+      },
+      {
+        "box": {
+          "id": "lane-prepend-30",
+          "maxclass": "newobj",
+          "numinlets": 1,
+          "numoutlets": 1,
+          "outlettype": [
+            ""
+          ],
+          "patching_rect": [
+            1016,
+            314,
+            40,
+            22
+          ],
+          "text": "prepend lane 30"
+        }
       }
     ],
     "lines": [
@@ -1305,6 +2880,726 @@
         "patchline": {
           "source": [
             "stopped-message",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-1",
+            0
+          ],
+          "destination": [
+            "lane-prepend-1",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-1",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-2",
+            0
+          ],
+          "destination": [
+            "lane-prepend-2",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-2",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-3",
+            0
+          ],
+          "destination": [
+            "lane-prepend-3",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-3",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-4",
+            0
+          ],
+          "destination": [
+            "lane-prepend-4",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-4",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-5",
+            0
+          ],
+          "destination": [
+            "lane-prepend-5",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-5",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-6",
+            0
+          ],
+          "destination": [
+            "lane-prepend-6",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-6",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-7",
+            0
+          ],
+          "destination": [
+            "lane-prepend-7",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-7",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-8",
+            0
+          ],
+          "destination": [
+            "lane-prepend-8",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-8",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-9",
+            0
+          ],
+          "destination": [
+            "lane-prepend-9",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-9",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-10",
+            0
+          ],
+          "destination": [
+            "lane-prepend-10",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-10",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-11",
+            0
+          ],
+          "destination": [
+            "lane-prepend-11",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-11",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-12",
+            0
+          ],
+          "destination": [
+            "lane-prepend-12",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-12",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-13",
+            0
+          ],
+          "destination": [
+            "lane-prepend-13",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-13",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-14",
+            0
+          ],
+          "destination": [
+            "lane-prepend-14",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-14",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-15",
+            0
+          ],
+          "destination": [
+            "lane-prepend-15",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-15",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-16",
+            0
+          ],
+          "destination": [
+            "lane-prepend-16",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-16",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-17",
+            0
+          ],
+          "destination": [
+            "lane-prepend-17",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-17",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-18",
+            0
+          ],
+          "destination": [
+            "lane-prepend-18",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-18",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-19",
+            0
+          ],
+          "destination": [
+            "lane-prepend-19",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-19",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-20",
+            0
+          ],
+          "destination": [
+            "lane-prepend-20",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-20",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-21",
+            0
+          ],
+          "destination": [
+            "lane-prepend-21",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-21",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-22",
+            0
+          ],
+          "destination": [
+            "lane-prepend-22",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-22",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-23",
+            0
+          ],
+          "destination": [
+            "lane-prepend-23",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-23",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-24",
+            0
+          ],
+          "destination": [
+            "lane-prepend-24",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-24",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-25",
+            0
+          ],
+          "destination": [
+            "lane-prepend-25",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-25",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-26",
+            0
+          ],
+          "destination": [
+            "lane-prepend-26",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-26",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-27",
+            0
+          ],
+          "destination": [
+            "lane-prepend-27",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-27",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-28",
+            0
+          ],
+          "destination": [
+            "lane-prepend-28",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-28",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-29",
+            0
+          ],
+          "destination": [
+            "lane-prepend-29",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-29",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-dial-30",
+            0
+          ],
+          "destination": [
+            "lane-prepend-30",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lane-prepend-30",
             0
           ],
           "destination": [

@@ -15,12 +15,15 @@
             [tolglow.studio.preview-playback :as playback]
             [tolglow.studio.airplay :as airplay]
             [tolglow.studio.room-window :as room-window]
+            [tolglow.studio.panel-layout :as panel-layout]
             [tolglow.studio.block-builder :as block-builder]
             [tolglow.studio.material-designer :as materials]
             [tolglow.studio.connections :as connections]
             [tolglow.studio.events :as events]
             [tolglow.studio.keyframe-editor :as keyframes]
+            [tolglow.studio.knob-candidates :as knob-candidates]
             [tolglow.studio.knobs :as knobs]
+            [tolglow.studio.knob-presets :as knob-presets]
             [tolglow.studio.reactive-editor :as reactive-editor]
             [tolglow.studio.expressive-mapping :as expressive]
             [tolglow.studio.effect-group-mixer :as effect-group-mixer]
@@ -435,9 +438,19 @@
                :on-change #(when-let [v (number-value %)] (input! [:studio/preview-setting key v]))}]])])
 
 (defn- scene-draft-banner [db]
-  (when-let [{:keys [id revision operations status pending? connected?] :as control} (events/scene-draft-control db)]
+  (when-let [{:keys [id revision operations status pending? connected? preview] :as control} (events/scene-draft-control db)]
     (let [busy? (or pending? (not connected?))
           scheduled? (= :scheduled status)]
+      (if preview
+        ;; A generated knob candidate (#667) auditions here; it is kept or discarded from its panel.
+        [:div.scene-draft-banner {:role "status" :aria-label "Room draft audition" :data-draft-id id}
+         [:div [:strong "Knob candidate"]
+          [:span.small.muted (str " · " (:name preview) " at " (.toFixed (js/Number (:value preview)) 2)
+                                  (events/scene-draft-note control))]
+          [:p.small.muted "The Room shows the candidate. Keep or discard it in Generate a knob; live output is unchanged."]]
+         [:div.button-row
+          [:button.text-button {:type "button" :disabled busy?
+                                :on-click #(send! [:studio/scene-draft-discard])} "Stop audition"]]]
       [:div.scene-draft-banner {:role "status" :aria-label "Room draft audition" :data-draft-id id}
        [:div [:strong "Draft audition"]
         [:span.small.muted (str " · " id " · revision " revision " · " operations " staged"
@@ -451,7 +464,7 @@
         [:button.button {:type "button" :disabled (or busy? scheduled? (#{:stale :error} status))
                          :on-click #(send! [:studio/scene-draft-apply {:bars 1}])} "Apply on next bar"]
         [:button.text-button {:type "button" :disabled busy?
-                              :on-click #(send! [:studio/scene-draft-discard])} "Discard"]]])))
+                              :on-click #(send! [:studio/scene-draft-discard])} "Discard"]]]))))
 
 (defn- preview-panel [db]
   [:section#preview-panel.preview-panel.panel {:aria-label "Live fixture preview"
@@ -463,7 +476,7 @@
      [:button.text-button.preview-fullscreen-tools
       {:type "button" :aria-pressed (boolean (get-in db [:ui :fullscreen-preview-controls?]))
        :on-click #(set-ui! [:fullscreen-preview-controls?] (not (get-in db [:ui :fullscreen-preview-controls?])))} "Controls"]
-     (when-not (room-window/popped? db)
+     (when-not (or (room-window/popped? db) (panel-layout/active-layout db))
        [:button.text-button.preview-expand-control {:type "button" :aria-pressed (boolean (get-in db [:ui :preview-expanded?]))
                               :on-click #(send! [:studio/preview-expand])} (if (get-in db [:ui :preview-expanded?]) "Compact" "Expand")])
      [:button.icon-button {:type "button" :aria-label "Fullscreen preview" :title "Fullscreen preview"
@@ -607,23 +620,27 @@
 
 (defn- perform-view [db]
   (let [section (get-in db [:ui :performance-section] "cues")
-        count-active (count (get-in db [:show :instances]))]
+        count-active (count (get-in db [:show :instances]))
+        custom? (some? (panel-layout/active-layout db))]
     [:section#view-perform.view {:hidden (not= :perform (get-in db [:ui :view]))
-                                :data-section section}
+                                :data-section section :data-layout (if custom? "custom" "built-in")}
      [:div.perform-heading [:h1 "Perform"]
       [:span.small.muted (str count-active " running")]
       [:div.perform-section-tabs {:role "group" :aria-label "Performance sections"}
        (for [[id title] [["cues" "Cues"] ["live" (str "Live · " count-active)] ["room" "Room"]]]
          ^{:key id} [:button {:type "button" :aria-pressed (= id section)
-                              :on-click #(set-ui! [:performance-section] id)} title])]]
+                              :on-click #(set-ui! [:performance-section] id)} title])]
+      [panel-layout/toolbar db]]
      [timeline/panel]
-     [:div.performance-layout {:class (when (get-in db [:ui :preview-expanded?]) "preview-expanded")}
-      [:div.performance-launch [cue-grid db]]
-      [:div.performance-live [section-pattern-panel db] [personality/panel] [performance/board db parameter-control]
-       [effect-group-mixer/panel] [knobs/panel db]
-       [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
-      [:div.performance-room [room-window/room db preview-panel]]
-      [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]]]))
+     [panel-layout/arrangement db
+      {:class (when (and (not custom?) (get-in db [:ui :preview-expanded?])) "preview-expanded")}
+      {:cues [:div.performance-launch [cue-grid db]]
+       :live [:div.performance-live [section-pattern-panel db] [personality/panel] [performance/board db parameter-control]
+              [effect-group-mixer/panel] [knobs/panel db] [knob-presets/panel db] ; knob looks (#547)
+              [knob-candidates/panel db]
+              [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
+       :room [:div.performance-room [room-window/room db preview-panel]]
+       :tools [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]}]]))
 
 (defn- slot-parameter-editor [db index slot]
   (let [cue (find-id (get-in db [:show :cues]) (:cue-id slot))
@@ -904,7 +921,7 @@
            (when (and (= :library (get-in db [:ui :view])) (= :form (get-in db [:ui :definition :mode])))
              [block-builder/field {:id (some-> builder :id not-empty keyword) :params {:level {}}
                                    :outputs {:color nil :dimmer nil}}
-              (or (:blocks builder) {}) #(set-ui! [:builder :blocks] %)])])
+              (or (:blocks builder) {}) (fn [f] (input! [:studio/ui-update [:builder :blocks] #(f (or % {}))]))])])
         [:label.checkbox-label [:input#builder-cue {:type "checkbox" :checked (boolean (:cue? builder)) :on-change #(set-ui! [:builder :cue?] (checked? %))}]
          "Create matching cue"]])
      [button "builder-preview" "Generate EDN ↗" [:studio/builder-generate]]]))
@@ -928,7 +945,8 @@
      [:div.registry-toolbar
       [:label.search-label [:input#definition-search {:type "search" :placeholder "Search registry" :aria-label "Search definitions"
                                                      :value search :on-change #(set-ui! [:definition-search] (input-value %))}]]
-      [:button#new-definition.text-button {:aria-label "New definition" :on-click #(send! [:studio/definition-new])} "New"]]
+      ;; Replace the source before the next input event, which would otherwise be overwritten.
+      [:button#new-definition.text-button {:aria-label "New definition" :on-click #(input! [:studio/definition-new])} "New"]]
      [:div#definition-list.definition-list
       (if (seq results)
         (for [[kind item] results]
@@ -984,7 +1002,7 @@
                                                             (.preventDefault event) (send! [:studio/definition-publish])))}]])
          [:p#source-help.muted.small "EDN is data. Publishing validates the definition and compiles its effect expressions; arbitrary Clojure is not evaluated."]]
         (when (and (= :library (:view ui)) (= :source (:mode definition)) (= "effects" (:kind definition)))
-          [block-builder/source-field (:source definition) #(send! [:studio/apply-block-source (:source definition) %])])
+          [block-builder/source-field (:source definition) #(input! [:studio/apply-block-source (:source definition) %])])
         [visual-builder db]]]]]))
 
 (defn- dialog [attrs & children]

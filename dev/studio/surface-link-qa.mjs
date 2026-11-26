@@ -37,13 +37,23 @@ async function browserPhase(page) {
   const outlinedAfter = await mixer.locator('.effect-group-mixer-channel[data-on-surface="true"]').count();
   assert.equal(await surfaces.getByRole('button', {name: 'Next bank on desk'}).isDisabled(), true);
   await surfaces.screenshot({path: join(directory, 'surface-box-last-page.png')});
-  return {outlinedBefore, outlinedAfter, badges, cardBadge, range: await range(surfaces).textContent()};
+  // Studio -> unit: the encoder mode menu commits :control-surface/layout (#706 slice 2).
+  await surfaces.getByRole('combobox', {name: 'Encoder mode on desk'}).selectOption('plug-in');
+  await page.waitForFunction(() => document.querySelector('[data-surface="desk"] .surface-box-layout select')?.value === 'plug-in'
+    && !document.querySelector('[data-surface="desk"] .surface-box-layout select')?.disabled);
+  await surfaces.screenshot({path: join(directory, 'surface-box-encoder-mode.png')});
+  return {outlinedBefore, outlinedAfter, badges, cardBadge, range: await range(surfaces).textContent(),
+          encoderMode: await surfaces.locator('[data-surface="desk"] .surface-box-layout select').inputValue()};
 }
 
 async function replPhase(page) {
   const {surfaces} = await openMixer(page);
   await page.waitForFunction(() => document.querySelector('[data-surface="desk"] .surface-box-range')?.textContent === 'Strips 1–16 of 20');
-  return {range: await range(surfaces).textContent()};
+  // Unit or REPL -> Studio: the REPL chose USER (knobs) with a selected strip.
+  await page.waitForFunction(() => document.querySelector('[data-surface="desk"] .surface-box-layout select')?.value === 'user');
+  return {range: await range(surfaces).textContent(),
+          encoderMode: await surfaces.locator('[data-surface="desk"] .surface-box-layout select').inputValue(),
+          layoutTitle: await surfaces.locator('[data-surface="desk"] .surface-box-layout').getAttribute('title')};
 }
 
 const context = await chromium.launchPersistentContext(join(directory, 'chrome-profile-' + phase), {

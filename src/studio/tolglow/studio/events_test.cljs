@@ -839,7 +839,87 @@
     (testing "a genuinely different delivery still marks the definition unpublished"
       (is (= {:status "Unpublished changes" :result "" :error? false}
              (status (:db (transition published [:studio/definition-source (str typed "y")])))
+             (status (:db (transition rejected [:studio/definition-source (str typed "y")]))))))
+    (testing "returning to the text the show runs after a failed publication"
+      (is (= {:status "ember · v2" :result "" :error? false}
              (status (:db (transition rejected [:studio/definition-source source]))))))))
+
+(deftest a-delivery-during-publication-stays-unpublished
+  (let [source "{:id :ember :version 2}"
+        request (transition base [:studio/definition-load "effects" "ember"])
+        loaded (:db (transition (:db request) (conj (get-in request [:studio/http :on-success]) {:source source})))
+        neovim (assoc-in loaded [:ui :definition :engine] :neovim)
+        typed (str source " ;x")
+        newer (str typed "y")
+        sent (transition (:db (transition neovim [:studio/definition-source typed])) [:studio/definition-publish false])
+        read (transition (:db sent) (conj (get-in sent [:studio/nvim-read :on-success]) typed))
+        ;; Neovim delivers a newer edit while the publication request is in flight.
+        in-flight (:db (transition (:db read) [:studio/definition-source newer]))
+        reply (conj (get-in read [:studio/http :on-success]) {:id "ember" :version 3})
+        published (transition in-flight reply)
+        status #(select-keys (get-in % [:ui :definition]) [:status :error? :source])]
+    (is (= typed (get-in read [:studio/http :body :source])))
+    (is (= {:status "Unpublished changes" :error? false :source newer} (status (:db published))))
+    (is (= 3 (get-in published [:db :ui :definition :version])))
+    (is (= {:source typed :status "Published"} (get-in published [:db :ui :definition :baseline])))
+    (testing "the newer edit is the next publication"
+      (let [again (transition (:db published) [:studio/definition-publish false])]
+        (is (= newer (-> (transition (:db again) (conj (get-in again [:studio/nvim-read :on-success]) newer))
+                         (get-in [:studio/http :body :source]))))))
+    (testing "returning to the text that was published reads as published"
+      (is (= {:status "Published" :error? false :source typed}
+             (status (:db (transition (:db published) [:studio/definition-source typed]))))))
+    (testing "without an intervening edit the reply marks the definition published"
+      (is (= {:status "Published" :error? false :source typed} (status (:db (transition (:db read) reply))))))))
+
+(deftest status-follows-the-source-against-the-published-baseline
+  (let [source "{:id :ember :version 2}"
+        request (transition base [:studio/definition-load "effects" "ember"])
+        loaded (-> (:db (transition (:db request) (conj (get-in request [:studio/http :on-success]) {:source source})))
+                   (assoc-in [:ui :definition :auto?] true))
+        edited (transition loaded [:studio/definition-source (str source " ;x")])
+        reverted (transition (:db edited) [:studio/definition-source source])
+        status #(select-keys (get-in % [:ui :definition]) [:status :result :error?])]
+    (is (= "Unpublished changes" (get-in edited [:db :ui :definition :status])))
+    (is (= [{:ms 850 :dispatch [:studio/auto-publish 1]}] (:dispatch-later edited)))
+    (testing "reverting to the loaded text restores its status and publishes nothing"
+      (is (= {:status "ember · v2" :result "" :error? false} (status (:db reverted))))
+      (is (nil? (:dispatch-later reverted)))
+      (is (empty? (transition (:db reverted) [:studio/auto-publish 2]))))
+    (testing "a new definition has no published baseline"
+      (let [fresh (:db (transition loaded [:studio/definition-new]))]
+        (is (= "Unpublished changes"
+               (get-in (transition fresh [:studio/definition-source source]) [:db :ui :definition :status])))))))
+
+(deftest auto-publish-follows-an-edit-made-during-publication
+  (let [source "{:id :ember :version 2}"
+        typed (str source " ;x")
+        newer (str typed "y")
+        request (transition base [:studio/definition-load "effects" "ember"])
+        loaded (-> (:db (transition (:db request) (conj (get-in request [:studio/http :on-success]) {:source source})))
+                   (assoc-in [:ui :definition :auto?] true))
+        edited (:db (transition loaded [:studio/definition-source typed]))
+        sent (transition edited [:studio/auto-publish 1])
+        opened (transition edited (:dispatch sent))
+        publish (transition (:db opened) (:dispatch opened))
+        in-flight (transition (:db publish) [:studio/definition-source newer])
+        ;; The newer edit's own debounce fires while the first request is pending and is dropped.
+        dropped (transition (:db in-flight) [:studio/auto-publish 2])
+        dropped-publish (transition (:db in-flight) (:dispatch dropped))
+        published (transition (:db in-flight) (conj (get-in publish [:studio/http :on-success]) {:id "ember" :version 3}))
+        follow-up (some #(when (= :dispatch-later (first %)) (second %)) (:fx published))]
+    (is (= [:studio/definition-publish true] (:dispatch sent)))
+    (is (empty? dropped-publish))
+    (testing "the follow-up waits the same quiet time as an edit, so typing does not chain requests"
+      (is (= {:ms 850 :dispatch [:studio/auto-publish 2]} follow-up))
+      (is (not-any? #(= :dispatch (first %)) (:fx published))))
+    (testing "an edit typed before the follow-up fires supersedes it"
+      (let [typing (:db (transition (:db published) [:studio/definition-source (str newer "z")]))]
+        (is (empty? (transition typing (:dispatch follow-up))))))
+    (is (= [:studio/definition-publish true] (:dispatch (transition (:db published) (:dispatch follow-up)))))
+    (testing "a publication that matches the current text queues nothing"
+      (let [current (transition (:db publish) (conj (get-in publish [:studio/http :on-success]) {:id "ember" :version 3}))]
+        (is (not-any? #(#{:dispatch :dispatch-later} (first %)) (:fx current)))))))
 
 (deftest duration-field-edits-keep-the-other-current-field
   (let [added (transition base [:studio/composition-add "ember"])
@@ -1693,3 +1773,37 @@
                                    :last-outcome (assoc (missed :clock-changed) :draft-revision 1)}))))
       (is (nil? (:missed (control {:draft draft :status :auditioning
                                    :last-outcome {:status :applied :draft-id "scene" :draft-revision 2}})))))))
+
+(deftest the-capture-button-posts-capture-and-shows-the-server-summary
+  (let [requested (transition base [:connections/capture])
+        [effect request] (first (:fx requested))
+        token (connections/token (:db requested))
+        summary {:status "captured" :capture-id 2 :bars 4 :notes 3 :cues ["wash" "aim"] :lane-points 1}
+        done (transition (:db requested) [:connections/captured token :capture summary])
+        stale (transition (:db requested) [:connections/captured [:other] :capture summary])
+        markup (fn [db] (renderToStaticMarkup (r/as-element [connections/connection-view db (connections/state db)])))]
+    (is (= :studio/http effect))
+    (is (= ["/api/capture/capture" {}] [(:path request) (:body request)]))
+    (is (contains? (get-in requested [:db :connections :pending]) :capture))
+    (is (= summary (get-in done [:db :connections :capture])))
+    (is (not (contains? (get-in done [:db :connections :pending]) :capture)))
+    (is (nil? stale) "a reply for another show session is ignored")
+    (is (= "Capture 2 · 4 bars · 3 activations of wash, aim · 1 parameter move" (connections/capture-text summary)))
+    (is (= "Nothing ran in the captured bars" (connections/capture-text {:status "empty" :message "Nothing ran in the captured bars"})))
+    (is (str/includes? (markup (:db done)) "Download MIDI clip"))
+    (is (str/includes? (markup (:db done)) "/api/capture/last.mid"))
+    (is (not (str/includes? (markup base) "Download MIDI clip")))))
+
+(deftest an-edit-after-new-is-what-publishes
+  ;; Studio dispatches New synchronously, so an edit typed straight after it lands on the
+  ;; new source rather than being replaced by it.
+  (let [source "{:id :ember :version 2}"
+        request (transition base [:studio/definition-load "effects" "ember"])
+        loaded (:db (transition (:db request) (conj (get-in request [:studio/http :on-success]) {:source source})))
+        fresh (:db (transition loaded [:studio/definition-new]))
+        edited (:db (transition fresh [:studio/definition-source "{:id"]))
+        sent (transition edited [:studio/definition-publish false])
+        publish (transition (:db sent) (:dispatch sent))]
+    (is (nil? (get-in fresh [:ui :definition :baseline])))
+    (is (= "{:id" (get-in publish [:studio/http :body :source])))
+    (is (nil? (get-in publish [:studio/http :body :expected-version])))))

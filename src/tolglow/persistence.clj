@@ -51,6 +51,8 @@
             [tolglow.output.pause-look :as pause-look]
             [tolglow.routing :as routing]
             [tolglow.knobs :as knobs]
+            [tolglow.audio-lfo :as audio-lfo]
+            [tolglow.knob-presets :as knob-presets]
             [tolglow.integrations.audio-return :as audio-return]
             [tolglow.integrations.section-patterns :as section-patterns]
             [tolglow.integrations.ableton :as ableton])
@@ -70,7 +72,7 @@
     :master :blackout? :event-subscribers :transport :control :rig :compositions :composition-runs
     :composition-tokens :auto :responses :integrations :extensions :frame-number
     :last-frame-time-ms :last-frame-beat :macros :sequences :reactive :settings :modulation :waveforms :routing :sensors
-    :knobs})
+    :knobs :audio-lfos})
 
 (def ^:private secret-keys
   #{"api-key" "api_key" "apikey" "authorization" "password" "secret"
@@ -369,6 +371,10 @@
   (when (contains? (:extensions model) variations/state-key)
     (check! (variations/valid-saved-state? (get-in model [:extensions variations/state-key]))
             [:extensions variations/state-key] "Invalid cue variation banks"))
+  ;; Knob looks (#547).
+  (when (contains? (:extensions model) knob-presets/state-key)
+    (check! (knob-presets/valid-saved-state? (get-in model [:extensions knob-presets/state-key]))
+            [:extensions knob-presets/state-key] "Invalid knob looks"))
   (check! (map? (:settings model {})) [:settings] "Settings must be an explicit portable map")
   (try (group-channels/validate-state! model)
        (catch clojure.lang.ExceptionInfo error
@@ -440,6 +446,9 @@
   (when (contains? model :knobs)
     (try (knobs/validate-state (:knobs model))
          (catch clojure.lang.ExceptionInfo error (fail! (:path (ex-data error) [:knobs]) (ex-message error)))))
+  (when (contains? model :audio-lfos)
+    (try (audio-lfo/validate-state (:audio-lfos model))
+         (catch clojure.lang.ExceptionInfo error (fail! (:path (ex-data error) [:audio-lfos]) (ex-message error)))))
   (when-let [integrations (:integrations model)]
     (check! (map? integrations) [:integrations] "Integration configuration must be a map")
     (when-let [bridge (:ableton integrations)] (validate-ableton! bridge [:integrations :ableton])))
@@ -540,7 +549,9 @@
         model (cond-> model sampled? effect-keyframes/without-checkpoints)]
     ;; A sampled temporary value may already be in the captured frame or
     ;; predictive windows. The restore path can regenerate them safely.
-    (cond-> {:schema-version schema-version :model (validate-model (prepare-edit-history (cue-timing/without-queue model)))}
+    ;; An unkept generated knob candidate (#667) is a draft, never saved.
+    (cond-> {:schema-version schema-version
+             :model (validate-model (prepare-edit-history (cue-timing/without-queue (dissoc model :knob-candidates))))}
       (and (some? frame-output) (not sampled?)) (assoc :frame-output (validate-frame-output model frame-output)))))
 
 (defn freeze
@@ -641,6 +652,7 @@
                 (:event-subscribers saved) (update :event-subscribers event-subscribers/restore ids)
                 (:routing saved) (update :routing routing/restore-state {:epoch epoch :instance-ids ids})
                 (:knobs saved) (update :knobs knobs/restore ids epoch)
+                (:audio-lfos saved) (update :audio-lfos audio-lfo/restore)
                 (:sensors saved) (update :sensors #(remap-references % ids owners))
                 (:reactive saved) (update :reactive #(remap-references % ids owners)))
         ;; Historical chat/tool results are evidence, not live references.

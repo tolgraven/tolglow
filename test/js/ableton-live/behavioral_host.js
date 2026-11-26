@@ -65,6 +65,7 @@ if (require.main === module) {
     let callback;
     const max = vm.createContext({
       include() {}, TolglowLive: require("../../../resources/devices/ableton-live/live_api"),
+      TolglowSession: require("../../../resources/devices/ableton-live/live_session"),
       TolglowParameters: require("../../../resources/devices/ableton-live/parameter_observers"),
       Task: function (fn) {
         let timer;

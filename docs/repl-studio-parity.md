@@ -618,6 +618,30 @@ display data are ready ([Push](linked-knobs.md#push),
 when Studio can set non-numeric endpoints and a Push encoder turns the same knob
 and shows the same resolved values.
 
+## Save and recall knob looks
+
+Studio, Push and the REPL read `:knob-presets` in the show snapshot and send
+`:knob-preset/capture`, `:knob-preset/recall` and `:knob-preset/clear` with a
+`:slot` from 0 to 7. [Knob looks](linked-knobs.md#knob-looks)
+
+```clojure
+(show/submit! runtime :command {:op :knob-preset/capture :slot 0})
+(:links @(show/submit! runtime :command {:op :knob-preset/recall :slot 0}))
+(map :state (:slots (:knob-presets (show/snapshot runtime))))
+;; => (:selected :empty :empty :empty :empty :empty :empty :empty)
+```
+
+In Studio, **Perform → Live → Knobs → Knob looks** lists the same eight slots.
+**Save**, **Recall**, **Overwrite** and **Clear** send those commands with the
+shown slot as `:expected`. A REPL save or recall changes the strip on the next
+snapshot, and a Studio recall moves the knobs the REPL reads. Saving into a
+saved slot without `:overwrite? true` returns `:code :knob-preset-occupied` and
+Studio shows the reason. On Push, the top pad row of the knob-look overlay
+sends the same commands.
+
+**Tracked gaps.** Slots have numbers, not names. Physical Push 2 and Push 3
+evidence is pending in [issue #547](https://github.com/tolgraven/tolglow/issues/547).
+
 ## Link control surfaces and move their session box
 
 Both surfaces read one projection, `:control-surfaces` in the show snapshot, and
@@ -658,10 +682,89 @@ a REPL move and a Studio move all update the open session boxes and both units.
 A refused move (an unknown surface, a cell that is not on it) shows its reason;
 a follow move for a cell a surface does not hold is ignored quietly.
 
+Each logical surface also carries a committed layout state (#706 slice 2):
+the encoder mode, its page, the selected strip and flip, under `:layout` in
+each `:logical` entry. The X-Touch PAN, SEND, PLUG-IN, USER, EQ/INST, SELECT
+and FLIP buttons, `show/surface-layout!` and Studio's encoder mode menu in the
+session box all commit `:control-surface/layout`:
+
+```clojure
+@(show/surface-layout! runtime "desk" {:encoder-mode :plug-in :selected [:cue :ember]})
+(:layout (first (:logical (:control-surfaces (show/snapshot runtime)))))
+;; => {:encoder-mode :plug-in, :page 0, :selected [:cue :ember], :flip? false}
+```
+
+The session box's menu shows the mode that a button press on the unit
+selected, and its tooltip names the page, the selected strip and flip.
+
 **Tracked gaps.** Studio has no form for up/down links, follow offsets other
-than one page, or a member's non-default viewport; the REPL accepts all three. A Studio page component is not yet a surface of its
+than one page, or a member's non-default viewport; the REPL accepts all three.
+Studio shows the selected strip only in the menu's tooltip and cannot select a
+strip or page the encoders itself (the REPL and the unit can). A Studio page component is not yet a surface of its
 own (#706 slice 5). Close these gaps when Studio can place a member anywhere and
 a Studio grid can mirror or follow a Push page.
+
+## Shape an LFO from a band of the input
+
+Both surfaces read `:audio-lfos` in the show snapshot and send the same owner
+commands, `:audio-lfo/configure` and `:audio-lfo/remove`. The LFO's waveform,
+`:audio/<id>`, is in the same picker catalog as every other waveform, and a
+parameter LFO bound to it is the ordinary `:modulation-bind`.
+[Audio-shaped LFOs](audio-shaped-lfo.md)
+
+```clojure
+@(show/submit! runtime :command {:op :audio-lfo/configure :lfo-id :bass :name "Bass"
+                                 :config {:band :bass :extract :envelope :morph {:bars 2}}})
+(select-keys (tolglow.audio-lfo/lfo-view (:model @(:state runtime)) :bass)
+             [:status :band-label :progress :last])
+```
+
+In Studio, **Connections → Audio LFOs** shows the same LFO: status, level,
+confidence, pitch and lateness, the source band's last window and the morph
+from the previous shape to the target. **Apply**, **Remove** and **Add audio
+LFO** send the commands above; an invalid setting from either side is refused
+with the reason and the previous configuration stays. A REPL configure
+appears in the open panel on the next snapshot.
+
+**Tracked gaps.** Linked knobs reach a bound LFO's period and endpoints, not
+the audio LFO's band or morph time. Physical input and recorded material are
+open on [issue #676](https://github.com/tolgraven/tolglow/issues/676).
+
+## Generate a knob and keep it
+
+Both surfaces read `:knob-candidates` in the show snapshot and send the same
+owner commands: `:knob-candidate/generate`, `/reroll`, `/audition`, `/link`,
+`/unlink`, `/keep` and `/discard`. The projection carries the candidate's seed,
+character, score, explanation, recipe and links resolved at the swept value,
+or the reason too few parameters were eligible, plus the Room audition's value
+and draft revision. Agents use the same commands through the `knob_candidate`
+tool. [Generated knobs](generated-knobs.md)
+
+From the REPL, generate one, sweep it in the Room, reroll and keep it:
+
+```clojure
+@(show/submit! runtime :command {:op :knob-candidate/generate :seed 11})
+@(show/submit! runtime :command {:op :knob-candidate/audition :value 1.0})
+@(show/submit! runtime :command {:op :knob-candidate/reroll})
+@(show/submit! runtime :command {:op :knob-candidate/keep :name "Lift"})
+;; Later, or after a reload: the same links from the kept knob's recipe.
+@(show/submit! runtime :command {:op :knob-candidate/generate :from-knob "generated-1"})
+```
+
+In Studio, **Perform → Live → Generate a knob** has **Character**, **Seed**,
+cue chips and **Generate**, a **Sweep in the Room** slider, the links with
+their explanations, **Reroll**, **Drop**, **Keep as knob**, **Discard** and
+**Repeat a kept knob**. The Room banner reads **Knob candidate** while one is
+auditioned. A REPL generation or audition moves the open panel and slider. A
+refusal reads the same from both sides: auditioning with no candidate returns
+`:status :rejected :code :no-candidate`, and applying the candidate's Room
+draft as a scene returns `:code :preview-draft`.
+
+**Tracked gaps.** A Push encoder cannot sweep a candidate yet (it reuses the
+linked-knob Push binding, which waits on an Afterglow adapter change). Enum,
+boolean and vector destinations are not generated. Close this gap when a Push
+encoder sweeps the same candidate in the Room
+([issue #667](https://github.com/tolgraven/tolglow/issues/667)).
 
 ## Reviewing a show feature
 
@@ -707,3 +810,5 @@ Calibrated paired aim arrival uses one host operation from both surfaces. In Stu
 ```
 
 The remaining gaps are tracked in issue #481. Studio has no editor for `:calibration :motor-rate-deg-per-sec`, so rates are set through the rig data or the REPL. Studio also cannot display the physical `:minimum-travel-ms` or the fingerprint behind a stale-calibration refusal. Close these gaps when an operator can enter rates in the fixture inspector and see why a launch was refused without the REPL.
+
+Retrospective Capture has a shared operation. The runtime owns the capture buffer. `show/capture-phrase!` at the REPL and **Connections → Capture** in Studio both call `show/capture-action!` with `:capture`. The REPL receives the phrase; Studio receives its summary and a MIDI clip download of the same capture (`:smf`). `(show/capture-action! rt :status {})` reads the buffer and the last capture that both surfaces show. Two gaps remain. Writing the capture into Live from Studio (`live-connection/capture!` over the configured bridge) is REPL-only, and Push has no Capture button: the uniform surface layer lives with the Push controllers, outside this change. Close them when Studio and Push both send the last capture to Live and the REPL can read the resulting clip identities. [Capture into Live](live-routing.md#capture-the-last-phrase-into-live) · [Issue #671](https://github.com/tolgraven/tolglow/issues/671) · [Issue #680](https://github.com/tolgraven/tolglow/issues/680)

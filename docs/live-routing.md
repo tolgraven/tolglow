@@ -139,6 +139,210 @@ gesture at its original time. [Live manual, Clip and Loop Region Settings](https
 
 `lein run -m tolglow.qa.live-pickup` reads the supplied Standard MIDI File and prints the actual lighting commands for the first pass and one repeat. Pass a MIDI file exported from the edited Live clip to inspect its note timing and velocities under the same mappings. The headless suite also exercises the recording worker and checks the destination beat and velocity it sends for each adjustment. Live/Max playback timing, recording admission and physical output still need a licensed host run.
 
+## Capture the last phrase into Live
+
+Retrospective Capture (#671) and automatic Set setup (#680). The Tolglow
+side, the Max for Live companion's operations (`live_session.js`) and their
+HTTP contract are tested against a simulated Live object graph. Nothing in
+this section has been run in a licensed Live Set; the hardware checklist is on
+pull request #730.
+
+**Capture buffer.** `tolglow.integrations.phrase-capture` keeps the last N
+bars (default 8, plus one margin bar) of accepted cue launches, releases and
+parameter writes. The host calls `observe-model` after each owner cycle; it
+reads only the history entries after the newest one it has observed. Each
+command's beat comes from its `:time-ms` against the committed transport. The
+show stamps a command with the time of the owner cycle that drains it, so
+capture resolves one owner cycle before the grid quantises it. While the
+transport is stopped the beat stands still, so commands accepted during a stop
+land on the stop beat and the phrase has no gap for the stop.
+`capture` returns a *phrase* on the beat grid (default a sixteenth).
+The phrase ends on the bar line nearest the Capture press. It holds one note
+per activation (start, length, launch values) and one lane of points per cue
+parameter. Beats are exact rationals relative to the phrase start. An
+activation still running at the phrase start begins at beat 0 with its values
+at that moment. One that is still running at the end is held to the end. A
+backwards seek starts a new phrase. A show restart clears the buffer.
+Commands whose source origin is `:live-playback` or `:tolglow-feedback` are not
+captured, and neither is anything addressed to an instance those commands
+launched, so replaying a clip does not record it again. Overlapping
+activations of one cue are kept as separate notes on the same pitch, but MIDI
+cannot say which release ends which note: a Standard MIDI File, Live's clip
+editor and the playback decoder pair them first in, first out, so their
+lengths are not preserved. One clip per run (#683) removes this.
+
+The show runtime owns one buffer (`create-runtime` option `:phrase-capture`,
+default `{:bars 8}`; `false` disables it) and folds every committed owner cycle
+into it after the sync observers. Expired events leave a persistent queue from
+the front: folding one command into 3.6k retained events took 5.3 µs in the
+pooled REPL (192 µs with the earlier vector filtering). Over 4,000 owner
+cycles of a show launching, moving and ending a cue every few cycles (about
+330 activations running by the end), the fold averaged 75 µs per cycle, worst
+1.6 ms with JIT and GC included (125 µs and 6.3 ms before the queue).
+Most of the remaining cost is checking which captured activations are still
+running. `(show/capture-action! rt :status {})` reports the running numbers.
+
+```clojure
+(show/capture-phrase! rt)            ; last 8 bars -> {:status :captured :phrase .. :notes n ..}
+(show/capture-phrase! rt {:bars 4})
+(show/capture-action! rt :status {}) ; buffer size, running activations, per-cycle cost
+(show/capture-action! rt :smf {})    ; {:filename "tolglow-capture-1.mid" :bytes ..}
+```
+
+Studio's **Connections → Capture** panel runs the same operation
+(`POST /api/capture/capture`), shows the summary and offers the last capture as
+a MIDI clip (`GET /api/capture/last.mid`). The MIDI layout is kept for the
+runtime's lifetime so later captures address the same pitches and controllers;
+it is not yet saved with the show.
+
+**Clip encoding.** `tolglow.integrations.phrase-clip` allocates a layout once
+and keeps earlier allocations, so clips recorded earlier still address the
+same targets. Each cue gets one pitch (an existing Drum Rack pad when given).
+Each parameter component gets a paired 14-bit controller: coarse on CC 1–31,
+fine on CC n+32, skipping bank select (0) and data entry (6). That is 30
+components per channel. Colours, aim vectors (`:vector` with `:size`) and
+ranges use one pair per component; gradients are listed as unassigned. Cue
+notes and controllers can use separate channels, which means separate capture
+tracks. `phrase->clips` writes launch values at their note's start.
+`clips->phrase` reads them back the same way. A later value attaches to the
+latest running activation of its cue. A value with no running activation is
+reported as an orphan and is not applied. The first encode quantises values to
+1/16383 of their range. After that, decoding and encoding are a fixed point,
+and decoded numbers stay inside their bounds. A value outside the encoded
+range (possible when a parameter has only `:recommended` bounds) is reported
+as skipped instead of being clamped.
+`clip->smf`/`smf->clip` carry a clip in a Standard MIDI File (960 PPQ, tempo
+and time signature, releases before controllers before note-ons within a
+tick).
+
+**Playback.** `clip/player` decodes the MIDI that Live plays from these clips
+into `:cue/launch`, `:param/set` and `:instance/end` commands with origin
+`:live-playback`. It binds each launch receipt to the note that started it.
+Values or a release that arrive before the receipt are applied when it
+arrives. Overlapping activations of one cue share its lanes, which address
+the latest activation. Independent envelopes per overlapping run need the
+one-clip-per-run tracks of #683. Live clips keep no MIDI channel, so the
+companion tags clip playback with the track that played it and the player maps
+that track to its layout channel (`live-connection/track-channels`). The player
+is not yet attached to the bridge's MIDI callbacks in the show runtime.
+
+**Connection boundary.** `tolglow.integrations.live-connection` sends data
+operations over the existing companion transport shape (`:open!`, `:request!`,
+`:close!`). Receipts are `executed`, `rejected` or `indeterminate`. Replies that crossed
+the companion's JSON wire have their enumerations (`:kind`, `:monitor`,
+`:code`) turned back into keywords and their clip beats into exact rationals;
+`fake-live/json-transport` tests that path. Operations:
+`inspect-set`, `ensure-track`, `configure-track`, `write-clip`, `extend-clip`, `capture-midi`,
+`read-clip`, `show-clip`, `fire-clip`, `stop-clips`. Every write names the
+track it expects. A non-executed receipt stops the sequence and is never
+retried. `setup!` inspects the Set and plans only the missing pieces. It then
+reads the Set back and checks every arm, monitor and input route. The
+musician's own tracks are never touched, and duplicate capture names are
+reported rather than guessed. Exactly one capture route is used per setup:
+`:tolglow-buffer` writes the captured phrase as a new clip, and
+`:live-capture-midi` feeds the monitored tracks continuously
+(`clip/feed-messages` on each `capture/events-after`) and invokes Live's
+Capture MIDI.
+
+Choice of transport: the operations go to the **Max for Live companion** over
+its loopback HTTP endpoint, which already has request identity, run ownership
+and the three-state receipts. The operations use these documented Live Object
+Model calls: `Song.create_midi_track`, `Track.arm`,
+`Track.input_routing_type`/`_channel`, `ClipSlot.create_clip`,
+`Clip.add_new_notes`/`get_all_notes_extended`, `Song.capture_midi` with
+`can_capture_midi`, and `Song.view.detail_clip` with
+`Application.view.focus_view`. `Track.current_monitoring_state`,
+`Clip.automation_envelope`/`create_automation_envelope` and the
+`AutomationEnvelope` methods (`insert_step`, `value_at_time`) are names from
+Live's Python API. They are not in Cycling '74's Live Object Model reference
+(checked 2026-11-26), so whether Max's `LiveAPI` reaches them is a question for
+the licensed run. `resources/devices/ableton-live/live_session.js`
+implements them behind the adapter's `deferlow` path. A Max device has to be in
+the Set before it can answer, so an empty Set needs one manual step: drop the
+companion on a new, empty MIDI track. Setup adopts that track as the cue
+capture track (`ensure-track` with `:host? true`) and renames it; other capture
+tracks are created. The companion adopts only a track with no clips and no
+device besides itself, or one whose name already starts with "Tolglow". On any
+other track it refuses with `host-track-in-use` and renames, arms and reroutes
+nothing. The host is always the track the device is on now, never a track
+found by name, so after the device moves a rerun of setup configures its new
+track. The companion caches its track id for MIDI events and lane moves and
+refreshes it on every Set operation. A Python Remote Script that places the companion automatically would
+remove this step. It is not written: Max cannot reach Live's browser, a Remote
+Script can, and installing one is the separately packaged host step #680
+allows. OSC through a Remote Script was not chosen: it needs the same
+installation and has no receipts.
+
+Echo rule: each capture track is fed on its own channel (16, 15, …), which clip
+playback never uses. The companion drops MIDI arriving on its feed channel
+(Tolglow's own monitored input) and forwards everything else as playback. It
+reads the feed channel back from its track's input routing, so a reloaded or
+moved companion keeps dropping the feed although a rerun of setup writes
+nothing. The playback decoder drops events tagged with a track that is not a
+capture track.
+
+The loopback endpoint accepts request bodies up to 64 KiB. Controller lanes
+travel as compact `[beat value]` points, and `write-phrase!` splits a clip's
+notes and lane points into requests of at most 48,000 JSON characters: one
+`write-clip`, then `extend-clip` requests that add to the same clip. An 8-bar
+phrase with 30 lanes moving every eighth note (7,650 points) takes several
+requests and reads back exactly. A clip is complete only when every one of its
+requests executed. If a later request is refused or indeterminate, the clip
+written so far is listed under `:partial-clips` and nothing is retried; delete
+it in Live or capture again.
+
+A refusal that never reached Max is `rejected` with its own code, so it is not
+mistaken for a write that may have happened: `payload-too-large` (413),
+`bridge-busy` (503), `malformed-request` (400), `bridge-session-mismatch` (409)
+and `not-connected` (nothing listening). A timeout after delivery (504) and any
+other transport failure stay `indeterminate`.
+
+Controller lanes on the buffer route: the Live Object Model has no call that
+writes MIDI CC events into a clip. The companion has thirty automatable
+parameters, `Tolglow lane 1`–`30`, one per coarse controller. `write-clip`
+turns each coarse/fine pair into a value in [0, 1] and writes it as a step of
+that parameter's clip envelope
+(`Clip.automation_envelope`/`create_automation_envelope`, then `insert_step`).
+When the clip plays, the moving parameter is forwarded as its controller pair.
+`read-clip` reports each lane's value at beat 0 and every change after it. It
+scans with `value_at_time` every sixteenth (`:sample-beats`) and bisects each
+change down to one tick (1/960 beat), so a step off the grid keeps its own
+beat. A step that reverts within one scan step is not seen. Imports can then
+round to the capture grid (`:grid-beats`, the capture's own rounding). A lane
+value written while no activation of its cue runs belongs to that cue's next
+launch, unless another value of the lane comes first, as a controller sent
+before a note would. Both the clip decoder and the playback decoder apply this
+rule, so a cue launched after the clip start keeps its launch values even
+though its lane reads back from beat 0. An envelope is continuous: an
+activation whose launch value equals the value the lane already holds reads
+back without that launch value. Lanes need the
+companion on the same track as the clip: a two-track layout needs a second
+companion on the lane track, and the companion refuses controllers on any
+other track. Capture MIDI remains the alternative route; the licensed run
+decides between them.
+
+Tests (`tolglow.integrations.live-capture-roundtrip-test`) perform on a real
+show runtime and capture. They set up a simulated Set with an armed musician
+track, write two clips (cue track and lane track) and focus the first. Then
+they move a note with its launch value and change a level in the simulated
+editor, read the clips back, and play them through the simulated Live
+playback into a fresh show. That replay reproduces the edited clip exactly
+when captured and replayed at 70→120, 120→180, 180→70 and 120→120 BPM. The
+Capture MIDI route captures the same phrase from the feed at 70, 120 and
+180 BPM. `live-connection-test` covers empty and musical Sets, idempotent
+reruns, lost acknowledgements, deleted and disarmed tracks, renamed tracks,
+duplicates and Exclusive Arm. The simulated Set is test code
+(`test/tolglow/integrations/fake_live.clj`). It does not claim real Live
+behaviour where that is undocumented, for example how Capture MIDI picks the
+clip length. Its `write-clip` refuses controller events unless a test creates
+the Set with `:envelope-lanes? true`, which models companion lane parameters on
+every capture track. `live-companion-contract-test` drives the real
+`live-transport` HTTP client, `node_bridge.js` and `max_adapter.js` with
+`live_session.js` against a simulated Live object graph
+(`test/js/ableton-live/live_set_fixture.js`). It covers setup, rerun, the
+envelope write and read-back, refusals and a stopped companion. The
+companion's own tests are in `test/js/ableton-live/live_session.test.js`.
+
 ## Verified Live APIs and limits
 
 The current official Live Object Model supports observing clip playback state
