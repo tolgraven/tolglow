@@ -134,11 +134,18 @@
           (set! (.-height canvas) pixel-height))
         (.setTransform context ratio 0 0 ratio 0 0)
         (.clearRect context 0 0 width height)
+        ;; The playhead trails the newest committed sample by up to one sample
+        ;; period, so audio stamped after the shown beat waits behind now.
+        (.save context)
+        (.beginPath context)
+        (.rect context 0 0 centre height)
+        (.clip context)
         (dotimes [index (alength list)]
           (let [entry (aget list index)]
             (when-let [[left column-width top column-height] (model/column-rect (aget entry 0) beat scale height)]
               (set! (.-fillStyle context) (aget entry 1))
               (.fillRect context left top (max 1 (- column-width 0.4)) column-height))))
+        (.restore context)
         (reset! (:drawn store) key)))))
 
 (defn- frame! [store]
