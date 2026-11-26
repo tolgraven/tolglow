@@ -255,8 +255,9 @@
             ;; Generated knob candidates (#667) and their Room audition.
             :knob-candidates (knob-candidates/projection
                               model (when-let [preview (get-in audition [:draft :preview])]
-                                      (assoc preview :status (:status audition)
-                                             :draft-revision (get-in audition [:draft :revision]))))
+                                      (cond-> (assoc preview :status (:status audition)
+                                                     :draft-revision (get-in audition [:draft :revision]))
+                                        (:frame-revision audition) (assoc :frame-revision (:frame-revision audition)))))
             :knob-presets (knob-presets/projection model) ; knob looks (#547)
             :operator-history (operator-history/project (:id runtime) model)
             :history-command-outcomes (:history-command-outcomes snapshot [])
@@ -285,6 +286,7 @@
             :draft-output (when-let [frame (:output audition)]
                             {:values (reflections/with-footprints optics (preview/values frame fixtures gains))
                              :draft (select-keys (:draft audition) [:id :revision])
+                             :frame-revision (:frame-revision audition)
                              :time-ms (:time-ms audition)})
             :output {:values (reflections/with-footprints optics (preview/values output fixtures gains))
                      :edge-tracking (:edge-tracking output [])
@@ -611,6 +613,8 @@
     (cond-> (-> model
                 subscribers/restart
                 spatial/clear-session
+                ;; A candidate (#667) was drafted from launches the restart ends.
+                knob-candidates/restart
                 surface/detach-all
                 (assoc :composition-runs {} :composition-tokens {} :modulation (modulation/new-state))
                 (autopilot/clear-session time-ms command)
@@ -909,10 +913,12 @@
 (defn- begin-audition
   "Start a private timeline from the committed frame state. Its first frame
   renders the staged model with the live frame's previous state, as the live
-  show would after applying the draft at the staging time."
+  show would after applying the draft at the staging time. :timeline names
+  this timeline: a retune replaces the draft but keeps the timeline, so the
+  worker and the owner's clock steps follow it rather than the draft."
   [runtime draft]
   (let [before @(:state runtime)]
-    {:draft draft :caches (audition-caches runtime (:model draft)) :next-model (:model draft)
+    {:draft draft :timeline (Object.) :caches (audition-caches runtime (:model draft)) :next-model (:model draft)
      :frame (assoc (select-keys before audition-state-keys)
                    :model (:model before)
                    ;; Response smoothing seeds from the previous packets. Copy them so the
@@ -996,20 +1002,49 @@
                                               :status :applied :time-ms time-ms)}))
         result))))
 
+(defn- retunable?
+  "True when a candidate audition at a new value can keep its private timeline:
+  the same candidate on the same committed show, with nothing stale or failed."
+  [model {:keys [draft retune error stale]} candidate]
+  (and draft retune (not error) (not stale)
+       (= knob-candidates/draft-id (:id draft))
+       (= (:revision model) (get-in draft [:base :revision]))
+       (= (:epoch model) (get-in draft [:base :epoch]))
+       (= candidate (:candidate retune))
+       (nil? (scene-draft/changed-dependency model draft))))
+
 (defn- stage-candidate-audition
   "Stage the model's knob candidate (#667) in the Room at knob value: an
   audition-only draft whose private show has the candidate's links resolved and
-  written in. Returns the staging receipt."
+  written in. Returns the staging receipt.
+
+  Sweeping the value coalesces: while the candidate and the committed show are
+  unchanged since staging, a new value bumps the draft revision and queues a
+  retune that the audition worker writes into its running private model before
+  its next frame. The private compile caches and timeline are kept, instead of
+  copying the show and recompiling on every encoder step. Another candidate, an
+  edit or any committed live change stages a fresh private copy. A retune is
+  data (the candidate, the value and a sequence number), which the worker
+  resolves with `knob-candidates/audition-model`."
   [runtime model value time-ms]
   (let [state (draft-state runtime)
-        {:keys [draft]} @state
+        {:keys [draft retune] :as current} @state
         candidate (knob-candidates/candidate model)
-        {:keys [ack] staged :draft}
-        (scene-draft/stage-preview model draft {:draft-id knob-candidates/draft-id
-                                                :preview (knob-candidates/preview candidate value)}
-                                   time-ms #(knob-candidates/audition-model % candidate value))]
-    (when staged (reset! state (begin-audition runtime staged)))
-    ack))
+        preview (knob-candidates/preview candidate value)]
+    (if (retunable? model current candidate)
+      (let [revision (inc (:revision draft))]
+        (swap! state assoc
+               :draft (assoc draft :revision revision :preview preview)
+               :retune {:seq (inc (:seq retune)) :candidate candidate :value (double value)})
+        (merge (select-keys (:base draft) [:show-id :epoch :revision])
+               {:status :accepted :draft-id (:id draft) :draft-revision revision :retuned? true}))
+      (let [{:keys [ack] staged :draft}
+            (scene-draft/stage-preview model draft {:draft-id knob-candidates/draft-id :preview preview} time-ms
+                                       #(knob-candidates/audition-model % candidate value))]
+        (when staged
+          (reset! state (assoc (begin-audition runtime staged)
+                               :retune {:seq 0 :candidate candidate :value (double value)} :retuned 0)))
+        ack))))
 
 (defn- knob-candidate-audition
   "Owner admission for :knob-candidate/audition. Like a Room stage it leaves the
@@ -1027,6 +1062,10 @@
       (nil? (knob-candidates/candidate model)) (reject :no-candidate "Generate a candidate first")
       (not (and (number? value) (Double/isFinite (double value)) (<= 0 value 1)))
       (reject :invalid-value "An audition value is between 0 and 1")
+      ;; A cue release (not a restart, which drops the candidate) can leave every
+      ;; destination without a launch; the Room would show nothing of the knob.
+      (not (knob-candidates/running-destinations? model (knob-candidates/candidate model)))
+      (reject :no-running-cues "None of the candidate's cues is running; launch them or generate again")
       :else (let [ack (stage-candidate-audition runtime model value time-ms)]
               {:model model :ack (merge ack {:command-id command-id}
                                         (when (= :accepted (:status ack))
@@ -2376,28 +2415,33 @@
                                 (assoc :last-outcome (outcome :missed (select-keys ack [:code :message])))))
               model))))))
 
-(def ^:private owner-draft-keys [:pending-apply :last-outcome])
+(def ^:private owner-draft-keys
+  "Draft fields the owner writes. A candidate retune (#667) replaces :draft and
+  :retune on the same timeline; the worker writes the frame fields and :retuned."
+  [:pending-apply :last-outcome :draft :retune])
 
 (defn- commit-draft-view!
   "Publish the cycle's draft edits after its frame has committed. Render
-  fields written by the audition worker for the same draft are kept."
+  fields written by the audition worker for the same timeline are kept."
   [runtime initial view]
   (when-not (identical? initial view)
     (swap! (:scene-draft runtime)
            (fn [current]
              (cond
                (nil? view) nil
-               (and current (identical? (:draft view) (:draft current)))
+               (and current (some? (:timeline view)) (identical? (:timeline view) (:timeline current)))
                (merge (apply dissoc current owner-draft-keys) (select-keys view owner-draft-keys))
                :else view)))))
 
-(defn- audition-projection [{:keys [draft frame pending-apply last-outcome error stale skipped rendered]}]
+(defn- audition-projection [{:keys [draft frame pending-apply last-outcome error stale skipped rendered frame-revision]}]
   (cond-> {}
     draft (assoc :draft (scene-draft/summary draft) :time-ms (get-in frame [:model :time-ms])
                  :status (cond error :error stale :stale pending-apply :scheduled :else :auditioning)
                  :frames {:rendered (or rendered 0) :skipped (or skipped 0)})
     (and draft (not error) (not stale) (pos? (or rendered 0)) (:output frame))
-    (assoc :output (select-keys (:output frame) [:values :compact :target-order]))
+    (assoc :output (select-keys (:output frame) [:values :compact :target-order])
+           ;; Compare with the draft revision to tell whether the frame shows the current value.
+           :frame-revision frame-revision)
     pending-apply (assoc :pending-apply (assoc (select-keys pending-apply [:due-beat :grid :requested-at])
                                                :command-id (get-in pending-apply [:command :command-id])))
     last-outcome (assoc :last-outcome last-outcome)
@@ -2430,22 +2474,24 @@
 
 (defn- render-audition!
   "Worker task: render one audition frame from the staged timeline. The
-  result installs only while the same draft is staged. Pending clock rebases
+  result installs only while the same timeline is staged. Pending clock rebases
   and stopped-transport holds are applied first, in the order the live show
-  took them. `live` is the
+  took them, then any candidate retune queued since the last frame. `live` is the
   committed model of the frame that queued this one: its transport, master,
   blackout, master ramp and track feel reach the private timeline."
-  [runtime draft live time-ms]
+  [runtime timeline live time-ms]
   (let [state (:scene-draft runtime)
-        same? #(identical? draft (:draft %))]
+        same? #(identical? timeline (:timeline %))]
     (try
-      (when-let [{:keys [frame caches next-model rebases]} (let [current @state] (when (same? current) current))]
-        (let [;; Shift the private musical anchors by each offset the live model took.
+      (when-let [{:keys [draft frame caches next-model rebases retune retuned]} (let [current @state] (when (same? current) current))]
+        (let [retune? (and retune (not= (:seq retune) retuned))
+              ;; Shift the private musical anchors by each offset the live model took.
               model (-> (reduce (fn [model step]
                                   (if (contains? step :held-ms)
                                     (show-clock/hold model (:held-ms step))
                                     (show-clock/rebase model step)))
                                 (or next-model (:model frame)) rebases)
+                        (cond-> retune? (knob-candidates/audition-model (:candidate retune) (:value retune)))
                         (merge (select-keys live [:transport :master :blackout?]))
                         ;; A draft cannot stage a feel and applying replays it on the live
                         ;; model, so the Room shows the live track feel.
@@ -2456,6 +2502,10 @@
           (swap! state #(if (same? %)
                         (-> % (dissoc :next-model)
                             (taken-rebases (count rebases))
+                            (cond-> retune? (assoc :retuned (:seq retune)))
+                            ;; The draft revision this frame rendered: a retune bumps the
+                            ;; revision before the worker renders the new value.
+                            (assoc :frame-revision (:revision draft))
                             (update :rendered (fnil inc 0))
                             (assoc :frame (assoc (select-keys rendered audition-state-keys)
                                                  :model (staging/finish (:model rendered))
@@ -2472,16 +2522,16 @@
   it cannot delay a live slot. A frame is skipped, and counted, while the
   previous one is still rendering or when the live frame used more than
   :max-live-share (default 0.5) of its period. `steps` are the clock steps the
-  live model took this cycle: a beat rebase {:draft :from-beat :beat} and a
-  stopped-transport hold {:draft :held-ms}. A timeline staged before the cycle
+  live model took this cycle: a beat rebase {:timeline :from-beat :beat} and a
+  stopped-transport hold {:timeline :held-ms}. A timeline staged before the cycle
   queues them, also when this frame is skipped."
   [runtime live time-ms elapsed-ms steps]
   (let [state (:scene-draft runtime)
-        _ (doseq [step steps :when (:draft step)]
-            (swap! state #(if (identical? (:draft step) (:draft %))
-                            (update % :rebases (fnil conj []) (dissoc step :draft))
+        _ (doseq [step steps :when (:timeline step)]
+            (swap! state #(if (identical? (:timeline step) (:timeline %))
+                            (update % :rebases (fnil conj []) (dissoc step :timeline))
                             %)))
-        {:keys [draft error stale in-flight]} @state
+        {:keys [draft timeline error stale in-flight]} @state
         share (get-in runtime [:audition-options :max-live-share] 0.5)
         period (/ 1000.0 (:frame-rate runtime))
         changed (when (and draft (not error) (not stale)) (scene-draft/changed-dependency live draft))]
@@ -2500,7 +2550,7 @@
       :else
       (do (swap! state assoc :in-flight true)
           (try (.execute ^java.util.concurrent.ExecutorService @(:audition-worker runtime)
-                         #(render-audition! runtime draft live time-ms))
+                         #(render-audition! runtime timeline live time-ms))
                (catch java.util.concurrent.RejectedExecutionException _
                  (swap! state dissoc :in-flight)))))))
 
@@ -2763,10 +2813,10 @@
                                    ;; step; a stopped interval held its millisecond progress.
                                    (cond-> []
                                      (not= clock-generation @(:presentation-clock runtime))
-                                     (conj {:draft (:draft draft-initial)
+                                     (conj {:timeline (:timeline draft-initial)
                                             :from-beat (get-in before [:model :transport :beat])
                                             :beat (get-in next-state [:model :transport :beat])})
-                                     (pos? held-ms) (conj {:draft (:draft draft-initial) :held-ms held-ms})))))))
+                                     (pos? held-ms) (conj {:timeline (:timeline draft-initial) :held-ms held-ms})))))))
        (finally
          (when @committed-bound? (pop-thread-bindings))
          (when-let [request @author-request]

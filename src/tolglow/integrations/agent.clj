@@ -40,7 +40,8 @@
    {:name "knob_candidate"
     :description (str "Generate, reroll, audition, edit, keep or discard one draft linked-knob mapping across the running cues. "
                       "generate takes an optional integer seed, character (energy, colour or motion), cue-ids to restrict the selection, "
-                      "size [min max] links, or from-knob to repeat a kept knob's saved recipe. reroll tries the next seed with a different mapping. "
+                      "size as two link-count bounds from 2 to 8 in either order, include-knob-driven? true to also offer destinations existing knobs drive "
+                      "(left out by default), or from-knob to repeat a kept knob's saved recipe. reroll tries the next seed with a different mapping. "
                       "audition stages the candidate in the Room at knob value 0–1; the live show is unchanged. "
                       "link replaces one candidate link by id and unlink drops one. keep creates an ordinary knob (optional knob-id, name, value); "
                       "discard drops the draft. Read the candidate, its explanation, or why too few parameters were eligible under knob-candidates in inspect_show.")
@@ -49,6 +50,7 @@
                               :seed {:type "integer"} :character {:type "string" :enum ["energy" "colour" "motion"]}
                               :cue-ids {:type "array" :items id-schema :maxItems 64}
                               :size {:type "array" :items {:type "integer" :minimum 2 :maximum 8} :minItems 2 :maxItems 2}
+                              :include-knob-driven? {:type "boolean"}
                               :from-knob id-schema :value level-schema :knob-id id-schema
                               :name {:type "string" :minLength 1 :maxLength 128}
                               :link {:type "object"} :link-id id-schema}
