@@ -52,14 +52,15 @@
 (defn- cpu-ns []
   (.getProcessCpuTime ^com.sun.management.OperatingSystemMXBean (ManagementFactory/getOperatingSystemMXBean)))
 
-(defn- run-once [n fps seconds & [definitions]]
+(defn- run-once [n fps seconds & [definitions extra-options]]
   (let [sends (atom [])
         sink {:send! (fn [_ _] (swap! sends conj (System/nanoTime))) :close! (fn [& _])}
         runtime (show/start! {:model (-> (demo/model)
                                          (assoc :rig (layout/materialize {:fixtures [] :pixel-layouts [strip]}))
                                          (assoc-in [:settings :video :mappings]
                                                    {:shader-strip (ex/strip-mapping {:source :shader/bench-strip :layout :strip-200})}))
-                              :workspace-options nil :recovery false}
+                              :workspace-options nil :recovery false
+                              :shader-options (:shader-options extra-options {})}
                              (fn [_] sink))
         reply! (fn [& args] (deref (apply show/submit! runtime args) 5000 {:status :timeout}))
         frame-ms (atom [])]
@@ -136,7 +137,10 @@
   lighting interval."
   [seconds]
   (vec (for [[w h] [[1920 1080] [4096 2160]]]
-         (assoc (run-once 1 30 seconds [(ex/plasma {:id :bench-large :size [w h] :fps 30})]) :size [w h]))))
+         ;; A 4K feed is beyond the default budget; the run raises it explicitly.
+         (assoc (run-once 1 30 seconds [(ex/plasma {:id :bench-large :size [w h] :fps 30})]
+                          {:shader-options {:max-pixel-rate (* 4096 2160 30)}})
+                :size [w h]))))
 
 (defn -main [& [seconds out mode]]
   (let [seconds (if seconds (Double/parseDouble seconds) 8)
