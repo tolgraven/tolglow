@@ -28,8 +28,14 @@
   "MCU strip button notes by row: REC, SOLO, MUTE, SELECT (strip = note - base)."
   [[:rec 0] [:solo 8] [:mute 16] [:select 24]])
 
-(def ^:private mcu-named-buttons
-  (merge mcu/buttons {:shift 70}))
+(def mcu-named-buttons
+  "Named main-unit MCU buttons: the Afterglow codec's table plus the encoder
+  assign, modifier and transport SOLO buttons the mixer layout uses, at their
+  standard MCU note numbers (unverified on hardware until the #706 slice 2
+  checklist runs)."
+  (merge mcu/buttons
+         {:track 40 :send 41 :pan 42 :plug-in 43 :eq 44 :inst 45 :user 69
+          :shift 70 :option 71 :control 72 :alt 73 :global-solo 90}))
 
 (defn- mcu-groups [extender?]
   (cond-> {:faders {:kind :faders :geometry [8 1] :capabilities {:motor true :touch true :resolution 14 :readback false}}

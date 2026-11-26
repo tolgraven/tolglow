@@ -150,6 +150,13 @@
             {released :commands} (clip/release-all p (envelope "stop"))]
         (is (= [[:param/set "0:1"]] (mapv (juxt :op :instance-id) sets)))
         (is (= [[:instance/end "0:1"]] (mapv (juxt :op :instance-id) released)))))
+    (testing "with a track map, playback tagged with another track is not a capture track"
+      (let [p (clip/player layout {:bridge-id "b"} {"track:7" 1})
+            launches #(mapv :cue-id (:commands (clip/play p [(merge {:type :note-on :note 36 :velocity 127 :channel 1} %)]
+                                                          (envelope "m"))))]
+        (is (= [:wash] (launches {:track-id "track:7"})))
+        (is (= [] (launches {:track-id "track:9"})) "the companion moved onto a musician's track")
+        (is (= [:wash] (launches {})) "untagged events keep their channel")))
     (testing "a rejected launch drops its run"
       (let [{p :player} (clip/play p0 [{:type :note-on :note 36 :velocity 127 :channel 1}] (envelope "r"))]
         (is (empty? (:runs (:player (clip/acknowledge p {:command-id "r/0" :status :rejected} (envelope "x"))))))))))
@@ -173,3 +180,37 @@
       (let [l {:components (clip/components {:type :number :recommended [0.0 1.0]})}]
         (is (= [16383] (clip/encode-value l 1.0)))
         (is (nil? (clip/encode-value l 2.5)))))))
+
+(deftest a-value-before-a-launch-belongs-to-that-launch
+  (let [layout (layout-for phrase)
+        level (lane layout :level)
+        v (fn [x] (first (clip/encode-value level x)))
+        cc (fn [beat x] [{:beat beat :controller 1 :value (bit-shift-right (v x) 7)} {:beat beat :controller 33 :value (bit-and (v x) 127)}])
+        clips {1 {:clip/version 1 :length-beats 8 :meter (:meter phrase)
+                  :notes [{:pitch 36 :start 2 :duration 1 :velocity 127} {:pitch 36 :start 5 :duration 1 :velocity 127}]
+                  :controllers (vec (concat (cc 0 0.5) (cc 3 0.25) (cc 4 0.75)))}}
+        decoded (clip/clips->phrase clips layout {})
+        value #(clip/decode-value level [(v %)])]
+    (is (= [{:level (value 0.5)} {:level (value 0.75)}] (mapv :params (:notes decoded)))
+        "the value read from beat 0 launches the note at 2; of two values held before the note at 5 the later wins")
+    (is (= [{:cue-id :wash :param :level :beat 3 :value (value 0.25)}] (:orphans (meta decoded))))
+    (testing "the playback decoder does the same"
+      (let [p0 (clip/player layout)
+            env (fn [prefix] (fn [n] {:command-id (str prefix n)}))
+            step (fn [p events prefix] (clip/play p (map #(assoc % :type :cc :channel 1) events) (env prefix)))
+            {p :player} (step p0 (cc 0 0.5) "a")
+            {p :player launch :commands} (clip/play p [{:type :note-on :note 36 :velocity 127 :channel 1}] (env "b"))]
+        (is (= {:level (value 0.5)} (get-in (first launch) [:launch :params])))
+        (is (empty? (:held p)) "a launch consumes the held value")))
+    (testing "an import can be quantised with the capture grid's rounding"
+      (let [off {1 (-> (get clips 1) (assoc-in [:notes 0 :start] 2.1) (update :controllers #(mapv (fn [c] (update c :beat + 1/16)) %)))}
+            q (clip/clips->phrase off layout {:grid-beats 1/4})]
+        (is (= [2 5] (mapv :start (:notes q))))
+        (is (= [1 1] (mapv :length (:notes q))))))))
+
+(deftest controller-events-compact-into-14-bit-lane-points
+  (is (= [{:controller 1 :points [[0 (+ (* 64 128) 3)] [1 (+ (* 10 128) 3)]]} {:controller 7 :points [[1/2 127]]}]
+         (clip/controller-lanes [{:beat 0 :controller 1 :value 64} {:beat 0 :controller 33 :value 3}
+                                 {:beat 1 :controller 1 :value 10}
+                                 {:beat 1/2 :controller 39 :value 127} {:beat 1/2 :controller 64 :value 1}]))
+      "a coarse-only write keeps the fine value; non-lane controllers are ignored"))

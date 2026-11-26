@@ -33,6 +33,7 @@
             [tolglow.controllers.page-overview :as page-overview]
             [tolglow.controllers.push-variations :as push-variations]
             [tolglow.surface.link :as surface]
+            [tolglow.surface.x-touch :as x-touch]
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
             [tolglow.effects.material-design :as material-design]
@@ -44,11 +45,14 @@
             [tolglow.compiler.batch :as batch]
             [tolglow.registry :as registry]
             [tolglow.integrations.ableton :as ableton]
+            [tolglow.integrations.phrase-capture :as phrase-capture]
+            [tolglow.integrations.phrase-clip :as phrase-clip]
             [tolglow.aim-paths :as aim-paths]
             [tolglow.rig.pixel-layout :as pixel-layout]
             [tolglow.rig.reflections :as reflections]
             [tolglow.rig.surface-aim :as surface-aim]
             [tolglow.modulation :as modulation]
+            [tolglow.knob-candidates :as knob-candidates]
             [tolglow.knobs :as knobs]
             [tolglow.knob-presets :as knob-presets]
             [tolglow.lighting-capacity :as capacity]
@@ -123,7 +127,6 @@
             [afterglow.reactive.clock :as reactive-clock]
             [tolglow.agents :as agents]
             [afterglow.control.devices.repl :as devices]
-            [afterglow.control.devices.x-touch :as x-touch]
             [taoensso.timbre :as timbre]
             [tolglow.composition.response :as response]
             [tolglow.composition.envelope :as envelope])
@@ -238,6 +241,11 @@
             :cue-launch-outcomes (cue-timing/outcomes model)
             :schedule (subscribers/schedule-view model)
             :knobs (knobs/projection model) ; linked knobs (#666)
+            ;; Generated knob candidates (#667) and their Room audition.
+            :knob-candidates (knob-candidates/projection
+                              model (when-let [preview (get-in audition [:draft :preview])]
+                                      (assoc preview :status (:status audition)
+                                             :draft-revision (get-in audition [:draft :revision]))))
             :knob-presets (knob-presets/projection model) ; knob looks (#547)
             :operator-history (operator-history/project (:id runtime) model)
             :history-command-outcomes (:history-command-outcomes snapshot [])
@@ -405,6 +413,15 @@
   "Owner operations that start driving fixtures through the physical sink."
   {:calibration #{:start} :photometry #{:start :start-surface} :fog-calibration #{:start}})
 
+(defn- new-phrase-capture
+  "Owner state for retrospective Capture (#671). options is false to disable,
+  or phrase-capture/new-buffer options such as {:bars 8 :grid {:beats 1/4}}."
+  [options]
+  (if (false? options)
+    {:enabled? false}
+    {:enabled? true :buffer (phrase-capture/new-buffer options) :layout {}
+     :cost {:samples 0 :total-ns 0 :max-ns 0 :last-ns 0} :captures 0 :last nil}))
+
 (defn- configure-runtime
   [compute-owner {:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
    (let [model (-> (or model (demo/model))
@@ -530,6 +547,7 @@
                             :input (atom {:epoch (:epoch model) :position initial-position
                                           :used-sessions #{(get-in initial-position [:provenance :session-id])}})})
       :sync-input (atom {:epoch (:epoch model) :events []})
+      :phrase-capture (atom (new-phrase-capture (get options :phrase-capture {})))
       :connections owned :devices (atom {}) :device-reconnects (atom {}) :surface-refusals (atom {}) :development development
       :rdm (rdm/create (merge (:rdm-options options)
                              {:state rdm-state :model! #(get @(:state @runtime-ref) :model)
@@ -716,6 +734,9 @@
                    ;; Linked knobs (#666).
                    (knobs/operations operation)
                    (control/apply-domain-command model envelope knobs/apply-operation)
+                   ;; Generated knob candidates (#667).
+                   (knob-candidates/operations operation)
+                   (control/apply-domain-command model envelope knob-candidates/apply-operation)
                    ;; Knob looks (#547).
                    (knob-presets/operations operation)
                    (control/apply-domain-command model envelope knob-presets/apply-operation)
@@ -957,10 +978,67 @@
                                               :status :applied :time-ms time-ms)}))
         result))))
 
+(defn- stage-candidate-audition
+  "Stage the model's knob candidate (#667) in the Room at knob value: an
+  audition-only draft whose private show has the candidate's links resolved and
+  written in. Returns the staging receipt."
+  [runtime model value time-ms]
+  (let [state (draft-state runtime)
+        {:keys [draft]} @state
+        candidate (knob-candidates/candidate model)
+        {:keys [ack] staged :draft}
+        (scene-draft/stage-preview model draft {:draft-id knob-candidates/draft-id
+                                                :preview (knob-candidates/preview candidate value)}
+                                   time-ms #(knob-candidates/audition-model % candidate value))]
+    (when staged (reset! state (begin-audition runtime staged)))
+    ack))
+
+(defn- knob-candidate-audition
+  "Owner admission for :knob-candidate/audition. Like a Room stage it leaves the
+  show model untouched; the candidate's preview replaces the Room's frame."
+  [runtime model payload time-ms]
+  (let [{:keys [command-id value]} (merge {:command-id (str (UUID/randomUUID))} payload)
+        reply (fn [status details]
+                {:model model :ack (merge (select-keys model [:show-id :epoch :revision])
+                                          {:status status :command-id command-id} details)})
+        reject (fn [code message] (reply :rejected {:code code :message message}))]
+    (cond
+      (not= [(:show-id model) (:epoch model)]
+            [(:show-id payload (:show-id model)) (:epoch payload (:epoch model))])
+      (reject :stale-epoch "The audition belongs to another show session")
+      (nil? (knob-candidates/candidate model)) (reject :no-candidate "Generate a candidate first")
+      (not (and (number? value) (Double/isFinite (double value)) (<= 0 value 1)))
+      (reject :invalid-value "An audition value is between 0 and 1")
+      :else (let [ack (stage-candidate-audition runtime model value time-ms)]
+              {:model model :ack (merge ack {:command-id command-id}
+                                        (when (= :accepted (:status ack))
+                                          {:value (double value)
+                                           :candidate-id (:id (knob-candidates/candidate model))}))}))))
+
+(defn- follow-candidate-audition!
+  "After a candidate command, keep a running candidate audition on the current
+  candidate at its knob value, or end it when no candidate remains."
+  [runtime result time-ms]
+  (let [state (draft-state runtime)
+        {:keys [draft]} @state
+        model (:model result)]
+    (when (and (= :accepted (get-in result [:ack :status])) (= knob-candidates/draft-id (:id draft)))
+      (if (knob-candidates/candidate model)
+        (stage-candidate-audition runtime model (get-in draft [:preview :value] 0.5) time-ms)
+        (reset! state nil)))
+    result))
+
 (defn- dispatch-owner-command [runtime model payload time-ms authority]
   (cond
     (scene-draft/operations (:op payload))
     (scene-draft-command runtime model payload time-ms)
+
+    ;; Generated knob candidates (#667): auditions stage in the Room; edits follow it.
+    (knob-candidates/audition-operations (:op payload))
+    (knob-candidate-audition runtime model payload time-ms)
+
+    (knob-candidates/operations (:op payload))
+    (follow-candidate-audition! runtime (command model payload time-ms authority) time-ms)
 
     (subscribers/schedulable? payload)
     (command model (subscribers/as-post payload) time-ms authority)
@@ -1792,6 +1870,22 @@
           (assoc-in [:variables :sync :events] (:events captured))
           (routing/admit-sync (:events captured))) model)))
 
+(defn- observe-phrase-capture!
+  "Fold the committed model into the capture buffer and record what it cost.
+  The fold is pure; a failure is reported in status and never stops a frame."
+  [runtime model]
+  (when-let [state (:phrase-capture runtime)]
+    (when (:enabled? @state)
+      (let [start (System/nanoTime)]
+        (try
+          (let [buffer (phrase-capture/observe-model (:buffer @state) model)
+                ns (- (System/nanoTime) start)]
+            (swap! state (fn [s] (-> s (assoc :buffer buffer)
+                                     (update :cost #(-> % (update :samples inc) (update :total-ns + ns)
+                                                        (update :max-ns max ns) (assoc :last-ns ns)))))))
+          (catch Exception error
+            (swap! (:state runtime) assoc-in [:status :phrase-capture-error] (error-data error))))))))
+
 (defn- observe-sync-commands! [runtime before after receipts events fired-outcomes]
   (let [manager (connections/sync (:connections runtime))
         old-ids (if (= (:epoch before) (:epoch after))
@@ -2536,6 +2630,8 @@
                                   (get-in next-state [:output :fog-demands])))
                   (catch Exception error
                     (swap! (:state runtime) assoc-in [:status :output-error] (error-data error))))
+             ;; After the frame is handed to output, so the fold never delays it.
+             (when-not restored? (observe-phrase-capture! runtime (:model next-state)))
              (let [observers (vals @(:observers runtime))
                    publication (try (connections/publish! (:connections runtime) (effect-keyframes/source (block-trace/source next-state) (:keyframes next-state))
                                             (boolean (some (fn [observer] ((:tracing? observer))) observers)))
@@ -2868,6 +2964,8 @@
           "launch_cue" [:command (merge envelope arguments {:op :cue/launch})]
           "stop_instance" [:command (merge envelope arguments {:op :instance/end})]
           "set_parameter" [:command (merge envelope arguments {:op :param/set})]
+          "knob_candidate" [:command (merge envelope (dissoc arguments :op)
+                                            {:op (keyword "knob-candidate" (name (:op arguments)))})]
           "schedule_events" [:command (merge envelope {:op :schedule/post :events (vec (:events arguments))})]
           "cancel_scheduled" [:command (merge envelope (select-keys arguments [:event-ids :label :destination])
                                               (when (:mine? arguments) {:posted-by (:source envelope)})
@@ -2975,6 +3073,19 @@
 
 (def ^:private device-command-wait-ms 5000)
 
+(defn- external-transport-fn
+  "model -> true while an external clock owns play and stop: any selected
+  source other than :manual, except Ableton Link with start/stop sync off
+  (tempo-only Link leaves playback local). A surface's PLAY and STOP then
+  stay quiet instead of fighting Live (#706 slice 2)."
+  [runtime]
+  (fn [model]
+    (boolean
+     (when-let [manager (try (connections/sync (:connections runtime)) (catch Exception _ nil))]
+       (let [{:keys [selected-source follow-transport?]}
+             (session/clock-at manager (get-in model [:transport :time-ms] (now-ms runtime)))]
+         (and (some? selected-source) (not= :manual selected-source) (not (false? follow-transport?))))))))
+
 (defn- surface-command!
   "Enqueue a host surface command without waiting: the owner may be ticked by
   the caller, and a device reads a missing surface as strip 0. A watcher off
@@ -3021,7 +3132,11 @@
   the first strips, followed by any configured cue channels. Each X-Touch or
   extender registers a control surface under its session ID; its window is
   show data, moved by its bank buttons, Studio and :control-surface/bank. Join
-  separately connected surfaces with link-surfaces!."
+  separately connected surfaces with link-surfaces!. X-Touch units run the
+  Tolglow mixer layout (tolglow.surface.x-touch): encoder modes, selection,
+  Solo/Mute and the other layout state are committed per logical surface,
+  see surface-layout!. :color-match (:hue, :rgb or :off) picks how strip
+  colours map to the eight scribble colours."
   [runtime kind {:keys [session-id ::restore-lease ::reconnect-lease] :as options}]
   (require-devices! runtime [:connect-device kind])
   (let [id session-id epoch (get-in @(:state runtime) [:model :epoch])]
@@ -3041,24 +3156,24 @@
                           {:adapter kind :session-id id})
             operator-id (when push-source (str (name kind) "/" id "/" (UUID/randomUUID)))
             open! (case kind :push-2 devices/open-push-2! :push-3 devices/open-push-3!
-                         :push-3-midi devices/open-push-3-midi! :seaboard devices/open-seaboard! :x-touch devices/open-x-touch!
+                         :push-3-midi devices/open-push-3-midi! :seaboard devices/open-seaboard! :x-touch x-touch/connect!
                          :midi devices/open-midi! :osc devices/open-osc! :sensor devices/open-sensor!
                          (throw (ex-info "Unknown device kind" {:kind kind})))
             push-3-variation-pads? (and (= kind :push-3) (true? (:cue-variation-pads? options)))
             x-touch? (= :x-touch kind)
             ;; Validates the cue channel bindings before any port opens.
-            _ (when x-touch? (x-touch/profile (select-keys options [:channels])))
+            _ (when x-touch? (x-touch/validate-channels! (vec (:channels options []))))
             surface-content (when x-touch?
                               {:type :mixer-strips :effect-group-view effect-group-view
                                :cue-strips (vec (:channels options []))})
             options (cond-> (dissoc options ::restore-lease ::reconnect-lease)
                       x-touch?
-                      (assoc :channels []
-                             :group-channels #(surface/strip-channels % id surface-content)
-                             :group-level-command (fn [group value]
-                                                    {:op :effect-groups/level-set :channel-id group :value value})
-                             :model-bank #(surface/strip-offset % id)
-                             :bank-command (fn [move] {:op :control-surface/bank :target id :viewport :strips :move move}))
+                      ;; The Tolglow mixer layout (#706 slice 2) reads strips, window and
+                      ;; layout state from the committed surface link.
+                      (assoc :surface-id id
+                             :rows #(surface/strip-channels % id surface-content)
+                             :placement #(surface/strip-placement % id)
+                             :external-transport? (external-transport-fn runtime))
                       push-source (assoc :operator-gestures? true :target-search targets/search
                                          :launch-receipt cue-timing/receipt)
                       (or push-3-variation-pads? (and push-source (true? (:cue-variations? options))))
@@ -3153,6 +3268,17 @@
   [runtime target move]
   (submit! runtime (merge {:op :control-surface/bank :target target :source {:adapter :repl :session-id "repl"}}
                           (if (keyword? move) {:move move} move))))
+
+(defn surface-layout!
+  "Change a surface's or link's committed layout state: a map with
+  :encoder-mode (:pan :send :plug-in :user), :page, :selected (a cell key such
+  as [:cue :ember] or [:group [:manual :mix]], or nil) and :flip?. The
+  X-Touch buttons commit the same command. Returns the receipt promise.
+
+    @(surface-layout! runtime \"desk\" {:encoder-mode :plug-in :selected [:cue :ember]})"
+  [runtime target patch]
+  (submit! runtime {:op :control-surface/layout :target target :set patch
+                    :source {:adapter :repl :session-id "repl"}}))
 
 (defn expressive-preview
   "Preview the selected cue's expressive mapping using the connected device's
@@ -3360,6 +3486,69 @@
                              (fn [_] (connections/admit-audio-stop! (:connections runtime))))]
             (shutdown!))
     (throw (ex-info "Unknown audio operation" {:operation operation}))))
+
+(defn- capture-summary [{:keys [id phrase layout]}]
+  (let [bpb (get-in phrase [:meter :beats-per-bar] 4)]
+    {:capture-id id :length-beats (double (:length-beats phrase)) :bars (long (/ (:length-beats phrase) bpb))
+     :start-beat (some-> (get-in phrase [:source :start-beat]) double)
+     :notes (count (:notes phrase)) :cues (vec (distinct (map :cue-id (:notes phrase))))
+     :lane-points (reduce + 0 (map (comp count :points) (:lanes phrase)))
+     :unassigned (:unassigned layout)}))
+
+(defn capture-action!
+  "Retrospective Capture (#671) for the REPL and Studio. The runtime folds
+  every committed owner cycle into a bounded buffer (create-runtime option
+  :phrase-capture, default 8 bars; false disables).
+    :status  -> buffer size, running activations, per-cycle cost and last capture
+    :capture -> capture the last bars ({:bars n :end-beat b} optional) as a
+                phrase, extend the saved MIDI layout and keep it as the last capture
+    :smf     -> {:filename :bytes} Standard MIDI File of the last capture on the
+                layout's cue channel (cue notes and lanes share it by default)
+  The layout is kept for the runtime's lifetime, so later captures address
+  the same pitches and controllers; it is not yet saved with the show."
+  [runtime operation payload]
+  (let [state (:phrase-capture runtime)]
+    (when-not (and state (:enabled? @state))
+      (throw (ex-info "Phrase capture is disabled for this show" {:operation operation})))
+    (case operation
+      :status (let [{:keys [buffer cost captures last]} @state
+                    n (max 1 (:samples cost))]
+                {:enabled? true :bars (:bars buffer) :grid-beats (double (:grid-beats buffer))
+                 :retained-events (count (:events buffer)) :running (count (:open buffer))
+                 :latest-beat (:last-beat buffer)
+                 :cost {:cycles (:samples cost) :mean-us (/ (:total-ns cost) n 1000.0)
+                        :max-us (/ (:max-ns cost) 1000.0) :last-us (/ (:last-ns cost) 1000.0)}
+                 :captures captures :last (some-> last capture-summary)})
+      :capture (let [{:keys [buffer layout captures]} @state
+                     {:keys [bars end-beat] :as options} (select-keys payload [:bars :end-beat])
+                     _ (when-not (and (or (nil? bars) (and (pos-int? bars) (<= bars (:bars buffer))))
+                                      (or (nil? end-beat) (and (number? end-beat) (Double/isFinite (double end-beat))
+                                                               (not (neg? end-beat)))))
+                         (throw (ex-info (str "Capture takes 1-" (:bars buffer) " bars and a non-negative end beat")
+                                         {:bars bars :end-beat end-beat})))
+                     phrase (phrase-capture/capture buffer options)
+                     registry (:registry (:model @(:state runtime)))
+                     layout (phrase-clip/allocate-layout layout registry (phrase-clip/phrase-targets phrase))
+                     entry {:id (inc captures) :phrase phrase :layout layout}]
+                 (if (empty? (:notes phrase))
+                   {:status :empty :message "Nothing ran in the captured bars"}
+                   (do (swap! state assoc :layout layout :captures (inc captures) :last entry)
+                       (assoc (capture-summary entry) :status :captured :phrase phrase))))
+      :smf (let [{:keys [last]} @state]
+             (when-not last (throw (ex-info "Capture a phrase first" {})))
+             (let [{:keys [id phrase layout]} last
+                   clips (phrase-clip/phrase->clips phrase layout)
+                   channel (:channel layout)]
+               {:filename (str "tolglow-capture-" id ".mid")
+                :bytes (phrase-clip/clip->smf (get clips channel) channel
+                                              {:bpm (or (get-in phrase [:source :bpm]) 120)})}))
+      (throw (ex-info "Unknown capture operation" {:operation operation})))))
+
+(defn capture-phrase!
+  "Capture the last bars from the REPL; returns the summary with :phrase.
+  Studio's Capture button runs the same operation."
+  ([runtime] (capture-phrase! runtime {}))
+  ([runtime options] (capture-action! runtime :capture options)))
 
 (defn sync-action!
   "Explicit synchronization and Live ownership operations for Ring/REPL."

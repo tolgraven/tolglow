@@ -255,6 +255,25 @@
                 (cond-> (= operation :source) (assoc-in [:connections :sync-form :selected-source] value))
                 (update-in [:connections :errors] dissoc operation))
        :fx [(req db operation path body :connections/action-complete)]})))
+(rf/reg-event-fx :connections/capture
+  (fn [{:keys [db]} _]
+    {:db (-> db (update-in [:connections :pending] (fnil conj #{}) :capture)
+             (update-in [:connections :errors] dissoc :capture))
+     :fx [(req db :capture "/api/capture/capture" {} :connections/captured)]}))
+(rf/reg-event-fx :connections/captured
+  (fn [{:keys [db]} [_ request-token _ result]]
+    (when (current? db request-token)
+      {:db (-> db (update-in [:connections :pending] disj :capture)
+               (assoc-in [:connections :capture] result))})))
+(defn capture-text
+  "One line describing the server's capture summary (the same operation as
+  show/capture-phrase! at the REPL)."
+  [{:keys [status bars notes cues lane-points capture-id message]}]
+  (if (= "captured" (some-> status name))
+    (str "Capture " capture-id " · " bars (if (= 1 bars) " bar · " " bars · ") notes
+         (if (= 1 notes) " activation of " " activations of ") (str/join ", " (map #(if (keyword? %) (name %) (str %)) cues))
+         " · " lane-points (if (= 1 lane-points) " parameter move" " parameter moves"))
+    (or message "Nothing ran in the captured bars")))
 (rf/reg-event-fx :connections/action-complete
   (fn [{:keys [db]} [_ request-token operation result]]
     (when (current? db request-token)
@@ -734,6 +753,19 @@
       (when-let [error (or (:error audio) (:last-callback-error audio))] [:p.connection-error (:message error)])
       [:p.small.muted "Capture continues when you change views."]]]))
 
+(defn- capture-panel [s]
+  (let [result (:capture s) captured? (= "captured" (some-> (:status result) name))]
+    [:section.panel {:aria-label "Capture"}
+     [:div.panel-top [:span.section-label "CAPTURE"]]
+     [:div.form-body
+      [:p.small.muted "Keep the last bars that ran as an editable phrase: one note per cue run, paired 14-bit controller lanes for parameter moves."]
+      [:div.button-row
+       [:button#capture-phrase.button.primary {:type "button" :disabled (contains? (:pending s) :capture)
+                                               :on-click #(rf/dispatch [:connections/capture])} "Capture last bars"]
+       (when captured?
+         [:a#capture-download.button {:href "/api/capture/last.mid" :download true} "Download MIDI clip"])]
+      (when result [:p.small {:role "status"} (capture-text result)])]]))
+
 (defn connection-view [db s]
   (let [active? (boolean (get-in s [:sync :active?])) pending? (boolean (seq (:pending s))) disabled? (or (nil? (:sync s)) active? pending?)]
     [:section#view-connections.view
@@ -758,7 +790,7 @@
                                           @(rf/subscribe [:show-window/preview-only])) "Connect enabled adapters"]
        [:button#sync-stop.button {:type "button" :disabled (or (not active?) pending?) :on-click #(rf/dispatch [:connections/action :stop])} "Disconnect"]]]
      [:div.connections-layout [midi-panel s disabled?] [beat-link-panel s disabled?] [link-panel s disabled?]
-      [live-panel s (get-in db [:show :cues]) disabled?] [audio-panel s] [section-reference-panel s]
+      [live-panel s (get-in db [:show :cues]) disabled?] [capture-panel s] [audio-panel s] [section-reference-panel s]
       [capacity/panel (contains? (:pending s) :lighting-capacity)] [fog-control/panel (contains? (:pending s) :fog-control)] [output-panel db s] [pause-panel (contains? (:pending s) :pause)]]
      [compute-client/panel]
      [sensors/panel db]

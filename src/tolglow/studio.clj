@@ -206,6 +206,7 @@
             :fixture! #(show/fixture-action! runtime %1 %2)
             :rdm! #(show/rdm-action! runtime %1 %2)
             :sync! #(show/sync-action! runtime %1 %2)
+            :capture! #(show/capture-action! runtime %1 %2)
             :section-reference! (fn [op payload]
                                   (case op
                                     :status (show/section-reference-status runtime)

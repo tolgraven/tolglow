@@ -6,8 +6,13 @@
             [afterglow.sync.session :refer [fail!]])
   (:import [java.util UUID]))
 
+(defn- connect-refused?
+  "Nothing listened on the loopback port, so the request was never sent."
+  [^Throwable e]
+  (some #(instance? java.net.ConnectException %) (take-while some? (iterate ex-cause e))))
+
 (defn- request! [config cancelled? id op payload]
-  (let [result (providers/http-transport!
+  (let [result (try (providers/http-transport!
                 {:method :post :url (:endpoint config)
                  :headers {"content-type" "application/json" "accept" "application/json"}
                  :body (json/write-str {:id id :protocol-version 1 :op op
@@ -16,8 +21,16 @@
                                                    (:sync-session-id config) (assoc :sync-session-id (:sync-session-id config)))})}
                 (fn [_] nil)
                 {:timeout-ms (:timeout-ms config) :connect-timeout-ms (min 1000 (:timeout-ms config))
-                 :max-response-chars 1048576 :cancelled? cancelled?})]
-    (when-not (= 200 (:status result)) (fail! :live-http "Live bridge returned a failing HTTP status"))
+                 :max-response-chars 1048576 :cancelled? cancelled?})
+                    (catch Exception e
+                      (throw (ex-info (.getMessage e)
+                                      (cond-> {:sync/error :live-transport} (connect-refused? e) (assoc :live/not-sent? true))
+                                      e))))]
+    ;; The status lets callers tell a refusal that never reached Max (413, 503..)
+    ;; from a timeout after which a write may have happened (504).
+    (when-not (= 200 (:status result))
+      (throw (ex-info "Live bridge returned a failing HTTP status"
+                      {:sync/error :live-http :http-status (:status result)})))
     (let [reply (json/read-str (:body result) :key-fn keyword)]
       (when-not (and (= id (:id reply)) (= 1 (:protocol-version reply))
                      (#{"executed" "rejected" "indeterminate"} (:status reply)))

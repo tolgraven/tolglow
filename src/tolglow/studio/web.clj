@@ -327,7 +327,8 @@
 
 (defn- get-routes
   [{:keys [snapshot! materials! definition! export! heartbeat! provider-get! chat-history! patch! checkpoint!
-           app-agent! fixture! rdm! audio! sync! section-reference! waveform! workspace! terminal! sensor! repl! calibration! photometry! fog-calibration! event-subscribers! show-identity!]}]
+           app-agent! fixture! rdm! audio! sync! section-reference! waveform! workspace! terminal! sensor! repl! calibration! photometry! fog-calibration! event-subscribers! show-identity!
+           capture!]}]
   (merge
    {;; The runtime, show and epoch a window binds to before it loads Studio (#669).
     "/api/identity" (available show-identity! "Show identity unavailable" (fn [_] (ok (show-identity!))))
@@ -365,6 +366,13 @@
     "/api/audio/returns/mixers" (read-action audio! :return-mixers "Audio service unavailable")
     "/api/audio/returns" (read-action audio! :return-status "Audio service unavailable")
     "/api/sync" (read-action sync! :status "Synchronization unavailable")
+    "/api/capture" (read-action capture! :status "Phrase capture unavailable")
+    "/api/capture/last.mid" (available capture! "Phrase capture unavailable"
+                                       (fn [_]
+                                         (let [{:keys [filename bytes]} (capture! :smf {})]
+                                           {:status 200 :body bytes
+                                            :headers {"Content-Type" "audio/midi" "Cache-Control" "no-store"
+                                                      "Content-Disposition" (str "attachment; filename=\"" filename "\"")}})))
     "/api/section-reference" (read-action section-reference! :status "Section reference unavailable")
     "/api/sync/ports" (read-action sync! :ports "Synchronization unavailable")
     "/api/waveforms" (read-action waveform! :registry "Waveform registry unavailable")
@@ -396,7 +404,8 @@
 
 (defn- post-routes [{:keys [material-preview! variable-sources! spatial-search! submit! submit-history! heartbeat! provider-put! chat! chat-select!
                              app-agent! checkpoint! cue-variation-preview!
-                             sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync! section-reference!]
+                             sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync! section-reference!
+                             capture!]
                      :or {material-preview! materials/preview}}]
   (merge
    (into {} (for [[path op] operations]
@@ -424,6 +433,9 @@
    (post-actions "/api/sync/" sync! ok {"configure" :configure "start" :start "stop" :stop "source" :source "handoff" :handoff "arrange" :arrange
                                       "learn-parameter" :learn-parameter "forget-parameter" :forget-parameter})
    (post-actions "/api/section-reference/" section-reference! acknowledgement {"reconnect" :reconnect})
+   ;; The browser receives the capture summary; the phrase itself stays on the host.
+   (post-actions "/api/capture/" (when capture! (fn [op payload] (dissoc (capture! op payload) :phrase))) ok
+                 {"capture" :capture} "Phrase capture unavailable")
    (post-actions "/api/" sync! ok {"live" :live})
    {"/api/cue-variations/preview"
     (available cue-variation-preview! "Cue variations unavailable" #(ok (cue-variation-preview! (:json-params %))))
