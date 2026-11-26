@@ -222,6 +222,9 @@
 (defn- storage []
   (try (.-localStorage js/window) (catch :default _ nil)))
 
+(defn- stored-text []
+  (try (some-> (storage) (.getItem storage-key)) (catch :default _ nil)))
+
 (defn media-class []
   (if (fn? (aget js/window "matchMedia"))
     (size-class (.-matches (js/matchMedia (:phone media-queries)))
@@ -232,7 +235,7 @@
   (fn [cofx _]
     (assoc cofx :panel-layout/environment
            {:class (media-class)
-            :saved (if-let [text (some-> (storage) (.getItem storage-key))] (decode text) {})})))
+            :saved (if-let [text (stored-text)] (decode text) {})})))
 
 (rf/reg-fx :panel-layout/store
   (fn [saved]
@@ -270,6 +273,16 @@
     (r/after-render
      #(some-> (.querySelector js/document (str "#view-perform [data-panel=\"" (name id) "\"] " selector)) (.focus)))))
 
+;; Entering or leaving edit mode replaces the focused toolbar button, so put
+;; focus on the first panel's title, or back on Edit layout.
+(rf/reg-fx :panel-layout/focus-control
+  (fn [selector]
+    (r/after-render #(some-> (.querySelector js/document (str "#view-perform " selector)) (.focus)))))
+
+(def ^:private first-handle ".layout-handle")
+
+(def ^:private edit-button "#edit-layout")
+
 ;; ---------------------------------------------------------------------------
 ;; Events
 
@@ -292,17 +305,18 @@
     (when-not (:edit (state db))
       (if-let [layout (active-layout db)]
         {:db (assoc-in db [:ui :panel-layout :edit] {:class (current-class db) :layout layout
-                                                     :announce "Editing the layout."})}
+                                                     :announce "Editing the layout."})
+         :panel-layout/focus-control first-handle}
         {:panel-layout/measure true}))))
 
-(rf/reg-event-db :panel-layout/began
-  (fn [db [_ measured]]
-    (if (:edit (state db))
-      db
+(rf/reg-event-fx :panel-layout/began
+  (fn [{:keys [db]} [_ measured]]
+    (when-not (:edit (state db))
       (let [class (current-class db)]
-        (assoc-in db [:ui :panel-layout :edit]
-                  {:class class :layout (if measured (seed class measured) (default-layout class))
-                   :announce "Editing the layout."})))))
+        {:db (assoc-in db [:ui :panel-layout :edit]
+                       {:class class :layout (if measured (seed class measured) (default-layout class))
+                        :announce "Editing the layout."})
+         :panel-layout/focus-control first-handle}))))
 
 (rf/reg-event-fx :panel-layout/done
   (fn [{:keys [db]} _]
@@ -310,10 +324,13 @@
       (let [saved (assoc (:saved (state db)) class layout)]
         {:db (update-in db [:ui :panel-layout] assoc :saved saved :edit nil)
          :panel-layout/store saved
+         :panel-layout/focus-control edit-button
          :dispatch [:studio/toast (str "Layout saved for this " (get-in classes [class :label]) " screen.")]}))))
 
-(rf/reg-event-db :panel-layout/cancel
-  (fn [db _] (assoc-in db [:ui :panel-layout :edit] nil)))
+(rf/reg-event-fx :panel-layout/cancel
+  (fn [{:keys [db]} _]
+    {:db (assoc-in db [:ui :panel-layout :edit] nil)
+     :panel-layout/focus-control edit-button}))
 
 (rf/reg-event-fx :panel-layout/reset
   (fn [{:keys [db]} _]
@@ -321,6 +338,7 @@
           saved (dissoc (:saved (state db)) class)]
       {:db (update-in db [:ui :panel-layout] assoc :saved saved :edit nil)
        :panel-layout/store saved
+       :panel-layout/focus-control edit-button
        :dispatch [:studio/toast (str "Default layout restored for this " (get-in classes [class :label]) " screen.")]})))
 
 (rf/reg-event-fx :panel-layout/move
@@ -379,11 +397,12 @@
 
 ;; Escape acts at once: a queued follow-up event could land after the
 ;; pointer release of the gesture it was meant to cancel.
-(rf/reg-event-db :panel-layout/escape
-  (fn [db _]
+(rf/reg-event-fx :panel-layout/escape
+  (fn [{:keys [db]} _]
     (if (get-in db [:ui :panel-layout :edit :gesture])
-      (cancel-gesture db nil)
-      (assoc-in db [:ui :panel-layout :edit] nil))))
+      {:db (cancel-gesture db nil)}
+      {:db (assoc-in db [:ui :panel-layout :edit] nil)
+       :panel-layout/focus-control edit-button})))
 
 ;; ---------------------------------------------------------------------------
 ;; Views
