@@ -16,6 +16,7 @@
             [tolglow.studio.airplay :as airplay]
             [tolglow.studio.room-window :as room-window]
             [tolglow.studio.panel-layout :as panel-layout]
+            [tolglow.studio.panel-tiles :as panel-tiles]
             [tolglow.studio.block-builder :as block-builder]
             [tolglow.studio.material-designer :as materials]
             [tolglow.studio.connections :as connections]
@@ -627,7 +628,9 @@
               [effect-group-mixer/panel] [knobs/panel db]
               [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
        :room [:div.performance-room [room-window/room db preview-panel]]
-       :tools [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]}]]))
+       :tools [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]}
+      {:render (fn [entry tier] [panel-tiles/render db parameter-control entry tier])
+       :chrome (fn [entry] [panel-tiles/chrome db entry])}]]))
 
 (defn- slot-parameter-editor [db index slot]
   (let [cue (find-id (get-in db [:show :cues]) (:cue-id slot))
