@@ -277,47 +277,110 @@ hot-plugging, Safari, the packaged Mac app or real AirPlay receivers.
 ### Arranging the Perform panels
 
 **Edit layout** in the Perform heading enters an explicit layout edit mode for
-the Cues, Live, Room and Tools panels (#668). Outside it nothing changes: pads,
-sliders and touch gestures behave as always. In edit mode every panel's content
-is inert and dimmed and a frame shows the grid. Drag a panel's title onto
-another panel to move it there (onto a later panel lands after it, onto an
-earlier one before it); the panel under the pointer is marked as the drop
-target. Drag the corner to resize it in grid columns and 20 px rows, with the
-size shown while dragging. Every move and resize also works without dragging:
-the title and corner are buttons that take arrow keys (Home and End move to
-the ends; Shift steps the corner by four), and each frame has Earlier, Later,
-Narrower, Wider, Shorter and Taller buttons. A screen reader hears the new
-position and size. Escape cancels a drag in progress, and otherwise cancels
-editing. **Done** saves, **Cancel** discards, and **Reset to default** removes the
-saved layout and returns to the built-in responsive layout. The Room's frame
-also has **Detach**/**Redock**, which is the pop-out window above.
+the Cues, Live, Room and Tools panels and any added panels (#668). Outside it
+nothing changes: pads, sliders and touch gestures behave as always. In edit
+mode every panel's content is inert and dimmed and a frame shows the grid.
+Drag a panel's title onto another panel to move it there (onto a later panel
+lands after it, onto an earlier one before it); the panel under the pointer is
+marked as the drop target. Drag the corner to resize it in grid columns and
+20 px rows, with the size shown while dragging. Holding a drag near the top or
+bottom of the visible area scrolls the page, so a panel can be dropped onto
+one that started off screen; it stops at the end of the page as it was when the
+drag began. Every move and resize also works without
+dragging: the title and corner are buttons that take arrow keys (Home and End
+move to the ends; Shift steps the corner by four), and each frame has Earlier,
+Later, Narrower, Wider, Shorter and Taller buttons whose accessible names start
+with those words. A screen reader hears the new position and size from a live
+region that stays mounted. Escape cancels a drag in progress, and otherwise
+cancels editing. Panels flow in their list order without dense packing, so the
+visual order is the keyboard and screen reader order; a gap can remain where a
+wide panel does not fit beside the one before it. A save is confirmed only
+after local storage accepted it; if the browser refuses (private mode, full
+storage), Studio says so and the layout stays in use until reload.
+
+**Named layouts.** Each screen size class keeps any number of named layouts
+and remembers the active one; the menu beside Edit layout switches between
+them and the built-in layout. While editing, **Name** renames the layout,
+**Done** saves it (a new layout gets a free name such as "Layout 2"; a name
+another layout already has gets a number), **Save as new** keeps the original
+and saves the edits under a new name, **Delete layout** (confirmed in a second
+step) removes it, **Cancel** discards the edits, and **Reset to default** switches
+this screen to the built-in responsive layout without deleting saved layouts.
+
+**Added panels.** **+ Parameter tile** adds a tile showing one cue parameter,
+picked from a menu (running cues first) on the tile or in its edit frame.
+**+ Visualization** adds one panel that plots the running effects' numeric,
+vector and colour parameters. Added panels have **Remove** in their frame. A
+tile binds to a cue ID and a parameter name, not to an instance, so it follows
+the cue's latest launch, says when the cue is not running and survives
+reloads. Tiles write through the same `:studio/param-set` command and shared
+widgets as the Live cards.
+
+**Content follows the tile size.** A tile's tier comes from its share of the
+grid: *full* (the shared control and a history, colour or 3D visualization),
+*compact* (a numeric readout and the compact control; the Live cards drop
+their plots) and *single*, the 1×1 tile (one reading; the Room keeps only its
+3D view). A tile is single at up to a sixth of the columns (two on desktop,
+one on tablet or phone) or at most 8 rows, and compact at up to a third of the
+columns or at most 14 rows. Growing a tile back restores its full controls and
+keeps its chosen parameter.
+
+**Any panel in its own window.** Every frame has **Detach**/**Redock**. The Room
+uses its pop-out window above. Other panels use `tolglow.studio.panel-window`,
+which generalises the same mechanism and reuses its window state machine: the
+panel's own Reagent content is portalled into one same-origin `window.open`
+window that receives Studio's stylesheets. It reads the same app-db and sends
+the same events over Studio's single socket; nothing is duplicated and no
+cue is relaunched. While a panel is detached its tile shows a placeholder with
+Show window and Redock, and its content exists in that window only. Closing
+the window, pressing Redock, closing Studio, or switching to a layout without
+that panel (including the layout of another screen size class) brings it back.
+Plots in a panel window follow that window's visibility, not Studio's, so they
+keep drawing while Studio is hidden.
 
 Layouts are kept per screen size class, matching the built-in breakpoints:
 phone (up to 600 px, 2 columns), tablet (601–1199 px, 6 columns) and desktop
 (1200 px and wider, 12 columns). They are device preferences, so they live in
-this browser's local storage (`tolglow.studio.panel-layouts`), not in the show
-document, a backup or the portable settings API; another device or browser
-keeps its own. Entering edit mode the first time measures the built-in layout
-on screen, so editing starts from what the operator sees. A saved layout is
-repaired on load: unknown panels are dropped, missing ones come back at a
-default size and sizes are clamped to the grid. If the window changes size
-class while editing, editing ends without saving. On a phone a saved layout
-replaces the Cues/Live/Room section tabs with the arranged stack. The Room's
-3D view fills its tile and the controls under it scroll when the tile is small.
+this browser's local storage (`tolglow.studio.panel-layouts`, version 2; the
+single-layout version 1 becomes "Layout 1"), not in the show document, a
+backup or the portable settings API; another device or browser keeps its own.
+In the packaged Mac app the loopback port, and with it the page's storage,
+changes on every launch. When the app's window binding (#669,
+`window.tolglowStudioWindow`) carries a `layouts` copy, Studio uses whichever
+of that copy and local storage was saved last (each records `savedAt`), and
+every save also posts `{type: "layouts", layouts}` to the app's
+`tolglowStudioWindow` message handler so the app can keep it per show folder.
+A save counts as kept when either copy was accepted. Until the app provides
+and stores that copy, the Mac app keeps layouts only for one launch.
+Editing a new layout starts from a measurement of the built-in layout on
+screen. A saved layout is repaired on load: unknown panels are dropped, missing
+Perform panels come back at a default size, invalid tile bindings are cleared
+and sizes are clamped to the grid. If the window changes size class while
+editing, editing ends without saving. On a phone a saved layout replaces the
+Cues/Live/Room section tabs with the arranged stack. The Room's 3D view fills
+its tile and the controls under it scroll when the tile is small.
 
 Panels are keyed children of one CSS grid. Moving one moves its DOM node and
-resizing changes its grid span, so no panel is remounted: a running cue's
-controls, the Room's preview engine and worker, and the single state socket
-are the same objects before and after. A detached Room is not reopened on
-reload, because a browser only opens windows from a user gesture.
+resizing changes its grid span, and switching between layouts keeps every
+panel both layouts share, so no panel is remounted: a running cue's controls,
+the Room's preview engine and worker, and the single state socket are the same
+objects before and after. Detaching a panel does remount its content, in the
+new window. Detached windows are not reopened on reload, because a browser
+only opens windows from a user gesture.
 
 `dev/studio/panel-layout-qa.mjs` drags, resizes, cancels, saves, reloads,
 detaches, repairs and resets at 1440×900, 1024×768 and 390×844 in headless
-Chrome, with CDP touch events at the two touch sizes, and checks that the
-running cue's card and the Room canvas stay the same DOM nodes. It is not
-evidence for iPad Safari, a physical touch screen or the packaged Mac app.
-Tiles that adapt their content to their size (a 1×1 tile with one chosen
-parameter) and further panel types are later slices of #668.
+Chrome, with CDP touch events at the two touch sizes. It also names, switches
+and deletes layouts, adds a tile, picks its parameter, shrinks it to 1×1 and
+grows it back, adds the visualization panel, and (desktop and tablet) detaches
+the Live panel and a tile, acts in the Live window, then redocks by closing
+the window and by Redock. Throughout it checks that the running cue keeps its
+instance ID, that the card and Room canvas stay the same DOM nodes where no
+panel was detached, and that there is one socket and one preview worker. It
+is not evidence for iPad Safari, a physical touch screen or the packaged Mac
+app. The app answers every blank `window.open` with its single Room window
+(`native/macOS/RoomWindows.swift`), so there Detach keeps panels other than the
+Room docked and says it is unsupported until the app hosts panel windows.
 
 ## Windows and tabs
 

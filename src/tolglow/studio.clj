@@ -221,6 +221,7 @@
             :terminal! #(show/application-operation! runtime development/terminal-operation! %1 %2)
             :app-agent! #(show/application-operation! runtime development/app-agent-operation! %1 %2)
             :audio! #(show/audio-action! runtime %1 %2)
+            :video! #(show/video-action! runtime %1 %2)
             :sensor! (fn [op payload]
                        (show/sensor-action! runtime op
                          (if (= op :sample) (sensor-osc/decode-json (json/write-str (web/json-data (dissoc payload :runtime-id :expected-epoch)))) payload)))

@@ -72,7 +72,7 @@ for (const viewport of viewports) {
     page.on('console', m => { if (m.type() === 'error' && !/favicon|ERR_CONNECTION/.test(m.text())) errors.push('console: ' + m.text()); });
     page.on('popup', p => { roomPage = p; });
     const cdp = await context.newCDPSession(page);
-    const shot = name => page.screenshot({path: join(directory, `${viewport.name}-${name}.png`)});
+    const shot = async name => { await page.waitForTimeout(400); await page.screenshot({path: join(directory, `${viewport.name}-${name}.png`)}); };
 
     const census = async label => {
       const data = await page.evaluate(() => ({
@@ -158,8 +158,10 @@ for (const viewport of viewports) {
     await shot('1-built-in');
 
     // Enter edit mode: every panel is shielded and handled.
+    assert.equal(await page.locator('#layout-announce').textContent(), '', 'the live region starts empty');
     await tap(page.locator('#edit-layout'));
     await page.waitForSelector('#view-perform .editing-layout');
+    assert.match(await page.locator('#layout-announce').textContent(), /Editing/, 'entering edit mode is announced');
     assert.equal(await page.locator('#view-perform .layout-chrome').count(), 4);
     assert.equal(await page.locator('#view-perform .layout-content[inert]').count(), 4);
     const seeded = await census('edit-seeded');
@@ -227,25 +229,27 @@ for (const viewport of viewports) {
     await page.keyboard.press('Enter');
     await page.waitForTimeout(100);
     assert.deepEqual((await census('step-later')).order, ['cues', 'room', 'live', 'tools']);
-    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Move Tools later');
+    assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Later Tools', 'focus stays on Later; its name starts with the visible word');
     await page.locator('#view-perform [data-panel="tools"] [data-step="earlier"]').focus();
     await page.keyboard.press('Enter');
     await page.waitForTimeout(100);
     assert.deepEqual((await census('step-earlier')).order, ['cues', 'room', 'tools', 'live']);
-    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Move Tools earlier');
+    assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Earlier Tools');
     const toolsBefore = await spans('tools');
     await page.locator('#view-perform [data-panel="tools"] .layout-resize').focus();
     await page.keyboard.press('Shift+ArrowDown');
     await page.waitForTimeout(100);
     assert.equal(n((await spans('tools')).row), n(toolsBefore.row) + 4, 'Shift+ArrowDown adds four rows');
-    assert.match(await page.locator('#view-perform .layout-toolbar .sr-only').textContent(), /Tools · position 3 of 4/);
+    assert.match(await page.locator('#layout-announce').textContent(), /Tools · position 3 of 4/);
 
     // Done saves for this size class only.
     await tap(page.locator('#layout-done'));
     await page.waitForSelector('#view-perform .editing-layout', {state: 'detached'});
     const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('tolglow.studio.panel-layouts')));
-    assert.deepEqual(Object.keys(stored.layouts), [viewport.cls]);
-    assert.deepEqual(stored.layouts[viewport.cls].map(e => e.id), ['cues', 'room', 'tools', 'live']);
+    assert.equal(stored.version, 2);
+    assert.deepEqual(Object.keys(stored.classes), [viewport.cls]);
+    assert.equal(stored.classes[viewport.cls].active, 'Layout 1');
+    assert.deepEqual(stored.classes[viewport.cls].layouts[0].panels.map(e => e.id), ['cues', 'room', 'tools', 'live']);
     const saved = await census('saved');
     assert.equal(saved.custom, true);
     assert.ok(saved.cardTagged && saved.canvasTagged, 'running cue card and Room canvas are the same nodes');
@@ -285,7 +289,7 @@ for (const viewport of viewports) {
       const detached = await census('detached');
       assert.equal(await page.locator('#preview').count(), 0, 'Studio holds no Room canvas while the Room is detached');
       assert.equal(await roomPage.locator('#preview').count(), 1, 'the Room window holds the only Room canvas');
-      assert.equal(await page.locator('#view-perform [data-panel="room"] .layout-detach').textContent(), 'Redock');
+      assert.equal(await page.locator('#view-perform [data-panel="room"] .layout-detach').textContent(), 'Redock Room', 'Redock names its panel');
       await shot('6-detached');
       await page.locator('#view-perform [data-panel="room"] .layout-detach').click();
       await page.waitForSelector('#room-window-placeholder', {state: 'detached', timeout: 20000});
@@ -295,9 +299,10 @@ for (const viewport of viewports) {
       assert.equal(redocked.sockets, 1, 'still one socket');
       record.detach = {detachedWorkersInStudio: detached.workers, redockedWorkers: redocked.workers};
       await tap(page.locator('#layout-cancel'));
+      await page.waitForSelector('#view-perform .editing-layout', {state: 'detached'});
     }
 
-    // A damaged saved layout is repaired: unknown panels go, missing ones return.
+    // A damaged version 1 layout is migrated and repaired: unknown panels go, missing ones return.
     await page.evaluate(cls => localStorage.setItem('tolglow.studio.panel-layouts', JSON.stringify(
       {version: 1, layouts: {[cls]: [{id: 'tools', w: 99, h: 1}, {id: 'mixer', w: 3, h: 9}, {id: 'tools', w: 1, h: 30}]}})), viewport.cls);
     await page.reload({waitUntil: 'domcontentloaded'});
@@ -306,20 +311,256 @@ for (const viewport of viewports) {
     assert.deepEqual(repaired.order, ['tools', 'cues', 'live', 'room']);
     assert.equal((await spans('tools')).column, `span ${viewport.columns}`);
 
-    // Reset returns to the built-in responsive layout and clears the storage.
+    // Reset returns to the built-in responsive layout and keeps the saved one.
     await tap(page.locator('#edit-layout'));
     await page.waitForSelector('#view-perform .editing-layout');
     await tap(page.locator('#layout-reset'));
     await page.waitForSelector('#view-perform .custom-layout', {state: 'detached'});
     const reset = await census('reset');
     assert.deepEqual(reset.order, ['cues', 'live', 'room', 'tools']);
-    assert.equal(await page.evaluate(() => localStorage.getItem('tolglow.studio.panel-layouts')), null);
+    const storedAfterReset = await page.evaluate(() => JSON.parse(localStorage.getItem('tolglow.studio.panel-layouts')));
+    assert.equal(storedAfterReset.classes[viewport.cls].active, null);
+    assert.deepEqual(storedAfterReset.classes[viewport.cls].layouts.map(l => l.name), ['Layout 1']);
     // Escape outside a gesture cancels editing.
     await tap(page.locator('#edit-layout'));
     await page.waitForSelector('#view-perform .editing-layout');
     await page.keyboard.press('Escape');
     await page.waitForSelector('#view-perform .editing-layout', {state: 'detached'});
-    assert.equal(await page.evaluate(() => localStorage.getItem('tolglow.studio.panel-layouts')), null);
+    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('tolglow.studio.panel-layouts')).classes),
+                     storedAfterReset.classes, 'Escape saved nothing');
+
+    // ---- Named layouts, parameter tiles and the visualization panel.
+    await page.locator('#end-all').evaluate(button => button.click());
+    await page.waitForFunction(() => !document.querySelector('[data-live-instance]'), null, {timeout: 20000});
+    await showSection('Cues');
+    await tap(page.locator('#cue-grid .cue-cell:not(.empty)').first());
+    await page.waitForSelector('[data-live-instance]', {state: 'attached', timeout: 20000});
+    const instance = await page.locator('[data-live-instance]').getAttribute('data-live-instance');
+    await page.evaluate(() => {
+      document.querySelector('[data-live-instance]').__qaTag = 'card';
+      document.querySelector('#preview').__qaTag = 'canvas';
+    });
+    await tap(page.locator('#edit-layout'));
+    await page.waitForSelector('#view-perform .editing-layout');
+    assert.equal(await page.locator('#layout-name').inputValue(), 'Layout 2', 'a new layout gets a free name');
+    await page.locator('#layout-name').fill('Tiles');
+    await tap(page.locator('#layout-add-param'));
+    const tile = page.locator('#view-perform [data-panel="param-1"]');
+    await tile.waitFor();
+    assert.equal(await page.evaluate(() => document.activeElement?.closest('[data-panel]')?.dataset.panel), 'param-1', 'focus moves to the new tile');
+    // Pick the running cue's first parameter from the tile's menu.
+    const menu = tile.locator('.layout-chrome .tile-picker');
+    const option = await menu.locator('option').evaluateAll(os => os.find(o => / · running$/.test(o.textContent))?.value);
+    assert.ok(option, 'the menu offers the running cue');
+    await menu.selectOption(option);
+    const optionLabel = (await menu.locator(`option[value="${option}"]`).textContent()).replace(/ · running$/, '');
+    // Shrink it to a 1×1 tile from the keyboard.
+    await tile.locator('.layout-resize').focus();
+    for (let i = 0; i < 4; i++) await page.keyboard.press('Shift+ArrowLeft');
+    for (let i = 0; i < 4; i++) await page.keyboard.press('Shift+ArrowUp');
+    await page.waitForTimeout(100);
+    assert.equal(await tile.getAttribute('data-tier'), 'single');
+    await tap(page.locator('#layout-add-viz'));
+    await page.locator('#view-perform [data-panel="viz"]').waitFor();
+    assert.equal(await page.locator('#layout-add-viz').isDisabled(), true, 'one visualization panel per layout');
+    await tap(page.locator('#layout-done'));
+    await page.waitForSelector('#view-perform .editing-layout', {state: 'detached'});
+    let named = await page.evaluate(() => JSON.parse(localStorage.getItem('tolglow.studio.panel-layouts')).classes);
+    assert.equal(named[viewport.cls].active, 'Tiles');
+    assert.deepEqual(named[viewport.cls].layouts.map(l => l.name), ['Layout 1', 'Tiles']);
+    const tilesEntry = named[viewport.cls].layouts[1].panels.find(p => p.id === 'param-1');
+    assert.ok(tilesEntry.binding?.cue && tilesEntry.binding?.param, 'the tile stores its cue and parameter');
+    await reveal(tile);
+    await tile.locator('.tile-single .tile-readout').waitFor();
+    const reading = await tile.locator('.tile-readout').textContent();
+    assert.ok(reading && reading !== '—', `the 1×1 tile reads the live value: ${reading}`);
+    assert.equal(await tile.locator('.param-row').count(), 0, 'a 1×1 tile shows no control');
+    assert.match(await tile.locator('.tile-title').textContent(), new RegExp(optionLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    await shot('7-tile-single');
+    const viz = page.locator('#view-perform [data-panel="viz"]');
+    await reveal(viz);
+    assert.ok(await viz.locator('.viz-item').count() >= 1, 'the visualization panel lists the running parameters');
+    await shot('8-visualization');
+
+    // Expanding the tile restores the full control and keeps its parameter.
+    await tap(page.locator('#edit-layout'));
+    await page.waitForSelector('#view-perform .editing-layout');
+    await tile.locator('.layout-resize').focus();
+    for (let i = 0; i < 3; i++) await page.keyboard.press('Shift+ArrowRight');
+    for (let i = 0; i < 5; i++) await page.keyboard.press('Shift+ArrowDown');
+    await page.waitForTimeout(100);
+    assert.equal(await tile.getAttribute('data-tier'), 'full');
+    await tap(page.locator('#layout-done'));
+    await page.waitForSelector('#view-perform .editing-layout', {state: 'detached'});
+    await reveal(tile);
+    await tile.locator('.tile-full .param-row').waitFor();
+    assert.equal(await tile.locator('.tile-head .tile-picker').inputValue(), option, 'the expanded tile keeps its parameter');
+    await shot('9-tile-full');
+    const kept = await census('tiles-saved');
+    assert.ok(kept.cardTagged && kept.canvasTagged, 'adding tiles did not remount the running cue or the Room');
+    assert.equal(kept.liveInstance, instance);
+
+    // Switch between named layouts and the built-in one without remounting.
+    const select = page.locator('#layout-select');
+    await select.selectOption('Layout 1');
+    await page.waitForFunction(() => !document.querySelector('#view-perform [data-panel="param-1"]'));
+    assert.deepEqual((await census('switch-layout-1')).order, ['tools', 'cues', 'live', 'room']);
+    await select.selectOption('');
+    await page.waitForSelector('#view-perform .custom-layout', {state: 'detached'});
+    await select.selectOption('Tiles');
+    await tile.waitFor();
+    const switched = await census('switch-tiles');
+    assert.ok(switched.cardTagged && switched.canvasTagged, 'switching layouts did not remount the running cue or the Room');
+    assert.equal(switched.sockets, 1);
+    assert.equal(switched.workers, 1);
+    assert.equal(switched.liveInstance, instance, 'switching layouts did not relaunch the cue');
+    await shot('10-switcher');
+
+    // Detach panels other than the Room into their own windows.
+    if (viewport.name !== 'phone') {
+      await tap(page.locator('#edit-layout'));
+      await page.waitForSelector('#view-perform .editing-layout');
+      roomPage = null;
+      await page.locator('#view-perform [data-panel="live"] .layout-detach').click();
+      await page.waitForSelector('#view-perform [data-detached="live"]', {timeout: 20000});
+      assert.ok(roomPage, 'the Live window opened');
+      const liveWindow = roomPage;
+      await liveWindow.waitForSelector('[data-live-instance]', {timeout: 20000});
+      assert.equal(await liveWindow.title(), 'Tolglow · Live', 'the panel window is titled');
+      assert.equal(await liveWindow.locator('[data-live-instance]').getAttribute('data-live-instance'), instance,
+                   'the detached Live panel shows the same running cue');
+      assert.equal(await page.locator('[data-live-instance]').count(), 0, 'the card exists in one window only');
+      const detachedLive = await census('live-detached');
+      assert.equal(detachedLive.sockets, 1, 'no second socket for a detached panel');
+      assert.equal(detachedLive.workers, 1, 'the Room keeps its one preview worker');
+      // Act in the detached window: the card's Detail toggle works there.
+      await liveWindow.locator('.live-effect-expand').first().click();
+      await liveWindow.waitForSelector('.live-effect-card[data-density="detail"]', {timeout: 10000});
+      await liveWindow.screenshot({path: join(directory, `${viewport.name}-11-live-window.png`)});
+      // A parameter tile detaches too.
+      roomPage = null;
+      await tile.locator('.layout-detach').click();
+      await page.waitForSelector('#view-perform [data-detached="param-1"]', {timeout: 20000});
+      const tileWindow = roomPage;
+      await tileWindow.waitForSelector('.parameter-tile .tile-full', {timeout: 20000});
+      await tap(page.locator('#layout-cancel'));
+      await page.waitForSelector('#view-perform .editing-layout', {state: 'detached'});
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await shot('12-detached-placeholders');
+      // Closing a window redocks its panel; the placeholder's Redock does too.
+      await liveWindow.close();
+      await page.waitForSelector('#view-perform [data-detached="live"]', {state: 'detached', timeout: 10000});
+      await page.waitForSelector('#view-perform [data-panel="live"] [data-live-instance]', {state: 'attached', timeout: 10000});
+      assert.equal(await page.locator('[data-live-instance]').getAttribute('data-live-instance'), instance, 'the redocked card is the same running cue');
+      await page.locator('#view-perform [data-detached="param-1"] button', {hasText: 'Redock'}).click();
+      await page.waitForSelector('#view-perform [data-detached="param-1"]', {state: 'detached', timeout: 10000});
+      await tile.locator('.tile-full').waitFor();
+      assert.equal(tileWindow.isClosed(), true, 'Redock closed the tile window');
+      const redockedPanels = await census('panels-redocked');
+      assert.equal(redockedPanels.sockets, 1);
+      assert.equal(redockedPanels.workers, 1);
+      assert.equal(redockedPanels.liveInstance, instance, 'detaching never relaunched the cue');
+      record.panelWindows = {liveInstance: instance, sockets: redockedPanels.sockets};
+    }
+
+    // Dragging to the bottom edge scrolls the page, and a panel that was below
+    // the fold becomes the drop target; Escape then cancels the drag.
+    {
+      await tap(page.locator('#edit-layout'));
+      await page.waitForSelector('#view-perform .editing-layout');
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.waitForTimeout(200);
+      const order = (await census('before-autoscroll')).order;
+      const handle = page.locator(`#view-perform [data-panel="${order[0]}"] .layout-handle`);
+      const start = await center(handle);
+      const bottom = {x: viewport.width / 2, y: viewport.height - 6};
+      const limit = await page.evaluate(() => document.documentElement.scrollHeight - innerHeight);
+      const hidden = await page.evaluate(vh => [...document.querySelectorAll('#view-perform .layout-region')]
+        .filter(e => e.getBoundingClientRect().top > vh).map(e => e.dataset.panel), viewport.height);
+      assert.ok(hidden.length > 0, 'some panel starts below the fold');
+      if (viewport.touch) {
+        const point = p => [{x: p.x, y: p.y, id: 2, radiusX: 4, radiusY: 4, force: 1}];
+        await cdp.send('Input.dispatchTouchEvent', {type: 'touchStart', touchPoints: point(start)});
+        for (let i = 1; i <= 8; i++) {
+          await cdp.send('Input.dispatchTouchEvent', {type: 'touchMove', touchPoints: point({x: start.x + (bottom.x - start.x) * i / 8, y: start.y + (bottom.y - start.y) * i / 8})});
+          await page.waitForTimeout(16);
+        }
+      } else {
+        await page.mouse.move(start.x, start.y);
+        await page.mouse.down();
+        await page.mouse.move(bottom.x, bottom.y, {steps: 8});
+      }
+      await page.waitForTimeout(1500);
+      const scrolled = await page.evaluate(() => window.scrollY);
+      const target = await page.evaluate(() => document.querySelector('#view-perform [data-drop-target]')?.dataset.panel ?? null);
+      assert.ok(scrolled > 100, `holding at the edge scrolled the page (${scrolled} px)`);
+      assert.ok(hidden.includes(target), `a panel from below the fold is the drop target (${target})`);
+      // Holding on stops at the end of the page: the dragged panel's own
+      // translation must not lengthen the page and keep it scrolling.
+      await page.waitForTimeout(2500);
+      const end = await page.evaluate(() => window.scrollY);
+      assert.ok(end >= scrolled && end <= limit, `auto-scroll stopped at the end of the page (${end} of ${limit} px)`);
+      await page.keyboard.press('Escape');
+      if (viewport.touch) await cdp.send('Input.dispatchTouchEvent', {type: 'touchEnd', touchPoints: []});
+      else await page.mouse.up();
+      await page.waitForTimeout(200);
+      assert.deepEqual((await census('after-autoscroll')).order, order, 'Escape cancelled the scrolled drag');
+      const still = await page.evaluate(() => window.scrollY);
+      await page.waitForTimeout(300);
+      assert.equal(await page.evaluate(() => window.scrollY), still, 'scrolling stopped with the drag');
+      record.autoscroll = {scrolled, target, end, limit};
+      await tap(page.locator('#layout-cancel'));
+      await page.waitForSelector('#view-perform .editing-layout', {state: 'detached'});
+    }
+
+    // Delete the Tiles layout: two steps, then the built-in layout.
+    await tap(page.locator('#edit-layout'));
+    await page.waitForSelector('#view-perform .editing-layout');
+    await tap(page.locator('#layout-delete'));
+    await tap(page.locator('#layout-delete-confirm'));
+    await page.waitForSelector('#view-perform .custom-layout', {state: 'detached'});
+    named = await page.evaluate(() => JSON.parse(localStorage.getItem('tolglow.studio.panel-layouts')).classes);
+    assert.deepEqual(named[viewport.cls].layouts.map(l => l.name), ['Layout 1']);
+    assert.equal(named[viewport.cls].active, null);
+
+    // The Mac app's window binding (#669): a host copy of the layouts is used
+    // when it is newer than the page's, and saving also posts a host copy.
+    if (viewport.name === 'desktop') {
+      const hostCopy = JSON.stringify({version: 2, savedAt: Date.now() + 60000, classes: {desktop: {active: 'From the app',
+        layouts: [{name: 'From the app', panels: [{id: 'room', w: 12, h: 20}, {id: 'cues', w: 6, h: 20}]}]}}});
+      const host = await context.newPage();
+      host.on('pageerror', e => errors.push('host page: ' + e.message));
+      await host.addInitScript(copy => {
+        window.__posted = [];
+        window.tolglowStudioWindow = Object.freeze({runtimeId: '', show: 'qa', layouts: copy});
+        window.webkit = {messageHandlers: {tolglowStudioWindow: {postMessage: m => window.__posted.push(JSON.parse(JSON.stringify(m)))}}};
+      }, hostCopy);
+      await host.goto(origin + '/', {waitUntil: 'domcontentloaded'});
+      await host.waitForSelector('#view-perform .custom-layout', {timeout: 60000});
+      const hostOrder = await host.evaluate(() => [...document.querySelectorAll('#view-perform .performance-layout > .layout-region')].map(e => e.dataset.panel));
+      assert.deepEqual(hostOrder, ['room', 'cues', 'live', 'tools'], 'the newer app copy is used');
+      await host.locator('#edit-layout').click();
+      await host.waitForSelector('#view-perform .editing-layout');
+      await host.locator('#layout-done').click();
+      await host.waitForSelector('#view-perform .editing-layout', {state: 'detached'});
+      const posted = await host.evaluate(() => window.__posted.filter(m => m.type === 'layouts'));
+      assert.equal(posted.length, 1, 'saving posts one host copy');
+      assert.equal(JSON.parse(posted[0].layouts).classes.desktop.active, 'From the app');
+      // The app answers window.open with its one Room window, so a panel
+      // other than the Room stays docked there and says so.
+      await host.evaluate(() => { window.webkit.messageHandlers.tolglowRoomWindow = {postMessage() {}}; });
+      let hostPopup = false;
+      host.on('popup', () => { hostPopup = true; });
+      await host.locator('#edit-layout').click();
+      await host.waitForSelector('#view-perform .editing-layout');
+      await host.locator('#view-perform [data-panel="live"] .layout-detach').click();
+      await host.waitForFunction(() => document.body.textContent.includes('cannot open a panel in its own window'), null, {timeout: 5000});
+      assert.equal(hostPopup, false, 'no window opens for a panel in the Mac app');
+      assert.equal(await host.locator('#view-perform [data-detached="live"]').count(), 0, 'Live stays docked in the Mac app');
+      await host.locator('#layout-cancel').click();
+      record.hostStore = {usedHostCopy: true, posted: posted.length, panelWindowRefused: true};
+      await host.close();
+    }
 
     await page.locator('#end-all').evaluate(button => button.click());
     assert.deepEqual(errors, [], 'no page errors');

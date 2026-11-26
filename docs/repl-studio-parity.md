@@ -704,6 +704,32 @@ strip or page the encoders itself (the REPL and the unit can). A Studio page com
 own (#706 slice 5). Close these gaps when Studio can place a member anywhere and
 a Studio grid can mirror or follow a Push page.
 
+## Shape an LFO from a band of the input
+
+Both surfaces read `:audio-lfos` in the show snapshot and send the same owner
+commands, `:audio-lfo/configure` and `:audio-lfo/remove`. The LFO's waveform,
+`:audio/<id>`, is in the same picker catalog as every other waveform, and a
+parameter LFO bound to it is the ordinary `:modulation-bind`.
+[Audio-shaped LFOs](audio-shaped-lfo.md)
+
+```clojure
+@(show/submit! runtime :command {:op :audio-lfo/configure :lfo-id :bass :name "Bass"
+                                 :config {:band :bass :extract :envelope :morph {:bars 2}}})
+(select-keys (tolglow.audio-lfo/lfo-view (:model @(:state runtime)) :bass)
+             [:status :band-label :progress :last])
+```
+
+In Studio, **Connections → Audio LFOs** shows the same LFO: status, level,
+confidence, pitch and lateness, the source band's last window and the morph
+from the previous shape to the target. **Apply**, **Remove** and **Add audio
+LFO** send the commands above; an invalid setting from either side is refused
+with the reason and the previous configuration stays. A REPL configure
+appears in the open panel on the next snapshot.
+
+**Tracked gaps.** Linked knobs reach a bound LFO's period and endpoints, not
+the audio LFO's band or morph time. Physical input and recorded material are
+open on [issue #676](https://github.com/tolgraven/tolglow/issues/676).
+
 ## Generate a knob and keep it
 
 Both surfaces read `:knob-candidates` in the show snapshot and send the same
@@ -786,3 +812,5 @@ Calibrated paired aim arrival uses one host operation from both surfaces. In Stu
 The remaining gaps are tracked in issue #481. Studio has no editor for `:calibration :motor-rate-deg-per-sec`, so rates are set through the rig data or the REPL. Studio also cannot display the physical `:minimum-travel-ms` or the fingerprint behind a stale-calibration refusal. Close these gaps when an operator can enter rates in the fixture inspector and see why a launch was refused without the REPL.
 
 Retrospective Capture has a shared operation. The runtime owns the capture buffer. `show/capture-phrase!` at the REPL and **Connections → Capture** in Studio both call `show/capture-action!` with `:capture`. The REPL receives the phrase; Studio receives its summary and a MIDI clip download of the same capture (`:smf`). `(show/capture-action! rt :status {})` reads the buffer and the last capture that both surfaces show. Two gaps remain. Writing the capture into Live from Studio (`live-connection/capture!` over the configured bridge) is REPL-only, and Push has no Capture button: the uniform surface layer lives with the Push controllers, outside this change. Close them when Studio and Push both send the last capture to Live and the REPL can read the resulting clip identities. [Capture into Live](live-routing.md#capture-the-last-phrase-into-live) · [Issue #671](https://github.com/tolgraven/tolglow/issues/671) · [Issue #680](https://github.com/tolgraven/tolglow/issues/680)
+
+Video strip mapping uses one message from both surfaces. In Studio, **Rig & space → Video strips** sends `:video-mapping` edits through `POST /api/video-mapping`. The REPL sends the same edits with `show/video-action! runtime :edit`, using the geometry helpers in `tolglow.video.mapping`. Both read source status and sampled strip colours from the snapshot's `:video` key. A REPL edit redraws the open editor through the state stream. Studio has no control for a video cue's `:placement` parameters beyond the ordinary parameter controls on its card. [Video on LED strips](video-strips.md) · [Issue #672](https://github.com/tolgraven/tolglow/issues/672)

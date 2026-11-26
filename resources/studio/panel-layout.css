@@ -9,7 +9,7 @@
 #view-perform .layout-toolbar>.button,#view-perform .layout-toolbar>.text-button{min-height:44px}
 #view-perform .layout-hint{font-size:11px;color:var(--muted);max-width:420px}
 
-#view-perform .performance-layout.custom-layout{display:grid;grid-template-columns:repeat(var(--layout-columns),minmax(0,1fr));grid-template-areas:none;grid-template-rows:none;grid-auto-rows:var(--layout-row);grid-auto-flow:row dense;column-gap:var(--layout-gap);row-gap:0;align-items:stretch}
+#view-perform .performance-layout.custom-layout{display:grid;grid-template-columns:repeat(var(--layout-columns),minmax(0,1fr));grid-template-areas:none;grid-template-rows:none;grid-auto-rows:var(--layout-row);grid-auto-flow:row;column-gap:var(--layout-gap);row-gap:0;align-items:stretch}
 #view-perform .custom-layout>.layout-region{display:block;position:relative;min-width:0;min-height:0;padding-bottom:var(--layout-gap)}
 #view-perform .custom-layout>.layout-region>.layout-content{display:block;height:100%;min-height:0}
 /* Tiles scroll on their own and hand the page back at their ends, so a wheel or
@@ -22,6 +22,8 @@
 #view-perform .custom-layout .performance-room>.room-window-placeholder{height:100%;overflow:auto}
 #view-perform[data-layout=custom] .perform-section-tabs{display:none}
 
+/* Panels flow in DOM order (no dense packing), so the visual order is the
+   keyboard and screen reader order. */
 /* Edit mode: show the grid, shield panel content and offer handles. */
 #view-perform .editing-layout{background-image:repeating-linear-gradient(90deg,#9fbf8a10 0 calc((100% - (var(--layout-columns) - 1) * var(--layout-gap)) / var(--layout-columns)),transparent 0 calc((100% - (var(--layout-columns) - 1) * var(--layout-gap)) / var(--layout-columns) + var(--layout-gap)));border-radius:var(--radius)}
 #view-perform .editing-layout>.layout-region>.layout-content{opacity:.55;filter:saturate(.6)}
@@ -31,7 +33,7 @@
 #view-perform .layout-grip{width:10px;height:16px;background-image:radial-gradient(circle,currentColor 1.4px,transparent 1.6px);background-size:5px 5px;opacity:.7}
 #view-perform .layout-size{font-size:11px;font-variant-numeric:tabular-nums;color:var(--muted);margin-right:auto}
 #view-perform .layout-steps{display:flex;flex-wrap:wrap;gap:4px}
-#view-perform .layout-step,#view-perform .layout-detach{min-width:44px;min-height:44px;padding:0 8px;border:1px solid var(--line);border-radius:7px;background:#20271e;color:var(--text);font-size:11px}
+#view-perform .layout-step,#view-perform .layout-detach,#view-perform .layout-remove{min-width:44px;min-height:44px;padding:0 8px;border:1px solid var(--line);border-radius:7px;background:#20271e;color:var(--text);font-size:11px}
 #view-perform .layout-detach{border-color:#5f7553}
 #view-perform .layout-step:hover,#view-perform .layout-detach:hover,#view-perform .layout-handle:hover{border-color:var(--accent)}
 #view-perform .layout-resize{position:absolute;right:0;bottom:0;width:44px;height:44px;border:0;border-radius:0 0 var(--radius) 0;background:linear-gradient(135deg,transparent 0 52%,#8ea57e 52% 58%,transparent 58% 68%,#8ea57e 68% 74%,transparent 74%);cursor:nwse-resize;touch-action:none}
@@ -43,3 +45,58 @@
 #view-perform .layout-handle:focus-visible,#view-perform .layout-resize:focus-visible,#view-perform .layout-step:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 @media(max-width:600px){#view-perform .layout-hint{display:none}#view-perform .layout-toolbar{width:100%;justify-content:space-between}#view-perform .layout-size{display:none}}
 @media(prefers-reduced-motion:no-preference){#view-perform .custom-layout>.layout-region:not([data-gesture]){transition:opacity .15s}}
+
+/* Named layouts in the heading. */
+#view-perform .layout-idle{gap:4px}
+#view-perform .layout-switch select{min-height:44px;max-width:180px;font-size:11px;padding:4px 8px}
+#view-perform .layout-name{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
+#view-perform .layout-name input{min-height:40px;width:150px;padding:4px 8px}
+#view-perform .layout-add{display:flex;gap:10px}
+#view-perform .layout-add>.text-button,#view-perform .layout-confirm>.text-button{min-height:44px}
+#view-perform .layout-danger{color:var(--danger)}
+#view-perform .layout-chrome-bar>.tile-picker{flex:1 1 100%;min-height:40px;font-size:12px}
+#view-perform .layout-remove{border-color:#7a4b40}
+
+/* Added panels: parameter tiles and the visualization panel. */
+#view-perform .custom-layout .layout-content>.parameter-tile,#view-perform .custom-layout .layout-content>.viz-panel{height:100%;overflow:auto}
+#view-perform .parameter-tile{display:flex;flex-direction:column;padding:10px 12px;gap:8px}
+#view-perform .tile-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+#view-perform .tile-title{font-size:12px;font-weight:600;color:var(--text);margin-right:auto}
+#view-perform .tile-picker{min-height:40px;max-width:100%;font-size:11px;padding:4px 6px}
+#view-perform .tile-readout{font-size:22px;font-variant-numeric:tabular-nums;font-weight:600;color:var(--accent);line-height:1.1;overflow-wrap:anywhere}
+#view-perform .tile-single{flex:1;display:grid;place-items:center;text-align:center}
+#view-perform .tile-single .tile-readout{font-size:clamp(20px,4vw,40px)}
+#view-perform .tile-compact .param-row{margin:6px 0}
+#view-perform .tile-full .param-row{margin:0}
+#view-perform .tile-empty{display:grid;gap:6px;align-content:start}
+#view-perform .parameter-tile[data-tier=single] .tile-head{justify-content:center}
+#view-perform .parameter-tile[data-tier=single] .tile-title{margin:0;text-align:center;font-weight:500;color:var(--muted)}
+#view-perform .viz-list{list-style:none;margin:0;padding:8px 12px;display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}
+#view-perform .viz-panel[data-tier=compact] .viz-list{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px}
+#view-perform .viz-panel[data-tier=single] .viz-list{grid-template-columns:1fr}
+#view-perform .viz-item{border:1px solid var(--line);border-radius:8px;padding:8px;min-width:0}
+#view-perform .viz-label{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:11px;color:var(--muted)}
+#view-perform .viz-label .tile-readout{font-size:15px}
+
+/* Core panels adapt too: compact tiles drop plots, single tiles keep essentials. */
+#view-perform [data-panel=live][data-tier=compact] :is(.parameter-visualizer,.strip-monitor),
+#view-perform [data-panel=live][data-tier=single] :is(.parameter-visualizer,.strip-monitor,.live-effect-advanced,.live-board-actions,.performance-groups){display:none}
+#view-perform [data-panel=live][data-tier=single] .live-effect-grid{grid-template-columns:1fr}
+#view-perform [data-panel=room]:is([data-tier=single],[data-tier=compact]) :is(.camera-navigation,.preview-settings){display:none}
+#view-perform [data-panel=room][data-tier=single] .fog-controls{display:none}
+#view-perform [data-panel=tools][data-tier=single] .performance-tools{grid-template-columns:1fr}
+
+/* A panel in its own window (tolglow.studio.panel-window). */
+body.panel-window{margin:0;min-height:100vh;background:var(--bg);color:var(--text)}
+body.panel-window>#view-perform{min-height:100vh;padding:10px;box-sizing:border-box}
+body.panel-window #view-perform>*{max-width:none}
+body.panel-window #view-perform>.parameter-tile{min-height:calc(100vh - 20px)}
+#view-perform .panel-window-placeholder .panel-top{flex-wrap:wrap;height:auto;min-height:52px}
+#view-perform .panel-window-placeholder .text-button{min-height:44px}
+#view-perform .panel-window-note{padding:10px 16px}
+
+/* A small tile's frame scrolls its controls and keeps the resize corner reachable. */
+#view-perform .layout-chrome-bar{max-height:calc(100% - 44px);overflow:auto}
+#view-perform .layout-step{padding:0 7px}
+/* A dragged panel never widens the page (a phone would zoom out to fit it). */
+#view-perform .performance-layout.editing-layout{overflow-x:clip}

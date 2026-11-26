@@ -80,16 +80,21 @@
 
 (defn prepare
   "Optional pure cache of compiled custom waveform functions. Retain at the
-  runtime boundary and pass as :prepared to value. Never put this in a show file."
+  runtime boundary and pass as :prepared to value. Never put this in a show file.
+  A definition that is unchanged since the previous registry keeps its compiled
+  function, so a live waveform republished every bar (an audio-shaped LFO)
+  recompiles only itself."
   [previous waveform-registry]
   (let [registry (or waveform-registry builtin-registry)]
     (if (identical? registry (:registry previous)) previous
       {:registry registry
        :functions (into {}
                         (for [[key definition] (:versions registry)]
-                          [key (if (= definition (get-in builtin-registry [:versions key]))
-                                 (get builtin-functions (:id definition))
-                                 (ir/compile-expression (:expression definition)))]))})))
+                          [key (let [prior (get-in previous [:registry :versions key])]
+                                 (cond
+                                   (and prior (identical? prior definition)) (get-in previous [:functions key])
+                                   (= definition (get-in builtin-registry [:versions key])) (get builtin-functions (:id definition))
+                                   :else (ir/compile-expression (:expression definition))))]))})))
 
 (defn cue-parameter
   "Read the local or latest running activation's typed input. Spatial links can
