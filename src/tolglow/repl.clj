@@ -3,7 +3,8 @@
   bounded queue, namespace, debug namespace and live values. Saved data contains
   only source/history/scratch text; loading it never evaluates code."
   (:require [afterglow.reactive.registry :as reactive-registry]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [tolglow.studio.pretty :as pretty])
   (:import [java.io PushbackReader StringReader Writer]
            [java.util UUID]
            [java.util.concurrent ArrayBlockingQueue CountDownLatch TimeUnit]))
@@ -40,6 +41,8 @@
                     (String. ^chars value (int offset) (int length))))))
     (flush []) (close [])))
 
+(def ^:private print-limits {:length 64 :level 10})
+
 (defn- bounded-print [value limit]
   (let [buffer (StringBuilder.) truncated? (volatile! false)
         writer (text-writer
@@ -47,9 +50,21 @@
                    (let [remaining (- limit (.length buffer)) n (min remaining (count text))]
                      (when (pos? n) (.append buffer ^String text 0 (int n)))
                      (when (< n (count text)) (vreset! truncated? true)))))]
-    (binding [*out* writer *print-length* 64 *print-level* 10 *print-meta* false]
+    (binding [*out* writer *print-length* (:length print-limits) *print-level* (:level print-limits) *print-meta* false]
       (pr value))
     {:value (str buffer) :truncated? @truncated?}))
+
+(defn- bounded-view
+  "A result or error data as the console shows it: a data structure is
+  pretty-printed over several lines with the same length, depth and character
+  bounds as bounded-print; strings and other values print as bounded-print does.
+  Printing stops at the character limit, so a huge value costs no more than
+  the text that is shown."
+  [value limit]
+  (if (and (coll? value) (not (record? value)))
+    (let [{:keys [text truncated?]} (pretty/edn-within value (assoc print-limits :max-chars limit))]
+      {:value text :truncated? truncated?})
+    (bounded-print value limit)))
 
 (defn- reserve-output! [session job text]
   (let [allocation
@@ -104,7 +119,7 @@
     (run-forms #(read {:eof eof} reader) eval)))
 
 (defn- report-value! [session job index value]
-  (let [printed (bounded-print value (get-in session [:options :max-result-chars]))
+  (let [printed (bounded-view value (get-in session [:options :max-result-chars]))
         allocation (reserve-output! session job (:value printed))
         result (assoc printed :value (:text allocation "")
                               :truncated? (or (:truncated? printed) (:truncated? allocation)))]
@@ -139,7 +154,7 @@
           (set! *e error)
           (let [status (if (interrupted-error? error) :interrupted :error)
                 info {:class (.getName (class error)) :message (text-limit (.getMessage error) 2048)
-                      :data (:value (bounded-print (ex-data error) 2048))}]
+                      :data (:value (bounded-view (ex-data error) 2048))}]
             (emit! session job (assoc info :type :error :status status))
             (reset! final-result {:status status :error info})))
         (finally
