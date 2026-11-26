@@ -248,13 +248,9 @@
             [:auto] "Invalid auto session/RNG/ownership state")
     (check! (and (integer? (:count config 1)) (<= 1 (:count config 1) 64))
             [:auto :config :count] "Auto count must be between 1 and 64")
-    (let [scope (:scope config :all)]
-      (check! (or (= :all scope)
-                   (and (map? scope)
-                        (or (and (:page-id scope) (get-in model [:pages (:page-id scope)]))
-                            (and (vector? (:cue-ids scope))
-                                 (every? #(get-in model [:registry :cues %]) (:cue-ids scope))))))
-              [:auto :config :scope] "Auto scope must name saved cues or a saved page"))
+    ;; Scope references are checked when auto is configured, never on save: a
+    ;; cue deleted later must not block a backup (#217). The planner skips it
+    ;; and reports :scope-missing.
     (let [duration (or (:interval config) (when (:interval-ms config) {:ms (:interval-ms config)}) {:beats 1})]
       (check-errors! (time/validate-duration duration) [:auto :config :interval])
       (check! (pos? (val (first duration))) [:auto :config :interval] "Auto interval must be positive"))
@@ -268,7 +264,9 @@
                    (every? #(and (map? %) (string? (:instance-id %))) (:owned-launches state)))
               [:auto :state :owned-launches] "Auto launch records need instance IDs"))
     (when (and enabled? (map? config))
-      (let [errors (into (policy/validate-config config) (policy/validate-references model config))]
+      ;; Settings kept verbatim from another build (restore-unrecognized) are
+      ;; not this planner's to judge.
+      (let [errors (policy/validate-config (:config (policy/sanitize-config config)))]
         (check! (empty? errors) [:auto :config] (str "Invalid auto config: " (pr-str (vec (take 3 errors)))))))
     (doseq [key [:next-at-ms :next-at-beat] :when (contains? state key)]
       (check! (registry/finite-number? (get state key)) [:auto :state key] "Auto boundary must be finite"))))
@@ -498,23 +496,33 @@
   output)
 
 (defn- restore-auto
-  "Saved shows predate the strict auto config (#217). Drop settings the planner
-  does not know and record them in the reasons; if the rest still cannot run,
-  restore auto mode switched off with the problem, instead of refusing the
-  whole show. Configure commands stay strict."
+  "Saved shows predate the strict auto config (#217). Set aside settings the
+  planner does not know under [:auto :unrecognized], verbatim, and list them in
+  the reasons; the next save writes them back. If the rest still cannot run,
+  restore auto mode switched off with the problem, keeping its ownership so
+  Stop can still end its looks, instead of refusing the whole show. Configure
+  commands stay strict."
   [model]
   (let [{:keys [enabled? config]} (:auto model)]
     (if-not (and (map? (:auto model)) (map? config)) model
-      (let [{config :config dropped :dropped} (policy/sanitize-config config)
-            errors (when enabled? (into (policy/validate-config config) (policy/validate-references model config)))
+      (let [{config :config dropped :dropped unrecognized :unrecognized} (policy/sanitize-config config)
+            errors (when enabled? (policy/validate-config config))
             notes (cond-> []
                     (seq dropped) (conj {:reason :restored-without-settings :paths dropped})
                     (seq errors) (conj {:reason :restored-disabled :errors (vec (take 3 errors))}))]
         (if (empty? notes) model
           (-> model
               (assoc-in [:auto :config] config)
-              (cond-> (seq errors) (update :auto assoc :enabled? false :state nil))
+              (cond-> (seq unrecognized) (assoc-in [:auto :unrecognized] unrecognized))
+              (cond-> (seq errors) (assoc-in [:auto :enabled?] false))
               (update-in [:auto :reasons] #(into (vec %) notes))))))))
+
+(defn- save-auto
+  "Write set-aside settings back into the saved config, verbatim."
+  [model]
+  (if-let [unrecognized (get-in model [:auto :unrecognized])]
+    (update model :auto #(-> % (update :config policy/restore-unrecognized unrecognized) (dissoc :unrecognized)))
+    model))
 
 (defn- validate-document! [document]
   (check! (and (map? document) (= schema-version (:schema-version document))
@@ -584,7 +592,7 @@
     ;; predictive windows. The restore path can regenerate them safely.
     ;; An unkept generated knob candidate (#667) is a draft, never saved.
     (cond-> {:schema-version schema-version
-             :model (validate-model (prepare-edit-history (cue-timing/without-queue (dissoc model :knob-candidates))))}
+             :model (validate-model (save-auto (prepare-edit-history (cue-timing/without-queue (dissoc model :knob-candidates)))))}
       (and (some? frame-output) (not sampled?)) (assoc :frame-output (validate-frame-output model frame-output)))))
 
 (defn freeze

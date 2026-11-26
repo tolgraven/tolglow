@@ -796,24 +796,37 @@
 
 (deftest shows-saved-before-strict-auto-configs-still-load
   ;; Master stored the auto request verbatim, so a REPL or agent call could save
-  ;; settings this planner does not know (#217). Such a show restores; unknown
-  ;; settings are dropped with a recorded reason, and a config that still
-  ;; cannot run restores switched off. Configure commands stay strict.
+  ;; settings this planner does not know (#217). Such a show restores: unknown
+  ;; settings are set aside verbatim and written back on the next save, and a
+  ;; config that still cannot run restores switched off with its ownership kept.
   (let [model (rich-model)
         legacy (fn [config]
                  (-> (files/freeze model)
                      (assoc-in [:model :auto :config] config)
                      (update-in [:model :auto :state] dissoc :base-seed :owned-launches :section)))
-        extra (files/thaw (assoc (demo/model) :epoch 9 :revision 200 :time-ms 9000)
-                          (legacy {:interval {:bars 2} :count 1 :scope :all :note "from an agent" :mood :calm}))
-        broken (files/thaw (assoc (demo/model) :epoch 9 :revision 200 :time-ms 9000)
-                           (legacy {:interval {:bars 2} :count 1 :scope :all :intent :bright}))]
+        current (assoc (demo/model) :epoch 9 :revision 200 :time-ms 9000)
+        saved-config {:interval {:bars 2} :count 1 :scope :all :note "from an agent" :mood :calm
+                      :sections [{:id :verse :length {:bars 4} :config {:count 1 :newer-setting [1 2]}}]}
+        extra (files/thaw current (legacy saved-config))
+        broken (files/thaw current (legacy {:interval {:bars 2} :count 1 :scope :all :intent :bright}))]
     (is (true? (get-in extra [:auto :enabled?])))
-    (is (= {:interval {:bars 2} :count 1 :scope :all} (get-in extra [:auto :config])))
-    (is (= [{:reason :restored-without-settings :paths [[:mood] [:note]]}]
-           (update-in (get-in extra [:auto :reasons]) [0 :paths] #(vec (sort %)))))
-    (is (map? (files/freeze extra)) "the restored show saves again")
-    (is (false? (get-in broken [:auto :enabled?])))
-    (is (nil? (get-in broken [:auto :state])))
-    (is (= :restored-disabled (get-in broken [:auto :reasons 0 :reason])))
-    (is (thrown? Exception (files/freeze (assoc-in extra [:auto :config :note] "new"))) "writing stays strict")))
+    (is (= {:interval {:bars 2} :count 1 :scope :all :sections [{:id :verse :length {:bars 4} :config {:count 1}}]}
+           (get-in extra [:auto :config])))
+    (is (= {:config {:note "from an agent" :mood :calm} :sections {:verse {:newer-setting [1 2]}}}
+           (get-in extra [:auto :unrecognized])))
+    (is (some #(= :restored-without-settings (:reason %)) (get-in extra [:auto :reasons])))
+    (testing "the next save writes the set-aside settings back, verbatim"
+      (let [document (files/freeze extra)]
+        (is (= saved-config (get-in document [:model :auto :config])))
+        (is (not (contains? (get-in document [:model :auto]) :unrecognized)))
+        (is (= (get-in extra [:auto :config]) (get-in (files/thaw current document) [:auto :config])))))
+    (testing "a config that cannot run restores off, still owning its looks"
+      (is (false? (get-in broken [:auto :enabled?])))
+      (is (some #(= :restored-disabled (:reason %)) (get-in broken [:auto :reasons])))
+      (let [state (get-in broken [:auto :state])
+            ids (set (keys (:instances broken)))]
+        (is (= 1 (count (:owned-instance-ids state))))
+        (is (every? ids (:owned-instance-ids state)))
+        (is (= (:owner-id state) (get-in broken [:instances (first (:owned-instance-ids state)) :source :session-id]))
+            "the restored look still names the auto session")
+        (is (= 1 (count (:commands (policy/stop-plan broken state 9000)))) "Stop can end it")))))

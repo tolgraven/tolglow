@@ -29,7 +29,9 @@ an integer from 1 to 64 at [:count]`; the committed config is left as it was.
 
 The request is checked before anything is committed: settings, scope shapes
 (`:all`, `{:page-id id}`, `{:cue-ids [...]}`), launch modes and durations, and
-that every scope (including each section's) names a saved page or cue.
+that every scope (including each section's) names a saved page or cue. A cue or
+page deleted later never blocks a save: the planner leaves it out and reports
+`:scope-missing`.
 
 Intervals and durations are beats, bars or phrases read from the transport.
 Milliseconds are accepted as an explicit physical option. A stopped transport
@@ -140,9 +142,14 @@ toward `:max-lit` instead of darkening it.
 
 A cue the show refuses (for example a shutter write to heads without a
 shutter), whether while predicting light or when the launch is dispatched, is
-dropped and reported once as `:launch-refused`. It is remembered in
-`[:auto :state :refusals]` and skipped until its cue or effect version or the
-patched rig changes, so it is not tried again on every decision. On the red
+dropped and reported as `:launch-refused`. A refusal that depends only on the
+definition and the rig (`:incapable-target`, `:invalid-targets`,
+`:invalid-params`, `:invalid-definition`, `:stale-calibration`, unknown cue or
+effect) is remembered in `[:auto :state :refusals]` and skipped until its cue
+or effect version or the patched rig changes, so it is not tried again on every
+decision. A refusal that depends on the moment, such as an aim path's
+`:start-wrap-mismatch` while a head sits on another pan wrap, or one caused by a
+section's launch options, counts for that decision only and is tried again. On the red
 show with ten refused cues, remembering them brought decision ticks from p95
 2.4 ms / max 3.0 ms to p95 0.6 ms / max 1.2 ms (captured output, 125 ms ticks,
 this M4 Pro under load from other work), and auto actually launched its two
@@ -161,11 +168,14 @@ the budget should choose.
 
 Auto config and state (seed, decision count, section, owned instances and their
 launch records, remembered refusals) are saved with the show and rekeyed on
-restore. A show saved before this planner was strict may carry settings it does
-not know; they are dropped on load and listed in the reasons as
-`:restored-without-settings`. If what remains still cannot run, the show loads
-with auto mode off and a `:restored-disabled` reason instead of refusing the
-whole file. Saving and configuring stay strict. A show restart
+restore. A show saved by another build may carry settings this planner does not know.
+On load they are set aside verbatim under `[:auto :unrecognized]` and listed in
+the reasons as `:restored-without-settings`; the next save writes them back
+into the config unchanged, until a new configure request replaces the config.
+If what remains still cannot run, the show loads with auto mode off and a
+`:restored-disabled` reason, keeping its ownership so **Stop auto** still ends
+the looks it launched, instead of refusing the whole file. Configure requests
+stay strict. A show restart
 discards ownership and the section, and the next decision starts a new one.
 
 ## Verification and limits

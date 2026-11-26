@@ -1492,6 +1492,10 @@
                        ;; show keeps rendering (#217).
                        (catch Throwable e
                          (when (instance? VirtualMachineError e) (throw e))
+                         ;; Shutdown interrupts the owner: keep the interrupt, never switch auto off for it.
+                         (when (instance? InterruptedException e)
+                           (.interrupt (Thread/currentThread))
+                           (throw e))
                          {:failed {:reason :planner-failed :message (or (.getMessage e) (.getName (class e)))}}))]
       (if-let [failure (:failed planned)]
         (stop-failed-auto model time-ms failure)

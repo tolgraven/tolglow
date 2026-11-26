@@ -311,3 +311,74 @@
               "no auto look keeps running while the panel reads off")
           (is (> (:time-ms (:transport m)) 3000) "the show kept ticking")))
       (finally (show/stop! rt)))))
+
+(deftest a-pan-wrap-refusal-is-retried-once-the-head-moves-back
+  ;; :start-wrap-mismatch depends on the head's current pan, not on the cue, so
+  ;; auto reports it for that decision only and launches the path once the
+  ;; head is back on the published wrap.
+  (let [head {:id :far-travel :universe 1 :address 1 :position [0 0 0]
+              :channels {:pan [1 3] :tilt [2 4]}
+              :calibration {:motor-rate-deg-per-sec {:pan 90 :tilt 120} :pan {:min-deg -270 :max-deg 270}}}
+        rt (show/create-runtime {:workspace-options nil :sink {:send! (fn [_ _])}
+                                 :model (afterglow.control.model/new-show {:rig {:fixtures [head]}
+                                                                           :transport {:playing? true :beat 0.0 :bpm 120.0}})})
+        point (fn [yaw] (let [r (Math/toRadians yaw)] [(Math/sin r) 0 (Math/cos r)]))
+        path! (fn [t spec] (is (= :accepted (:status (submit!! rt t :aim-path spec))) (pr-str spec)))]
+    (try
+      (show/tick! rt 0)
+      ;; Published from the neutral pose, the start resolves to the -170 degree wrap.
+      (path! 0 {:id :wrapped :targets [:far-travel] :points [(point -170) (point -150)] :sync-arrival? true})
+      (path! 0 {:id :out :targets [:far-travel] :mode :once :duration {:ms 1000} :points (mapv point [-90 0 90 150 190])})
+      (path! 0 {:id :back :targets [:far-travel] :mode :once :duration {:ms 1000} :points (mapv point [190 150 90 0 -90 -160])})
+      (let [out (:instance-id (submit!! rt 0 :command {:op :cue/launch :cue-id :out :launch {:mode :persistent}}))]
+        (doseq [t (range 125 1300 125)] (show/tick! rt t))
+        (is (= :accepted (:status (submit!! rt 1300 :auto {:enabled? true :seed 1 :intent :darkness :scope {:cue-ids [:wrapped]}
+                                                           :interval {:beats 2} :launch {:mode :timed :duration {:beats 2}}}))))
+        (let [refused (mapcat :refused (:reasons (auto-of rt)))]
+          (is (= [:start-wrap-mismatch] (mapv :code refused)) (pr-str (:reasons (auto-of rt))))
+          (is (empty? (get-in (auto-of rt) [:state :refusals])) "a pose-dependent refusal is not remembered"))
+        ;; The performer brings the head back to the published wrap.
+        (submit!! rt 1400 :command {:op :instance/end :instance-id out :force? true})
+        (submit!! rt 1400 :command {:op :cue/launch :cue-id :back :launch {:mode :persistent}})
+        (doseq [t (range 1500 4500 125)] (show/tick! rt t))
+        (is (some #(and (= :wrapped (:cue-id %)) (= :auto (get-in % [:source :adapter])))
+                  (vals (get-in @(:state rt) [:model :instances])))
+            (pr-str (:reasons (auto-of rt)))))
+      (finally (show/stop! rt)))))
+
+(deftest deleting-a-scoped-cue-never-blocks-a-backup
+  (let [rt (runtime (model))]
+    (try
+      (show/tick! rt 0)
+      (submit!! rt 0 :auto (auto-config 217))
+      (is (= :accepted (:status (submit!! rt 125 :command {:op :cue/delete :cue-id :accent}))))
+      (doseq [t (range 250 20000 125)] (show/tick! rt t))
+      (is (true? (:enabled? (auto-of rt))))
+      (is (nil? (get-in @(:state rt) [:status :error])))
+      (let [document (show/export-show rt)]
+        (is (map? document) "the backup is written")
+        (is (some #(= :accent (get-in % [:config :scope :cue-ids 3])) (get-in document [:model :auto :config :sections]))
+            "the plan is saved as configured"))
+      (finally (show/stop! rt)))))
+
+(deftest a-show-restored-with-auto-off-can-still-stop-its-looks
+  (let [rt (runtime (model))]
+    (try
+      (show/tick! rt 0)
+      (submit!! rt 0 :auto {:enabled? true :seed 2 :scope {:cue-ids [:wash-color :accent]} :interval {:beats 1}
+                            :launch {:mode :persistent}})
+      (doseq [t (range 125 2500 125)] (show/tick! rt t))
+      (let [document (-> (show/export-show rt)
+                         ;; As if saved by a build whose intent this planner does not have.
+                         (assoc-in [:model :auto :config :intent] :bright))
+            _ (is (= :accepted (:status (submit!! rt 2500 :import {:source (pr-str document)}))))
+            restored (auto-of rt)
+            auto-looks #(filterv (fn [i] (and (= :auto (get-in i [:source :adapter])) (= :running (:phase i))))
+                                 (vals (get-in @(:state rt) [:model :instances])))]
+        (is (false? (:enabled? restored)))
+        (is (some #(= :restored-disabled (:reason %)) (:reasons restored)))
+        (is (seq (auto-looks)) "the looks came back, still owned by auto")
+        (is (= (set (map :id (auto-looks))) (set (get-in restored [:state :owned-instance-ids]))))
+        (is (= :accepted (:status (submit!! rt 2625 :auto {:enabled? false}))))
+        (is (empty? (auto-looks)) "Stop ends them"))
+      (finally (show/stop! rt)))))

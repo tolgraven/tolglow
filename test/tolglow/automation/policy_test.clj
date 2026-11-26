@@ -276,8 +276,22 @@
          (mapv :path (policy/validate-references (model) {:sections [{:id :a :length {:bars 1}}
                                                                      {:id :b :length {:bars 1} :config {:scope {:page-id :gone}}}]}))))
   (is (= [{:config {:count 2 :sections [{:id :a :length {:bars 1} :config {:count 1}}]}
-           :dropped [[:note] [:sections 0 :config :legacy]]}]
+           :dropped [[:note] [:sections 0 :config :legacy]]
+           :unrecognized {:config {:note "x"} :sections {:a {:legacy true}}}}]
          [(policy/sanitize-config {:count 2 :note "x" :sections [{:id :a :length {:bars 1} :config {:count 1 :legacy true}}]})])))
+
+(deftest set-aside-settings-go-back-verbatim
+  (let [config {:count 2 :note "x" :sections [{:id :a :length {:bars 1} :config {:count 1 :legacy true}}
+                                              {:id :b :length {:bars 1}}]}
+        {:keys [unrecognized] clean :config} (policy/sanitize-config config)]
+    (is (= config (policy/restore-unrecognized clean unrecognized)))))
+
+(deftest only-definition-refusals-are-remembered
+  (let [show (assoc (model) :rig {:fixtures [fixture]})
+        state (policy/initial-state 0 0 :auto)]
+    (is (empty? (:refusals (policy/record-refusal state show :red {:code :start-wrap-mismatch}))))
+    (is (empty? (:refusals (policy/record-refusal state show :red {:code :invalid-duration}))))
+    (is (= :incapable-target (get-in (policy/record-refusal state show :red {:code :incapable-target}) [:refusals :red :code])))))
 
 (deftest keep-plan-keeps-randomize-domains-across-stop-and-start
   (let [repl {:sections [{:id :a :length {:bars 1}}] :randomize {:params :marked :palette [{:color [1 0 0]}] :ranges {:level [0 1]}}}

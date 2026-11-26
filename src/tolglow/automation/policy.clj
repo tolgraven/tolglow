@@ -140,14 +140,26 @@
       (fn [cue] (when-let [entry (get remembered (:id cue))]
                   (= (:key entry) (refusal-key model cue)))))))
 
+(def remembered-refusals
+  "Refusal codes that depend only on the cue, its effect and the patched rig,
+  so they hold until one of those changes. Refusals that depend on the moment
+  (a head's current pan wrap, a section's launch options, a stale gesture) are
+  reported for that decision only and tried again next time."
+  #{:incapable-target :invalid-targets :invalid-params :invalid-definition
+    :stale-calibration :unknown-cue :unknown-effect})
+
+(defn- remember-refusal [state model cue-id code]
+  (let [cue (get-in model [:registry :cues cue-id])]
+    (if (and cue (remembered-refusals code))
+      (assoc-in state [:refusals cue-id] {:code code :key (refusal-key model cue)})
+      state)))
+
 (defn record-refusal
   "The command shell reports a launch the show rejected at dispatch. Remember
-  it like a refusal met while planning, so later decisions skip that cue until
-  its definition or the rig changes."
+  a definition-dependent refusal like one met while planning, so later
+  decisions skip that cue until its definition or the rig changes."
   [state model cue-id ack]
-  (if-let [cue (get-in model [:registry :cues cue-id])]
-    (assoc-in state [:refusals cue-id] {:code (:code ack) :key (refusal-key model cue)})
-    state))
+  (remember-refusal state model cue-id (:code ack)))
 
 (defn- candidates [model config state]
   (let [scope (:scope config :all)
@@ -434,23 +446,42 @@
                          (range) (:sections config))))))
 
 (defn sanitize-config
-  "For a saved show: drop settings this planner does not know (top level and in
-  section configs) instead of refusing the whole show. Returns
-  {:config .. :dropped [paths]}. New configure commands stay strict."
+  "For a saved show: set aside settings this planner does not know (top level
+  and in section configs) instead of refusing the whole show. Returns
+  {:config .. :dropped [paths] :unrecognized {:config {k v} :sections {id {k v}}}};
+  unrecognized values are kept verbatim so restore-unrecognized can write them
+  back on the next save. New configure commands stay strict."
   [config]
-  (if-not (map? config) {:config config :dropped []}
+  (if-not (map? config) {:config config :dropped [] :unrecognized {}}
     (let [unknown (vec (remove config-keys (keys config)))
+          top (select-keys config unknown)
           config (apply dissoc config unknown)
           sections (when (vector? (:sections config))
                      (map-indexed (fn [i section]
                                     (if (map? (:config section))
-                                      (let [{c :config d :dropped} (sanitize-config (:config section))]
+                                      (let [{c :config d :dropped u :unrecognized} (sanitize-config (:config section))]
                                         {:section (assoc section :config c)
-                                         :dropped (mapv #(into [:sections i :config] %) d)})
+                                         :dropped (mapv #(into [:sections i :config] %) d)
+                                         :unrecognized (when (seq (:config u)) [(:id section) (:config u)])})
                                       {:section section :dropped []}))
-                                  (:sections config)))]
+                                  (:sections config)))
+          by-section (into {} (keep :unrecognized) sections)]
       {:config (cond-> config sections (assoc :sections (mapv :section sections)))
-       :dropped (into (mapv vector unknown) (mapcat :dropped sections))})))
+       :dropped (into (mapv vector unknown) (mapcat :dropped sections))
+       :unrecognized (cond-> {} (seq top) (assoc :config top) (seq by-section) (assoc :sections by-section))})))
+
+(defn restore-unrecognized
+  "Put settings sanitize-config set aside back into config, verbatim, so a save
+  keeps what an older or newer build wrote. Section settings return to the
+  section with the same ID; a section that no longer exists drops them."
+  [config {top :config by-section :sections}]
+  (cond-> (merge top config)
+    (and (seq by-section) (vector? (:sections config)))
+    (update :sections (fn [sections]
+                        (mapv #(if-let [extra (get by-section (:id %))]
+                                 (update % :config (fn [c] (merge extra c)))
+                                 %)
+                              sections)))))
 
 (defn- plan-without-refusals
   "Run plan over the pool. A cue whose launch the show would refuse (a head
@@ -634,17 +665,16 @@
             {:state (cond-> (assoc state :seed seed :epoch (:epoch model) :interval-timer timer
                                    :tick (inc (:tick state)))
                       (seq refused)
-                      (update :refusals (fnil into {})
-                              (map (fn [{:keys [cue-id code]}]
-                                     [cue-id {:code code
-                                              :key (refusal-key model (get-in model [:registry :cues cue-id]))}])
-                                   refused))
+                      (as-> s (reduce (fn [s {:keys [cue-id code]}] (remember-refusal s model cue-id code)) s refused))
                       ctx (assoc :owned-instance-ids (into [] (remove (set ended)) owned))
                       (= :ms unit) (assoc :next-at-ms next-at)
                       (= :beats unit) (assoc :next-at-beat next-at))
              :commands commands
              :reasons (cond-> (vec handed)
                         (seq refused) (conj (tag {:reason :launch-refused :refused refused}))
+                        ;; A cue or page deleted after configure: plan without it, and say so.
+                        (seq (validate-references model config))
+                        (conj (tag {:reason :scope-missing :missing (mapv :message (validate-references model config))}))
                         (seq cut-ids) (conj (tag {:reason transition :instance-ids cut-ids}))
                         true (conj (tag (cond-> (dissoc result :cues ::required)
                                           (seq randomized) (assoc :randomized randomized)))))}))))))
