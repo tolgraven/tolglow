@@ -98,6 +98,15 @@ This option is explicit and off when loading another definition. Arbitrary
 Clojure source is not evaluated by the definition endpoint. Validation runs at
 publish time; the textarea itself does not claim a live Clojure linter.
 
+The definition status follows the text, not the edit history. Studio keeps the
+published baseline: the source last loaded from or accepted by the running show.
+Text equal to it shows that baseline's status (`ember · v2` or Published); any
+other text shows Unpublished changes. A publication reply marks Published only
+when the editor still holds the text that was sent, so an edit (or a late Neovim
+delivery) that arrives while the request is in flight stays unpublished and, with
+Publish valid edits on, is published next. Neovim echoes of the text Studio
+already holds change nothing.
+
 The default editor is a labeled accessible textarea with Tab indentation and
 Ctrl/Cmd+Enter publication. Selecting Neovim loads the actual pinned WASM runtime
 reused from Tolgraven. Its Worker owns the editable buffer; the UI consumes
