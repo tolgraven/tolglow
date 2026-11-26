@@ -58,6 +58,17 @@
       (let [emptied (builder/write-bindings source {})]
         (is (= (assoc definition :blocks {}) (edn/read-string emptied)))
         (is (= (assoc definition :blocks replaced) (edn/read-string (builder/write-bindings emptied replaced))))))
+    (testing "a block map that grows or shrinks moves to the line a fresh print gives it"
+      (let [small {[:outputs :dimmer] {:stages [{:block :lfo/sine}]}}
+            with-small (pretty/edn (assoc definition :blocks small))]
+        (is (some #{" :blocks {[:outputs :dimmer] {:stages [{:block :lfo/sine}]}}"} (str/split-lines with-small)))
+        (is (= (pretty/edn (assoc definition :blocks replaced)) (builder/write-bindings with-small replaced)))
+        (is (= with-small (builder/write-bindings source small)))))
+    (testing "a block map on one line among other entries stays on one line"
+      (let [compact (pr-str definition)
+            written (builder/write-bindings compact replaced)]
+        (is (= 1 (count (str/split-lines written))))
+        (is (= (assoc definition :blocks replaced) (edn/read-string written)))))
     (testing "a definition without blocks gets them as its last entry, indented with the others"
       (let [bare (pretty/edn (dissoc definition :blocks))
             added (builder/write-bindings bare replaced)

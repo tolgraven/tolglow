@@ -11,8 +11,9 @@
   a collection value does not fit on the rest of that line, on the next line
   indented two columns past its key; several entries never share a line. A
   vector, list or set of scalars fills each line, except that a keyword-argument
-  sequence ([:key value :key value ...]) puts each pair on its own line; one
-  holding collections puts each element on its own line. A map lists :id, :version and :name first, then
+  vector or list ([:key value :key value ...], not keywords only) puts each pair
+  on its own line; one holding collections puts each element on its own line.
+  A map lists :id, :version and :name first, then
   keeps the order of a small (array) or sorted map and sorts the keys of a
   hash map, whose own order is arbitrary and differs between platforms. Set
   elements are sorted the same way. Records and other values print as pr-str
@@ -54,8 +55,14 @@
     (number? b) 1
     :else (compare (pr-str a) (pr-str b))))
 
+(defn- leading-entry
+  "The entry for `k`. A sorted map is searched rather than looked up, because
+  its comparator may not accept a keyword (a map keyed by numbers or strings)."
+  [m k]
+  (if (sorted? m) (some #(when (= k (key %)) %) m) (find m k)))
+
 (defn- map-entries [m]
-  (let [lead (keep #(find m %) leading-keys)
+  (let [lead (keep #(leading-entry m %) leading-keys)
         others (remove #(some #{(key %)} leading-keys) m)]
     (concat lead (if (ordered-map? m) others (sort-by key compare-printed others)))))
 
@@ -176,10 +183,13 @@
             (recur (inc i) (conj lines line) text)))))))
 
 (defn- keyword-pairs?
-  "A sequence of keyword/value pairs, as in keyword-argument style vectors."
-  [elements]
-  (and (<= 4 (count elements)) (even? (count elements))
-       (every? keyword? (take-nth 2 elements))))
+  "A sequence of keyword/value pairs, as in keyword-argument style vectors. A
+  set is never one, and neither is a sequence of keywords only, such as a list
+  of fixture IDs, which fills its lines like other scalars."
+  [kind elements]
+  (and (not= kind :set) (<= 4 (count elements)) (even? (count elements))
+       (every? keyword? (take-nth 2 elements))
+       (not-every? keyword? (take-nth 2 (rest elements)))))
 
 (defn- layout-sequence [kind x column tail width depth]
   (let [[open close] (delimiters kind)
@@ -194,7 +204,7 @@
                                                         width (inc depth)))
                                               elements)))
            (let [texts (mapv scalar-text elements)]
-             (if (keyword-pairs? elements)
+             (if (keyword-pairs? kind elements)
                (apply str (interpose (str "\n" (spaces inner))
                                      (map (fn [[k v]] (str k " " v)) (partition 2 texts))))
                (fill texts inner (+ tail (count close)) width))))

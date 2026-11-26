@@ -67,6 +67,13 @@
         (is (= text (str/join "\n" (str/split text #"\n" -1))))
         (is (not (str/ends-with? text "\n")))))))
 
+(deftest keyword-only-vectors-and-sorted-maps-as-on-the-host
+  (is (= "[:beam-1 :beam-2 :beam-3\n :beam-4 :beam-5 :beam-6]"
+         (pretty/edn [:beam-1 :beam-2 :beam-3 :beam-4 :beam-5 :beam-6] {:width 26})))
+  (is (= "{1 2 3 4}" (pretty/edn (sorted-map 3 4 1 2))))
+  (is (= "{\"a\" 1 \"b\" 2}" (pretty/edn (sorted-map "b" 2 "a" 1))))
+  (is (= "{:id :x :a 1}" (pretty/edn (sorted-map :a 1 :id :x)))))
+
 (deftest json-views-indent-two-spaces
   (is (= "{\n  \"a\": [\n    1,\n    \"b\"\n  ]\n}" (pretty/json {:a [1 :b]})))
   (is (= "\"plain\"" (pretty/json "plain"))))

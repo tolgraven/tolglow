@@ -144,8 +144,10 @@ stage reaches the next one. **Add private or variable binding** accepts a privat
 varying name or a space-separated show variable path such as `weather density`.
 
 **Write stages to EDN** updates the block map in the current draft and preserves
-surrounding source and comments. The block map is pretty-printed from the column
-where it starts, so a loaded definition keeps its layout. **Validate & publish** sends that definition to
+surrounding source and comments. In a pretty-printed definition the block map
+gets the lines a fresh print would give it, after `:blocks` or on the next line
+as its size needs; a block map written on one line among other entries stays on
+one line. **Validate & publish** sends that definition to
 the show. With **Publish valid edits** enabled the normal live-edit policy applies.
 In the visual RGB builder, use **Assign blocks** before **Generate EDN**.
 

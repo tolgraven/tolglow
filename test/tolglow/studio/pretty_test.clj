@@ -89,6 +89,19 @@
     (is (= "{:id :wash\n           :tags [:color]}"
            (pretty/edn {:id :wash :tags [:color]} {:width 30 :column 10})))))
 
+(deftest keyword-only-vectors-and-sets-fill-their-lines
+  (testing "a list of IDs is not keyword arguments"
+    (is (= "[:beam-1 :beam-2 :beam-3\n :beam-4 :beam-5 :beam-6]"
+           (pretty/edn [:beam-1 :beam-2 :beam-3 :beam-4 :beam-5 :beam-6] {:width 26}))))
+  (is (= "#{1 :a :b\n  :c}" (pretty/edn #{:a 1 :b :c} {:width 10})))
+  (is (= "[:a 1\n :b :c]" (pretty/edn [:a 1 :b :c] {:width 8}))))
+
+(deftest sorted-maps-keyed-by-other-than-keywords-print
+  (is (= "{1 2 3 4}" (pretty/edn (sorted-map 3 4 1 2))))
+  (is (= "{\"a\" 1 \"b\" 2}" (pretty/edn (sorted-map "b" 2 "a" 1))))
+  (is (= "{3 :c 2 :b 1 :a}" (pretty/edn (sorted-map-by > 1 :a 2 :b 3 :c))))
+  (is (= "{:id :x :a 1}" (pretty/edn (sorted-map :a 1 :id :x)))))
+
 (deftest printing-ignores-the-callers-print-limits
   (binding [*print-length* 2 *print-level* 1]
     (is (= "[1 2 3 [4 [5]]]" (pretty/edn [1 2 3 [4 [5]]])))))
