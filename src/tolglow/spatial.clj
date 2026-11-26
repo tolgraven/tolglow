@@ -95,7 +95,7 @@
           :else
           (let [prior (get-in model state-path)
                 clock (assoc (time/frame-clock model) :time-ms now :epoch (:epoch model))
-                config (scene-config (assoc settings :volumes {id volume}) (assoc model :time-ms now) (:start-clock prior clock))
+                config (scene-config (assoc settings :volumes {id volume}) (assoc model :time-ms now) (or (:start-clock prior) (signal/origin model clock)))
                 body (get-in prior [:bodies id])
                 saved (when body {:bodies {id body}})]
             (:members (physics/advance (physics/rebase saved clock) config clock (get-in model [:rig :fixtures]) {}))))))))
@@ -273,7 +273,7 @@
       :else
       (let [fixtures (get-in model [:rig :fixtures])
             rig (if (identical? fixtures (:fixtures old-cache)) (:rig old-cache) (physics/prepare-rig fixtures))
-            start (or (get-in prior [:start-clock]) clock)
+            start (or (get-in prior [:start-clock]) (signal/origin model clock))
             dynamic? (if (identical? s (:settings old-cache)) (:dynamic? old-cache)
                          (boolean (some :radius-source (vals (:volumes s)))))
             scene (if (and (identical? s (:settings old-cache)) (not dynamic?)) (:scene old-cache)

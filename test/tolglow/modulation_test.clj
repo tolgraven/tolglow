@@ -519,3 +519,26 @@
     (is (seq (modulation/validate-state (assoc-in state [:holds "0:1" :level] {:until-beat "tomorrow"}))))
     (is (thrown? clojure.lang.ExceptionInfo
                  (modulation/restore-state state {:show-id :x :epoch 2 :instance-ids {"a" "c" "b" "c"}})))))
+
+(deftest a-restart-reload-starts-the-owner-controller-on-the-private-clock
+  ;; The engine restarts a :restart owner at its private clock. On the reload
+  ;; frame modulation prepares the same instance, so the controller starts
+  ;; where the following frame, reading the reloaded owner, would start it.
+  (let [owner (assoc effect :id :owner :version 1 :params {} :outputs {})
+        modulated (assoc owner :version 2 :modulation {:seed 3 :every {:beats 1} :params [:level]
+                                                       :select {:cue-ids [:wash]} :ranges {:level [0.5 0.5]}})
+        running (assoc (instance "0:2" owner) :cue-id :owner :order 1 :reload-policy :restart
+                       :duration {:ms 3000}
+                       :duration-timer (time/start {:ms 3000} {:time-ms 0.0 :beat 0.0})
+                       :system {:clock-offset-ms 1000.0 :clock-offset-beats 2.0})
+        frame {:time-ms 5000.0 :beat 10.0}
+        base (-> (model) (assoc-in [:registry :effects :owner] modulated))
+        reload-frame (assoc-in base [:instances "0:2"] running)
+        reloaded (assoc-in base [:instances "0:2"]
+                           (assoc running :definition modulated :effect-version 2
+                                  :started-at-ms 4000.0 :started-at-beat 8.0
+                                  :duration-timer (time/start {:ms 3000} {:time-ms 4000.0 :beat 8.0})))
+        controller #(first (:controllers (modulation/reconcile-cues nil % frame)))]
+    (is (= [:cue "0:2"] (:id (controller reload-frame))))
+    (is (= 8.0 (:anchor-beat (controller reload-frame))) "the private beat, not the shared 10.0")
+    (is (= (controller reloaded) (controller reload-frame)))))

@@ -69,11 +69,39 @@ before commands and advancement:
 | --- | --- |
 | Running instances | `:system :clock-offset-ms` and `:transport-held-ms` grow by the held interval, so the private clock reads the same time it had at the stop. This covers system attack/release, authored envelopes and release tails, timed durations, output tweens, `:time` expressions, `:period {:ms …}` oscillators and step deltas. |
 | Explicitly paused instances | Only `:transport-held-ms` grows. Their private clock is already frozen and `:instance/resume` recomputes the offset over the whole pause, stop included. |
+| Show transport | `[:transport :held-ms]` grows by the held interval: the show-level counterpart of an instance's `:transport-held-ms`. It is absent until the first stop. |
+| Signal phases without an activation | Millisecond periods read the show clock (see below). |
 | Scheduler ramps with `:over {:ms …}` | `:start` and `:end` shift by the held interval. |
 | Response envelopes | Millisecond start/release anchors shift. Each selected instance samples its private clock plus its `:system :transport-held-ms`, so a stop holds the response for every instance while an explicit pause still holds it for that instance only. |
+| Routing ADSR envelopes | Millisecond start/release anchors in `[:routing :state :routes]` shift (`integrations.patch/hold-clock`). Beat envelopes already stand still, so both units hold. A gate that opens during a stop starts its attack on play. |
+| Energy conductor | Decisions, pending corrections and target slew read the show clock (see below). |
+| Output response | Attack/release of delivered light (`:output-response`) reads the show clock: it freezes on the stop frame's committed level and resumes exactly on play. |
 | Auto planner with a millisecond interval | Interval timer and `:next-at-ms` shift. Beat intervals already wait for play. |
 | Millisecond sequences | Unchanged: their logical clock accumulates only intervals that began playing. |
 | Spatial physics | Unchanged: the simulation reads `:playing?` and advances no physical time while stopped. |
+
+The show clock is host `:time-ms` less `[:transport :held-ms]`
+(`autopilot.signal/show-clock`). It is continuous and nondecreasing, and equals
+host time for a show that has never stopped.
+
+- **Signal phases.** Autopilot, HDR, spatial and lighting-budget signals with a
+  millisecond period read it. That covers `:phase :global` (the default) and
+  named signals. A `:phase :local` phase measured from a captured start clock
+  subtracts only the time held since that start, which the start clock records
+  as `:held-ms`. A phase measured from an activation reads its private clock,
+  which already holds.
+- **Energy conductor.** Its decision cadence, pending corrections and target
+  slew (`:target-response`) read it, so a millisecond `:interval` keeps its
+  place across a stop and no decision is due on play. No decision fires while
+  stopped. The slew holds its value; it already held while `:playing?` was
+  false, and the interval ending on the stop frame is the one frame it does not
+  use. The play frame loses nothing, because that interval was stopped time.
+  Observation of delivered light keeps the host clock and, like the rolling
+  statistics, counts only intervals that began playing.
+- **Output response.** A transport stop no longer bypasses the response. On
+  the stop frame it advances over the last playing interval, then stands still,
+  and play continues from that level with no jump on either edge. Blackout,
+  master zero, calibration and the ambient pause look still bypass it.
 
 All of this lives in saved state, so a show saved during a stop resumes from
 the held position after import. A Room scene-draft audition replays the same
@@ -88,9 +116,19 @@ These keep the wall clock on purpose, because they are not show progress:
   outlives transport stop and play.
 - **Output timing.** Physical packet deadlines, presentation scheduling and
   frame timestamps follow the device clock.
-- **Inputs and their shaping.** Sensor and routing envelopes, smoothing, gates
-  and observation timeouts follow live input, which keeps arriving during a stop,
-  like a fader the operator moves. Parameters fed by them stay live.
+- **Inputs and their shaping.** Sensor envelopes, routing gates, smoothing and
+  observation timeouts follow live input, which keeps arriving during a stop,
+  like a fader the operator moves. A routing gate still opens and closes during
+  a stop; only its ADSR envelope holds. Beat-unit smoothing and timeouts stand
+  still with the beat, as before.
+- **The audio fog pulse.** The audio-reactive fog request
+  (`lighting-capacity/fog-policy`) is cancelled on stop, not paused. While the
+  transport is stopped the fogger must not emit, so a pause could only cut the
+  0.4 s pulse and replay its remainder on play, seconds or minutes after the
+  audio crossing that triggered it. The 0.4 s on and 6 s rest are the fogger's
+  duty limits (`:fogger :duty`), physical time for the machine and the room, so
+  a stop counts as rest. The pulse follows live audio and its state is frame
+  output, never saved show state.
 - **Physical estimates.** The venue fog estimate decays as real fog does. The
   Room preview's own interpolation and fog drawing are presentation and never
   advance show state.
@@ -99,8 +137,13 @@ These keep the wall clock on purpose, because they are not show progress:
 
 `tolglow.transport-pause-test` checks each category through the real show owner
 and a capture sink: start the change, stop part-way, hold five seconds, play,
-and require the output to stay frozen and continue without a jump. Beat
-scenarios run at 70, 120 and 180 BPM.
+and require the output to move normally into the stop frame, stay frozen and
+continue without a jump. The output-response cases also match a never-stopping
+twin frame for frame, shifted by the held interval. Beat
+scenarios, the global millisecond oscillator, both routing envelope units and
+the energy conductor's slew and cadence and the output response's attack and
+release run at 70, 120 and 180 BPM. The held show clock also survives a backup round
+trip, and a show saved without it reads host time as before.
 
 ## Covered state
 

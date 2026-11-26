@@ -299,13 +299,16 @@
            (if-let [duration (:duration-ms instance)]
              (< (:time-ms clock) (+ (:started-at-ms instance) duration)) true)))))
 
-(defn- prepared-owner [instance definition clock]
-  ;; Match engine reload-before-expiry ordering, including revival during release.
+(defn- prepared-owner [instance definition global-clock]
+  ;; Match engine reload-before-expiry ordering, including revival during
+  ;; release. The engine restarts on the instance's private clock, which
+  ;; owner-active? also samples. Paused instances get no reload candidate.
   (if (and (= :restart (:reload-policy instance))
            (> (:version definition) (:effect-version instance)))
-    (cond-> (assoc instance :phase :running :started-at-ms (:time-ms clock) :started-at-beat (:beat clock))
-      (:duration instance) (assoc :duration-timer
-                                  (time/start (:duration instance) (assoc clock :meter (:timing-meter instance)))))
+    (let [clock (system/private-clock instance global-clock)]
+      (cond-> (assoc instance :phase :running :started-at-ms (:time-ms clock) :started-at-beat (:beat clock))
+        (:duration instance) (assoc :duration-timer
+                                    (time/start (:duration instance) (assoc clock :meter (:timing-meter instance))))))
     instance))
 
 (defn reconcile-cues
