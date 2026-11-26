@@ -2,7 +2,8 @@
   "A mixer for the committed effect channels in Studio’s show projection."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
-            [tolglow.studio.projection :as projection]))
+            [tolglow.studio.projection :as projection]
+            [tolglow.studio.surfaces :as surfaces]))
 
 (def ^:private overlay-options [[:fixtures "Fixtures"] [:categories "Categories"] [:cue-pages "Cue pages"]])
 
@@ -149,7 +150,7 @@
     [:span {:title "Combined group level"} [:span.sr-only "Combined group level "] (percent member-level)]]])
 
 (defn- group-node [{:keys [id name level groups instance-ids matching-instance-ids] :as group}
-                   {:keys [closed requests connected? instances-by-id] :as state} overlay? depth]
+                   {:keys [closed requests connected? instances-by-id on-surface] :as state} overlay? depth]
   (let [members (membership group overlay? instances-by-id)
         expandable? (or (seq groups) (seq members))
         open? (and expandable? (not (contains? closed id)))
@@ -157,24 +158,30 @@
         pending (pending? request)
         member-count (count instance-ids)
         match-count (count matching-instance-ids)
-        committed (percent level)]
+        committed (percent level)
+        strip (get on-surface id)]
     [:li.effect-group-mixer-group
-     [:div.effect-group-mixer-channel {:style {"--group-depth" (min depth 4)}}
+     [:div.effect-group-mixer-channel {:style {"--group-depth" (min depth 4)}
+                                       ;; Outlined while a surface's session box shows this strip (#705).
+                                       :data-on-surface (boolean strip)}
       [:div.effect-group-mixer-channel-name
        (if expandable?
          [:button.effect-group-mixer-disclosure
           {:type "button" :aria-expanded (boolean open?) :aria-label (str "Members of " name)
-           :on-click #(rf/dispatch [:effect-group-mixer/toggle id])}
+           :on-click #(do (rf/dispatch [:effect-group-mixer/toggle id])
+                          (rf/dispatch [:surfaces/follow [:group id]]))}
           [:span.effect-group-mixer-chevron {:aria-hidden true}]
           [:span name]]
          [:span.effect-group-mixer-empty-name name])
        [:small (if (and overlay? (> match-count member-count))
                  (str member-count " controlled · " match-count " matches")
-                 (str member-count " " (if (= member-count 1) "effect" "effects")))]]
+                 (str member-count " " (if (= member-count 1) "effect" "effects")))]
+       (when strip [:span.surface-strip-badge {:title "Shown on this control surface strip"} strip])]
       [:input.effect-group-mixer-volume
        {:type "range" :min 0 :max 1 :step 0.01 :value (if pending (:value request) level)
         :aria-label (str (if overlay? "Overlay" "Manual") " group volume for " name)
         :aria-valuetext (percent (if pending (:value request) level)) :disabled (not connected?)
+        :on-focus #(rf/dispatch [:surfaces/follow [:group id]])
         :on-change #(rf/dispatch-sync [:effect-group-mixer/edit id (.. % -target -valueAsNumber)])}]
       [:output.effect-group-mixer-level {:aria-label (str "Committed group volume for " name)} committed]]
      (when open?
@@ -196,8 +203,10 @@
   (let [{:keys [mixer overlays connected? requests] :as state} @(rf/subscribe [:effect-group-mixer/panel])
         {:keys [manual overlay instances active-overlay]} mixer
         selected (get requests :overlay)
-        state (assoc state :instances-by-id (into {} (map (juxt :instance-id identity)) instances))]
+        state (assoc state :instances-by-id (into {} (map (juxt :instance-id identity)) instances)
+                     :on-surface (:groups @(rf/subscribe [:surfaces/on-surface])))]
     [:div.effect-group-mixer-body
+     [surfaces/panel]
      [:header.effect-group-mixer-heading
       (when (some pending? (vals requests)) [:span.effect-group-mixer-pending {:role "status"} "Applying…"])
       [:label "Overlay"

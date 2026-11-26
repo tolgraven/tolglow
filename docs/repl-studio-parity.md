@@ -608,6 +608,51 @@ sends the same commands.
 **Tracked gaps.** Slots have numbers, not names. Physical Push 2 and Push 3
 evidence is pending in [issue #547](https://github.com/tolgraven/tolglow/issues/547).
 
+## Link control surfaces and move their session box
+
+Both surfaces read one projection, `:control-surfaces` in the show snapshot, and
+send the same owner commands: `:control-surface/link`, `:control-surface/unlink`
+and `:control-surface/bank`. Devices send `:control-surface/attach` and
+`:control-surface/detach` when they connect and disconnect, and their bank
+buttons send `:control-surface/bank` too. `:logical` lists every link and every
+unlinked surface with its `:window`, `:span`, content `:size`, last window
+(`:limit`) and, per member, the cells it shows. The follow setting lives at
+`[:settings :controllers :surfaces :follow-selection?]`.
+[X-Touch surfaces and links](xtouch.md#surfaces-links-and-the-session-box)
+
+From the REPL, attach two units, extend the main unit with the extender to its
+right, page the window and read it back:
+
+```clojure
+(show/connect-device! runtime :x-touch {:session-id "xt-main" :input-index 0 :output-index 6
+                                         :effect-group-view :manual})
+(show/connect-device! runtime :x-touch {:session-id "xt-ext" :input-index 5 :output-index 11
+                                         :extender? true})
+@(show/link-surfaces! runtime "desk" ["xt-main" "xt-ext"])          ; or {:mode :mirror}, {:mode :follow :offset {:x 1}}
+@(show/bank-surface! runtime "desk" :next)                           ; :first :last :previous ...
+@(show/bank-surface! runtime "desk" {:reveal [:group [:manual :mix]]})
+(map (juxt :id :mode :window) (:logical (:control-surfaces (show/snapshot runtime))))
+;; => (["desk" :extend {:x 16, :y 0}])
+@(show/submit! runtime :settings {:scope :controllers :values {:surfaces {:follow-selection? true}}})
+```
+
+In Studio, **Perform → Group mixer → Surfaces** shows a session box per link or
+unlinked surface: its name and mode, "Strips 17–20 of 20", and ⏮ ‹ › ⏭ bank
+buttons. **Link** joins two unlinked surfaces (extended to the right or left,
+mirrored, or followed one page to the right) and **Unlink** dissolves a link. Group rows on a surface are outlined
+and badged with the surface and strip (`xt-main 3`); **In the mix** outlines and
+badges the cards whose cue strip is on a surface. With **Follow selection** on,
+focusing a group's volume, opening a group, or opening a card moves each surface
+that holds that strip to the page that shows it. A bank button on the hardware,
+a REPL move and a Studio move all update the open session boxes and both units.
+A refused move (an unknown surface, a cell that is not on it) shows its reason;
+a follow move for a cell a surface does not hold is ignored quietly.
+
+**Tracked gaps.** Studio has no form for up/down links, follow offsets other
+than one page, or a member's non-default viewport; the REPL accepts all three. A Studio page component is not yet a surface of its
+own (#706 slice 5). Close these gaps when Studio can place a member anywhere and
+a Studio grid can mirror or follow a Push page.
+
 ## Reviewing a show feature
 
 - **Find it from either side.** Name the view, control label and public REPL entry point. Include the shared command, input units, identifiers and scope so an operator who knows one surface can recognize the other.
