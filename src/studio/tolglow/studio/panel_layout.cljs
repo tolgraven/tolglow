@@ -469,15 +469,21 @@
                    (assoc :dispatch [:studio/toast (str "Layout editing ended: the window changed to the "
                                                         (get-in classes [class :label]) " size. Nothing was saved.")])))))))
 
-(defn- store-fx
-  "Persist saved layouts, and redock windows of panels the new layout lacks.
-  Leaving edit mode puts focus back on Edit layout."
-  [db & [left-editing? notice]]
+(defn- settle-fx
+  "Redock windows of panels the new layout lacks. Leaving edit mode puts
+  focus back on Edit layout."
+  [db left-editing?]
   (let [present (set (map :id (active-layout db)))
         orphans (remove #(or (some #{%} panel-ids) (present %)) (panel-window/detached-ids db))]
-    (cond-> {:db db :panel-layout/store (cond-> {:saved (:saved (state db))} notice (assoc :notice notice))}
+    (cond-> {:db db}
       left-editing? (assoc :panel-layout/focus-control edit-button)
       (seq orphans) (assoc :dispatch-n (mapv (fn [id] [:panel-window/redock id]) orphans)))))
+
+(defn- store-fx
+  "Persist saved layouts, then settle windows and focus as settle-fx does."
+  [db & [left-editing? notice]]
+  (assoc (settle-fx db left-editing?)
+         :panel-layout/store (cond-> {:saved (:saved (state db))} notice (assoc :notice notice))))
 
 (defn- label [class] (get-in classes [class :label]))
 
@@ -522,7 +528,7 @@
   (fn [{:keys [db]} _] (when (:edit (state db)) (finish db true))))
 
 (rf/reg-event-fx :panel-layout/cancel
-  (fn [{:keys [db]} _] (store-fx (assoc-in db [:ui :panel-layout :edit] nil) true)))
+  (fn [{:keys [db]} _] (settle-fx (assoc-in db [:ui :panel-layout :edit] nil) true)))
 
 (rf/reg-event-fx :panel-layout/delete
   (fn [{:keys [db]} _]
@@ -630,7 +636,7 @@
   (fn [{:keys [db]} _]
     (if (get-in db [:ui :panel-layout :edit :gesture])
       {:db (cancel-gesture db nil)}
-      (store-fx (assoc-in db [:ui :panel-layout :edit] nil) true))))
+      (settle-fx (assoc-in db [:ui :panel-layout :edit] nil) true))))
 
 ;; ---------------------------------------------------------------------------
 ;; Views

@@ -299,6 +299,7 @@ for (const viewport of viewports) {
       assert.equal(redocked.sockets, 1, 'still one socket');
       record.detach = {detachedWorkersInStudio: detached.workers, redockedWorkers: redocked.workers};
       await tap(page.locator('#layout-cancel'));
+      await page.waitForSelector('#view-perform .editing-layout', {state: 'detached'});
     }
 
     // A damaged version 1 layout is migrated and repaired: unknown panels go, missing ones return.

@@ -154,8 +154,10 @@
     (is (= (layout/default-layout :desktop) (layout/active-layout editing)))
     (is (= [:room :cues :live :tools] (ids (layout/active-layout moved))))
     (is (re-find #"Room · position 1 of 4 · 6 columns by 28 rows" (get-in moved [:ui :panel-layout :edit :announce])))
-    (testing "cancel keeps the built-in layout"
-      (is (nil? (layout/active-layout (run moved [:panel-layout/cancel])))))
+    (testing "cancel keeps the built-in layout and writes nothing"
+      (is (nil? (layout/active-layout (run moved [:panel-layout/cancel]))))
+      (is (not (contains? (transition moved [:panel-layout/cancel]) :panel-layout/store)))
+      (is (not (contains? (transition moved [:panel-layout/escape]) :panel-layout/store))))
     (testing "done stores the named layout for this size class only and makes it active"
       (let [effects (transition (run moved [:panel-layout/name "  Show  "]) [:panel-layout/done])
             saved (saved-of (:db effects))]
