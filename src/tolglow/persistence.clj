@@ -22,6 +22,7 @@
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
             [tolglow.effects.group-channels :as group-channels]
+            [tolglow.surface.link :as surface]
             [tolglow.modulation :as modulation]
             [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.lighting-capacity :as capacity]
@@ -373,6 +374,11 @@
        (catch clojure.lang.ExceptionInfo error
          (fail! (:path (ex-data error) [:settings :effect-group-channels]) (ex-message error))))
   (when-let [s (get-in model [:settings :fog-control])] (fog-control/settings s))
+  ;; Control surfaces and links (#705, #706): a malformed link would break every snapshot.
+  (try (surface/validate-state! model)
+       (when-let [s (get-in model [:settings :controllers])] (surface/validate-settings! s))
+       (catch clojure.lang.ExceptionInfo error
+         (fail! [:extensions :tolglow.surface.link/state] (ex-message error))))
   (lighting-scenes/validate-state! model)
   (try (personalities/validate-state! model)
        (catch clojure.lang.ExceptionInfo error
@@ -586,7 +592,9 @@
   (validate-document! document)
   (check! (and (natural? (:epoch current-model)) (natural? (:revision current-model)))
           [:current-model] "Current model needs valid epoch/revision")
-  (let [saved (-> (:model document) cue-timing/without-queue saved-audio/restore validate-model audio-return/disarm)
+  ;; Device sessions never survive a restore, so every surface loads detached.
+  (let [saved (-> (:model document) cue-timing/without-queue saved-audio/restore validate-model audio-return/disarm
+                  surface/detach-all)
         epoch (inc (max (:epoch current-model) (:epoch saved)))
         ordered (sort-by (juxt :order :id) (vals (:instances saved)))
         ids (into {} (map-indexed (fn [i instance] [(:id instance) (str epoch ":" (inc i))]) ordered))
