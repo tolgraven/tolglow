@@ -35,8 +35,9 @@ Steps 1 to 7 fit in ten minutes. Steps 8 and 9 add about five. `push-3-mode live
 restores Live Mode and MPE aftertouch as found; run it even if step 9 is skipped.
 The automatic checks (`$K probe all`, the unattended motor, LCD and rate
 receipts and the chart receipt) already ran on 2026-11-26 and need nobody.
-Check 8 (display-dependent Push 3 features) cannot run yet: it needs a Studio
-production build (see below).
+Check 8 (display-dependent Push 3 features) ran unattended on 2026-11-26 with
+`dev/qa/naut-hardware/push3-display.sh show-features 15` (results below); what
+it showed still needs the operator's eyes.
 
 ## Hardware results, 2026-11-26 (Live quit)
 
@@ -168,6 +169,56 @@ plain MCU is the product target.
   about 45 ms plus sleep overshoot. The frame was static, so this is not
   visible here; it bounds animated content.
 - Push 3 MIDI answered the identity probe normally after each display session.
+
+### Push 3 display-dependent states (check 8)
+
+`push3-display.sh show-features 15 4310` (`tolglow.qa.naut-display-features`),
+2026-11-26, Live quit. Studio's production build served `/push-display` on
+127.0.0.1:4310; headless Chrome 155 (no `--use-angle`, so WebGL may be
+software) captured it and the frames went to the Push 3 through one USB claim
+(25.1 s, all `libusb_init`; one open, one close). Operator input came from a
+virtual Push 3 at the MIDI boundary with the kit's byte encoding and synthetic
+addresses (no real layout is captured yet), so no Push 3 MIDI port was opened
+and nothing was sent to the controller. Receipt
+`push-3-display-features-…060356Z.edn` plus one PNG per state (the exact image
+sent) in `check-8-…060020Z/`, not committed. 3,736 header and 3,736 payload
+transfers, 1,224,272,256 bytes, no libusb errors; payload transfer
+10.82–15.69 ms, median 10.96.
+
+| Local time (CET) | State | Issue | Presented view (from the receipt and PNG) |
+| --- | --- | --- | --- |
+| 07:00:45–07:01:02 | Parameter page | #219 | Ember: period 1 (dial), level 0.7, tint swatch with H/S/V bars; cue row Ember, Merlot, Orchid… |
+| 07:01:02–07:01:18 | Full cue variations | #547 | "Full cue variations", Saved 1–8 over the top row, 56 cells. A pad pressed before the overlay reached the screen changed nothing (no ack); the same pad after it was presented was accepted and changed level 0.7→0.369, period 1→3/4 and tint |
+| 07:01:18–07:01:26 | Cue parameter rows | #547 | "Parameter variations", rows period, level, tint (24 cells, 3 rows); Up again closed it |
+| 07:01:26–07:01:42 | Beat-ratio chooser | #529 | Touch encoder 1: "Beat ratios · Ember · period · 3/4 · Preferred", two pad rows 1/4…4 with 3/4 selected. Pad 1/4 accepted: period 3/4→1/4 |
+| 07:01:42–07:01:50 | Chooser closed | #529 | Encoder lifted: parameter page again, period 0.25 |
+| 07:01:50–07:02:08 | Saved shows | #552 | Content-browser session (Push session replaced): "Saved shows", Naut rehearsal and Naut tour, "Latest named" |
+| 07:02:08–07:02:16 | Show preview | #552 | "Saved show preview · Naut rehearsal · Latest named" |
+| 07:02:16–07:02:24 | Back | #552 | The list again with Naut rehearsal still selected |
+| 07:02:24–07:02:39 | Registered effects | #552 | Next library: Amber … Moon, page 1 of 2, Version 1 |
+| 07:02:39–07:02:56 | Room preview | #530 | Display mode simulator: the rig scene, "LIVE · Fit rig · 8 / 8 fixtures" |
+| 07:02:56–07:03:11 | Room, one touch | #530 | Encoder 2 touched (device session), scene unchanged: the Room projection carries no touched parameters at this revision |
+| 07:03:11–07:03:26 | Room, two touches | #530 | Encoders 2 and 3 touched, scene unchanged, as above |
+| 07:03:26–07:03:41 | Parameters, one touch | #530 | Level slot highlighted |
+| 07:03:41–07:03:56 | Parameters, two touches | #530 | Level highlighted; tint fans out across slots 3–8 (swatch, full-width H/S/V, RGB readout) |
+
+Each state is held 15 s (8 s for the follow-on states) from the moment its
+view was presented (43–2,999 ms after its input). The Push 3 answered the
+identity probe afterwards and interface 0 was free again.
+
+Findings from this run:
+
+- **Fixed here:** Push browser projection dropped the device view's metadata
+  in parameter, audio and simulator modes, so presentation receipts never
+  reached the session outside pad overlays. After the #547 overlay closed, the
+  session kept its overlay generation and encoder touch could no longer open
+  the #529 chooser. `show/push-browser-display` now keeps the metadata
+  (regression in `variation-control-test`).
+- **#530 is not implemented for the Room preview:** the simulator projection
+  returns only the scene, so touching encoders changes nothing there. The
+  touch layouts exist on the parameter page only.
+- Not exercised: the #552 checkpoint restore, real pad, encoder and button
+  addresses (check 2), and anything the operator has not yet confirmed seeing.
 
 ### Push 3 MIDI mode without Live
 
@@ -491,18 +542,21 @@ display address from check 7:
 | #552 | Disconnect `push`, then connect through `tolglow.controllers.content-browser-display/connect-device!` with `:catalog-controls` on captured unused buttons, including `:next-kind` ([Browse saved shows](../push-display-packaging.md#browse-saved-shows)). Browse effects and cues, then open a working-recovery checkpoint | Photo of the list, selection preserved on Back, the restore receipt |
 | #530 | Press Layout for the simulator, touch one encoder, then two | Still and clip of the untouched, single-touch and two-touch layouts |
 
-**Not run on 2026-11-26.** The browser route needs `node_modules` (`npm ci`) and a
-Studio production build (`npm run studio:build`) in this worktree. Neither exists
-here, and the hardware lane may not install or download anything, so the Push 3
-display could not show a Studio page. The tethered sink itself is proven by
-check 7. Once a build exists, the operator needs to look at: the parameter page
-after connecting (any frame at all), the #547 overlay, the #529 chooser, the #552
-list and the #530 one- and two-touch layouts.
+**Scripted run.** With `node_modules` and a Studio production build in the
+worktree, and Live quit:
 
-Check 8 is a REPL session, not a scripted replay. The logic it exercises has its own
-virtual replays: `tolglow.authoring.variation-control-test` for #529 and #547, and the content-browser
-display tests for #552. The session itself has not run here. Studio must be running on a port
-from this lane's block for the browser capture.
+```sh
+dev/qa/naut-hardware/push3-display.sh show-features 15 4310   # seconds per state, Studio port
+```
+
+It claims the display once (about 25 s), then holds each state in the order of
+the table under "Push 3 display-dependent states" and writes one receipt with a
+per-state entry (input, presented view, frames captured, transfers, PNG and its
+SHA-256). Input is a virtual Push 3 with synthetic addresses, so the operator
+only watches. `tolglow.qa.naut-display-features-test` runs the same sequence
+with a replay backend and an injected capture. The REPL session above remains
+the way to drive the same states from the real controls once check 2 has a
+layout.
 
 ## Not covered
 
@@ -540,7 +594,7 @@ from this lane's block for the browser capture.
 ## Hardware-free verification
 
 ```sh
-lein test :only tolglow.qa.naut-hardware-test
+lein test :only tolglow.qa.naut-hardware-test tolglow.qa.naut-display-features-test
 ```
 
 This runs every probe, the full 89-control layout capture, the Push 3 pad scenario on the captured layout, both
