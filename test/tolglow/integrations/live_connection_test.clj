@@ -78,12 +78,37 @@
         (let [conn (connect set)]
           (is (:ready? (live/setup! conn desired)))
           (is (= [:configure-track] (writes conn))))))
-    (testing "two tracks with a capture name are left for the performer"
-      (swap! set update :tracks conj {:track-id "track:dup" :name "Tolglow Cues" :kind :midi :arm? false
+    (testing "a stale track with the host's name is ignored: the host is where the companion is"
+      (swap! set update :tracks conj {:track-id "track:old" :name "Tolglow Cues" :kind :midi :arm? false
+                                      :monitor :auto :input {} :slots {} :history []})
+      (let [conn (connect set) result (live/setup! conn desired)]
+        (is (:ready? result))
+        (is (empty? (writes conn)))))
+    (testing "two tracks with a created capture track's name are left for the performer"
+      (swap! set update :tracks conj {:track-id "track:dup" :name "Tolglow Lanes" :kind :midi :arm? false
                                       :monitor :auto :input {} :slots {} :history []})
       (let [conn (connect set) result (live/setup! conn desired)]
         (is (= [:duplicate-tracks] (mapv :code (:problems result))))
         (is (empty? (writes conn)))))))
+
+(deftest the-host-follows-the-companion-and-never-takes-a-musicians-track
+  (let [set (fake/create {:tracks [{:name "Keys" :instrument? true} {:name "Pads" :slots {0 {:clip-id "clip:7"}}}]})
+        conn (connect set)
+        setup (live/setup! conn desired)]
+    (is (:ready? setup))
+    (fake/move-companion! set "Keys")
+    (let [conn (connect set) refused (live/setup! conn desired)]
+      (is (not (:ready? refused)))
+      (is (= [[:ensure-track :rejected]] (:applied refused)))
+      (is (= "Keys" (:name (first (get-in refused [:set :tracks])))) "the musician's track keeps its name"))
+    (fake/move-companion! set "Pads")
+    (is (= [[:ensure-track :rejected]] (:applied (live/setup! (connect set) desired))) "a track with a clip is refused too")
+    (swap! set update :tracks conj {:track-id "track:new" :name "MIDI 5" :kind :midi :arm? false :monitor :auto
+                                    :input {:port "All Ins" :channel nil} :slots {} :history []})
+    (fake/move-companion! set "MIDI 5")
+    (let [moved (live/setup! (connect set) desired)]
+      (is (:ready? moved) (pr-str (:problems moved)))
+      (is (= "track:new" (get-in moved [:tracks 1])) "the cue track is the companion's new track, found by the device, not by name"))))
 
 (def phrase
   {:phrase/version 1 :length-beats 4 :meter {:beats-per-bar 4 :bars-per-phrase 4}
@@ -206,3 +231,36 @@
              (mapv (juxt :op :cue-id (comp :params :launch)) commands))
           "the lane track's controllers reach the cue launch through its track mapping")
       (is (= #{1 2} (into #{} (map #(get channels (:track-id %))) events))))))
+
+(deftest transport-failures-are-refusals-only-when-nothing-was-sent
+  (let [failing (fn [data] {:open! (constantly nil)
+                            :request! (fn [& _] (throw (ex-info "transport" data)))})
+        receipt (fn [data] (live/request! (live/open (failing data) {}) :fire-clip {:clip-id "clip:1"}))]
+    (is (= [:rejected :payload-too-large] ((juxt :status (comp :code :error)) (receipt {:http-status 413}))))
+    (is (= [:rejected :bridge-busy] ((juxt :status (comp :code :error)) (receipt {:http-status 503}))))
+    (is (= [:rejected :malformed-request] ((juxt :status (comp :code :error)) (receipt {:http-status 400}))))
+    (is (= [:rejected :not-connected] ((juxt :status (comp :code :error)) (receipt {:live/not-sent? true}))))
+    (is (= :indeterminate (:status (receipt {:http-status 504}))) "Max may have run the write before the timeout")
+    (is (= :indeterminate (:status (receipt {}))))))
+
+(deftest large-clips-are-written-in-requests-under-the-budget
+  (let [set (fake/create {:envelope-lanes? true})
+        conn (connect set)
+        setup (live/setup! conn desired)
+        dense (assoc phrase :lanes [{:cue-id :wash :param :level
+                                     :points (vec (for [i (range 1 16)] {:beat (/ i 4) :value (/ i 16.0) :note "n0"}))}])
+        before (count (:requests @set))
+        written (live/write-phrase! conn setup dense layout {:budget 120})
+        bodies (drop before (:requests @set))]
+    (is (:complete? written) (pr-str (:receipts written)))
+    (is (< 1 (count (filter #(= :extend-clip (first %)) bodies))))
+    (is (every? #(< (count (clojure.data.json/write-str (select-keys (second %) [:notes :lanes]))) 400) bodies))
+    (is (= (clip/comparable (clip/clips->phrase (clip/phrase->clips dense layout) layout {}))
+           (clip/comparable (live/import-clips! conn (:clips written) layout {}))))
+    (testing "a failed continuation leaves a reported partial clip and is not retried"
+      (fake/inject-fault! set :extend-clip :lose-ack)
+      (let [partial (live/write-phrase! conn setup dense layout {:budget 120})]
+        (is (not (:complete? partial)))
+        (is (= :indeterminate (:status (last (:receipts partial)))))
+        (is (= [2] (mapv :channel (:partial-clips partial))) "the lane clip is partial")
+        (is (= [1] (mapv :channel (:clips partial))) "the cue clip fit in one request")))))

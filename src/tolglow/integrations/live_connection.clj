@@ -18,8 +18,12 @@
                      Finds a MIDI track by exact name or creates one at the end.
     :configure-track {:track-id :expected-name :arm? :monitor :in|:auto|:off
                       :input {:port :channel}} -> {:track track}
-    :write-clip      {:track-id :expected-name :slot-index n|nil :name :clip clip}
+    :write-clip      {:track-id :expected-name :slot-index n|nil :name :clip clip
+                      :lanes [{:controller coarse :points [[beat v14] ..]}]}
                      -> {:clip-id :slot-index}; nil slot means the first empty one.
+                     The clip's notes travel in :clip; controllers as :lanes.
+    :extend-clip     {:track-id :expected-name :clip-id :notes [..] :lanes [..]}
+                     adds to a clip written by :write-clip when one body is too small.
     :capture-midi    {:destination :auto} -> {:clips [{:clip-id :track-id :slot-index}]}
     :read-clip       {:clip-id} -> {:clip clip :track-id}
     :show-clip       {:clip-id} -> {:clip-id :view \"Detail/Clip\"}
@@ -31,11 +35,17 @@
   rejects a stale ID or a renamed track. A non-executed receipt after a
   possibly applied write is never retried automatically; rerunning setup
   inspects the Set again and repairs only what is missing."
-  (:require [tolglow.integrations.phrase-clip :as clip]))
+  (:require [clojure.data.json :as json]
+            [tolglow.integrations.phrase-clip :as clip]))
 
 (def operations
-  #{:inspect-set :ensure-track :configure-track :write-clip :capture-midi
+  #{:inspect-set :ensure-track :configure-track :write-clip :extend-clip :capture-midi
     :read-clip :show-clip :fire-clip :stop-clips})
+
+(def request-budget-chars
+  "JSON characters of notes and lanes per request. The companion's loopback
+  endpoint refuses bodies over 64 KiB; this leaves room for the envelope."
+  48000)
 
 (def capture-routes
   "Exactly one route records a phrase into Live:
@@ -74,7 +84,10 @@
     (-> (if (contains? clip :clip/version) clip (-> clip (assoc :clip/version (:version clip 1)) (dissoc :version)))
         (update :length-beats wire-beat)
         (update :meter (fn [m] (when m (update m :beats-per-bar #(if (integer? %) % (rationalize (wire-beat %)))))))
-        (update :notes (fn [ns] (mapv #(-> % (update :start wire-beat) (update :duration wire-beat)) ns)))
+        (update :notes (fn [ns] (mapv #(cond-> (-> % (update :start wire-beat) (update :duration wire-beat))
+                                         ;; Live reports note velocities as floats.
+                                         (number? (:velocity %)) (update :velocity (fn [v] (long (Math/round (double v))))))
+                                      ns)))
         (update :controllers (fn [cs] (mapv #(update % :beat wire-beat) cs))))))
 
 (defn- normalize-track [track]
@@ -91,16 +104,29 @@
     :read-clip (update result :clip normalize-clip)
     result))
 
+(def ^:private refusals
+  "HTTP answers from the companion's loopback endpoint that mean the request
+  never reached Max, so nothing was written."
+  {400 :malformed-request 403 :browser-origin-refused 404 :unknown-endpoint 409 :bridge-session-mismatch
+   413 :payload-too-large 415 :unsupported-media-type 503 :bridge-busy})
+
+(defn- transport-receipt
+  "A receipt for a transport failure: rejected when the request provably never
+  reached Max, indeterminate otherwise (it may have been written)."
+  [id ^Exception e]
+  (let [{:keys [http-status] :as data} (ex-data e)
+        code (or (get refusals http-status) (when (:live/not-sent? data) :not-connected))]
+    (if code
+      {:id id :status :rejected :error {:code code :message (.getMessage e) :http-status http-status}}
+      {:id id :status :indeterminate :error {:code :transport-failure :message (.getMessage e) :http-status http-status}})))
+
 (defn request!
   "Send one operation and return its validated receipt. Never retries."
   [{:keys [transport handle session-id counter log]} op payload]
   (when-not (contains? operations op) (fail! "Unknown Live connection operation" {:op op}))
   (let [id (str session-id "/" (swap! counter inc))
         receipt (try (update ((:request! transport) handle id op payload) :status keywordize)
-                     ;; The request may have reached Live before the transport failed.
-                     (catch Exception e
-                       {:id id :status :indeterminate
-                        :error {:code :transport-failure :message (.getMessage e)}}))]
+                     (catch Exception e (transport-receipt id e)))]
     (when-not (and (map? receipt) (= id (:id receipt)) (#{:executed :rejected :indeterminate} (:status receipt)))
       (fail! "Live connection returned an invalid receipt" {:op op :id id}))
     (swap! log conj {:id id :op op :status (:status receipt)})
@@ -164,6 +190,16 @@
   (let [matches (filter #(and (= name (:name %)) (= :midi (:kind %))) (:tracks set-snapshot))]
     (when (= 1 (count matches)) (first matches))))
 
+(defn- spec-track
+  "The Set's track for a desired capture track: for the host, the track the
+  companion is on now (renamed to the spec name); otherwise the one MIDI track
+  with that name. Returns {:track t} or {:duplicates? true}."
+  [set-snapshot spec]
+  (if (:host? spec)
+    {:track (first (filter #(and (:companion? %) (= (:name spec) (:name %)) (= :midi (:kind %))) (:tracks set-snapshot)))}
+    (let [named (filter #(and (= (:name spec) (:name %)) (not (:companion? %))) (:tracks set-snapshot))]
+      (if (> (count named) 1) {:duplicates? true} {:track (track-named {:tracks named} (:name spec))}))))
+
 (defn- track-state [track] (select-keys track [:arm? :monitor :input]))
 
 (defn- wanted-state [spec] (select-keys spec [:arm? :monitor :input]))
@@ -173,10 +209,9 @@
   {:ready? bool :tracks {channel track-id} :problems [..]}."
   [set-snapshot desired]
   (let [checks (for [spec (:tracks desired)
-                     :let [named (filter #(= (:name spec) (:name %)) (:tracks set-snapshot))
-                           track (track-named set-snapshot (:name spec))]]
+                     :let [{:keys [track duplicates?]} (spec-track set-snapshot spec)]]
                  (cond
-                   (> (count named) 1) {:problem {:channel (:channel spec) :code :duplicate-tracks :name (:name spec)}}
+                   duplicates? {:problem {:channel (:channel spec) :code :duplicate-tracks :name (:name spec)}}
                    (nil? track) {:problem {:channel (:channel spec) :code :missing-track :name (:name spec)}}
                    (not= (wanted-state spec) (track-state track))
                    {:track [(:channel spec) (:track-id track)]
@@ -196,10 +231,9 @@
   a musician's own track."
   [set-snapshot desired]
   (vec (mapcat (fn [spec]
-                 (let [named (filter #(= (:name spec) (:name %)) (:tracks set-snapshot))
-                       track (track-named set-snapshot (:name spec))]
+                 (let [{:keys [track duplicates?]} (spec-track set-snapshot spec)]
                    (cond
-                     (> (count named) 1) []
+                     duplicates? []
                      (nil? track) [[:ensure-track (cond-> {:name (:name spec) :kind :midi} (:host? spec) (assoc :host? true))]
                                    [:configure-track (assoc (wanted-state spec) :expected-name (:name spec))]]
                      (not= (wanted-state spec) (track-state track))
@@ -234,23 +268,69 @@
 (defn- track-name [setup track-id]
   (some #(when (= track-id (:track-id %)) (:name %)) (get-in setup [:set :tracks])))
 
+(defn- json-size [x] (count (json/write-str x)))
+
+(defn- chunks
+  "Split notes and lane points into request bodies under the budget. A lane
+  split across requests keeps its points in time order, so each later step
+  overwrites the earlier one from where it starts."
+  [notes lanes budget]
+  (let [items (concat (map (fn [n] [:note n]) notes)
+                      (for [{:keys [controller points]} lanes, p points] [:point controller p]))]
+    (loop [[item & more :as all] items, current [], size 0, out []]
+      (cond
+        (nil? item) (if (seq current) (conj out current) (if (seq out) out [[]]))
+        :else (let [n (json-size (peek item))]
+                (if (and (seq current) (> (+ size n 8) budget))
+                  (recur all [] 0 (conj out current))
+                  (recur more (conj current item) (+ size n 8) out)))))))
+
+(defn- chunk-payload [items]
+  (let [notes (vec (keep (fn [[kind n]] (when (= kind :note) n)) items))
+        lanes (->> items (filter #(= :point (first %))) (group-by second)
+                   (sort-by key) (mapv (fn [[controller ps]] {:controller controller :points (mapv #(nth % 2) ps)})))]
+    {:notes notes :lanes lanes}))
+
+(defn- write-clip!
+  "Write one clip description, in several requests when it does not fit one.
+  Complete only when every request executed; otherwise the clip written so far
+  is reported and nothing is retried (atomic or indeterminate)."
+  [conn track-id expected-name slot-index name description budget]
+  (let [lanes (clip/controller-lanes (:controllers description))
+        [first-chunk & rest-chunks] (map chunk-payload (chunks (:notes description) lanes budget))
+        receipt (request! conn :write-clip {:track-id track-id :expected-name expected-name :slot-index slot-index :name name
+                                            :clip (-> description (dissoc :controllers) (assoc :notes (:notes first-chunk)))
+                                            :lanes (:lanes first-chunk)})]
+    (if-not (= :executed (:status receipt))
+      {:receipts [receipt] :complete? false}
+      (let [clip-id (get-in receipt [:result :clip-id])
+            more (reduce (fn [acc payload]
+                           (if-not (:complete? acc) acc
+                             (let [r (request! conn :extend-clip (assoc payload :track-id track-id :expected-name expected-name :clip-id clip-id))]
+                               (cond-> (update acc :receipts conj r)
+                                 (not= :executed (:status r)) (assoc :complete? false :partial? true)))))
+                         {:receipts [] :complete? true} rest-chunks)]
+        (assoc more :receipts (into [receipt] (:receipts more)) :clip (assoc (:result receipt) :clip-id clip-id))))))
+
 (defn write-phrase!
   "Route :tolglow-buffer: write a captured phrase as one new clip per capture
-  track (first empty slot unless :slot-index). Returns {:clips [{:channel
-  :track-id :clip-id :slot-index}] :receipts [..] :complete? bool}."
-  [conn setup phrase layout {:keys [slot-index name] :or {name "Tolglow capture"}}]
+  track (first empty slot unless :slot-index). Controller lanes go as compact
+  [beat 14-bit-value] points; a clip too large for one request is continued
+  with :extend-clip. Returns {:clips [{:channel :track-id :clip-id :slot-index}]
+  :receipts [..] :complete? bool :partial-clips [..]}: a clip whose later
+  request failed is listed in :partial-clips, never retried."
+  [conn setup phrase layout {:keys [slot-index name budget] :or {name "Tolglow capture" budget request-budget-chars}}]
   (when-not (:ready? setup) (fail! "Live setup is not ready" {:problems (:problems setup)}))
   (let [clips (clip/phrase->clips phrase layout)
         results (reduce (fn [acc [ch description]]
                           (if-not (:complete? acc) acc
                             (let [track-id (get-in setup [:tracks ch])
-                                  receipt (request! conn :write-clip {:track-id track-id :expected-name (track-name setup track-id)
-                                                                      :slot-index slot-index :name name :clip description})]
-                              (cond-> (update acc :receipts conj receipt)
-                                (= :executed (:status receipt))
-                                (update :clips conj (merge {:channel ch :track-id track-id} (:result receipt)))
-                                (not= :executed (:status receipt)) (assoc :complete? false)))))
-                        {:clips [] :receipts [] :complete? true}
+                                  r (write-clip! conn track-id (track-name setup track-id) slot-index name description budget)]
+                              (cond-> (update acc :receipts into (:receipts r))
+                                (:clip r) (update (if (:complete? r) :clips :partial-clips) conj
+                                                  (merge {:channel ch :track-id track-id} (:clip r)))
+                                (not (:complete? r)) (assoc :complete? false)))))
+                        {:clips [] :partial-clips [] :receipts [] :complete? true}
                         (sort-by key clips))]
     (assoc results :skipped (:skipped (meta clips)))))
 

@@ -232,7 +232,7 @@ operations over the existing companion transport shape (`:open!`, `:request!`,
 the companion's JSON wire have their enumerations (`:kind`, `:monitor`,
 `:code`) turned back into keywords and their clip beats into exact rationals;
 `fake-live/json-transport` tests that path. Operations:
-`inspect-set`, `ensure-track`, `configure-track`, `write-clip`, `capture-midi`,
+`inspect-set`, `ensure-track`, `configure-track`, `write-clip`, `extend-clip`, `capture-midi`,
 `read-clip`, `show-clip`, `fire-clip`, `stop-clips`. Every write names the
 track it expects. A non-executed receipt stops the sequence and is never
 retried. `setup!` inspects the Set and plans only the missing pieces. It then
@@ -259,9 +259,15 @@ Live's Python API. They are not in Cycling '74's Live Object Model reference
 the licensed run. `resources/devices/ableton-live/live_session.js`
 implements them behind the adapter's `deferlow` path. A Max device has to be in
 the Set before it can answer, so an empty Set needs one manual step: drop the
-companion on any MIDI track. Setup adopts that track as the cue capture track
-(`ensure-track` with `:host? true`) and renames it; other capture tracks are
-created. A Python Remote Script that places the companion automatically would
+companion on a new, empty MIDI track. Setup adopts that track as the cue
+capture track (`ensure-track` with `:host? true`) and renames it; other capture
+tracks are created. The companion adopts only a track with no clips and no
+device besides itself, or one whose name already starts with "Tolglow". On any
+other track it refuses with `host-track-in-use` and renames, arms and reroutes
+nothing. The host is always the track the device is on now, never a track
+found by name, so after the device moves a rerun of setup configures its new
+track. The companion caches its track id for MIDI events and lane moves and
+refreshes it on every Set operation. A Python Remote Script that places the companion automatically would
 remove this step. It is not written: Max cannot reach Live's browser, a Remote
 Script can, and installing one is the separately packaged host step #680
 allows. OSC through a Remote Script was not chosen: it needs the same
@@ -275,9 +281,21 @@ moved companion keeps dropping the feed although a rerun of setup writes
 nothing. The playback decoder drops events tagged with a track that is not a
 capture track.
 
-The loopback endpoint accepts request bodies up to 64 KiB. A `write-clip` for a
-few bars fits; a long phrase dense with controller moves needs a larger limit
-or several clips.
+The loopback endpoint accepts request bodies up to 64 KiB. Controller lanes
+travel as compact `[beat value]` points, and `write-phrase!` splits a clip's
+notes and lane points into requests of at most 48,000 JSON characters: one
+`write-clip`, then `extend-clip` requests that add to the same clip. An 8-bar
+phrase with 30 lanes moving every eighth note (7,650 points) takes several
+requests and reads back exactly. A clip is complete only when every one of its
+requests executed. If a later request is refused or indeterminate, the clip
+written so far is listed under `:partial-clips` and nothing is retried; delete
+it in Live or capture again.
+
+A refusal that never reached Max is `rejected` with its own code, so it is not
+mistaken for a write that may have happened: `payload-too-large` (413),
+`bridge-busy` (503), `malformed-request` (400), `bridge-session-mismatch` (409)
+and `not-connected` (nothing listening). A timeout after delivery (504) and any
+other transport failure stay `indeterminate`.
 
 Controller lanes on the buffer route: the Live Object Model has no call that
 writes MIDI CC events into a clip. The companion has thirty automatable
@@ -286,12 +304,18 @@ turns each coarse/fine pair into a value in [0, 1] and writes it as a step of
 that parameter's clip envelope
 (`Clip.automation_envelope`/`create_automation_envelope`, then `insert_step`).
 When the clip plays, the moving parameter is forwarded as its controller pair.
-`read-clip` samples each lane envelope with `value_at_time` on a quarter-beat
-grid (`:sample-beats`) and reports a value wherever it changes. Before its first
-step an envelope is assumed to hold its first value, so a lane whose first step
-is after beat 0 reads back from beat 0; a cue launched after the clip start
-then loses its launch values on import (they arrive before its note, as
-orphans). Beats off the quarter grid read back on the next grid point. Lanes therefore need the
+`read-clip` reports each lane's value at beat 0 and every change after it. It
+scans with `value_at_time` every sixteenth (`:sample-beats`) and bisects each
+change down to one tick (1/960 beat), so a step off the grid keeps its own
+beat. A step that reverts within one scan step is not seen. Imports can then
+round to the capture grid (`:grid-beats`, the capture's own rounding). A lane
+value written while no activation of its cue runs belongs to that cue's next
+launch, unless another value of the lane comes first, as a controller sent
+before a note would. Both the clip decoder and the playback decoder apply this
+rule, so a cue launched after the clip start keeps its launch values even
+though its lane reads back from beat 0. An envelope is continuous: an
+activation whose launch value equals the value the lane already holds reads
+back without that launch value. Lanes need the
 companion on the same track as the clip: a two-track layout needs a second
 companion on the lane track, and the companion refuses controllers on any
 other track. Capture MIDI remains the alternative route; the licensed run

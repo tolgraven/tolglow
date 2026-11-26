@@ -246,13 +246,15 @@ is discarded. This bridge never emits its clip-recording intents as MIDI wire
 feedback as well.
 
 Automatic setup, Capture and clip write operations (`inspect-set`,
-`ensure-track`, `configure-track`, `write-clip`, `capture-midi`, `read-clip`,
+`ensure-track`, `configure-track`, `write-clip`, `extend-clip`, `capture-midi`, `read-clip`,
 `show-clip`, `fire-clip`, `stop-clips`) are specified on the Tolglow side in
 [Capture into Live](../../../docs/live-routing.md#capture-the-last-phrase-into-live).
 `live_session.js` implements them with these receipts. Keep it beside the other
 scripts when saving the device; `max_adapter.js` includes it. The patch adds
 thirty automatable `Tolglow lane k` parameters for controller lanes. Drop the
-saved companion on any MIDI track once: setup adopts that track for capture.
+saved companion on a new, empty MIDI track once: setup adopts that track for
+capture. It refuses a track that holds clips or other devices unless the
+track's name starts with "Tolglow".
 
 ## Verified API references and host qualification limits
 

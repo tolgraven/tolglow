@@ -11,7 +11,7 @@ const { COARSE, OPERATIONS } = require("../../../resources/devices/ableton-live/
 const { liveSet, PORTS, CHANNELS } = require("./live_set_fixture.js");
 
 test("operation list matches tolglow.integrations.live-connection/operations", () => {
-  assert.deepEqual([...OPERATIONS].sort(), ["capture-midi", "configure-track", "ensure-track", "fire-clip", "inspect-set",
+  assert.deepEqual([...OPERATIONS].sort(), ["capture-midi", "configure-track", "ensure-track", "extend-clip", "fire-clip", "inspect-set",
     "read-clip", "show-clip", "stop-clips", "write-clip"]);
   assert.deepEqual(COARSE, Array.from({ length: 31 }, (_, i) => i + 1).filter(c => c !== 6), "same as phrase-clip/coarse-controllers");
 });
@@ -200,4 +200,68 @@ test("the patch exposes thirty automatable lane parameters routed through deferl
   }
   const source = fs.readFileSync(path.join(__dirname, "../../../resources/devices/ableton-live/max_adapter.js"), "utf8");
   assert.ok(source.includes('include("live_session.js")') && /function lane\(k, value\)/.test(source));
+});
+
+test("the companion adopts only an empty or Tolglow track, and follows the device when it moves", () => {
+  const busy = liveSet({ tracks: [{ name: "Keys", instrument: true }, { name: "Drums", clip: true }, { name: "Tolglow old", instrument: true }, { name: "MIDI" }], host: 0 });
+  const refused = busy.request("ensure-track", { name: "Tolglow Cues", kind: "midi", "host?": true });
+  assert.equal(refused.status, "rejected");
+  assert.equal(refused.error.code, "host-track-in-use");
+  assert.match(refused.error.message, /new, empty MIDI track/);
+  busy.moveCompanion(1);
+  assert.equal(busy.request("ensure-track", { name: "Tolglow Cues", "host?": true }).error.code, "host-track-in-use", "a track with a clip is the musician's");
+  assert.deepEqual(busy.writes, [], "nothing was renamed");
+  busy.moveCompanion(2);
+  assert.equal(busy.request("ensure-track", { name: "Tolglow Cues", "host?": true }).result["adopted?"], true, "a Tolglow-named track may hold devices");
+  busy.moveCompanion(3);
+  const moved = busy.request("ensure-track", { name: "Tolglow Cues", "host?": true });
+  assert.deepEqual(moved.result, { "track-id": "track:" + busy.song.tracks[3].id, "created?": false, "adopted?": true },
+    "after the device moves, the host is its new track, not the old one found by name");
+  assert.deepEqual(busy.request("ensure-track", { name: "Tolglow Cues", "host?": true }).result,
+    { "track-id": "track:" + busy.song.tracks[3].id, "created?": false });
+});
+
+test("lane read-back finds change points off the scan grid and keeps values for a late launch", () => {
+  const live = liveSet({ tracks: [{ name: "Tolglow Capture" }] });
+  const track = "track:" + live.song.tracks[0].id;
+  const w = live.request("write-clip", { "track-id": track, clip: { "length-beats": 8, notes: [{ pitch: 36, start: 2, duration: 2 }] },
+    lanes: [{ controller: 1, points: [[2, 8192], [2.5, 100], [1056 / 960 + 4, 16383]] }, { controller: 2, points: [[2, 16383]] }] });
+  assert.equal(w.status, "executed", JSON.stringify(w.error));
+  const r = live.request("read-clip", { "clip-id": w.result["clip-id"] }).result.clip;
+  const coarse = (c) => r.controllers.filter(e => e.controller === c).map(e => [e.beat, e.value]);
+  assert.deepEqual(coarse(1), [[0, 64], [2.5, 0], [5.1, 127]], "1.1 beats past bar 1 stays at 5.1, not the next quarter");
+  assert.deepEqual(coarse(2), [[0, 127]], "a lane read from beat 0 reports its value before the note; Tolglow gives it to the next launch");
+});
+
+test("extend-clip adds lanes to a clip on the same track and refuses another track's clip", () => {
+  const live = liveSet({ tracks: [{ name: "Tolglow Capture" }, { name: "Other" }] });
+  const track = "track:" + live.song.tracks[0].id;
+  const w = live.request("write-clip", { "track-id": track, clip: { "length-beats": 4, notes: [{ pitch: 36, start: 0, duration: 1 }] },
+    lanes: [{ controller: 1, points: [[0, 100]] }] });
+  const e = live.request("extend-clip", { "track-id": track, "clip-id": w.result["clip-id"], notes: [{ pitch: 37, start: 1, duration: 1 }],
+    lanes: [{ controller: 2, points: [[1, 200], [2, 300]] }] });
+  assert.deepEqual(e.result, { notes: 1, "envelope-steps": 2 });
+  const clip = live.song.tracks[0].slots[0].clip;
+  assert.deepEqual(clip.notes.map(n => n.pitch), [36, 37]);
+  assert.deepEqual(clip.envelopes[live.device.params[1].id].steps.map(s => [s.time, s.duration]), [[1, 1], [2, 2]]);
+  assert.equal(live.request("extend-clip", { "track-id": "track:" + live.song.tracks[1].id, "clip-id": w.result["clip-id"], notes: [] }).error.code,
+    "stale-clip");
+  assert.equal(live.request("extend-clip", { "track-id": track, "clip-id": w.result["clip-id"], lanes: [{ controller: 64, points: [[0, 1]] }] }).error.code,
+    "controller-lane");
+});
+
+test("MIDI events and lane moves reuse the cached companion track", () => {
+  const live = liveSet({ tracks: [{ name: "Tolglow Capture" }] });
+  live.request("inspect-set");
+  live.request("handoff", { mode: "lighting" });
+  let lookups = 0;
+  const api = live.session.api;
+  live.session.api = (p) => { lookups++; return api(p); };
+  for (let i = 0; i < 100; i++) {
+    live.adapter.midi({ type: "cc", controller: 1, value: i % 128, channel: 1 });
+    live.adapter.lane(1, i / 100);
+  }
+  assert.equal(lookups, 0, "no LiveAPI object per event");
+  live.request("inspect-set");
+  assert.ok(lookups > 0, "a Set operation refreshes the cache");
 });

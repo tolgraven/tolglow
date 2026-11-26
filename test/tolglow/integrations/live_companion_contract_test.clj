@@ -72,6 +72,53 @@
             (is (= :rejected (:status r)))
             (is (= :controllers-need-companion (get-in r [:error :code]))))
           (is (= :rejected (:status (live/request! conn :read-clip {:clip-id "clip:999999"})))))
+        (testing "a cue launched after the clip start keeps its launch values (lane read from beat 0)"
+          (let [late (assoc phrase
+                            :notes [{:id "n0" :cue-id :aim :start 0 :length 6 :params {:direction [0.0 0.5 -0.5]}}
+                                    {:id "n1" :cue-id :wash :start 2 :length 2 :params {:level 0.5 :mode :soft}}]
+                            :lanes [{:cue-id :wash :param :level :points [{:beat 3 :value 0.25 :note "n1"}]}])
+                captured (live/capture! conn setup {:phrase late :layout layout})
+                imported (live/import-clips! conn (:clips captured) layout {:meter (:meter phrase)})]
+            (is (:complete? captured))
+            (is (= (clip/comparable (clip/clips->phrase (clip/phrase->clips late layout) layout {}))
+                   (clip/comparable imported)))
+            (is (= {:level (clip/decode-value (first (filter #(= :level (:param %)) (:lanes layout)))
+                                              (clip/encode-value (first (filter #(= :level (:param %)) (:lanes layout))) 0.5))
+                    :mode :soft}
+                   (:params (second (:notes imported)))))
+            (is (empty? (:orphans (meta imported))))))
+        (testing "an 8-bar phrase dense with lane moves is split under the 64 KiB body limit"
+          (let [dense-registry {:effects {:dense {:id :dense :version 1
+                                                  :params (into {} (for [i (range 30)] [(keyword (str "p" i)) {:type :number :bounds [0.0 1.0]}]))}}
+                                :cues {:dense {:id :dense :effect-id :dense :version 1}}}
+                params (mapv #(keyword (str "p" %)) (range 30))
+                dense {:phrase/version 1 :length-beats 32 :meter {:beats-per-bar 4 :bars-per-phrase 4}
+                       :notes [{:id "n0" :cue-id :dense :start 0 :length 32 :params (zipmap params (repeat 0.0))}]
+                       :lanes (vec (for [[k param] (map-indexed vector params)]
+                                     {:cue-id :dense :param param
+                                      :points (vec (for [i (range 1 256)]
+                                                     {:beat (/ i 8) :value (/ (mod (+ k (* i 37)) 101) 100.0) :note "n0"}))}))}
+                dense-layout (clip/allocate-layout {} dense-registry (clip/phrase-targets dense))
+                before (count (live/operations-sent conn))
+                too-big (live/write-phrase! conn setup dense dense-layout {:budget 100000000})
+                written (live/write-phrase! conn setup dense dense-layout {})
+                sent (drop before (live/operations-sent conn))
+                imported (live/import-clips! conn (:clips written) dense-layout {:meter (:meter dense)})]
+            (is (= :payload-too-large (get-in (first (:receipts too-big)) [:error :code])) "one oversized body never reaches Max")
+            (is (= :rejected (:status (first (:receipts too-big)))))
+            (is (:complete? written) (pr-str (map (juxt :status :error) (:receipts written))))
+            (is (< 2 (count (filter #{:extend-clip} sent))) "the phrase took several requests")
+            (is (= (clip/comparable (clip/clips->phrase (clip/phrase->clips dense dense-layout) dense-layout {}))
+                   (clip/comparable imported)))))
         (testing "a stopped companion yields indeterminate receipts, never exceptions"
           ((:close! t) handle)
           (is (= :indeterminate (:status (live/request! conn :fire-clip {:clip-id "clip:1"})))))))))
+
+(deftest nothing-listening-is-a-refusal-not-an-uncertain-write
+  (let [port (with-open [socket (java.net.ServerSocket. 0 1 (java.net.InetAddress/getLoopbackAddress))] (.getLocalPort socket))
+        t (transport/transport {:endpoint (str "http://127.0.0.1:" port "/live") :bridge-id "tolglow-m4l"
+                                :sync-session-id "nobody" :timeout-ms 1000})
+        conn (live/open t {:session-id "refused"})
+        r (live/request! conn :write-clip {:track-id "track:1" :clip {:length-beats 4 :notes []}})]
+    (is (= :rejected (:status r)))
+    (is (= :not-connected (get-in r [:error :code])))))

@@ -236,6 +236,14 @@
         running (set (keep (fn [[id instance]] (when (not= :ended (:phase instance)) id)) (:instances model)))]
     (observe-ended buffer running beat)))
 
+(defn quantize-beat
+  "The capture grid's rounding: nearest grid line, halves rounding up, as an
+  exact rational. Imports use it so an edited clip lands where a capture would."
+  [grid beat]
+  (let [steps (/ (rationalize beat) grid)
+        floor (long (Math/floor (double steps)))]
+    (* grid (if (>= (- steps floor) 1/2) (inc floor) floor))))
+
 (defn- quantize-exact [grid beat]
   (let [steps (/ (rationalize beat) grid)
         floor (long (Math/floor (double steps)))

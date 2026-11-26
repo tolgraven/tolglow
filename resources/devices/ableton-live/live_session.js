@@ -21,8 +21,13 @@
   var MAX14 = 16383;
   var MONITOR = ["in", "auto", "off"];
   var CAPTURE_DESTINATION = {auto: 0, session: 1, arrangement: 2};
-  var OPERATIONS = ["inspect-set", "ensure-track", "configure-track", "write-clip", "capture-midi",
+  var OPERATIONS = ["inspect-set", "ensure-track", "configure-track", "write-clip", "extend-clip", "capture-midi",
     "read-clip", "show-clip", "fire-clip", "stop-clips"];
+  // Envelope read-back: scan at this step, then bisect each change to one
+  // Standard MIDI File tick (1/960 beat).
+  var TICK = 1 / 960;
+  // A track whose name starts with this is Tolglow's to adopt and configure.
+  var TOLGLOW_NAME = /^Tolglow(\s|$)/;
 
   function fault(code, message) { var e = new Error(message); e.code = code; throw e; }
   function finite(n) { return typeof n === "number" && isFinite(n); }
@@ -52,7 +57,11 @@
     this.setDictionary = options.setDictionary || function (object, property, value) { object.set(property, value); };
     this.hostPath = options.hostPath || "this_device canonical_parent";
     this.devicePath = options.devicePath || "this_device";
-    this.sampleBeats = options.sampleBeats || 0.25;
+    this.sampleBeats = options.sampleBeats || 0.0625;
+    // The companion's own track id, cached: MIDI events and lane moves must not
+    // build a LiveAPI object each. Refreshed by every Set operation, so moving
+    // the device to another track is picked up at the next setup or write.
+    this.host = undefined;
     // {host, channel}: the feed channel of the companion's track. Re-read from
     // the track's input routing when the device reloads or moves, because a
     // rerun of setup on a configured Set writes (and so tells us) nothing.
@@ -71,9 +80,19 @@
   };
 
   Session.prototype.trackIds = function () { return ids(this.object("live_set").get("tracks")); };
-  Session.prototype.hostTrackId = function () {
-    var host = this.api(this.hostPath);
-    return host && Number(host.id) ? Number(host.id) : null;
+  Session.prototype.hostTrackId = function (refresh) {
+    if (refresh || this.host === undefined) {
+      var host = this.api(this.hostPath);
+      this.host = host && Number(host.id) ? Number(host.id) : null;
+    }
+    return this.host;
+  };
+  // Empty: no Session or Arrangement clip and no device other than the companion.
+  Session.prototype.emptyTrack = function (track) {
+    var self = this;
+    if (ids(track.get("clip_slots")).some(function (id) { return !!self.read(self.object({id: id}), "has_clip"); })) return false;
+    if (ids(track.get("arrangement_clips")).length) return false;
+    return ids(track.get("devices")).length <= 1;
   };
   Session.prototype.track = function (trackId, expectedName) {
     var id = idOf(trackId, "track");
@@ -113,6 +132,7 @@
 
   Session.prototype.inspectSet = function () {
     var song = this.object("live_set"), self = this;
+    this.hostTrackId(true);
     var numerator = Number(this.read(song, "signature_numerator")), denominator = Number(this.read(song, "signature_denominator"));
     var app = this.api("live_app"), version = null;
     if (app && Number(app.id)) version = [app.call("get_major_version"), app.call("get_minor_version"), app.call("get_bugfix_version")].map(scalar).join(".");
@@ -126,20 +146,26 @@
     var name = payload.name, self = this;
     if (typeof name !== "string" || !name.length || name.length > 128) fault("track-name", "A capture track needs a name");
     if (payload.kind !== undefined && payload.kind !== "midi") fault("track-kind", "Capture tracks are MIDI tracks");
+    if (payload["host?"]) {
+      // The host capture track is wherever the companion is now, never a track
+      // found by name: after the device moves, the old track is no longer it.
+      var hostId = this.hostTrackId(true);
+      if (!hostId) fault("no-companion", "The companion is not on a track");
+      var host = this.object({id: hostId}), current = String(this.read(host, "name"));
+      if (!this.read(host, "has_midi_input")) fault("track-kind", "Place the companion on a MIDI track");
+      if (current === name) return {"track-id": "track:" + hostId, "created?": false};
+      // Never rename, arm or reroute a musician's track.
+      if (!TOLGLOW_NAME.test(current) && !this.emptyTrack(host))
+        fault("host-track-in-use", "The companion is on a track with clips or instruments. Put it on a new, empty MIDI track and run setup again");
+      mark(); host.set("name", name);
+      return {"track-id": "track:" + hostId, "created?": false, "adopted?": true};
+    }
     var found = this.trackIds().filter(function (id) {
       var t = self.object({id: id});
       return String(self.read(t, "name")) === name && !!self.read(t, "has_midi_input");
     });
     if (found.length > 1) fault("duplicate-tracks", "Several MIDI tracks have that name; choose one in Live");
     if (found.length === 1) return {"track-id": "track:" + found[0], "created?": false};
-    if (payload["host?"]) {
-      var hostId = this.hostTrackId();
-      if (!hostId) fault("no-companion", "The companion is not on a track");
-      var host = this.object({id: hostId});
-      if (!this.read(host, "has_midi_input")) fault("track-kind", "Place the companion on a MIDI track");
-      mark(); host.set("name", name);
-      return {"track-id": "track:" + hostId, "created?": false, "adopted?": true};
-    }
     var before = this.trackIds();
     mark(); this.object("live_set").call("create_midi_track", -1);
     var created = this.trackIds().filter(function (id) { return before.indexOf(id) < 0; });
@@ -157,7 +183,7 @@
   Session.prototype.configureTrack = function (payload, mark) {
     var track = this.track(payload["track-id"], payload["expected-name"]), input = payload.input, self = this;
     var monitor = payload.monitor === undefined ? undefined : MONITOR.indexOf(payload.monitor);
-    var host = Number(track.id) === this.hostTrackId();
+    var host = Number(track.id) === this.hostTrackId(true);
     if (monitor !== undefined && monitor < 0) fault("monitor", "Monitoring is in, auto or off");
     if (payload["arm?"] && !this.read(track, "can_be_armed")) fault("not-armable", "This track cannot be armed");
     var type, channel;
@@ -210,6 +236,24 @@
     return lanes;
   }
 
+  // The compact wire form: [{controller: coarse, points: [[beat, v14], ...]}].
+  function compactLanes(list, length) {
+    var lanes = {};
+    if (!Array.isArray(list) || list.length > COARSE.length * 4) fault("lanes", "Lanes must be a bounded list");
+    list.forEach(function (lane) {
+      if (!lane || !laneOf(lane.controller) || !Array.isArray(lane.points) || lane.points.length > 16384)
+        fault("controller-lane", "Controller " + (lane && lane.controller) + " is not a Tolglow lane");
+      var points = lanes[lane.controller] = lanes[lane.controller] || [];
+      lane.points.forEach(function (p) {
+        if (!Array.isArray(p) || !finite(p[0]) || p[0] < 0 || p[0] >= length || !integer(p[1], 0, MAX14))
+          fault("controller", "Invalid lane point");
+        points.push({beat: p[0], value: p[1] / MAX14});
+      });
+    });
+    Object.keys(lanes).forEach(function (c) { lanes[c].sort(function (a, b) { return a.beat - b.beat; }); });
+    return lanes;
+  }
+
   Session.prototype.laneParameters = function () {
     var device = this.object(this.devicePath), self = this, out = {};
     ids(device.get("parameters")).forEach(function (id) {
@@ -229,20 +273,21 @@
     return this.object({id: found[0]});
   };
 
-  Session.prototype.writeClip = function (payload, mark) {
-    var track = this.track(payload["track-id"], payload["expected-name"]), clip = payload.clip || {}, self = this;
-    var length = clip["length-beats"], notes = clip.notes || [], controllers = clip.controllers || [];
-    if (!finite(length) || length <= 0 || length > 4096) fault("clip-length", "A clip needs a positive length in beats");
-    if (!Array.isArray(notes) || !Array.isArray(controllers) || notes.length > 4096 || controllers.length > 65536)
-      fault("clip", "Notes and controllers must be bounded lists");
+  // Validate notes and lanes for a clip of this length; nothing is written.
+  Session.prototype.clipContent = function (track, payload, length) {
+    var clip = payload.clip || {}, notes = clip.notes || payload.notes || [];
+    if (!Array.isArray(notes) || notes.length > 4096) fault("clip", "Notes must be a bounded list");
     notes.forEach(function (n) {
       if (!integer(n.pitch, 0, 127) || !finite(n.start) || n.start < 0 || !finite(n.duration) || n.duration <= 0 ||
           n.start + n.duration > length + 1e-9 || !integer(n.velocity === undefined ? 127 : n.velocity, 1, 127))
         fault("note", "Invalid clip note");
     });
-    var lanes = lanePoints(controllers, length), parameters = {}, coarseList = Object.keys(lanes);
+    var controllers = clip.controllers || [];
+    if (!Array.isArray(controllers) || controllers.length > 65536) fault("clip", "Controllers must be a bounded list");
+    var lanes = payload.lanes ? compactLanes(payload.lanes, length) : lanePoints(controllers, length);
+    var parameters = {}, coarseList = Object.keys(lanes);
     if (coarseList.length) {
-      if (Number(track.id) !== this.hostTrackId())
+      if (Number(track.id) !== this.hostTrackId(true))
         fault("controllers-need-companion", "Controller lanes are written as envelopes of the companion's parameters on its own track");
       var available = this.laneParameters();
       coarseList.forEach(function (coarse) {
@@ -250,6 +295,37 @@
         parameters[coarse] = available[coarse];
       });
     }
+    return {notes: notes, lanes: lanes, parameters: parameters};
+  };
+
+  // Write validated content into a clip. Each lane point becomes an envelope
+  // step lasting until the next point of that lane in this request, or to the
+  // clip end; a later request's steps overwrite what they cover.
+  Session.prototype.fill = function (clip, content, length, mark) {
+    var self = this, steps = 0;
+    if (content.notes.length) {
+      mark();
+      this.dictionaryCall(clip, "add_new_notes", {notes: content.notes.map(function (n) {
+        return {pitch: n.pitch, start_time: n.start, duration: n.duration, velocity: n.velocity === undefined ? 127 : n.velocity, mute: 0};
+      })});
+    }
+    Object.keys(content.lanes).forEach(function (coarse) {
+      var envelope = self.envelope(clip, content.parameters[coarse], true, mark), points = content.lanes[coarse];
+      points.forEach(function (p, i) {
+        var end = i + 1 < points.length ? points[i + 1].beat : length;
+        mark();
+        envelope.call("insert_step", p.beat, end - p.beat, p.value);
+        steps++;
+      });
+    });
+    return {notes: content.notes.length, "envelope-steps": steps};
+  };
+
+  Session.prototype.writeClip = function (payload, mark) {
+    var track = this.track(payload["track-id"], payload["expected-name"]), clip = payload.clip || {}, self = this;
+    var length = clip["length-beats"];
+    if (!finite(length) || length <= 0 || length > 4096) fault("clip-length", "A clip needs a positive length in beats");
+    var content = this.clipContent(track, payload, length);
     var slotIds = ids(track.get("clip_slots")), slot = payload["slot-index"];
     if (slot === undefined || slot === null) {
       slot = -1;
@@ -262,20 +338,20 @@
     clipSlot.call("create_clip", length);
     var created = this.object(this.slotPath(track, slot) + " clip");
     if (payload.name) created.set("name", String(payload.name).slice(0, 128));
-    if (notes.length)
-      this.dictionaryCall(created, "add_new_notes", {notes: notes.map(function (n) {
-        return {pitch: n.pitch, start_time: n.start, duration: n.duration, velocity: n.velocity === undefined ? 127 : n.velocity, mute: 0};
-      })});
-    var steps = 0;
-    coarseList.forEach(function (coarse) {
-      var envelope = self.envelope(created, parameters[coarse], true, mark), points = lanes[coarse];
-      points.forEach(function (p, i) {
-        var end = i + 1 < points.length ? points[i + 1].beat : length;
-        envelope.call("insert_step", p.beat, end - p.beat, p.value);
-        steps++;
-      });
+    var filled = this.fill(created, content, length, mark);
+    return {"clip-id": "clip:" + Number(created.id), "slot-index": slot, notes: filled.notes, "envelope-steps": filled["envelope-steps"]};
+  };
+
+  // Add notes and lane steps to a clip this connection wrote, for phrases too
+  // large for one request. The clip must still be on the named track.
+  Session.prototype.extendClip = function (payload, mark) {
+    var track = this.track(payload["track-id"], payload["expected-name"]), clip = this.clip(payload["clip-id"]);
+    var self = this, onTrack = ids(track.get("clip_slots")).some(function (id, i) {
+      return !!self.read(self.object({id: id}), "has_clip") && Number(self.object(self.slotPath(track, i) + " clip").id) === Number(clip.id);
     });
-    return {"clip-id": "clip:" + Number(created.id), "slot-index": slot, notes: notes.length, "envelope-steps": steps};
+    if (!onTrack) fault("stale-clip", "That clip is no longer on the named track");
+    var length = Number(this.read(clip, "length"));
+    return this.fill(clip, this.clipContent(track, payload, length), length, mark);
   };
 
   Session.prototype.allClipIds = function () {
@@ -316,16 +392,26 @@
       return {pitch: n.pitch, start: n.start_time, duration: n.duration, velocity: n.velocity};
     }).sort(function (a, b) { return a.start - b.start || a.pitch - b.pitch; });
     var controllers = [], parameters = this.laneParameters();
+    var v14At = function (envelope, beat) {
+      return Math.round(Math.max(0, Math.min(1, Number(scalar(envelope.call("value_at_time", beat))))) * MAX14);
+    };
     Object.keys(parameters).map(Number).sort(function (a, b) { return a - b; }).forEach(function (coarse) {
-      var envelope = self.envelope(clip, parameters[coarse], false), last = null, k, beat, v14;
+      var envelope = self.envelope(clip, parameters[coarse], false), last, pos, next, lo, hi, mid;
+      var stepTicks = Math.max(1, Math.round(step / TICK)), endTick = Math.ceil(length / TICK - 1e-9) - 1;
+      var at = function (tick) { return v14At(envelope, tick * TICK); };
+      var emit = function (tick, v) {
+        controllers.push({beat: tick * TICK, controller: coarse, value: v >> 7}, {beat: tick * TICK, controller: coarse + 32, value: v & 127});
+      };
       if (!envelope) return;
-      for (k = 0; k * step < length; k++) {
-        beat = k * step;
-        v14 = Math.round(Math.max(0, Math.min(1, Number(scalar(envelope.call("value_at_time", beat))))) * MAX14);
-        if (v14 !== last) {
-          controllers.push({beat: beat, controller: coarse, value: v14 >> 7}, {beat: beat, controller: coarse + 32, value: v14 & 127});
-          last = v14;
-        }
+      last = at(0); emit(0, last); pos = 0;
+      // Scan every `step`; at a change, bisect down to the tick where it begins.
+      // A change that reverts within one scan step is not seen.
+      while (pos < endTick) {
+        next = Math.min(pos + stepTicks, endTick);
+        if (at(next) === last) { pos = next; continue; }
+        lo = pos; hi = next;
+        while (hi - lo > 1) { mid = Math.floor((lo + hi) / 2); if (at(mid) === last) lo = mid; else hi = mid; }
+        last = at(hi); emit(hi, last); pos = hi;
       }
     });
     var numerator = Number(this.read(song, "signature_numerator")), denominator = Number(this.read(song, "signature_denominator"));
@@ -348,6 +434,7 @@
       case "ensure-track": return this.ensureTrack(payload, mark);
       case "configure-track": return this.configureTrack(payload, mark);
       case "write-clip": return this.writeClip(payload, mark);
+      case "extend-clip": return this.extendClip(payload, mark);
       case "capture-midi": return this.captureMidi(payload, mark);
       case "read-clip": return this.readClip(payload);
       case "show-clip": return this.showClip(payload, mark);
@@ -376,7 +463,7 @@
     return this.feed.channel;
   };
   Session.prototype.route = function (event) {
-    var host = this.hostTrackId(), feed = this.feedChannel(host);
+    var host = this.hostTrackId(), feed = this.feedChannel(host);  // cached host, no LiveAPI per event
     if (feed !== null && event.channel === feed) return null;
     if (host) event["track-id"] = "track:" + host;
     return event;

@@ -17,9 +17,11 @@ function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4 } = {}) {
   }
   function makeTrack(t) {
     const track = add({ kind: "track", props: { name: t.name, has_midi_input: t.audio ? 0 : 1, can_be_armed: 1, arm: t.arm ? 1 : 0,
-      current_monitoring_state: t.monitor ?? 1, input_routing_type: t.port ?? PORTS[0], input_routing_channel: t.channel ?? CHANNELS[0] },
+      current_monitoring_state: t.monitor ?? 1, input_routing_type: t.port ?? PORTS[0], input_routing_channel: t.channel ?? CHANNELS[0],
+      devices: t.instrument ? ["id", 7001, "id", 7002] : ["id", 7001], arrangement_clips: [] },
     slots: [], received: !!t.received });
     for (let i = 0; i < slots; i++) track.slots.push(add({ kind: "slot", clip: null }));
+    if (t.clip) track.slots[0].clip = makeClip(4);
     return track;
   }
   const song = add({ id: 1, kind: "song", props: { tempo: 120, signature_numerator: 4, signature_denominator: 4, can_capture_midi: canCapture ? 1 : 0 },
@@ -27,7 +29,9 @@ function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4 } = {}) {
   const view = add({ kind: "view", props: {} }), appView = add({ kind: "app-view", props: {} });
   const app = add({ kind: "app", props: {} });
   const device = add({ kind: "device", params: COARSE.map((_, i) => add({ kind: "param", props: { name: "Tolglow lane " + (i + 1) } })) });
-  const hostTrack = () => song.tracks[host];
+  let hostIndex = host;
+  const hostTrack = () => song.tracks[hostIndex];
+  const moveCompanion = (index) => { hostIndex = index; };
 
   function proxy(o) {
     if (!o) return { id: 0 };
@@ -41,7 +45,7 @@ function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4 } = {}) {
         if (key === "input_routing_type" || key === "input_routing_channel") return JSON.stringify({ [key]: o.props[key] });
         if (key === "available_input_routing_types") return JSON.stringify({ [key]: PORTS });
         if (key === "available_input_routing_channels") return JSON.stringify({ [key]: CHANNELS });
-        return [o.props[key]];
+        return Array.isArray(o.props[key]) ? o.props[key] : [o.props[key]];
       },
       set(key, value) { writes.push({ id: o.id, key, value }); o.props[key] = value; },
       call(method, ...args) {
@@ -100,7 +104,7 @@ function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4 } = {}) {
   const adapter = new Adapter({ api, session, dictionaryCall: (o, m, d) => o.call(m, d), readDictionary: JSON.parse });
   let n = 0;
   const request = (op, payload = {}) => adapter.handle({ id: "r" + (++n), op, payload });
-  return { song, device, view, appView, entities, writes, calls, request, adapter, session, api, setDictionary };
+  return { song, device, view, appView, entities, writes, calls, request, adapter, session, api, setDictionary, moveCompanion };
 }
 
 module.exports = { liveSet, PORTS, CHANNELS };
