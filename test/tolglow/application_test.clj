@@ -4,7 +4,9 @@
             [tolglow.application :as app]
             [tolglow.agents :as agents]
             [tolglow.modules :as modules]
-            [tolglow.show :as show])
+            [tolglow.show :as show]
+            [tolglow.studio.display :as display]
+            [afterglow.control.devices.push-3.usb :as push-3-usb])
   (:import [java.nio.file Files]))
 
 (defn setup-extension [context options]
@@ -225,3 +227,24 @@
       (is (= [:show :prefabs :variable-blocks] (get-in runtime [:application :loaded-components])))
       (is (= 0.4 (:transmission (show/variables runtime))))
       (finally (app/stop! runtime)))))
+
+(deftest push-3-display-module-warms-libusb-only-when-configured-and-never-blocks
+  (let [warm-ups @#'display/push-3-usb-warmups saved @warm-ups
+        calls (atom []) scan (promise)
+        config {:init {:components [] :modules [:push-3-display]}}]
+    (reset! warm-ups {})
+    (try
+      (with-redefs [push-3-usb/prepare-in-background! (fn [options] (swap! calls conj options) scan)]
+        (is (= [{:id :push-3-display :enabled? false}]
+               (->> (modules/plan app/registry (app/default-config))
+                    (filter #(= :push-3-display (:id %))) (map #(select-keys % [:id :enabled?])))))
+        (is (= [] (:loaded-components (modules/start! app/registry (assoc config :push-3-display false)))))
+        (is (empty? @calls))
+        ;; The scan never finishes here, yet startup completes with it pending.
+        (let [app (modules/start! app/registry (assoc config :push-3-display {:library "/opt/test/libusb-1.0.dylib"}))]
+          (is (= [:push-3-display] (:loaded-components app)))
+          (is (identical? scan (get-in app [:modules :push-3-display])))
+          (is (= [{:library "/opt/test/libusb-1.0.dylib"}] @calls))
+          (is (= {:status :preparing} (display/push-3-usb-status {:library "/opt/test/libusb-1.0.dylib"})))
+          ((:stop! app))))
+      (finally (reset! warm-ups saved)))))
