@@ -46,6 +46,11 @@ The existing `RoomPreview(canvas, status)`, `update(snapshot)`, `setFog(value)`,
 engine loader. Additional explicit camera/quality/preset methods may be exposed
 through Reagent controls. Shader hot reload must compile a candidate first and
 retain the last working program on rejection. Rendering errors remain visible.
+An engine uses the globals of the window whose loader imported it (document,
+focus, animation frames, pixel ratio, observers). When the Room is popped out,
+Studio loads the module in that window and constructs the engine on a canvas
+created there; a canvas is never moved between documents (see
+`docs/studio-ui.md`, Room in its own window).
 
 `room_renderer_fog_fixture_optics` owns the complete preview: scene construction,
 fixture meshes, light/shadow management, fog field/pass, compositing and visual

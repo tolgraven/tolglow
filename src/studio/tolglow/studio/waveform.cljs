@@ -4,7 +4,8 @@
             [reagent.core :as r]
             [re-frame.core :as rf]
             [tolglow.studio.events :as events]
-            [tolglow.studio.parameter-widgets :as widgets]))
+            [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.visualization.waveform-shapes :as shapes]))
 
 (def channels
   [[:value "Value"] [:slope "Slope"] [:angular-velocity "Angular velocity"] [:jagginess "Jagginess"]])
@@ -137,7 +138,7 @@
       (when (and (<= -1.000001 x-min -0.999999) (<= 0.999999 x-max 1.000001))
         (assoc chart :ticks (into [] (comp (filter #(and (widgets/finite? (:position %))
                                                         (<= -1 (:position %) 1)
-                                                        (#{"beat" "bar" "phrase"} (wire (:kind %)))))
+                                                        (#{"sixteenth" "beat" "bar" "phrase"} (wire (:kind %)))))
                                            (map (fn [{:keys [kind position]}]
                                                   {:kind (wire kind) :x (+ 256 (* position 246))})))
                                   (take 195 (:ticks timeline))))))))
@@ -152,6 +153,13 @@
        :clock (when (clock-bound? (get-in instance [:definition :params]))
                 [(get-in db [:show :time-ms]) (get-in db [:show :transport]) (:system instance)])
        :waveform-revision (get-in db [:show :waveform-revision])})))
+
+(rf/reg-sub :waveform/catalog (fn [db _] (get-in db [:server-projection :view :parameter-waveforms])))
+
+(defn shape-choices
+  "Glyph choices when a schema chooses between registered waveforms, else nil."
+  [schema]
+  (shapes/choices schema @(rf/subscribe [:waveform/catalog])))
 
 (rf/reg-sub :waveform/entry (fn [db [_ key]] (entry db key)))
 (rf/reg-sub :waveform/session (fn [db _] (request-token db)))
@@ -216,6 +224,11 @@
                          "degrees-per-cycle" "Degrees / cycle" "amplitude-per-cycle-squared" "Amplitude / cycle²"
                          (widgets/label unit)))
 
+(defn- cycle-x
+  "Place a grid line of the sampled cycle window in the chart."
+  [line]
+  (+ 10 (* 492 (:position line))))
+
 (defn- svg-chart [data channel]
   (when-let [{:keys [points minimum maximum low high zero-y x-min x-max]} (chart-data (:samples data) channel)]
     (let [channel-label (second (first (filter #(= channel (first %)) channels)))
@@ -227,11 +240,13 @@
                                ", maximum " (widgets/number-label maximum) ", across " (widgets/number-label (- x-max x-min)) " cycles")}
         [:line {:x1 10 :x2 502 :y1 20 :y2 20 :class "waveform-grid"}]
         [:line {:x1 10 :x2 502 :y1 164 :y2 164 :class "waveform-grid"}]
+        [widgets/grid-lines (:grid data) cycle-x 20 164]
         [:line {:x1 10 :x2 502 :y1 zero-y :y2 zero-y :class "waveform-zero"}]
         [:polyline {:points points :fill "none" :stroke "currentColor" :stroke-width 1.8 :vector-effect "non-scaling-stroke"}]]
-       [:div.waveform-axis [:span (str (widgets/number-label x-min) " cycles")]
-        [:span (str "Range " (widgets/number-label low) " … " (widgets/number-label high))]
-        [:span (str (widgets/number-label x-max) " cycles")]]])))
+       (into [:div.waveform-axis [:span (str (widgets/number-label x-min) " cycles")]]
+             (remove nil? [(widgets/grid-period (:grid data))
+                           [:span (str "Range " (widgets/number-label low) " … " (widgets/number-label high))]
+                           [:span (str (widgets/number-label x-max) " cycles")]]))])))
 
 (defn- preview-view [key _selection options settings _token]
   (let [e @(rf/subscribe [:waveform/entry key])
@@ -303,6 +318,7 @@
                                 (when timed ", centered on the current beat with beat, bar and phrase marks"))}
         (for [{:keys [x kind]} (:ticks timed)]
           ^{:key x} [:line {:class (str "waveform-tick " kind) :x1 x :x2 x :y1 20 :y2 164}])
+        (when-not timed [widgets/grid-lines (:grid data) cycle-x 20 164])
         [:line.waveform-zero {:x1 10 :x2 502 :y1 (:zero-y shape) :y2 (:zero-y shape)}]
         [:polyline {:points (:points shape) :fill "none" :stroke "currentColor" :stroke-width 1.8 :vector-effect "non-scaling-stroke"}]
         (when timed [:line.waveform-now {:x1 256 :x2 256 :y1 14 :y2 172}])]
@@ -341,10 +357,12 @@
                   (and (not actual?) (:params context)) (assoc :context-params (:params context)))]
     [:div.waveform-picker {:data-waveform-param (wire parameter)}
      [:div.waveform-choice-row
-      [:select {:aria-label title :value selected
-                 :on-change #(change! (:value (get choices (js/parseInt (.. % -target -value) 10))))}
-       (for [[index item] (map-indexed vector choices)]
-         ^{:key index} [:option {:value index} (or (:label item) (widgets/label (:id item)))])]
+      (if-let [glyphs (shape-choices schema)]
+        [widgets/shape-picker title glyphs value change!]
+        [:select {:aria-label title :value selected
+                  :on-change #(change! (:value (get choices (js/parseInt (.. % -target -value) 10))))}
+         (for [[index item] (map-indexed vector choices)]
+           ^{:key index} [:option {:value index} (or (:label item) (widgets/label (:id item)))])])
       (when category [:span.waveform-category {:style {"--waveform-category" (get category-colors category "#a8b99a")}}
                       (widgets/label category)])]
      [compact-preview-component key selection options (:settings e) token]

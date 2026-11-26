@@ -148,6 +148,17 @@
 (defn waveform "Return the current bounded PCM projection without opening an input." [manager]
   (or (:waveform (status manager)) (waveforms/capture-view (waveforms/new-capture))))
 
+(def history-options
+  "A longer, coarser summary of the same PCM for the musical timeline: 512
+  columns of 60 ms, about 30 seconds."
+  {:max-bins 512 :bin-ms 60.0})
+
+(defn history-waveform
+  "Return the long capture history in the same shape as waveform. It is kept
+  beside the public status, so status readers do not carry it."
+  [manager]
+  (waveforms/capture-view (or (:history @(:state manager)) (waveforms/new-capture history-options))))
+
 (defn active-run-id [manager] (get-in @(:state manager) [:run :run-id]))
 
 (defn- update-public! [manager run f & args]
@@ -224,6 +235,7 @@
 (defn- capture! [manager run config]
   (let [last-analyzer (volatile! (analysis/new-analyzer (:analyzer-options config)))
         capture-state (volatile! (waveforms/new-capture))
+        history-state (volatile! (waveforms/new-capture history-options))
         result
         (try
           (if @(:cancelled? run)
@@ -271,12 +283,13 @@
                                            (update-public! manager run assoc :last-clock-error (error-data error)) nil)))
                             samples (decode-pcm16 buffer 0 byte-count (:channels config)
                                                   (:big-endian? config) (:input-channel config))
-                            captured (waveforms/capture-block @capture-state
-                                                              {:samples samples :sample-rate (:sample-rate config)
-                                                               :channels (:channels config) :input-channel (:input-channel config)
-                                                               :source-id (:run-id run)
-                                                               :started-at-ms started :clock clock :timing-valid? timing-valid?
-                                                               :discontinuity? (or possible-overflow? (pos? lost) (pos? discarded))})
+                            block {:samples samples :sample-rate (:sample-rate config)
+                                   :channels (:channels config) :input-channel (:input-channel config)
+                                   :source-id (:run-id run)
+                                   :started-at-ms started :clock clock :timing-valid? timing-valid?
+                                   :discontinuity? (or possible-overflow? (pos? lost) (pos? discarded))}
+                            captured (waveforms/capture-block @capture-state block)
+                            history (waveforms/capture-block @history-state block)
                             waveform (waveforms/capture-view captured)
                             analyzed (analysis/analyze state {:samples samples
                                                               :sample-rate (:sample-rate config) :started-at-ms started
@@ -293,10 +306,17 @@
                                          (:events analyzed))]
                         (vreset! last-analyzer state)
                         (vreset! capture-state captured)
-                        (update-public! manager run
-                                        #(-> % (update-in [:metrics :frames] + n)
-                                             (update-in [:metrics :blocks] inc)
-                                             (assoc :features features :sample-counter (+ cursor n) :waveform waveform)))
+                        (vreset! history-state history)
+                        (swap! (:state manager)
+                               (fn [state]
+                                 (if (identical? run (:run state))
+                                   (-> state
+                                       (assoc :history history)
+                                       (update :public
+                                               #(-> % (update-in [:metrics :frames] + n)
+                                                    (update-in [:metrics :blocks] inc)
+                                                    (assoc :features features :sample-counter (+ cursor n) :waveform waveform))))
+                                   state)))
                         (when-not @(:cancelled? run)
                           (when (seq events) (callback! manager run :events! (:events! callbacks) events))
                           (when features (callback! manager run :features! (:features! callbacks) features))
@@ -352,7 +372,7 @@
                              :source-closed? (atom false) :close-error (atom nil) :result (promise) :thread (atom nil)}
                         thread (doto (Thread. #(capture! manager run config) "tolglow-audio-capture") (.setDaemon true))]
                     (reset! (:thread run) thread)
-                    (swap! (:state manager) assoc :run run
+                    (swap! (:state manager) assoc :run run :history nil
                            :public {:state :starting :running? false :run-id (:run-id run) :config config
                                     :metrics {:frames 0 :blocks 0 :dropped-input-frames 0 :discarded-input-frames 0
                                               :possible-overflows 0 :dropped-events 0 :callback-errors 0 :subscriber-errors 0}})

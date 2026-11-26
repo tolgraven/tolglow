@@ -78,13 +78,28 @@ Preposition the heads at the first-point pose, then publish or republish, then
 launch the cue from the Studio cue grid or REPL with
 `{:op :cue/launch :cue-id :paired-arrival}`. Studio's **Create + run** launches
 it persistently. The cue traverses once and holds the endpoint until ended.
-Running instances keep their launch version. A launch is refused, with the
+Running instances keep their launch version.
+
+Tempo never refuses a launch. When the tempo has risen since publication so a
+musical arrival would now be shorter than the physical minimum, the launch
+stretches the move to that minimum and the heads still arrive together. The
+launched instance runs a private copy of the published move with the same
+musical unit and a longer span, for example `{:beats 5}` launched at 170 BPM
+becomes `{:beats 5.67}`, which lasts the 2 s minimum at that tempo. The move stays
+on the beat clock, so it pauses on transport stop and resumes from where it
+was. A one-shot launch lives until the stretched arrival unless the cue or
+launch sets its own duration. The published definition is unchanged, and a
+show saved during the move restores the stretched instance. The
+launch acknowledgement and the instance carry `:arrival-stretch`, for example
+`{:musical-duration {:beats 5} :duration {:beats 5.67} :musical-ms 1764.7
+:duration-ms 2000.0 :stretched-by-ms 235.3 :bpm 170}`. A launch that needs no
+stretch runs the published move unchanged and has no `:arrival-stretch`.
+
+A launch is refused, with the
 committed state unchanged, when:
 
 - `:stale-calibration`: a selected head's position, rotation or calibration
   no longer matches the fingerprint. Repatching addresses does not count.
-- `:tempo-exceeds-motor-rate`: a musical arrival would now be faster than the
-  calibrated rates at the current tempo.
 - `:start-wrap-mismatch`: a head's committed pan is nearer another in-range
   wrap of the start pose than the published one, so frame 0 would command a
   full-turn jump. `tick!` binds the last committed frame for its owner cycle
@@ -98,7 +113,9 @@ actions. A refused slot is appended to `:composition-faults` and the run keeps
 playing. A refused subscriber action becomes a handler fault. Lighting scenes
 launch only the generated cues they own, which are never synchronized paths.
 
-A tempo change while the move is running is not rechecked. The timing
+A tempo change while the move is running is not rechecked: the move follows
+the beat clock, and commanding a head faster than it can follow is a valid
+effect, not an error. The timing
 describes scheduled pan/tilt commands. Physical arrival depends on the heads'
 acceleration, internal position control and DMX delivery, and requires a
 hardware measurement. Fixture-specific speed channels need their own

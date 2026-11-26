@@ -65,17 +65,23 @@ private struct StudioWindow: NSViewRepresentable {
     @MainActor final class Coordinator {
         let navigation: StudioNavigation
         let qualification = ShaderQualification.fromArguments()
-        init(url: URL) { navigation = StudioNavigation(origin: url) }
+        let rooms: RoomWindows
+        init(url: URL) {
+            navigation = StudioNavigation(origin: url)
+            rooms = RoomWindows(origin: url)
+        }
     }
     func makeCoordinator() -> Coordinator { Coordinator(url: url) }
     func makeNSView(context: Context) -> WKWebView {
         studioWebView(origin: url, navigation: context.coordinator.navigation,
-                      qualification: context.coordinator.qualification)
+                      qualification: context.coordinator.qualification, rooms: context.coordinator.rooms)
     }
     func updateNSView(_ view: WKWebView, context: Context) {}
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
         coordinator.qualification?.stop(view)
         view.stopLoading()
         view.navigationDelegate = nil
+        view.uiDelegate = nil
+        coordinator.rooms.close()
     }
 }

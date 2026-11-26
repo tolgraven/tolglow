@@ -249,6 +249,130 @@
     (is (= 0.7 (level retained)))
     (is (= 1 (:owner-version (controller retained))))))
 
+(deftest reload-candidates-are-the-revisions-the-engine-will-attempt
+  (let [show (-> (model) (assoc-in [:instances "0:1" :reload-policy] :preserve-state))
+        wash (get-in show [:instances "0:1"])
+        newer (assoc effect :version 2)
+        pending (assoc-in show [:registry :effects :wash] newer)
+        candidate #(modulation/reload-candidate %1 (merge wash %2))]
+    (is (nil? (candidate show {})) "The registry still holds the captured version")
+    (is (= newer (candidate pending {})))
+    (is (= newer (modulation/owner-definition pending wash)))
+    (is (true? (modulation/reload-pending? pending)))
+    (is (false? (modulation/reload-pending? show)))
+    (doseq [[label change] [["pinned" {:reload-policy :pinned}]
+                            ["paused" {:system {:paused? true}}]
+                            ["already rejected" {:reload-fault {:effect-version 2}}]
+                            ["already adopted" {:effect-version 2 :definition newer}]
+                            ["ahead of the registry" {:effect-version 3}]]]
+      (is (nil? (candidate pending change)) label))
+    (testing "a schema that rejects a retained parameter is rejected at preparation, so it is no candidate"
+      (let [unfit (assoc-in pending [:registry :effects :wash :params :level] {:type :number :default 2.5 :bounds [2.0 3.0]})]
+        (is (nil? (candidate unfit {})))
+        (is (= effect (modulation/owner-definition unfit wash)))
+        (is (= 0.0 (level (modulation/advance (start {:ranges {:level [0.0 0.0]}}) unfit (frame 0))))
+            "The frame samples the captured schema instead of failing")
+        (is (map? (modulation/source-index (assoc unfit :modulation (start)) [])))))
+    (testing "the last-good view has no candidates and leaves the model data alone"
+      (let [view (modulation/last-good-view pending)]
+        (is (nil? (modulation/reload-candidate view wash)))
+        (is (false? (modulation/reload-pending? view)))
+        (is (= effect (modulation/owner-definition view wash)))
+        (is (= (:registry pending) (:registry view)))
+        (is (= (:instances pending) (:instances view)))))))
+
+(defn- owner-frame
+  "One owner frame as the show runs it: sample both reload outcomes from the
+  same prior state, let the engine read one of them, commit that one."
+  [show beat compile]
+  (let [frame (assoc (frame beat) :fixtures (get-in show [:rig :fixtures]))
+        candidate (modulation/advance (:modulation show) show frame)
+        last-good (when (modulation/reload-pending? show)
+                    (modulation/advance (:modulation show) (modulation/last-good-view show) frame))
+        overlay (if last-good
+                  (modulation/reload-middleware (:overrides candidate) (:overrides last-good))
+                  (modulation/middleware (:overrides candidate)))
+        result (engine/advance (assoc show :modulation (:state candidate))
+                               (cond-> frame last-good (assoc ::engine/reload-fallback modulation/last-good-frame))
+                               #(comp (compile %) overlay))]
+    (cond-> result
+      (= :fallback (:reload-inputs result)) (assoc-in [:model :modulation] (:state last-good)))))
+
+(deftest both-reload-outcomes-are-sampled-from-one-prior-state-and-one-is-committed
+  (let [config {:params [:level] :seed 19 :every {:beats 1/4} :mode :glide}
+        show (-> (with-owner (model) config) (assoc-in [:instances "0:2" :reload-policy] :preserve-state))
+        changed (-> (get-in show [:registry :effects :modulator])
+                    (assoc :version 2 :modulation (assoc config :seed 23 :ranges {:level [0.9 1.0]})))
+        compile-with (fn [broken-version]
+                       (fn [definition]
+                         (if (= :modulator (:id definition))
+                           (fn [context]
+                             (when (= broken-version (:version definition)) (throw (ex-info "Bad owner" {})))
+                             context)
+                           (compiler/compile-effect definition))))
+        run (fn [compile publish-at beats]
+              (reductions (fn [result beat]
+                            (owner-frame (cond-> (:model result)
+                                           (= beat publish-at) (assoc-in [:registry :effects :modulator] changed))
+                                         beat compile))
+                          {:model show} beats))
+        beats [0 1/8 1/4 3/8 1/2 5/8 3/4]
+        observed (fn [results] (mapv (juxt :assignments (comp :controllers :modulation :model)) (rest results)))
+        twin (run (compile-with nil) nil beats)
+        rejected (run (compile-with 2) 3/8 beats)
+        accepted (run (compile-with nil) 3/8 beats)]
+    (testing "a rejected candidate leaves the output and the controller of a show that never saw it"
+      (is (= (observed twin) (observed rejected)))
+      (is (= [nil nil nil :fallback nil nil nil] (mapv :reload-inputs (rest rejected))))
+      (is (= 2 (get-in (last rejected) [:model :instances "0:2" :reload-fault :effect-version]))))
+    (testing "an accepted candidate restarts the controller once, on its takeover frame"
+      (is (= (take 3 (observed twin)) (take 3 (observed accepted))))
+      (is (= [nil nil nil :frame nil nil nil] (mapv :reload-inputs (rest accepted))))
+      (is (= [[1 0 0.0] [1 0 0.0] [1 0 0.0] [2 1 3/8] [2 1 3/8] [2 1 3/8] [2 1 3/8]]
+             (mapv (fn [result] ((juxt :owner-version :order :anchor-beat)
+                                 (first (get-in result [:model :modulation :controllers]))))
+                   (rest accepted))))
+      (is (<= 0.9 (get-in (nth accepted 4) [:model :modulation :controllers 0 :values "0:1" :level :to]) 1.0)
+          "The takeover frame already samples the new range"))
+    (testing "sampling the other outcome consumes nothing: the same prior state gives the same result"
+      (let [pending (assoc-in (:model (nth twin 3)) [:registry :effects :modulator] changed)
+            frame (frame 3/8)
+            prior (:modulation pending)
+            first-sample (modulation/advance prior (modulation/last-good-view pending) frame)]
+        (is (= first-sample (modulation/advance prior (modulation/last-good-view pending) frame)))
+        (is (= (:state first-sample)
+               (:state (modulation/advance prior (:model (nth twin 3)) frame)))
+            "The last-good view samples exactly what the unpublished show samples")
+        (is (not= (:state first-sample) (:state (modulation/advance prior pending frame))))))))
+
+(deftest reload-middleware-reads-the-overrides-of-the-inputs-the-engine-evaluates
+  (let [overlay (modulation/reload-middleware {"0:1" {:level 0.9}} {"0:1" {:level 0.2}})
+        context {:instance {:id "0:1" :definition effect :params {:level 0.0}} :frame {:time-ms 0.0}}]
+    (is (= 0.9 (get-in (overlay context) [:instance :params :level])))
+    (is (= 0.2 (get-in (overlay (update context :frame merge modulation/last-good-frame)) [:instance :params :level])))
+    (is (thrown? clojure.lang.ExceptionInfo (modulation/reload-middleware {"0:1" {:level 0.9}} nil)))))
+
+(deftest overrides-that-do-not-follow-a-reload-are-restricted-to-the-candidates-schema
+  (let [two {:id :wash :version 1 :params {:level {:type :number :default 0.0 :bounds [0.0 1.0]}
+                                           :gain {:type :number :default 1.0 :bounds [0.0 1.0]}}}
+        show (-> (model two)
+                 (assoc-in [:instances "0:1" :reload-policy] :preserve-state)
+                 (assoc-in [:instances "0:2"] (assoc (instance "0:2" two) :order 1)))
+        ramped {"0:1" {:level 0.9 :gain 0.4} "0:2" {:level 0.9 :gain 0.4} "gone" {:level 0.1}}
+        publish (fn [params] (assoc-in show [:registry :effects :wash] (assoc two :version 2 :params params)))]
+    (is (= ramped (modulation/candidate-overrides show ramped)) "No candidate, nothing restricted")
+    (is (= {} (modulation/candidate-overrides show nil)))
+    (testing "a removed parameter and a value outside the candidate's bounds are dropped for the candidate only"
+      (is (= (assoc ramped "0:1" {:level 0.9})
+             (modulation/candidate-overrides (publish {:level (get-in two [:params :level])}) ramped)))
+      (is (= (assoc ramped "0:1" {:gain 0.4})
+             (modulation/candidate-overrides
+               (publish (assoc-in (:params two) [:level :bounds] [0.0 0.5])) ramped))))
+    (testing "an instance left with nothing has no entry, and the last-good view restricts nothing"
+      (let [emptied (publish {:other {:type :number :default 0.0 :bounds [0.0 1.0]}})]
+        (is (= (dissoc ramped "0:1") (modulation/candidate-overrides emptied ramped)))
+        (is (= ramped (modulation/candidate-overrides (modulation/last-good-view emptied) ramped)))))))
+
 (deftest save-and-restore-remap-identities-without-resetting-seeds-or-next-beats
   (let [show (with-owner (model) {:seed 41 :params [:level] :select {:instance-ids ["0:1"]}})
         original (modulation/advance nil show (frame 1/4))

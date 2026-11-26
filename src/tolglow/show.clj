@@ -85,6 +85,7 @@
             [tolglow.integrations.mpv-session :as mpv-session]
             [tolglow.integrations.reference-position :as reference-position]
             [tolglow.integrations.section-patterns :as section-patterns]
+            [tolglow.timeline :as timeline]
             [tolglow.persistence :as persistence]
             [tolglow.personalities :as personalities]
             [tolglow.operator-history :as operator-history]
@@ -1447,6 +1448,7 @@
             (fn [acc event] (staging/collect acc :audio {:kind :audio :id (or (get-in event [:source :id]) :analysis)} [event]))
             m (:events captured)))
         (seq (:events captured)) (assoc-in [:variables :audio :events] (:events captured))
+        (seq (:events captured)) (timeline/remember-sections (:events captured))
         (seq (:events captured)) (update-in [:variables :audio :event-count] (fnil + 0) (count (:events captured)))) model)))
 
 (defn section-reference-callbacks
@@ -1832,6 +1834,25 @@
                                    options (or (pause-look/blackout? model) (zero? (:master model)))
                                    (assoc slot :timeline-id clock-id :output-context @(:patch runtime)))))
 
+(defn- last-good-inputs
+  "Sample modulation for the frame that rejects a pending hot reload, from the
+  same prior controller state as the candidate samples. Return the engine's
+  reload fallback and the state behind it, or nil when both outcomes read the
+  same inputs. An outcome whose own controllers cannot advance has no fallback.
+  Ramp overlays do not follow a candidate, so both outcomes rest on the same ones."
+  [model candidate candidate-samples samples ramp-params spatial-overrides time-ms]
+  (when-let [result (try (modulation/advance (:modulation model) (modulation/last-good-view model)
+                                             {:time-ms time-ms :transport (:transport model)})
+                         (catch clojure.lang.ExceptionInfo _ nil))]
+    (let [sampled #(select-keys % [:overrides :priorities :priority-overrides])]
+      (when (or (not= (:state result) (:state candidate)) (not= (:overrides result) (:overrides candidate))
+                (not= (sampled samples) (sampled candidate-samples)))
+        (let [overrides (merge-with merge ramp-params (:overrides result) (:overrides samples) spatial-overrides)]
+          {:modulation result :parameter-samples samples :overrides overrides
+           :frame (assoc modulation/last-good-frame
+                         :keyframe-params overrides
+                         ::engine/priority-overrides (:priority-overrides samples {}))})))))
+
 (defn- render-frame
   "Render one lighting frame from a model whose inputs this cycle already owns.
   The live owner and a private Room audition call this same path. Callers
@@ -1847,6 +1868,12 @@
         frame-master (get ramp-frame :master (:master model))
         parameter-samples (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)}
                                                    (:parameter-samples before))
+        ;; This frame's engine pass may reject a pending hot reload. Sample the
+        ;; waveforms for that outcome too, from the same prior state.
+        last-good-samples (when (modulation/reload-pending? model)
+                            (parameter-sources/sample (modulation/last-good-view model)
+                                                      {:time-ms time-ms :transport (:transport model)}
+                                                      (:parameter-samples before)))
         control-view (if (seq (:overrides parameter-samples))
                        (update (:modulation-view before) :overrides
                                #(merge-with merge % (:overrides parameter-samples)))
@@ -1883,11 +1910,19 @@
                                                            control-view hdr-scope) {}))
         modulation-result (modulation/advance (:modulation model) model
                                                {:time-ms time-ms :transport (:transport model)})
+        last-good (when last-good-samples
+                    (last-good-inputs model modulation-result parameter-samples last-good-samples
+                                      (:params ramp-frame) (get-in space [:fields :overrides]) time-ms))
         model (assoc model :modulation (:state modulation-result))
         ;; Active modulation and waveform bindings take precedence over a ramp overlay.
-        input-overrides (merge-with merge (:params ramp-frame) (:overrides modulation-result) (:overrides parameter-samples)
+        ;; A ramp does not follow a pending reload: its candidate reads only
+        ;; the ramped parameters its schemas still accept.
+        input-overrides (merge-with merge (modulation/candidate-overrides model (:params ramp-frame))
+                                    (:overrides modulation-result) (:overrides parameter-samples)
                                     (get-in space [:fields :overrides]))
-        modulation-middleware (modulation/middleware input-overrides)
+        modulation-middleware (if last-good
+                                (modulation/reload-middleware input-overrides (:overrides last-good))
+                                (modulation/middleware input-overrides))
         _ (prepare-compiler! runtime (get-in model [:rig :fixtures]))
         variable-plan (variable-blocks/prepare! (:variable-plan runtime) (get-in model [:settings :variable-blocks]) (prefabs/catalog model))
         variables (variable-blocks/sample variable-plan model time-ms (:variable-observation before))
@@ -1927,7 +1962,10 @@
                       (seq (:priority-overrides parameter-samples))
                       (assoc ::engine/priority-overrides (:priority-overrides parameter-samples))
                       response-frame (assoc ::waveforms/response-frame response-frame)
-                      engine-levels (assoc ::engine/opacity-factors engine-levels))
+                      engine-levels (assoc ::engine/opacity-factors engine-levels)
+                      ;; The engine reads these instead, for the whole frame,
+                      ;; if it rejects any pending reload.
+                      last-good (assoc ::engine/reload-fallback (:frame last-good)))
         response (response-middleware! runtime (:responses model []))
         inputs (if response-frame
                  (fn [context]
@@ -1997,7 +2035,17 @@
                    #(resolve-frame patch (lighting/contributions standby % extra-blocks) render-options)
                    (if spatial-groups
                      #(spatial-cues/mask-contributions % spatial-groups spatial-levels) identity))
-        result (:result resolved)
+        ;; A renderer rejection rebuilds the result from the engine's frame
+        ;; model, which carries the ramp overlay: take it out of that one too.
+        result (update (:result resolved) :model subscribers/without-frame-overlays model ramp-frame)
+        ;; Commit the controller and waveform state behind the inputs the
+        ;; engine read, so a rejected reload leaves no trace in either.
+        last-good? (= :fallback (:reload-inputs result))
+        modulation-result (if last-good? (:modulation last-good) modulation-result)
+        parameter-samples (if last-good? (:parameter-samples last-good) parameter-samples)
+        input-overrides (if last-good? (:overrides last-good) input-overrides)
+        result (cond-> result
+                 last-good? (assoc-in [:model :modulation] (:state modulation-result)))
         finished (when (or (get-in model [:settings :output-response :enabled?])
                            (get-in model [:settings :lighting-budget :enabled?])
                            (get-in model [:settings :lighting-activity :enabled?]))
@@ -2576,6 +2624,32 @@
    (case form
      :compact (subscribers/compact-view (:model @(:state runtime)))
      :full (schedule runtime))))
+
+(defn- timeline-reference
+  "The matched recording's sections and the current reference lock, when a
+  section reference is attached to this show."
+  [runtime committed]
+  (when-let [profile (:profile (or (:section-pattern-state committed) (:section-patterns runtime)))]
+    (when-let [{:keys [reference-state reference-now-ms]} (reference-evidence runtime (get-in committed [:model :epoch]))]
+      {:profile profile
+       :lock (try (reference-position/snapshot reference-state reference-now-ms)
+                  (catch clojure.lang.ExceptionInfo _ nil))})))
+
+(defn timeline
+  "Read the musical timeline Studio draws around now: scheduled and fired
+  events, ramps, sections, the beat grid, the captured-audio lane and the
+  level meters. Pass {:bars n} for n bars either side (default 8). The
+  three-argument form projects a given committed state. See docs/timeline.md."
+  ([runtime] (timeline runtime {}))
+  ([runtime options] (timeline runtime @(:state runtime) options))
+  ([runtime {:keys [model output] :as committed} options]
+   (timeline/view {:model model :output output
+                   :waveform (audio/history-waveform (connections/audio (:connections runtime)))
+                   :reference (timeline-reference runtime committed)
+                   ;; The active track-feel personality (#647), from the same
+                   ;; cached projection the snapshot carries as :personalities.
+                   :feel (get-in (personality-views runtime model) [:projection :active])}
+                  options)))
 
 (defn post-events!
   "Validate and enqueue a batch of beat-clock events atomically. Returns the

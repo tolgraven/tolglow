@@ -115,6 +115,20 @@ host checkout or lighting registry. See
 [`vendor/neovim/README.md`](../resources/studio/vendor/neovim/README.md) for provenance
 and bundled licenses.
 
+A code-cue editor can construct the engine with `pinBuffer: true` (#311; no Studio
+view uses it yet). It pins the buffer current at start and keeps reading, writing
+and diagnosing that buffer when the user opens another file in the window. Each
+`onChange` carries a draft `{sessionId, bufferId, changedtick, sourceSha256,
+source}`. `setDraftDiagnostics(draft, findings)` applies findings (zero-based line,
+UTF-8 byte column) only while session, buffer, changedtick and digest still match,
+and resolves `false` for an earlier draft, a closed buffer, a stopped editor or a
+Neovim that has exited (`:qa!`). Any edit clears the findings. They show their message at the end of the line, also in
+insert mode. `:edit!` and reopening after `:bdelete` keep the observer and report
+the buffer's new text as a change; while the buffer is unloaded the engine reports
+one close through `onError`. The caller still fences replies against its own show
+epoch, cue and definition version, and converts host positions to byte columns.
+The host's definition API reports data paths, not source positions.
+
 ### Assigning and inspecting effect blocks
 
 In **Library**, open an effect in the EDN editor and select **Assign blocks**.
@@ -194,6 +208,56 @@ currently lacks comprehensive light/shadow occlusion between scene objects,
 realistic gobos, fixture-specific optics, reflections, detailed truss meshes, architectural imports,
 Gaussian splats and accurate fog fluid dynamics. Those remain renderer work,
 not hidden simulated functionality.
+
+### Room in its own window
+
+**Pop out** moves the Perform Room into a separate window so the cue grid
+keeps the main window; **Move to display** sends that window to another display
+(and pops it out first when the Room is docked). **Redock**, or closing the
+window, brings the Room back; reloading or navigating that window closes it
+and redocks too, and reloading or closing Studio closes it. `room_window.cljs` owns the state
+(`[:ui :room-window]`: docked, popping, popped, redocking) and the window
+handle.
+
+The window is an empty same-origin `window.open` page. Studio portals its own
+Room panel into it, so the panel reads the same app-db, the same state socket
+and the same commands; a cue changed in Studio reaches the Room on the next
+render. The window loads its own copy of the preview module
+(`engine-loader.js`), so the single preview engine, its worker, observers,
+display clock and pixel ratio belong to the window that shows the canvas. The
+docked engine is disposed in the React commit that mounts the popped-out one,
+and the reverse on redock: there is one engine, one worker and one WebGL
+context throughout, and the show itself is never touched. Each document makes
+a fresh canvas; no canvas moves between documents. The engine restarts on each
+move, so the Room shows "Preparing preview" for its first frame again.
+
+While popped out the Room renders whenever its window is visible, although
+Studio has keyboard focus (the canvas announces an external `room-window`
+owner, as PiP and sharing do). If the Studio window itself is hidden, the Room
+window flushes pending Reagent renders from its own animation frames.
+
+Why not the alternatives: Document Picture-in-Picture is Chromium-only, stays
+small and always on top, and cannot be placed on or fill another display. A
+second Studio route subscribed as another viewer would open a second socket
+and app instance and needs its own renderer lifecycle coordination; the portal
+keeps one of each.
+
+Move to display uses the Window Management API (`getScreenDetails`, with its
+permission prompt) to pick a display other than Studio's, cycling through
+three or more, and moves and resizes the window to that display's available
+area. Press Fullscreen there to fill it. A single display (`screen.isExtended`
+false) is reported without a prompt. A denied permission, a browser without
+the API, or a browser that silently ignores the move each leave the window
+usable with an explanation of manual placement. Removing the Room's display is
+announced, and reconnecting one offers Move to display again. PiP and sharing
+controls move with the Room; their capture belongs to the panel, so popping
+out or redocking ends an active PiP or share instead of leaving an encoder on
+a canvas that no longer exists. Start it again from the new location.
+
+`dev/studio/room-pop-out-qa.mjs` exercises this in headless Chrome against a
+production build with emulated displays (CDP `Emulation.addScreen`) and a
+granted or denied permission. That is not evidence for physical displays,
+hot-plugging, Safari, the packaged Mac app or real AirPlay receivers.
 
 ## API and lifecycle
 

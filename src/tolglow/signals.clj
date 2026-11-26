@@ -263,3 +263,20 @@
      {:samples samples :units units :window (:window options (/ 1.0 1024.0))
       :angle-span-deg (:angle-span-deg options 360.0) :selection selection
       :start-phase start :cycles cycles})))
+
+(defn glyph
+  "One cycle of a registered waveform for a shape picker: `:samples` values
+  (default 49) of its :value channel over phase 0…1, normalised by the declared
+  :range and rounded to four decimals. It is sampled from the compiled IR that
+  `preview` and the engine run, with the waveform's default parameters unless
+  :params binds them, so a glyph is never a hand-drawn lookalike. Returns nil
+  when a sample is not finite."
+  ([state id] (glyph state id {}))
+  ([state id options]
+   (let [definition (lookup state id (:version options))
+         [low high] (:range definition [0.0 1.0])
+         span (- (double high) (double low))
+         samples (:samples (preview state id (merge {:samples 49} (select-keys options [:version :params :samples]))))
+         values (map :value samples)]
+     (when (and (pos? span) (every? registry/finite-number? values))
+       (mapv #(/ (Math/round (* 10000.0 (/ (- (double %) low) span))) 10000.0) values)))))

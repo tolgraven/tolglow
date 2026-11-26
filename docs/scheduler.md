@@ -125,6 +125,16 @@ place of a top-level timing key.
   controller on the same parameter wins over the ramp overlay. The ramp still
   advances and commits its target, which becomes the base value under the
   modulation.
+- **Pending hot reload.** A ramp overlay does not follow a reload candidate.
+  On a frame with a pending reload, both the candidate inputs and the
+  last-good inputs (see
+  [modulation](modulation.md#a-frame-with-a-pending-hot-reload)) rest on the
+  same ramp overlays. The candidate reads only the ramped parameters its
+  schemas still accept, so a healthy revision that removes or retypes a ramped
+  parameter is not rejected because of the ramp. A renderer rejection rebuilds
+  the engine result from its frame model; the owner takes the ramp overlay out
+  of that result too, so the rejection does not commit the ramp's frame value
+  and the ramp keeps running.
 - **Supersede.** A new ramp, or a scheduled set on the same destination,
   replaces the running ramp. A new ramp starts from the old ramp's value at its
   start, so there is no jump. `:recent` records
@@ -253,7 +263,9 @@ Push, the REPL and agents read this one projection. Keep the shape stable: the
 `:status` is one of `:fired`, `:rejected` (with `:message`), `:missed`,
 `:cancelled` or `:completed` (ramps). `:category` is one of `:cue`,
 `:instance`, `:param`, `:ramp`, `:master`, `:variable`, `:macro`, `:scene` or
-`:callback`. Values are not rounded.
+`:callback`. Values are not rounded. A ramp outcome (`:completed` or
+`:cancelled`) also keeps the ramp's `:from`, `:curve`, `:unit`, `:over`,
+`:start` and `:end`, so the [timeline](timeline.md) can still draw it as a bar.
 
 The projection changes only when the schedule changes. It does not publish a
 ramp's live value. A consumer derives progress from `:start`, `:end` and the
@@ -375,6 +387,13 @@ real owner tick and captures ArtDmx packets from the output sink:
   requester whose source has no adapter cannot move or cancel anything. A group
   gain change leaves an opacity ramp running, and a group opacity change
   cancels it.
+
+[`modulation_reload_test.clj`](../test/tolglow/effects/modulation_reload_test.clj)
+covers ramps on a frame with a pending hot reload: a running ramp composes
+with both reload outcomes byte-identically to a show that never published the
+rejected revision, a renderer-rejected reload does not commit the ramp's frame
+value, and an accepted revision that drops a ramped parameter is not faulted by
+the ramp.
 
 ## Remaining gaps
 
