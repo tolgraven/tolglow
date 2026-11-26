@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Build TolglowVideoBridge against a Syphon.framework (BSD-2, github.com/Syphon).
+#   SYPHON_FRAMEWORK_DIR=<directory containing Syphon.framework> native/VideoBridge/build [output]
+# The framework is not vendored. A packaged Studio embeds the official release
+# under Contents/Frameworks and sets TOLGLOW_VIDEO_BRIDGE to the built helper.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+: "${SYPHON_FRAMEWORK_DIR:?Set SYPHON_FRAMEWORK_DIR to the directory that contains Syphon.framework}"
+out="${1:-$root/target/video-bridge/TolglowVideoBridge}"
+mkdir -p "$(dirname "$out")"
+xcrun swiftc -O -target arm64-apple-macos14.0 \
+  -F "$SYPHON_FRAMEWORK_DIR" -framework Syphon -framework Metal -framework MetalPerformanceShaders -framework AppKit \
+  -Xlinker -rpath -Xlinker "$SYPHON_FRAMEWORK_DIR" -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
+  -o "$out" "$root/native/VideoBridge/main.swift"
+echo "$out"

@@ -36,6 +36,7 @@
             [tolglow.agents :as agents]
             [tolglow.autopilot.actions :as conductor-actions]
             [tolglow.spatial :as spatial]
+            [tolglow.video.mapping :as video-mapping]
             [tolglow.spatial.actions :as spatial-actions]
             [tolglow.spatial.cues :as spatial-cues]
             [tolglow.fixtures.library :as fixture-service]
@@ -384,6 +385,7 @@
   (variable-blocks/compile-model model)
   (registry/validate-public-query-ids! (get-in model [:settings :studio :public-queries]))
   (when-let [s (get-in model [:settings :spatial])] (spatial/settings s))
+  (when-let [s (get-in model [:settings :video])] (video-mapping/validate! s))
   (when (contains? (:settings model) :lighting-capacity)
     (capacity/settings (get-in model [:settings :lighting-capacity])))
   (when (contains? (:settings model) :expressive)

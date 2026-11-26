@@ -122,7 +122,12 @@
             [tolglow.agents :as agents]
             [afterglow.control.devices.repl :as devices]
             [tolglow.composition.response :as response]
-            [tolglow.composition.envelope :as envelope])
+            [tolglow.composition.envelope :as envelope]
+            [tolglow.compiler.video :as video-output]
+            [tolglow.video.hub :as video-hub]
+            [tolglow.video.mapping :as video-mapping]
+            [tolglow.video.preview :as video-preview]
+            [tolglow.video.sampler :as video-sampler])
   (:import [java.util Arrays UUID]
            [java.util.concurrent LinkedBlockingQueue]))
 
@@ -203,6 +208,8 @@
             :autopilot (get-in model [:variables :lighting/autopilot] {:enabled? false})
             :audio/energy (get-in model [:variables :audio/energy])
             :lighting-scenes (lighting-scenes/snapshot model (scene-eligible-ids runtime fixtures))
+            :video (when (or (seq (get-in model [:settings :video :sources])) (seq (get-in model [:settings :video :mappings])))
+                     (video-preview/project (:video runtime) (:video-latch snapshot) fixtures (:video-preview-plans runtime)))
             :personalities (:projection (personality-views runtime model))
             :receiver-surfaces (:receivers optics)
             :surface-aim (get-in model [:variables :surface-aim] {})
@@ -506,7 +513,10 @@
       :optics-plan (atom (reflections/plan (:rig model)))
       :patch (atom {:fixtures fixtures :compiled patch :retirement (retirement/plan nil nil patch)
                     :brightness-gains (preview/brightness-gains fixtures)})
-      :compile (cached-compile compiler-context)}]
+      :compile (cached-compile compiler-context)
+      ;; Video sources open on their own thread, outside the lighting frame (#672).
+      :video (video-hub/create (:video-options options {}))
+      :video-preview-plans (video-sampler/plan-cache 16)}]
        (reset! runtime-ref runtime)
        runtime)))
 
@@ -961,6 +971,8 @@
     :spatial-cue (spatial-cues/spawn model payload time-ms command)
     :autopilot-authored (autopilot/accept-authored model payload time-ms command)
     :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
+    :video-mapping {:model (update-in model [:settings :video] video-mapping/apply-operation payload)
+                    :ack {:status :accepted}}
     :personality (personalities/apply-operation model payload)
     :event-subscriber (let [inline-registration (::inline-registration payload)]
                         (when (and inline-registration (nil? (get-in runtime [:event-callbacks :inline-handlers])))
@@ -1939,7 +1951,10 @@
                           :frame-number (inc (get model :frame-number 0))
                           :responses (:responses model)
                           :adaptive-intervals (get-in sampling [:inputs :keyframe-intervals])})
+        ;; Video frames latch once per lighting frame and hold while stopped (#672).
+        video-latch (video-hub/latch (:video runtime) model (:video-latch before))
         frame-input (merge {:time-ms time-ms :epoch (:epoch model) :show-id (:show-id model)
+                            video-output/input-key video-latch
                             :keyframes (:keyframes before) :keyframe-params input-overrides
                             :keyframe-generation (:responses model) :spatial-aims (get-in space [:fields :aims])
                             :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
@@ -2077,7 +2092,7 @@
                              setpoint (fog-control/publish previous-control (:status setpoint)))
                   updated (advance-light-scenes runtime (lighting/publish with-fog frame) patch frame time-ms bypass?)]
               (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
-     :output frame :variable-observation variables
+     :output frame :variable-observation variables :video-latch video-latch
      ::waveforms/response-frame response-frame
      ::show-events/intent-emissions (:intent-emissions result)
      :preview-hdr (when (:hdr? frame-input) (or hdr-opts {}))
@@ -2528,7 +2543,9 @@
          (when-let [{:keys [receipt] :as device} @restoring-device]
            (when (and (realized? receipt) (= :accepted (:status @receipt)))
              (reopen-restoring-device! runtime device)))
-         (rdm/reconcile! (:rdm runtime)))))))
+         (rdm/reconcile! (:rdm runtime))
+         (when @(:running runtime)
+           (video-hub/request-reconcile! (:video runtime) (get-in @(:state runtime) [:model :settings :video :sources]))))))))
 
 (defn- prepare-rig-edit [model proposed]
   (let [basis (:rig model)
@@ -2751,6 +2768,7 @@
                               #(when (realized? (:audition-worker runtime))
                                  (.shutdownNow ^java.util.concurrent.ExecutorService @(:audition-worker runtime)))
                               #(duplex/stop! (:audio-returns runtime))
+                              #(video-hub/stop! (:video runtime))
                               #(development/close! (:development runtime))
                               #(connections/close! (:connections runtime))
                               (fn [] (locking (:devices runtime)
@@ -3333,6 +3351,24 @@
       (let [manager (session-operation! runtime payload (fn [_] (connections/sensors (:connections runtime))))]
         (sensors/stop-osc! manager))
       (throw (ex-info "Unknown sensor operation" {:operation operation})))))
+
+(defn video-action!
+  "Video sources and strip mappings (#672) for Ring and the REPL.
+  :status       source status and sampled strip colours from the latched frame
+  :edit         apply one `tolglow.video.mapping/apply-operation` edit through
+                the show queue; sources reconcile after it commits
+  :syphon       list Syphon servers through the native helper
+  :frame-jpeg   bytes of a latched frame, {:source id :max-width px}"
+  [runtime operation payload]
+  (case operation
+    :status (let [state @(:state runtime)]
+              (video-preview/project (:video runtime) (:video-latch state) (get-in state [:model :rig :fixtures])
+                                     (:video-preview-plans runtime)))
+    :edit (let [receipt (submit! runtime :video-mapping (dissoc payload :runtime-id :expected-epoch))]
+            receipt)
+    :syphon (video-hub/list-syphon (:video runtime))
+    :frame-jpeg (video-preview/frame-jpeg (:video-latch @(:state runtime)) (:source payload) (:max-width payload 640))
+    (throw (ex-info "Unknown video operation" {:operation operation}))))
 
 (defn repl-action!
   "Session operations for the explicit development REPL. Restoring history never
