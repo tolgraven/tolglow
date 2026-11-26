@@ -112,9 +112,9 @@ try {
   // The running REPL reads the selection Studio made.
   assert.equal(await repl('(get-in (tolglow.show/snapshot runtime) [:personalities :active :id])'), ':squircle');
 
-  // A selection made at the REPL reaches the open Studio view.
+  // A selection made at the REPL reaches the open Studio view. The console pretty-prints data (#717).
   const accepted = await repl('(select-keys @(tolglow.show/submit! runtime :personality {:op :select :id :zigzag-shaky :seed 5}) [:status :active])');
-  assert.equal(accepted, '{:status :accepted, :active {:mix [{:id :zigzag-shaky, :version 1, :weight 1.0}], :seed 5}}');
+  assert.equal(accepted, '{:status :accepted :active {:mix [{:id :zigzag-shaky :version 1 :weight 1.0}] :seed 5}}');
   await page.waitForFunction(() => document.querySelector('.personality-current strong')?.textContent === 'Zig to the zag but shaky');
   await choices.getByRole('button', { name: 'Zig to the zag but shaky', pressed: true }).waitFor();
   await panel.getByText('seed 5', { exact: false }).waitFor();
@@ -141,7 +141,7 @@ try {
 
   // A refusal reads the same at the REPL and over HTTP, and the committed feel stays.
   const refusedAtRepl = await repl('(select-keys @(tolglow.show/submit! runtime :personality {:op :select :id :no-such-feel}) [:status :message :details])');
-  assert.equal(refusedAtRepl, '{:status :rejected, :message "Unknown personality", :details {:id :no-such-feel}}');
+  assert.equal(refusedAtRepl, '{:status :rejected :message "Unknown personality" :details {:id :no-such-feel}}');
   const refused = await api('/api/personality', { op: 'select', id: 'no-such-feel' });
   assert.equal(refused.status, 422);
   assert.deepEqual([refused.data.message, refused.data.details], ['Unknown personality', { id: 'no-such-feel' }]);

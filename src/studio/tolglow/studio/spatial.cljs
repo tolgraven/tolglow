@@ -5,6 +5,7 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.autopilot-signal :as signal]
+            [tolglow.studio.pretty :as pretty]
             [tolglow.studio.spatial-drafts :as drafts]
             [tolglow.studio.spatial-fields :refer [number-input xyz]]
             [tolglow.studio.volume-sculpt :as sculpt]
@@ -87,7 +88,7 @@
   (r/with-let [draft (r/atom nil) error (r/atom nil)]
     [:details [:summary title]
      [:label [:span title]
-      [:textarea {:aria-label title :value (or @draft (pr-str spec)) :spell-check false
+      [:textarea {:aria-label title :value (or @draft (pretty/edn spec)) :spell-check false
                   :on-change #(reset! draft (.. % -target -value))}]]
      [:button.button {:type "button" :disabled (nil? @draft)
                       :on-click #(try (let [v (reader/read-string @draft)]

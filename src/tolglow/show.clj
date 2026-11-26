@@ -32,6 +32,7 @@
             [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.controllers.page-overview :as page-overview]
             [tolglow.controllers.push-variations :as push-variations]
+            [tolglow.surface.link :as surface]
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
             [tolglow.effects.material-design :as material-design]
@@ -122,6 +123,8 @@
             [afterglow.reactive.clock :as reactive-clock]
             [tolglow.agents :as agents]
             [afterglow.control.devices.repl :as devices]
+            [afterglow.control.devices.x-touch :as x-touch]
+            [taoensso.timbre :as timbre]
             [tolglow.composition.response :as response]
             [tolglow.composition.envelope :as envelope])
   (:import [java.util Arrays UUID]
@@ -245,6 +248,8 @@
             :auto (select-keys (:auto model) [:enabled? :config :reasons])
             :responses (vec (:responses model))
             :effect-group-channels (group-channels/projection model)
+            :control-surfaces (surface/with-refusals (surface/projection model) ; surfaces, links, session boxes (#705)
+                                                     (some-> (:surface-refusals runtime) deref (dissoc ::sequence)))
             :effect-events (get-in model [:variables :runtime] {:event-sequence 0 :events []})
             :patch (routing/snapshot model)
             :modulation {:controllers (mapv #(select-keys % [:id :config :ticks :next-beat :owner-instance-id])
@@ -403,6 +408,8 @@
              (cadence/settings config))
          _ (when-let [s (get-in model [:settings :spatial])] (spatial/settings s))
          _ (when-let [opts (get-in model [:settings :lighting-capacity])] (capacity/settings opts))
+         _ (when-let [opts (get-in model [:settings :controllers])] (surface/validate-settings! opts))
+         _ (surface/validate-state! model)
          _ (rig/validate-rig (:rig model))
          _ (venue-fog/validate-saved! model)
          _ (when-let [opts (get-in model [:settings :fog-control])] (fog-control/settings opts))
@@ -495,7 +502,7 @@
                             :input (atom {:epoch (:epoch model) :position initial-position
                                           :used-sessions #{(get-in initial-position [:provenance :session-id])}})})
       :sync-input (atom {:epoch (:epoch model) :events []})
-      :connections owned :devices (atom {}) :device-reconnects (atom {}) :development development
+      :connections owned :devices (atom {}) :device-reconnects (atom {}) :surface-refusals (atom {}) :development development
       :rdm (rdm/create (merge (:rdm-options options)
                              {:state rdm-state :model! #(get @(:state @runtime-ref) :model)
                               :identity! #(let [runtime @runtime-ref]
@@ -543,6 +550,7 @@
     (cond-> (-> model
                 subscribers/restart
                 spatial/clear-session
+                surface/detach-all
                 (assoc :composition-runs {} :composition-tokens {} :modulation (modulation/new-state))
                 (autopilot/clear-session time-ms command)
                 (cond-> (get-in model [:extensions :tolglow.autopilot/hdr-clock])
@@ -673,6 +681,8 @@
                    variation? (variations/apply-command model envelope)
                    (group-channels/operation? operation)
                    (control/apply-domain-command model envelope group-channels/apply-operation)
+                   (surface/operations operation)
+                   (control/apply-domain-command model envelope surface/apply-operation)
                    (subscribers/operations operation)
                    (control/apply-domain-command model envelope subscribers/apply-operation)
                    ;; Linked knobs (#666).
@@ -1200,6 +1210,7 @@
               _ (when (= scope :section-patterns) (section-patterns/override-settings settings))
               _ (when (= scope :studio) (registry/validate-public-query-ids! (:public-queries settings)))
               _ (when (= scope :lighting-capacity) (capacity/settings settings))
+              _ (when (= scope :controllers) (surface/validate-settings! settings))
               _ (when (= scope :audio-returns) (audio-return/validate-config model settings))
               settings (if (= scope :expressive) (expressive-mapping/normalize-config settings) settings)
               updated (-> (if (= scope :fog-control)
@@ -2941,18 +2952,32 @@
 
 (def ^:private device-command-wait-ms 5000)
 
-(defn- xtouch-effect-group-channels [view model]
-  (let [{:keys [manual] :as mixer} (group-channels/projection model)
-        expanded (when (= :manual view)
-                   (into #{} (map :id) (mapcat #(tree-seq :groups :groups %) manual)))]
-    (into []
-          (comp (filter #(= :group (:type %)))
-                (map (fn [{:keys [id name level depth instance-ids]}]
-                       {:group-id id :label name :level level :active? (boolean (seq instance-ids))
-                        :color (cond (= :overlay view) [1 0 1]
-                                     (pos? depth) [0 0 1]
-                                     :else [0 1 1])})))
-          (group-channels/channel-rows mixer view expanded))))
+(defn- surface-command!
+  "Enqueue a host surface command without waiting: the owner may be ticked by
+  the caller, and a device reads a missing surface as strip 0. A watcher off
+  the owner thread logs a refusal and keeps it for the snapshot's
+  :control-surfaces until that surface's next accepted host command."
+  [runtime epoch surface-id command]
+  (let [refusals (:surface-refusals runtime)
+        ;; Watchers finish in any order; only the latest command for a surface
+        ;; may record or clear its refusal.
+        sequence (-> (swap! refusals update-in [::sequence surface-id] (fnil inc 0)) (get-in [::sequence surface-id]))
+        latest? #(= sequence (get-in % [::sequence surface-id]))
+        receipt (submit! runtime (merge {:source {:adapter :surface :session-id surface-id} :expected-epoch epoch}
+                                        command))]
+    (.start (doto (Thread. (fn []
+                             (let [{:keys [status] :as ack} (deref receipt 30000 {:status :timeout})
+                                   refusal (merge {:op (:op command)} (select-keys ack [:status :code :message]))]
+                               (cond
+                                 (= :accepted status)
+                                 (swap! refusals #(cond-> % (latest? %) (dissoc surface-id)))
+                                 @(:running runtime)
+                                 (do (timbre/warn "Control surface command refused" surface-id (:op command)
+                                                  (select-keys ack [:status :code :message]))
+                                     (swap! refusals #(cond-> % (latest? %) (assoc surface-id refusal)))))))
+                           "tolglow-surface-command")
+              (.setDaemon true)))
+    receipt))
 
 (defn connect-device!
   "Explicit REPL connection; no devices open at application startup. kind is
@@ -2970,7 +2995,10 @@
   :variation/cycle button in :button-bindings. The display must support
   presentation receipts. This option also enables exact beat-ratio edits.
   X-Touch accepts :effect-group-view :manual or :overlay. Group faders occupy
-  the first strips, followed by any configured cue channels."
+  the first strips, followed by any configured cue channels. Each X-Touch or
+  extender registers a control surface under its session ID; its window is
+  show data, moved by its bank buttons, Studio and :control-surface/bank. Join
+  separately connected surfaces with link-surfaces!."
   [runtime kind {:keys [session-id ::restore-lease ::reconnect-lease] :as options}]
   (let [id session-id epoch (get-in @(:state runtime) [:model :epoch])]
     (when-not (and (string? id) (seq id)) (throw (ex-info "Device requires session-id" {})))
@@ -2993,11 +3021,20 @@
                          :midi devices/open-midi! :osc devices/open-osc! :sensor devices/open-sensor!
                          (throw (ex-info "Unknown device kind" {:kind kind})))
             push-3-variation-pads? (and (= kind :push-3) (true? (:cue-variation-pads? options)))
+            x-touch? (= :x-touch kind)
+            ;; Validates the cue channel bindings before any port opens.
+            _ (when x-touch? (x-touch/profile (select-keys options [:channels])))
+            surface-content (when x-touch?
+                              {:type :mixer-strips :effect-group-view effect-group-view
+                               :cue-strips (vec (:channels options []))})
             options (cond-> (dissoc options ::restore-lease ::reconnect-lease)
-                      effect-group-view
-                      (assoc :group-channels (partial xtouch-effect-group-channels effect-group-view)
-                             :group-level-command (fn [id value]
-                                                    {:op :effect-groups/level-set :channel-id id :value value}))
+                      x-touch?
+                      (assoc :channels []
+                             :group-channels #(surface/strip-channels % id surface-content)
+                             :group-level-command (fn [group value]
+                                                    {:op :effect-groups/level-set :channel-id group :value value})
+                             :model-bank #(surface/strip-offset % id)
+                             :bank-command (fn [move] {:op :control-surface/bank :target id :viewport :strips :move move}))
                       push-source (assoc :operator-gestures? true :target-search targets/search
                                          :launch-receipt cue-timing/receipt)
                       (or push-3-variation-pads? (and push-source (true? (:cue-variations? options))))
@@ -3032,6 +3069,7 @@
                                                                 (cond-> {:status :pending :command-id (:command-id command)}
                                                                   gesture? (assoc :completion reply)))))}))
             device (cond-> device
+                     x-touch? (assoc ::surface-id id)
                      push-3-variation-pads? (assoc ::ratio-pad-operator operator-id)
                      restore-lease (assoc ::restore-lease restore-lease))]
         (if (locking (:lock runtime)
@@ -3041,7 +3079,13 @@
                 (swap! (:devices runtime) assoc id device)
                 (swap! (:device-reconnects runtime) dissoc id)
                 true))
-          device
+          (do (when x-touch?
+                (surface-command! runtime epoch id
+                                  {:op :control-surface/attach :surface-id id
+                                   :descriptor (if (:extender? options) :behringer/x-touch-ext :behringer/x-touch)
+                                   :role (if (:extender? options) :extender :main)
+                                   :viewports {:strips surface-content}}))
+              device)
           (do (devices/close! device)
               (throw (ex-info "Show stopped or changed while connecting device" {}))))))))
 
@@ -3050,7 +3094,41 @@
     (when-let [device (locking (:lock runtime)
                         (swap! (:device-reconnects runtime) dissoc id)
                         (get (first (swap-vals! (:devices runtime) dissoc id)) id))]
-      (devices/close! device))))
+      (devices/close! device)
+      (when (and (::surface-id device) @(:running runtime))
+        (surface-command! runtime (get-in @(:state runtime) [:model :epoch]) id
+                          {:op :control-surface/detach :surface-id id})))))
+
+(defn link-surfaces!
+  "Join attached surfaces into one logical surface with one window. Members
+  are surface IDs or {:surface-id :viewport :offset} maps; each uses its first
+  viewport unless :viewport is given. Modes:
+  {:mode :extend :direction :right} (the default) packs each next surface
+  beside the previous one by its actual width (:left, :down, :up too);
+  {:mode :mirror} shows the leader's window on every member;
+  {:mode :follow :offset {:x 1}} keeps each follower that many pages after the
+  leader, which still pages by its own width. Returns the receipt promise.
+
+    @(link-surfaces! runtime \"desk\" [\"xt-main\" \"xt-ext\"])
+    @(link-surfaces! runtime \"twins\" [\"xt-main\" \"xt-ext\"] {:mode :mirror})"
+  ([runtime link-id surface-ids] (link-surfaces! runtime link-id surface-ids {}))
+  ([runtime link-id surface-ids options]
+   (submit! runtime (merge {:op :control-surface/link :link-id link-id
+                            :source {:adapter :repl :session-id "repl"}}
+                           (surface/link-command surface-ids options)))))
+
+(defn unlink-surfaces!
+  "Dissolve a link; each member keeps the window it was showing."
+  [runtime link-id]
+  (submit! runtime {:op :control-surface/unlink :link-id link-id :source {:adapter :repl :session-id "repl"}}))
+
+(defn bank-surface!
+  "Move a surface's or link's window: a move keyword (:previous :next
+  :channel-previous :channel-next :first :last :up :down) or a map with :to
+  {:x :y} or :reveal cell-key. Returns the receipt promise."
+  [runtime target move]
+  (submit! runtime (merge {:op :control-surface/bank :target target :source {:adapter :repl :session-id "repl"}}
+                          (if (keyword? move) {:move move} move))))
 
 (defn expressive-preview
   "Preview the selected cue's expressive mapping using the connected device's
@@ -3077,7 +3155,8 @@
   (let [[model output windows] (locking (:lock runtime)
                                  (let [{:keys [model output keyframes]} @(:state runtime)
                                        atmosphere (venue-fog/for-save runtime output)
-                                       model (merge (fog-scan/disarm model) (connections/export-state (:connections runtime) model))]
+                                       model (merge (surface/detach-all (fog-scan/disarm model))
+                                                    (connections/export-state (:connections runtime) model))]
                                    [(cond-> (fog-deadline/save-ids model output)
                                       atmosphere (assoc-in venue-fog/saved-path atmosphere))
                                     output keyframes]))]

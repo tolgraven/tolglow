@@ -14,6 +14,7 @@
             [tolglow.transit :as transit]
             [reitit.ring :as ring]
             [tolglow.studio.page-routes :as pages]
+            [tolglow.studio.pretty :as pretty]
             [ring.middleware.content-type :refer [wrap-content-type]]
             [ring.middleware.head :refer [wrap-head]]
             [ring.middleware.params :refer [assoc-query-params]]
@@ -263,6 +264,10 @@
   (fn [{:keys [json-params]}]
     (heartbeat! (get-in json-params [:source :session-id]))
     (let [payload (cond-> json-params
+                    ;; Only a device's own connection may speak as that surface (#705).
+                    (and (= operation :command) (= "control-surface" (some-> (:op json-params) namespace))
+                         (#{:surface "surface"} (get-in json-params [:source :adapter])))
+                    (assoc-in [:source :adapter] :web)
                     (and (= operation :command) (= :page/put (:op json-params))
                          (vector? (get-in json-params [:page :cells])))
                     (update-in [:page :cells] #(into {} (map (fn [{:keys [x y cue-id]}] [[x y] cue-id])) %))
@@ -337,7 +342,7 @@
     "/api/definition" (fn [{:keys [query-params]}]
                         (if-let [definition (definition! (keyword (get query-params "kind" "effects"))
                                                          (keyword (get query-params "id" "")))]
-                          (ok (cond-> {:source (pr-str definition)}
+                          (ok (cond-> {:source (pretty/edn definition)}
                                 (= "true" (get query-params "data")) (assoc :definition definition)))
                           (data-response 404 {:message "Definition not found"})))
     "/api/export" (fn [_] {:status 200 :headers {"Content-Type" transit-type

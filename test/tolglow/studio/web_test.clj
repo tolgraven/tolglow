@@ -24,7 +24,7 @@
         command (app (request :post "/api/command" {:op "page/put" :page {:id "page-a" :cells [{:x 1 :y 2 :cue-id "red"}]}}))]
     (is (= ["ipad one" nil] @seen))
     (is (= "main" (get (json/read-str (:body state)) "show-id")))
-    (is (= "{:kind :effects, :id :user/wash}" (get (json/read-str (:body definition)) "source")))
+    (is (= "{:id :user/wash :kind :effects}" (get (json/read-str (:body definition)) "source")))
     (is (= 200 (:status command)))
     (doseq [uri ["/" "/studio/preview.js"]]
       (let [asset (app {:request-method :get :uri uri})]

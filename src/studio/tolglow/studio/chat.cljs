@@ -2,7 +2,8 @@
   "Streaming agent chat and runtime-only provider settings through Ring APIs."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
-            [tolglow.studio.events :as events]))
+            [tolglow.studio.events :as events]
+            [tolglow.studio.pretty :as pretty]))
 
 (defonce stream (atom nil))
 
@@ -252,7 +253,7 @@
   [:details.chat-tool
    [:summary [:span (if (= :running (:status tool)) "◌" "✓")] [:span (str/replace (:name tool "Tool") "_" " ")]
     [:span.small.muted (if (= :running (:status tool)) "running" "completed")]]
-   [:pre (js/JSON.stringify (clj->js (or (:result tool) (:arguments tool))) nil 2)]])
+   [:pre (pretty/json (or (:result tool) (:arguments tool)))]])
 
 (defn- conversation [db]
   (let [chat (:chat db)
