@@ -39,7 +39,9 @@
       (is (seq (remove :with-agent-change? boundaries)))
       (is (every? :on-bar? (remove :with-agent-change? boundaries)) (pr-str boundaries))
       (is (pos? (:launches launch-timing)))
-      (is (zero? (:beyond-one-frame launch-timing)) (pr-str launch-timing)))
+      (is (zero? (:beyond-one-frame launch-timing)) (pr-str launch-timing))
+      (is (zero? (:before-due launch-timing)))
+      (is (= (:measured launch-timing) (:due-on-own-grid launch-timing)) "bar intervals fall due on bar lines, beats on beats"))
     (testing "every phrase is measured with novelty against the one before"
       (is (= (range 12) (map :phrase phrases)))
       (is (every? number? (keep :novelty (rest phrases))))
@@ -48,7 +50,11 @@
       (is (< (get-in by-kind [:quiet :mean-brightness]) (get-in by-kind [:breakdown :mean-brightness])
              (get-in by-kind [:groove :mean-brightness])))
       (is (< 0.9 (get-in by-kind [:quiet :dark-fraction])))
-      (is (zero? (get-in by-kind [:quiet :strobe-fraction])))
+      ;; The return's plan can enter its strobe bar on the quiet line itself;
+      ;; that look is a carry-over, ended when the agent's change lands.
+      (is (< (get-in by-kind [:quiet :strobe-fraction]) 0.02))
+      (is (or (zero? (get-in by-kind [:quiet :strobe-fraction]))
+              (pos? (:carry-over-launches (last responses)))))
       (is (zero? (get-in by-kind [:breakdown :strobe-fraction]))))
     (testing "the stop in the return holds the plan and resumes without catching up"
       (is (= 1 (count stops)))
@@ -58,7 +64,7 @@
     (testing "the report says it is headless and leaves the judgement to the operator"
       (is (re-find #"Headless rehearsal" report))
       (is (re-find #"Operator note" report))
-      (is (not-any? #(re-find #"off the bar grid|not darker|did not hold" %) flags) (pr-str flags)))))
+      (is (not-any? #(re-find #"off the bar grid|not darker|did not hold|off their interval" %) flags) (pr-str flags)))))
 
 (deftest a-late-agent-is-measured-and-a-stale-one-is-named
   (let [late (rehearsal/club 670 {:passage {:agent-lag-beats 2}})
@@ -67,7 +73,15 @@
     (is (some #(pos? (:carry-over-launches %)) (:responses late)) "the previous mood keeps launching into the new section")
     (is (some #(re-find #"landed 2\.\d+ beats after the section line; the previous mood launched" %) (:flags late)))
     (is (some :stale? (:responses stale)))
-    (is (some #(re-find #"suggestion for breakdown landed in return" %) (:flags stale)))))
+    (is (some #(re-find #"suggestion for breakdown landed in return" %) (:flags stale))))
+  (testing "an agent answering a frame early launches the new mood before the line instead"
+    (let [early (rehearsal/club 670 {:passage {:agent-lag-beats -0.3}})
+          lines (rest (:responses early))]
+      (is (every? #(neg? (:late-beats %)) lines))
+      (is (every? #(zero? (:carry-over-launches %)) lines))
+      (is (every? #(pos? (:early-launches %)) lines))
+      (is (not-any? :stale? lines))
+      (is (some #(re-find #"beats before the line; the new mood launched" %) (:flags early))))))
 
 (def concert-review (delay (rehearsal/concert 670)))
 
@@ -76,7 +90,10 @@
         [a b] takes
         sections (into {} (map (juxt :section identity)) (:sections comparison))]
     (is (every? (comp nil? :error) takes))
-    (is (empty? flags) (pr-str flags))
+    (testing "the only flags are the previous mood's launches on section lines"
+      (is (seq flags))
+      (is (every? #(re-find #"line the previous mood launched" %) flags) (pr-str flags))
+      (is (every? #(<= (:carry-over-launches %) 2) (mapcat :agent takes))))
     (testing "the agent posts every anchor once and both takes start them on their bar"
       (is (every? #(= {"schedule_events" :accepted "configure_auto" :accepted} (:receipts %))
                   (map (comp first :agent) takes)))

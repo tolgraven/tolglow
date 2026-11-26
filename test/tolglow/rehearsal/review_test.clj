@@ -80,3 +80,13 @@
     (is (some #(re-find #"Strobe ran in the quiet section" %) (:flags review)))
     (is (some #(re-find #"quiet section is not darker" %) (:flags review)))
     (is (re-find #"Operator note" (:report review)))))
+
+(deftest silent-phrases-are-not-repeats
+  (let [frames (concat (for [b (range 0 16)] (club-frame (double b) [:wash]))
+                       (for [b (range 16 64)] (club-frame (double b) [] :lit #{} :brightness 0.0))
+                       (for [b (range 64 80)] (club-frame (double b) [] :lit #{} :brightness 0.0)))
+        review (review/club {:passage club-passage :frame-ms 500.0 :frames (vec frames) :transport []
+                             :agent [] :gestures [] :schedule {:recent []} :status {}})]
+    (is (= [nil 1.0 nil nil nil] (mapv :novelty (:phrases review))))
+    (is (empty? (:repeat-phrases (:repetition review))))
+    (is (not-any? #(re-find #"repeat the same look" %) (:flags review)))))

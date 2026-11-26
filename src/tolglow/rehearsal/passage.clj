@@ -134,7 +134,7 @@
   intentional quiet passage, with one transport stop in the return. Nobody
   plays; stems drive nothing here, the agent alone chooses. Options: :bpm,
   :sections, :stop {:beat b :hold-ms ms}, and :agent-lag-beats to make the
-  agent answer each section line that many beats late."
+  agent answer each section line that many beats late (negative: early)."
   ([seed] (club seed {}))
   ([seed {:keys [bpm sections stop agent-lag-beats] :or {bpm 124.0 sections club-sections agent-lag-beats 0}}]
    (let [sections (with-starts sections)
@@ -185,9 +185,10 @@
 (defn concert
   "A Push-led concert passage at 120 BPM, verse/chorus twice, as take :a or
   :b. Both takes share the song, its section anchors and the agent; the take
-  seed changes the drummer's fills, the bass rests, the auto fills and the
-  performer's Push gestures. Kick onsets launch :kick-hit, snare onsets
-  :snare-hit, and the bass level drives the verse anchor's level."
+  seed changes the drummer's fills, the bass rests and the auto fills, and
+  each take has its own fixed table of Push gestures (take-gestures). Kick
+  onsets launch :kick-hit, snare onsets :snare-hit, and the bass level
+  drives the verse anchor's level."
   ([seed take] (concert seed take {}))
   ([seed take {:keys [bpm sections] :or {bpm 120.0 sections concert-sections}}]
    (when-not (contains? take-gestures take)

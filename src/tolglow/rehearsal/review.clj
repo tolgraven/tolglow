@@ -44,11 +44,12 @@
   "Every instance once, from the first frame it appears in, with the music
   and auto sections that frame was in."
   [frames]
-  (vals (reduce (fn [seen {:keys [instances music auto-section beat]}]
+  (vals (reduce (fn [seen {:keys [instances music auto-section beat auto-interval]}]
                   (reduce-kv (fn [seen id i]
                                (if (contains? seen id) seen
                                    (assoc seen id (assoc (select-keys i [:cue-id :adapter :params :launch-mode :duration :started-at-beat])
-                                                         :id id :music music :auto-section auto-section :seen-beat beat))))
+                                                         :id id :music music :auto-section auto-section :seen-beat beat
+                                                         :interval auto-interval))))
                              seen instances))
                 (sorted-map-by (fn [a b] (compare [(count a) a] [(count b) b])))
                 frames)))
@@ -62,9 +63,12 @@
   [launches]
   (into #{} (map (fn [l] [(:cue-id l) (get-in l [:params :color])])) launches))
 
-(defn- jaccard-distance [a b]
+(defn- jaccard-distance
+  "Distance between two sets, or nil when both are empty: two silent
+  phrases are not a repeat of each other."
+  [a b]
   (let [union (set/union a b)]
-    (if (empty? union) 0.0 (- 1.0 (/ (count (set/intersection a b)) (double (count union)))))))
+    (when (seq union) (- 1.0 (/ (count (set/intersection a b)) (double (count union)))))))
 
 (defn- frame-light [frames]
   (let [playing (filter :playing? frames)]
@@ -92,7 +96,7 @@
                                            :colours (count (distinct (keep #(get-in % [:params :color]) ls)))
                                            :new-cues (vec (sort-by str (set/difference cues seen)))
                                            :retained-cues (vec (sort-by str (set/intersection cues (set (map first previous)))))
-                                           :novelty (when (some? previous) (round (jaccard-distance sig previous) 3))}
+                                           :novelty (when (some? previous) (some-> (jaccard-distance sig previous) (round 3)))}
                                           (dissoc (frame-light fs) :frames)))
                   :seen (into seen cues) :previous sig}))
              {:rows [] :seen #{} :previous nil} phrases))))
@@ -115,14 +119,16 @@
   [frames]
   (->> frames
        (keep #(when (and (:auto-section %) (:auto-section-start %))
-                [[(:auto-section %) (:auto-section-start %)] (:beat %)]))
-       (reduce (fn [seen [k beat]] (if (some #(= k (first %)) seen) seen (conj seen [k beat]))) [])
-       (mapv (fn [[[id start] seen-beat]]
+                [[(:auto-section %) (:auto-section-start %)] [(:beat %) (:auto-section-length %)]]))
+       (reduce (fn [seen [k v]] (if (some #(= k (first %)) seen) seen (conj seen [k v]))) [])
+       (mapv (fn [[[id start] [seen-beat length]]]
                (let [with-agent? (> start (+ seen-beat eps))
                      beat (if with-agent? seen-beat start)]
                  {:auto-section id :beat beat :position (bar-label beat) :timer-start start
                   :with-agent-change? with-agent?
+                  :length length
                   :on-bar? (on-grid? beat passage/beats-per-bar)
+                  :on-own-grid? (boolean (and length (on-grid? beat length)))
                   :on-phrase? (on-grid? beat passage/beats-per-phrase)})))))
 
 (defn- agent-responses
@@ -132,7 +138,9 @@
   section than the one it was for (stale)."
   [passage agent-log auto-launches]
   (mapv (fn [{:keys [section section-beat accepted-beat suggested-beat status receipts tools]}]
-          (let [after (sort (keep #(when (> (:seen-beat % (start-beat %)) (+ accepted-beat eps)) (start-beat %)) auto-launches))
+          (let [new-mood (filter #(> (:seen-beat % (start-beat %)) (+ accepted-beat eps)) auto-launches)
+                after (sort (map start-beat new-mood))
+                early (filter #(< (start-beat %) (- section-beat eps)) new-mood)
                 ;; The previous mood can still decide on the frame that crosses
                 ;; the line, just before the agent's change lands on that frame:
                 ;; such a launch was already committed (seen) by then.
@@ -145,20 +153,33 @@
              :late-beats (round (- accepted-beat section-beat) 3)
              :first-launch-beat (first after)
              :carry-over-launches (count carry)
-             :landed-in landed :stale? (and (some? landed) (not= landed section))
+             :early-launches (count early)
+             :landed-in landed :stale? (and (some? landed) (> accepted-beat section-beat) (not= landed section))
              :status status :tools tools
              :receipts (update-vals receipts :status)}))
         agent-log))
 
 (defn- launch-timing
-  "How far after their beat auto launches started. A decision fires on the
-  first frame at or after its beat, so up to one frame late is expected."
-  [auto-launches bpm frame-ms]
-  (let [offsets (map #(let [b (start-beat %)] (- b (Math/floor (+ b eps)))) auto-launches)
-        frame-beats (/ (* frame-ms bpm) 60000.0)]
-    {:launches (count offsets)
-     :on-beat (count (filter #(< % eps) offsets))
-     :max-after-beat (round (if (seq offsets) (apply max offsets) 0.0) 3)
+  "How auto launches sit on their own interval's grid. Each decision falls
+  due on a grid point of its interval (a beat, bar or phrase line, or the
+  interval's own length when shorter); the decision fires on the first
+  frame at or after it. A decision taken when a new configuration arrives
+  is immediate by design and is counted apart."
+  [auto-launches agent-beats bpm frame-ms]
+  (let [frame-beats (/ (* frame-ms bpm) 60000.0)
+        configure? (fn [l] (and (some #(< (abs (- (start-beat l) %)) eps) agent-beats)
+                                (> (:seen-beat l (start-beat l)) (+ (start-beat l) eps))))
+        timed (remove configure? (filter :interval auto-launches))
+        rows (map (fn [l] (let [{:keys [started-at step]} (:interval l)]
+                            {:offset (- (start-beat l) started-at) :on-grid? (on-grid? started-at step)}))
+                  timed)
+        offsets (map :offset rows)]
+    {:launches (count auto-launches)
+     :at-configuration (count (filter configure? auto-launches))
+     :measured (count rows)
+     :due-on-own-grid (count (filter :on-grid? rows))
+     :max-after-due (round (if (seq offsets) (apply max offsets) 0.0) 3)
+     :before-due (count (filter #(< % (- eps)) offsets))
      :frame-beats (round frame-beats 3)
      :beyond-one-frame (count (filter #(> % (+ frame-beats eps)) offsets))}))
 
@@ -194,6 +215,20 @@
                     :decisions-in-first-resumed-beat (- (:auto-tick (last first-beat) 0) (:auto-tick (second (last run)) 0))}))))
            transport))))
 
+(defn- carry-over-flags
+  "Flags for the previous mood deciding on a section line before the
+  agent's change, and for a change that arrived early enough that the new
+  mood launched in the previous section."
+  [take responses]
+  (let [who (if take (str "Take " (name take) ": ") "")]
+    (concat
+     (for [r responses :when (and (<= (:late-beats r) late-threshold-beats) (pos? (:carry-over-launches r)))]
+       (str who "On the " (name (:section r)) " line the previous mood launched " (:carry-over-launches r)
+            " looks before the agent's change landed, " (:late-beats r) " beats after the line."))
+     (for [r responses :when (pos? (:early-launches r 0))]
+       (str who "The agent's change for " (name (:section r)) " landed " (- (:late-beats r)) " beats before the line; the new mood launched "
+            (:early-launches r) " looks in the previous section.")))))
+
 (defn- club-flags [{:keys [boundaries responses contrast repetition stops launch-timing]}]
   (let [by-kind (group-by :kind contrast)
         brightness (fn [kind] (mean (map :mean-brightness (by-kind kind))))]
@@ -205,14 +240,16 @@
         (str "The agent's change for " (name (:section r)) " landed " (:late-beats r) " beats after the section line"
              (when (pos? (:carry-over-launches r)) (str "; the previous mood launched " (:carry-over-launches r) " looks into it"))
              "."))
-      (for [r responses :when (and (<= (:late-beats r) late-threshold-beats) (pos? (:carry-over-launches r)))]
-        (str "On the " (name (:section r)) " line the previous mood launched " (:carry-over-launches r)
-             " looks before the agent's change landed " (:late-beats r) " beats later."))
+      (carry-over-flags nil responses)
       (for [r responses :when (:stale? r)]
         (str "The agent's suggestion for " (name (:section r)) " landed in " (name (:landed-in r))
              "; nothing in the show refuses a stale configure_auto."))
       (when (pos? (:beyond-one-frame launch-timing))
-        [(str (:beyond-one-frame launch-timing) " auto launches started more than one frame after their beat.")])
+        [(str (:beyond-one-frame launch-timing) " auto launches started more than one frame after their decision fell due.")])
+      (when (pos? (:before-due launch-timing))
+        [(str (:before-due launch-timing) " auto launches started before their decision fell due.")])
+      (when (< (:due-on-own-grid launch-timing) (:measured launch-timing))
+        [(str (- (:measured launch-timing) (:due-on-own-grid launch-timing)) " auto decisions fell due off their interval's grid.")])
       (when (>= (get-in repetition [:longest-repeat-run :length]) 3)
         [(str "Phrases " (str/join ", " (get-in repetition [:longest-repeat-run :phrases]))
               " repeat the same look; listen for whether that holds a motif or stalls.")])
@@ -238,6 +275,11 @@
        (str/join ", " (map #(str (name (:id %)) " bars " (:start-bar %) "–" (+ (:start-bar %) (:bars %))) (:sections passage)))
        ". Frames every " (fmt frame-ms) " ms."))
 
+(def ^:private agent-note
+  (str "The recorded agent has no lookahead (:agent-lag-beats " "shifts it): it hears a section line on the first frame at or past it, "
+       "and configure_auto applies on arrival. Carry-over launches are those the previous mood made from the line until the change landed, "
+       "including on the frame that crossed the line; early launches are the new mood's launches before the line."))
+
 (def ^:private headless-note
   (str "Headless rehearsal: the real show owner rendered every frame into a capture sink. No Room window, "
        "device, Live set or provider was used; the agent's rounds are recorded tool calls. Bars and beats count from zero."))
@@ -245,22 +287,25 @@
 (defn- club-report [{:keys [passage frame-ms boundaries responses phrases repetition contrast stops flags launch-timing]}]
   (str "# Club rehearsal\n\n" headless-note "\n\n" (passage-line passage frame-ms) "\n\n"
        "## Agent responses to section lines\n\n"
-       (table ["Section" "Line" "Accepted at beat" "Late (beats)" "Carry-over launches" "First launch of the new mood" "Receipts"]
-              (map (fn [r] [(:section r) (:position r) (:accepted-beat r) (:late-beats r) (:carry-over-launches r) (:first-launch-beat r)
+       (table ["Section" "Line" "Accepted at beat" "Late (beats)" "Carry-over launches" "Early launches" "First launch of the new mood" "Receipts"]
+              (map (fn [r] [(:section r) (:position r) (:accepted-beat r) (:late-beats r) (:carry-over-launches r) (:early-launches r) (:first-launch-beat r)
                             (str/join ", " (map (fn [[k v]] (str k " " (fmt v))) (:receipts r)))])
                    responses))
-       "\nCarry-over launches are auto launches the previous mood made from the section line until the agent's change landed, including on the frame that crossed the line.\n"
+       "\n" agent-note "\n"
        "\n## Phrasing\n\n"
-       (let [{:keys [launches on-beat max-after-beat frame-beats beyond-one-frame]} launch-timing]
-         (str launches " auto launches: " on-beat " exactly on a beat, the latest " max-after-beat
-              " beats after its beat (one frame is " frame-beats " beats), " beyond-one-frame " later than one frame.\n\n"))
+       (let [{:keys [launches at-configuration measured due-on-own-grid max-after-due before-due frame-beats beyond-one-frame]} launch-timing]
+         (str launches " auto launches. " at-configuration " were immediate decisions when a configuration arrived. Of the other "
+              measured ", " due-on-own-grid " fell due on their own interval's grid (beat, bar or phrase), and the latest started "
+              max-after-due " beats after its decision fell due (one frame is " frame-beats " beats); " beyond-one-frame
+              " later than one frame, " before-due " before it.\n\n"))
        (let [planned (remove :with-agent-change? boundaries)]
          (str (count boundaries) " auto sections began: " (- (count boundaries) (count planned))
               " with an agent change (timed by the agent row above) and " (count planned) " at a plan boundary, "
-              (count (filter :on-bar? planned)) " of them on the bar grid and "
+              (count (filter :on-bar? planned)) " of them on the bar grid, "
+              (count (filter :on-own-grid? planned)) " on a multiple of their own length and "
               (count (filter :on-phrase? planned)) " on the phrase grid.\n\n"))
-       (table ["Auto section" "Began" "With agent change" "On bar" "On phrase"]
-              (map (juxt :auto-section :position :with-agent-change? :on-bar? :on-phrase?) boundaries))
+       (table ["Auto section" "Began" "Length (beats)" "With agent change" "On bar" "On own length" "On phrase"]
+              (map (juxt :auto-section :position :length :with-agent-change? :on-bar? :on-own-grid? :on-phrase?) boundaries))
        "\n## Phrase by phrase\n\n"
        "Novelty is the Jaccard distance between a phrase's set of launched [cue, colour] pairs and the previous phrase's; 0 repeats it exactly.\n\n"
        (table ["Phrase" "First bar" "Music" "Auto sections" "Launches" "Cues" "New" "Novelty" "Lit" "Brightness" "Strobe" "Operator note"]
@@ -293,7 +338,7 @@
         result {:id :club :passage (dissoc passage :onsets :levels) :frame-ms frame-ms
                 :boundaries boundaries :responses responses :phrases phrases
                 :repetition (repetition phrases)
-                :launch-timing (launch-timing auto-launches (:bpm passage) frame-ms)
+                :launch-timing (launch-timing auto-launches (map :accepted-beat agent) (:bpm passage) frame-ms)
                 :contrast (section-contrast passage frames)
                 :stops (stops frames transport)
                 :launch-count (count auto-launches)
@@ -381,9 +426,9 @@
                          {:section id
                           :fills-a (count fa) :fills-b (count fb) :fills-shared (count shared)
                           :shared-fills-with-other-params (count (filter #(not= (params-a %) (params-b %)) shared))
-                          :fill-distance (round (jaccard-distance fa fb) 3)
+                          :fill-distance (some-> (jaccard-distance fa fb) (round 3))
                           :stem-hits-a (count sa) :stem-hits-b (count sb) :stem-hits-shared (count (set/intersection sa sb))
-                          :stem-distance (round (jaccard-distance sa sb) 3)
+                          :stem-distance (some-> (jaccard-distance sa sb) (round 3))
                           :gestures-a (vec (keep #(when (= id (section-of (:passage a) (:beat %))) (:label %)) (:gestures a)))
                           :gestures-b (vec (keep #(when (= id (section-of (:passage b) (:beat %))) (:label %)) (:gestures b)))}))
                      sections)}))
@@ -391,6 +436,7 @@
 (defn- concert-flags [takes comparison]
   (vec
    (concat
+    (mapcat #(carry-over-flags (:take %) (:agent %)) takes)
     (for [t takes a (:anchors t) :when (:missed? a)]
       (str "Take " (name (:take t)) " missed the " (name (:cue-id a)) " anchor at " (:position a) "."))
     (for [t takes a (:anchors t) :when (and (:late-beats a) (> (:late-beats a) eps))]
@@ -407,6 +453,8 @@
     (str "# Concert rehearsal: two takes\n\n" headless-note "\n\n"
          "Take a: " (passage-line (:passage a) frame-ms) "\n\nTake b: " (passage-line (:passage b) frame-ms) "\n\n"
          "## Section anchors\n\n"
+         "Both takes post the same anchor events, so \"Kept\" checks that the scheduler started them identically; "
+         "it says nothing about the agent's choices.\n\n"
          (table ["Section" "Anchor" "Take a starts" "Take b starts" "Kept"]
                 (map (juxt :section :cue-id :a :b :kept?) (:anchors comparison)))
          "\n## What varied\n\n"
@@ -430,9 +478,10 @@
                              "none recorded")
                            ".\n")))
          "\n## Agent\n\n"
-         (table ["Take" "Section" "Line" "Late (beats)" "Receipts"]
+         agent-note "\n\n"
+         (table ["Take" "Section" "Line" "Late (beats)" "Carry-over launches" "Early launches" "Receipts"]
                 (for [t takes r (:agent t)]
-                  [(:take t) (:section r) (:position r) (:late-beats r)
+                  [(:take t) (:section r) (:position r) (:late-beats r) (:carry-over-launches r) (:early-launches r)
                    (str/join ", " (map (fn [[k v]] (str k " " (fmt v))) (:receipts r)))]))
          "\n## Measured flags\n\n"
          (if (empty? flags) "None.\n" (apply str (map #(str "- " % "\n") flags)))

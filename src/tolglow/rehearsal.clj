@@ -22,6 +22,7 @@
             [clojure.java.io :as io]
             [clojure.pprint :as pprint]
             [tolglow.automation.launch-params :as launch-params]
+            [tolglow.automation.grid :as grid]
             [tolglow.integrations.agent :as agent]
             [tolglow.lighting-capacity :as capacity]
             [tolglow.registry :as registry]
@@ -150,6 +151,11 @@
      :music (:id (passage/section-at passage beat))
      :auto-section (get-in model [:auto :state :section :id])
      :auto-section-start (get-in model [:auto :state :section :timer :started-at])
+     :auto-section-length (get-in model [:auto :state :section :timer :duration :value])
+     :auto-interval (let [{:keys [started-at duration]} (get-in model [:auto :state :interval-timer])]
+                      (when (= :beats (:unit duration))
+                        {:started-at started-at :value (:value duration)
+                         :step (grid/step (:source duration) (:value duration) (:meter duration))}))
      :auto-tick (get-in model [:auto :state :tick])
      :instances instances
      :lit lit :brightness brightness

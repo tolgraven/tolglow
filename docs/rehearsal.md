@@ -86,17 +86,23 @@ the host's agent turnaround, kept apart from frame timing.
 - *Agent responses.* For each section line: the beat the change was accepted,
   how late that was, *carry-over launches* (looks the previous mood launched
   from the line until the change landed, including on the frame that crossed
-  the line) and whether the suggestion landed in a later section than it was
-  for (stale).
-- *Phrasing.* Each auto section the planner entered, on or off the bar and
-  phrase grid. The first section after an agent change begins with that change
-  and is reported at it. Auto launches: how many started exactly on a beat and
-  how far after their beat the latest one started; a decision fires on the
-  first frame at or after its beat, so up to one frame is expected.
+  the line), *early launches* (the new mood's launches before the line, when
+  the change arrives early) and whether the suggestion landed in a later
+  section than it was for (stale). The recorded agent has no lookahead: it
+  hears a line on the first frame at or past it, so carry-over is expected on
+  most lines; `:agent-lag-beats` (negative for early) moves it.
+- *Phrasing.* Each auto section the planner entered: on the bar grid, on a
+  multiple of its own length, on the phrase grid. A section whose timer starts
+  after the frame that entered it is reported at that frame. Auto launches are
+  measured against their own interval: whether each decision fell due on its
+  interval's grid (a bar line for a bar interval, and so on) and how long after
+  that point it fired; up to one frame is expected. Decisions taken the moment
+  a configuration arrives are immediate by design and counted apart.
 - *Phrase by phrase.* Launches, cues, new cues and *novelty*: the Jaccard
   distance between a phrase's set of launched `[cue colour]` pairs and the
   previous phrase's. Below 0.2 counts as a repeat; the longest run of repeats
-  is reported, since it may be a held motif or a stall.
+  is reported, since it may be a held motif or a stall. Two phrases with no
+  launches are not compared.
 - *Contrast.* Per music section: mean lit heads and brightness from the same
   calibrated meter as the budget, the share of dark frames (at most one head
   lit) and of frames with a strobe cue running.
@@ -106,7 +112,10 @@ the host's agent turnaround, kept apart from frame timing.
 **Concert**, per take and across the two:
 
 - *Anchors.* Each section's anchor started on its bar, late or missed, and
-  whether both takes started it at the same beat.
+  whether both takes started it at the same beat. Both takes post the same
+  anchor events, so this checks the scheduler, not the agent's choices.
+- *Agent.* Per take, the same lateness, carry-over and early launches as in
+  the club.
 - *Variation.* Per section: auto fills and stem hits in each take, how many
   `[cue start-beat]` pairs they share, the Jaccard distance between the takes,
   shared fills whose seeded parameters differ, and the Push gestures of each.
@@ -117,7 +126,8 @@ the host's agent turnaround, kept apart from frame timing.
   `:human-override`.
 
 Flags list measured problems only: off-grid plan boundaries, late or stale
-agent changes, launches more than a frame after their beat, three or more
+agent changes, carry-over and early launches, decisions due off their
+interval's grid or firing more than a frame late, three or more
 repeated phrases, strobe in a quiet or breakdown section, a quiet section not
 darker than the groove, a stop that did not hold, missed or late anchors,
 anchors that differ between takes, overwritten or refused gestures.
@@ -145,18 +155,23 @@ takes.
 The same passage and seed reproduce every accepted action, committed instance,
 receipt and output hash per frame (`rehearsal/replay-signature`). Another seed,
 or another take, is another performance: the take seed changes the drummer's
-fills, the bass rests, the auto choices and the performer's gestures. A
+fills, the bass rests and the auto choices, and each take has its own fixed
+table of Push gestures. A
 real-time `play!` is not frame-for-frame repeatable; use `run-take` for that.
 
 ## Verification
 
 - `tolglow.rehearsal-test` (real show owner, captured output): the club passage
   replays exactly and another seed differs; four agent changes accepted within
-  one frame through the tool path; plan boundaries on the bar grid; launches
-  within one frame of their beat; quiet darker than the breakdown, darker than
-  the groove, neither strobing; the stop holds and resumes with at most one
-  decision. A two-beat-late agent shows carry-over launches; a 40-beat-late one
-  is named stale. Two concert takes keep all four anchors on their bars, differ
+  one frame through the tool path; plan boundaries on the bar grid; every
+  decision due on its own interval's grid and fired within one frame of it;
+  quiet darker than the breakdown, darker than the groove; no strobe in the
+  breakdown, and in the quiet only a carry-over from the line; the stop holds
+  and resumes with at most one decision. A two-beat-late agent shows carry-over
+  launches; a 40-beat-late one is named stale; one answering 0.3 beats early
+  has no carry-over but launches the new mood before each line. Two concert
+  takes keep all four anchors on their bars (a scheduler check, given identical
+  anchor events), report carry-over on the section lines, differ
   in chorus fills, fill parameters and stem hits, accept every Push 3 gesture,
   and take B's grab cancels the build ramp with `:human-override` and holds;
   a taken sweep stays with the performer until they release it while auto goes
@@ -164,22 +179,29 @@ real-time `play!` is not frame-for-frame repeatable; use `run-take` for that.
   as EDN. A Room rehearsal of four bars at 180 BPM on a started show posts the
   anchors before play and launches them, the hits and the gesture.
 - `tolglow.rehearsal.review-test`: the overwritten-gesture, anchor, repeat,
-  stop and contrast detectors fire on hand-built frames.
-- `tolglow.automation.policy-test/beat-decisions-stay-on-the-grid-when-frames-miss-the-beat`:
-  the first club rehearsal found beat one-shots sliding off the beat at
-  124 BPM (a 125 ms frame is 0.258 beats and each interval started from the
-  late frame). Musical intervals now start where the previous one fell due.
+  stop and contrast detectors fire on hand-built frames, and two silent
+  phrases are not a repeat.
+- `tolglow.automation.policy-test`: the first club rehearsal found beat
+  one-shots sliding off the beat at 124 BPM (a 125 ms frame is 0.258 beats and
+  each interval started from the late frame). Regressions cover that, auto
+  enabled just before a bar or phrase line, a frame gap landing just before a
+  line, an interval changed mid-run, a section plan entered just before a line
+  (each decides once, then on the next line at least half an interval on), and
+  a clock rebase that shifted the interval off the grid.
 
 ## What the first rehearsal found
 
 - Beat one-shots slid off the beat at 124 BPM: each interval started from the
-  frame that took the decision. Fixed in the planner (see Verification).
+  frame that took the decision. Fixed in the planner with one grid rule for
+  intervals and section plans (see [auto show](auto-show.md)).
 - `configure_auto` applies when it arrives. An agent answering a section line
   on the first frame past it lands up to a frame late, and on that frame the
   previous mood still decides once: on seed 670 the groove launched 3 looks on
-  the breakdown's first frame, the return 2 on the quiet's, and the agent's
-  change then released them. Answering a frame early would launch the new mood
-  just before the line instead. A configuration that takes effect on a given
+  the breakdown's first frame, and the return entered its strobe bar on the
+  quiet's first frame, before the agent's change released them. In the concert
+  the verse looks flash on each chorus downbeat the same way (1–2 launches per
+  line). Answering 0.3 beats early, measured, removes the carry-over but
+  launches the new mood 1–2 times in the previous section. A configuration that takes effect on a given
   bar, as scheduled events do, would remove both; that is a planner decision
   for the operator.
 - A Push-sourced write cancels an agent ramp with `:human-override` only when
