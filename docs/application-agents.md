@@ -221,3 +221,26 @@ acceptance gate.
 The Coding agent pane receives `[:development/task-events task-id cursor]` on the operator’s Transit WebSocket. Each update contains up to 16 retained events, the next cursor, and the newest available cursor. Studio reads successive pages after a gap and refreshes the task’s status when history has expired. Closing the pane drops its stream. The task continues in its workspace, and opening the pane again resumes from the last displayed cursor. The final status remains visible after the stream is released.
 
 After building Studio and its local development container, run `lein run -m tolglow.qa.developer-output` to exercise the browser workflow. It uses a local provider fixture, an actual Docker zsh session and a paused show.
+
+## Show-authoring agents and the beat clock
+
+Application agents edit the program. Show-authoring agents (the Studio chat
+and `tolglow.integrations.agent` tool loop) operate the running show through
+the same owner commands as the REPL and Studio. For a smooth show, such an
+agent plans ahead instead of sending parameter values at a high rate. It posts
+a batch of events on the beat clock with `schedule_events`. It describes each
+gradual change as a target value, a musical duration and an easing curve. The
+show owner runs the animation.
+
+```json
+{"events": [
+  {"id": "p8-wash", "op": "cue/launch", "cue-id": "wash", "grid": {"phrases": 1}},
+  {"id": "p8-swell", "op": "param/ramp", "cue-id": "wash", "param": "level",
+   "to": 0.9, "over": {"bars": 8}, "curve": "ease-in-out", "grid": {"phrases": 1}}]}
+```
+
+`inspect_schedule` returns a compact read-back of the current bar, upcoming
+events, ramp progress and recent outcomes. `cancel_scheduled` withdraws events
+by ID, label, destination or `mine?`. A human gesture on a ramped control
+cancels that ramp. Command shapes, the projection and seek or tempo behavior
+are in [beat-clock scheduling](scheduler.md).

@@ -367,6 +367,54 @@
 #view-perform .cue-index { position: static; font-size: 9px; font-weight: 500; line-height: 12px; font-variant-numeric: tabular-nums; color: #e3e9dd; opacity: .78; }
 #view-perform .cue-dot { position: static; justify-self: end; }
 #view-perform .cue-name { grid-column: 1 / -1; align-self: end; font-weight: 550; line-height: 1.15; font-size: 12px; overflow-wrap: anywhere; }
+/* Running pads breathe with the transport, like playing clips on Push (#659).
+   The light layer sits between the pad's live preview colour and its label,
+   so the preview keeps playing underneath. Without #cue-grid[data-breath=live]
+   (paused, stale, hidden, no tempo, reduced motion) pads show a steady
+   indicator. While live, each layer is a CSS opacity animation lasting one
+   beat (--beat-duration). pad_breath.cljs aligns their start times to the
+   projected transport: phase 0 is the downbeat, as Afterglow's Push grid. */
+.cue-cell { isolation: isolate; }
+.cue-cell:not(.empty)::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(130% 100% at 50% 110%,
+              color-mix(in srgb, var(--cue-color) 82%, white) 0%,
+              color-mix(in srgb, var(--cue-color) 30%, transparent) 52%,
+              transparent 82%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cue-color) 75%, white),
+              inset 0 0 16px color-mix(in srgb, var(--cue-color) 40%, transparent);
+  opacity: 0;
+}
+.cue-cell.running::before { opacity: .4; }
+.cue-cell.held::before { opacity: .62; }
+.cue-cell.releasing::before { opacity: .14; }
+.cue-cell.queued:not(.active)::before { opacity: .22; }
+/* Raised cosine, brightest on the beat. */
+@keyframes pad-breath {
+  0%, 100% { opacity: .72; animation-timing-function: cubic-bezier(.37, 0, .63, 1); }
+  50% { opacity: .12; animation-timing-function: cubic-bezier(.37, 0, .63, 1); }
+}
+@keyframes pad-breath-held {
+  0%, 100% { opacity: .9; animation-timing-function: cubic-bezier(.37, 0, .63, 1); }
+  50% { opacity: .55; animation-timing-function: cubic-bezier(.37, 0, .63, 1); }
+}
+/* Afterglow's ending blink: bright through 40% of the beat, then dim. */
+@keyframes pad-release-blink { 0%, 40% { opacity: .3; } 46%, 100% { opacity: .05; } }
+/* Push's queued blink, twice per beat. */
+@keyframes pad-queued-flash { 0%, 50% { opacity: .36; } 54%, 100% { opacity: .06; } }
+@keyframes pad-queued-dot { 0%, 50% { opacity: 1; } 54%, 100% { opacity: .3; } }
+@media (prefers-reduced-motion: no-preference) {
+  #cue-grid[data-breath=live] .cue-cell.running::before { animation: pad-breath var(--beat-duration) infinite; will-change: opacity; }
+  #cue-grid[data-breath=live] .cue-cell.held::before { animation-name: pad-breath-held; }
+  #cue-grid[data-breath=live] .cue-cell.releasing::before { animation: pad-release-blink var(--beat-duration) linear infinite; will-change: opacity; }
+  #cue-grid[data-breath=live] .cue-cell.queued:not(.active)::before { animation: pad-queued-flash calc(var(--beat-duration) / 2) linear infinite; will-change: opacity; }
+  #cue-grid[data-breath=live] .cue-cell.queued .cue-dot { animation: pad-queued-dot calc(var(--beat-duration) / 2) linear infinite; }
+}
 @container (min-width: 660px) {
   #view-perform .cue-cell:not(.empty) { padding: 8px; }
   #view-perform .cue-name { font-size: 13px; }
