@@ -44,6 +44,7 @@
             [tolglow.studio.performance :as performance]
             [tolglow.studio.lighting-scenes :as lighting-scenes]
             [tolglow.studio.lighting-policy :as lighting-policy]
+            [tolglow.studio.personality :as personality]
             [tolglow.studio.autopilot :as autopilot]
             [tolglow.studio.workspace :as workspace]))
 
@@ -611,7 +612,7 @@
                               :on-click #(set-ui! [:performance-section] id)} title])]]
      [:div.performance-layout {:class (when (get-in db [:ui :preview-expanded?]) "preview-expanded")}
       [:div.performance-launch [cue-grid db]]
-      [:div.performance-live [section-pattern-panel db] [performance/board db parameter-control]
+      [:div.performance-live [section-pattern-panel db] [personality/panel] [performance/board db parameter-control]
        [effect-group-mixer/panel] [knobs/panel db]
        [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
       [:div.performance-room [preview-panel db]]

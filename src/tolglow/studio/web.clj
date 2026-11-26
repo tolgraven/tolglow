@@ -227,7 +227,8 @@
    "/api/sensors/audience-zone" :sensor-audience-zone
    "/api/command" :command "/api/spatial/cues" :spatial-cue "/api/definition" :definition "/api/rig" :rig
    "/api/aim-path" :aim-path "/api/surface-aim" :surface-aim
-   "/api/lighting-scene" :lighting-scene "/api/audio/returns/configure" :audio-return-configure
+   "/api/lighting-scene" :lighting-scene "/api/personality" :personality
+   "/api/audio/returns/configure" :audio-return-configure
    "/api/composition" :composition "/api/composition/append" :composition-append "/api/composition/run" :composition-run
    "/api/composition/stop" :composition-stop "/api/import" :import "/api/auto" :auto
    "/api/response" :response "/api/response/release" :response-release
