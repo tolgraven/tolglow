@@ -1589,3 +1589,79 @@
                                             {:status "pending" :message "Command remains queued"}))]
       (is (= saved (draft queued)))
       (is (nil? (:pending (spatial-drafts/state queued)))))))
+
+(deftest room-draft-controls-apply-or-discard-the-staged-revision
+  (let [view (assoc (:show base) :runtime-id "draft-owner" :show-id :main
+                    :scene-draft {:draft {:id "scene" :revision 2 :operations [{:op :cue/launch} {:op :instance/end}]}
+                                  :status :auditioning})
+        db (:db (full-frame base view))
+        applying (transition db [:studio/scene-draft-apply {:bars 1}])
+        [_ sent] (first (:fx applying))
+        reply (transition (:db applying) (conj (:on-success sent) {:status "scheduled" :due-beat 8}))
+        discarding (transition db [:studio/scene-draft-discard])
+        [_ dropped] (first (:fx discarding))
+        failed (transition (:db discarding) (conj (:on-failure dropped) "Stale draft"))
+        idle (:db (full-frame base (:show base)))]
+    (is (= {:id "scene" :revision 2 :operations 2 :status :auditioning :due-beat nil :stale nil :missed nil
+            :pending? false :connected? true}
+           (events/scene-draft-control db)))
+    (is (= "scene-draft/apply" (:op sent)))
+    (is (= {:draft-id "scene" :expected-draft-revision 2 :grid {:bars 1}} (dissoc (:fields sent) :command-id)))
+    (is (= (get-in applying [:db :scene-draft-request :id]) (get-in sent [:fields :command-id])))
+    (is (:pending? (events/scene-draft-control (:db applying))))
+    (is (= [:studio/toast "Room draft applies at beat 8."] (:dispatch reply)))
+    (is (nil? (get-in reply [:db :scene-draft-request])))
+    (is (= "scene-draft/discard" (:op dropped)))
+    (is (= [:studio/failure "Room draft: Stale draft"] (:dispatch failed)))
+    (testing "only a confirmed result is reported as done"
+      (let [confirmed (fn [request reply] (:dispatch (transition (:db request) (conj (:on-success (second (first (:fx request)))) reply))))]
+        (is (= [:studio/toast "Room draft applied to the show."] (confirmed applying {:status "accepted"})))
+        (is (= [:studio/toast "Room draft discarded."] (confirmed discarding {:status :accepted :discarded? true})))
+        (is (= [:studio/failure "Room draft: Command remains queued. Check the banner before trying again."]
+               (confirmed applying {:status "pending" :message "Command remains queued"})
+               (confirmed discarding {:status "pending" :message "Command remains queued"})))))
+    (testing "only the Room renders the audition frame"
+      (let [live {:head-1 {:emitted-color [1 0 0]}} drafted {:head-1 {:emitted-color [0 0 1]}}
+            staged (:db (full-frame base (assoc view :output {:values live}
+                                                :draft-output {:values drafted :draft {:id "scene" :revision 2}})))]
+        (is (= drafted (get-in (events/room-show staged) [:output :values])))
+        (is (= live (get-in staged [:show :output :values])))
+        (is (= live (get-in (events/room-show (:db (full-frame base (assoc view :output {:values live}))))
+                            [:output :values])))))
+    (is (nil? (events/scene-draft-control idle)))
+    (is (empty? (transition idle [:studio/scene-draft-discard])))))
+
+(deftest room-draft-banner-reports-what-the-repl-reports
+  (let [view (assoc (:show base) :runtime-id "draft-owner" :show-id :main)
+        draft {:id "scene" :revision 2 :operations [{:op :cue/launch}]}
+        control (fn [scene-draft] (events/scene-draft-control (:db (full-frame base (assoc view :scene-draft scene-draft)))))
+        note (comp events/scene-draft-note control)
+        missed (fn [code] {:status :missed :draft-id "scene" :draft-revision 2 :due-beat 8 :code code})]
+    (is (= "" (note {:draft draft :status :auditioning})))
+    (is (= " · applies at beat 8" (note {:draft draft :status :scheduled :pending-apply {:due-beat 8}})))
+    (is (= " · audition failed" (note {:draft draft :status :error :error {:message "boom"}})))
+    (testing "a stale draft names the dependency that changed"
+      (is (= :stale-registry (:stale (control {:draft draft :status :stale :stale :stale-registry}))))
+      (is (= " · stale: the rig changed. Stage it again" (note {:draft draft :status :stale :stale :stale-patch})))
+      (is (= " · stale: a cue or effect changed. Stage it again"
+             (note {:draft draft :status "stale" :stale "stale-registry"})))
+      (is (= " · stale: the material library changed. Stage it again"
+             (note {:draft draft :status :stale :stale :stale-prefabs}))))
+    (testing "a scheduled apply that missed its boundary stays visible until the next attempt"
+      (is (= {:due-beat 8 :code :clock-changed}
+             (:missed (control {:draft draft :status :auditioning :last-outcome (missed :clock-changed)}))))
+      (is (= " · the apply at beat 8 was missed: the clock source changed"
+             (note {:draft draft :status :auditioning :last-outcome (missed :clock-changed)})))
+      (is (= " · the apply at beat 8 was missed: the beat moved back"
+             (note {:draft draft :status :auditioning :last-outcome (missed "clock-moved-back")})))
+      (is (= " · stale: a cue or effect changed. Stage it again · the apply at beat 8 was missed: a cue or effect changed"
+             (note {:draft draft :status :stale :stale :stale-registry :last-outcome (missed :stale-registry)})))
+      (is (= " · the apply at beat 8 was missed: stale-instance"
+             (note {:draft draft :status :auditioning :last-outcome (missed :stale-instance)})))
+      (is (= " · applies at beat 12"
+             (note {:draft draft :status :scheduled :pending-apply {:due-beat 12} :last-outcome (missed :clock-changed)}))))
+    (testing "an outcome of another draft or revision is not this draft's"
+      (is (nil? (:missed (control {:draft draft :status :auditioning
+                                   :last-outcome (assoc (missed :clock-changed) :draft-revision 1)}))))
+      (is (nil? (:missed (control {:draft draft :status :auditioning
+                                   :last-outcome {:status :applied :draft-id "scene" :draft-revision 2}})))))))
