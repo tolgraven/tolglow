@@ -7,6 +7,7 @@
             [afterglow.time :as time]
             [tolglow.compiler :as compiler]
             [tolglow.compiler.blocks :as blocks]
+            [tolglow.compiler.capability :as capability]
             [tolglow.lighting-match :as matching]
             [tolglow.registry :as registry]))
 
@@ -25,10 +26,12 @@
                  (= (count fixtures) (count (set (map :id fixtures)))))
     (fail! [:fixtures] "Batch compiler needs distinct fixture IDs, finite xyz positions and optional finite [u v] pairs")))
 
-(defn- select-targets [fixtures selected {:keys [targets] :as output}]
+(defn- select-targets [fixtures selected {:keys [targets attribute] :as output}]
+  ;; A head without the output's attribute is skipped, never faulted (#688).
   (let [targets (when (some? targets) (set targets))
         fixtures (filterv #(and (or (nil? selected) (contains? selected (:id %)))
-                                (or (nil? targets) (contains? targets (:id %)))) fixtures)]
+                                (or (nil? targets) (contains? targets (:id %)))
+                                (capability/capable? % attribute)) fixtures)]
     (when (seq fixtures)
       (cond-> (assoc output :target-ids (mapv :id fixtures) :positions (mapv #(:position % [0 0 0]) fixtures))
         (some :surface-uv fixtures) (assoc :surface-uvs (mapv :surface-uv fixtures))))))
