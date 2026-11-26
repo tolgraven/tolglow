@@ -2056,7 +2056,19 @@
                                            {:code "no-drum-rack"} {:code "empty-pad" :note 68 :expected "Blue"}]))
         "pad problems of one kind share a line")
     (is (str/includes? html "Push 64 Pads · cells match Push"))
-    (is (= "push-64-pads" (get-in (connections/sync-payload base) [:live :pad-layout])) "Studio always saves an explicit layout")))
+    (is (= "push-64-pads" (get-in (connections/sync-payload base) [:live :pad-layout])) "Studio always saves an explicit layout")
+    (testing "Set up in Live and Write pad clip run the host's launcher operations, then show the projection again"
+      (let [setup (transition db [:connections/launcher-action :setup])
+            [_ setup-request] (first (:fx setup))
+            write (transition db [:connections/launcher-action :write-clip])
+            [_ write-request] (first (:fx write))
+            acted (transition (:db setup) [:connections/launcher-acted (connections/token (:db setup)) :launcher {:ready? true}])]
+        (is (= ["/api/live-launcher/setup" {:page-id "pads"}] [(:path setup-request) (:body setup-request)]))
+        (is (= ["/api/live-launcher/write-clip" {:page-id "pads"}] [(:path write-request) (:body write-request)]))
+        (is (= [:connections/launcher-refresh] (:dispatch acted)))
+        (is (not (contains? (get-in acted [:db :connections :pending]) :launcher)))))
+    (is (str/includes? (renderToStaticMarkup (r/as-element [connections/connection-view (:db done) (connections/state (:db done))]))
+                       "Set up in Live"))))
 
 (deftest an-edit-after-new-is-what-publishes
   ;; Studio dispatches New synchronously, so an edit typed straight after it lands on the

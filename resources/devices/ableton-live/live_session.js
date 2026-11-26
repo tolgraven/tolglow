@@ -39,6 +39,13 @@
   var TICK = 1 / 960;
   // A track whose name starts with this is Tolglow's to adopt and configure.
   var TOLGLOW_NAME = /^Tolglow(\s|$)/;
+  // A cue launcher track (#228). Other Tolglow tracks, such as the Capture
+  // cue track the companion hosts after #680 setup, are never adopted by it.
+  var LAUNCHER_NAME = /^Tolglow launcher(\s|$)/;
+  // Live stores a chain colour as the nearest entry of its palette, so a
+  // read-back this close to the requested colour is that colour: rewriting it
+  // would dirty the Set on every setup. Squared RGB distance.
+  var PALETTE_SNAP = 96 * 96;
 
   function fault(code, message) { var e = new Error(message); e.code = code; throw e; }
   function finite(n) { return typeof n === "number" && isFinite(n); }
@@ -681,19 +688,26 @@
     return {id: hostId, track: track, index: index, own: own, rack: rack, devices: deviceIds.length};
   };
   Session.prototype.rackPath = function (where) { return "live_set tracks " + where.index + " devices " + where.rack; };
+  function colorDistance(a, b) {
+    var d = function (shift) { return ((a >> shift) & 255) - ((b >> shift) & 255); };
+    return d(16) * d(16) + d(8) * d(8) + d(0) * d(0);
+  }
   Session.prototype.ensureLauncher = function (payload, mark) {
     var name = payload.name, row = payload["scroll-row"];
-    if (typeof name !== "string" || !TOLGLOW_NAME.test(name) || name.length > 128)
-      fault("track-name", "A launcher track name starts with Tolglow");
+    if (typeof name !== "string" || !LAUNCHER_NAME.test(name) || name.length > 128)
+      fault("track-name", "A launcher track name starts with Tolglow launcher");
     if (row !== undefined && row !== null && !integer(row, 0, 28)) fault("scroll-row", "The pad overview scrolls to rows 0-28");
     var where = this.launcherTrack(), current = String(this.read(where.track, "name")), result = {};
     if (!this.read(where.track, "has_midi_input")) fault("track-kind", "Place the companion on a MIDI track");
-    // Adopt only an empty track, one already Tolglow's, or one holding just the
-    // companion and a Drum Rack: never take over a musician's instrument.
+    // Adopt only a launcher track, an empty track, or one holding just the
+    // companion and a Drum Rack: never take over a musician's instrument or
+    // another Tolglow track (Capture's cue track hosts the companion too).
     var self = this, clipless = !ids(where.track.get("arrangement_clips")).length &&
       !ids(where.track.get("clip_slots")).some(function (id) { return !!self.read(self.object({id: id}), "has_clip"); });
     var bare = where.devices <= 1 || (where.rack >= 0 && where.devices === 2);
-    if (current !== name && !TOLGLOW_NAME.test(current) && !(clipless && bare))
+    if (!LAUNCHER_NAME.test(current) && TOLGLOW_NAME.test(current))
+      fault("tolglow-track-in-use", "The companion is on another Tolglow track (" + current + "). One companion hosts either Capture or the cue launcher; put a second companion on a new, empty MIDI track");
+    if (!LAUNCHER_NAME.test(current) && !(clipless && bare))
       fault("host-track-in-use", "The companion is on a track with clips or instruments. Put it on a new, empty MIDI track and run setup again");
     if (where.rack < 0) {
       if (!this.canInsert()) fault("drum-rack-creation-unavailable", "This Live cannot insert devices (Track.insert_device needs Live 12.3). Drop a Drum Rack after the companion and run setup again");
@@ -750,8 +764,10 @@
         created = true;
       } else chain = self.object({id: chains[0]});
       var name = p.name.slice(0, 128);
-      if (String(self.read(chain, "name")) !== name || !!self.read(chain, "is_auto_colored") || Number(self.read(chain, "color")) !== p.color) {
-        mark(); chain.set("is_auto_colored", 0); chain.set("name", name); chain.set("color", p.color);
+      var renamed = String(self.read(chain, "name")) !== name, auto = !!self.read(chain, "is_auto_colored");
+      if (renamed) { mark(); chain.set("name", name); }
+      if (renamed || auto || colorDistance(Number(self.read(chain, "color")), p.color) > PALETTE_SNAP) {
+        mark(); chain.set("is_auto_colored", 0); chain.set("color", p.color);
       }
       written.push({note: p.note, name: String(self.read(chain, "name")), color: Number(self.read(chain, "color")), "chain-created?": created});
     });
@@ -761,7 +777,11 @@
   // overview's scroll row and every filled pad's first chain. Writes nothing.
   Session.prototype.inspectLauncher = function () {
     var where = this.launcherTrack(), self = this, out = {"track-id": "track:" + where.id, name: String(this.read(where.track, "name")),
-      "can-insert?": this.canInsert(), rack: null};
+      "can-insert?": this.canInsert(), rack: null,
+      // Where pad hits come from: Tolglow checks that a performer can reach the companion.
+      input: this.routing(where.track), "routed-from-track?": this.routedFromTrack(where.id) !== false,
+      "arm?": !!this.read(where.track, "can_be_armed") && !!this.read(where.track, "arm"),
+      monitor: MONITOR[Number(this.read(where.track, "current_monitoring_state"))] || null};
     if (where.rack < 0) return out;
     var rack = this.object(this.rackPath(where)), pads = [];
     if (!this.read(rack, "has_drum_pads")) return out;

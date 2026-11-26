@@ -22,10 +22,8 @@
                  holds notes 36-67 (bottom block 36-51, top block 52-67), the
                  right half 68-99 (bottom 68-83, top 84-99), each block rising
                  left to right and bottom to top like Live's own pad overview.
-                 Source: Live 12's control-surface framework,
-                 DrumGroupComponent._button_coordinates_to_pad_index, with
-                 first note 36 and an 8x8 matrix. Derived from that source, not
-                 yet observed on Push 3 hardware.
+                 This is Push's 64 Pads note grid as Push users observe it; it
+                 is still to be confirmed on Push 3 hardware.
   :rows          The earlier layout: notes rise left to right in rows of eight,
                  bottom row 36-43, top row 92-99. Saved Live settings that
                  already hold note mappings keep it."

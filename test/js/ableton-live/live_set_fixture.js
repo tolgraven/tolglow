@@ -23,9 +23,10 @@ const CHANNELS = [{ display_name: "All Channels", identifier: 100 }].concat(
 // Live without Track.insert_device / RackDevice.insert_chain (both 12.3).
 // A chain belongs to the pad whose note equals its in_note; insert_chain adds
 // a chain with in_note -1 ("All Notes"), which belongs to no pad until set:
-// an assumption about Live to verify on a real Set.
+// an assumption about Live to verify on a real Set. palette: [0xrrggbb, ..]
+// makes Chain.color store the nearest entry, as Live does; null keeps it exact.
 function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGroup = true, notify = "sync", now,
-  launcher = false, version = [12, 4, 5] } = {}) {
+  launcher = false, version = [12, 4, 5], palette = null } = {}) {
   const entities = {}, writes = [], calls = [], observers = [], emitted = []; let next = 10;
   const add = (o) => { o.id = o.id || ++next; entities[o.id] = o; return o; };
   function makeClip(length) {
@@ -89,7 +90,14 @@ function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGro
         if (key === "available_input_routing_channels") return JSON.stringify({ [key]: CHANNELS });
         return Array.isArray(o.props[key]) ? o.props[key] : [o.props[key]];
       },
-      set(key, value) { writes.push({ id: o.id, key, value }); o.props[key] = value; },
+      set(key, value) {
+        writes.push({ id: o.id, key, value });
+        if (o.kind === "chain" && key === "color" && palette) {
+          const dist = (a, b) => [16, 8, 0].reduce((sum, s) => sum + (((a >> s) & 255) - ((b >> s) & 255)) ** 2, 0);
+          value = palette.reduce((best, c) => (dist(c, value) < dist(best, value) ? c : best), palette[0]);
+        }
+        o.props[key] = value;
+      },
       call(method, ...args) {
         calls.push({ id: o.id, method, args });
         if (o.kind === "song" && method === "create_midi_track") {

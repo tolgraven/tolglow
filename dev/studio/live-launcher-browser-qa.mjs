@@ -4,7 +4,9 @@
 //   CHROMIUM_PATH=... node dev/studio/live-launcher-browser-qa.mjs http://127.0.0.1:18850 target/live-launcher-qa/out
 //
 // Uses the production Studio build in headless Chrome with the real GPU. It
-// opens Connections, presses Show pads, checks the 8x8 grid against
+// opens Connections, presses Show pads, then Set up in Live (the same host
+// operation as show/setup-live-launcher! at the REPL, through the running Live
+// bridge), checks the 8x8 grid, problems and warnings against
 // /api/live-launcher (the projection show/live-launcher returns at the REPL),
 // checks the Pad layout selector, and writes stills at desktop and phone
 // widths plus report.json. Headless desktop Chrome is not evidence for a
@@ -59,19 +61,25 @@ const panelText = panel => panel.evaluate(section => ({
       label: pad.querySelector('.launcher-label')?.textContent ?? null,
     }))),
   errors: [...section.querySelectorAll('.connection-error')].map(e => e.textContent),
+  warnings: [...section.querySelectorAll('p.muted')].map(e => e.textContent).filter(t => t.startsWith('Warning')),
   overflow: section.scrollWidth - section.clientWidth,
 }));
 
 try {
-  const projection = await json('/api/live-launcher');
-  const playing = projection.pads.filter(p => p['cue-id']);
-  assert.equal(projection.layout, 'push-64-pads');
-  assert.ok(playing.length > 2, 'the demo page maps several pads');
-  pass('the REPL projection served at /api/live-launcher', {layout: projection.layout, playing: playing.length,
-    setup: {ready: projection.setup?.['ready?'], problems: projection.setup?.problems?.length}});
-
+  const before = await json('/api/live-launcher');
+  assert.equal(before.layout, 'push-64-pads');
+  assert.equal(before.setup, undefined, 'nothing is set up before the browser asks');
   const desktop = await launch('desktop', {width: 1440, height: 1000});
   const panel = await showPads(desktop.page);
+  await panel.locator('#launcher-setup').click();
+  await panel.locator('[role=status]', {hasText: 'setup problem'}).waitFor({timeout: 15000});
+  const projection = await json('/api/live-launcher');
+  const playing = projection.pads.filter(p => p['cue-id']);
+  assert.ok(playing.length > 2, 'the demo page maps several pads');
+  pass('Set up in Live ran the host setup through the bridge', {playing: playing.length,
+    setup: {ready: projection.setup['ready?'], applied: projection.setup.applied, problems: projection.setup.problems.length,
+            warnings: projection.setup.warnings}});
+
   const shown = await panelText(panel);
   assert.equal(shown.rows.length, 8);
   assert.ok(shown.rows.every(r => r.length === 8));
@@ -86,12 +94,13 @@ try {
   assert.equal(shown.rows[0][7].note, 99, 'top-right pad is note 99');
   const notes = projection.setup.problems.filter(p => p.code === 'empty-pad').map(p => p.note);
   assert.deepEqual(shown.errors, ['empty-pad · notes ' + notes.join(', ')], 'the empty pads share one line');
+  assert.deepEqual(shown.warnings, ['Warning · stale-pad · note 40']);
   assert.match(shown.status, /^Push 64 Pads · \d+ of 64 pads play cues · \d+ setup problems? in Live$/);
   assert.equal(shown.overflow, 0);
   const layout = await desktop.page.locator('#live-pad-layout').inputValue();
   assert.equal(layout, 'push-64-pads', 'the saved layout is selected');
   assert.deepEqual(desktop.problems, []);
-  pass('Studio draws the same 64 pads as the projection, top row first', {status: shown.status, errors: shown.errors, layout});
+  pass('Studio draws the same 64 pads, problems and warnings as the projection, top row first', {status: shown.status, errors: shown.errors, warnings: shown.warnings, layout});
   await panel.screenshot({path: join(output, 'launcher-desktop.png')});
 
   const phone = await launch('phone', {width: 390, height: 844, scale: 3, touch: true});

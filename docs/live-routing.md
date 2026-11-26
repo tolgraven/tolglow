@@ -356,12 +356,11 @@ on Push's 64 Pads drum grid. The grid is four 4x4 blocks: the left half holds
 notes 36–67 (bottom block 36–51, top block 52–67), the right half 68–99
 (bottom 68–83, top 84–99), each block rising left to right and bottom to top.
 So the bottom-left pad is 36, the top-left 64, the bottom-right 71 and the
-top-right 99. This is derived from Live 12's control-surface framework
-(`DrumGroupComponent._button_coordinates_to_pad_index` with first note 36 and
-an 8x8 matrix, read from a decompiled copy of the scripts), with the Drum
-Rack's pad overview scrolled to row 9 (`RackDevice.View.drum_pads_scroll_position`,
-rows of four pads, so note 36 is the lowest visible pad). It has not been seen
-on Push 3 yet.
+top-right 99. This is Push's 64 Pads note grid with the Drum Rack's pad
+overview scrolled to row 9 (`RackDevice.View.drum_pads_scroll_position`, rows
+of four pads, so note 36 is the lowest visible pad). It is still to be
+confirmed on Push 3 hardware (step 3 of the host checklist on the pull
+request).
 - `ableton/pad-note` and `ableton/pad-cell` convert between a cell and a note
   for a layout (`ableton/pad-layouts`).
 - The Live bridge setting `:pad-layout` chooses the layout for new automatic
@@ -389,15 +388,19 @@ record keeps that run as a *take* (#683).
 - When a clip plays on the launcher track, the companion marks every note
   `live-playback`. The notes launch and release the same cues on the same
   beats, and make no takes and no clip writes. A looping pad clip therefore
-  does not add takes each pass.
+  does not add takes each pass. Hits a performer plays on the launcher track
+  *while a clip plays there* are playback too: they launch cues but make no
+  takes. To record over a loop, play the loop on another track.
 - `live-launcher/pad-clip` makes the same kind of clip from the run record:
   one note per released take of a cue that has a pad, at the take's start
   beat and held for its held beats, over the whole bars around the takes (or
-  an explicit beat range). One pad plays one cue at a time, so a hit on a pad
-  that is still held ends the earlier note there (reported under
-  `:shortened`). Takes of cues with no pad, and running takes, are skipped
-  and reported. A pad clip holds timing only; launch values and moves stay in
-  the take.
+  an explicit beat range). A note's velocity is how hard the pad was hit (the
+  pad hit's velocity travels in the command source and the take); a take
+  launched elsewhere gets the value its pad's `:velocity-param` received, or
+  127. One pad plays one cue at a time, so a hit on a pad that is still held
+  ends the earlier note there (reported under `:shortened`). Takes of cues
+  with no pad, and running takes, are skipped and reported. Launch values
+  and moves stay in the take.
 - The known limits of #683's classification apply: a launcher track that
   holds Arrangement clips, or takes MIDI from another track, counts as
   playback, so a performer there is not recorded as a take.
@@ -405,12 +408,21 @@ record keeps that run as a *take* (#683).
 **Live layout.** The launcher is the track of the companion that the Live
 bridge (Studio's **Connections → Ableton Live**) talks to, because pad hits
 reach the show through that bridge. Drop that companion on a new, empty MIDI
-track once, as for Capture. Setup runs from the REPL over a companion
-connection with its own session, and a newer handshake takes the companion's
-callback ownership, so connect (or reconnect) the Live bridge in Studio after
-setup.
-- `:ensure-launcher` adopts the track (empty, Tolglow-named, or holding only
-  the companion and a Drum Rack), names it `Tolglow launcher <page-id>`,
+track once. One companion hosts either the launcher or Capture's cue track
+(#680), not both: put a second companion on its own track for Capture.
+- Setup and pad-clip writes go through the running Live bridge
+  (`show/live-bridge-connection`): the same companion connection, under the
+  bridge's sync session and in order with its status polls. The companion
+  accepts operations only from the session of its last handshake, so a
+  separate connection with its own session would lose the companion at the
+  bridge's next poll (every 500 ms) and, while it held it, the bridge would
+  drop the companion's pad hits. Connect the bridge first; without it setup is
+  refused as `not-connected` and nothing is sent.
+- `:ensure-launcher` adopts the track only when it is a `Tolglow launcher …`
+  track, an empty track, or holds only the companion and a Drum Rack. Any
+  other Tolglow track, such as Capture's cue track, is refused with
+  `tolglow-track-in-use`; a musician's track with clips or instruments with
+  `host-track-in-use`. It names the track `Tolglow launcher <page-id>`,
   inserts a Drum Rack right after the companion when none follows it
   (`Track.insert_device("Drum Rack", index)`, documented since Live 12.3) and
   scrolls the pad overview to row 9. On an older Live a missing Drum Rack is
@@ -421,47 +433,61 @@ setup.
   with `RackDevice.insert_chain` and `DrumChain.in_note` (both since Live
   12.3); on an older Live it is reported as `chain-creation-unavailable`.
   `DrumPad` has no colour setter and its name is read-only, so nothing is
-  written to the pad itself. Live picks the nearest palette colour; the
-  read-back reports it and setup does not count a colour difference as a
-  problem.
-- `:inspect-launcher` reads the track, the Drum Rack, the scroll row and every
-  filled pad back, and `live-launcher/setup!` verifies them: a wrong track
-  name, a missing Drum Rack, a wrong scroll row, or a pad without its chain or
-  name is a problem. A rerun writes only what differs. A refused or
-  indeterminate receipt stops setup and is never retried.
+  written to the pad itself. Live keeps the nearest palette colour, so a chain
+  whose colour is already close to the cue's (within 96 in RGB distance) is
+  not rewritten: a rerun leaves the Set alone, while a changed cue colour is
+  written. The read-back reports the colour and setup does not count a
+  palette difference as a problem.
+- `:inspect-launcher` reads the track, its input routing, the Drum Rack, the
+  scroll row and every filled pad back, and `live-launcher/setup!` verifies
+  them. Problems: a wrong track name, a missing Drum Rack, a wrong scroll
+  row, a pad without its chain or name, and an input that cannot carry the
+  performer's pads: none, Tolglow's own feed port, another track (MIDI From,
+  or a track whose output names this one), or a single channel 2–16, which
+  the companion drops as Tolglow's feed. Use All Ins or the controller's port.
+  A filled pad on the grid that launches no cue is a `stale-pad` warning: it
+  looks like a cue pad on Push and plays nothing. A rerun writes only what
+  differs. A refused or indeterminate receipt stops setup and is never
+  retried.
 - `live-launcher/write-clip!` writes a pad clip into the launcher track's
   first empty slot (adding a scene when it is full) with the existing
   `:write-clip` operation.
 
 ```clojure
-(require '[tolglow.integrations.live-connection :as live]
-         '[tolglow.integrations.live-transport :as transport])
-(show/live-launcher runtime :pads)                         ; the 64 pads Studio shows
-(def conn (live/open (transport/transport {:endpoint "http://127.0.0.1:8750/live"
-                                           :bridge-id "tolglow-m4l"
-                                           :sync-session-id "launcher"})
-                     {:session-id "launcher"}))
-(show/setup-live-launcher! runtime conn {:page-id :pads})  ; track, Drum Rack, pad chains, read-back
-(show/write-live-launcher-clip! runtime conn {:page-id :pads :from-beat 0 :to-beat 16})
+(show/live-launcher runtime :pads)                          ; the 64 pads Studio shows
+(show/sync-action! runtime :start {})                       ; or Studio's Connect enabled adapters
+(show/setup-live-launcher! runtime {:page-id :pads})        ; Studio: Set up in Live
+(show/write-live-launcher-clip! runtime {:page-id :pads :from-beat 0 :to-beat 16})  ; Studio: Write pad clip
 ```
 
 **Evidence.**
-- `live-launcher-test` checks every cell of the layout against a transcription
-  of the framework function, then performs on a real `show/create-runtime`:
-  the bridge maps a page in Push's layout, pad hits arrive exactly as Studio's
-  `/api/live` receives companion callbacks, launch the pads' cues and become
-  takes. The simulated Live records the hits from the armed launcher track.
-  That clip equals the pad clip Tolglow writes from the takes. Replaying
-  either one launches the same cues on the same beats as `live-playback`,
-  with no new takes, and the bridge receives no recording write. A negative
-  control that marks the replay `live-input` makes those checks fail.
+- `live-launcher-test` checks every cell of the layout against a literal 8x8
+  note table, then performs on a real `show/create-runtime` whose Live bridge
+  talks to the simulated Set:
+  - setup before the bridge connects is refused from Studio and the REPL
+    alike; after it, Studio's `POST /api/live-launcher/setup` and the REPL run
+    the same operation through the bridge;
+  - the bridge maps a page in Push's layout, and pad hits arrive exactly as
+    Studio's `/api/live` receives companion callbacks, launch the pads' cues
+    and become takes;
+  - the simulated Live records the hits, velocity included, from the armed
+    launcher track. That clip equals the pad clip Tolglow writes from the
+    takes. Replaying either one launches the same cues on the same beats as
+    `live-playback`, with no new takes, and the bridge receives no recording
+    write. A separate negative control marks the replay `live-input` and
+    shows it would record takes again.
 - The same test reads the projection from the REPL and from
   `GET /api/live-launcher`, and covers an older Live (no Drum Rack insert, no
-  chain insert) and a performer's own Drum Rack.
-- `live-companion-contract-test` builds the launcher and writes and reads back
-  a pad clip over real HTTP through the bridge, `max_adapter.js` and
-  `live_session.js`. `live_session.test.js` covers the companion operations,
-  their refusals and the input/playback marking on the launcher track.
+  chain insert), a performer's own Drum Rack with a stale pad, Capture's cue
+  track (refused, untouched) and a launcher track listening to Tolglow's feed.
+- `live-companion-contract-test` sets the launcher up through a running Live
+  bridge over real HTTP (the bridge, `max_adapter.js` and `live_session.js`),
+  with the bridge polling every 100 ms and once more between every
+  operation, writes and reads back a pad clip, and shows that a connection
+  with its own session is refused (`bridge-session-mismatch`) after the
+  bridge's next poll. `live_session.test.js` covers the companion operations,
+  their refusals, palette-snapped colours, input reporting and the
+  input/playback marking on the launcher track.
 
 ## Mirror what ran as run tracks, clips and Group Tracks
 

@@ -458,7 +458,7 @@
 (defn- post-routes [{:keys [material-preview! variable-sources! spatial-search! submit! submit-history! heartbeat! provider-put! chat! chat-select!
                              app-agent! checkpoint! cue-variation-preview!
                              sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync! section-reference!
-                             capture! video!]
+                             capture! video! live-launcher!]
                      :or {material-preview! materials/preview}}]
   (merge
    (into {} (for [[path op] operations]
@@ -494,6 +494,9 @@
    (post-actions "/api/capture/" (when capture! (fn [op payload] (dissoc (capture! op payload) :phrase))) ok
                  {"capture" :capture} "Phrase capture unavailable")
    (post-actions "/api/" sync! ok {"live" :live})
+   ;; The cue launcher's Live setup and pad-clip write go through the running
+   ;; Live bridge, as show/setup-live-launcher! does at the REPL (#228).
+   (post-actions "/api/live-launcher/" live-launcher! ok {"setup" :setup "write-clip" :write-clip} "Cue launcher unavailable")
    {"/api/cue-variations/preview"
     (available cue-variation-preview! "Cue variations unavailable" #(ok (cue-variation-preview! (:json-params %))))
     "/api/materials/preview" #(ok (material-preview! (:json-params %)))

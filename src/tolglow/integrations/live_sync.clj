@@ -121,6 +121,36 @@
                                             :status-version status-version})
                        (when (= op :inspect) (reset! (:poll-pending? run) false))))))))
 
+(defn companion-transport
+  "A live-connection transport ({:open! :request! :close!}) that sends each
+  operation through the running Live bridge's own companion connection, under
+  the bridge's sync session and in order with its status polls and recording
+  writes. The companion accepts operations only from the session of its last
+  inspect handshake, so a second connection with its own session would take
+  the companion's callbacks from the bridge, and the bridge's next poll would
+  take them back between that connection's operations. Each request blocks the
+  calling thread until its receipt (never call it from the show owner).
+  Without a running bridge a request is refused as never sent (:not-connected);
+  no receipt within the wait is indeterminate."
+  [manager]
+  {:open! (fn [_] :live-bridge)
+   :close! (fn [_] nil)
+   :request! (fn [_ id op payload]
+               (let [{:keys [active config]} @(:state manager)
+                     {:keys [transport handle]} (when active (:live @(:resources active)))
+                     reply (promise)
+                     wait-ms (+ 1000 (* 4 (get-in config [:live :timeout-ms] 2000)))]
+                 (when-not transport
+                   (throw (ex-info "Connect the Live bridge first" {:live/not-sent? true})))
+                 (when-not (enqueue-io! manager active
+                                        (fn [] (deliver reply (try ((:request! transport) handle id op payload)
+                                                                   (catch Exception error error)))))
+                   (throw (ex-info "The Live bridge's request queue is full" {:live/not-sent? true})))
+                 (let [result (deref reply wait-ms ::no-receipt)]
+                   (cond (= ::no-receipt result) (throw (ex-info "No receipt from the Live bridge in time" {:wait-ms wait-ms}))
+                         (instance? Exception result) (throw result)
+                         :else result))))})
+
 (defn edit-observed-parameter! [manager op id]
   (when-not (live-params/valid-id? id)
     (fail! :invalid-live-parameter-id "Use a unique name of up to 64 letters, numbers, dots, hyphens or underscores"))
@@ -225,7 +255,8 @@
             instance (when (and mapping (not (:disabled? mapping)) (:resolve-instance! callbacks))
                        ((:resolve-instance! callbacks) (:cue-id mapping)))
             source (cond-> {:sync-run-id (:id run) :source-id (:source-id event)}
-                     (contains? event :note) (assoc :note (:note event)))
+                     (contains? event :note) (assoc :note (:note event))
+                     (and (= :note-on (:type event)) (pos? (or (:velocity event) 0))) (assoc :velocity (:velocity event)))
             result (bridge-step! manager #(ableton/midi->commands % event (assoc envelope :source source) instance))]
         (doseq [notice (:events result)] (emit! manager run notice))
         (commands! manager run (:commands result))))))

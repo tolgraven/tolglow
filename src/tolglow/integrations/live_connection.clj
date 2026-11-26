@@ -51,7 +51,8 @@
                      events (live-runs/player decodes them).
     :ensure-launcher {:name :scroll-row} -> {:track-id :device-index :rack-created? :renamed?}
                      The cue launcher (#228): adopts the companion's own track
-                     (empty, Tolglow-named, or holding only a Drum Rack), names
+                     (empty, a Tolglow launcher track, or holding only a Drum
+                     Rack; never another Tolglow track: :tolglow-track-in-use), names
                      it, inserts a Drum Rack after the companion when none
                      follows it (Track.insert_device, Live 12.3+; otherwise
                      refused with :drum-rack-creation-unavailable) and scrolls
@@ -61,7 +62,8 @@
                          :skipped [{:note :code}]}: names and colours each
                      pad's first chain, inserting one for an empty pad
                      (RackDevice.insert_chain + DrumChain.in_note, Live 12.3+).
-    :inspect-launcher {} -> {:track-id :name :can-insert? :rack nil |
+    :inspect-launcher {} -> {:track-id :name :can-insert? :input {:port :channel}
+                             :routed-from-track? :arm? :monitor :rack nil |
                              {:device-index :scroll-row :pads [{:note :name :color :chains}]}}
 
   Clip descriptions are those of `phrase-clip`. Live IDs are session
@@ -139,6 +141,7 @@
     :configure-track (update result :track normalize-track)
     :read-clip (update result :clip normalize-clip)
     :write-pads (update result :skipped (partial mapv #(update % :code keywordize)))
+    :inspect-launcher (update result :monitor keywordize)
     result))
 
 (def ^:private refusals

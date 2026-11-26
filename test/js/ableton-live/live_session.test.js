@@ -479,8 +479,39 @@ test("an older Live uses a placed Drum Rack, and a musician's track is refused b
   const busy = liveSet({ tracks: [{ name: "Keys", clip: true }], host: 0, launcher: true });
   assert.equal(busy.request("ensure-launcher", { name: "Tolglow launcher page-1" }).error.code, "host-track-in-use");
   assert.deepEqual(busy.writes, []);
-  assert.equal(liveSet({ tracks: [{ name: "MIDI" }], host: 0, launcher: true }).request("ensure-launcher", { name: "Launcher" }).error.code,
-    "track-name", "launcher tracks are Tolglow's by name");
+  assert.equal(liveSet({ tracks: [{ name: "MIDI" }], host: 0, launcher: true }).request("ensure-launcher", { name: "Tolglow Cues" }).error.code,
+    "track-name", "launcher tracks are named Tolglow launcher");
+});
+
+test("the launcher never adopts Capture's cue track, and reports where pad hits come from", () => {
+  for (const capture of [{ name: "Tolglow Cues", clip: true, arm: true, port: PORTS[1], channel: CHANNELS[16] }, { name: "Tolglow Capture" }]) {
+    const live = liveSet({ tracks: [capture], host: 0, launcher: true });
+    const r = live.request("ensure-launcher", { name: "Tolglow launcher page-1" });
+    assert.equal(r.status, "rejected", capture.name);
+    assert.equal(r.error.code, "tolglow-track-in-use");
+    assert.deepEqual(live.writes, []); assert.deepEqual(live.calls.filter(c => c.method === "insert_device"), []);
+    assert.equal(live.song.tracks[0].props.name, capture.name);
+  }
+  const fed = liveSet({ tracks: [{ name: "Tolglow launcher page-1", port: PORTS[1], channel: CHANNELS[16], drumRack: {} }], host: 0, launcher: true });
+  const read = fed.request("inspect-launcher").result;
+  assert.deepEqual(read.input, { port: "Tolglow", channel: 16 });
+  assert.equal(read["routed-from-track?"], false);
+  assert.equal(read.monitor, "auto");
+  const open = liveSet({ tracks: [{ name: "Tolglow launcher page-1", drumRack: {} }], host: 0, launcher: true }).request("inspect-launcher").result;
+  assert.deepEqual(open.input, { port: "All Ins", channel: null });
+});
+
+test("a chain colour Live snapped to its palette is not rewritten on the next setup; a changed cue colour is", () => {
+  const live = liveSet({ tracks: [{ name: "Tolglow launcher page-1", drumRack: { 36: "Kick" } }], host: 0, launcher: true,
+    palette: [0xff3a34, 0x1aff2f, 0x10a4ee, 0xffffff] });
+  const track = "track:" + live.song.tracks[0].id;
+  live.request("write-pads", { "track-id": track, pads: [{ note: 36, name: "Ember", color: 0xff2200 }] });
+  assert.equal(live.rackOf(0).chains[0].props.color, 0xff3a34, "Live keeps the nearest palette colour");
+  const writes = live.writes.length;
+  live.request("write-pads", { "track-id": track, pads: [{ note: 36, name: "Ember", color: 0xff2200 }] });
+  assert.equal(live.writes.length, writes, "a rerun leaves the snapped colour alone");
+  live.request("write-pads", { "track-id": track, pads: [{ note: 36, name: "Ember", color: 0x0000ff }] });
+  assert.equal(live.rackOf(0).chains[0].props.color, 0x10a4ee, "a new cue colour is written");
 });
 
 test("pad hits on the launcher track are live input until a clip plays there, then playback", () => {

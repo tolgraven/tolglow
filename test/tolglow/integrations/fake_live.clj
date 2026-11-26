@@ -115,17 +115,18 @@
         rel #(- (rationalize (:song-beat %)) start)
         result (reduce (fn [{:keys [open notes controllers] :as acc} {:keys [type note velocity controller value] :as m}]
                          (case type
-                           :note-on (if (pos? velocity) (update-in acc [:open note] (fnil conj []) (rel m))
+                           ;; Live keeps each note's played velocity.
+                           :note-on (if (pos? velocity) (update-in acc [:open note] (fnil conj []) [(rel m) velocity])
                                         (recur acc (assoc m :type :note-off)))
-                           :note-off (if-let [s (first (get open note))]
+                           :note-off (if-let [[s v] (first (get open note))]
                                        (-> acc (update-in [:open note] subvec 1)
-                                           (update :notes conj {:pitch note :start s :duration (- (rel m) s) :velocity 127}))
+                                           (update :notes conj {:pitch note :start s :duration (- (rel m) s) :velocity v}))
                                        acc)
                            :cc (update acc :controllers conj {:beat (rel m) :controller controller :value value})
                            acc))
                        {:open {} :notes [] :controllers []} in-window)
-        held (for [[pitch starts] (:open result), s starts]
-               {:pitch pitch :start s :duration (- (- end start) s) :velocity 127})]
+        held (for [[pitch starts] (:open result), [s v] starts]
+               {:pitch pitch :start s :duration (- (- end start) s) :velocity v})]
     {:clip/version 1 :length-beats (- end start) :meter {:beats-per-bar 4 :bars-per-phrase 4}
      :notes (vec (sort-by (juxt :start :pitch) (concat (:notes result) held)))
      :controllers (:controllers result)}))
@@ -188,8 +189,11 @@
             name (:name payload)]
         (cond
           (nil? i) (rejected :no-companion)
-          (not (re-find #"^Tolglow(\s|$)" (str name))) (rejected :track-name)
-          (not (or (= name (:name t)) (re-find #"^Tolglow(\s|$)" (str (:name t)))
+          (not (re-find #"^Tolglow launcher(\s|$)" (str name))) (rejected :track-name)
+          ;; Like the companion: never another Tolglow track (Capture's cue track).
+          (and (not (re-find #"^Tolglow launcher(\s|$)" (str (:name t)))) (re-find #"^Tolglow(\s|$)" (str (:name t))))
+          (rejected :tolglow-track-in-use)
+          (not (or (re-find #"^Tolglow launcher(\s|$)" (str (:name t)))
                    (and (empty? (:slots t)) (empty? (:arrangement t)) (not (:instrument? t)))))
           (rejected :host-track-in-use)
           (and (nil? (:rack t)) (not (:device-insert? state))) (rejected :drum-rack-creation-unavailable)
@@ -223,6 +227,8 @@
       (if-let [t (first (filter :companion? (:tracks state)))]
         {:status :executed
          :result {:track-id (:track-id t) :name (:name t) :can-insert? (:device-insert? state)
+                  :input (:input t) :routed-from-track? (boolean (:routed-from-track? t))
+                  :arm? (:arm? t) :monitor (:monitor t)
                   :rack (when-let [rack (:rack t)]
                           {:device-index 1 :scroll-row (:scroll-row rack)
                            :pads (vec (for [[note {:keys [name color]}] (:chains rack)]
@@ -438,8 +444,8 @@
                                         (inc (long (Math/ceil (/ (- to start) length-beats)))))
                         [0])
                :let [base (+ start (* loop length-beats))]
-               event (concat (for [{:keys [pitch start duration]} notes]
-                               [{:type :note-on :note pitch :velocity 127 :song-beat (+ base start)}
+               event (concat (for [{:keys [pitch start duration velocity]} notes]
+                               [{:type :note-on :note pitch :velocity (or velocity 127) :song-beat (+ base start)}
                                 {:type :note-off :note pitch :velocity 0 :song-beat (+ base start duration)}])
                              (for [{:keys [beat controller value]} controllers]
                                [{:type :cc :controller controller :value value :song-beat (+ base beat)}]))

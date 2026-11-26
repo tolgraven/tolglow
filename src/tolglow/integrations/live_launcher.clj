@@ -11,8 +11,9 @@
     each pad's cue definition, label and colour, and the page cells whose cue
     is not under its own pad.
   - `setup!`: the launcher track in the Set over a companion connection
-    (live-connection): the companion's own track with a Drum Rack after it
-    and one named, coloured chain per mapped pad, read back and verified.
+    (the runtime passes its running Live bridge's, show/live-bridge-connection):
+    the companion's own track with a Drum Rack after it and one named,
+    coloured chain per mapped pad, read back and verified, input included.
   - `pad-clip` and `write-clip!`: a Session clip of many pad hits made from
     the run record (live-runs), one note per take at its cue's pad, so a
     performance can be replayed from the launcher track.
@@ -27,7 +28,9 @@
   keeps them as takes and Live records them itself on an armed track; the
   bridge never writes them back. When a pad clip plays, the companion marks
   its notes :live-playback: they launch the same cues and make no takes and no
-  clip writes (live-runs and ableton/record-command ignore that origin).
+  clip writes (live-runs and ableton/record-command ignore that origin). Hits
+  a performer plays on the launcher track while a pad clip plays there count
+  as playback too, so they launch cues but make no takes.
   Musical units are primary: a clip's beats are show-transport beats relative
   to its first bar."
   (:require [tolglow.integrations.ableton :as ableton]
@@ -60,7 +63,8 @@
   A pad's :cue-id is what its note launches; :page-cue-id is what the page
   shows in that cell. They differ only for manual or older mappings."
   [live registry page]
-  (let [layout (get live :pad-layout :push-64-pads)
+  (let [;; As ableton/map-page: settings that name no layout were allocated in rows.
+        layout (get live :pad-layout :rows)
         mappings (into {} (remove (comp :disabled? val)) (:mappings live))
         presented (into {} (map (juxt :note identity)) (ableton/mapped-pads registry mappings))
         cells (into {} (for [[xy cue] (:cells page)] [xy cue]))
@@ -71,6 +75,7 @@
                      shown (get presented note)]
                  (cond-> {:cell [x y] :note note :cue-id (:cue-id m) :page-cue-id (get cells [x y])}
                    m (assoc :mode (get m :mode :persistent))
+                   (:velocity-param m) (assoc :velocity-param (:velocity-param m))
                    ;; mapped-pads labels an unnamed cue with (str id); show its name.
                    shown (assoc :label (if (= (:label shown) (str (:cue-id m))) (wire-id (:cue-id m)) (:label shown))
                                 :live-color (:live-color shown)))))
@@ -92,23 +97,46 @@
   scroll row and one named, coloured chain per pad that launches a cue."
   [{:keys [page-id scroll-row] :as launcher}]
   {:name (track-name page-id) :scroll-row scroll-row
+   :grid-notes (set (map :note (:pads launcher)))
    :pads (vec (for [{:keys [note cue-id label live-color]} (sort-by :note (:pads launcher)) :when cue-id]
                 (let [n (str (or label (wire-id cue-id)))]
                   {:note note :name (subs n 0 (min 128 (count n))) :color (or live-color 0)})))})
 
+(def feed-ports
+  "Input ports Tolglow itself drives (live-connection/desired-setup's default
+  :port). A launcher track listening there hears Tolglow, not the performer."
+  #{"Tolglow"})
+
+(defn- input-problems
+  "Can a performer's pad hits reach the companion on this track? Its input
+  must be a controller port or All Ins, not another track or Tolglow's own
+  feed, and not a single channel 2-16: the companion drops that channel as
+  Tolglow's feed (live-connection's echo rule)."
+  [{:keys [input] :as read-back}]
+  (let [{:keys [port channel]} input]
+    (cond-> []
+      (or (nil? port) (= "No Input" port)) (conj {:code :no-input})
+      (contains? feed-ports port) (conj {:code :input-is-tolglow-feed :port port})
+      (true? (:routed-from-track? read-back)) (conj {:code :input-from-track :port port})
+      (and (integer? channel) (<= 2 channel 16)) (conj {:code :input-feed-channel :channel channel}))))
+
 (defn verify
   "Compare an :inspect-launcher read-back with the desired launcher. Live picks
   the nearest palette entry for a chain colour, so colours are reported
-  (:color in each pad) but never a problem. Returns {:ready? :problems}."
+  (:color in each pad) but never a problem. Filled pads on the 64-pad grid
+  that launch no cue are :warnings (:stale-pad): they look like cue pads on
+  Push and play nothing. Returns {:ready? :problems :warnings}."
   [read-back wanted]
   (let [rack (:rack read-back)
         by-note (into {} (map (juxt :note identity)) (:pads rack))
+        wanted-notes (set (map :note (:pads wanted)))
         problems (cond-> []
                    (not= (:name wanted) (:name read-back))
                    (conj {:code :not-launcher-track :expected (:name wanted) :actual (:name read-back)})
                    (nil? rack) (conj {:code :no-drum-rack})
                    (and rack (some? (:scroll-row wanted)) (not= (:scroll-row wanted) (:scroll-row rack)))
                    (conj {:code :scroll-row :expected (:scroll-row wanted) :actual (:scroll-row rack)}))
+        problems (into problems (input-problems read-back))
         problems (into problems
                        (when rack
                          (for [{:keys [note name]} (:pads wanted)
@@ -116,8 +144,11 @@
                                :when (not= name (:name actual))]
                            (if actual
                              {:code :pad-name :note note :expected name :actual (:name actual)}
-                             {:code :empty-pad :note note :expected name}))))]
-    {:ready? (empty? problems) :problems problems}))
+                             {:code :empty-pad :note note :expected name}))))
+        warnings (vec (for [{:keys [note name]} (sort-by :note (:pads rack))
+                            :when (and (contains? (:grid-notes wanted #{}) note) (not (wanted-notes note)))]
+                        {:code :stale-pad :note note :name name}))]
+    {:ready? (empty? problems) :problems problems :warnings warnings}))
 
 (defn setup!
   "Bring the launcher track into the Set: :ensure-launcher on the companion's
@@ -140,10 +171,12 @@
         refusal (some #(when-not (= :executed (:status %)) %) [receipt pads])]
     (cond-> (assoc verdict :name (:name wanted) :track-id (or track-id (:track-id read-back))
                    :applied applied :skipped (get-in pads [:result :skipped] []) :launcher read-back)
+      ;; The refusal first: it explains the read-back problems after it.
       refusal (-> (assoc :ready? false)
-                  (update :problems conj {:code (or (get-in refusal [:error :code]) (:code refusal) (:status refusal))
-                                          :status (:status refusal)
-                                          :message (get-in refusal [:error :message])})))))
+                  (update :problems #(into [{:code (or (get-in refusal [:error :code]) (:code refusal) (:status refusal))
+                                             :status (:status refusal)
+                                             :message (get-in refusal [:error :message])}]
+                                           %))))))
 
 (defn- clip-range
   "Whole bars around the takes: from the bar holding the first start to the
@@ -163,7 +196,9 @@
   Without a range the clip covers the whole bars around those takes.
   One pad plays one cue at a time, so a take that starts while an earlier
   take of the same cue still holds shortens the earlier note to end there
-  (reported under :shortened). Notes past the clip end are cut at it.
+  (reported under :shortened). Notes past the clip end are cut at it. A
+  note's velocity is how hard the pad was hit, or for a take launched
+  elsewhere the value its pad's :velocity-param received, otherwise 127.
   Returns {:clip clip :takes [take-id ..] :skipped [{:take-id :reason}]
   :shortened [take-id ..] :from-beat :to-beat}; the clip is nil when no take
   is in range. Running takes are skipped until they are released."
@@ -171,6 +206,16 @@
   ([record launcher {:keys [from-beat to-beat beats-per-bar] :or {beats-per-bar 4}}]
    (when-not (and (number? beats-per-bar) (pos? beats-per-bar)) (fail! "beats-per-bar must be positive" {}))
    (let [note-of (into {} (for [{:keys [note cue-id]} (:pads launcher) :when cue-id] [(wire-id cue-id) note]))
+         velocity-param (into {} (for [{:keys [cue-id velocity-param]} (:pads launcher) :when velocity-param]
+                                   [(wire-id cue-id) velocity-param]))
+         ;; How hard the pad was hit when it came from a pad; else the launch
+         ;; value its mapping's :velocity-param sets (velocity/127); else 127.
+         velocity-of (fn [t]
+                       (let [hit (get-in t [:source :velocity])
+                             param (get-in t [:params (velocity-param (wire-id (:cue-id t)))])]
+                         (cond (and (integer? hit) (<= 1 hit 127)) hit
+                               (number? param) (max 1 (min 127 (Math/round (* 127.0 (double param)))))
+                               :else 127)))
          candidates (filter #(and (or (nil? from-beat) (>= (:start-beat %) from-beat))
                                   (or (nil? to-beat) (< (:start-beat %) to-beat)))
                             (runs/takes record))
@@ -189,7 +234,7 @@
              notes (mapv (fn [t] {:take-id (:take-id t) :pitch (note-of (wire-id (:cue-id t)))
                                   :start (- (:start-beat t) from)
                                   :duration (max runs/min-clip-beats (runs/held-beats t))
-                                  :velocity 127})
+                                  :velocity (velocity-of t)})
                          takes)
              ;; One pad, one held cue: a later hit on the same pad ends the earlier note.
              [notes shortened] (reduce (fn [[out shortened] n]

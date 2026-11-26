@@ -305,6 +305,21 @@
       {:db (-> db (update-in [:connections :pending] disj :launcher)
                (assoc-in [:connections :launcher] result))})))
 
+(rf/reg-event-fx :connections/launcher-action
+  (fn [{:keys [db]} [_ operation]]
+    (let [page-id (get-in db [:ui :page-id])]
+      {:db (-> db (update-in [:connections :pending] (fnil conj #{}) :launcher)
+               (update-in [:connections :errors] dissoc :launcher))
+       :fx [(req db :launcher (str "/api/live-launcher/" (name operation)) (cond-> {} page-id (assoc :page-id (str page-id)))
+                 :connections/launcher-acted)]})))
+
+(rf/reg-event-fx :connections/launcher-acted
+  ;; The host answers with the setup or clip result; show the projection again.
+  (fn [{:keys [db]} [_ request-token _ _]]
+    (when (current? db request-token)
+      {:db (update-in db [:connections :pending] disj :launcher)
+       :dispatch [:connections/launcher-refresh]})))
+
 (defn- plural [n one many] (str n " " (if (= 1 n) one many)))
 
 (defn- id-text [x] (if (keyword? x) (name x) (str x)))
@@ -875,10 +890,14 @@
     [:section.panel {:aria-label "Cue launcher"}
      [:div.panel-top [:span.section-label "CUE LAUNCHER"]]
      [:div.form-body
-      [:p.small.muted "The selected cue page on one Drum Rack track in Live. Each pad is the cell its cue sits in, as Push's 64 Pads layout shows it. Hitting a pad launches its cue; a clip of pad hits replays them without recording them again."]
+      [:p.small.muted "The selected cue page on one Drum Rack track in Live: the track of the companion the Live bridge talks to. Each pad is the cell its cue sits in, as Push's 64 Pads layout shows it. Hitting a pad launches its cue; a clip of pad hits replays them without recording them again. Hits played while a clip plays on that track count as playback."]
       [:div.button-row
        [:button#launcher-refresh.button {:type "button" :disabled (contains? (:pending s) :launcher)
-                                         :on-click #(rf/dispatch [:connections/launcher-refresh])} "Show pads"]]
+                                         :on-click #(rf/dispatch [:connections/launcher-refresh])} "Show pads"]
+       [:button#launcher-setup.button {:type "button" :disabled (or (contains? (:pending s) :launcher) (not (get-in s [:sync :active?])))
+                                       :on-click #(rf/dispatch [:connections/launcher-action :setup])} "Set up in Live"]
+       [:button#launcher-write.button {:type "button" :disabled (or (contains? (:pending s) :launcher) (not (:ready? setup)))
+                                       :on-click #(rf/dispatch [:connections/launcher-action :write-clip])} "Write pad clip"]]
       (when launcher
         [:<>
          [:p.small {:role "status"} (launcher-text launcher)]
@@ -894,10 +913,12 @@
                           (when cue-id [:span.launcher-label (or label (id-text cue-id))])]))))
          (for [line (launcher-problems (:problems setup))]
            ^{:key line} [:p.connection-error.small line])
+         (for [line (launcher-problems (:warnings setup))]
+           ^{:key line} [:p.small.muted (str "Warning · " line)])
          (when (and clip (not= "executed" (some-> (:status clip) id-text)))
            [:p.connection-error.small (str "Pad clip " (id-text (:status clip)))])
          (when-not setup
-           [:p.small.muted "Set the launcher up in Live from the REPL with show/setup-live-launcher!; this panel then shows the read-back."])])]]))
+           [:p.small.muted "Connect the Live bridge, then Set up in Live (show/setup-live-launcher! at the REPL) to put a Drum Rack after the companion and name its pads."])])]]))
 
 (defn- live-runs-panel [s]
   (let [{:keys [channels mirror] :as runs} (:live-runs s)]
