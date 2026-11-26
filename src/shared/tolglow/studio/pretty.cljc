@@ -17,7 +17,8 @@
   keeps the order of a small (array) or sorted map and sorts the keys of a
   hash map, whose own order is arbitrary and differs between platforms. Set
   elements are sorted the same way. Records and other values print as pr-str
-  does.")
+  does."
+  #?(:cljs (:import [goog.string StringBuffer])))
 
 (def default-width
   "Columns a line may use before a collection breaks across lines."
@@ -133,41 +134,61 @@
 
 (defn- spaces [n] (apply str (repeat n " ")))
 
-(defn- last-line-width [text start-column]
-  (let [newline (.lastIndexOf ^String text "\n")]
-    (if (neg? newline) (+ start-column (count text)) (- (count text) newline 1))))
+;; Layout appends to one buffer as it goes, so a character budget can stop it
+;; as soon as the text is long enough instead of after building all of it.
+(def ^:private ^:dynamic *buffer* nil)
 
-(declare layout)
+(def ^:private ^:dynamic *column* nil)
 
-(defn- map-entry-text
+(def ^:private ^:dynamic *newlines* nil)
+
+(def ^:private ^:dynamic *max-chars* nil)
+
+(defn- new-buffer [] #?(:clj (StringBuilder.) :cljs (StringBuffer.)))
+
+(defn- buffer-length [] #?(:clj (.length ^StringBuilder *buffer*) :cljs (.getLength *buffer*)))
+
+(defn- emit! [^String text]
+  #?(:clj (.append ^StringBuilder *buffer* text) :cljs (.append *buffer* text))
+  (let [newline (.lastIndexOf text "\n")]
+    (if (neg? newline)
+      (vswap! *column* + (count text))
+      (do (vreset! *column* (- (count text) newline 1))
+          (vswap! *newlines* inc))))
+  (when (and *max-chars* (> (buffer-length) *max-chars*))
+    (throw (ex-info "Pretty-print budget reached" {::budget true}))))
+
+(defn- new-line! [column] (emit! (str "\n" (spaces column))))
+
+(declare layout!)
+
+(defn- map-entry!
   "A key and its value: on the key's line when the value fits there (or is a
   scalar, or the key itself spans lines), otherwise on the next line indented
   two columns past the key, so deep values do not drift to the right edge."
   [k v inner tail width depth]
-  (let [key-text (layout k inner 0 width (inc depth))
-        hang-column (inc (last-line-width key-text inner))]
-    (if (or (not (collection-kind v))
-            (flat v (inc depth) (- width hang-column tail))
-            (not (neg? (.indexOf ^String key-text "\n"))))
-      (str key-text " " (layout v hang-column tail width (inc depth)))
-      (let [flow-column (+ inner flow-indent)]
-        (str key-text "\n" (spaces flow-column) (layout v flow-column tail width (inc depth)))))))
+  (let [lines @*newlines*]
+    (layout! k 0 width (inc depth))
+    (let [hang-column (inc @*column*)]
+      (if (or (not (collection-kind v))
+              (flat v (inc depth) (- width hang-column tail))
+              (not= lines @*newlines*))
+        (emit! " ")
+        (new-line! (+ inner flow-indent)))
+      (layout! v tail width (inc depth)))))
 
-(defn- layout-map [x column tail width depth]
-  (let [inner (inc column)
+(defn- layout-map! [x tail width depth]
+  (let [inner (inc @*column*)
         pairs (vec (entries :map x depth))
         last-index (dec (count pairs))]
-    (str "{"
-         (apply str
-                (interpose
-                 (str "\n" (spaces inner))
-                 (map-indexed
-                  (fn [i pair]
-                    (if (identical? pair ellipsis)
-                      (scalar-text pair)
-                      (map-entry-text (first pair) (second pair) inner (if (= i last-index) (inc tail) 0) width depth)))
-                  pairs)))
-         "}")))
+    (emit! "{")
+    (dotimes [i (count pairs)]
+      (when (pos? i) (new-line! inner))
+      (let [pair (nth pairs i)]
+        (if (identical? pair ellipsis)
+          (emit! (scalar-text pair))
+          (map-entry! (first pair) (second pair) inner (if (= i last-index) (inc tail) 0) width depth))))
+    (emit! "}")))
 
 (defn- fill
   "Scalars packed onto as few lines as fit, each line starting at `column`."
@@ -191,49 +212,66 @@
        (every? keyword? (take-nth 2 elements))
        (not-every? keyword? (take-nth 2 (rest elements)))))
 
-(defn- layout-sequence [kind x column tail width depth]
+(defn- layout-sequence! [kind x tail width depth]
   (let [[open close] (delimiters kind)
-        inner (+ column (count open))
+        inner (+ @*column* (count open))
         elements (vec (entries kind x depth))
         last-index (dec (count elements))]
-    (str open
-         (if (some collection-kind elements)
-           (apply str (interpose (str "\n" (spaces inner))
-                                 (map-indexed (fn [i element]
-                                                (layout element inner (if (= i last-index) (+ tail (count close)) 0)
-                                                        width (inc depth)))
-                                              elements)))
-           (let [texts (mapv scalar-text elements)]
-             (if (keyword-pairs? kind elements)
-               (apply str (interpose (str "\n" (spaces inner))
-                                     (map (fn [[k v]] (str k " " v)) (partition 2 texts))))
-               (fill texts inner (+ tail (count close)) width))))
-         close)))
+    (emit! open)
+    (if (some collection-kind elements)
+      (dotimes [i (count elements)]
+        (when (pos? i) (new-line! inner))
+        (layout! (nth elements i) (if (= i last-index) (+ tail (count close)) 0) width (inc depth)))
+      (let [texts (mapv scalar-text elements)]
+        (if (keyword-pairs? kind elements)
+          (emit! (apply str (interpose (str "\n" (spaces inner))
+                                       (map (fn [[k v]] (str k " " v)) (partition 2 texts)))))
+          (emit! (fill texts inner (+ tail (count close)) width)))))
+    (emit! close)))
 
-(defn- layout
-  "Text of `x` at nesting `depth`, starting at `column` and followed on its
-  last line by `tail` characters."
-  [x column tail width depth]
-  (or (flat x depth (- width column tail))
-      (if-let [kind (collection-kind x)]
-        (if (= kind :map)
-          (layout-map x column tail width depth)
-          (layout-sequence kind x column tail width depth))
-        (scalar-text x))))
+(defn- layout!
+  "Append the text of `x` at nesting `depth`, starting at the current column
+  and followed on its last line by `tail` characters."
+  [x tail width depth]
+  (if-let [text (flat x depth (- width @*column* tail))]
+    (emit! text)
+    (if-let [kind (collection-kind x)]
+      (if (= kind :map)
+        (layout-map! x tail width depth)
+        (layout-sequence! kind x tail width depth))
+      (emit! (scalar-text x)))))
+
+(defn edn-within
+  "Pretty-printed EDN of `value` as {:text t :truncated? b}. Takes the options
+  of `edn`; with `:max-chars` it stops once the text exceeds that many
+  characters and returns its first `:max-chars` characters, so the work and
+  memory stay bounded by the budget rather than by the size of `value`."
+  [value {:keys [width column tail length level max-chars] :or {width default-width column 0 tail 0}}]
+  ;; Values printed by pr-str (records, Java objects) inside get the same limits.
+  (binding [*print-length* length *print-level* level *print-meta* false
+            *limits* (when (or length level) {:length length :level level})
+            *buffer* (new-buffer) *column* (volatile! column) *newlines* (volatile! 0)
+            *max-chars* max-chars]
+    (try
+      (layout! (shown value 0) tail width 0)
+      {:text (str *buffer*) :truncated? false}
+      (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+        (if (::budget (ex-data error))
+          {:text (subs (str *buffer*) 0 max-chars) :truncated? true}
+          (throw error))))))
 
 (defn edn
   "Pretty-printed EDN text of `value`. Options: `:width` (default 100); when
   the text is spliced into other text, `:column`, the column its first line
   starts at (later lines are indented to match), and `:tail`, the number of
   characters that follow it on its last line; `:length` and `:level` elide
-  long and deep collections as *print-length* and *print-level* do (the text
+  long and deep collections as *print-length* and *print-level* do, and
+  `:max-chars` stops after that many characters and appends \"...\" (the text
   then no longer reads back to the whole value)."
   ([value] (edn value nil))
-  ([value {:keys [width column tail length level] :or {width default-width column 0 tail 0}}]
-   ;; Values printed by pr-str (records, Java objects) inside get the same limits.
-   (binding [*print-length* length *print-level* level *print-meta* false
-             *limits* (when (or length level) {:length length :level level})]
-     (layout (shown value 0) column tail width 0))))
+  ([value options]
+   (let [{:keys [text truncated?]} (edn-within value options)]
+     (cond-> text truncated? (str "...")))))
 
 #?(:cljs
    (defn json

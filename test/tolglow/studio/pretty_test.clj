@@ -123,3 +123,17 @@
   (binding [*print-length* 3 *print-level* 2]
     (is (= (pr-str (array-map :a (range) :b [1 [2 [3]]]))
            (str/replace (pretty/edn (array-map :a (range) :b [1 [2 [3]]]) {:length 3 :level 2}) " :b" ", :b")))))
+
+(deftest a-character-budget-bounds-the-work-not-just-the-text
+  (let [row (vec (range 64)) value (vec (repeat 64 (vec (repeat 64 (vec (repeat 64 row))))))
+        started (System/nanoTime)
+        {:keys [text truncated?]} (pretty/edn-within value {:length 64 :level 10 :max-chars 8192})
+        elapsed-ms (/ (- (System/nanoTime) started) 1e6)]
+    (is truncated?)
+    (is (= 8192 (count text)))
+    (is (< elapsed-ms 500) (str "took " elapsed-ms " ms"))
+    (testing "under the budget the text is the unbounded layout"
+      (let [definition (get-in (demo/model) [:registry :effects :breathe])
+            full (pretty/edn definition)]
+        (is (= {:text full :truncated? false} (pretty/edn-within definition {:max-chars (count full)})))
+        (is (= (str (subs full 0 40) "...") (pretty/edn definition {:max-chars 40})))))))

@@ -81,3 +81,12 @@
 (deftest length-and-level-elide-as-on-the-host
   (is (= "{:a (0 1 2 ...) :b [1 #] :c #{0 1 2 ...}}"
          (pretty/edn (array-map :a (range) :b [1 [2 [3 [4]]]] :c (set (range 10))) {:length 3 :level 2}))))
+
+(deftest a-character-budget-stops-the-layout-as-on-the-host
+  (let [row (vec (range 64)) value (vec (repeat 64 (vec (repeat 64 row))))
+        {:keys [text truncated?]} (pretty/edn-within value {:length 64 :level 10 :max-chars 500})]
+    (is truncated?)
+    (is (= 500 (count text)))
+    (is (= (subs (pretty/edn value {:length 64 :level 10}) 0 500) text))
+    (is (= {:text golden-text :truncated? false}
+           (pretty/edn-within (edn/read-string golden-source) {:max-chars (count golden-text)})))))

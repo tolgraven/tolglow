@@ -57,12 +57,13 @@
 (defn- bounded-view
   "A result or error data as the console shows it: a data structure is
   pretty-printed over several lines with the same length, depth and character
-  bounds as bounded-print; strings and other values print as bounded-print does."
+  bounds as bounded-print; strings and other values print as bounded-print does.
+  Printing stops at the character limit, so a huge value costs no more than
+  the text that is shown."
   [value limit]
   (if (and (coll? value) (not (record? value)))
-    (let [text (pretty/edn value print-limits)
-          n (min limit (count text))]
-      {:value (subs text 0 n) :truncated? (< n (count text))})
+    (let [{:keys [text truncated?]} (pretty/edn-within value (assoc print-limits :max-chars limit))]
+      {:value text :truncated? truncated?})
     (bounded-print value limit)))
 
 (defn- reserve-output! [session job text]

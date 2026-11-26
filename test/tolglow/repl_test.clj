@@ -199,3 +199,16 @@
       (is (= "\"text\"" (:result (run! session "\"text\""))))
       (is (= "11" (:result (run! session "11"))))
       (finally (repl/close! session)))))
+
+(deftest a-huge-data-result-stops-printing-at-the-result-bound
+  ;; 64^4 leaves: printing all of it built a 50 M-character string in several seconds.
+  (let [session (repl/open! {:session-id "huge"})]
+    (try
+      (let [started (System/nanoTime)
+            done (run! session "(let [row (vec (range 64)) plane (vec (repeat 64 row)) cube (vec (repeat 64 plane))] (vec (repeat 64 cube)))")
+            elapsed-ms (/ (- (System/nanoTime) started) 1e6)]
+        (is (= :completed (:status done)))
+        (is (= 8192 (count (:result done))))
+        (is (str/starts-with? (:result done) "[[[[0 1 2 3 "))
+        (is (< elapsed-ms 1000) (str "took " elapsed-ms " ms")))
+      (finally (repl/close! session)))))
