@@ -329,7 +329,7 @@
 (defn- get-routes
   [{:keys [snapshot! materials! definition! export! heartbeat! provider-get! chat-history! patch! checkpoint!
            app-agent! fixture! rdm! audio! video! sync! section-reference! waveform! workspace! terminal! sensor! repl! calibration! photometry! fog-calibration! event-subscribers!
-           capture!]}]
+           capture! live-runs!]}]
   (merge
    {"/api/event-subscribers" (available event-subscribers! "Event subscribers unavailable" (fn [_] (ok (event-subscribers!))))
     "/api/fog-calibration" (available fog-calibration! "Venue calibration unavailable" (fn [_] (ok (fog-calibration!))))
@@ -366,6 +366,7 @@
     "/api/audio/returns" (read-action audio! :return-status "Audio service unavailable")
     "/api/sync" (read-action sync! :status "Synchronization unavailable")
     "/api/capture" (read-action capture! :status "Phrase capture unavailable")
+    "/api/live-runs" (read-action live-runs! :status "Run record unavailable")
     "/api/capture/last.mid" (available capture! "Phrase capture unavailable"
                                        (fn [_]
                                          (let [{:keys [filename bytes]} (capture! :smf {})]

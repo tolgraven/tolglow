@@ -1794,6 +1794,37 @@
     (is (str/includes? (markup (:db done)) "/api/capture/last.mid"))
     (is (not (str/includes? (markup base) "Download MIDI clip")))))
 
+(deftest the-live-runs-panel-reads-the-run-record-projection
+  (let [requested (transition base [:connections/live-runs-refresh])
+        [effect request] (first (:fx requested))
+        token (connections/token (:db requested))
+        projection {:takes 3 :running 1
+                    :channels [{:cue-id "a" :name "Amber sweep" :group-path ["stage" "warm"]
+                                :lanes [{:lane 0 :track-name "Tolglow run a"
+                                         :takes [{:take-id "r.1" :run 1 :start-beat 1 :length-beats 3 :phase "ended" :clip {:status "in-live"}}
+                                                 {:take-id "r.3" :run 2 :start-beat 6 :phase "running" :clip {:status "recording"}}]}]}
+                               {:cue-id "b" :name "Blue wash" :group-path ["stage"]
+                                :lanes [{:lane 0 :track-name "Tolglow run b"
+                                         :takes [{:take-id "r.2" :run 1 :start-beat 2 :length-beats 5 :phase "ended" :clip {:status "not-in-live"}}]}]}]
+                    :mirror {:complete? false :pending 1 :problems [{:code "not-in-group" :name "Tolglow run b"}]}}
+        done (transition (:db requested) [:connections/live-runs-loaded token :live-runs projection])
+        stale (transition (:db requested) [:connections/live-runs-loaded [:other] :live-runs projection])
+        html (renderToStaticMarkup (r/as-element [connections/connection-view (:db done) (connections/state (:db done))]))]
+    (is (= :studio/http effect))
+    (is (= ["/api/live-runs" nil] [(:path request) (:body request)]))
+    (is (= projection (get-in done [:db :connections :live-runs])))
+    (is (not (contains? (get-in done [:db :connections :pending]) :live-runs)))
+    (is (nil? stale) "a reply for another show session is ignored")
+    (is (= "2 launched cues · 3 takes (1 running) · 1 of 3 in Live" (connections/live-runs-text projection)))
+    (is (= "Nothing has run yet" (connections/live-runs-text {:takes 0 :channels []})))
+    (is (= "run 1 · beat 1.00 · held 3.00 · in Live" (connections/take-text (get-in projection [:channels 0 :lanes 0 :takes 0]))))
+    (is (= "run 2 · beat 6.00 · running · recording" (connections/take-text (get-in projection [:channels 0 :lanes 0 :takes 1]))))
+    (is (str/includes? html "Amber sweep"))
+    (is (str/includes? html "in stage / warm"))
+    (is (str/includes? html "Tolglow run b"))
+    (is (str/includes? html "not-in-group · Tolglow run b"))
+    (is (not (str/includes? (renderToStaticMarkup (r/as-element [connections/connection-view base (connections/state base)])) "Amber sweep")))))
+
 (deftest an-edit-after-new-is-what-publishes
   ;; Studio dispatches New synchronously, so an edit typed straight after it lands on the
   ;; new source rather than being replaced by it.

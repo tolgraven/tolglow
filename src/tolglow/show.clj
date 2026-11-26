@@ -46,6 +46,7 @@
             [tolglow.compiler.batch :as batch]
             [tolglow.registry :as registry]
             [tolglow.integrations.ableton :as ableton]
+            [tolglow.integrations.live-runs :as live-runs]
             [tolglow.integrations.phrase-capture :as phrase-capture]
             [tolglow.integrations.phrase-clip :as phrase-clip]
             [tolglow.aim-paths :as aim-paths]
@@ -406,6 +407,17 @@
     {:enabled? true :buffer (phrase-capture/new-buffer options) :layout {}
      :cost {:samples 0 :total-ns 0 :max-ns 0 :last-ns 0} :captures 0 :last nil}))
 
+(defn- new-live-runs
+  "Owner state for the run record (#683). options is false to disable, or
+  live-runs/new-record options; each runtime gets its own record ID so its
+  run clips never share a name with another session's in one Set."
+  [options]
+  (if (false? options)
+    {:enabled? false}
+    (let [record-id (or (:record-id options) (subs (str (java.util.UUID/randomUUID)) 0 8))]
+      {:enabled? true :record (live-runs/new-record (assoc options :record-id record-id)) :mirror nil
+       :cost {:samples 0 :total-ns 0 :max-ns 0 :last-ns 0}})))
+
 (defn- configure-runtime
   [compute-owner {:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
    (let [model (-> (or model (demo/model))
@@ -531,6 +543,7 @@
                                           :used-sessions #{(get-in initial-position [:provenance :session-id])}})})
       :sync-input (atom {:epoch (:epoch model) :events []})
       :phrase-capture (atom (new-phrase-capture (get options :phrase-capture {})))
+      :live-runs (atom (new-live-runs (get options :live-runs {})))
       :connections owned :devices (atom {}) :device-reconnects (atom {}) :surface-refusals (atom {}) :development development
       :rdm (rdm/create (merge (:rdm-options options)
                              {:state rdm-state :model! #(get @(:state @runtime-ref) :model)
@@ -1905,6 +1918,22 @@
           (catch Exception error
             (swap! (:state runtime) assoc-in [:status :phrase-capture-error] (error-data error))))))))
 
+(defn- observe-live-runs!
+  "Fold the committed model into the run record. Pure fold; a failure is
+  reported in status and never stops a frame."
+  [runtime model]
+  (when-let [state (:live-runs runtime)]
+    (when (:enabled? @state)
+      (let [start (System/nanoTime)]
+        (try
+          (let [record (live-runs/observe-model (:record @state) model)
+                ns (- (System/nanoTime) start)]
+            (swap! state (fn [s] (-> s (assoc :record record)
+                                     (update :cost #(-> % (update :samples inc) (update :total-ns + ns)
+                                                        (update :max-ns max ns) (assoc :last-ns ns)))))))
+          (catch Exception error
+            (swap! (:state runtime) assoc-in [:status :live-runs-error] (error-data error))))))))
+
 (defn- observe-sync-commands! [runtime before after receipts events fired-outcomes]
   (let [manager (connections/sync (:connections runtime))
         old-ids (if (= (:epoch before) (:epoch after))
@@ -2654,6 +2683,7 @@
                     (swap! (:state runtime) assoc-in [:status :output-error] (error-data error))))
              ;; After the frame is handed to output, so the fold never delays it.
              (when-not restored? (observe-phrase-capture! runtime (:model next-state)))
+             (when-not restored? (observe-live-runs! runtime (:model next-state)))
              (let [observers (vals @(:observers runtime))
                    publication (try (connections/publish! (:connections runtime) (effect-keyframes/source (block-trace/source next-state) (:keyframes next-state))
                                             (boolean (some (fn [observer] ((:tracing? observer))) observers)))
@@ -3577,6 +3607,51 @@
   Studio's Capture button runs the same operation."
   ([runtime] (capture-phrase! runtime {}))
   ([runtime options] (capture-action! runtime :capture options)))
+
+(defn- live-runs-state [runtime operation]
+  (let [state (:live-runs runtime)]
+    (when-not (and state (:enabled? @state))
+      (throw (ex-info "The run record is disabled for this show" {:operation operation})))
+    state))
+
+(defn live-runs-action!
+  "The run record (#683) for the REPL and Studio. The runtime folds every
+  committed owner cycle into it (create-runtime option :live-runs; false
+  disables): one channel per launched cue, one take per activation, lanes for
+  overlapping runs and the manual effect-group tree.
+    :status -> live-runs/projection with the last Live sync, plus fold cost
+  Mirroring into Live needs a companion connection, which the runtime does not
+  own yet; run sync-live-runs! from the REPL. Studio shows its result."
+  [runtime operation _payload]
+  (let [state (live-runs-state runtime operation)]
+    (case operation
+      :status (let [{:keys [record mirror cost]} @state
+                    n (max 1 (:samples cost))]
+                (assoc (live-runs/projection record mirror)
+                       :cost {:cycles (:samples cost) :mean-us (/ (:total-ns cost) n 1000.0)
+                              :max-us (/ (:max-ns cost) 1000.0)}))
+      (throw (ex-info "Unknown run record operation" {:operation operation})))))
+
+(defn live-runs
+  "What ran, as Studio's Live runs panel shows it (see live-runs-action!)."
+  [runtime]
+  (live-runs-action! runtime :status {}))
+
+(defn live-runs-record
+  "The run record itself: exact beats, every take's launch values and moves."
+  [runtime]
+  (:record @(live-runs-state runtime :record)))
+
+(defn sync-live-runs!
+  "Mirror the run record into a Live Set over a companion connection
+  (live-connection/open), keep the result for the projection and return it.
+  options as live-runs/sync! (:groups?, :arrangement-offset-beats)."
+  ([runtime conn] (sync-live-runs! runtime conn {}))
+  ([runtime conn options]
+   (let [state (live-runs-state runtime :sync)
+         result (live-runs/sync! conn (:record @state) options)]
+     (swap! state assoc :mirror (dissoc result :set))
+     result)))
 
 (defn sync-action!
   "Explicit synchronization and Live ownership operations for Ring/REPL."

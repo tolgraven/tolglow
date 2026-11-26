@@ -5,11 +5,14 @@
   simulated Live Set (tolglow.integrations.fake-live) and run clips are played
   back into the show. No Live, Link, Max or MIDI device is used."
   (:require [afterglow.control.model :as control]
+            [clojure.data.json :as json]
             [clojure.test :refer [deftest is testing]]
             [tolglow.integrations.fake-live :as fake]
             [tolglow.integrations.live-connection :as live]
             [tolglow.integrations.live-runs :as runs]
-            [tolglow.show :as show]))
+            [tolglow.show :as show]
+            [tolglow.studio :as studio])
+  (:import [java.io ByteArrayInputStream]))
 
 (defn- effect [id]
   {:id id :version 1 :category :light
@@ -32,13 +35,15 @@
              :groups [{:id :warm :name "Warm" :cue-ids [:a]}]
              :cue-ids [:b]}]})
 
-(defn- runtime []
+(defn- runtime
+  ([] (runtime {:live-runs false}))
+  ([options]
   (show/create-runtime
    {:model (control/new-show {:show-id :live-runs :transport {:playing? true :beat 0.0 :bpm 120.0}
                               :registry registry
                               :pages {:page-1 {:id :page-1 :cells (into {} (map-indexed (fn [i id] [[(mod i 8) (quot i 8)] id]) (keys page-cues)))}}
                               :rig {:fixtures [{:id :left :universe 1 :address 1 :channels {:dimmer 1}}]}})
-    :sink {:send! (fn [_ _])} :workspace-options nil :phrase-capture false}))
+    :sink {:send! (fn [_ _])} :workspace-options nil :phrase-capture false :live-runs (:live-runs options)})))
 
 (def push {:adapter :push :session-id "pads"})
 
@@ -284,4 +289,56 @@
             (tick! 31)
             (is (empty? (:instances (:model @(:state rt)))))
             (is (= takes-before (count (:takes @record)))))))
+      (finally (show/stop! rt)))))
+
+(defn- request [app uri]
+  (app {:request-method :get :uri uri :headers {"host" "localhost"} :body (ByteArrayInputStream. (.getBytes "" "UTF-8"))}))
+
+(deftest the-runtime-owns-the-record-and-studio-reads-the-same-projection
+  (let [rt (runtime {:live-runs {:record-id "show1"}})
+        app (studio/handler rt)
+        h {:rt rt
+           :tick! (fn [beat] (show/tick! rt (long (* 500 beat))))
+           :submit! (fn [beat payload]
+                      (let [reply (show/submit! rt :command payload)]
+                        (show/tick! rt (long (* 500 beat)))
+                        (deref reply 1000 ::missing)))}]
+    (try
+      (perform! h)
+      (let [repl (show/live-runs rt)
+            response (request app "/api/live-runs")
+            ring (json/read-str (:body response) :key-fn keyword)]
+        (is (= 200 (:status response)) (pr-str response))
+        (is (= [[:a 0 1 4] [:b 0 2 7] [:a 0 6 10] [:a 0 12 15] [:a 1 13 16]]
+               (mapv timing (runs/takes (show/live-runs-record rt))))
+            "the runtime folds every owner cycle into the record")
+        (testing "Studio's route serves the REPL's projection"
+          (is (= 5 (:takes repl) (:takes ring)))
+          (is (= ["a" "b"] (mapv :cue-id (:channels ring))))
+          (is (= (mapv (comp count :lanes) (:channels repl)) (mapv (comp count :lanes) (:channels ring))))
+          (is (= (mapv :take-id (mapcat :takes (mapcat :lanes (:channels repl))))
+                 (mapv :take-id (mapcat :takes (mapcat :lanes (:channels ring))))))
+          (is (= ["stage" "warm"] (:group-path (first (:channels ring)))))
+          (is (= "show1.1" (get-in ring [:channels 0 :lanes 0 :takes 0 :take-id])))
+          (is (= "not-in-live" (get-in ring [:channels 0 :lanes 0 :takes 0 :clip :status])))
+          (is (pos? (get-in ring [:cost :cycles]))))
+        (testing "a sync from the REPL shows in Studio: each take bound to its clip"
+          (let [ls (fake/create {:companion? false})
+                stage (fake/add-group-track! ls "Tolglow group stage")
+                _ (fake/add-group-track! ls "Tolglow group warm" stage)
+                result (show/sync-live-runs! rt (live/open (fake/transport ls) {}))
+                ring (json/read-str (:body (request app "/api/live-runs")) :key-fn keyword)]
+            (is (:complete? result))
+            (is (= {:complete? true :pending 0 :problems []} (:mirror ring)))
+            (is (every? #(= "in-live" (get-in % [:clip :status])) (mapcat :takes (mapcat :lanes (:channels ring)))))
+            (is (= (get-in result [:clips "show1.1" :clip-id]) (get-in ring [:channels 0 :lanes 0 :takes 0 :clip :clip-id]))))))
+      (finally (show/stop! rt)))))
+
+(deftest the-run-record-can-be-disabled
+  (let [rt (runtime {:live-runs false})
+        app (studio/handler rt)]
+    (try
+      (show/tick! rt 0)
+      (is (thrown? clojure.lang.ExceptionInfo (show/live-runs rt)))
+      (is (= 400 (:status (request app "/api/live-runs"))))
       (finally (show/stop! rt)))))
