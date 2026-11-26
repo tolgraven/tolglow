@@ -6,11 +6,18 @@
             [clojure.test :refer [deftest is]]
             [tolglow.qa.naut-display-features :as features])
   (:import [java.awt.image BufferedImage]
+           [java.util.concurrent CountDownLatch TimeUnit]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
 (deftest every-state-is-presented-through-one-claim
   (let [opens (atom 0) closes (atom 0) writes (atom 0)
+        ;; Captures wait while the gate is held, so the #547 overlay cannot be
+        ;; presented before the early pad press is handled, however loaded the
+        ;; machine is. Bounded so a stuck gate cannot hang the suite.
+        gate (atom nil)
+        hold! #(reset! gate (CountDownLatch. 1))
+        release! #(when-let [^CountDownLatch latch @gate] (reset! gate nil) (.countDown latch))
         out-dir (.toFile (Files/createTempDirectory "naut-check-8-" (make-array FileAttribute 0)))
         image (BufferedImage. 960 160 BufferedImage/TYPE_INT_RGB)
         receipt (try
@@ -20,7 +27,10 @@
                                :write! (fn [_ _] (swap! writes inc))
                                :close! (fn [_] (swap! closes inc))}
                      :capture {:open! (constantly :capture) :close! (fn [_])
-                               :capture! (fn [_ _] image)}})
+                               :capture! (fn [_ _]
+                                           (when-let [^CountDownLatch latch @gate] (.await latch 10 TimeUnit/SECONDS))
+                                           image)}
+                     :presentation-gate {:hold! hold! :release! release!}})
                   (finally (doseq [file (reverse (file-seq out-dir))] (io/delete-file file true))))
         by-id (into {} (map (juxt :state identity)) (:states receipt))]
     (is (= [1 1] [@opens @closes]) "one claim for every session")

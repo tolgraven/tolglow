@@ -211,13 +211,21 @@
       :enter! (fn [ctx]
                 (let [preview (show/cue-variation-preview (:runtime ctx) {:instance-id @(:instance-id ctx) :layout :full})
                       cell (first (filter #(and (= :generated (:kind %)) (note-of (:position %))) (:cells preview)))
-                      before (params ctx)]
-                  (button! ctx :up)
-                  ;; Immediately, before the first overlay capture can reach the screen.
-                  (emit-actions! ctx [[:press (:position cell) 100]])
-                  (let [early {:position (:position cell) :params-unchanged? (= before (params ctx)) :ack (last-ack ctx)}]
-                    (emit-actions! ctx [[:lift (:position cell)]])
-                    {:early-press early ::cell cell})))
+                      before (params ctx)
+                      {:keys [hold! release!]} (:presentation-gate ctx)]
+                  ;; A replay holds the display capture across Up and the early press, so
+                  ;; the overlay cannot be presented before the press is handled. On
+                  ;; hardware the press simply races the first overlay capture.
+                  (when hold! (hold!))
+                  (try
+                    (button! ctx :up)
+                    ;; Immediately, before the first overlay capture can reach the screen.
+                    ;; Input is handled synchronously, so params and ack are final here.
+                    (emit-actions! ctx [[:press (:position cell) 100]])
+                    (let [early {:position (:position cell) :params-unchanged? (= before (params ctx)) :ack (last-ack ctx)}]
+                      (emit-actions! ctx [[:lift (:position cell)]])
+                      {:early-press early ::cell cell})
+                    (finally (when release! (release!))))))
       :expect #(= :full (get-in % [:pad-overlay :layout]))
       :after! (fn [ctx {cell ::cell}]
                 (let [before (params ctx)]
@@ -370,8 +378,11 @@
   "Claim the tethered Push 3 once (bus/address from push3-display.sh status),
   start Studio on 127.0.0.1:port and show every check 8 state for hold-ms
   in order. :backend replaces the libusb backend and :capture the browser
-  capture (replay tests). Returns the receipt."
-  [{:keys [bus address port hold-ms backend capture browser-executable out-dir]
+  capture (replay tests). :presentation-gate {:hold! f :release! f} (replay
+  tests) is called around the #547 early pad press, so a capture that blocks
+  between hold! and release! keeps the overlay from being presented before
+  that press is handled. Returns the receipt."
+  [{:keys [bus address port hold-ms backend capture browser-executable out-dir presentation-gate]
     :or {port 4310 hold-ms default-hold-ms
          browser-executable "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"}}]
   (let [started (Instant/now)
@@ -393,6 +404,7 @@
         _ (println (format "%s claimed after %.0f ms" (local-time) claim-ms))
         ctx {:runtime runtime :presented (atom nil) :device (atom nil) :emit! (atom nil) :instance-id (atom nil)
              :stats stats :shared shared :out-dir out-dir :catalog-saves catalog-saves
+             :presentation-gate presentation-gate
              :display-options {:sink (:sink shared) :browser-executable browser-executable
                                :url (str "http://127.0.0.1:" (:port web) "/push-display")}}
         results (atom [])]
