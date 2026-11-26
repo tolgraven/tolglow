@@ -55,8 +55,17 @@ eligible heads to its calibrated movement solver, using history from the last
 accepted frame. Direct pan/tilt channels and fixtures without a world-space
 target go through their ordinary packing path. A patch change rebuilds the
 native fixture mounts. Exact coordinates, ambiguous results and unavailable or
-late readbacks use the reference solver. A movement-only show uses the same
-facility with scalar or batched CPU-authored effects.
+late readbacks use the reference solver. A head whose pan or tilt lies within
+the driver's rounding margin of a DMX code boundary is also ambiguous.
+Afterglow chooses that margin from `GL_RENDERER`; see "Rounding guard by
+renderer" in its `doc/architecture/moving-head-shaders.md`. On an Apple M-series
+GPU the margin is a sixteenth of a 16-bit step. On Mesa llvmpipe it is a whole
+step and on other software or unmeasured drivers four steps. A margin of half a
+step or more reaches a code boundary from every level, so every 16-bit axis
+uses the reference solver on those drivers and only 8-bit axes stay native.
+`afterglow.render.gpu.movement/renderer` reports the renderer and its
+`:rounding` row. A movement-only show uses the same facility with scalar or
+batched CPU-authored effects.
 
 The default GPU waiting budget is half a frame period, rounded down to a
 minimum of one millisecond. It is 12 ms at 40 Hz. All requests in a frame share
@@ -87,7 +96,8 @@ The movement status describes the published frame. `:requested` shows the
 configured backend. `:backend`, `:gpu-heads` and `:cpu-heads` report the
 solver used and the number of final world targets assigned to each solver.
 When available, `:reason` gives the fallback or idle reason, e.g. `:timeout`,
-`:busy`, `:unavailable`, `:cpu-input` or `:no-geometry`. `:backend :idle`
+`:busy`, `:unavailable`, `:cpu-input`, `:no-geometry` or `:ambiguous` (the
+native solver returned no head that it could publish). `:backend :idle`
 means the output has no movement solver result, such as during startup.
 
 ## Verify with a capture sink
@@ -107,5 +117,10 @@ correctness checks. Live hardware throughput requires separate measurement.
 
 The calibrated movement test launches overlapping effects on two of eight heads,
 sweeps the upper effect through zero, half and full opacity and compares all
-DMX slots with the CPU show. It runs once with CPU expressions and again with
-both native stages sharing the same frame deadline.
+DMX slots with the CPU show byte for byte. It runs once with CPU expressions
+and again with both native stages sharing the same frame deadline. The demo
+heads have 16-bit pan and tilt, so the test expects both heads native only when
+the renderer's margin is under half a 16-bit step, and expects `:backend :cpu`
+with `:reason :ambiguous` otherwise. A second run gives the same rig 8-bit pan
+and tilt and expects both heads native on every renderer, so llvmpipe still
+compares native movement bytes against the CPU show.
