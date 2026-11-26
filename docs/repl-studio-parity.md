@@ -361,6 +361,39 @@ dragging on the same projection. Push does not display the schedule yet. Close
 these gaps when an operator can post and move an event from Studio and see it in
 the REPL projection, and when Push shows the same upcoming list.
 
+## Turn one knob across several cues
+
+Both surfaces read one projection, `:knobs` in the show snapshot, and send the
+same owner commands: `:knob/create`, `:knob/link`, `:knob/unlink`,
+`:knob/set`, `:knob/nudge`, `:knob/rename` and `:knob/remove`. Each link in the
+projection carries its `:resolved` value with `:text`, `:unit` and, for beat
+ratios, the exact `:ratio`, plus the destination's `:current` value, `:status`
+and `:shared-with`. [Linked knobs](linked-knobs.md)
+
+From the REPL, link a knob to two running cues and turn it:
+
+```clojure
+(require '[tolglow.knobs :as knobs])
+@(show/submit! runtime :command
+   {:op :knob/create :knob-id :look :name "Look"
+    :links [{:id "sat" :destination {:kind :param :cue-id :ember :param :level} :range [0.2 1.0]}
+            {:id "rate" :destination {:kind :lfo :cue-id :ice :param :level :field :period}
+             :range [2 1/2] :quantize {:ratios :preferred}}]})
+(:links @(show/submit! runtime :command {:op :knob/set :knob-id :look :value 3/7}))
+(map (juxt :id (comp :text :resolved)) (:links (knobs/knob-view (:model @(:state runtime)) :look)))
+;; => (["sat" "0.543"] ["rate" "1 beats"])
+```
+
+A refusal reads the same from both sides: linking a missing parameter returns
+`:status :rejected :code :invalid-knob` with the reason, and the knob keeps its
+previous links. A destination that disappears later stays in the projection as
+`:status :dangling` with a `:reason`.
+
+**Tracked gaps.** Studio and Push panels are in progress on
+[issue #666](https://github.com/tolgraven/tolglow/issues/666). Close this gap
+when an operator can create, link and turn a knob in Studio, see the same
+resolved values from the REPL, and turn it from a Push encoder.
+
 ## Reviewing a show feature
 
 - **Find it from either side.** Name the view, control label and public REPL entry point. Include the shared command, input units, identifiers and scope so an operator who knows one surface can recognize the other.

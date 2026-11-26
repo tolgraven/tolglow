@@ -1,0 +1,221 @@
+# Linked knobs
+
+A linked knob is one normalized control, 0 to 1, that moves several typed
+destinations at once: a colour's saturation on one cue, a head's pan on
+another, a waveform's period in exact beat ratios, and the duty cycle and gain
+of a square LFO on a dimmer. Each destination keeps its own identity and stays
+editable on its own. The knob stores only links. Issue
+[#666](https://github.com/tolgraven/tolglow/issues/666) tracks this work.
+
+[Source](../src/tolglow/knobs.clj) · [Scheduler and ramps](scheduler.md) ·
+[Waveform destinations](modulation.md#waveforms-on-a-running-instance) ·
+[REPL and Studio parity](repl-studio-parity.md#turn-one-knob-across-several-cues)
+
+These are called *knobs*, not macros. A saved macro (`:macro/run`,
+[#216](https://github.com/tolgraven/tolglow/issues/216) and
+[#546](https://github.com/tolgraven/tolglow/issues/546)) composes cue slots.
+A knob owns no cues and launches nothing.
+
+## Data
+
+The show model keeps portable, versioned data under `:knobs`. It contains no
+functions, so a full backup saves it and a restore validates it.
+
+```clojure
+{:schema-version 1 :next-order 1
+ :knobs {:look {:id :look :name "Look" :value 0.5 :order 0
+                :links [{:id "sat" :destination {:kind :param :cue-id :tint :param :saturation}
+                         :range [0.2 1.0] :direction :up :curve :linear :input [0 1]}]}}}
+```
+
+A link has these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `:id` | Stable ID within the knob. Linking the same ID again edits that link |
+| `:destination` | What the link drives (table below) |
+| `:range` | `[from to]` in the destination's own units and type |
+| `:direction` | `:up` (default) or `:down`, which runs the range from `to` back to `from` |
+| `:curve` | Any `afterglow.render.easing` curve, as in scheduler ramps. Default `:linear` |
+| `:input` | `[low high]` part of the knob that moves this link. Default `[0 1]`. Below `low` the link holds `from`, above `high` it holds `to` |
+| `:quantize` | Optional. `{:ratios :preferred}` or `{:ratios :free}` for beat ratios, `:integer` for whole numbers |
+| `:unit` | Optional unit for a show variable, which has no schema |
+
+Destinations:
+
+| `:kind` | Fields | Type comes from |
+| --- | --- | --- |
+| `:param` | `:cue-id` or `:instance-id`, `:param` | The effect parameter's schema |
+| `:lfo` | `:cue-id` or `:instance-id`, `:param`, and `:field` (`:from`, `:to`, `:period`) or `:input` (a waveform input such as `:duty`) | The bound parameter's schema for `:from`/`:to`; exact beats for `:period`; the waveform's registered input schema for `:input` |
+| `:variable` | `:variable` | A number, with the link's `:unit`. Runtime variables are reserved, as for `:variable/set` |
+
+A `:cue-id` addresses every running launch of that cue, as scheduler and agent
+actions do, and keeps working across relaunches and restores. An
+`:instance-id` addresses one launch. The waveform `:to` endpoint is the pulse's
+high level, so it acts as the LFO's gain.
+
+Supported destination types are number, integer, colour, vector, enum and
+boolean. Gradient and range parameters are refused with a reason.
+
+## Commands
+
+All surfaces send the same owner commands with the usual receipts, show ID,
+epoch and command-ID replay.
+
+```clojure
+{:op :knob/create :knob-id :look :name "Look" :links [...]}   ; :value defaults to 0
+{:op :knob/rename :knob-id :look :name "Wash look"}
+{:op :knob/link   :knob-id :look :link {...}}                 ; add, or edit by link :id
+{:op :knob/unlink :knob-id :look :link-id "sat"}
+{:op :knob/set    :knob-id :look :value 0.75}
+{:op :knob/nudge  :knob-id :look :delta 1/64}                 ; relative encoders; clamps to 0–1
+{:op :knob/remove :knob-id :look}
+```
+
+Linking validates the destination against the running show. An unknown cue,
+missing parameter, endpoint outside the parameter's bounds, ratio steps on a
+parameter that is not a beat ratio, or a waveform link with no waveform bound is
+refused. A cue that is not running yet can be linked. Its links are skipped
+until a launch exists.
+
+## Resolving a knob value
+
+For each link the knob position goes through the input window, then the curve,
+then the direction, giving a fraction `u` from 0 to 1. A continuous destination
+takes `from + u × (to − from)`, component-wise for colours and vectors, clamped
+to the parameter's bounds and rounded for integers.
+
+A stepped destination (beat ratios, enums, booleans) divides `u` into equal
+steps: step `floor(u × n)` of the `n` values from `from` to `to`.
+
+- **Preferred ratios** are the exact fractions `n/d` with `n` and `d` from 1, 2,
+  3, 4, 6 and 8, the same set as cue variations and the Push ratio pad (#529,
+  #547), inside the link range and the parameter's bounds. A period range of
+  `[2 1/2]` steps through 2, 3/2, 4/3, 1, 3/4, 2/3 and 1/2 beats.
+- **Free ratios** use every fraction with a denominator up to 16 in the range.
+- An **enum** steps through its declared values between the two endpoints.
+  A **boolean** switches at the halfway point.
+
+**No hysteresis.** A position exactly on a boundary `k/n` selects step `k`, the
+upper step, in either sweep direction. A position a hair below selects step
+`k − 1`. Positions within 10⁻⁹ below a boundary count as on it, so a decimal
+`3/7` behaves like the exact fraction. The knob is the operator's own position,
+so the same value must give the same step on Studio, Push, the REPL and after a
+reload. Hysteresis would make the step depend on the path taken. Layer priority
+uses hysteresis because it follows a free-running waveform; a knob does not.
+
+Ratios stay exact. `[:knobs ...]` in the snapshot reports `:resolved {:value 3/2
+:text "3/2 beats" :unit :beats :ratio [3 2]}`, and Transit carries the fraction
+to Studio unchanged.
+
+## How the value reaches destinations
+
+`:knob/set` commits the knob value and every waveform-field link in one owner
+command. The owner then sends each parameter and show-variable link as a
+`:param/set` or `:variable/set` through the same command reducer that a Studio
+control uses. Each write gets the derived command ID `<command-id>/<n>` and the
+knob command's source. The receipt lists every link with `:status`:
+
+| Status | Meaning |
+| --- | --- |
+| `:applied` | Written |
+| `:skipped` | Not written, with `:reason`: `:not-running`, `:gesture-open`, or a dangling reason |
+| `:rejected` | The destination refused the value, with its `:message`. Other links still apply |
+
+Replaying a knob command ID replays its writes from their receipts, so nothing
+is written twice and a later edit survives.
+
+Resolution reads only the knob value and link data. It samples no waveform and
+advances no random controller, so a frame never evaluates a stateful signal a
+second time for a knob.
+
+## Overrides and conflicts
+
+Knobs reuse the existing override contract. They add no parallel one.
+
+- **Manual edit or a finished gesture on a destination.** The destination
+  takes the human value and keeps it. The knob keeps its own position. The
+  projection marks the link `:diverged? true`. The next knob move writes the
+  resolved value again: last committed writer wins, with no pickup or
+  catch-up mode.
+- **An open human gesture on a destination.** While a Push, Studio or other
+  operator gesture holds a parameter (`:gesture/begin` until `:gesture/end` or
+  `:gesture/cancel`), knob moves skip that destination with `:reason
+  :gesture-open`. The other links still follow the knob.
+- **A scheduler ramp on a destination.** A knob write is a committed write, so
+  it cancels the ramp as [scheduler.md](scheduler.md#ramp-semantics) describes.
+  From Studio, Push or the REPL `:recent` records `:reason :human-override`; from
+  an agent or reactive source it records `:reason :superseded`. A ramp posted
+  after the knob moved runs, commits its target, and the link then shows
+  `:diverged?`.
+- **A waveform or random controller on the same parameter.** The knob writes the
+  base value. Under the existing manual-edit rule, an operator write to a
+  parameter with an active waveform or random controller holds that source until
+  it is resumed. Link the waveform's own fields (`:lfo` destinations) to shape
+  the modulation instead of fighting it.
+- **Two knobs on one destination.** Both are allowed. Each link lists the other
+  knobs in `:shared-with`. The last committed knob write wins, in owner command
+  order. There is no averaging or priority between knobs.
+- **Removing a knob** deletes only its links. Destinations keep their
+  definitions and current values, including any waveform period, duty or gain
+  the knob last set.
+
+## Dangling and incompatible targets
+
+The projection resolves each link against the current show. A link's
+`:status` is `:ok`, `:inactive` (its cue has no running launch) or `:dangling`
+with a `:reason` and `:message`:
+
+| Reason | When |
+| --- | --- |
+| `:cue-missing` | The cue no longer exists |
+| `:instance-missing` | The addressed launch ended, or did not survive a restore |
+| `:param-missing` | The effect no longer has that parameter |
+| `:lfo-missing`, `:input-missing` | The waveform was unbound, or it has no such input |
+| `:incompatible` | The range no longer fits the parameter, for example after a revision changed its bounds or type |
+
+Dangling links are never dropped and never crash a knob. Setting the knob
+skips them and applies the rest. Linking the same link ID to a live destination
+clears the state.
+
+A full backup saves knobs as they are. Restoring rebinds `:instance-id` links to
+the new launch IDs. A link whose launch did not survive keeps its old ID with a
+saved `:dangling {:reason :instance-missing}` marker, so it cannot attach to an
+unrelated launch. Other reasons are derived again from the restored show.
+
+## Using it from the REPL
+
+```clojure
+(require '[tolglow.show :as show] '[tolglow.knobs :as knobs])
+
+@(show/submit! runtime :command
+   {:op :knob/create :knob-id :look :name "Look"
+    :links [{:id "sat" :destination {:kind :param :cue-id :tint :param :saturation} :range [0.2 1.0]}
+            {:id "pan" :destination {:kind :param :cue-id :aim :param :pan} :range [0.25 0.75] :curve :ease-in-out}
+            {:id "rate" :destination {:kind :lfo :cue-id :pulse :param :level :field :period}
+             :range [2 1/2] :quantize {:ratios :preferred}}
+            {:id "gain" :destination {:kind :lfo :cue-id :pulse :param :level :field :to}
+             :range [0.5 1.0] :input [0.5 1.0]}
+            {:id "duty" :destination {:kind :lfo :cue-id :pulse :param :level :input :duty}
+             :range [0.125 0.5] :direction :down :input [0.5 1.0]}]})
+
+(:links @(show/submit! runtime :command {:op :knob/set :knob-id :look :value 1.0}))
+(->> (show/snapshot runtime) :knobs :knobs first :links (map (juxt :id (comp :text :resolved))))
+;; => (["sat" "1.000"] ["pan" "0.750"] ["rate" "1/2 beats"] ["gain" "1.000"] ["duty" "0.125"])
+```
+
+The waveform must be bound first, for example with `:modulation-bind` as in
+[modulation.md](modulation.md#waveforms-on-a-running-instance).
+
+## Verification
+
+`tolglow.knob-sweep-test` drives the real owner tick and captures ArtDmx. One
+knob sweep up and back down checks saturation (green channel), eased pan, the
+preferred-ratio period, and the square LFO's gain and duty on the dimmer at
+each frame's beat, including exactly on and just below each ratio boundary in
+both directions. Halfway the pulse is half a beat long at half level. At the
+bright end it is a 1/16-beat pulse at full level. Other tests cover manual
+edits, an open gesture, ramp cancellation, two knobs on one destination,
+removal, command replay, a full backup round trip and dangling targets after
+reload. `tolglow.knobs-test` covers validation and every supported type
+without a running show.
