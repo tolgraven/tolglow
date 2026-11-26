@@ -5,6 +5,7 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.chat :as chat]
+            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.checkpoints :as checkpoints]
             [tolglow.studio.cue-pad-preview :as pad-preview]
             [tolglow.studio.pad-breath :as pad-breath]
@@ -384,7 +385,7 @@
                   [:select {:aria-label title :value selected :on-change #(change! (:value (get choices (js/parseInt (input-value %) 10))))}
                    (for [[index choice] (map-indexed vector choices)]
                      ^{:key index} [:option {:value index} (or (:label choice) (label (:id choice)) (str (:value choice)))])])
-       "boolean" [:input {:type "checkbox" :aria-label title :checked (boolean value) :on-change #(change! (checked? %))}]
+       "boolean" [checkbox/input {:aria-label title :checked (boolean value) :on-change #(change! (checked? %))}]
        "enum" (let [choices (vec (or (:values schema) (:options schema)))
                     selected (or (first (keep-indexed #(when (= value %2) %1) choices)) 0)]
                 [:select {:aria-label title :value selected :on-change #(change! (get choices (js/parseInt (input-value %) 10)))}
@@ -541,7 +542,7 @@
       [duration-control "auto-duration" "Cue duration" (:duration-value form 4) (:duration-unit form "beats")
        (fn [value unit] (when (some? value) (set-ui! [:auto-form :duration-value] value))
          (when unit (set-ui! [:auto-form :duration-unit] unit)))]
-      [:label.policy-toggle [:input {:type "checkbox" :checked enabled?
+      [:label.policy-toggle [checkbox/input {:checked enabled?
                                     :on-change #(set-ui! [:auto-form :target-activity?] (checked? %))}]
        "Choose cues by visual activity"]
       (when enabled?
@@ -927,7 +928,7 @@
              [block-builder/field {:id (some-> builder :id not-empty keyword) :params {:level {}}
                                    :outputs {:color nil :dimmer nil}}
               (or (:blocks builder) {}) (fn [f] (input! [:studio/ui-update [:builder :blocks] #(f (or % {}))]))])])
-        [:label.checkbox-label [:input#builder-cue {:type "checkbox" :checked (boolean (:cue? builder)) :on-change #(set-ui! [:builder :cue?] (checked? %))}]
+        [:label.checkbox-label [checkbox/input {:id "builder-cue" :checked (boolean (:cue? builder)) :on-change #(set-ui! [:builder :cue?] (checked? %))}]
          "Create matching cue"]])
      [button "builder-preview" "Generate EDN ↗" [:studio/builder-generate]]]))
 
@@ -975,8 +976,8 @@
     [:label "Editor" [:select#editor-engine {:value (name (:engine definition :textarea)) :disabled (= :form (:mode definition))
                                              :on-change #(send! [:studio/editor-engine (keyword (input-value %))])}
                       [:option {:value "textarea"} "Text editor"] [:option {:value "neovim"} "Neovim · WASM"]]]
-    [:label.auto-publish [:input#auto-publish {:type "checkbox" :checked (boolean (:auto? definition))
-                                                             :on-change #(set-ui! [:definition :auto?] (checked? %))}]
+    [:label.auto-publish [checkbox/input {:id "auto-publish" :checked (boolean (:auto? definition))
+                                          :on-change #(set-ui! [:definition :auto?] (checked? %))}]
      "Publish valid edits"]]
    [:div.definition-feedback
     [:span#definition-status.small.muted (:status definition "Ready to create")]

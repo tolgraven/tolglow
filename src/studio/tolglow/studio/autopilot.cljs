@@ -3,6 +3,7 @@
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
             [tolglow.studio.autopilot-signal :as signal]
+            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.events :as events]
             [tolglow.studio.lighting-policy :as policy]
             [tolglow.studio.lighting-scenes :as scenes]
@@ -91,8 +92,8 @@
 
 (defn- enable [section label on? disabled?]
   [:label.policy-toggle
-   [:input {:type "checkbox" :checked (boolean on?) :disabled disabled? :aria-label label
-            :on-change #(rf/dispatch [::enable section (.. % -target -checked)])}] label])
+   [checkbox/input {:checked (boolean on?) :disabled disabled? :aria-label label
+                    :on-change #(rf/dispatch [::enable section (.. % -target -checked)])}] label])
 
 (defn- scope-field [scope change!]
   (let [groups @(rf/subscribe [::policy/group-ids])
@@ -113,11 +114,11 @@
         (for [{:keys [id name]} fixtures]
           ^{:key (pr-str id)}
           [:label.policy-toggle
-           [:input {:type "checkbox" :checked (boolean (some #{id} selected))
-                    :on-change #(let [on? (.. % -target -checked)]
-                                  (change! (fn [prior]
-                                             (update prior :fixture-ids
-                                                     (fn [ids] (if on? (vec (distinct (conj ids id))) (into [] (remove #{id}) ids)))))))}]
+           [checkbox/input {:checked (boolean (some #{id} selected))
+                            :on-change #(let [on? (.. % -target -checked)]
+                                          (change! (fn [prior]
+                                                     (update prior :fixture-ids
+                                                             (fn [ids] (if on? (vec (distinct (conj ids id))) (into [] (remove #{id}) ids)))))))}]
            (or name (events/wire-id id))])])]))
 
 (def unit-opts {:min 0 :max 1 :step 0.005 :percent? true})
@@ -255,8 +256,8 @@
       [signal/choice "Preferred changes" (:preference controls)
        [[:parameters "Adjust existing parameters"] [:cues "Launch or retire cues"]
         [:generate "Compose one-shot effects"] [:author "Request an agent-authored effect"]] #(edit :preference %)]]
-     [:label.policy-toggle [:input {:type "checkbox" :checked (:rotate? controls)
-                                    :on-change #(edit :rotate? (.. % -target -checked))}] "Rotate active fixtures"]
+     [:label.policy-toggle [checkbox/input {:checked (:rotate? controls)
+                                            :on-change #(edit :rotate? (.. % -target -checked))}] "Rotate active fixtures"]
      [:details.source-readings [:summary "Target attack and release"]
       [:div.policy-grid
        (for [stage [:attack :release]]

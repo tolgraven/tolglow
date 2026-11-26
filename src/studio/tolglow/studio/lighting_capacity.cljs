@@ -1,13 +1,14 @@
 (ns tolglow.studio.lighting-capacity
-  (:require [re-frame.core :as rf]))
+  (:require [re-frame.core :as rf]
+            [tolglow.studio.checkbox :as checkbox]))
 
 (defn- percent [x] (str (js/Math.round (* 100 x)) "%"))
 
 (defn- change! [key value] (rf/dispatch [:connections/set-capacity {key value}]))
 
 (defn- toggle [title key value pending?]
-  [:label [:input {:type "checkbox" :checked (boolean value) :disabled pending?
-                   :on-change #(change! key (.. % -target -checked))}] title])
+  [:label [checkbox/input {:checked (boolean value) :disabled pending?
+                           :on-change #(change! key (.. % -target -checked))}] title])
 
 (defn- bound [label key value minimum maximum pending?]
   [:label label
@@ -66,12 +67,12 @@
               [:fieldset
                [:legend "Fog outputs"]
                (for [{:keys [id name]} foggers]
-                 ^{:key id} [:label [:input {:type "checkbox" :disabled pending?
-                                             :checked (boolean (some #{id} fog-fixture-ids))
-                                             :on-change #(change! :fog-fixture-ids
-                                                            (if (.. % -target -checked)
-                                                              (conj (vec fog-fixture-ids) id)
-                                                              (filterv (partial not= id) fog-fixture-ids)))}]
+                 ^{:key id} [:label [checkbox/input {:disabled pending?
+                                                     :checked (boolean (some #{id} fog-fixture-ids))
+                                                     :on-change #(change! :fog-fixture-ids
+                                                                    (if (.. % -target -checked)
+                                                                      (conj (vec fog-fixture-ids) id)
+                                                                      (filterv (partial not= id) fog-fixture-ids)))}]
                              (or name (str id))])
                [:p.small.muted (if (:active? fog) "Pulse active"
                                   "A high-energy crossing requests half channel drive for 0.4 s, with at least 6 s rest.")]])])])]]))

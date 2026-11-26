@@ -7,6 +7,7 @@
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
             [reagent.core :as r]
+            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.events :as events]
             [tolglow.studio.projection :as projection]
             [tolglow.video.mapping :as mapping]))
@@ -274,7 +275,7 @@
       [:button.text-button {:type "button" :on-click #(put! [:rotate 15])} "↻ 15°"]
       [:button.text-button {:type "button" :on-click #(put! [:length 0.9])} "Shorter"]
       [:button.text-button {:type "button" :on-click #(put! [:length (/ 1 0.9)])} "Longer"]
-      [:label.video-check [:input {:type "checkbox" :checked (boolean (:reverse? strip))
+      [:label.video-check [checkbox/input {:checked (boolean (:reverse? strip))
                        :on-change #(put! [:reverse (.. % -target -checked)])}] " First pixel at the far end"]]
      [:div.form-row
       [:label "Sampling height"

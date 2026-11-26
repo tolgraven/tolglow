@@ -1,6 +1,7 @@
 (ns tolglow.studio.audience
   "Operate the enrolled audience zones. The existing Connections stream owns all telemetry."
   (:require [re-frame.core :as rf]
+            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.events :as events]))
 
 (rf/reg-sub ::mix
@@ -71,9 +72,9 @@
         checked? (if (and pending? (contains? operation :included?)) (:included? operation) selected?)]
     [:li.audience-zone {:data-zone id :data-status (name status)}
      [:label.audience-inclusion
-      [:input {:type "checkbox" :checked checked? :disabled (or pending? (and (= :unavailable status) (not selected?)))
-               :aria-label (str "Include " label " in audience mix")
-               :on-change #(select! id (not checked?))}]
+      [checkbox/input {:checked checked? :disabled (or pending? (and (= :unavailable status) (not selected?)))
+                       :aria-label (str "Include " label " in audience mix")
+                       :on-change #(select! id (not checked?))}]
       [:span [:strong label] [:small (get status-label status)]]]
      (when (#{:armed :ready} status)
        [:button.button {:type "button" :disabled pending? :on-click #(arm! id session-id (= :ready status))

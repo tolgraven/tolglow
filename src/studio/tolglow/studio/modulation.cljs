@@ -2,6 +2,7 @@
   "Re-frame controls for the server's musical parameter modulation owner."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
+            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.events :as events]))
 
 (def defaults
@@ -261,8 +262,8 @@
         (if (seq choices)
           (for [choice choices]
             ^{:key (:id choice)} [:label.modulation-choice
-                                 [:input {:type "checkbox" :checked (boolean (some #{(:id choice)} (:targets s))) :disabled busy?
-                                           :on-change #(rf/dispatch [:modulation/toggle :targets (:id choice)])}]
+                                 [checkbox/input {:checked (boolean (some #{(:id choice)} (:targets s))) :disabled busy?
+                                                   :on-change #(rf/dispatch [:modulation/toggle :targets (:id choice)])}]
                                  [:span (:label choice)]])
           [:p.small.muted "No targets of this kind are available in this show."])]))])
 
@@ -276,9 +277,9 @@
        [:div.modulation-choices {:role "group" :aria-label "Modulated parameters"}
         (for [parameter parameters]
           ^{:key (:id parameter)} [:label.modulation-choice
-                                  [:input {:type "checkbox" :disabled busy?
-                                            :checked (boolean (some #{(:id parameter)} (:selected-params s)))
-                                            :on-change #(rf/dispatch [:modulation/toggle :selected-params (:id parameter)])}]
+                                  [checkbox/input {:disabled busy?
+                                                    :checked (boolean (some #{(:id parameter)} (:selected-params s)))
+                                                    :on-change #(rf/dispatch [:modulation/toggle :selected-params (:id parameter)])}]
                                   [:span (:label parameter)]])])
      [:details.modulation-ranges
       [:summary "Choose ranges · optional"]
@@ -289,11 +290,11 @@
                                 :high (if domain (str (second domain)) "")} (get-in s [:ranges id]))]]
         ^{:key id}
         [:div.modulation-range-row
-         [:label.modulation-choice [:input {:type "checkbox" :disabled busy? :checked (:enabled? entry)
-                                            :on-change (fn [event]
-                                                         (rf/dispatch [:modulation/range id :low (:low entry)])
-                                                         (rf/dispatch [:modulation/range id :high (:high entry)])
-                                                         (rf/dispatch [:modulation/range id :enabled? (.. event -target -checked)]))}]
+         [:label.modulation-choice [checkbox/input {:disabled busy? :checked (:enabled? entry)
+                                                    :on-change (fn [event]
+                                                                 (rf/dispatch [:modulation/range id :low (:low entry)])
+                                                                 (rf/dispatch [:modulation/range id :high (:high entry)])
+                                                                 (rf/dispatch [:modulation/range id :enabled? (.. event -target -checked)]))}]
           [:span label]]
          [:label "Minimum" [:input {:type "text" :input-mode "decimal" :value (:low entry) :disabled (or busy? (not (:enabled? entry)))
                                       :aria-label (str label " random minimum")

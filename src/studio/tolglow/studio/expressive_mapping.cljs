@@ -3,6 +3,7 @@
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
             [reagent.core :as r]
+            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.events :as events]
             [tolglow.studio.parameter-widgets :as widgets]))
 
@@ -202,7 +203,7 @@
     (for [[id title] options] ^{:key id} [:option {:value id} title])]])
 
 (defn- toggle [label enabled? change attrs]
-  [:label.expressive-toggle [:input (merge {:type "checkbox" :checked enabled? :on-change #(change (checked %))} attrs)] [:span label]])
+  [:label.expressive-toggle [checkbox/input (merge {:checked enabled? :on-change #(change (checked %))} attrs)] [:span label]])
 
 (defn- range-field [s param index field values]
   [:div.expressive-range

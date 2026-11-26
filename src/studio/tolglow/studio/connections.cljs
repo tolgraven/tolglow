@@ -4,6 +4,7 @@
   (:require [clojure.string :as str]
             [afterglow.sync.peer :as pairing]
             [re-frame.core :as rf]
+            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.compute-client :as compute-client]
             [reagent.core :as r]
             [tolglow.audio.pcm :as pcm]
@@ -497,8 +498,8 @@
   [:label title [:input (merge {:type "text" :value (get-in s path "") :on-change #(edit! path (text %))} attrs)]])
 
 (defn- checkbox [s path title disabled?]
-  [:label.checkbox-label [:input {:type "checkbox" :checked (boolean (get-in s path)) :disabled (boolean disabled?)
-                                  :on-change #(edit! path (.. % -target -checked))}] title])
+  [:label.checkbox-label [checkbox/input {:checked (boolean (get-in s path)) :disabled (boolean disabled?)
+                                          :on-change #(edit! path (.. % -target -checked))}] title])
 
 (defn- status-chip [active? title] [:span.connection-chip {:class (when active? "active")} [:i] title])
 
@@ -555,8 +556,8 @@
       [:label (if (= kind :notes) "Note" "CC") [:input {:type "text" :input-mode "numeric" :value (:control row) :disabled disabled?
                                                          :aria-label (str (name kind) " " (inc index) " number")
                                                          :on-change #(rf/dispatch-sync [:connections/mapping-edit kind index :control (text %)])}]]
-      [:label.checkbox-label [:input {:type "checkbox" :checked (not (:disabled? row)) :disabled disabled?
-                                      :on-change #(rf/dispatch-sync [:connections/mapping-edit kind index :disabled? (not (.. % -target -checked))])}] "Enabled"]
+      [:label.checkbox-label [checkbox/input {:checked (not (:disabled? row)) :disabled disabled?
+                                              :on-change #(rf/dispatch-sync [:connections/mapping-edit kind index :disabled? (not (.. % -target -checked))])}] "Enabled"]
       [:label "Cue" [:select {:value (:cue-id row) :disabled disabled? :aria-label (str (name kind) " " (inc index) " cue")
                               :on-change #(rf/dispatch-sync [:connections/mapping-edit kind index :cue-id (text %)])}
                      (for [cue cues] ^{:key (:id cue)} [:option {:value (:id cue)} (or (:name cue) (:id cue))])]]
@@ -646,11 +647,11 @@
                                                              :on-change #(edit! [:sync-form :live :record-route] (text %))}
                                   [:option {:value "bridge"} "Bridge · confirmed clip writes"] [:option {:value "midi"} "MIDI · delivery only"]]]
        [field s [:sync-form :live :channel] "MIDI channel · 1–16" {:id "live-channel" :input-mode "numeric" :disabled disabled?}]]
-      [:label.checkbox-label [:input {:type "checkbox" :checked (:automap? live true) :disabled disabled?
-                                      :on-change #(edit! [:sync-form :live :automap?] (.. % -target -checked))}]
+      [:label.checkbox-label [checkbox/input {:checked (:automap? live true) :disabled disabled?
+                                              :on-change #(edit! [:sync-form :live :automap?] (.. % -target -checked))}]
        "Map this cue page and its parameters when saving"]
-      [:label.checkbox-label [:input {:type "checkbox" :checked (boolean (:pairing live)) :disabled disabled?
-                                       :on-change #(rf/dispatch-sync [:connections/pairing (.. % -target -checked)])}]
+      [:label.checkbox-label [checkbox/input {:checked (boolean (:pairing live)) :disabled disabled?
+                                               :on-change #(rf/dispatch-sync [:connections/pairing (.. % -target -checked)])}]
        "Pair a track, clip slot and drum rack"]
       (when (:pairing live)
         [:div.connection-pairing

@@ -1,7 +1,8 @@
 (ns tolglow.studio.fog-fields
   "Fixture and room atmosphere authoring. Values stay in re-frame drafts until published."
   (:require [clojure.string :as str]
-            [re-frame.core :as rf]))
+            [re-frame.core :as rf]
+            [tolglow.studio.checkbox :as checkbox]))
 
 (defn- number! [label value valid?]
   (let [n (js/Number value)]
@@ -58,8 +59,8 @@
       [:fieldset.fixture-type-fields {:disabled (boolean (:busy s))}
        [:legend "Fog machine"]
        [:label {:for "model-fog-output"} "Model fog output"
-        [:input#model-fog-output {:type "checkbox" :checked enabled?
-                                 :on-change #(rf/dispatch-sync [:fixtures/edit-fogger :enabled? (.. % -target -checked)])}]]
+        [checkbox/input {:id "model-fog-output" :checked enabled?
+                         :on-change #(rf/dispatch-sync [:fixtures/edit-fogger :enabled? (.. % -target -checked)])}]]
        (when enabled?
          [:<>
           [input edits profile :flow-m3-min "Rated fog flow (m³/min)" "Required"]
