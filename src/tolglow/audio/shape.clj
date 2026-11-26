@@ -43,7 +43,9 @@
   [band]
   (let [[low high] (band-range band)
         hz #(if (>= % 1000.0) (str (/ (Math/round (/ % 100.0)) 10.0) " kHz") (str (Math/round (double %)) " Hz"))]
-    (str (if (keyword? band) (name band) "band") (when low (str " " (hz low) "–" (hz high))))))
+    (cond (= :full band) "full range"
+          (keyword? band) (str (name band) " " (hz low) "–" (hz high))
+          :else (str (hz low) "–" (hz high)))))
 
 ;; Filter bank ------------------------------------------------------------------
 
@@ -326,6 +328,9 @@
                     (open-window index length origin points complete?))]
         (when-let [window (:window state)] (load! window))
         (loop [i 0 window (:window state)
+               ;; The open window's index and start beat, unboxed for the sample loop.
+               windex (long (:index (:window state) Long/MIN_VALUE))
+               wstart (double (:start-beat (:window state) 0.0))
                sum-sq (double (:sum-sq (:window state) 0.0)) wn (long (:n (:window state) 0))
                at (long (:ring-at state)) filled (long (:ring-filled state))
                seq (long (:seq state)) extractions []]
@@ -336,22 +341,24 @@
              :extractions extractions}
             (let [beat (+ beat0 (* i step))
                   index (long (Math/floor (/ (- beat origin) length)))]
-              (if (and window (= index (:index window)))
+              (if (and window (= index windex))
                 (let [y (aget filtered i)
-                      point (long (max 0 (min (dec points) (Math/floor (* points (/ (- beat (double (:start-beat window))) length))))))]
+                      point (long (max 0 (min (dec points) (Math/floor (* points (/ (- beat wstart) length))))))]
                   (aset squares point (+ (aget squares point) (* y y)))
                   (aset counts point (inc (aget counts point)))
                   (aset ring at y)
-                  (recur (inc i) window (+ sum-sq (* y y)) (inc wn) (mod (inc at) size) (min size (inc filled))
+                  (recur (inc i) window windex wstart (+ sum-sq (* y y)) (inc wn)
+                         (let [next (inc at)] (if (= next size) 0 next)) (min size (inc filled))
                          seq extractions))
                 ;; An edge: close the window that ended, then reprocess sample i
                 ;; in the new one. A jump in either direction starts incomplete.
-                (let [contiguous? (and window (= index (inc (:index window))))
+                (let [contiguous? (and window (= index (inc windex)))
                       extraction (when (and contiguous? (:complete? window))
                                    (finish-window (assoc state :seq seq) (store window sum-sq wn) ring filled at))
                       ;; A window opened on its first sample is whole too.
-                      at-edge? (<= (- beat (+ origin (* index length))) (* 1.5 step))]
-                  (recur i (fresh index (boolean (or contiguous? at-edge?))) 0.0 0 at filled
+                      at-edge? (<= (- beat (+ origin (* index length))) (* 1.5 step))
+                      opened (fresh index (boolean (or contiguous? at-edge?)))]
+                  (recur i opened index (double (:start-beat opened)) 0.0 0 at filled
                          (if extraction (inc seq) seq)
                          (cond-> extractions extraction (conj extraction))))))))))))
 

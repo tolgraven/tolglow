@@ -14,6 +14,7 @@
             [tolglow.studio.lighting-capacity :as capacity]
             [tolglow.studio.fog-control :as fog-control]
             [tolglow.studio.audio-scope :as audio-scope]
+            [tolglow.studio.audio-lfo :as audio-lfo]
             [tolglow.studio.events :as events]
             [tolglow.studio.projection :as projection]))
 
@@ -754,6 +755,7 @@
      [:div.connections-layout [midi-panel s disabled?] [beat-link-panel s disabled?] [link-panel s disabled?]
       [live-panel s (get-in db [:show :cues]) disabled?] [audio-panel s] [section-reference-panel s]
       [capacity/panel (contains? (:pending s) :lighting-capacity)] [fog-control/panel (contains? (:pending s) :fog-control)] [output-panel db s] [pause-panel (contains? (:pending s) :pause)]]
+     [audio-lfo/panel]
      [compute-client/panel]
      [sensors/panel db]
      [patchbay/panel db]]))

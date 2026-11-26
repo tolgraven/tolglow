@@ -318,6 +318,11 @@
 
 ;; Offline replay ----------------------------------------------------------------
 
+(defn- timing [nanos]
+  (let [sorted (vec (sort nanos)) n (count sorted)
+        at (fn [q] (/ (nth sorted (min (dec n) (long (Math/floor (* q n))))) 1000.0))]
+    (when (pos? n) {:median (at 0.5) :p99 (at 0.99) :max (/ (peek sorted) 1000.0) :count n})))
+
 (defn replay
   "Run mono PCM through the same extractor, admission and morph an LFO uses
   live, on a steady transport that starts at beat 0 and time 0. Blocks arrive
@@ -328,8 +333,8 @@
   Returns :commits (each with the frame, beat, latency and the largest table
   change at that frame), :frames [beat value] of the LFO scanned over the scan
   period, :steps (largest frame-to-frame value change overall and on commit
-  frames), and per-block extraction and per-frame sampling cost in
-  microseconds."
+  frames), and the median, p99 and maximum per-block extraction and per-frame
+  sampling cost in microseconds."
   [^doubles samples {:keys [config sample-rate bpm block-frames fps scan]
                      :or {sample-rate 48000.0 bpm 120.0 block-frames 480 fps 60.0 scan 1.0}}]
   (let [sample-rate (double sample-rate) bpm (double bpm)
@@ -342,7 +347,7 @@
         duration-ms (* 1000.0 (/ n sample-rate))
         frames (long (Math/floor (/ (* duration-ms fps) 1000.0)))]
     (loop [frame 0 block 0 extractor (shape/new-extractor (dissoc spec :digest) sample-rate)
-           pending nil model model out [] commits [] extract-ns 0 sample-ns 0]
+           pending nil model model out [] commits [] extract-ns [] sample-ns []]
       (if (= frame frames)
         (let [steps (map (fn [[_ a] [_ b]] (Math/abs (- (double b) (double a)))) out (rest out))
               commit-frames (set (map :frame commits))
@@ -350,8 +355,8 @@
           {:commits commits :frames out
            :steps {:max (reduce max 0.0 steps)
                    :max-on-commit (reduce max 0.0 (keep (fn [[i step]] (when (commit-frames (inc i)) step)) indexed))}
-           :extract-us-per-block (/ extract-ns (max 1 block) 1000.0)
-           :sample-us-per-frame (/ sample-ns (max 1 frames) 1000.0)
+           :extract-us (timing extract-ns)
+           :sample-us (timing sample-ns)
            :blocks block :duration-ms duration-ms})
         (let [time-ms (/ (* 1000.0 frame) fps)
               ;; Deliver every block captured by this frame's time.
@@ -374,7 +379,7 @@
                              (if-let [e (peek extractions)]
                                (assoc e :run-id :replay :spec-digest (:digest spec) :arrived-ms end-ms)
                                pending)
-                             (+ extract-ns elapsed))))))
+                             (conj extract-ns elapsed))))))
               beat (beat-at time-ms)
               model (assoc-in model [:transport :beat] beat)
               before (get-in model [:audio-lfos :lfos :replay])
@@ -394,4 +399,4 @@
                         :table-jump (reduce max 0.0 (map #(Math/abs (- (double %1) (double %2)))
                                                          (shape-at before beat) table))})]
           (recur (inc frame) block extractor nil admitted (conj out [beat value])
-                 (cond-> commits commit (conj commit)) extract-ns (+ sample-ns elapsed)))))))
+                 (cond-> commits commit (conj commit)) extract-ns (conj sample-ns elapsed)))))))

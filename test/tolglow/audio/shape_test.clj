@@ -159,6 +159,8 @@
                                            :silence-db 3 :min-confidence 2}))))
   (is (thrown? clojure.lang.ExceptionInfo (shape/new-extractor {:points 4} sample-rate)))
   (is (= "bass 60 Hz–250 Hz" (shape/band-label :bass)))
+  (is (= "full range" (shape/band-label :full)))
+  (is (= "100 Hz–1.5 kHz" (shape/band-label [100 1500])))
   (is (= [100.0 900.0] (shape/band-range [100 900]))))
 
 (deftest table-value-interpolates-one-periodic-cycle

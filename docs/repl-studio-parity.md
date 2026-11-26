@@ -584,6 +584,32 @@ display data are ready ([Push](linked-knobs.md#push),
 when Studio can set non-numeric endpoints and a Push encoder turns the same knob
 and shows the same resolved values.
 
+## Shape an LFO from a band of the input
+
+Both surfaces read `:audio-lfos` in the show snapshot and send the same owner
+commands, `:audio-lfo/configure` and `:audio-lfo/remove`. The LFO's waveform,
+`:audio/<id>`, is in the same picker catalog as every other waveform, and a
+parameter LFO bound to it is the ordinary `:modulation-bind`.
+[Audio-shaped LFOs](audio-shaped-lfo.md)
+
+```clojure
+@(show/submit! runtime :command {:op :audio-lfo/configure :lfo-id :bass :name "Bass"
+                                 :config {:band :bass :extract :envelope :morph {:bars 2}}})
+(select-keys (tolglow.audio-lfo/lfo-view (:model @(:state runtime)) :bass)
+             [:status :band-label :progress :last])
+```
+
+In Studio, **Connections → Audio LFOs** shows the same LFO: status, level,
+confidence, pitch and lateness, the source band's last window and the morph
+from the previous shape to the target. **Apply**, **Remove** and **Add audio
+LFO** send the commands above; an invalid setting from either side is refused
+with the reason and the previous configuration stays. A REPL configure
+appears in the open panel on the next snapshot.
+
+**Tracked gaps.** Linked knobs reach a bound LFO's period and endpoints, not
+the audio LFO's band or morph time. Physical input and recorded material are
+open on [issue #676](https://github.com/tolgraven/tolglow/issues/676).
+
 ## Reviewing a show feature
 
 - **Find it from either side.** Name the view, control label and public REPL entry point. Include the shared command, input units, identifiers and scope so an operator who knows one surface can recognize the other.
