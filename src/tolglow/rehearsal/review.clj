@@ -132,7 +132,7 @@
   section than the one it was for (stale)."
   [passage agent-log auto-launches]
   (mapv (fn [{:keys [section section-beat accepted-beat suggested-beat status receipts tools]}]
-          (let [after (sort (keep #(let [b (start-beat %)] (when (>= b (- accepted-beat eps)) b)) auto-launches))
+          (let [after (sort (keep #(when (> (:seen-beat % (start-beat %)) (+ accepted-beat eps)) (start-beat %)) auto-launches))
                 ;; The previous mood can still decide on the frame that crosses
                 ;; the line, just before the agent's change lands on that frame:
                 ;; such a launch was already committed (seen) by then.
@@ -245,7 +245,7 @@
 (defn- club-report [{:keys [passage frame-ms boundaries responses phrases repetition contrast stops flags launch-timing]}]
   (str "# Club rehearsal\n\n" headless-note "\n\n" (passage-line passage frame-ms) "\n\n"
        "## Agent responses to section lines\n\n"
-       (table ["Section" "Line" "Accepted at beat" "Late (beats)" "Carry-over launches" "First auto launch" "Receipts"]
+       (table ["Section" "Line" "Accepted at beat" "Late (beats)" "Carry-over launches" "First launch of the new mood" "Receipts"]
               (map (fn [r] [(:section r) (:position r) (:accepted-beat r) (:late-beats r) (:carry-over-launches r) (:first-launch-beat r)
                             (str/join ", " (map (fn [[k v]] (str k " " (fmt v))) (:receipts r)))])
                    responses))
