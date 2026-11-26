@@ -13,10 +13,16 @@
   keeps running, later slots are dropped until it lands, and it is then
   published. A cue whose frames take longer than its own period waits
   `late-duty` times its render time before the next one, so one heavy cue
-  cannot monopolise the shared GPU worker. The renderer is replaced only when
-  Afterglow reports its context closed. A slot whose program, uniforms and
-  target are unchanged re-uses the published frame, so a paused instance or a
-  stopped transport costs nothing.
+  cannot monopolise the shared GPU worker. The renderer is replaced when
+  Afterglow reports its context closed, or by the watchdog when it has had
+  work queued without finishing any job for `:watchdog-ms`; a job is timed
+  from the renderer's last progress, not from when it was queued. Each loss
+  is recorded with its time and the next renderer opens after an
+  exponentially growing delay; after `:max-losses` losses in a row the
+  producer stops reopening and reports every running cue failed
+  (:shader/renderer-unresponsive) until all of them have ended. A slot whose
+  program, uniforms and target are unchanged re-uses the published frame, so
+  a paused instance or a stopped transport costs nothing.
 
   Feed references: `frames` returns {:frames {feed-id frame} :instance-frames
   {instance-id {feed-id frame}}}. A feed id resolves to the newest-launched
@@ -44,8 +50,6 @@
   "Shader instances rendered at once."
   8)
 
-(def compile-timeout-ms 15000)
-
 (def history-size
   "Per-instance timing samples kept for status and measurement."
   512)
@@ -54,8 +58,8 @@
   (compile-shader [renderer shader] "A Future of {:compiled? true}; fails with the driver log.")
   (render-frame [renderer shader request] "A Future of {:pixels :width :height :draw-ms :readback-ms :gpu-ms}.")
   (release-shader [renderer shader] "A Future; frees the program.")
-  (describe-renderer [renderer] "Portable driver and cache status.")
-  (close-renderer [renderer] "Release the context."))
+  (describe-renderer [renderer] "Portable driver and cache status; :terminated? true once a closed renderer has released its context.")
+  (close-renderer [renderer] "Release the context. false means its worker is still busy and cleanup is pending."))
 
 (defn native-renderer
   "Afterglow's JOGL fragment-shader renderer. Throws ex-info with
@@ -112,10 +116,29 @@
   (* 2 1920 1080 30))
 
 (def default-watchdog-ms
-  "A render or compile still running after this long has wedged the
-  renderer: it is abandoned and a new one opens. Afterglow's own fence
-  timeout (1 s) handles an ordinary hung draw."
+  "A renderer that has had work queued for this long without finishing a
+  single job has wedged: it is abandoned and, after a delay, a new one opens.
+  Jobs queued behind one another do not add up, because each finished job is
+  progress. Afterglow's own fence timeout (1 s) handles an ordinary hung
+  draw."
   15000)
+
+(def default-max-losses
+  "Renderers lost in a row before the producer stops reopening. A loss counts
+  towards the run when its renderer was lost within `healthy-periods`
+  watchdog periods of opening. Each wedged renderer can leave a worker
+  thread stuck in the driver with its GL context, so this also bounds the
+  contexts abandoned while a cause persists."
+  4)
+
+(def healthy-periods
+  "A renderer that lasted this many watchdog periods before it was lost
+  starts a new run of losses."
+  4)
+
+(def poll-ms
+  "How often a thread waiting on a compile checks the renderer's progress."
+  25)
 
 (defn create
   "A producer. :renderer is a ShaderRenderer or a no-argument factory
@@ -125,20 +148,33 @@
   waiting instance never holds up another's slots); :render-timeout-ms is
   how long a slot waits for its frame before calling it late (default 5000);
   :max-pixel-rate is the pixel budget (default `default-pixel-rate`);
-  :watchdog-ms abandons a wedged renderer (default `default-watchdog-ms`)."
+  :watchdog-ms abandons a wedged renderer (default `default-watchdog-ms`);
+  :max-losses bounds renderers lost in a row (default `default-max-losses`);
+  :clock-ns is the monotonic clock for the watchdog and reopen delays
+  (default System/nanoTime)."
   ([] (create {}))
-  ([{:keys [renderer now-ms threads render-timeout-ms max-pixel-rate watchdog-ms]
+  ([{:keys [renderer now-ms threads render-timeout-ms max-pixel-rate watchdog-ms max-losses clock-ns]
      :or {now-ms #(System/currentTimeMillis) threads (inc max-instances) render-timeout-ms 5000
-          max-pixel-rate default-pixel-rate watchdog-ms default-watchdog-ms}}]
+          max-pixel-rate default-pixel-rate watchdog-ms default-watchdog-ms max-losses default-max-losses
+          clock-ns #(System/nanoTime)}}]
    {:renderer-factory (if (satisfies? ShaderRenderer renderer) (constantly renderer) (or renderer native-renderer))
     :owns-renderer? (not (satisfies? ShaderRenderer renderer))
     :renderer (atom nil)
     :renderer-error (atom nil)
     :renderer-lock (Object.)
+    ;; The current renderer's jobs: {:renderer :opened-ns :progress-ns
+    ;; :pending {Future {:at-ns :instance-id}}}, on :clock-ns.
+    :watch (atom nil)
+    ;; Renderers lost in the current run.
+    :losses (atom 0)
+    ;; Renderers dropped by this producer whose close has not finished.
+    :abandoned (atom #{})
     :now-ms now-ms
+    :clock-ns clock-ns
     :render-timeout-ms render-timeout-ms
     :max-pixel-rate max-pixel-rate
     :watchdog-ms watchdog-ms
+    :max-losses max-losses
     :opened (atom 0)
     :requests (atom {})
     :last-offered (atom {})
@@ -154,37 +190,145 @@
                    (.setRemoveOnCancelPolicy true)))}))
 
 (def retry-after-ms
-  "A renderer that failed to open is retried after this long."
+  "A renderer that failed to open is retried after this long. A wedged
+  renderer's replacement waits this long, doubling with each further loss in
+  a row; the first replacement for a context Afterglow closed opens at once."
   2000)
+
+(defn- clock ^long [producer] (long ((:clock-ns producer))))
+
+(defn- since-ms [producer since-ns] (/ (- (clock producer) (long since-ns)) 1.0e6))
+
+(defn- prune-abandoned!
+  "Forget abandoned renderers that have since released their context."
+  [producer]
+  (doseq [r @(:abandoned producer)]
+    (when (try (:terminated? (describe-renderer r)) (catch Throwable _ false))
+      (swap! (:abandoned producer) disj r))))
 
 (defn- renderer! [producer]
   (or @(:renderer producer)
       (locking (:renderer-lock producer)
         (or @(:renderer producer)
-            (let [failed (:at-ns @(:renderer-error producer))]
-              (when (or (nil? failed) (> (- (System/nanoTime) (long failed)) (* 1000000 retry-after-ms)))
-                (try
-                  (let [r ((:renderer-factory producer))]
-                    (swap! (:opened producer) inc)
-                    (reset! (:renderer-error producer) nil)
-                    (reset! (:renderer producer) r))
-                  (catch Exception e
-                    (reset! (:renderer-error producer) {:message (ex-message e) :at-ns (System/nanoTime)
-                                                        :code (:code (ex-data e) :shader/renderer-failed)})
-                    nil))))))))
+            (let [{:keys [at-ns final?] wait-ms :retry-after-ms} @(:renderer-error producer)]
+              (when-not (or final? (and at-ns (< (since-ms producer at-ns) (double wait-ms))))
+                (prune-abandoned! producer)
+                (if (>= (count @(:abandoned producer)) (long (:max-losses producer)))
+                  ;; Every abandoned context is still held by a stuck worker:
+                  ;; open no more until one is released.
+                  (do (reset! (:renderer-error producer)
+                              {:code :shader/renderer-unresponsive :abandoned (count @(:abandoned producer))
+                               :message (str (count @(:abandoned producer)) " abandoned shader renderers have not released their GPU context; no new one opens until one does")
+                               :at-ns (clock producer) :retry-after-ms retry-after-ms})
+                      nil)
+                  (try
+                    (let [r ((:renderer-factory producer))
+                          now (clock producer)]
+                      (swap! (:opened producer) inc)
+                      (reset! (:watch producer) {:renderer r :opened-ns now :progress-ns now :pending {}})
+                      (reset! (:renderer-error producer) nil)
+                      (reset! (:renderer producer) r))
+                    (catch Exception e
+                      (reset! (:renderer-error producer) {:message (ex-message e) :at-ns (clock producer)
+                                                          :retry-after-ms retry-after-ms
+                                                          :code (:code (ex-data e) :shader/renderer-failed)})
+                      nil)))))))))
+
+(defn- reopen-delay-ms
+  "Delay before the renderer after the `losses`th loss in a row opens."
+  [losses wedged?]
+  (if (and (= 1 losses) (not wedged?)) 0 (* retry-after-ms (bit-shift-left 1 (dec (long losses))))))
 
 (defn- drop-renderer!
   "Forget a renderer whose context Afterglow already closed (its fence timeout
-  or a lost driver); the next slot opens a new one through the factory. The
-  old one is closed on its own thread, never on a cadence thread."
-  [producer r error]
-  (when (compare-and-set! (:renderer producer) r nil)
-    (reset! (:renderer-error producer) {:message (ex-message error)
-                                        :code (:code (ex-data error) :shader/renderer-failed)})
-    (when (:owns-renderer? producer)
-      (doto (Thread. ^Runnable (fn [] (try (close-renderer r) (catch Throwable _ nil))) "tolglow-shader-renderer-close")
-        (.setDaemon true)
-        (.start)))))
+  or a lost driver) or that wedged. The loss is recorded with its time; the
+  next slot after the reopen delay opens a new renderer through the factory,
+  unless this loss ends a run of :max-losses. The old renderer is closed on
+  its own thread, never on a cadence thread, and counts as abandoned until
+  its close finishes."
+  [producer r error wedged?]
+  (when (identical? r @(:renderer producer))
+    (locking (:renderer-lock producer)
+      (when (compare-and-set! (:renderer producer) r nil)
+        (let [now (clock producer)
+              opened (long (:opened-ns @(:watch producer) now))
+              healthy? (> (- now opened) (* (long healthy-periods) (long (:watchdog-ms producer)) 1000000))
+              losses (if healthy? 1 (inc (long @(:losses producer))))
+              final? (>= losses (long (:max-losses producer)))
+              cause (:code (ex-data error) :shader/renderer-failed)]
+          (reset! (:losses producer) losses)
+          (reset! (:renderer-error producer)
+                  (merge (select-keys (ex-data error) [:instance-id :stalled-ms])
+                         (if final?
+                           {:code :shader/renderer-unresponsive :cause cause :losses losses :final? true
+                            :message (str "The shader renderer failed " losses " times in a row; shader cues stay stopped until they have all ended")}
+                           {:code cause :message (ex-message error) :losses losses
+                            :at-ns now :retry-after-ms (reopen-delay-ms losses wedged?)})))
+          (when (:owns-renderer? producer)
+            (swap! (:abandoned producer) conj r)
+            (doto (Thread. ^Runnable (fn []
+                                       ;; A close that throws has finished; false means its worker is still busy.
+                                       (when-not (false? (try (close-renderer r) (catch Throwable _ true)))
+                                         (swap! (:abandoned producer) disj r)))
+                           "tolglow-shader-renderer-close")
+              (.setDaemon true)
+              (.start))))))))
+
+(defn- track!
+  "Note job f, submitted to renderer r for instance id. Returns f."
+  [producer r id ^Future f]
+  (let [now (clock producer)]
+    (swap! (:watch producer) #(if (identical? r (:renderer %)) (assoc-in % [:pending f] {:at-ns now :instance-id id}) %))
+    f))
+
+(defn- sweep!
+  "Forget r's finished jobs; a finished job is progress. r's watch, or nil
+  when r is no longer the current renderer."
+  [producer r]
+  (let [w @(:watch producer)]
+    (when (identical? r (:renderer w))
+      (let [done (into [] (comp (map key) (filter #(.isDone ^Future %))) (:pending w))]
+        (if (empty? done)
+          w
+          (let [now (clock producer)
+                w (swap! (:watch producer) #(if (identical? r (:renderer %))
+                                              (-> % (update :pending (fn [p] (apply dissoc p done))) (assoc :progress-ns now))
+                                              %))]
+            (when (identical? r (:renderer w)) w)))))))
+
+(defn- stalled
+  "When renderer r has had work queued without finishing any job for longer
+  than the watchdog: {:stalled-ms :instance-id} for its oldest job. A job
+  counts from the later of its submission and r's last progress, so jobs
+  queued behind one another on the one worker never add up."
+  [producer r]
+  (when-let [{:keys [pending progress-ns]} (sweep! producer r)]
+    (when (seq pending)
+      (let [[_ {:keys [at-ns instance-id]}] (apply min-key (comp :at-ns val) pending)
+            ms (since-ms producer (max (long at-ns) (long progress-ns)))]
+        (when (> ms (double (:watchdog-ms producer)))
+          {:stalled-ms ms :instance-id instance-id})))))
+
+(defn- wedged-error [data]
+  (ex-info "The shader renderer stopped responding" (assoc data :code :shader/renderer-wedged)))
+
+(defn- await-job
+  "Wait for job f on renderer r for as long as r keeps finishing jobs. Throws
+  :shader/renderer-wedged once r has finished nothing for the watchdog
+  period (dropping it), or when r has been replaced meanwhile."
+  [producer r ^Future f]
+  (loop []
+    (let [result (try (.get f poll-ms TimeUnit/MILLISECONDS)
+                      (catch ExecutionException e (throw (or (.getCause e) e)))
+                      (catch TimeoutException _ ::pending))]
+      (cond
+        (not (identical? ::pending result)) (do (sweep! producer r) result)
+        (not (identical? r @(:renderer producer))) (throw (wedged-error {}))
+        :else (if-let [stall (stalled producer r)]
+                (let [e (wedged-error stall)]
+                  (drop-renderer! producer r e true)
+                  (throw e))
+                (recur))))))
 
 (defn- push-sample [v x] (let [v (conj (or v []) x)] (if (> (count v) history-size) (subvec v (- (count v) history-size)) v)))
 
@@ -212,28 +356,27 @@
     (let [program (:program @entry)]
       (when (and program (not (shader-in-use? producer program id)))
         (when-let [r @(:renderer producer)]
-          (try (release-shader r program) (catch Exception _ nil)))))))
+          (try (track! producer r id (release-shader r program)) (catch Exception _ nil)))))))
 
 (defn- ensure-program!
   "Compile the request's shader when it changed. Returns the program to render
-  (the request's, or the last working one), or nil."
-  [producer entry request r]
+  (the request's, or the last working one), or nil. The compile may wait
+  behind other jobs on the worker; it is abandoned only when the renderer
+  stops making progress."
+  [producer id entry request r]
   (let [{:keys [program failed]} @entry
         wanted (:shader request)]
     (if (or (= wanted program) (= wanted failed))
       program
       (let [started (System/nanoTime)]
         (try
-          (await-future (compile-shader r wanted) compile-timeout-ms)
+          (await-job producer r (track! producer r id (compile-shader r wanted)))
           (swap! entry assoc :program wanted :failed nil :error nil
                  :compile-ms (/ (- (System/nanoTime) started) 1.0e6))
           (swap! entry update :compiles (fnil inc 0))
           wanted
           (catch clojure.lang.ExceptionInfo e
             (let [data (ex-data e)]
-              (when (= :shader/late (:code data))
-                ;; A compile is milliseconds; one stuck this long has wedged the worker.
-                (drop-renderer! producer r (ex-info "The shader renderer stopped responding" {:code :shader/renderer-wedged})))
               (if (#{:compile :link} (:stage data))
                 (do (swap! entry assoc :failed wanted
                            :error {:code :shader/compile-failed :stage (:stage data) :log (:log data)
@@ -278,17 +421,19 @@
   "A render that outlived an earlier slot's wait. Publish it if it has
   finished. True while it is still running, so this slot is dropped."
   [producer id entry]
-  (when-let [{:keys [^Future future renderer started] :as job} (:in-flight @entry)]
+  (when-let [{:keys [^Future future renderer] :as job} (:in-flight @entry)]
     (if-not (.isDone future)
-      (if (> (- (System/nanoTime) (long started)) (* 1000000 (long (:watchdog-ms producer))))
-        ;; Wedged without Afterglow noticing: abandon the job and the renderer.
-        (let [error (ex-info "The shader renderer stopped responding" {:code :shader/renderer-wedged})]
+      ;; A job on a renderer that has since been dropped is abandoned at once;
+      ;; on the current one, only when the renderer has stopped making progress.
+      (if-let [stall (if (identical? renderer @(:renderer producer)) (stalled producer renderer) {})]
+        (let [error (wedged-error stall)]
           (swap! entry #(-> % (dissoc :in-flight) (update :failures (fnil inc 0))
                             (assoc :error {:code :shader/renderer-wedged :message (ex-message error)})))
-          (drop-renderer! producer renderer error)
+          (drop-renderer! producer renderer error true)
           false)
         true)
       (do (swap! entry dissoc :in-flight)
+          (sweep! producer renderer)
           (try (publish! producer id entry job (await-future future 0))
                (catch Exception e
                  (swap! entry #(-> % (update :failures (fnil inc 0))
@@ -306,9 +451,9 @@
           (swap! entry update :dropped (fnil inc 0))
           (do
             (swap! entry update :slots (fnil inc 0))
-            (when-let [r (renderer! producer)]
+            (if-let [r (renderer! producer)]
               (try
-                (when-let [program (ensure-program! producer entry request r)]
+                (when-let [program (ensure-program! producer id entry request r)]
                   (let [uniforms (if (= program (:shader request))
                                    (:uniforms request)
                                    (compatible-uniforms program request (:last-uniforms @entry)))
@@ -316,11 +461,12 @@
                         input [program uniforms target]]
                     (if (and (= input (:rendered-input @entry)) (get @(:published producer) id))
                       (swap! entry update :unchanged (fnil inc 0))
-                      (let [job {:future (render-frame r program (assoc target :uniforms uniforms)) :renderer r
-                                 :request request :input input :uniforms uniforms :started (System/nanoTime)}]
+                      (let [job {:future (track! producer r id (render-frame r program (assoc target :uniforms uniforms)))
+                                 :renderer r :request request :input input :uniforms uniforms :started (System/nanoTime)}]
                         (swap! entry assoc :in-flight job)
                         (let [result (await-future (:future job) (:render-timeout-ms producer))]
                           (swap! entry dissoc :in-flight)
+                          (sweep! producer r)
                           (publish! producer id entry job result))))))
                 (catch Exception e
                   (let [code (:code (ex-data e))
@@ -330,7 +476,13 @@
                       (swap! entry #(-> % (update :late (fnil inc 0)) (assoc :error {:code :shader/late :message (ex-message e)})))
                       (do (swap! entry #(-> % (dissoc :in-flight) (update :failures (fnil inc 0))
                                             (assoc :error {:code (or code :shader/render-failed) :message (ex-message e)})))
-                          (when (renderer-lost type) (drop-renderer! producer r e))))))))))
+                          (when (renderer-lost type) (drop-renderer! producer r e false)))))))
+              ;; The producer has given up on the renderer: this cue has failed.
+              (let [error @(:renderer-error producer)]
+                (when (and (= :shader/renderer-unresponsive (:code error))
+                           (not= (:code error) (:code (:error @entry))))
+                  (swap! entry #(-> % (update :failures (fnil inc 0))
+                                    (assoc :error (select-keys error [:code :message :losses :abandoned])))))))))
         (schedule! producer id entry (:fps request) slot)))))
 
 (defn- schedule!
@@ -399,6 +551,11 @@
           [previous _] (reset-vals! (:requests producer) (select-keys requests admitted))]
       (reset! (:last-offered producer) requests)
       (when-not (= (set (keys previous)) admitted)
+        ;; A launch after every shader cue has ended tries a renderer again.
+        (when (and (empty? previous) (:final? @(:renderer-error producer)))
+          (locking (:renderer-lock producer)
+            (reset! (:losses producer) 0)
+            (reset! (:renderer-error producer) nil)))
         (let [running (set (keys @(:entries producer)))]
           (doseq [id running :when (not (contains? admitted id))] (retire! producer id))
           (doseq [id admitted :when (not (contains? running id))] (admit! producer id (get requests id))))))))
@@ -426,8 +583,12 @@
   (let [requests @(:requests producer)
         published @(:published producer)]
     {:renderer (some-> @(:renderer producer) describe-renderer (select-keys [:backend :renderer :version :programs :targets :renders :compile-failures :queued]))
-     :error (some-> @(:renderer-error producer) (dissoc :at-ns))
+     :error (when-let [{:keys [at-ns retry-after-ms] :as e} @(:renderer-error producer)]
+              (cond-> (dissoc e :at-ns)
+                at-ns (assoc :retry-in-ms (max 0.0 (- (double retry-after-ms) (since-ms producer at-ns))))))
      :opened @(:opened producer)
+     ;; Dropped renderers whose close has not finished (a stuck worker keeps its context).
+     :abandoned (count @(:abandoned producer))
      :pixel-budget (:max-pixel-rate producer)
      ;; Older launches beyond the instance or pixel-rate limit do not render.
      :refused (vec (sort (map str (keys (apply dissoc (or @(:last-offered producer) {}) (keys requests))))))
@@ -461,7 +622,7 @@
   calling thread, which waits; never call it from the lighting frame."
   [producer shader]
   (if-let [r (renderer! producer)]
-    (try (await-future (compile-shader r shader) compile-timeout-ms) {:compiled? true}
+    (try (await-job producer r (track! producer r nil (compile-shader r shader))) {:compiled? true}
          (catch clojure.lang.ExceptionInfo e
            (let [d (ex-data e)]
              {:compiled? false :stage (:stage d) :log (:log d) :message (ex-message e)
