@@ -131,24 +131,72 @@
 (defn launch-problem
   "Nil when a launch may proceed, otherwise [code message]. A synchronized aim
   path is refused when a head's mount or calibration changed since it was
-  solved, when the current tempo makes its musical arrival faster than the
-  calibrated motor rates, or when a head's committed pan is nearer another
-  wrap of the start pose than the published one. Committed values are an
-  optional ID -> output row lookup (a map works), read only for such paths."
+  solved, or when a head's committed pan is nearer another wrap of the start
+  pose than the published one. Tempo never refuses a launch: see launch-stretch.
+  Committed values are an optional ID -> output row lookup (a map works), read
+  only for such paths."
   [model command committed]
   (let [effect (when (#{:cue/launch :effect/launch} (:op command)) (launched-effect model command))
-        {:keys [rig-fingerprint arrival-duration minimum-travel-ms] :as editor} (:editor effect)
+        {:keys [rig-fingerprint] :as editor} (:editor effect)
         fixtures (into {} (map (fn [fixture] [(wire-id (:id fixture)) fixture])) (get-in model [:rig :fixtures]))]
     (when (= :synchronized-aim-path (:type editor))
       (or (when-not (and (map? rig-fingerprint) (seq rig-fingerprint)
                          (every? (fn [[id digest]] (= digest (some-> (get fixtures (wire-id id)) head-fingerprint)))
                                  rig-fingerprint))
             [:stale-calibration "A head's mount or calibration changed after this synchronized path was solved; republish it"])
-          (when (and (map? arrival-duration) (not (contains? arrival-duration :ms)) (number? minimum-travel-ms)
-                     (< (try (estimate-ms (:transport model) arrival-duration) (catch clojure.lang.ExceptionInfo _ 0.0))
-                        (- minimum-travel-ms 1.0e-6)))
-            [:tempo-exceeds-motor-rate "At the current tempo this musical arrival is faster than the calibrated motor rates; republish it"])
           (some (partial wrap-problem fixtures committed) (:outputs effect))))))
+
+(defn launch-stretch
+  "Nil unless a synchronized aim path launch has a musical arrival that the
+  current tempo makes shorter than its slowest head's minimum travel time.
+  Then the move keeps its musical unit with a longer span lasting that minimum
+  at the launch tempo: {:effect published :duration stretched
+  :musical-duration :musical-ms :duration-ms :stretched-by-ms :bpm}."
+  [model command]
+  (let [effect (when (#{:cue/launch :effect/launch} (:op command)) (launched-effect model command))
+        {:keys [arrival-duration minimum-travel-ms] :as editor} (:editor effect)]
+    (when (and (= :synchronized-aim-path (:type editor)) (map? arrival-duration)
+               (not (contains? arrival-duration :ms)) (registry/finite-number? minimum-travel-ms))
+      (let [musical-ms (try (estimate-ms (:transport model) arrival-duration) (catch clojure.lang.ExceptionInfo _ nil))]
+        (when (and musical-ms (pos? musical-ms) (< musical-ms (- minimum-travel-ms 1.0e-6)))
+          (let [[unit span] (first arrival-duration)]
+            {:effect effect :duration {unit (* span (/ minimum-travel-ms musical-ms))}
+             :musical-duration arrival-duration :musical-ms musical-ms :duration-ms minimum-travel-ms
+             :stretched-by-ms (- minimum-travel-ms musical-ms) :bpm (get-in model [:transport :bpm])}))))))
+
+(defn- stretch-definition [effect duration]
+  (let [[unit span] (first duration)
+        last-at (fn [keyframes] (assoc-in keyframes [(dec (count keyframes)) :at] {unit span}))]
+    (-> effect
+        (assoc :duration duration)
+        (update :outputs (partial mapv #(update-in % [:value :spec :keyframes] last-at))))))
+
+(defn stretch-launch
+  "Apply launch-stretch to an accepted launch result. The new instance runs a
+  stretched private copy of the published move on the same beat clock, and its
+  musical lifetime grows to match unless the cue or launch set its own. The
+  instance and acknowledgement carry the :arrival-stretch report."
+  [{:keys [ack] :as result} model command]
+  (let [id (:instance-id ack)
+        instance (get-in result [:model :instances id])
+        stretch (when (and (= :accepted (:status ack)) instance) (launch-stretch model command))
+        cue (when (= :cue/launch (:op command)) (get-in model [:registry :cues (:cue-id command)]))]
+    (if-not (and stretch (= (:effect stretch) (:definition instance)))
+      result
+      (let [{:keys [duration]} stretch
+            report (dissoc stretch :effect)
+            own-lifetime? (some #(or (contains? % :duration) (contains? % :duration-ms)) [(:launch command) cue])
+            stretched (cond-> (-> instance
+                                  (assoc :definition (stretch-definition (:definition instance) duration))
+                                  (assoc :arrival-stretch report))
+                        (and (:duration-timer instance) (not own-lifetime?))
+                        (-> (assoc :duration duration)
+                            (assoc-in [:duration-timer :duration] (time/normalize-duration duration (:timing-meter instance)))))
+            launched? #(and (= :instance/launched (:type %)) (= id (get-in % [:instance :id])))]
+        (-> result
+            (assoc-in [:model :instances id] stretched)
+            (update :events (partial mapv #(if (launched? %) (assoc % :instance stretched) %)))
+            (assoc-in [:ack :arrival-stretch] report))))))
 
 (defn definition
   "Create a revision of an aim-only effect for selected moving heads.

@@ -192,6 +192,109 @@
         (is (nil? (get-in (show/snapshot runtime) [:status :error]))))
       (finally (show/stop! runtime)))))
 
+(def ^:private head-words
+  "Captured [coarse fine] slots of each paired head's pan and tilt."
+  {:far-travel {:pan [[1 510] [2 0]] :tilt [[1 511] [2 1]]}
+   :slow-motor {:pan [[2 4] [2 5]] :tilt [[2 6] [2 7]]}})
+
+(defn- capturing-runtime [captured]
+  (show/create-runtime
+   {:workspace-options nil
+    :model (control/new-show {:rig {:fixtures paths/paired-heads}})
+    :sink {:send! (fn [universes _] (reset! captured (update-vals universes #(mapv (partial bit-and 255) %))))}}))
+
+(defn- frame-words [packet]
+  (into {} (for [[id axes] head-words [axis [coarse fine]] axes] [[id axis] (word packet coarse fine)])))
+
+(defn- run-frames!
+  "Tick the real owner at each time and return [time words] for every frame."
+  [runtime captured times]
+  (mapv (fn [t] (show/tick! runtime t) [t (frame-words @captured)]) times))
+
+(defn- arrival-frame [frames]
+  (let [final (second (peek frames))]
+    (into {} (for [k (keys final)
+                   :let [moved? (not= (get (second (first frames)) k) (get final k))]
+                   :when moved?]
+               [k (some (fn [[t words]] (when (= (get final k) (get words k)) t)) frames)]))))
+
+(defn- degrees [fixture axis word]
+  (let [pose (frame/fixture-pose fixture (assoc {:pan 0.5 :tilt 0.5} axis (/ word 65535.0)))]
+    (get pose (if (= axis :pan) :pan-deg :tilt-deg))))
+
+(defn- worst-rate-excess
+  "Largest per-frame angular step beyond each head's calibrated rate, in 16-bit steps."
+  [frames]
+  (reduce max 0.0
+          (for [[[t0 a] [t1 b]] (partition 2 1 frames)
+                fixture paths/paired-heads
+                axis [:pan :tilt]
+                :let [k [(:id fixture) axis]
+                      step (abs (- (degrees fixture axis 1) (degrees fixture axis 0)))
+                      moved (abs (- (degrees fixture axis (get b k)) (degrees fixture axis (get a k))))
+                      allowed (* (get-in fixture [:calibration :motor-rate-deg-per-sec axis]) (/ (- t1 t0) 1000.0))]]
+            (/ (- moved allowed) step))))
+
+(deftest arrive-together-published-at-120-bpm-stretches-at-170-and-heads-arrive-on-one-frame
+  (let [captured (atom nil)
+        runtime (capturing-runtime captured)
+        spec (assoc paths/synchronized-spec :targets ["far-travel" "slow-motor"] :duration {:beats 5})]
+    (try
+      (let [response (post! runtime "/api/aim-path" spec 0)]
+        (is (= "accepted" (get-in response [:data :status])))
+        (is (= {:beats 5} (get-in response [:data :arrival-duration])) "Five beats at 120 BPM need no publish stretch")
+        (is (= :accepted (:status (submit-at! runtime :command {:op :transport/set :transport {:bpm 170}} 0))))
+        (let [launch (submit-at! runtime :command {:op :cue/launch :cue-id :paired} 0)
+              report (:arrival-stretch launch)
+              frames (run-frames! runtime captured (range 0 2201 25))]
+          (is (= :accepted (:status launch)) "No tempo refusal and no republish")
+          (is (< (abs (- 2000.0 (:duration-ms report))) 1.0e-6))
+          (is (< (abs (- (- 2000.0 (/ 300000.0 170)) (:stretched-by-ms report))) 1.0e-6))
+          (is (= report (get-in @(:state runtime) [:model :instances (:instance-id launch) :arrival-stretch])))
+          (let [arrivals (arrival-frame frames)]
+            (is (= #{[:far-travel :pan] [:slow-motor :pan]} (set (keys arrivals))))
+            (is (= #{2000} (set (vals arrivals))) "Both heads reach their end words on the same captured frame"))
+          (is (<= (worst-rate-excess frames) 1.0) "No frame outruns a calibrated rate by more than one 16-bit step")
+          (is (nil? (get-in (show/snapshot runtime) [:status :error])))))
+      (finally (show/stop! runtime)))))
+
+(deftest arrive-together-needing-no-stretch-runs-the-published-move
+  (let [captured (atom nil)
+        runtime (capturing-runtime captured)
+        spec (assoc paths/synchronized-spec :targets ["far-travel" "slow-motor"] :duration {:beats 5})]
+    (try
+      (post! runtime "/api/aim-path" spec 0)
+      (let [launch (submit-at! runtime :command {:op :cue/launch :cue-id :paired} 0)
+            instance (get-in @(:state runtime) [:model :instances (:instance-id launch)])
+            frames (run-frames! runtime captured (range 0 2701 25))]
+        (is (= :accepted (:status launch)))
+        (is (not (contains? launch :arrival-stretch)))
+        (is (not (contains? instance :arrival-stretch)))
+        (is (= (get-in @(:state runtime) [:model :registry :effects :paired]) (:definition instance)))
+        (is (= #{2500} (set (vals (arrival-frame frames)))) "Five beats at 120 BPM arrive at 2.5 s"))
+      (finally (show/stop! runtime)))))
+
+(deftest stretched-arrival-pauses-on-transport-stop-and-resumes-on-play
+  (let [captured (atom nil)
+        runtime (capturing-runtime captured)
+        spec (assoc paths/synchronized-spec :targets ["far-travel" "slow-motor"] :duration {:beats 5})]
+    (try
+      (post! runtime "/api/aim-path" spec 0)
+      (submit-at! runtime :command {:op :transport/set :transport {:bpm 170}} 0)
+      (is (some? (:arrival-stretch (submit-at! runtime :command {:op :cue/launch :cue-id :paired} 0))))
+      (let [moving (run-frames! runtime captured (range 0 1001 25))
+            _ (is (= :accepted (:status (submit-at! runtime :command {:op :transport/set :transport {:playing? false}} 1000))))
+            stopped (run-frames! runtime captured (range 1000 1501 25))
+            _ (is (= :accepted (:status (submit-at! runtime :command {:op :transport/set :transport {:playing? true}} 1500))))
+            resumed (run-frames! runtime captured (range 1500 2701 25))]
+        (is (not= (second (first moving)) (second (peek moving))) "The heads were mid-move at the stop")
+        (is (= 1 (count (distinct (map second stopped)))) "Every head holds its pose while stopped")
+        (is (= (second (peek moving)) (second (first stopped))))
+        (is (= #{2500} (set (vals (arrival-frame (into moving resumed)))))
+            "The move resumes from where it stopped and arrives 500 ms later, together")
+        (is (<= (worst-rate-excess (into moving resumed)) 1.0)))
+      (finally (show/stop! runtime)))))
+
 (defn- committed-pan-deg [runtime fixture]
   (let [{:keys [values compact]} (:output @(:state runtime))
         row (or (get values (:id fixture))
