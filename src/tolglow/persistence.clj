@@ -36,6 +36,7 @@
             [tolglow.composition :as composition]
             [tolglow.agents :as agents]
             [tolglow.autopilot.actions :as conductor-actions]
+            [tolglow.automation.policy :as policy]
             [tolglow.spatial :as spatial]
             [tolglow.video.mapping :as video-mapping]
             [tolglow.spatial.actions :as spatial-actions]
@@ -247,17 +248,26 @@
             [:auto] "Invalid auto session/RNG/ownership state")
     (check! (and (integer? (:count config 1)) (<= 1 (:count config 1) 64))
             [:auto :config :count] "Auto count must be between 1 and 64")
-    (let [scope (:scope config :all)]
-      (check! (or (= :all scope)
-                   (and (map? scope)
-                        (or (and (:page-id scope) (get-in model [:pages (:page-id scope)]))
-                            (and (vector? (:cue-ids scope))
-                                 (every? #(get-in model [:registry :cues %]) (:cue-ids scope))))))
-              [:auto :config :scope] "Auto scope must name saved cues or a saved page"))
+    ;; Scope references are checked when auto is configured, never on save: a
+    ;; cue deleted later must not block a backup (#217). The planner skips it
+    ;; and reports :scope-missing.
     (let [duration (or (:interval config) (when (:interval-ms config) {:ms (:interval-ms config)}) {:beats 1})]
       (check-errors! (time/validate-duration duration) [:auto :config :interval])
       (check! (pos? (val (first duration))) [:auto :config :interval] "Auto interval must be positive"))
     (when (:interval-timer state) (timer! (:interval-timer state) [:auto :state :interval-timer]))
+    (when-let [section (:section state)]
+      (check! (and (map? section) (natural? (:index section)) (pos-int? (:run section)) (map? (:timer section)))
+              [:auto :state :section] "Auto section state needs an index, run and timer")
+      (timer! (:timer section) [:auto :state :section :timer]))
+    (when (contains? state :owned-launches)
+      (check! (and (vector? (:owned-launches state))
+                   (every? #(and (map? %) (string? (:instance-id %))) (:owned-launches state)))
+              [:auto :state :owned-launches] "Auto launch records need instance IDs"))
+    (when (and enabled? (map? config))
+      ;; Settings kept verbatim from another build (restore-unrecognized) are
+      ;; not this planner's to judge.
+      (let [errors (policy/validate-config (:config (policy/sanitize-config config)))]
+        (check! (empty? errors) [:auto :config] (str "Invalid auto config: " (pr-str (vec (take 3 errors)))))))
     (doseq [key [:next-at-ms :next-at-beat] :when (contains? state key)]
       (check! (registry/finite-number? (get state key)) [:auto :state key] "Auto boundary must be finite"))))
 
@@ -485,12 +495,41 @@
               [:frame-output :universes universe] "Each universe needs 512 signed or unsigned channel bytes")))
   output)
 
+(defn- restore-auto
+  "Saved shows predate the strict auto config (#217). Set aside settings the
+  planner does not know under [:auto :unrecognized], verbatim, and list them in
+  the reasons; the next save writes them back. If the rest still cannot run,
+  restore auto mode switched off with the problem, keeping its ownership so
+  Stop can still end its looks, instead of refusing the whole show. Configure
+  commands stay strict."
+  [model]
+  (let [{:keys [enabled? config]} (:auto model)]
+    (if-not (and (map? (:auto model)) (map? config)) model
+      (let [{config :config dropped :dropped unrecognized :unrecognized} (policy/sanitize-config config)
+            errors (when enabled? (policy/validate-config config))
+            notes (cond-> []
+                    (seq dropped) (conj {:reason :restored-without-settings :paths dropped})
+                    (seq errors) (conj {:reason :restored-disabled :errors (vec (take 3 errors))}))]
+        (if (empty? notes) model
+          (-> model
+              (assoc-in [:auto :config] config)
+              (cond-> (seq unrecognized) (assoc-in [:auto :unrecognized] unrecognized))
+              (cond-> (seq errors) (assoc-in [:auto :enabled?] false))
+              (update-in [:auto :reasons] #(into (vec %) notes))))))))
+
+(defn- save-auto
+  "Write set-aside settings back into the saved config, verbatim."
+  [model]
+  (if-let [unrecognized (get-in model [:auto :unrecognized])]
+    (update model :auto #(-> % (update :config policy/restore-unrecognized unrecognized) (dissoc :unrecognized)))
+    model))
+
 (defn- validate-document! [document]
   (check! (and (map? document) (= schema-version (:schema-version document))
                (contains? document :model)
                (every? #{:schema-version :model :frame-output} (keys document)))
           [] "Expected a schema-2 show document")
-  (let [document (update document :model validate-model)]
+  (let [document (update document :model (comp validate-model restore-auto))]
     (when (contains? document :frame-output)
       (validate-frame-output (:model document) (:frame-output document)))
     document))
@@ -553,7 +592,7 @@
     ;; predictive windows. The restore path can regenerate them safely.
     ;; An unkept generated knob candidate (#667) is a draft, never saved.
     (cond-> {:schema-version schema-version
-             :model (validate-model (prepare-edit-history (cue-timing/without-queue (dissoc model :knob-candidates))))}
+             :model (validate-model (save-auto (prepare-edit-history (cue-timing/without-queue (dissoc model :knob-candidates)))))}
       (and (some? frame-output) (not sampled?)) (assoc :frame-output (validate-frame-output model frame-output)))))
 
 (defn freeze
@@ -602,11 +641,11 @@
   command receipts, external held-note leases and session sources are not revived.
   No schema-1/legacy compatibility path is provided. Failure leaves inputs intact."
   [current-model document]
-  (validate-document! document)
   (check! (and (natural? (:epoch current-model)) (natural? (:revision current-model)))
           [:current-model] "Current model needs valid epoch/revision")
   ;; Device sessions never survive a restore, so every surface loads detached.
-  (let [saved (-> (:model document) cue-timing/without-queue saved-audio/restore validate-model audio-return/disarm
+  ;; Document validation also repairs an older saved auto config (restore-auto).
+  (let [saved (-> (:model (validate-document! document)) cue-timing/without-queue saved-audio/restore validate-model audio-return/disarm
                   surface/detach-all)
         epoch (inc (max (:epoch current-model) (:epoch saved)))
         ordered (sort-by (juxt :order :id) (vals (:instances saved)))
@@ -647,7 +686,9 @@
                                       (cond-> (:target-response run) (assoc-in [:target-response :clock :epoch] epoch)))))
                 (contains? saved :composition-runs) (assoc :composition-runs runs)
                 (contains? saved :composition-tokens) (assoc :composition-tokens tokens)
-                (get-in saved [:auto :state]) (update :auto #(-> (remap-references % ids owners) (assoc-in [:state :epoch] epoch)))
+                ;; Only auto's own state names instances and owners; settings kept
+                ;; verbatim from another build (:unrecognized) are never rewritten.
+                (get-in saved [:auto :state]) (update-in [:auto :state] #(-> (remap-references % ids owners) (assoc :epoch epoch)))
                 (:responses saved) (update :responses #(remap-references % ids owners))
                 (:modulation saved) (update :modulation modulation/restore-state
                                              {:show-id (:show-id model) :epoch epoch :instance-ids ids})

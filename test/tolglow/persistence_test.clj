@@ -52,11 +52,14 @@
                           :held {36 {:instance-id id :command-id "pending"}}
                           :clip-links {:ember {:track-id "lighting" :clip-id "verse"}}
                           :recorded #{[:main 0 "old"]} :record-order [[:main 0 "old"]]))
-        auto (assoc (policy/initial-state 12345 4000 "auto-before")
+        auto (assoc (policy/record-launch (policy/initial-state 12345 4000 "auto-before") id (get-in model [:instances id]))
                     :tick 7 :epoch 0 :owned-instance-ids [id "0:ended"]
+                    :section {:id :verse :index 2 :run 1
+                              :timer (time/start {:bars 4} {:beat 8 :time-ms 4000 :meter time/default-meter})}
                     :interval-timer (time/start {:bars 2} {:beat 8 :time-ms 4000 :meter time/default-meter}))]
     (assoc (:model held)
-           :auto {:enabled? true :config {:interval {:bars 2} :count 1 :scope :all} :state auto}
+           :auto {:enabled? true :config {:interval {:bars 2} :count 1 :scope :all
+                                          :sections [{:id :verse :length {:bars 4}}]} :state auto}
            :integrations {:ableton bridge :audio {:input-gain 0.8} :extensions {:vendor/mapping {:version 3}}}
            :responses [{:id :response :select {:instance-ids [id]} :params [:level]
                         :envelope {:attack {:beats 1}} :state {:started-at-ms 4000 :started-at-beat 8}}]
@@ -362,6 +365,9 @@
     (is (= {:adapter :restore :epoch 10} (:source held)))
     (is (= :held (:launch-mode held)))
     (is (= (get-in model [:auto :state :interval-timer]) (:interval-timer auto-state)))
+    (is (= (get-in model [:auto :state :section]) (:section auto-state)))
+    (is (every? ids (map :instance-id (:owned-launches auto-state))) "launch records follow the rekeyed instance")
+    (is (= 1 (count (:commands (policy/stop-plan result auto-state 4000)))))
     (is (every? ids (map :instance-id (:commands (policy/stop-plan result auto-state 4000)))))))
 
 (deftest ableton-links-and-configuration-roundtrip-with-fresh-live-session
@@ -787,3 +793,44 @@
       (is (= 3 (get-in (files/thaw base (files/freeze (model))) [:registry :effects :dangling :version]))
           "every command the owner accepted leaves a show that saves and restores")
       (finally (show/stop! runtime)))))
+
+(deftest shows-saved-before-strict-auto-configs-still-load
+  ;; Master stored the auto request verbatim, so a REPL or agent call could save
+  ;; settings this planner does not know (#217). Such a show restores: unknown
+  ;; settings are set aside verbatim and written back on the next save, and a
+  ;; config that still cannot run restores switched off with its ownership kept.
+  (let [model (rich-model)
+        legacy (fn [config]
+                 (-> (files/freeze model)
+                     (assoc-in [:model :auto :config] config)
+                     (update-in [:model :auto :state] dissoc :base-seed :owned-launches :section)))
+        current (assoc (demo/model) :epoch 9 :revision 200 :time-ms 9000)
+        saved-config {:interval {:bars 2} :count 1 :scope :all :note "from an agent" :mood :calm
+                      ;; Looks like instance references; restore must not rekey it.
+                      :linked {:instance-ids ["0:1" "zz"] :instance-id "0:1" :owner-id "auto-before"}
+                      :sections [{:id :verse :length {:bars 4} :config {:count 1 :newer-setting [1 2]}}]}
+        extra (files/thaw current (legacy saved-config))
+        broken (files/thaw current (legacy {:interval {:bars 2} :count 1 :scope :all :intent :bright}))]
+    (is (true? (get-in extra [:auto :enabled?])))
+    (is (= {:interval {:bars 2} :count 1 :scope :all :sections [{:id :verse :length {:bars 4} :config {:count 1}}]}
+           (get-in extra [:auto :config])))
+    (is (= {:config {:note "from an agent" :mood :calm
+                     :linked {:instance-ids ["0:1" "zz"] :instance-id "0:1" :owner-id "auto-before"}}
+            :sections {:verse {:newer-setting [1 2]}}}
+           (get-in extra [:auto :unrecognized])))
+    (is (some #(= :restored-without-settings (:reason %)) (get-in extra [:auto :reasons])))
+    (testing "the next save writes the set-aside settings back, verbatim"
+      (let [document (files/freeze extra)]
+        (is (= saved-config (get-in document [:model :auto :config])))
+        (is (not (contains? (get-in document [:model :auto]) :unrecognized)))
+        (is (= (get-in extra [:auto :config]) (get-in (files/thaw current document) [:auto :config])))))
+    (testing "a config that cannot run restores off, still owning its looks"
+      (is (false? (get-in broken [:auto :enabled?])))
+      (is (some #(= :restored-disabled (:reason %)) (get-in broken [:auto :reasons])))
+      (let [state (get-in broken [:auto :state])
+            ids (set (keys (:instances broken)))]
+        (is (= 1 (count (:owned-instance-ids state))))
+        (is (every? ids (:owned-instance-ids state)))
+        (is (= (:owner-id state) (get-in broken [:instances (first (:owned-instance-ids state)) :source :session-id]))
+            "the restored look still names the auto session")
+        (is (= 1 (count (:commands (policy/stop-plan broken state 9000)))) "Stop can end it")))))

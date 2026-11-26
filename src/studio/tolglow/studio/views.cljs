@@ -551,8 +551,19 @@
          [:input {:type "range" :min 0 :max 100 :step 1 :value percent
                   :aria-label "Target visual activity" :aria-valuetext (str percent "%")
                   :on-change #(set-ui! [:auto-form :activity-target] (/ (js/Number (input-value %)) 100))}]])
+      [:label.policy-toggle [:input#auto-randomize {:type "checkbox" :checked (events/auto-varies? db)
+                                                    :on-change #(set-ui! [:auto-form :randomize?] (checked? %))}]
+       "Vary marked parameters within their ranges"]
+      (when-let [plan (events/auto-plan db)]
+        [:label.policy-toggle [:input#auto-keep-plan {:type "checkbox" :checked (events/auto-keeps-plan? db)
+                                                     :on-change #(set-ui! [:auto-form :keep-plan?] (checked? %))}]
+         (str "Keep the section plan"
+              (when-let [sections (seq (:sections plan))]
+                (str " (" (str/join ", " (map (comp events/wire-id :id) sections)) ")")))])
       [:div.button-row [button "auto-start" "Start auto" [:studio/auto-start] "button primary"] [button "auto-stop" "Stop auto" [:studio/auto-stop]]]
-      [:p.small.muted "Persistent cues remain active until released. You can keep playing the grid while auto mode runs."]]]))
+      (let [summary (events/auto-summary db)]
+        (when-not (str/blank? summary) [:p#auto-reason.small {:role "status"} summary]))
+      [:p.small.muted "Persistent cues remain active until released. You can keep playing the grid while auto mode runs. A look you change is handed to you and auto mode leaves it running."]]]))
 
 (defn- response-duration-label [envelope stage]
   (if-let [[unit value] (or (first (get envelope stage))
