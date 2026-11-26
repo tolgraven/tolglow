@@ -1,0 +1,30 @@
+.personality-panel { margin-top: 16px; padding: 10px clamp(14px, 2vw, 22px); }
+.personality-panel summary { display: flex; align-items: center; gap: 12px; min-height: 56px; cursor: pointer; list-style: none; }
+.personality-panel summary::-webkit-details-marker { display: none; }
+.personality-panel summary::after { content: ""; flex: none; width: 8px; height: 8px; margin: 0 6px 4px auto; border: solid var(--muted); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+.personality-panel details[open] > summary::after { margin-bottom: -4px; transform: rotate(225deg); }
+.personality-icon { display: block; flex: none; border-radius: 21%; user-select: none; }
+.personality-current { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.personality-current > div { display: grid; gap: 3px; min-width: 0; }
+.personality-current .section-label { color: var(--muted); }
+.personality-current strong { font-weight: 500; font-size: 15px; line-height: 1.25; overflow-wrap: anywhere; }
+.personality-none { flex: none; width: 48px; height: 48px; border-radius: 21%; border: 1px dashed var(--line); }
+.personality-swatches { display: flex; gap: 4px; }
+.personality-swatches i { width: 28px; height: 8px; border-radius: 3px; box-shadow: inset 0 0 0 1px #ffffff1f; }
+.personality-detail { margin: 6px 0 12px; }
+.personality-choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.personality-choices button { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 7px 10px 7px 8px; text-align: left; background: var(--raised); border: 1px solid var(--line); border-radius: 12px; }
+.personality-choices button span { min-width: 0; font-size: 12px; line-height: 1.25; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.personality-choices button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.personality-blend { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; align-items: end; gap: 12px; margin-top: 14px; }
+.personality-blend label { display: grid; gap: 4px; min-width: 0; color: var(--muted); font-size: 12px; }
+.personality-blend label > span { display: flex; justify-content: space-between; gap: 8px; }
+.personality-blend output { color: var(--text); font-variant-numeric: tabular-nums; }
+.personality-blend select, .personality-blend input { min-width: 0; min-height: 44px; width: 100%; box-sizing: border-box; }
+.personality-blend .button { min-height: 44px; }
+.personality-panel .performance-actions { margin: 14px 0 10px; }
+@media (max-width: 640px) {
+  .personality-blend { grid-template-columns: 1fr; gap: 8px; }
+  .personality-blend select { font-size: 16px; }
+  .personality-choices { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }
+}

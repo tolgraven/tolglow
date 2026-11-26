@@ -27,6 +27,7 @@
             [tolglow.show.lighting :as lighting]
             [tolglow.atmosphere.control :as fog-control]
             [tolglow.lighting-scenes :as lighting-scenes]
+            [tolglow.personalities :as personalities]
             [tolglow.signals :as signals]
             [tolglow.composition.response :as response]
             [tolglow.composition.sequence :as sequence]
@@ -364,6 +365,9 @@
          (fail! (:path (ex-data error) [:settings :effect-group-channels]) (ex-message error))))
   (when-let [s (get-in model [:settings :fog-control])] (fog-control/settings s))
   (lighting-scenes/validate-state! model)
+  (try (personalities/validate-state! model)
+       (catch clojure.lang.ExceptionInfo error
+         (check-errors! (:errors (ex-data error)) [:extensions personalities/state-key])))
   (lighting/validate! (:settings model))
   (when (contains? (:settings model) :section-patterns)
     (section-patterns/override-settings (get-in model [:settings :section-patterns])))
