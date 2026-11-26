@@ -383,11 +383,11 @@ async function desktop() {
         swatches: [...slot.querySelectorAll('.timeline-feel-palette i')].map(i => getComputedStyle(i).backgroundColor)};
     });
     assert.ok(feelSlot.icon, 'the personality icon SVG is drawn');
-    assert.equal(feelSlot.swatches.length, 3, 'colour, gradient and split palette entries each give a swatch');
+    assert.equal(feelSlot.swatches.length, 3, 'the three palette entries (a colour, a split, a colour) each give a swatch');
     await page.screenshot({path: join(output, 'desktop-feel-slot.png')});
     flag('feel', false);
     await page.waitForFunction(() => document.querySelector('#timeline-panel .timeline-feel')?.getAttribute('aria-label') === 'Track feel: none', null, {timeout: 6000});
-    pass('the feel slot is empty until data fills it, then draws the personality projection shape', feelSlot);
+    pass('the feel slot is empty until a personality is selected, then draws the active one', feelSlot);
 
     // Meters move with the music.
     const levels = [];

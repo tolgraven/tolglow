@@ -41,6 +41,11 @@
     (show/tick! rt time)
     (deref reply 1000 ::missing)))
 
+(defn- feel! [rt time operation]
+  (let [reply (show/submit! rt :personality operation)]
+    (show/tick! rt time)
+    (deref reply 1000 ::missing)))
+
 (defn- by-id [entries id] (first (filter #(= id (:event-id %)) entries)))
 
 (defn- close? [a b] (< (Math/abs (- (double a) (double b))) 1.0e-6))
@@ -501,12 +506,23 @@
                                            :palette ["url(https://example.invalid/p.png)" "#abc"
                                                      "red; background-image: url(x)" "rgb(10, 20, 30)"]}}))))
       (is (nil? (:feel (timeline/view {:model (live-model) :feel {:icon "https://example.invalid/i.svg"}})))))
-    (let [rt (runtime)]
-      (try
-        (is (= :accepted (:status (at! rt 0 {:op :variable/set :variable :music/personality :value feel
-                                             :source {:adapter :repl :session-id "r"}}))))
-        (is (= "Squircle" (get-in (show/timeline rt) [:feel :label])))
-        (finally (show/stop! rt))))))
+    (testing "the show's active personality fills the slot, through the projection the snapshot carries"
+      (let [rt (runtime)]
+        (try
+          (is (nil? (:feel (show/timeline rt))) "no feel is chosen in a new show")
+          (is (= :accepted (:status (at! rt 0 {:op :variable/set :variable :music/personality :value feel
+                                               :source {:adapter :repl :session-id "r"}}))))
+          (is (nil? (:feel (show/timeline rt))) "the provisional show variable no longer fills the slot")
+          (is (= :accepted (:status (feel! rt 250 {:op :select :id :squares}))))
+          (let [active (get-in (show/snapshot rt) [:personalities :active])
+                {:keys [id name icon-svg palette] :as shown} (:feel (show/timeline rt))]
+            (is (= :squares (:id active)))
+            (is (= (:feel (timeline/view {:model (live-model) :feel active})) shown))
+            (is (= [:squares "Squares and rectangles" (:icon active)] [id name icon-svg]))
+            (is (= ["#ff3326" "#ffd11a" "#f5f5eb"] palette) "a colour, a split shown by its first colour, a colour"))
+          (is (= :accepted (:status (feel! rt 500 {:op :clear}))))
+          (is (nil? (:feel (show/timeline rt))))
+          (finally (show/stop! rt)))))))
 
 ;; Studio state stream -------------------------------------------------------------------
 

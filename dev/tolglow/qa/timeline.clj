@@ -9,8 +9,8 @@
   Choose a port other than 4190: Node's fetch refuses it as an unsafe port.
 
   Files in the control directory steer the scenario while it runs:
-  `match-off` stops the simulated recording match, `feel` fills the track-feel
-  slot with synthetic data, and `stop` shuts the show down."
+  `match-off` stops the simulated recording match, `feel` selects the built-in
+  Squares personality for the track-feel slot, and `stop` shuts the show down."
   (:require [tolglow.application :as app]
             [tolglow.demo :as demo]
             [tolglow.integrations.reference-position :as position]
@@ -197,28 +197,14 @@
           (>= bar (- base 1)) (do (post-block! runtime (+ base 8)) (recur (+ base 8)))
           :else (recur base))))))
 
-(def ^:private feel
-  "Shaped like the active entry of the personality projection (#647): SVG text
-  under :icon and a palette of [r g b] colours, a gradient and a split."
-  {:id :qa/squares :name "Squares (synthetic)" :version 1 :seed 0 :current? true
-   :palette [[0.957 0.322 0.196]
-             {:gradient [{:position 0.0 :color [0.867 0.651 0.278]} {:position 1.0 :color [1.0 1.0 1.0]}] :angle-deg 0}
-             {:split [[0.412 0.729 0.780] [0.1 0.1 0.1]] :angle-deg 90}]
-   :forms [{:form :square :weight 0.6} {:form :rectangle :weight 0.4}]
-   :icon (str "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'>"
-              "<rect width='48' height='48' rx='9' fill='#171b18'/>"
-              "<rect x='7' y='9' width='18' height='18' fill='#f45232'/>"
-              "<rect x='20' y='19' width='20' height='13' fill='#dda647'/>"
-              "<rect x='12' y='30' width='11' height='11' fill='#69bac7'/></svg>")})
-
 (defn- follow-controls! [runtime running? ^File directory]
   (loop [shown? false]
     (when @running?
       (Thread/sleep 200)
       (let [wanted? (.exists (File. directory "feel"))]
         (when (not= wanted? shown?)
-          (show/submit! runtime {:op :variable/set :variable :music/personality
-                                 :value (if wanted? feel false) :source operator}))
+          ;; The built-in Squares personality: a colour, a split and a colour.
+          (show/submit! runtime :personality (if wanted? {:op :select :id :squares} {:op :clear})))
         (when (.exists (File. directory "stop")) (reset! running? false))
         (recur wanted?)))))
 

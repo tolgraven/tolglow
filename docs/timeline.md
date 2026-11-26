@@ -113,9 +113,11 @@ features, `:audio/energy` is the public energy signal, and `:brightness` and
 statistics and targets when it runs, otherwise the measured scene. Audio
 features older than two seconds are `:available? false` with no value.
 
-**Feel.** A slot for the active track-feel personality from
-[#647](https://github.com/tolgraven/tolglow/issues/647). The slot reads the
-active entry of the personality projection as data: `:id`, `:name` (or a
+**Feel.** The active [track-feel personality](personalities.md): the
+`:active` entry of `(:personalities (show/snapshot runtime))`, `nil` when no
+feel is chosen. Select one in Perform's **Track feel** row or with
+`(show/submit! runtime :personality {:op :select :id :squares})`, and the slot
+follows on the next frame. It reads that entry as data: `:id`, `:name` (or a
 `:label`), the icon as SVG text under `:icon` (or `:icon-svg`, or a data URI
 under `:icon` / `:icon-url`), and the palette. Palette entries become CSS
 colours here, not in the browser: `[r g b]` in 0..1 becomes `#rrggbb`, a
@@ -123,9 +125,6 @@ gradient or split shows its first colour, and a string passes through only as
 colour text (hex or a colour function). An image URL must be a data URI, so
 the slot never makes Studio fetch anything. Other keys (forms, motion,
 concurrency) are dropped, and nothing drawable gives `nil`.
-Until the personality projection is merged, `show/timeline` reads the map from
-the show variable `:music/personality`; that source key is provisional, and the
-merge should point it at the projection's `:active` entry instead.
 
 ## The Studio panel
 

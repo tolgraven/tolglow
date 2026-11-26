@@ -2591,10 +2591,9 @@
    (timeline/view {:model model :output output
                    :waveform (audio/history-waveform (connections/audio (:connections runtime)))
                    :reference (timeline-reference runtime committed)
-                   ;; Slot for the active track-feel personality (#647). It takes
-                   ;; the personality projection's :active entry as data; until
-                   ;; that projection is merged, a show variable can fill it.
-                   :feel (get-in model [:variables :music/personality])}
+                   ;; The active track-feel personality (#647), from the same
+                   ;; cached projection the snapshot carries as :personalities.
+                   :feel (get-in (personality-views runtime model) [:projection :active])}
                   options)))
 
 (defn post-events!
