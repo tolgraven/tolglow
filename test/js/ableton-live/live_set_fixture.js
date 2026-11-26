@@ -30,7 +30,7 @@ function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGro
     return track;
   }
   const song = add({ id: 1, kind: "song", props: { tempo: 120, signature_numerator: 4, signature_denominator: 4, can_capture_midi: canCapture ? 1 : 0,
-    current_song_time: 0 },
+    current_song_time: 0, is_playing: 0 },
     tracks: tracks.map(makeTrack) });
   tracks.forEach((t, i) => {
     if (t.parent) song.tracks[i].props.group_track = ["id", song.tracks.find(g => g.props.name === t.parent).id];

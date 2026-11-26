@@ -14,7 +14,8 @@
                             :can-capture-midi? bool :live-version text}
                      track = {:track-id :index :name :kind :arm? :monitor :input
                               :group-track-id (nil when ungrouped)
-                              :clips [{:clip-id :slot-index :name :length-beats}]}
+                              :clips [{:clip-id :slot-index :name :length-beats}]
+                              :arrangement-clips [{:name :start-beat :end-beat}]}
                      :kind is :midi, :audio or :group (a Group Track, whose arm,
                      monitor and input are not read).
     :ensure-track    {:name :kind :midi :group-track-id g} -> {:track-id :created? bool
@@ -32,8 +33,11 @@
                      -> {:clip-id :slot-index}; nil slot means the first empty one.
                      The clip's notes travel in :clip; controllers as :lanes.
                      :create-scene? true adds a scene when every slot is full;
-                     :arrangement-beat b also places the clip in the Arrangement
-                     at song beat b (refused before any write if that overlaps).
+                     :looping? false creates the clip without looping.
+    :place-clip      {:track-id :expected-name :clip-id :arrangement-beat b}
+                     -> {:arrangement-beat b}: copies a Session clip into the
+                     track's Arrangement at song beat b. An overlap with a clip
+                     already there is refused before any write.
     :extend-clip     {:track-id :expected-name :clip-id :notes [..] :lanes [..]}
                      adds to a clip written by :write-clip when one body is too small.
     :capture-midi    {:destination :auto} -> {:clips [{:clip-id :track-id :slot-index}]}
@@ -56,7 +60,7 @@
 
 (def operations
   #{:inspect-set :ensure-track :ensure-group :configure-track :write-clip :extend-clip :capture-midi
-    :read-clip :show-clip :fire-clip :stop-clips :watch-run-tracks})
+    :read-clip :show-clip :fire-clip :stop-clips :watch-run-tracks :place-clip})
 
 (def request-budget-chars
   "JSON characters of notes and lanes per request. The companion's loopback
@@ -108,7 +112,8 @@
 
 (defn- normalize-track [track]
   (cond-> (-> track (update :kind keywordize) (update :monitor keywordize))
-    (:clips track) (update :clips (partial mapv #(update % :length-beats wire-beat)))))
+    (:clips track) (update :clips (partial mapv #(update % :length-beats wire-beat)))
+    (:arrangement-clips track) (update :arrangement-clips (partial mapv #(-> % (update :start-beat wire-beat) (update :end-beat wire-beat))))))
 
 (defn normalize-result
   "Bring a result decoded from JSON back to Tolglow data: enumerations become

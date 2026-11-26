@@ -294,14 +294,15 @@
 (defn live-runs-text
   "One line summarizing the run record (the same projection as show/live-runs
   at the REPL)."
-  [{:keys [channels takes running mirror]}]
+  [{:keys [channels takes running mirror truncated? shown]}]
   (let [clips (mapcat :takes (mapcat :lanes channels))
         in-live (count (filter #(= "in-live" (some-> % :clip :status name)) clips))]
     (if (zero? (or takes 0))
       "Nothing has run yet"
       (str (plural (count channels) "launched cue" "launched cues") " · " (plural takes "take" "takes")
            (when (pos? (or running 0)) (str " (" running " running)"))
-           " · " (if mirror (str in-live " of " (count clips) " in Live") "not synced with Live")))))
+           " · " (if mirror (str in-live " of " (count clips) " in Live") "not synced with Live")
+           (when truncated? (str " · newest " shown " shown"))))))
 
 (defn- beat-text [b] (if (number? b) (.toFixed b 2) "—"))
 

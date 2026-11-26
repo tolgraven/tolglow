@@ -366,7 +366,7 @@
     "/api/audio/returns" (read-action audio! :return-status "Audio service unavailable")
     "/api/sync" (read-action sync! :status "Synchronization unavailable")
     "/api/capture" (read-action capture! :status "Phrase capture unavailable")
-    "/api/live-runs" (read-action live-runs! :status "Run record unavailable")
+    "/api/live-runs" (read-action live-runs! :status "Run record unavailable" #(query-fields % {:limit nil}))
     "/api/capture/last.mid" (available capture! "Phrase capture unavailable"
                                        (fn [_]
                                          (let [{:keys [filename bytes]} (capture! :smf {})]

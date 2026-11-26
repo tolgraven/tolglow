@@ -416,6 +416,9 @@
     {:enabled? false}
     (let [record-id (or (:record-id options) (subs (str (java.util.UUID/randomUUID)) 0 8))]
       {:enabled? true :record (live-runs/new-record (assoc options :record-id record-id)) :mirror nil
+       ;; Run-clip playback decoder, made by the first sync; its lock orders
+       ;; playback events with the owner's acknowledgements and moves.
+       :player nil :player-lock (Object.)
        :cost {:samples 0 :total-ns 0 :max-ns 0 :last-ns 0}})))
 
 (defn- configure-runtime
@@ -1806,6 +1809,8 @@
       (live-sync/acknowledge! manager (get-in command [:source :note])
                          (assoc ack :sync-run-id (get-in command [:source :sync-run-id])) envelope))))
 
+(declare live-run-clip!)
+
 (defn sync-callbacks
   "Bounded external transport callbacks. Commands enter the same owner queue;
   the callback never waits for rendering or writes the show model."
@@ -1820,6 +1825,7 @@
                             (->> (vals (get-in @(:state runtime) [:model :instances]))
                                  (filter #(and (= cue-id (:cue-id %)) (= :running (:phase %))))
                                  (sort-by :order) last :id)))
+     :run-clip! (fn [event] (when (current?) (live-run-clip! runtime event)))
      :events! (fn [event]
                 (when (current?)
                   (locking (:sync-input runtime)
@@ -1918,6 +1924,30 @@
           (catch Exception error
             (swap! (:state runtime) assoc-in [:status :phrase-capture-error] (error-data error))))))))
 
+(defn- run-clip-envelope [runtime model]
+  {:command-id (str (UUID/randomUUID)) :show-id (:show-id model) :epoch (:epoch model) :time-ms (now-ms runtime)})
+
+(defn- advance-run-player!
+  "Bind run-clip launch receipts from the committed history, then send the
+  moves and releases playing takes have reached. Runs on the owner after
+  output; commands enter the owner queue, never applied here."
+  [runtime state model]
+  (when (:player @state)
+    (locking (:player-lock @state)
+      (let [envelope #(run-clip-envelope runtime model)
+            history (get-in model [:control :history])
+            acked (reduce (fn [{:keys [player commands]} id]
+                            (if-let [ack (get-in history [id :ack])]
+                              (let [r (live-runs/acknowledge player ack envelope)]
+                                {:player (:player r) :commands (into commands (:commands r))})
+                              {:player player :commands commands}))
+                          {:player (:player @state) :commands []}
+                          (live-runs/pending-launches (:player @state)))
+            advanced (live-runs/advance (:player acked) (get-in model [:transport :beat] 0) envelope)
+            commands (into (:commands acked) (:commands advanced))]
+        (swap! state assoc :player (:player advanced))
+        (doseq [c commands] (submit! runtime (assoc c :expected-epoch (:epoch model))))))))
+
 (defn- observe-live-runs!
   "Fold the committed model into the run record. Pure fold; a failure is
   reported in status and never stops a frame."
@@ -1930,9 +1960,34 @@
                 ns (- (System/nanoTime) start)]
             (swap! state (fn [s] (-> s (assoc :record record)
                                      (update :cost #(-> % (update :samples inc) (update :total-ns + ns)
-                                                        (update :max-ns max ns) (assoc :last-ns ns)))))))
+                                                        (update :max-ns max ns) (assoc :last-ns ns))))))
+            (advance-run-player! runtime state model))
           (catch Exception error
             (swap! (:state runtime) assoc-in [:status :live-runs-error] (error-data error))))))))
+
+(defn live-run-clip!
+  "Feed one run-clip playback event from the companion's run-track watch
+  (live-runs/player) into the show. The event's :beat is stamped here with the
+  show transport beat at arrival, the one place Live song time meets the show
+  clock; Live's :song-beat is kept only for diagnostics. Needs a previous
+  sync-live-runs!, which binds clips to takes. The Live bridge calls this for
+  `run-clip` callbacks; the REPL can call it too. Returns the commands sent."
+  [runtime event]
+  (let [state (:live-runs runtime)]
+    (if-not (and state (:enabled? @state) (:player @state))
+      {:status :ignored :reason (if (and state (:enabled? @state)) :not-synced :disabled)}
+      (locking (:player-lock @state)
+        (let [model (:model @(:state runtime))
+              {:keys [beat bpm playing? time-ms]} (:transport model)
+              elapsed (if (and playing? time-ms) (/ (* (- (now-ms runtime) time-ms) (or bpm 120.0)) 60000.0) 0)
+              event (-> event
+                        (update :type #(if (string? %) (keyword %) %))
+                        (assoc :beat (live-runs/snap (+ (or beat 0) (max 0 elapsed)))))
+              {:keys [player commands]} (live-runs/play (:player @state) (:record @state) event
+                                                        #(run-clip-envelope runtime model))]
+          (swap! state assoc :player player)
+          (doseq [c commands] (submit! runtime (assoc c :expected-epoch (:epoch model))))
+          {:status :decoded :commands (mapv #(select-keys % [:op :cue-id :instance-id :command-id]) commands)})))))
 
 (defn- observe-sync-commands! [runtime before after receipts events fired-outcomes]
   (let [manager (connections/sync (:connections runtime))
@@ -3619,15 +3674,19 @@
   committed owner cycle into it (create-runtime option :live-runs; false
   disables): one channel per launched cue, one take per activation, lanes for
   overlapping runs and the manual effect-group tree.
-    :status -> live-runs/projection with the last Live sync, plus fold cost
+    :status -> live-runs/projection with the last Live sync, plus fold cost;
+               payload {:limit n} lists the newest n takes (default 256)
   Mirroring into Live needs a companion connection, which the runtime does not
   own yet; run sync-live-runs! from the REPL. Studio shows its result."
-  [runtime operation _payload]
+  [runtime operation payload]
   (let [state (live-runs-state runtime operation)]
     (case operation
       :status (let [{:keys [record mirror cost]} @state
-                    n (max 1 (:samples cost))]
-                (assoc (live-runs/projection record mirror)
+                    n (max 1 (:samples cost))
+                    limit (some-> (:limit payload) str parse-long)]
+                (when (and (:limit payload) (not (and limit (<= 1 limit 4096))))
+                  (throw (ex-info "limit takes 1-4096" {:limit (:limit payload)})))
+                (assoc (live-runs/projection record mirror (cond-> {} limit (assoc :limit limit)))
                        :cost {:cycles (:samples cost) :mean-us (/ (:total-ns cost) n 1000.0)
                               :max-us (/ (:max-ns cost) 1000.0)}))
       (throw (ex-info "Unknown run record operation" {:operation operation})))))
@@ -3649,8 +3708,11 @@
   ([runtime conn] (sync-live-runs! runtime conn {}))
   ([runtime conn options]
    (let [state (live-runs-state runtime :sync)
-         result (live-runs/sync! conn (:record @state) options)]
-     (swap! state assoc :mirror (dissoc result :set))
+         result (live-runs/sync! conn (:record @state) options)
+         mirror (dissoc result :set)]
+     (locking (:player-lock @state)
+       (swap! state (fn [s] (assoc s :mirror mirror
+                                   :player (if-let [p (:player s)] (live-runs/with-mirror p mirror) (live-runs/player mirror))))))
      result)))
 
 (defn sync-action!

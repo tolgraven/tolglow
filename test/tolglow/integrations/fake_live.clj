@@ -61,6 +61,9 @@
         (assoc (select-keys track [:track-id :name :kind]) :arm? false :monitor nil :input nil)
         (select-keys track [:track-id :name :kind :arm? :monitor :input :companion?]))
       (assoc :group-track-id (:group-track-id track))
+      (assoc :arrangement-clips (vec (for [{:keys [clip-id start length]} (:arrangement track)]
+                                       {:name (get-in (first (filter #(= clip-id (:clip-id %)) (vals (:slots track)))) [:name])
+                                        :start-beat start :end-beat (+ start length)})))
       (assoc :clips (vec (for [[slot c] (sort-by key (:slots track))]
                            {:clip-id (:clip-id c) :slot-index slot :name (:name c)
                             :length-beats (get-in c [:clip :length-beats])})))))
@@ -190,9 +193,6 @@
                       (and (or (seq (get-in payload [:clip :controllers])) (some (comp seq :points) (:lanes payload)))
                            (not (:envelope-lanes? state)))
                       (rejected :controllers-unsupported)
-                      (and (:arrangement-beat payload)
-                           (overlaps? (get-in state [:tracks i :arrangement]) (:arrangement-beat payload) (get-in payload [:clip :length-beats])))
-                      (rejected :placement-overlap)
                       :else
                         (let [slot (or (:slot-index payload) (first-empty-slot (get-in state [:tracks i])))
                               scenes (:scenes state)
@@ -204,12 +204,19 @@
                             (let [id (next-id! live "clip")]
                               (when full? (swap! live update :scenes inc))
                               (swap! live assoc-in [:tracks i :slots slot]
-                                     {:clip-id id :name (:name payload) :clip (with-lanes (:clip payload) (:lanes payload) nil)})
-                              (when-let [beat (:arrangement-beat payload)]
-                                (swap! live update-in [:tracks i :arrangement] (fnil conj [])
-                                       {:clip-id id :start beat :length (get-in payload [:clip :length-beats])}))
-                              {:status :executed :result (cond-> {:clip-id id :slot-index slot :scene-created? (boolean full?)}
-                                                           (:arrangement-beat payload) (assoc :arrangement-beat (:arrangement-beat payload)))})))))
+                                     {:clip-id id :name (:name payload) :looping? (get payload :looping? true)
+                                      :clip (with-lanes (:clip payload) (:lanes payload) nil)})
+                              {:status :executed :result {:clip-id id :slot-index slot :scene-created? (boolean full?)}})))))
+      :place-clip (let [[i code] (check-track state payload)
+                        found (find-clip state (:clip-id payload))
+                        length (get-in found [:entry :clip :length-beats])]
+                    (cond
+                      code (rejected code)
+                      (or (nil? found) (not= i (:track-index found))) (rejected :stale-clip)
+                      (overlaps? (get-in state [:tracks i :arrangement]) (:arrangement-beat payload) length) (rejected :placement-overlap)
+                      :else (do (swap! live update-in [:tracks i :arrangement] (fnil conj [])
+                                       {:clip-id (:clip-id payload) :start (:arrangement-beat payload) :length length})
+                                {:status :executed :result {:arrangement-beat (:arrangement-beat payload)}})))
       :extend-clip (let [[i code] (check-track state payload)
                          found (find-clip state (:clip-id payload))]
                      (cond

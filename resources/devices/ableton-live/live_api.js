@@ -24,7 +24,7 @@
     return "{" + Object.keys(value).sort().map(function (key) { return JSON.stringify(key) + ":" + canonical(value[key]); }).join(",") + "}";
   }
   var SESSION_OPERATIONS = ["inspect-set", "ensure-track", "ensure-group", "configure-track", "write-clip", "extend-clip", "capture-midi",
-    "read-clip", "show-clip", "fire-clip", "stop-clips", "watch-run-tracks"];
+    "read-clip", "show-clip", "fire-clip", "stop-clips", "watch-run-tracks", "place-clip"];
   function sessionOperation(op) { return SESSION_OPERATIONS.indexOf(op) >= 0; }
   function recordingKey(intent) {
     return canonical([intent["destination-id"], intent["show-id"] || null, intent.epoch, intent["command-id"]]);
@@ -212,7 +212,9 @@
     } else if ((event.type !== "note-on" && event.type !== "note-off") || !integer(event.note, 0, 127) || !integer(event.velocity, 0, 127))
       fault("midi-value", "Invalid MIDI note event");
     if (this.session) { event = this.session.route(event); if (!event) return null; }
-    event.origin = "live-playback";
+    // A performer playing through Live while the companion's track plays no
+    // clip is live input; everything else is clip playback (#683).
+    event.origin = event.origin === "live-input" ? "live-input" : "live-playback";
     return event;
   };
   Adapter.prototype.lane = function (lane, value) {

@@ -138,6 +138,8 @@ function stopped() {
   if (adapter) {
     adapter.handle({id: "local-stopped-" + (++localId), op: "handoff", payload: {mode: "live"}});
     if (adapter.parameters) adapter.parameters.close();
+    // Run-track and host-track playback watches end with the device.
+    if (adapter.session) adapter.session.closeWatches();
     outlet(1, "thru", 1);
   }
 }

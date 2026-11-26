@@ -877,6 +877,10 @@ Track. The automated check compares the Ring projection with the REPL's
 projection, before and after a sync
 ([test](../test/tolglow/integrations/live_runs_test.clj)).
 
+Run-clip playback reaches the show through the Live bridge. The REPL can feed
+the same event to `show/live-run-clip!`. The panel and
+`/api/live-runs?limit=n` list the newest 256 takes by default.
+
 Gaps:
 - Studio cannot start a sync, because the runtime does not own a companion
   connection.

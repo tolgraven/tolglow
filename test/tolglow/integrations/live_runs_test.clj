@@ -223,7 +223,7 @@
             c1 (get-in synced [:clips "r1.1" :clip-id])]
         (fake/delete-clip! ls c1)
         (let [after (runs/sync! conn r {:groups? false})]
-          (is (= [{:op :write-clip :status :executed :take-id "r1.1"}] (:applied after))))))))
+          (is (= [{:op :write-clip :status :executed :take-id "r1.1"}] (map #(select-keys % [:op :status :take-id]) (:applied after)))))))))
 
 (deftest a-running-take-is-recorded-but-not-written-until-released
   (let [{:keys [rt record tick!] :as h} (harness)]
@@ -342,3 +342,176 @@
       (is (thrown? clojure.lang.ExceptionInfo (show/live-runs rt)))
       (is (= 400 (:status (request app "/api/live-runs"))))
       (finally (show/stop! rt)))))
+
+;; ---------------------------------------------------------------------------
+;; Review follow-ups (#750)
+
+(defn- fold-models
+  "Fold plain show models, one per step: {:beat b :epoch e :playing? bool
+  :commands [[command ack] ..] :instances {id phase}}."
+  [record steps]
+  (reduce (fn [record [i {:keys [beat epoch commands instances playing?] :or {epoch 0 playing? true}}]]
+            (let [ids (map-indexed (fn [j _] (str "s" i "-" j)) commands)]
+              (runs/observe-model record
+                                  {:epoch epoch :time-ms (* 500 beat)
+                                   :transport {:beat (double beat) :bpm 120.0 :playing? playing? :time-ms (* 500 beat)}
+                                   :registry {:cues {:a {:name "A" :version 3}}}
+                                   :instances (into {} (for [[id phase] instances] [id {:id id :phase phase :effect-version 7}]))
+                                   :control {:history (into {} (map (fn [id [c a]] [id {:command (assoc c :command-id id :time-ms (* 500 beat)
+                                                                                                          :source (or (:source c) {:adapter :push}))
+                                                                                        :ack (assoc a :status :accepted)}])
+                                                                    ids commands))
+                                             :history-order (vec ids)}})))
+          record (map-indexed vector steps)))
+
+(def ^:private launch-a [{:op :cue/launch :cue-id :a :launch {:mode :persistent}} {:instance-id "0:1"}])
+
+(deftest a-seek-inside-a-run-does-not-change-its-hold
+  (let [r (fold-models (runs/new-record) [{:beat 8 :commands [launch-a] :instances {"0:1" :running}}
+                                         {:beat 10 :instances {"0:1" :running}}
+                                         {:beat 1 :instances {"0:1" :running}}
+                                         {:beat 2 :commands [[{:op :instance/end :instance-id "0:1"} {}]]}])
+        [t] (runs/takes r)]
+    (is (= [8 2] [(:start-beat t) (:release-beat t)]))
+    (is (= 3 (runs/held-beats t)) "2 beats before the seek and 1 after")
+    (is (= 3 (runs/clip-beats t)))))
+
+(deftest a-show-restart-ends-open-takes-at-the-restart
+  (let [r (fold-models (runs/new-record) [{:beat 1 :commands [launch-a] :instances {"0:1" :running}}
+                                         {:beat 4 :instances {"0:1" :running}}
+                                         {:beat 5 :epoch 1}])
+        [t] (runs/takes r)]
+    (is (= [5 :epoch] [(:end-beat t) (:interrupted t)]) "the new epoch's first beat, not the last folded one")))
+
+(deftest parameter-moves-are-bounded-per-take-under-a-burst
+  (let [moves (for [i (range 2000)] [{:op :param/set :instance-id "0:1" :param (if (even? i) :level :hue) :value (/ i 2000.0)} {}])
+        record (runs/new-record {:max-moves 64})
+        ;; 2,000 moves over 100 owner cycles of 20 moves, two parameters.
+        steps (cons {:beat 0 :commands [launch-a] :instances {"0:1" :running}}
+                    (for [[i chunk] (map-indexed vector (partition 20 moves))]
+                      {:beat (/ (inc i) 4) :commands chunk :instances {"0:1" :running}}))
+        start (System/nanoTime)
+        r (fold-models record steps)
+        elapsed-ms (/ (- (System/nanoTime) start) 1e6)
+        [t] (runs/takes r)]
+    (is (= 64 (count (:moves t))) "moves of one parameter on one beat coalesce, then the cap holds")
+    (is (:truncated? t))
+    (is (= 1360 (:moves-dropped t)) "32 cycles fill the 64 kept moves; the other 1,360 writes are counted")
+    (is (= [0.0095 0.009] (mapv :value (take 2 (sort-by :param (filter #(= 1/4 (:beat %)) (:moves t))))))
+        "the last value of each parameter in a cycle wins")
+    (is (= 1360 (:moves-dropped r)))
+    (is (= 1360 (get-in (runs/projection r) [:channels 0 :lanes 0 :takes 0 :moves-dropped])))
+    (println (format "live-runs burst fold: 2,000 moves over 101 cycles in %.1f ms" elapsed-ms))))
+
+(deftest a-take-keeps-its-launch-and-definition-version-and-replays-the-launch
+  (let [launch {:mode :timed :duration-ms 750 :targets [:left] :params {:level 0.4}}
+        r (fold-models (runs/new-record) [{:beat 0 :commands [[{:op :cue/launch :cue-id :a :launch launch} {:instance-id "0:1"}]]
+                                           :instances {"0:1" :running}}
+                                          {:beat 2}])
+        [t] (runs/takes r)]
+    (is (= launch (:launch t)))
+    (is (= [7 3] [(:effect-version t) (:cue-version t)]))
+    (is (= launch (runs/replay-launch t)) "mode, targets and duration replay as recorded")
+    (is (= :persistent (:mode (runs/replay-launch (assoc-in t [:launch :mode] :held)))) "a held pad's release is the clip's")
+    (let [p (runs/player {:clips {(:take-id t) {:clip-id "clip:1"}}})
+          {:keys [commands player]} (runs/play p r {:type :clip-started :track-id "track:1" :clip-id "clip:1" :serial 1 :beat 0}
+                                               (fn [] {:command-id "c1"}))]
+      (is (= [:cue/launch] (mapv :op commands)))
+      (is (= 7 (get-in commands [0 :source :live/effect-version])))
+      (is (empty? (get-in player [:playing "track:1" :due])) "a timed launch ends itself; no release is scheduled"))))
+
+(deftest a-reloaded-companion-counting-from-one-again-is-not-a-repeat
+  (let [r (fold-models (runs/new-record) [{:beat 0 :commands [launch-a] :instances {"0:1" :running}}
+                                         {:beat 2 :commands [[{:op :instance/end :instance-id "0:1"} {}]]}])
+        take-id (:take-id (first (runs/takes r)))
+        n (atom 0)
+        env (fn [] {:command-id (str "c" (swap! n inc))})
+        play (fn [p e] (runs/play p r e env))
+        s1 (play (runs/player {:clips {take-id {:clip-id "clip:1"}}}) {:type :clip-started :track-id "t" :clip-id "clip:1" :watch-session "w1" :serial 1 :beat 0})
+        s2 (play (:player s1) {:type :clip-stopped :track-id "t" :watch-session "w1" :serial 2 :beat 1})
+        again (play (:player s2) {:type :clip-started :track-id "t" :clip-id "clip:1" :watch-session "w1" :serial 1 :beat 2})
+        reloaded (play (:player s2) {:type :clip-started :track-id "t" :clip-id "clip:1" :watch-session "w2" :serial 1 :beat 2})]
+    (is (empty? (:commands again)) "the same session and serial is a repeat")
+    (is (= [:cue/launch] (mapv :op (:commands reloaded))) "a new watch session's serial 1 is a new start")
+    (testing "unknown clips are counted, and only the last few kept"
+      (let [p (reduce (fn [p i] (:player (play p {:type :clip-started :track-id "t" :clip-id (str "clip:x" i) :watch-session "w3" :serial i})))
+                      (runs/player {}) (range 100))]
+        (is (= 100 (:ignored-count p)))
+        (is (= 16 (count (:ignored p))))))))
+
+(deftest live-input-makes-takes-and-clip-playback-does-not
+  (let [r (fold-models (runs/new-record)
+                       [{:beat 0 :commands [[{:op :cue/launch :cue-id :a :launch {:mode :persistent} :source {:type :ableton :origin :live-input}} {:instance-id "0:1"}]
+                                            [{:op :cue/launch :cue-id :a :launch {:mode :persistent} :source {:type :ableton :origin :live-playback}} {:instance-id "0:2"}]]
+                         :instances {"0:1" :running "0:2" :running}}])]
+    (is (= ["0:1"] (mapv :instance-id (runs/takes r))) "a looping launcher or Capture clip does not record a take each pass")))
+
+(deftest arrangement-placement-is-its-own-step-and-an-overlap-holds-back-nothing
+  (let [;; Two takes of one cue whose beats overlap after a transport loop.
+        r (fold-models (runs/new-record {:record-id "x"})
+                       [{:beat 4 :commands [launch-a] :instances {"0:1" :running}}
+                        {:beat 8 :commands [[{:op :instance/end :instance-id "0:1"} {}]]}
+                        {:beat 5 :commands [[{:op :cue/launch :cue-id :a :launch {:mode :persistent}} {:instance-id "0:2"}]] :instances {"0:2" :running}}
+                        {:beat 7 :commands [[{:op :instance/end :instance-id "0:2"} {}]]}])
+        ls (fake/create {:companion? false})
+        conn (live/open (fake/transport ls) {})
+        options {:groups? false :arrangement-offset-beats 0}]
+    (fake/inject-fault! ls :place-clip :refuse)
+    (let [first-sync (runs/sync! conn r options)]
+      (is (= 2 (count (:clips first-sync))) "both takes have Session clips")
+      (is (every? #(false? (get-in @ls [:tracks 0 :slots % :looping?])) [0 1]) "run clips are written without looping")
+      (is (= [{:op :place-clip :status :rejected :take-id "x.1"}]
+             (mapv #(select-keys % [:op :status :take-id]) (filter #(= :place-clip (:op %)) (:applied first-sync))))
+          "the first placement failed; the overlapping one was never attempted")
+      (is (= #{[:placement-overlap "x.2"] [:injected "x.1"]} (set (map (juxt :code :take-id) (filter :take-id (:problems first-sync))))))
+      (is (not (:complete? first-sync)) "x.1 still waits for its Arrangement copy"))
+    (let [repair (runs/sync! conn r options)
+          p (runs/projection r repair)]
+      (is (= [:place-clip] (mapv :op (:applied repair))) "the failed placement is repaired on the next sync")
+      (is (:complete? repair) "the overlap is reported, not retried forever")
+      (is (= [[:placement-overlap "x.2"]] (mapv (juxt :code :take-id) (:problems repair))))
+      (is (= {:status :placed :start-beat 4.0} (get-in p [:channels 0 :lanes 0 :takes 0 :arrangement])))
+      (is (= {:status :placement-overlap} (get-in p [:channels 0 :lanes 0 :takes 1 :arrangement])) "x.2 reused lane 0 after x.1's release"))
+    (is (empty? (:applied (runs/sync! conn r options))) "a third sync writes nothing")))
+
+(deftest the-runtime-plays-run-clips-reported-by-the-companion
+  (let [rt (runtime {:live-runs {:record-id "rt"}})
+        h {:tick! (fn [beat] (show/tick! rt (long (* 500 beat))))
+           :submit! (fn [beat payload]
+                      (let [reply (show/submit! rt :command payload)]
+                        (show/tick! rt (long (* 500 beat)))
+                        (deref reply 1000 ::missing)))}
+        tick! (:tick! h)
+        instances #(vals (:instances (:model @(:state rt))))]
+    (try
+      (perform! h)
+      (is (= :not-synced (:reason (show/live-run-clip! rt {:type "clip-started"}))))
+      (let [ls (fake/create {:companion? false})
+            mirror (show/sync-live-runs! rt (live/open (fake/transport ls) {}) {:groups? false})
+            clip-id (get-in mirror [:clips "rt.1" :clip-id])
+            track-id (get-in mirror [:tracks [:lane :a 0]])
+            takes (count (:takes (show/live-runs-record rt)))
+            ;; Exactly what the companion emits: Live song time, no show beat.
+            event {:type "clip-started" :track-id track-id :clip-id clip-id :watch-session "w1" :serial 1 :song-beat 512}]
+        (tick! 20)
+        (is (= [:cue/launch] (mapv :op (:commands (show/live-run-clip! rt event)))))
+        (is (empty? (:commands (show/live-run-clip! rt event))) "a repeated report launches nothing")
+        (tick! 20)
+        (is (= [{:level 0.5}] (mapv :params (instances))) "the take's launch values")
+        ;; A move the owner reaches in one cycle is applied in the next.
+        (tick! 22.25) (tick! 22.5)
+        (is (= [0.75] (mapv #(get-in % [:params :level]) (instances))) "the owner replays the move two beats in")
+        (doseq [b [23 23.25 23.5]] (tick! b))
+        (is (empty? (instances)) "and releases after the held three beats")
+        (is (= takes (count (:takes (show/live-runs-record rt)))) "playback made no take"))
+      (finally (show/stop! rt)))))
+
+(deftest the-projection-lists-only-the-newest-takes
+  (let [steps (mapcat (fn [i] [{:beat (* 2 i) :commands [[{:op :cue/launch :cue-id :a :launch {:mode :persistent}} {:instance-id (str "0:" i)}]]
+                                :instances {(str "0:" i) :running}}
+                               {:beat (inc (* 2 i)) :commands [[{:op :instance/end :instance-id (str "0:" i)} {}]]}])
+                      (range 10))
+        r (fold-models (runs/new-record {:record-id "p"}) steps)
+        p (runs/projection r nil {:limit 3})]
+    (is (= [10 3 true] ((juxt :takes :shown :truncated?) p)))
+    (is (= ["p.8" "p.9" "p.10"] (mapv :take-id (mapcat :takes (mapcat :lanes (:channels p))))))))

@@ -78,14 +78,19 @@
                  a clip name in one Set.
     :max-takes   bound on kept takes (default 4096); the oldest finished takes
                  are dropped first and counted under :dropped.
+    :max-moves   bound on parameter moves kept per take (default 512). Moves
+                 of one parameter on one beat coalesce (the last value wins);
+                 moves beyond the bound are counted under :moves-dropped and
+                 the take is marked :truncated? true.
     :ignore-origins  origins that never make takes (default playback and
                  feedback)."
   ([] (new-record {}))
-  ([{:keys [record-id max-takes ignore-origins] :or {record-id "run" max-takes 4096}}]
+  ([{:keys [record-id max-takes max-moves ignore-origins] :or {record-id "run" max-takes 4096 max-moves 512}}]
    (when-not (and (string? record-id) (re-matches #"[A-Za-z0-9-]{1,32}" record-id))
      (fail! "A record ID is 1-32 letters, digits or dashes" {:record-id record-id}))
    (when-not (pos-int? max-takes) (fail! "max-takes must be a positive integer" {:max-takes max-takes}))
-   {:record/version record-version :record-id record-id :max-takes max-takes
+   (when-not (pos-int? max-moves) (fail! "max-moves must be a positive integer" {:max-moves max-moves}))
+   {:record/version record-version :record-id record-id :max-takes max-takes :max-moves max-moves :moves-dropped 0
     :ignore-origins (or ignore-origins echo-origins)
     :epoch nil :last-beat nil :serial 0 :dropped 0
     :channels {} :channel-order [] :takes {} :take-order []
@@ -173,7 +178,8 @@
         serial (inc (:serial record))
         take-id (str (:record-id record) "." serial)
         run (inc (get-in record [:channels cue-id :runs]))
-        assigned (get-in model [:instances instance-id manual-group-key])
+        instance (get-in model [:instances instance-id])
+        assigned (get instance manual-group-key)
         group-lineage (or (get (group-lineages (manual-config model)) assigned) (get lineages cue-id []))]
     (-> record
         (assoc :serial serial)
@@ -185,16 +191,25 @@
                    :epoch (:epoch record) :command-id (:command-id command)
                    :source (source-summary (:source command))
                    :start-beat beat :release-beat nil :end-beat nil :phase :running
+                   ;; Held time accumulates per transport segment, so a seek or
+                   ;; loop inside a run does not shorten or lengthen its hold.
+                   :segment-start beat :held-acc 0
+                   ;; The launch as validated: mode, targets, duration and values.
+                   :launch (or (:launch command) {})
                    :params (or (get-in command [:launch :params]) {}) :moves []
+                   :effect-id (:effect-id instance) :effect-version (:effect-version instance)
+                   :cue-version (get-in registry [:cues cue-id :version])
+                   :assigned-group (when (some? assigned) assigned)
                    :group-path group-lineage})
         (update :take-order conj take-id))))
 
 (defn- release-take [record take-id beat]
-  (let [{:keys [cue-id lane release-beat]} (get-in record [:takes take-id])]
+  (let [{:keys [cue-id lane release-beat held-acc segment-start]} (get-in record [:takes take-id])]
     (if release-beat
       record
       (-> record
           (assoc-in [:takes take-id :release-beat] beat)
+          (assoc-in [:takes take-id :held] (+ (or held-acc 0) (max 0 (- beat (or segment-start beat)))))
           (assoc-in [:takes take-id :phase] :releasing)
           (update :lanes #(if (= take-id (get % [cue-id lane])) (dissoc % [cue-id lane]) %))))))
 
@@ -216,6 +231,24 @@
             (update :takes #(apply dissoc % drop-ids))
             (update :take-order #(into [] (remove drop-ids) %))
             (update :dropped + (count drop-ids)))))))
+
+(defn- add-move
+  "Append a parameter move: a move of the same parameter on the same beat
+  replaces the earlier one, and moves beyond :max-moves are counted, not kept.
+  Beats only grow within a take, so same-beat moves sit at the tail."
+  [record take-id move]
+  (let [moves (get-in record [:takes take-id :moves])
+        same (loop [i (dec (count moves))]
+               (when (and (>= i 0) (= (:beat move) (:beat (nth moves i))))
+                 (if (= (:param move) (:param (nth moves i))) i (recur (dec i)))))]
+    (cond
+      same (assoc-in record [:takes take-id :moves same] move)
+      (>= (count moves) (:max-moves record 512))
+      (-> record
+          (update-in [:takes take-id :moves-dropped] (fnil inc 0))
+          (assoc-in [:takes take-id :truncated?] true)
+          (update :moves-dropped (fnil inc 0)))
+      :else (update-in record [:takes take-id :moves] conj move))))
 
 (defn- observe-command
   "Fold one accepted command at its beat."
@@ -254,16 +287,18 @@
             param (:param command)]
         (if (or (nil? take-id) (echo? record command) (not (keyword? param)))
           record
-          (update-in record [:takes take-id :moves] conj
-                     {:beat beat :param param :value (if (= :param/set op) (:value command) (:value observation))})))
+          (add-move record take-id
+                    {:beat beat :param param :value (if (= :param/set op) (:value command) (:value observation))})))
 
       :else (remember-id record id))))
 
 (defn- close-for-epoch
-  "A new show epoch ends every open take where the old epoch left off. Its
-  channels, lanes and finished takes stay for editing."
-  [record epoch]
-  (let [beat (or (:last-beat record) 0)]
+  "A new show epoch ends every open take at the beat the restart happened:
+  the new model's transport beat when it moved on, otherwise the last beat
+  folded (within one owner cycle of the restart). Channels, lanes and
+  finished takes stay for editing."
+  [record epoch model-beat]
+  (let [beat (snap (max (or (:last-beat record) 0) (or model-beat 0)))]
     (-> (reduce (fn [r [instance-id take-id]] (-> (end-take r instance-id beat)
                                                   (assoc-in [:takes take-id :interrupted] :epoch)))
                 record (sort-by key (:open record)))
@@ -289,12 +324,23 @@
   comes from its :time-ms against the model transport."
   [record model]
   (let [{:keys [beat beat-at]} (transport-beat model)
-        record (if (not= (:epoch model) (:epoch record)) (close-for-epoch record (:epoch model)) record)
+        record (if (not= (:epoch model) (:epoch record))
+                 (close-for-epoch record (:epoch model) (when (:epoch record) beat))
+                 record)
         record (refresh-groups record model)
         ;; A backwards seek or loop: later takes start on the beats the
-        ;; transport now shows. Takes keep the beats they were recorded on.
+        ;; transport now shows. Takes keep the beats they were recorded on, and
+        ;; a held take banks the segment before the jump.
         record (if (and (:last-beat record) (< beat (- (:last-beat record) 1e-9)))
-                 (-> record (assoc :last-beat (snap beat)) (update :seeks (fnil inc 0)))
+                 (let [last-beat (:last-beat record) target (snap beat)]
+                   (-> (reduce (fn [r [_ take-id]]
+                                 (if (get-in r [:takes take-id :release-beat])
+                                   r
+                                   (update-in r [:takes take-id]
+                                              #(-> % (update :held-acc + (max 0 (- last-beat (:segment-start %))))
+                                                   (assoc :segment-start target)))))
+                               record (:open record))
+                       (assoc :last-beat target) (update :seeks (fnil inc 0))))
                  record)
         history (get-in model [:control :history])
         order (get-in model [:control :history-order])
@@ -332,9 +378,10 @@
   ([record cue-id] (filterv #(= cue-id (:cue-id %)) (takes record))))
 
 (defn held-beats
-  "How long a take was held, from launch to release, or nil while it runs."
-  [{:keys [start-beat release-beat]}]
-  (when release-beat (max 0 (- release-beat start-beat))))
+  "How long a take was held, from launch to release in transport time while
+  playing forward, or nil while it runs. A seek inside the run does not count."
+  [{:keys [start-beat release-beat held]}]
+  (when release-beat (or held (max 0 (- release-beat start-beat)))))
 
 (defn clip-beats
   "The length of a take's clip: its held length, at least min-clip-beats."
@@ -394,16 +441,29 @@
                  :let [id (take-id-of (:name c))] :when id]
              [id (assoc (select-keys c [:clip-id :slot-index :name]) :track-id (:track-id track))])))
 
+(defn- arrangement-index
+  "Run clips already in the Arrangement, by take ID, and the occupied
+  [start end) ranges of every track's Arrangement."
+  [set-snapshot]
+  {:placed (into {} (for [track (:tracks set-snapshot), c (:arrangement-clips track)
+                          :let [id (take-id-of (:name c))] :when id]
+                      [id (assoc (select-keys c [:start-beat :end-beat]) :track-id (:track-id track))]))
+   :ranges (into {} (for [track (:tracks set-snapshot)]
+                      [(:track-id track) (mapv (juxt :start-beat :end-beat) (:arrangement-clips track))]))})
+
 (defn mirror-plan
   "Compare an inspected Set with the record. Returns
     {:steps [[op payload {:binds key :take-id id}] ..]
      :bindings {[:group id] track-id, [:lane cue-id lane] track-id}
      :clips {take-id {:clip-id :track-id :slot-index :name}}
      :problems [..]}
-  Payload values `[::ref key]` name a track a previous step creates.
+  Payload values `[::ref key]` name a track or clip a previous step creates.
   Options: :groups? (default true) mirrors the group tree;
-  :arrangement-offset-beats places each new clip in the Arrangement at its
-  start beat plus the offset as well (omitted: Session only)."
+  :arrangement-offset-beats also places each take's clip in the Arrangement at
+  its start beat plus the offset (omitted: Session only). Placement is its own
+  step, keyed by take ID: a take already in the Arrangement is not placed
+  again, and a range another clip holds is reported as :placement-overlap for
+  that take without holding back its Session clip or the rest of the sync."
   ([set-snapshot record] (mirror-plan set-snapshot record {}))
   ([set-snapshot record {:keys [groups? arrangement-offset-beats] :or {groups? true}}]
    (let [tracks (:tracks set-snapshot)
@@ -467,20 +527,45 @@
                                lane (range (:lanes ch))]
                            [cue-id lane]))
          ;; One Session clip per released take that the Set does not hold yet.
-         acc (reduce (fn [acc {:keys [take-id cue-id lane start-beat] :as take}]
+         ;; Run clips do not loop: a played clip steers its run once.
+         acc (reduce (fn [acc {:keys [take-id cue-id lane] :as take}]
                        (let [track (get-in acc [:bindings [:lane cue-id lane]])
                              clip (take-clip take)]
                          (if (or (nil? clip) (nil? track) (contains? (:clips acc) take-id))
                            acc
                            (update acc :steps conj
-                                   [:write-clip (cond-> {:track-id track :expected-name (lane-track-name cue-id lane)
-                                                         :slot-index nil :create-scene? true
-                                                         :name (clip-name record take) :clip clip}
-                                                  arrangement-offset-beats
-                                                  (assoc :arrangement-beat (snap (+ start-beat arrangement-offset-beats))))
-                                    {:take-id take-id}]))))
-                     acc (takes record))]
-     acc)))
+                                   [:write-clip {:track-id track :expected-name (lane-track-name cue-id lane)
+                                                 :slot-index nil :create-scene? true :looping? false
+                                                 :name (clip-name record take) :clip clip}
+                                    {:take-id take-id :binds [:clip take-id] :bind-field :clip-id}]))))
+                     acc (takes record))
+         ;; Arrangement copies, each its own step.
+         {:keys [placed ranges]} (arrangement-index set-snapshot)
+         acc (if-not arrangement-offset-beats
+               acc
+               (reduce (fn [acc {:keys [take-id cue-id lane start-beat] :as take}]
+                         (let [track (get-in acc [:bindings [:lane cue-id lane]])
+                               existing (get-in acc [:clips take-id :clip-id])
+                               planned? (some #(= take-id (:take-id (nth % 2))) (:steps acc))
+                               length (clip-beats take)
+                               start (snap (+ start-beat arrangement-offset-beats))
+                               end (when length (+ start length))
+                               name (lane-track-name cue-id lane)]
+                           (cond
+                             (or (nil? length) (nil? track) (contains? placed take-id) (not (or existing planned?))) acc
+                             (neg? start) (update acc :problems conj {:code :placement-range :take-id take-id :name name})
+                             (some (fn [[s e]] (and (< start e) (< s end))) (get-in acc [:ranges track]))
+                             (update acc :problems conj {:code :placement-overlap :take-id take-id :name name
+                                                         :arrangement-beat start})
+                             :else
+                             (-> acc
+                                 (update :steps conj [:place-clip {:track-id track :expected-name name
+                                                                   :clip-id (or existing [::ref [:clip take-id]])
+                                                                   :arrangement-beat start}
+                                                      {:take-id take-id :placement? true}])
+                                 (update-in [:ranges track] (fnil conj []) [start end])))))
+                       (assoc acc :ranges ranges) (takes record)))]
+     (-> acc (dissoc :ranges) (assoc :placed placed)))))
 
 (defn- inspect! [conn]
   (let [r (live/request! conn :inspect-set {})]
@@ -529,7 +614,7 @@
                                          ungrouped? (assoc :ungrouped? true))
                                  acc (update acc :applied conj entry)]
                              (case status
-                               :executed (cond-> acc binds (assoc-in [:bindings binds] (get-in receipt [:result :track-id])))
+                               :executed (cond-> acc binds (assoc-in [:bindings binds] (get-in receipt [:result (or (:bind-field meta) :track-id)])))
                                :rejected (cond-> acc binds (update :bindings dissoc binds))
                                :indeterminate (reduced (assoc acc :stopped? true)))))))
                      {:bindings (:bindings plan) :applied [] :stopped? false}
@@ -537,13 +622,14 @@
          after (inspect! conn)
          verdict (mirror-plan after record options)
          failures (vec (for [{:keys [status error] :as a} (:applied run) :when (#{:rejected :indeterminate} status)]
-                         (merge (select-keys a [:op :take-id :cue-id :lane :binds]) {:code (or (:code error) status) :status status})))]
+                         (merge (select-keys a [:op :take-id :cue-id :lane :binds :placement?]) {:code (or (:code error) status) :status status})))]
      {:complete? (and (empty? (:steps verdict)) (not (:stopped? run)))
       :applied (:applied run)
       :pending (mapv (fn [[op _ meta]] (assoc meta :op op)) (:steps verdict))
       :tracks (into {} (filter (comp #{:lane} first key)) (:bindings verdict))
       :groups (into {} (filter (comp #{:group} first key)) (:bindings verdict))
       :clips (select-keys (:clips verdict) (:take-order record))
+      :arranged (select-keys (:placed verdict) (:take-order record))
       :problems (into (:problems verdict) failures)
       :set after})))
 
@@ -552,27 +638,45 @@
 
 (defn- beat-number [b] (when b (double b)))
 
+(def default-projection-limit
+  "Takes a projection lists by default: the newest, across all lanes."
+  256)
+
 (defn projection
   "What ran, as plain data for Studio and the REPL. mirror is the last sync!
   result (optional): it binds takes to clips and reports problems.
-  Beats are doubles on the show transport; :length-beats is the held length."
+  Beats are doubles on the show transport; :length-beats is the held length.
+  Options: :limit lists only the newest takes (default 256); :shown and
+  :truncated? say how many were left out."
   ([record] (projection record nil))
-  ([record mirror]
+  ([record mirror] (projection record mirror {}))
+  ([record mirror {:keys [limit] :or {limit default-projection-limit}}]
    (let [clips (:clips mirror)
-         failed (into {} (keep (fn [{:keys [take-id status]}] (when take-id [take-id status]))) (:problems mirror))
-         take-row (fn [{:keys [take-id instance-id run start-beat release-beat end-beat phase params moves interrupted] :as take}]
+         arranged (:arranged mirror)
+         failed (into {} (keep (fn [{:keys [take-id status placement?]}] (when (and take-id (not placement?)) [take-id status])))
+                      (:problems mirror))
+         placement-problems (into {} (keep (fn [{:keys [take-id code]}]
+                                             (when (#{:placement-overlap :placement-range} code) [take-id code])))
+                                  (:problems mirror))
+         take-row (fn [{:keys [take-id instance-id run start-beat release-beat end-beat phase params moves interrupted
+                               moves-dropped effect-version launch] :as take}]
                     (let [clip (get clips take-id)]
                       (cond-> {:take-id take-id :instance-id instance-id :run run :phase phase
                                :start-beat (beat-number start-beat) :release-beat (beat-number release-beat)
                                :end-beat (beat-number end-beat) :length-beats (beat-number (held-beats take))
-                               :params params :moves (count moves)
+                               :params params :moves (count moves) :mode (:mode launch) :effect-version effect-version
                                :clip (cond
                                        clip (assoc (select-keys clip [:clip-id :track-id :slot-index]) :status :in-live)
                                        (nil? release-beat) {:status :recording}
                                        (get failed take-id) {:status (get failed take-id)}
                                        :else {:status :not-in-live})}
+                        (get arranged take-id) (assoc :arrangement {:status :placed :start-beat (beat-number (get-in arranged [take-id :start-beat]))})
+                        (get placement-problems take-id) (assoc :arrangement {:status (get placement-problems take-id)})
+                        moves-dropped (assoc :moves-dropped moves-dropped)
                         interrupted (assoc :interrupted interrupted))))
-         by-lane (group-by (juxt :cue-id :lane) (takes record))
+         order (:take-order record)
+         shown (set (take-last limit order))
+         by-lane (group-by (juxt :cue-id :lane) (filter #(contains? shown (:take-id %)) (takes record)))
          channels (vec (for [cue-id (:channel-order record)
                              :let [{:keys [name lanes group-path first-beat runs]} (get-in record [:channels cue-id])]]
                          {:cue-id cue-id :name name :group-path group-path :first-beat (beat-number first-beat) :runs runs
@@ -588,7 +692,8 @@
                                        cue-id))
                       :groups (mapv group-row groups)})]
      {:record-id (:record-id record) :latest-beat (beat-number (:last-beat record))
-      :takes (count (:takes record)) :running (count (:open record)) :dropped (:dropped record)
+      :takes (count (:takes record)) :shown (count shown) :truncated? (< (count shown) (count order))
+      :running (count (:open record)) :dropped (:dropped record) :moves-dropped (:moves-dropped record 0)
       :channels channels
       :groups (mapv group-row (:groups record))
       :playback (vec (for [[instance-id {:keys [take-id cue-id start-beat]}] (sort-by key (:playback record))]
@@ -612,27 +717,43 @@
 ;; ---------------------------------------------------------------------------
 ;; Playback of run clips
 
+(def ^:private ignored-kept 16)
+
 (defn player
   "A decoder for run-clip playback reported by the companion. mirror is a
   sync! result: it maps clip IDs to takes. source is merged into each
   command's :source; origin is always :live-playback, so the record shows the
   playback and makes no take of it.
-  Events (from the companion's run-track watch), beats on the show transport:
-    {:type :clip-started :track-id t :clip-id c :serial n :beat b}
-    {:type :clip-stopped :track-id t :serial n}"
+  Events come from the companion's run-track watch. The host stamps :beat with
+  the show transport beat when an event arrives (show/live-run-clip! does);
+  Live's own song time travels as :song-beat for diagnostics only:
+    {:type :clip-started :track-id t :clip-id c :watch-session w :serial n :beat b}
+    {:type :clip-stopped :track-id t :watch-session w :serial n :beat b}
+  Repeats are recognised by [watch-session serial], so a companion that
+  reloads and counts from 1 again is not mistaken for a repeat."
   ([mirror] (player mirror {}))
   ([mirror source]
    {:clips (into {} (map (fn [[take-id {:keys [clip-id]}]] [clip-id take-id])) (:clips mirror))
     :source (merge {:type :ableton :adapter :live-run-clip} source {:origin :live-playback})
-    :playing {} :stopping #{} :serials #{} :serial-order [] :ignored []}))
+    :playing {} :stopping #{} :serials #{} :serial-order [] :ignored [] :ignored-count 0}))
 
-(defn- seen-serial [player serial]
-  (if (nil? serial)
-    player
-    (let [order (conj (:serial-order player) serial)]
-      (if (> (count order) 1024)
-        (assoc player :serials (disj (conj (:serials player) serial) (first order)) :serial-order (subvec order 1))
-        (assoc player :serials (conj (:serials player) serial) :serial-order order)))))
+(defn with-mirror
+  "The player after a new sync: its clip map follows the mirror, and what is
+  playing keeps playing."
+  [player mirror]
+  (assoc player :clips (into {} (map (fn [[take-id {:keys [clip-id]}]] [clip-id take-id])) (:clips mirror))))
+
+(defn- seen-serial [player key]
+  (let [order (conj (:serial-order player) key)]
+    (if (> (count order) 1024)
+      (assoc player :serials (disj (conj (:serials player) key) (first order)) :serial-order (subvec order 1))
+      (assoc player :serials (conj (:serials player) key) :serial-order order))))
+
+(defn- ignore [player event]
+  (-> player
+      (update :ignored #(let [v (conj % (select-keys event [:type :track-id :clip-id :serial]))]
+                          (if (> (count v) ignored-kept) (subvec v (- (count v) ignored-kept)) v)))
+      (update :ignored-count inc)))
 
 (defn- command [player envelope-fn op data]
   (merge (envelope-fn) {:op op :source (:source player)} data))
@@ -648,50 +769,76 @@
                    :commands [(command player envelope-fn :instance/end {:instance-id instance-id})]}
       :else {:player (-> player (update :playing dissoc track-id) (update :stopping conj command-id)) :commands []})))
 
+(def ^:private self-ending-modes #{:timed :one-shot})
+
+(defn replay-launch
+  "The launch a take's playback sends: its recorded mode, targets, duration
+  and launch values. A :held launch replays as :persistent, because the clip,
+  not a held pad, owns its release. What is not reproduced: the effect
+  revision (playback runs the cue's current definition; the take keeps
+  :effect-version) and live modulation or other writers at the time."
+  [take]
+  (let [launch (merge (:launch take) {:params (:params take)})]
+    (cond-> launch
+      (or (nil? (:mode launch)) (= :held (:mode launch))) (assoc :mode :persistent))))
+
 (defn play
   "Decode one playback event. envelope-fn returns a fresh command envelope
   (:command-id :show-id :epoch :time-ms) each call. A clip start launches the
-  take's cue once with its launch values; a repeated report of the same start
-  (same :serial) launches nothing. Starting another clip on a track that is
-  playing one ends the first, as Live does. Returns {:player :commands}."
-  [player record {:keys [type track-id clip-id serial beat] :as event} envelope-fn]
-  (if (and serial (contains? (:serials player) serial))
-    {:player player :commands []}
-    (let [player (seen-serial player serial)]
-      (case type
-        :clip-started
-        (let [take-id (get-in player [:clips clip-id])
-              take (get-in record [:takes take-id])]
-          (if-not take
-            {:player (update player :ignored conj (select-keys event [:type :track-id :clip-id :serial])) :commands []}
-            (let [{ended :player ends :commands} (end-playing player track-id envelope-fn)
-                  launch (-> (command ended envelope-fn :cue/launch
-                                      {:cue-id (:cue-id take) :launch {:mode :persistent :params (:params take)}})
-                             (update :source assoc :live/take-id take-id :live/clip-id clip-id))
-                  held (or (clip-beats take) 0)
-                  due (vec (concat (for [{move-beat :beat :keys [param value]} (:moves take)
-                                         :let [rel (- move-beat (:start-beat take))]
-                                         :when (< rel held)]
-                                     [(max 0 rel) {:op :param/set :param param :value value}])
-                                   [[held {:op :instance/end}]]))]
-              {:player (assoc-in ended [:playing track-id]
-                                 {:take-id take-id :clip-id clip-id :command-id (:command-id launch)
-                                  :start-beat beat :due due})
-               :commands (conj ends launch)})))
-        :clip-stopped (end-playing player track-id envelope-fn)
-        {:player (update player :ignored conj (select-keys event [:type :track-id :serial])) :commands []}))))
+  take's cue once with its recorded launch; a repeated report of the same
+  start launches nothing. Starting another clip on a track that is playing one
+  ends the first, as Live does. Returns {:player :commands}."
+  [player record {:keys [type track-id clip-id serial watch-session beat] :as event} envelope-fn]
+  (let [key [watch-session serial]]
+    (if (and serial (contains? (:serials player) key))
+      {:player player :commands []}
+      (let [player (cond-> player serial (seen-serial key))]
+        (case type
+          :clip-started
+          (let [take-id (get-in player [:clips clip-id])
+                take (get-in record [:takes take-id])]
+            (if-not take
+              {:player (ignore player event) :commands []}
+              (let [{ended :player ends :commands} (end-playing player track-id envelope-fn)
+                    launch (replay-launch take)
+                    command (-> (command ended envelope-fn :cue/launch {:cue-id (:cue-id take) :launch launch})
+                                (update :source assoc :live/take-id take-id :live/clip-id clip-id
+                                        :live/effect-version (:effect-version take)))
+                    held (or (clip-beats take) 0)
+                    due (vec (concat (for [{move-beat :beat :keys [param value]} (:moves take)
+                                           :let [rel (- move-beat (:start-beat take))]
+                                           :when (< rel held)]
+                                       [(max 0 rel) {:op :param/set :param param :value value}])
+                                     ;; A timed or one-shot launch ends on its own.
+                                     (when-not (contains? self-ending-modes (:mode launch))
+                                       [[held {:op :instance/end}]])))]
+                {:player (assoc-in ended [:playing track-id]
+                                   {:take-id take-id :clip-id clip-id :command-id (:command-id command)
+                                    :start-beat beat :due due :assigned-group (:assigned-group take)})
+                 :commands (conj ends command)})))
+          :clip-stopped (end-playing player track-id envelope-fn)
+          {:player (ignore player event) :commands []})))))
+
+(defn pending-launches
+  "Command IDs of launches waiting for their receipts."
+  [player]
+  (into (set (keep (comp #(when-not (:instance-id %) (:command-id %)) val) (:playing player))) (:stopping player)))
 
 (defn acknowledge
-  "Bind a launch receipt to the playing clip it started. A clip stopped
-  before its receipt arrived is ended now. Returns {:player :commands}."
+  "Bind a launch receipt to the playing clip it started. A per-instance group
+  placement the take had is restored. A clip stopped before its receipt
+  arrived is ended now. Returns {:player :commands}."
   [player {:keys [command-id status instance-id]} envelope-fn]
   (let [accepted? (and (= :accepted status) instance-id)]
     (if (contains? (:stopping player) command-id)
       {:player (update player :stopping disj command-id)
        :commands (if accepted? [(command player envelope-fn :instance/end {:instance-id instance-id})] [])}
-      (if-let [track-id (some (fn [[t e]] (when (= command-id (:command-id e)) t)) (:playing player))]
+      (if-let [[track-id entry] (some (fn [[t e]] (when (= command-id (:command-id e)) [t e])) (:playing player))]
         (if accepted?
-          {:player (assoc-in player [:playing track-id :instance-id] instance-id) :commands []}
+          {:player (assoc-in player [:playing track-id :instance-id] instance-id)
+           :commands (if-let [group (:assigned-group entry)]
+                       [(command player envelope-fn :effect-groups/assign-instance {:instance-id instance-id :group-id group})]
+                       [])}
           {:player (update player :playing dissoc track-id) :commands []})
         {:player player :commands []}))))
 
@@ -703,9 +850,8 @@
             (if (or (nil? instance-id) (nil? start-beat))
               {:player player :commands commands}
               (let [[now later] (split-with (fn [[rel]] (<= (+ start-beat rel) beat)) due)
-                    out (mapv (fn [[_ c]] (command player envelope-fn (:op c) (assoc (dissoc c :op) :instance-id instance-id))) now)
-                    ended? (some #(= :instance/end (:op %)) out)]
-                {:player (if ended?
+                    out (mapv (fn [[_ c]] (command player envelope-fn (:op c) (assoc (dissoc c :op) :instance-id instance-id))) now)]
+                {:player (if (empty? later)
                            (update player :playing dissoc track-id)
                            (assoc-in player [:playing track-id :due] (vec later)))
                  :commands (into commands out)})))

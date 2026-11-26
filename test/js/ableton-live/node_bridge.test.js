@@ -92,6 +92,29 @@ test("MIDI callbacks reach the real receiving HTTP server in order with unique e
   } finally { releaseFirst.resolve(); await bridge.stop(); await new Promise(resolve => studio.close(resolve)); }
 });
 
+test("run-clip playback events are forwarded to the studio like MIDI (#683)", async () => {
+  const received = [];
+  const studio = http.createServer((request, response) => {
+    const chunks = []; request.on("data", x => chunks.push(x)); request.on("end", () => {
+      received.push(JSON.parse(Buffer.concat(chunks)));
+      response.writeHead(200, { "Content-Type": "application/json" }); response.end('{"accepted":true}');
+    });
+  });
+  await new Promise(resolve => studio.listen(0, "127.0.0.1", resolve));
+  const bridge = createBridge({ sendToMax: (_, text) => bridge.receive({ id: JSON.parse(text).id, status: "executed", result: {} }) });
+  const { port } = await bridge.start({ port: 0, callback: "http://127.0.0.1:" + studio.address().port + "/api/live", id: "test-bridge" });
+  try {
+    await post(port, { id: "handshake", op: "inspect", payload: { "sync-session-id": "run-1", "expected-bridge-id": "test-bridge" } });
+    const event = { type: "clip-started", "track-id": "track:5", "clip-id": "clip:9", "watch-session": "w1", serial: 1, "song-beat": 32 };
+    await bridge.forward({ kind: "run-clip", event });
+    assert.equal(received.length, 1);
+    assert.equal(received[0].kind, "run-clip");
+    assert.deepEqual(received[0].event, event);
+    assert.equal(received[0]["sync-session-id"], "run-1");
+    await assert.rejects(bridge.forward({ kind: "run-clips", event }), /Unknown Live callback kind/);
+  } finally { await bridge.stop(); await new Promise(resolve => studio.close(resolve)); }
+});
+
 test("sync handshake rejects wrong bridge and retains the owner of queued callbacks", async () => {
   const received = [], firstArrived = deferred(), releaseFirst = deferred(), sent = [];
   const studio = http.createServer((request, response) => {

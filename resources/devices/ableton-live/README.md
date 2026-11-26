@@ -240,9 +240,11 @@ Status includes arm/recording/automation flags, paired destination, clip-relativ
 time signature is also reported, with quarter-note beats per bar; for 7/8 that
 value is 3.5 rather than an incorrect seven quarter notes.
 
-All forwarded MIDI input carries `origin: "live-playback"`; existing common
-recording logic suppresses re-recording of that origin. `tolglow-feedback` input
-is discarded. This bridge never emits its clip-recording intents as MIDI wire
+Forwarded MIDI input carries `origin: "live-input"` when the companion's track
+plays no Session clip and nothing can play from its Arrangement (a performer),
+and `origin: "live-playback"` otherwise (#683). Common recording logic never
+re-records either origin. `tolglow-feedback` input is discarded. `kind:
+"run-clip"` callbacks report run-track clip starts and stops. This bridge never emits its clip-recording intents as MIDI wire
 feedback as well.
 
 Automatic setup, Capture and clip write operations (`inspect-set`,

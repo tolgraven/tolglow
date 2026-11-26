@@ -176,6 +176,9 @@
           (is (= [["Amber run 1 [contract.1]" 3] ["Amber run 2 [contract.3]" 4]]
                  (mapv (juxt :name :length-beats) (:clips (first (filter #(= "Tolglow run a" (:name %)) tracks))))))
           (is (= ["Blue run 1 [contract.2]"] (mapv :name (:clips (first (filter #(= "Tolglow run b" (:name %)) tracks)))))))
+        (testing "each clip is copied into the Arrangement at its start beat by its own step"
+          (is (= {"contract.1" 1 "contract.2" 2 "contract.3" 6}
+                 (update-vals (:arranged result) :start-beat))))
         (testing "a rerun over HTTP writes nothing"
           (is (empty? (:applied (runs/sync! conn record {:arrangement-offset-beats 0})))))
         (testing "the companion accepts the run-track watch"

@@ -345,122 +345,172 @@ companion's own tests are in `test/js/ableton-live/live_session.test.js`.
 
 ## Mirror what ran as run tracks, clips and Group Tracks
 
-Issue #683. The Tolglow side, the companion operations and their HTTP
-contract are tested against the simulated Set and a simulated Live object
+Issue #683. The Tolglow side, the companion operations, the bridge and their
+HTTP contract are tested against the simulated Set and a simulated Live object
 graph. None of it has run in a licensed Live Set yet; the operator checklist
-is on the pull request.
+is on pull request #750.
 
 **Run record.** `tolglow.integrations.live-runs` folds each committed show
 model, as the capture buffer does, but keeps every run instead of the last
 bars. The runtime owns one record (`create-runtime` option `:live-runs`,
 `false` disables it).
-- A cue definition gets a *channel* on its first launch. Later runs of that cue
-  reuse the channel. A 64-cue page with two launched cues has two channels.
-- Each activation is a *take*: start, release and end beats on the show
-  transport (exact rationals on the 1/960 beat grid), launch values, parameter
-  moves, the launching source and the instance ID. A take outlives its
-  instance.
-- A run holds the lowest *lane* of its channel that no other unreleased run of
-  the same cue holds. Successive runs reuse lane 0, and overlapping runs get
-  lanes 1, 2 and so on. Each lane is a separate Live track, so overlapping runs
-  play and stop independently. A run releases its lane at the release command,
-  so a relaunch during the previous run's release tail still reuses the track.
+- A cue definition gets a *channel* on its first launch. Later runs reuse it.
+  A 64-cue page with two launched cues has two channels.
+- Each activation is a *take*. It keeps:
+  - start, release and end beats on the show transport, as exact rationals on
+    the 1/960 beat grid;
+  - the validated launch (mode, targets, duration, values);
+  - the instance's effect revision and the cue's version;
+  - any per-instance group placement;
+  - parameter moves, the launching source and the instance ID.
+  A take outlives its instance.
+- Moves of one parameter on one beat coalesce; the last value wins. A take
+  keeps at most `:max-moves` (default 512). Writes beyond that are counted in
+  `:moves-dropped` and the take is marked `:truncated? true`. On this Mac, a
+  2,000-write burst over 100 owner cycles folded in a mean of 87 µs per cycle,
+  worst 0.3 ms, with the commands themselves included.
+- The hold is transport time played forward. A seek or loop inside a run banks
+  the segment before the jump, so it neither shortens nor lengthens the hold.
+- A run holds the lowest *lane* of its channel that no other run of the same
+  cue holds until its release. Successive runs reuse lane 0. Runs held at the
+  same time get lanes 1, 2 and so on, each its own Live track, so they play and
+  stop independently. A lane frees at the release command. A relaunch during
+  the previous run's release tail therefore reuses the track, and the tail and
+  the new run share that lane.
 - A channel follows its cue's place in the manual effect-group tree (#553).
-  Regrouping moves the channel in the record. A take keeps the group path of
-  its instance, including a per-instance placement.
+- A new show epoch ends every open take at the beat of the restart, within one
+  owner cycle, and marks it `:interrupted :epoch`. Channels and finished takes
+  are kept.
+
+**Recording ownership.** A take is made only for a performance.
 - Commands with origin `:live-playback` or `:tolglow-feedback` make no takes,
-  and neither does anything addressed to an instance they launched. A playback
-  launch whose source names `:live/take-id` is listed as playing that take.
-- A new show epoch ends every open take at the last beat it saw and marks it
-  `:interrupted :epoch`. Channels and finished takes are kept.
+  and neither does anything addressed to an instance they launched.
+- The companion marks MIDI it forwards:
+  - `live-input` when its own track plays no Session clip
+    (`playing_slot_index` below 0) and either the transport is stopped or the
+    track holds no Arrangement clips;
+  - `live-playback` otherwise, including when the state is unknown.
+- The Ableton bridge gives `live-input` commands origin `:live-input`. The run
+  record and Capture keep them as performances, and they are never recorded
+  back into Live, which already has its input.
+- Everything else from Live, such as a looping launcher pattern (#228) or a
+  Capture clip, stays `:live-playback`, so a looping clip does not add a take
+  every pass.
+- Arrangement playback on a track that holds Arrangement clips is treated as
+  playback while the transport runs. A performer playing over such a track is
+  therefore not recorded; that limit is on the checklist.
 
 **Live layout.** `live-runs/sync!` inspects the Set, applies a plan and
 inspects again.
-- Each channel lane gets one MIDI track, named `Tolglow run <cue-id>`, or
-  `Tolglow run <cue-id> · 2` for lane 1. The name uses the cue ID, so renaming
-  the cue does not break reconnection.
-- Each released take gets one Session clip, named `<cue name> run <n>
-  [<take-id>]`, on its lane track. The clip holds one note (pitch 60) for the
-  held length. Take IDs carry the runtime's record ID, so clips from another
-  session never collide.
+- Each channel lane gets one MIDI track, named `Tolglow run <cue-id>` or
+  `Tolglow run <cue-id> · 2` and so on.
+- Each released take gets one non-looping Session clip (`Clip.looping` 0),
+  named `<cue name> run <n> [<take-id>]`, holding one note (pitch 60) for the
+  held length. A full track gets a new scene, and `Song.create_scene` adds an
+  empty slot to every track in the Set.
 - Each manual group that contains a channel gets a Group Track named
-  `Tolglow group <group-id>`. A lane track is created inside its innermost
-  group.
-- A reopened Set reconnects by these names. A rerun writes only what is
-  missing. A clip the performer moved to another track is still found by its
-  take ID.
-- A rejected step changed nothing, so only its dependents are skipped. A lane
-  track whose group could not be bound is created ungrouped and reported. An
-  indeterminate receipt stops the run. Nothing is retried, and the next sync
-  finds by name a clip that was written after all.
-- `:arrangement-offset-beats` also places each new clip in the Arrangement at
-  its start beat plus the offset (`Track.duplicate_clip_to_arrangement`). An
-  overlap there is refused before the Session clip is written.
+  `Tolglow group <group-id>`.
+- Reconnection by name:
+  - Tracks reconnect by name in any Set.
+  - Clips reconnect by the take ID in their name, within one runtime. The
+    record is not saved with the show yet, so after a restart the old run
+    clips stay in the Set without takes, and playing them launches nothing.
+  - A rerun writes only what is missing.
+- A rejected step skips only its dependents. A lane track whose group could
+  not be bound is created ungrouped and reported. An indeterminate receipt
+  stops the run, nothing is retried, and the next sync finds by name a clip
+  that was written after all.
+- `:arrangement-offset-beats` adds a separate `place-clip` step per take
+  (`Track.duplicate_clip_to_arrangement`), keyed by take ID:
+  - a take already in the Arrangement is not placed again;
+  - a failed placement is placed on the next sync;
+  - a range another clip holds, for example after a loop, is reported as
+    `placement-overlap` for that take only. Its Session clip is still written
+    and the sync still completes.
 - The performer's own tracks are never renamed, moved or written.
 
 **Group Tracks: what is and is not documented.** The Live Object Model
 documents `Track.group_track`, `is_foldable` and `is_grouped` for reading
 membership. It has no call that creates a Group Track or moves a track into
-one. The companion therefore handles groups this way:
+one.
 - `ensure-group` only finds a Group Track by name. A missing group is refused
-  with `group-creation-unavailable`, telling the performer to group a track
-  and name the group, or to load a packaged template.
-- `ensure-track` with `:group-track-id` creates the track with
-  `create_midi_track(index)`. The index is just after the group's last direct
-  member that is not itself a group, or just after the Group Track when it has
-  none. Right after a nested group's members would be ambiguous between the
-  inner and outer group, so that index is never used.
-- Every track's membership is read back. A track outside its group is reported
-  as `not-in-group` and left where it is.
+  with `group-creation-unavailable`.
+- `ensure-track` with `:group-track-id` inserts with
+  `create_midi_track(index)`: just after the group's last direct member that is
+  not itself a group, or just after the Group Track when it has none.
+- Membership is read back. A track outside its group is reported as
+  `not-in-group` and left where it is.
 
-Whether an insert at that index joins the group in real Live is the first
-group question for the host run. A packaged template is the fallback creation
-path.
+Whether that insert joins the group in real Live is the first group question
+for the host run. A packaged template is the fallback creation path.
 
-**Values in Live.** A run clip carries its timing. Its launch values and
-parameter moves stay in the Tolglow record. On the companion's own track,
-clip envelopes can hold them through the companion's lane parameters. A run
-track has no device whose parameters an envelope could automate until the
-parameter racks of #625 exist. Editing a run's envelope in Live therefore
-waits for #625.
+**Values in Live.** A run clip carries its timing. Launch values and moves
+stay in the Tolglow record. A run track has no device whose parameters an
+envelope could automate until the parameter racks of #625 exist, so editing a
+run's envelope in Live waits for #625.
 
-**Playback ownership.** The companion's `watch-run-tracks` observes
-`Track.playing_slot_index` on the run tracks. Reads are deferred out of the
-notification. The companion reports each clip start or stop once, with a
-serial and the clip ID. `live-runs/player` decodes these reports:
-- a clip start launches the take's cue once with its launch values (origin
-  `:live-playback`, `:live/take-id`);
-- `advance` replays the take's moves and ends the instance after the held
-  length;
-- a stop ends the instance, even when the launch had not been acknowledged
-  yet;
-- a repeated report of the same start launches nothing.
+**Playback.** Playback is wired from Live to the show:
+- The companion's `watch-run-tracks` observes `Track.playing_slot_index` on the
+  run tracks, with reads deferred out of the notification.
+- It emits each clip start and stop once. An event carries the clip ID, a
+  serial and the companion's watch-session ID.
+- `node_bridge.js` forwards these `run-clip` events to Studio's `/api/live`.
+- The Live sync manager hands them to the runtime's `show/live-run-clip!`.
+  The REPL can call the same function.
+- `show/live-run-clip!` stamps each event with the show transport beat on
+  arrival. This is the one place Live song time meets the show clock; the
+  companion's `song-beat` is kept for diagnostics.
 
-Playback never makes a take, so a played clip cannot record another clip. The
-Drum Rack launcher (#228) plays definitions and its hits are performances,
-which do make takes. Run tracks never feed the launcher, so the two cannot
-double-fire each other.
+`live-runs/player` decodes the events:
+- A clip start launches the take's cue once with its recorded launch. A held
+  launch replays as persistent, because the clip owns its release. The launch
+  carries origin `:live-playback`, `:live/take-id` and the recorded
+  `:live/effect-version`.
+- The owner binds the receipt, restores a per-instance group placement,
+  replays the recorded moves and releases after the held length. Each of these
+  lands one owner cycle after the beat it is due.
+- A timed or one-shot launch ends itself.
+- A stop ends the instance, even before its launch is acknowledged.
+- A repeat of the same watch session and serial launches nothing. A reloaded
+  companion's new session is not taken for a repeat.
+- Unknown clips are counted, and the last 16 kept.
 
-Not wired yet:
-- the runtime does not consume `run-clip` events from the companion's event
-  stream;
-- Live edits to a run clip's length are not read back into the player;
-- Arrangement playback is not observed, because `playing_slot_index` reports
-  Session slots only.
+Playback never makes a take, so a played clip cannot record another clip.
 
-**Evidence.** `live-runs-test` performs on a real `show/create-runtime`. A
-runs 1–4. B runs 2–7, launched from Studio rather than Live. A runs again
-6–10, and two overlapping runs of A follow. The record holds two A takes on
-lane 0, one B take, and the overlapping runs on lanes 0 and 1 with their own
-instance IDs and moves. The test mirrors them into the simulated Set with
-placed Group Tracks. It also covers groups that cannot be created, a lost
-acknowledgement, a deleted clip, a running take, Arrangement placement, and
-playback that steers once and records nothing. Studio's `/api/live-runs`
-serves the REPL's projection and shows a REPL sync. The
-`live-companion-contract-test` case mirrors a record over real HTTP through
-`node_bridge.js`, `max_adapter.js` and `live_session.js`. The JavaScript tests
-cover Group Track inspection, `ensure-group` refusal, group placement, scene
-creation, Arrangement placement and the playback watch.
+Playback does not reproduce:
+- the effect revision: playback runs the cue's current definition;
+- modulation or other writers active at the time;
+- a clip edited in Live: the take's length is used, not the edited length;
+- Arrangement playback: `playing_slot_index` reports Session slots only.
+
+**Projection.** `show/live-runs`, Studio's **Connections → Live runs** and
+`GET /api/live-runs?limit=n` list the newest takes, 256 by default and at most
+4096. They report `:shown` and `:truncated?`, along with each take's clip and
+Arrangement status.
+
+**Evidence.**
+- `live-runs-test` performs on a real `show/create-runtime`:
+  - A held 1–4, B 2–7 launched from Studio, A 6–10, then two overlapping runs
+    of A. Two A takes are on lane 0, one B take, and the overlapping runs are
+    on lanes 0 and 1.
+  - It mirrors them into the simulated Set with Group Tracks.
+  - Failure and edge cases: groups that cannot be created, a lost
+    acknowledgement, a deleted clip, a running take, Arrangement placement
+    after a loop with a failed copy repaired, seeks, restarts, a 2,000-move
+    burst, launch replay, a companion reload, origin marking and the projection
+    limit.
+  - It feeds a run-clip event shaped exactly as the companion sends it through
+    `show/live-run-clip!` and lets the owner replay the move and the release.
+- `live-sync-test` routes a `run-clip` callback to the show and gives
+  `live-input` MIDI its origin.
+- `ableton-test` checks that live input is not recorded back.
+- The `live-companion-contract-test` case mirrors a record over real HTTP,
+  with Arrangement copies, through the bridge, `max_adapter.js` and
+  `live_session.js`.
+- The JavaScript tests cover the bridge forwarding run-clip events, Group
+  Track inspection, group placement, scenes, non-looping clips, `place-clip`,
+  the playback watch with its session ID, origin marking and closing the
+  watches when the device stops.
 
 ## Verified Live APIs and limits
 

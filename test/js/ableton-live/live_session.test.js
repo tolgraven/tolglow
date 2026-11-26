@@ -12,7 +12,7 @@ const { liveSet, PORTS, CHANNELS } = require("./live_set_fixture.js");
 
 test("operation list matches tolglow.integrations.live-connection/operations", () => {
   assert.deepEqual([...OPERATIONS].sort(), ["capture-midi", "configure-track", "ensure-group", "ensure-track", "extend-clip", "fire-clip",
-    "inspect-set", "read-clip", "show-clip", "stop-clips", "watch-run-tracks", "write-clip"]);
+    "inspect-set", "place-clip", "read-clip", "show-clip", "stop-clips", "watch-run-tracks", "write-clip"]);
   assert.deepEqual(COARSE, Array.from({ length: 31 }, (_, i) => i + 1).filter(c => c !== 6), "same as phrase-clip/coarse-controllers");
 });
 
@@ -151,8 +151,9 @@ test("echo rule: the feed channel is dropped, playback is tagged with its track,
   live.request("configure-track", { "track-id": track, input: { port: "Tolglow", channel: 16 } });
   live.request("handoff", { mode: "lighting" });
   assert.equal(live.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 16 }), null, "Tolglow's own monitored feed");
+  live.play(0, 0);
   assert.deepEqual(live.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 }),
-    { type: "note-on", note: 36, velocity: 127, channel: 1, "track-id": track, origin: "live-playback" });
+    { type: "note-on", note: 36, velocity: 127, channel: 1, "track-id": track, origin: "live-playback" }, "the track plays a clip");
   assert.deepEqual(live.adapter.lane(6, 1), [
     { type: "cc", controller: 7, value: 127, channel: 1, origin: "live-playback", "track-id": track },
     { type: "cc", controller: 39, value: 127, channel: 1, origin: "live-playback", "track-id": track }]);
@@ -324,14 +325,40 @@ test("write-clip adds a scene when the run track is full and places the clip in 
   assert.equal(first.result["scene-created?"], false);
   const refused = live.request("write-clip", { "track-id": track, name: "A run 2 [r.2]", clip });
   assert.equal(refused.status, "rejected"); assert.equal(refused.error.code, "no-empty-slot");
-  const second = live.request("write-clip", { "track-id": track, name: "A run 2 [r.2]", clip, "create-scene?": true, "arrangement-beat": 16 });
+  const second = live.request("write-clip", { "track-id": track, name: "A run 2 [r.2]", clip, "create-scene?": true, "looping?": false });
   assert.equal(second.status, "executed", JSON.stringify(second.error));
-  assert.deepEqual([second.result["slot-index"], second.result["scene-created?"], second.result["arrangement-beat"]], [1, true, 16]);
+  assert.deepEqual([second.result["slot-index"], second.result["scene-created?"]], [1, true]);
   assert.equal(live.song.tracks[0].slots[1].clip.props.name, "A run 2 [r.2]");
-  const overlap = live.request("write-clip", { "track-id": track, name: "A run 3 [r.3]", clip, "create-scene?": true, "arrangement-beat": 18 });
-  assert.equal(overlap.status, "rejected", "an Arrangement overlap is refused before the Session clip is written");
+  assert.equal(live.song.tracks[0].slots[1].clip.props.looping, 0, "run clips do not loop");
+  assert.equal(live.song.tracks[0].slots[0].clip.props.looping, undefined, "without looping? Live's default stays");
+  const placed = live.request("place-clip", { "track-id": track, "expected-name": "Tolglow run a", "clip-id": second.result["clip-id"], "arrangement-beat": 16 });
+  assert.deepEqual(placed.result, { "arrangement-beat": 16 });
+  const overlap = live.request("place-clip", { "track-id": track, "clip-id": first.result["clip-id"], "arrangement-beat": 18 });
+  assert.equal(overlap.status, "rejected", "an Arrangement overlap is refused before the copy");
   assert.equal(overlap.error.code, "placement-overlap");
-  assert.equal(live.song.tracks[0].slots.length, 2);
+  const inspected = live.request("inspect-set").result.tracks[0];
+  assert.deepEqual(inspected["arrangement-clips"], [{ name: "A run 2 [r.2]", "start-beat": 16, "end-beat": 19 }]);
+});
+
+test("forwarded MIDI is live input only while the companion's track plays no clip and nothing can play from the Arrangement", () => {
+  const live = liveSet({ tracks: [{ name: "Tolglow Cues" }] });
+  live.request("handoff", { mode: "lighting" });
+  const note = () => live.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 }).origin;
+  live.request("inspect-set");
+  assert.equal(note(), "live-input", "stopped transport, no clip playing: a performer");
+  live.play(0, 0);
+  assert.equal(note(), "live-playback", "a Session clip plays on the companion's track");
+  live.play(0, -1);
+  assert.equal(note(), "live-input");
+  const quiet = liveSet({ tracks: [{ name: "Tolglow Cues" }] });
+  quiet.request("handoff", { mode: "lighting" });
+  quiet.song.props.is_playing = 1;
+  quiet.song.tracks[0].props.arrangement_clips = ["id", 9999];
+  quiet.session.hostTrackId(true);
+  assert.equal(quiet.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 }).origin, "live-playback",
+    "the transport plays and the track has Arrangement clips: treated as playback");
+  live.session.closeWatches();
+  assert.ok(live.observers.every(o => !o.open), "closing the device ends every watch");
 });
 
 test("watch-run-tracks reports each clip start and stop once, with the clip identity", () => {
@@ -345,8 +372,9 @@ test("watch-run-tracks reports each clip start and stop once, with the clip iden
   assert.equal(live.writes.length, writes, "watching writes nothing");
   live.play(0, 0, 32); live.play(0, 0, 32); live.play(0, -2, 34);
   assert.deepEqual(live.emitted, [
-    { type: "clip-started", "track-id": "track:" + a.id, serial: 1, "slot-index": 0, "clip-id": written.result["clip-id"], "song-beat": 32 },
-    { type: "clip-stopped", "track-id": "track:" + a.id, serial: 2, "song-beat": 34 }]);
+    { type: "clip-started", "track-id": "track:" + a.id, "watch-session": live.session.watchSession, serial: 1, "slot-index": 0,
+      "clip-id": written.result["clip-id"], "song-beat": 32 },
+    { type: "clip-stopped", "track-id": "track:" + a.id, "watch-session": live.session.watchSession, serial: 2, "song-beat": 34 }]);
   live.request("watch-run-tracks", { "track-ids": ["track:" + b.id] });
   live.play(0, 0);
   assert.equal(live.emitted.length, 2, "a replaced watch no longer reports");
