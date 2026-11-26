@@ -371,6 +371,19 @@ test("forwarded MIDI is live input only while the companion's track plays, launc
   routed.session.hostTrackId(true);
   assert.equal(routed.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 }).origin, "live-playback",
     "MIDI From another track carries that track's clips");
+
+  const sent = liveSet({ tracks: [{ name: "Tolglow Cues" }, { name: "Launcher", output: { display_name: "Tolglow Cues", identifier: 901 } }],
+    now: () => clock });
+  sent.request("handoff", { mode: "lighting" });
+  sent.session.hostTrackId(true);
+  assert.equal(sent.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 }).origin, "live-playback",
+    "another track's MIDI To the companion's track carries that track's clips");
+
+  const grouped = liveSet({ tracks: [{ name: "Tolglow Cues" }, { name: "Tolglow group stage", group: true }, { name: "Bass" }], now: () => clock });
+  grouped.request("handoff", { mode: "lighting" });
+  grouped.session.hostTrackId(true);
+  assert.equal(grouped.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 }).origin, "live-input",
+    "a Group Track or a track sending to the Master does not route into the companion");
 });
 
 test("with notifications delivered later, as LiveAPI does, the value is kept inside the notification", async () => {

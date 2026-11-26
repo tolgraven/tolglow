@@ -594,3 +594,35 @@
                                     {:type :clip-started :track-id "t" :clip-id "clip:1" :serial 1 :beat 0} (fn [] {:command-id "c1"}))]
     (is (= 3 (:at (first (:moves t)))) "two beats before the seek and one after")
     (is (= [[3 :param/set] [4 :instance/end]] (mapv (fn [[at c]] [at (:op c)]) (get-in player [:playing "t" :due]))))))
+
+(deftest a-replay-end-refused-by-a-full-owner-queue-is-sent-again
+  (let [{:keys [rt event]} (synced-runtime)
+        state (:live-runs rt)
+        instances #(vals (:instances (:model @(:state rt))))]
+    (try
+      (show/tick! rt 10000)
+      (show/live-run-clip! rt (assoc event :serial 1))
+      (doseq [t [10010 10020 10030]] (show/tick! rt t))
+      (is (= 1 (count (instances))) "the replay runs")
+      ;; Fill the owner queue with 256 commands nobody has drained yet.
+      (dotimes [_ 256] (show/submit! rt :command {:op :master/set :value 1.0 :source studio}))
+      ;; This test thread stands in for the owner, which reaches the replay's
+      ;; end (three held beats in) while the queue is full.
+      (#'show/advance-run-player! rt state (assoc-in (:model @(:state rt)) [:transport :beat] 1000.0))
+      (is (= [:rejected] (mapv (comp :status deref :reply) (vals (:end-replies @state)))) "the end was refused")
+      (is (empty? (:playing (:player @state))) "the player has let the entry go")
+      (show/tick! rt 10040)
+      (is (= 1 (count (instances))) "the backlog drained; the instance still runs, so the owner sent the end again")
+      (show/tick! rt 10050)
+      (is (empty? (instances)) "the resent end ended the replay")
+      (is (empty? (filter (comp #(and (realized? %) (= :rejected (:status @%))) :reply) (vals (:end-replies @state)))))
+      (finally (show/stop! rt)))))
+
+(deftest dropped-playback-events-are-visible-to-the-repl-and-studio
+  (let [{:keys [rt event]} (synced-runtime)
+        app (studio/handler rt)]
+    (try
+      (dotimes [i 300] (show/live-run-clip! rt (assoc event :serial i :type "clip-stopped")))
+      (is (= {:queued 256 :dropped 44} (:playback-events (show/live-runs rt))))
+      (is (= {:queued 256 :dropped 44} (:playback-events (json/read-str (:body (request app "/api/live-runs")) :key-fn keyword))))
+      (finally (show/stop! rt)))))

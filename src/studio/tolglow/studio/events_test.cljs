@@ -1819,6 +1819,8 @@
     (is (= "Nothing has run yet" (connections/live-runs-text {:takes 0 :channels []})))
     (is (= "2 launched cues · 300 takes · 1 of 3 in Live · newest 3 shown"
            (connections/live-runs-text (assoc projection :takes 300 :running 0 :truncated? true :shown 3))))
+    (is (= "2 launched cues · 3 takes (1 running) · 1 of 3 in Live · 44 playback events dropped"
+           (connections/live-runs-text (assoc projection :playback-events {:queued 0 :dropped 44}))))
     (is (= "run 1 · beat 1.00 · held 3.00 · in Live" (connections/take-text (get-in projection [:channels 0 :lanes 0 :takes 0]))))
     (is (= "run 2 · beat 6.00 · running · recording" (connections/take-text (get-in projection [:channels 0 :lanes 0 :takes 1]))))
     (is (str/includes? html "Amber sweep"))

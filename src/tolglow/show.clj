@@ -445,7 +445,7 @@
       {:enabled? true :record (live-runs/new-record (assoc options :record-id record-id)) :mirror nil
        ;; Run-clip playback decoder, made by the first sync; its lock orders
        ;; playback events with the owner's acknowledgements and moves.
-       :player nil :player-lock (Object.) :inbox [] :replies {}
+       :player nil :player-lock (Object.) :inbox [] :inbox-dropped 0 :replies {} :end-replies {}
        :cost {:samples 0 :total-ns 0 :max-ns 0 :last-ns 0}})))
 
 (defn- configure-runtime
@@ -1963,10 +1963,21 @@
   the moves and releases playing takes have reached. The player lock is held
   only while the pure player runs; commands are submitted after it is
   released, so a callback or a sync can never wait on the owner while the
-  owner waits on them."
+  owner waits on them. An end the owner queue refused is sent again while
+  its instance still runs, so a replayed cue cannot keep running."
   [runtime state model]
   (when (:player @state)
     (let [envelope #(run-clip-envelope runtime model)
+          instances (:instances model)
+          ;; At most 8 attempts per end, so a refusal that persists cannot loop.
+          resend (into [] (keep (fn [[_ {:keys [reply instance-id attempt]}]]
+                                  (when (and (realized? reply) (= :rejected (:status @reply)) (contains? instances instance-id)
+                                             (< (or attempt 1) 8))
+                                    (merge (envelope) {:op :instance/end :instance-id instance-id ::attempt (inc (or attempt 1))
+                                                       :source (get-in @state [:player :source])}))))
+                       (:end-replies @state))
+          _ (swap! state update :end-replies
+                   (fn [rs] (into {} (remove (fn [[_ {:keys [reply]}]] (realized? reply))) rs)))
           commands (locking (:player-lock @state)
                      (let [[old _] (swap-vals! state assoc :inbox [])
                            replies (:replies old {})
@@ -1989,10 +2000,13 @@
                        (swap! state #(-> % (assoc :player (:player advanced))
                                          (update :replies (fn [rs] (select-keys rs pending)))))
                        (into (:commands acked) (:commands advanced))))]
-      (doseq [c commands]
-        (let [reply (submit! runtime (assoc c :expected-epoch (:epoch model)))]
-          (when (= :cue/launch (:op c))
-            (swap! state assoc-in [:replies (:command-id c)] reply)))))))
+      (doseq [c (into resend commands)]
+        (let [reply (submit! runtime (-> c (dissoc ::attempt) (assoc :expected-epoch (:epoch model))))]
+          (case (:op c)
+            :cue/launch (swap! state assoc-in [:replies (:command-id c)] reply)
+            :instance/end (swap! state assoc-in [:end-replies (:command-id c)]
+                                 {:reply reply :instance-id (:instance-id c) :attempt (get c ::attempt 1)})
+            nil))))))
 
 (defn- observe-live-runs!
   "Fold the committed model into the run record. Pure fold; a failure is
@@ -3747,6 +3761,7 @@
                 (when (and (:limit payload) (not (and limit (<= 1 limit 4096))))
                   (throw (ex-info "limit takes 1-4096" {:limit (:limit payload)})))
                 (assoc (live-runs/projection record mirror (cond-> {} limit (assoc :limit limit)))
+                       :playback-events {:queued (count (:inbox @state)) :dropped (:inbox-dropped @state 0)}
                        :cost {:cycles (:samples cost) :mean-us (/ (:total-ns cost) n 1000.0)
                               :max-us (/ (:max-ns cost) 1000.0)}))
       (throw (ex-info "Unknown run record operation" {:operation operation})))))

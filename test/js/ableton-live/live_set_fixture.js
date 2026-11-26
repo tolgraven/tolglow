@@ -25,6 +25,7 @@ function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGro
   }
   function makeTrack(t) {
     const track = add({ kind: "track", props: { name: t.name, has_midi_input: t.audio || t.group ? 0 : 1, can_be_armed: t.group ? 0 : 1, arm: t.arm ? 1 : 0,
+      output_routing_type: t.output ?? { display_name: "Master", identifier: 900 },
       is_foldable: t.group ? 1 : 0, group_track: ["id", 0], playing_slot_index: -1, fired_slot_index: -1,
       current_monitoring_state: t.monitor ?? 1, input_routing_type: t.port ?? PORTS[0], input_routing_channel: t.channel ?? CHANNELS[0],
       devices: t.instrument ? ["id", 7001, "id", 7002] : ["id", 7001], arrangement_clips: [] },
@@ -59,7 +60,7 @@ function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGro
         if (o.kind === "track" && key === "clip_slots") return o.slots.flatMap(s => ["id", s.id]);
         if (o.kind === "slot" && key === "has_clip") return [o.clip ? 1 : 0];
         if (o.kind === "device" && key === "parameters") return o.params.flatMap(p => ["id", p.id]);
-        if (key === "input_routing_type" || key === "input_routing_channel") return JSON.stringify({ [key]: o.props[key] });
+        if (key === "input_routing_type" || key === "input_routing_channel" || key === "output_routing_type") return JSON.stringify({ [key]: o.props[key] });
         if (key === "available_input_routing_types") return JSON.stringify({ [key]: PORTS });
         if (key === "available_input_routing_channels") return JSON.stringify({ [key]: CHANNELS });
         return Array.isArray(o.props[key]) ? o.props[key] : [o.props[key]];

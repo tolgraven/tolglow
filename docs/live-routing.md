@@ -392,13 +392,18 @@ bars. The runtime owns one record (`create-runtime` option `:live-runs`,
   - the track holds no Arrangement clips;
   - the track takes no MIDI from another track (its input routing does not
     name another track);
-  - nothing changed on those slots within the last 250 ms.
+  - nothing changed on those slots within the 250 ms after the change was
+    noted;
+  - no other MIDI track's output routing names the companion's track
+    ("MIDI To").
   Everything else is `live-playback`, including when the state is unknown.
 - The notification stores each observed value at once, as a plain
   assignment. Only reads that need LiveAPI are deferred. A launch is
-  therefore seen at `fired_slot_index`, before the clip starts. Notes that
-  still reach the companion before Live's first notification would be
-  classified as input; that ordering needs the host run.
+  therefore seen at `fired_slot_index`, before a quantized clip starts. The
+  250 ms window helps only notes handled after the notification stored the
+  change. With launch quantization None, a note handled before that
+  notification still reads the old slot and is classified as input; that
+  ordering needs the host run.
 - The Ableton bridge gives `live-input` commands origin `:live-input`. The run
   record and Capture keep them as performances, and they are never recorded
   back into Live, which already has its input.
@@ -408,8 +413,10 @@ bars. The runtime owns one record (`create-runtime` option `:live-runs`,
 - Known limits:
   - A performer playing on a companion track that holds Arrangement clips, or
     one that takes MIDI from another track, is not recorded.
-  - Routing is detected by name: a MIDI port named exactly like another track
-    counts as routing from that track. An undetected route from a clip would
+  - Routing is detected by name, in both directions: an input port named
+    exactly like another track, or another MIDI track whose output names the
+    companion's track, counts as routing. A track named like a MIDI port
+    therefore stops a performer being recorded. An undetected route from a clip would
     be recorded as performance, and a later Capture into Live would write back
     what Live played. Keep the companion on its own track with a MIDI port or
     keyboard input.
@@ -472,7 +479,8 @@ run's envelope in Live waits for #625.
 - The Live sync manager hands them to the runtime's `show/live-run-clip!`.
   The REPL can call the same function.
 - `show/live-run-clip!` stamps each event with the show transport beat on
-  arrival and only queues it (at most 256). This is the one place Live song
+  arrival and only queues it (at most 256). Queued and dropped events are
+  reported in the projection as `:playback-events`. This is the one place Live song
   time meets the show clock; the companion's `song-beat` is kept for
   diagnostics.
 - The owner thread decodes the queue at its next cycle and submits the
@@ -490,6 +498,9 @@ run's envelope in Live waits for #625.
   offsets (a move after a seek keeps its offset into the run), and releases
   after the take's actual held length, also for a timed run stopped early.
   Each of these lands one owner cycle after it is due.
+- An end the owner queue refused (for example because the queue was full) is
+  sent again while its instance still runs, at most eight times, so a
+  replayed cue cannot keep running.
 - A playing entry whose instance already ended is dropped.
 - A stop ends the instance, even before its launch is acknowledged.
 - A repeat of the same watch session and serial launches nothing. A reloaded

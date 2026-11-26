@@ -82,9 +82,10 @@
     this.hostArrangement = null;
     this.hostRouted = null;
     this.now = options.now || function () { return new Date().getTime(); };
-    // MIDI within this many milliseconds of a launch, start or stop on the
-    // companion's track counts as playback (its notification can trail the
-    // first notes).
+    // MIDI within this many milliseconds after a launch, start or stop on the
+    // companion's track was noted counts as playback. It only helps notes
+    // handled after the notification stored the change; a note handled
+    // before it (launch quantization None) still reads the old slot.
     this.transitionMs = options.transitionMs === undefined ? 250 : options.transitionMs;
     // The companion's own track id, cached: MIDI events and lane moves must not
     // build a LiveAPI object each. Refreshed by every Set operation, so moving
@@ -120,16 +121,25 @@
     }
     return this.host;
   };
-  // Whether the companion's track takes its MIDI from another track ("MIDI
-  // From: <track>"): that track's clips then reach the companion as input.
-  // Input routing is readable in the LOM; a port name equal to another
-  // track's name is taken as routing from that track. Unknown counts as true.
+  // Whether MIDI from another track reaches the companion's track: its input
+  // names another track ("MIDI From: <track>"), or another track's output
+  // names the companion's track ("MIDI To: <companion track>"). That track's
+  // clips then arrive as input. Routing is readable in the LOM; a routing
+  // display name equal to a track name is taken as that track, which errs
+  // toward playback. Unknown counts as routed.
   Session.prototype.routedFromTrack = function (hostId) {
     var self = this;
     try {
-      var port = this.routing(this.object({id: hostId})).port;
-      if (port === null) return false;
-      return this.trackIds().some(function (id) { return id !== hostId && String(self.read(self.object({id: id}), "name")) === port; });
+      var host = this.object({id: hostId}), hostName = String(this.read(host, "name"));
+      var port = this.routing(host).port, others = this.trackIds().filter(function (id) { return id !== hostId; });
+      return others.some(function (id) {
+        var t = self.object({id: id});
+        if (port !== null && String(self.read(t, "name")) === port) return true;
+        // Only a MIDI track can send MIDI; Group and audio tracks are skipped.
+        if (self.foldable(t) || !self.read(t, "has_midi_input")) return false;
+        var out = self.dict(t, "output_routing_type");
+        return !!out && out.display_name === hostName;
+      });
     } catch (e) { return true; }
   };
   // Follow the companion track's Session playback: playing_slot_index and
