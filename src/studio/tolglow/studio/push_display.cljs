@@ -28,12 +28,19 @@
                           (assoc :usage (select-keys (:usage preview) [:cue-count :page-count :running-count]))
                           (seq (:load-options preview)) (assoc :load-options (vec (take 2 (:load-options preview))))))))))
 
+(defn personality
+  "The active track feel's name and picture, when the show supplied an SVG data URI."
+  [{:keys [name icon]}]
+  (when (and (string? icon) (str/starts-with? icon "data:image/svg+xml;base64,") (<= (count icon) 16384))
+    {:name (when (string? name) (subs name 0 (min 80 (count name)))) :icon icon}))
+
 (defn normalize-view [view]
   (let [view (if (map? view) view {})]
     (-> (select-keys view [:title :page :origin :status :master :blackout? :bpm :selected
                           :cue :effect :swatch :category-colors :page-overview :display-mode :scene :audio-waveform :instance-id
                           :parameter-bank :active-effect-navigation :touched-parameter :fine? :musical-timing])
         (assoc :touched-parameters (vec (take 8 (:touched-parameters view)))
+               :personality (personality (:personality view))
                :saved-show-catalog (saved-show-catalog (:saved-show-catalog view))
                :pad-overlay (when-let [overlay (:pad-overlay view)]
                               (if (#{:beat-ratios "beat-ratios"} (:layout overlay))
@@ -287,6 +294,8 @@
                         :class (str (when audio? "audio-mode ") (when global "global-control-active"))}
      [:header.push-heading
       [:span.push-brand (or (:title view) "Tolglow")]
+      (when-let [{:keys [name icon]} (:personality view)]
+        [:span.push-personality {:title name} [:img {:src icon :alt (or name "Track feel")}]])
       [:span.push-page (widgets/label (:page view))]
       [:strong.push-selection (or (:name cue) (:name effect) (some-> (:selected view) widgets/label) "Choose a cue")]
       (if-let [armed (get-in view [:target-picker :armed])]
