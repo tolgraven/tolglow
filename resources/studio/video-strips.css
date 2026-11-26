@@ -1,0 +1,35 @@
+/* 2D video strip mapping (#672) */
+#video-strips { margin-top: 24px; overflow: hidden }
+#video-strips .form-body { display: grid; gap: 16px }
+#video-strips .form-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: end }
+#video-strips label { display: grid; gap: 6px; font-size: 11px; color: var(--muted) }
+#video-strips button, #video-strips select { min-height: 44px }
+.video-source-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px }
+.video-source { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: center;
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px }
+.video-source.selected { border-color: var(--accent) }
+.video-source .text-button { text-align: left; padding: 0 }
+.video-source p { grid-column: 1 / -1; margin: 0 }
+.video-state { font-size: 10px; letter-spacing: .6px; text-transform: uppercase; color: var(--accent) }
+.video-state.stale, .video-state.error { color: #f2a09b }
+.video-state.frozen { color: #e7c77a }
+.video-source-actions, .syphon-server { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
+.syphon-list { display: grid; gap: 6px; font-size: 12px }
+.video-canvas { position: relative; width: 100%; max-width: 960px; background: #000; border: 1px solid var(--line);
+  border-radius: 8px; overflow: hidden; touch-action: none; user-select: none }
+.video-frame { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; opacity: .82 }
+.video-empty { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; font-size: 12px; color: var(--muted) }
+.video-overlay { position: absolute; inset: 0; width: 100%; height: 100% }
+.video-strip polygon { stroke: #000a; stroke-width: 1; vector-effect: non-scaling-stroke }
+.video-strip-line { fill: none; stroke: #fff9; stroke-width: 10; stroke-linecap: round; vector-effect: non-scaling-stroke;
+  stroke-opacity: .25; cursor: move }
+.video-strip.selected .video-strip-line { stroke: var(--accent); stroke-opacity: .55 }
+.video-strip-start { fill: #fff; stroke: #000; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none }
+.video-strip-handle { fill: var(--accent); stroke: #000; stroke-width: 2; vector-effect: non-scaling-stroke; cursor: grab }
+.video-strip-label { fill: #fff; paint-order: stroke; stroke: #000; pointer-events: none }
+.video-strip-editor { border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 12px }
+#video-strips label.video-check { display: flex; flex-direction: row; align-items: center; gap: 8px; min-height: 44px }
+#video-strips label.video-check input { flex: none; margin: 0; width: 18px; min-width: 18px; height: 18px; min-height: 18px }
+.video-strip-editor h3 { margin: 0; font-size: 13px; font-weight: 500 }
+.video-strip-editor output { font-size: 11px; color: var(--text) }
+@media (max-width: 600px) { #video-strips .form-row > * { flex: 1 1 140px } #video-strips select { font-size: 16px } }
