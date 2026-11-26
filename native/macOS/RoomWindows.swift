@@ -117,7 +117,9 @@ final class RoomWindows: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptM
     }
 
     private func moveToDisplay() {
-        guard let window = room?.window else { return }
+        // A move already waiting for the fullscreen exit places and replies;
+        // a second toggle or frame during that animation would undo or lose it.
+        guard let window = room?.window, !placeAfterFullScreen else { return }
         let screens = NSScreen.screens
         let studioScreen = studio?.window?.screen.flatMap { screens.firstIndex(of: $0) }
         let roomScreen = window.screen.flatMap { screens.firstIndex(of: $0) }

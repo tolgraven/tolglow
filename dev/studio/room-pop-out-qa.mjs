@@ -461,6 +461,8 @@ try {
   await room5.waitForTimeout(500);
   const beforeMove = uploadsBy('writer-2');
   await move5.click();
+  // The notice already reads "The Room is on …", so wait for the window itself.
+  await room5.waitForFunction(x => screenX !== x, results.ownDisplayLost.replaced.screenX, {timeout: 5000});
   await room5.waitForFunction(() => /The Room is on/.test(document.querySelector('.room-window-notice')?.textContent || ''), null, {timeout: 5000});
   await waitUploads('writer-2', beforeMove + 2);
   results.sharing.moved = {at: await room5.evaluate(() => ({screenX, screenY})), starts: receiver.starts.length,
