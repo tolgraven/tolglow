@@ -249,15 +249,27 @@ area. Press Fullscreen there to fill it. A single display (`screen.isExtended`
 false) is reported without a prompt. A denied permission, a browser without
 the API, or a browser that silently ignores the move each leave the window
 usable with an explanation of manual placement. Removing the Room's display is
-announced, and reconnecting one offers Move to display again. PiP and sharing
+announced, and reconnecting one offers Move to display again. With display
+access granted, the Room remembers the display it was placed on (label and
+rectangle), so losing that display is announced even when two or more remain;
+Move to display then uses another free one. In the packaged Mac app, moving a
+fullscreen Room window first leaves fullscreen and places it once that
+animation ends, and the Room window closes if Studio's web content process
+ends. PiP and sharing
 controls move with the Room; their capture belongs to the panel, so popping
 out or redocking ends an active PiP or share instead of leaving an encoder on
 a canvas that no longer exists. Start it again from the new location.
 
 `dev/studio/room-pop-out-qa.mjs` exercises this in headless Chrome against a
 production build with emulated displays (CDP `Emulation.addScreen`) and a
-granted or denied permission. That is not evidence for physical displays,
-hot-plugging, Safari, the packaged Mac app or real AirPlay receivers.
+granted or denied permission. It also loses the Room's own display among three,
+emulates a hidden Studio (document hidden, Studio animation frames held) and
+checks that the Room keeps following the show, and shares video from the
+popped-out Room with the real encoder while the script answers the receiver
+endpoints: Stop sharing, moving the window while sharing (one session) and
+redocking (session stopped, no further uploads). That is not evidence for
+physical displays, hot-plugging, a really hidden or minimised window, Safari,
+the packaged Mac app, a LAN receiver or real AirPlay receivers.
 
 ## API and lifecycle
 

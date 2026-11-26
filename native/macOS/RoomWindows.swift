@@ -15,6 +15,8 @@ final class RoomWindows: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptM
     private weak var studio: WKWebView?
     private var room: (window: NSWindow, view: WKWebView)?
     private var screensObserver: NSObjectProtocol?
+    /// A move requested while the Room window was fullscreen waits for the exit animation.
+    private var placeAfterFullScreen = false
 
     init(origin: URL) {
         self.origin = origin
@@ -82,10 +84,17 @@ final class RoomWindows: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptM
         reply(["status": "closed"])
     }
 
+    /// The Room shares Studio's web content process. If that process ends, Studio
+    /// reloads docked and the Room window would be left showing nothing.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        if webView === room?.view { close() }
+    }
+
     /// The Room window never outlives Studio's web view.
     func close() {
         guard let current = room else { return }
         room = nil
+        placeAfterFullScreen = false
         current.window.delegate = nil
         current.view.stopLoading()
         current.window.contentView = nil
@@ -117,13 +126,31 @@ final class RoomWindows: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptM
             return
         }
         let screen = screens[target]
-        if window.styleMask.contains(.fullScreen) { window.toggleFullScreen(nil) }
+        // Leaving fullscreen is animated, and a frame set during it is lost.
+        // Place the window once it has left fullscreen.
+        if window.styleMask.contains(.fullScreen) {
+            placeAfterFullScreen = true
+            window.toggleFullScreen(nil)
+            return
+        }
         window.setFrame(screen.visibleFrame, display: true)
         if window.screen == screen {
             reply(["status": "placed", "label": screen.localizedName])
         } else {
             reply(["status": "manual"])
         }
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        guard placeAfterFullScreen, notification.object as? NSWindow === room?.window else { return }
+        placeAfterFullScreen = false
+        moveToDisplay()
+    }
+
+    func windowDidFailToExitFullScreen(_ window: NSWindow) {
+        guard placeAfterFullScreen, window === room?.window else { return }
+        placeAfterFullScreen = false
+        reply(["status": "manual"])
     }
 
     /// A display other than Studio's; the next free one when the Room is
