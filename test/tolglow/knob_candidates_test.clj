@@ -92,11 +92,12 @@
     (show/tick! rt t)
     (is (show/await-audition rt 5000))))
 
-(defn- slow-audition
-  "The real audition frame, ms later, so a test can act while a frame is in flight."
-  [ms]
+(defn- gated-audition
+  "The real audition frame, held until gate is delivered, so a test can act
+  while a frame is in flight without depending on machine load."
+  [gate]
   (let [render @#'show/render-audition-frame]
-    (fn [& args] (Thread/sleep (long ms)) (apply render args))))
+    (fn [& args] (deref gate 10000 nil) (apply render args))))
 
 (defn- audition-frames! [rt t0]
   (doseq [t (range t0 (+ t0 100) 20)]
@@ -441,14 +442,16 @@
       (submit! rt 100 {:op :knob-candidate/generate :seed 11})
       (submit! rt 110 {:op :knob-candidate/audition :value 0.2})
       (frames! rt 120 3)
-      (let [revision (get-in @(:scene-draft rt) [:draft :revision])]
-        (with-redefs [show/render-audition-frame (slow-audition 150)]
+      (let [revision (get-in @(:scene-draft rt) [:draft :revision])
+            gate (promise)]
+        (with-redefs [show/render-audition-frame (gated-audition gate)]
           (show/tick! rt 300)
-          (is (:in-flight @(:scene-draft rt)) "a slow frame at 0.2 is rendering")
+          (is (:in-flight @(:scene-draft rt)) "a held frame at 0.2 is rendering")
           (let [a (submit! rt 310 {:op :knob-candidate/audition :value 0.4})
                 b (submit! rt 320 {:op :knob-candidate/audition :value 0.9})]
             (is (= [true true] [(:retuned? a) (:retuned? b)]))
             (is (:in-flight @(:scene-draft rt)) "both retunes queued behind the in-flight frame"))
+          (deliver gate true)
           (is (show/await-audition rt 5000))
           (room-shows! rt 0.2)
           (testing "the in-flight frame is labelled with the revision it rendered, not the new one"
@@ -469,14 +472,21 @@
       (submit! rt 110 {:op :knob-candidate/audition :value 0.3})
       (frames! rt 120 3)
       (is (:retuned? (submit! rt 200 {:op :knob-candidate/audition :value 0.6})))
-      (let [timeline (:timeline @(:scene-draft rt))]
-        (with-redefs [show/render-audition-frame (slow-audition 150)]
+      (is (show/await-audition rt 5000))
+      (let [timeline (:timeline @(:scene-draft rt))
+            gate (promise)]
+        (with-redefs [show/render-audition-frame (gated-audition gate)]
           (show/tick! rt 300)
-          (is (:in-flight @(:scene-draft rt)))
+          (is (:in-flight @(:scene-draft rt)) "a held frame of the old candidate is rendering")
+          ;; The reroll restages; its tick queues the new timeline's first frame
+          ;; behind the held one on the single audition worker.
           (submit! rt 310 {:op :knob-candidate/reroll})
           (is (not (identical? timeline (:timeline @(:scene-draft rt)))))
-          (Thread/sleep 300)
-          (is (zero? (or (:rendered @(:scene-draft rt)) 0)) "the old timeline's frame did not install")
+          (is (zero? (or (:rendered @(:scene-draft rt)) 0)))
+          (deliver gate true)
+          (is (show/await-audition rt 5000))
+          (is (= 1 (:rendered @(:scene-draft rt))) "only the new timeline's frame installed")
+          (room-shows! rt 0.6)
           (frames! rt 400 2))
         (room-shows! rt 0.6))
       (finally (show/stop! rt)))))
