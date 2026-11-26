@@ -137,7 +137,8 @@
             [tolglow.video.mapping :as video-mapping]
             [tolglow.video.preview :as video-preview]
             [tolglow.video.sampler :as video-sampler]
-            [tolglow.video.source :as video-source])
+            [tolglow.video.source :as video-source]
+            [tolglow.video.surface-cues :as video-surface-cues])
   (:import [java.util Arrays UUID]
            [java.util.concurrent LinkedBlockingQueue]))
 
@@ -218,8 +219,9 @@
             :autopilot (get-in model [:variables :lighting/autopilot] {:enabled? false})
             :audio/energy (get-in model [:variables :audio/energy])
             :lighting-scenes (lighting-scenes/snapshot model (scene-eligible-ids runtime fixtures))
-            :video (when (or (seq (get-in model [:settings :video :sources])) (seq (get-in model [:settings :video :mappings])))
-                     (video-preview/project (:video runtime) (:video-latch snapshot) fixtures (:video-preview-plans runtime)))
+            :video (when (or (seq (get-in model [:settings :video :sources])) (seq (get-in model [:settings :video :mappings]))
+                             (seq (get-in model [:settings :video :surfaces])))
+                     (video-preview/project (:video runtime) (:video-latch snapshot) fixtures (:video-preview-plans runtime) model))
             :personalities (:projection (personality-views runtime model))
             :receiver-surfaces (:receivers optics)
             :surface-aim (get-in model [:variables :surface-aim] {})
@@ -1075,14 +1077,16 @@
     :spatial-cue (spatial-cues/spawn model payload time-ms command)
     :autopilot-authored (autopilot/accept-authored model payload time-ms command)
     :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
-    :video-mapping (do
+    :video-mapping (if (= :surface-cue (:op payload))
+                     (video-surface-cues/spawn model payload time-ms command)
+                    (do
                      ;; Refuse a file source outside the show directory here,
                      ;; with its code, rather than saving it and listing it unavailable.
                      (when (and (= :put-source (:op payload)) (#{:image :feed} (get-in payload [:source :kind]))
                                 (contains? (:source payload) :file))
                        (video-source/resolve-file (get-in payload [:source :file]) (:roots (:video runtime))))
                      {:model (update-in model [:settings :video] video-mapping/apply-operation payload)
-                      :ack {:status :accepted}})
+                      :ack {:status :accepted}}))
     :personality (personalities/apply-operation model payload)
     :event-subscriber (let [inline-registration (::inline-registration payload)]
                         (when (and inline-registration (nil? (get-in runtime [:event-callbacks :inline-handlers])))
@@ -3675,17 +3679,20 @@
       (throw (ex-info "Unknown sensor operation" {:operation operation})))))
 
 (defn video-action!
-  "Video sources and strip mappings (#672) for Ring and the REPL.
-  :status       source status and sampled strip colours from the latched frame
+  "Video sources, strip mappings (#672) and 3D surfaces (#674) for Ring and the REPL.
+  :status       source status, sampled strip colours from the latched frame and
+                each surface with the heads in contact
   :edit         apply one `tolglow.video.mapping/apply-operation` edit through
-                the show queue; sources reconcile after it commits
+                the show queue; sources reconcile after it commits.
+                {:op :surface-cue :surface id} spawns and launches a cue
+                projecting that surface (`tolglow.video.surface-cues/spawn`)
   :syphon       list Syphon servers through the native helper
   :frame-jpeg   bytes of a latched frame, {:source id :max-width px}"
   [runtime operation payload]
   (case operation
     :status (let [state @(:state runtime)]
               (video-preview/project (:video runtime) (:video-latch state) (get-in state [:model :rig :fixtures])
-                                     (:video-preview-plans runtime)))
+                                     (:video-preview-plans runtime) (:model state)))
     :edit (let [receipt (submit! runtime :video-mapping (dissoc payload :runtime-id :expected-epoch))]
             receipt)
     :syphon (video-hub/list-syphon (:video runtime))

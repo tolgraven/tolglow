@@ -5,7 +5,8 @@
   of it reads the latch the lighting frame already took; nothing here pulls a
   new frame from a source."
   (:require [tolglow.video.hub :as hub]
-            [tolglow.video.sampler :as sampler])
+            [tolglow.video.sampler :as sampler]
+            [tolglow.video.surface :as surface])
   (:import [java.awt.image BufferedImage]
            [java.io ByteArrayOutputStream]
            [javax.imageio ImageIO]))
@@ -42,12 +43,39 @@
                                                   (range (count (:targets strip))))})
                                  (:strips plan) offsets)}))])))
 
+(def max-projected-contacts
+  "Contacts listed per surface view; :count still gives the whole number."
+  4096)
+
+(defn- surface-view [cache fixtures resolved]
+  (let [contacts (cache [:contacts resolved fixtures] #(surface/contacts resolved fixtures))]
+    {:resolved resolved :count (count contacts)
+     :contacts (if (> (count contacts) max-projected-contacts) (subvec contacts 0 max-projected-contacts) contacts)}))
+
+(defn surface-views
+  "Surfaces for the Room (#674). :authored has every configured surface at
+  its saved pose. :running has each running surface output at the pose its
+  effect evaluated on its last frame, read from the instance state, so the
+  projection never evaluates a placement, modulation or the musical clock a
+  second time. Each view lists the heads in contact: their surface uv,
+  distance and contact weight. Fixture colours come from the committed
+  output, not from here."
+  [model fixtures cache]
+  {:authored (into {} (for [[id spec] (get-in model [:settings :video :surfaces])]
+                        [id (surface-view cache fixtures (surface/resolve-surface spec nil 0))]))
+   :running (vec (for [instance (sort-by (juxt :order :id) (vals (:instances model)))
+                       [i {:keys [surface resolved]}] (sort-by key (get-in instance [:state :tolglow.video/surfaces]))]
+                   (merge {:instance-id (:id instance) :cue-id (:cue-id instance) :output i :surface surface}
+                          (surface-view cache fixtures resolved))))})
+
 (defn project
-  "The :video key of the show snapshot."
-  [video-hub latch fixtures cache]
-  {:sources (hub/status video-hub latch)
-   :frozen? (boolean (:frozen? latch))
-   :mappings (mapping-samples latch fixtures cache)})
+  "The :video key of the show snapshot. model, when given, adds :surfaces."
+  ([video-hub latch fixtures cache] (project video-hub latch fixtures cache nil))
+  ([video-hub latch fixtures cache model]
+   (cond-> {:sources (hub/status video-hub latch)
+            :frozen? (boolean (:frozen? latch))
+            :mappings (mapping-samples latch fixtures cache)}
+     model (assoc :surfaces (surface-views model fixtures cache)))))
 
 (def max-jpeg-dimension
   "Largest served preview width or height, whatever the caller asks for."

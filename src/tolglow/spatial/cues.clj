@@ -88,7 +88,10 @@
     (when transforms (layers/validate-transforms! transforms))
     member))
 
-(defn- available-cell [page preferred]
+(defn available-cell
+  "The preferred grid cell when it is free, else the first free one; throws
+  when the page has none. Shared by every spawned cue (#407, #674)."
+  [page preferred]
   (let [w (:columns page 8) h (:rows page 8) cells (:cells page {})
         available? (fn [p] (and (vector? p) (= 2 (count p)) (every? nat-int? p)
                                 (< (first p) w) (< (second p) h) (not (contains? cells p))))]
@@ -96,7 +99,9 @@
             (first (for [y (range h) x (range w) :when (available? [x y])] [x y])))
         (fail! "Choose an empty cell on this page" {:page-id (:id page) :cell preferred}))))
 
-(defn- accept [model command payload now]
+(defn accept
+  "Apply one owner command and throw unless it was accepted."
+  [model command payload now]
   (let [result (command model payload now)]
     (when-not (= :accepted (get-in result [:ack :status]))
       (fail! (get-in result [:ack :message] "Spatial cue command rejected") {:ack (:ack result)}))

@@ -11,6 +11,7 @@
   type, `:video-mapping`. Geometry here is shared with the Studio overlay, so
   the preview draws the exact footprints the sampler reads."
   (:require [clojure.string :as str]
+            [tolglow.video.surface :as surface]
             #?(:clj [clojure.math :as math] :cljs [cljs.math :as math])))
 
 (def filters #{:box :nearest})
@@ -119,8 +120,9 @@
   [settings]
   (if-not (map? settings)
     [(error [] "Video settings must be a map")]
-    (let [{:keys [sources mappings]} settings]
+    (let [{:keys [sources mappings surfaces]} settings]
       (vec (concat
+            (surface/surfaces-errors surfaces)
             (when-not (or (nil? sources) (map? sources)) [(error [:sources] "Sources are a map by id")])
             (when (and (map? sources) (> (count sources) max-sources))
               [(error [:sources] (str "A show uses at most " max-sources " video sources"))])
@@ -161,18 +163,21 @@
   Operations: {:op :put-source :id :source}, {:op :delete-source :id},
   {:op :put-mapping :mapping}, {:op :delete-mapping :id},
   {:op :put-strip :mapping-id :strip} (replace by :id or append),
-  {:op :delete-strip :mapping-id :strip-id}."
+  {:op :delete-strip :mapping-id :strip-id}, and the surface edits
+  {:op :put-surface :surface} and {:op :delete-surface :id} (#674)."
   [settings {:keys [op] :as operation}]
   (let [settings (or settings {})
         next (case op
                :put-source (assoc-in settings [:sources (:id operation)] (:source operation))
-               :delete-source (do (when (some #(= (:id operation) (:source %)) (vals (:mappings settings)))
+               :delete-source (do (when (some #(= (:id operation) (:source %))
+                                              (concat (vals (:mappings settings)) (vals (:surfaces settings))))
                                     (throw (ex-info "A mapping still reads this source"
                                                     {:errors [(error [:id] "A mapping still reads this source")]})))
                                   (update settings :sources dissoc (:id operation)))
                :put-mapping (let [mapping (update (:mapping operation) :strips #(or % []))]
                               (assoc-in settings [:mappings (:id mapping)] mapping))
                :delete-mapping (update settings :mappings dissoc (:id operation))
+               (:put-surface :delete-surface) (surface/apply-operation settings operation)
                :put-strip (let [mapping (require-mapping settings (:mapping-id operation))
                                 strip (:strip operation)
                                 i (strip-index mapping (:id strip))]
