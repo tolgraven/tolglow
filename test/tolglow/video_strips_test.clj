@@ -312,6 +312,30 @@
       (finally
         (doseq [d [show outside]] (run! #(.delete ^File %) (reverse (file-seq d))))))))
 
+(deftest a-file-swapped-for-a-link-after-the-check-is-not-read
+  (let [show (temp-dir "tolglow-show") outside (temp-dir "tolglow-outside")
+        link! (fn [^File from ^File to]
+                (.delete from)
+                (java.nio.file.Files/createSymbolicLink (.toPath from) (.toPath to) (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (try
+      (is (= :video/path-outside-show (code-of #(source/resolve-file "." [show]))) "the show directory itself is not a file")
+      (testing "a feed re-checks its path before remapping"
+        (let [inside (File. show "feed.tgvf") evil (File. outside "evil.tgvf")]
+          (source/write-feed! inside (source/test-pattern-frame {:width 8 :height 4}) {})
+          (source/write-feed! evil (source/test-pattern-frame {:width 16 :height 4}) {})
+          (let [feed (source/open :f {:kind :feed :file "feed.tgvf"} [show])]
+            (is (= 8 (:width (source/latest feed))))
+            (link! inside evil)
+            (is (not= 16 (:width (source/latest feed))) "the outside feed is never mapped")
+            (is (some? (:error (source/describe feed)))))))
+      (testing "a still opens the checked path without following a swapped-in link"
+        (let [inside (png! (File. show "still.png") 2 2) secret (png! (File. outside "secret.png") 3 3)
+              checked (source/resolve-file "still.png" [show])]
+          (link! inside secret)
+          (is (thrown? java.io.IOException (source/image-frame :s checked 0)))))
+      (finally
+        (doseq [d [show outside]] (run! #(.delete ^File %) (reverse (file-seq d))))))))
+
 (deftest stills-are-size-checked-before-decoding
   (let [show (temp-dir "tolglow-show")
         wide (png! (File. show "wide.png") (inc source/max-image-dimension) 1)

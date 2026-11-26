@@ -18,7 +18,7 @@
            [java.nio ByteBuffer ByteOrder MappedByteBuffer]
            [java.nio.channels FileChannel FileChannel$MapMode]
            [java.nio.charset StandardCharsets]
-           [java.nio.file OpenOption StandardOpenOption]
+           [java.nio.file LinkOption OpenOption StandardOpenOption]
            [java.awt.image BufferedImage]
            [javax.imageio ImageIO]))
 
@@ -125,8 +125,9 @@
   (throw (ex-info message (assoc data :code code :errors [{:path [:file] :message message}]))))
 
 (defn- inside? [^java.io.File root ^java.io.File file]
+  ;; Strictly below the root: the show directory itself is not a video file.
   (let [r (.getCanonicalPath root) f (.getCanonicalPath file)]
-    (or (= r f) (.startsWith f (str r java.io.File/separator)))))
+    (.startsWith f (str r java.io.File/separator))))
 
 (defn resolve-file
   "Resolve a source file against the allowed roots and return the canonical
@@ -181,16 +182,44 @@
     (frame {:source-id id :width w :height h :pixels px :sequence 1
             :captured-at-ms captured-at-ms :label label})))
 
+(defn- read-bounded
+  "All bytes of a stream, refusing past limit without reading further."
+  ^bytes [^java.io.InputStream in limit]
+  (with-open [out (java.io.ByteArrayOutputStream.)]
+    (let [buffer (byte-array 65536)]
+      (loop [total 0]
+        (let [n (.read in buffer)]
+          (when (pos? n)
+            (when (> (+ total n) limit)
+              (refuse! :video/image-too-large (str "Video stills are limited to " limit " bytes") {}))
+            (.write out buffer 0 n)
+            (recur (+ total n)))))
+      (.toByteArray out))))
+
+(defn- bytes->frame [id ^bytes data captured-at-ms label limits]
+  (check-image! (alength data) (decoded-size (java.io.ByteArrayInputStream. data)) limits)
+  (image->frame id (or (ImageIO/read (java.io.ByteArrayInputStream. data))
+                       (refuse! :video/unreadable-image "Not a readable PNG or JPEG image" {}))
+                captured-at-ms label))
+
+(def ^:private no-follow
+  "Open the checked path itself: a symlink swapped in after the check is refused."
+  (into-array OpenOption [StandardOpenOption/READ LinkOption/NOFOLLOW_LINKS]))
+
 (defn image-frame
   "Read a PNG/JPEG file into a frame after checking its byte size and header
-  dimensions. ImageIO runs headless. `limits` may override :max-bytes and
+  dimensions. The file is opened once, without following a final symlink, and
+  read into memory up to the byte limit, so the bytes checked are the bytes
+  decoded. ImageIO runs headless. `limits` may override :max-bytes and
   :max-dimension."
   ([id file captured-at-ms] (image-frame id file captured-at-ms {}))
   ([id file captured-at-ms limits]
    (let [f (io/file file)]
-     (check-image! (.length f) (decoded-size f) limits)
-     (image->frame id (or (ImageIO/read f) (refuse! :video/unreadable-image "Not a readable PNG or JPEG image" {}))
-                   captured-at-ms (.getName f)))))
+     (when-not (.isFile f)
+       (refuse! :video/unreadable-image "A video still must be a regular file" {:file (str file)}))
+     (let [data (with-open [channel (FileChannel/open (.toPath f) ^"[Ljava.nio.file.OpenOption;" no-follow)]
+                  (read-bounded (java.nio.channels.Channels/newInputStream channel) (:max-bytes limits max-image-bytes)))]
+       (bytes->frame id data captured-at-ms (.getName f) limits)))))
 
 (defn resource-frame
   "Read a still bundled with the application, from the classpath under
@@ -202,21 +231,8 @@
        (refuse! :video/path-traversal "Bundled video stills are named relative to the video resources" {:resource text}))
      (let [url (or (io/resource (str resource-prefix text))
                    (refuse! :video/missing-resource "No bundled video still has that name" {:resource text}))
-           data (with-open [in (io/input-stream url) out (java.io.ByteArrayOutputStream.)]
-                  (let [buffer (byte-array 65536)
-                        limit (:max-bytes limits max-image-bytes)]
-                    (loop [total 0]
-                      (let [n (.read in buffer)]
-                        (when (pos? n)
-                          (when (> (+ total n) limit)
-                            (refuse! :video/image-too-large (str "Video stills are limited to " limit " bytes") {}))
-                          (.write out buffer 0 n)
-                          (recur (+ total n)))))
-                    (.toByteArray out)))]
-       (check-image! (alength ^bytes data) (decoded-size (java.io.ByteArrayInputStream. data)) limits)
-       (image->frame id (or (ImageIO/read (java.io.ByteArrayInputStream. data))
-                            (refuse! :video/unreadable-image "Not a readable PNG or JPEG image" {}))
-                     captured-at-ms (last (str/split text #"/")))))))
+           data (with-open [in (io/input-stream url)] (read-bounded in (:max-bytes limits max-image-bytes)))]
+       (bytes->frame id data captured-at-ms (last (str/split text #"/")) limits)))))
 
 (defn image
   "A still from :file (inside `roots`) or a bundled :resource."
@@ -286,8 +302,11 @@
 
 (defn feed
   "Read the TGVF file at :file. The file is mapped once; a writer that
-  recreates it at a new size is picked up on the next frame."
-  [id {:keys [file]}]
+  recreates it at a new size is picked up on the next frame. With :roots, the
+  path is checked against them again before every remap and opened without
+  following a final symlink, so a file swapped for a link after the first
+  check is never mapped."
+  [id {:keys [file roots]}]
   (let [state (atom {})
         mapped (fn []
                  (let [f (io/file file)
@@ -295,7 +314,10 @@
                    (if (and buffer (= size (.length f)))
                      buffer
                      (when (.isFile f)
-                       (with-open [channel (FileChannel/open (.toPath f) (into-array OpenOption [StandardOpenOption/READ]))]
+                       (when roots (resolve-file file roots))
+                       (with-open [channel (FileChannel/open (.toPath f) (if roots
+                                                                           ^"[Ljava.nio.file.OpenOption;" no-follow
+                                                                           (into-array OpenOption [StandardOpenOption/READ])))]
                          (let [buffer (.order (.map channel FileChannel$MapMode/READ_ONLY 0 (.size channel)) ByteOrder/LITTLE_ENDIAN)]
                            (swap! state assoc :buffer buffer :size (.length f) :word nil)
                            buffer))))))]
@@ -367,5 +389,5 @@
    (case kind
      :test-pattern (test-pattern id config)
      :image (image id config roots)
-     :feed (feed id (assoc config :file (str (resolve-file (:file config) roots))))
+     :feed (feed id (assoc config :file (str (resolve-file (:file config) roots)) :roots roots))
      (throw (ex-info "Unsupported video source kind" {:kind kind})))))
