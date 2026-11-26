@@ -115,6 +115,20 @@ host checkout or lighting registry. See
 [`vendor/neovim/README.md`](../resources/studio/vendor/neovim/README.md) for provenance
 and bundled licenses.
 
+A code-cue editor can construct the engine with `pinBuffer: true` (#311; no Studio
+view uses it yet). It pins the buffer current at start and keeps reading, writing
+and diagnosing that buffer when the user opens another file in the window. Each
+`onChange` carries a draft `{sessionId, bufferId, changedtick, sourceSha256,
+source}`. `setDraftDiagnostics(draft, findings)` applies findings (zero-based line,
+UTF-8 byte column) only while session, buffer, changedtick and digest still match,
+and resolves `false` for an earlier draft, a closed buffer or a stopped editor. Any
+edit clears the findings. They show their message at the end of the line, also in
+insert mode. `:edit!` and reopening after `:bdelete` keep the observer and report
+the buffer's new text as a change; while the buffer is unloaded the engine reports
+one close through `onError`. The caller still fences replies against its own show
+epoch, cue and definition version, and converts host positions to byte columns.
+The host's definition API reports data paths, not source positions.
+
 ### Assigning and inspecting effect blocks
 
 In **Library**, open an effect in the EDN editor and select **Assign blocks**.
