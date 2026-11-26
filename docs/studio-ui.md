@@ -285,7 +285,8 @@ lands after it, onto an earlier one before it); the panel under the pointer is
 marked as the drop target. Drag the corner to resize it in grid columns and
 20 px rows, with the size shown while dragging. Holding a drag near the top or
 bottom of the visible area scrolls the page, so a panel can be dropped onto
-one that started off screen. Every move and resize also works without
+one that started off screen; it stops at the end of the page as it was when the
+drag began. Every move and resize also works without
 dragging: the title and corner are buttons that take arrow keys (Home and End
 move to the ends; Shift steps the corner by four), and each frame has Earlier,
 Later, Narrower, Wider, Shorter and Taller buttons whose accessible names start
@@ -333,7 +334,9 @@ the same events over Studio's single socket; nothing is duplicated and no
 cue is relaunched. While a panel is detached its tile shows a placeholder with
 Show window and Redock, and its content exists in that window only. Closing
 the window, pressing Redock, closing Studio, or switching to a layout without
-that panel brings it back.
+that panel (including the layout of another screen size class) brings it back.
+Plots in a panel window follow that window's visibility, not Studio's, so they
+keep drawing while Studio is hidden.
 
 Layouts are kept per screen size class, matching the built-in breakpoints:
 phone (up to 600 px, 2 columns), tablet (601–1199 px, 6 columns) and desktop

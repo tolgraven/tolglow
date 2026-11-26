@@ -289,7 +289,7 @@ for (const viewport of viewports) {
       const detached = await census('detached');
       assert.equal(await page.locator('#preview').count(), 0, 'Studio holds no Room canvas while the Room is detached');
       assert.equal(await roomPage.locator('#preview').count(), 1, 'the Room window holds the only Room canvas');
-      assert.equal(await page.locator('#view-perform [data-panel="room"] .layout-detach').textContent(), 'Redock');
+      assert.equal(await page.locator('#view-perform [data-panel="room"] .layout-detach').textContent(), 'Redock Room', 'Redock names its panel');
       await shot('6-detached');
       await page.locator('#view-perform [data-panel="room"] .layout-detach').click();
       await page.waitForSelector('#room-window-placeholder', {state: 'detached', timeout: 20000});
@@ -426,6 +426,7 @@ for (const viewport of viewports) {
       assert.ok(roomPage, 'the Live window opened');
       const liveWindow = roomPage;
       await liveWindow.waitForSelector('[data-live-instance]', {timeout: 20000});
+      assert.equal(await liveWindow.title(), 'Tolglow · Live', 'the panel window is titled');
       assert.equal(await liveWindow.locator('[data-live-instance]').getAttribute('data-live-instance'), instance,
                    'the detached Live panel shows the same running cue');
       assert.equal(await page.locator('[data-live-instance]').count(), 0, 'the card exists in one window only');
@@ -473,6 +474,7 @@ for (const viewport of viewports) {
       const handle = page.locator(`#view-perform [data-panel="${order[0]}"] .layout-handle`);
       const start = await center(handle);
       const bottom = {x: viewport.width / 2, y: viewport.height - 6};
+      const limit = await page.evaluate(() => document.documentElement.scrollHeight - innerHeight);
       const hidden = await page.evaluate(vh => [...document.querySelectorAll('#view-perform .layout-region')]
         .filter(e => e.getBoundingClientRect().top > vh).map(e => e.dataset.panel), viewport.height);
       assert.ok(hidden.length > 0, 'some panel starts below the fold');
@@ -493,6 +495,11 @@ for (const viewport of viewports) {
       const target = await page.evaluate(() => document.querySelector('#view-perform [data-drop-target]')?.dataset.panel ?? null);
       assert.ok(scrolled > 100, `holding at the edge scrolled the page (${scrolled} px)`);
       assert.ok(hidden.includes(target), `a panel from below the fold is the drop target (${target})`);
+      // Holding on stops at the end of the page: the dragged panel's own
+      // translation must not lengthen the page and keep it scrolling.
+      await page.waitForTimeout(2500);
+      const end = await page.evaluate(() => window.scrollY);
+      assert.ok(end >= scrolled && end <= limit, `auto-scroll stopped at the end of the page (${end} of ${limit} px)`);
       await page.keyboard.press('Escape');
       if (viewport.touch) await cdp.send('Input.dispatchTouchEvent', {type: 'touchEnd', touchPoints: []});
       else await page.mouse.up();
@@ -501,7 +508,7 @@ for (const viewport of viewports) {
       const still = await page.evaluate(() => window.scrollY);
       await page.waitForTimeout(300);
       assert.equal(await page.evaluate(() => window.scrollY), still, 'scrolling stopped with the drag');
-      record.autoscroll = {scrolled, target};
+      record.autoscroll = {scrolled, target, end, limit};
       await tap(page.locator('#layout-cancel'));
       await page.waitForSelector('#view-perform .editing-layout', {state: 'detached'});
     }

@@ -37,7 +37,7 @@
 
 (def ^:private titles (assoc (into {} (map (juxt :id :title)) panels) :viz "Visualization"))
 
-(defn param-id? [id] (boolean (and (keyword? id) (re-matches #"param-\d+" (name id)))))
+(defn param-id? [id] (boolean (and (keyword? id) (re-matches #"param-\d{1,9}" (name id)))))
 
 (defn extra? [id] (or (= :viz id) (param-id? id)))
 
@@ -460,15 +460,6 @@
   (fn [{:keys [db] :panel-layout/keys [environment]} _]
     {:db (update-in db [:ui :panel-layout] merge environment)}))
 
-(rf/reg-event-fx :panel-layout/class
-  (fn [{:keys [db]} [_ class]]
-    (let [{:keys [edit] :as before} (state db)]
-      (when (and (contains? classes class) (not= class (:class before)))
-        (cond-> {:db (assoc-in db [:ui :panel-layout :class] class)}
-          edit (-> (update :db assoc-in [:ui :panel-layout :edit] nil)
-                   (assoc :dispatch [:studio/toast (str "Layout editing ended: the window changed to the "
-                                                        (get-in classes [class :label]) " size. Nothing was saved.")])))))))
-
 (defn- settle-fx
   "Redock windows of panels the new layout lacks. Leaving edit mode puts
   focus back on Edit layout."
@@ -486,6 +477,18 @@
          :panel-layout/store (cond-> {:saved (:saved (state db))} notice (assoc :notice notice))))
 
 (defn- label [class] (get-in classes [class :label]))
+
+;; Another size class has its own layouts, so a window whose panel that
+;; layout lacks is redocked, as on a layout switch.
+(rf/reg-event-fx :panel-layout/class
+  (fn [{:keys [db]} [_ class]]
+    (let [{:keys [edit] :as before} (state db)]
+      (when (and (contains? classes class) (not= class (:class before)))
+        (cond-> (settle-fx (cond-> (assoc-in db [:ui :panel-layout :class] class)
+                             edit (assoc-in [:ui :panel-layout :edit] nil))
+                           false)
+          edit (assoc :dispatch [:studio/toast (str "Layout editing ended: the window changed to the "
+                                                    (get-in classes [class :label]) " size. Nothing was saved.")]))))))
 
 (rf/reg-event-fx :panel-layout/begin
   (fn [{:keys [db]} _]
@@ -676,12 +679,20 @@
     (edge-speed (- client-y (.-offsetTop vv)) (.-height vv))
     (edge-speed client-y (.-innerHeight js/window))))
 
+(defn- scroll-limit
+  "The furthest the page scrolls now. Measured when a drag starts, because the
+  dragged panel's own translation lengthens the document as the page scrolls:
+  scrolling to the live end would chase it forever."
+  []
+  (max 0 (- (.. js/document -documentElement -scrollHeight) (.-innerHeight js/window))))
+
 (defn- autoscroll-frame [_]
-  (when-let [{:keys [pointer-id client-x client-y ^js element]} @autoscroll]
-    (let [speed (visible-speed client-y)]
+  (when-let [{:keys [pointer-id client-x client-y limit ^js element]} @autoscroll]
+    (let [before (.-scrollY js/window)
+          speed (let [s (visible-speed client-y)] (if (pos? s) (max 0 (min s (- limit before))) s))]
       (if (or (zero? speed) (not (.-isConnected element)))
         (swap! autoscroll assoc :running? false)
-        (let [before (.-scrollY js/window)]
+        (do
           (.scrollBy js/window 0 speed)
           (when (not= before (.-scrollY js/window))
             (rf/dispatch [:panel-layout/gesture-move pointer-id (page-x client-x) (page-y client-y)]))
@@ -702,7 +713,7 @@
       (.preventDefault event)
       (.setPointerCapture (.-currentTarget event) (.-pointerId event))
       (reset! autoscroll {:pointer-id (.-pointerId event) :element (.-currentTarget event)
-                          :client-x (.-clientX event) :client-y (.-clientY event)})
+                          :client-x (.-clientX event) :client-y (.-clientY event) :limit (scroll-limit)})
       (let [{:keys [container-width rects]} (measure-regions)
             own (some #(when (= id (:id %)) %) rects)]
         (rf/dispatch [:panel-layout/gesture-start
@@ -754,10 +765,10 @@
                                                   #(rf/dispatch-sync [:room-window/pop-out])
                                                   #(rf/dispatch-sync [:panel-window/pop-out id name
                                                                       (window-sizes id (if (param-id? id) [380 300] [720 640]))]))}
-               "Detach"]
+               "Detach" [:span.sr-only (str " " name)]]
       :popped [:button.layout-detach {:type "button" :title (str "Return " name " to Studio")
                                       :on-click #(rf/dispatch (if room? [:room-window/redock] [:panel-window/redock id]))}
-               "Redock"]
+               "Redock" [:span.sr-only (str " " name)]]
       [:span.small.muted {:role "status"} (if (= :redocking phase) "Redocking…" "Opening…")])))
 
 (defn- chrome [db {:keys [id w h] :as entry} index total gesture chrome-extra]
@@ -783,7 +794,8 @@
        [detach-control db id]
        (when (extra? id)
          [:button.layout-remove {:type "button" :title (str "Remove " name " from this layout")
-                                               :on-click #(rf/dispatch [:panel-layout/remove id])} "Remove"])]
+                                 :on-click #(rf/dispatch [:panel-layout/remove id])}
+          "Remove" [:span.sr-only (str " " name)]])]
       (when chrome-extra [chrome-extra entry])]
      [:button.layout-resize (merge {:type "button"
                                     :aria-label (str "Resize " name ", " w " of " (columns class) " columns by " h

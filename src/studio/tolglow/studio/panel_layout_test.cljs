@@ -76,7 +76,14 @@
                                                {:id "param-4" :binding {:cue "" :param "level"}}])]
       (is (= [:param-3 :viz :param-4 :cues :live :room :tools] (ids repaired)))
       (is (= {:cue "ember" :param "level"} (:binding (first repaired))))
-      (is (not (contains? (nth repaired 2) :binding)))))
+      (is (not (contains? (nth repaired 2) :binding))))
+    (testing "a tile number too long to count past is dropped, so new tiles never share an ID"
+      (let [repaired (layout/normalize :desktop [{:id "param-99999999999999999999"}])]
+        (is (= [:cues :live :room :tools] (ids repaired)))
+        (is (= [:param-1 :param-2]
+               (->> (layout/add-panel :desktop (layout/add-panel :desktop repaired :param) :param)
+                    (filter (comp layout/param-id? :id))
+                    ids))))))
   (testing "adding numbers tiles after the highest, the visualization panel only once"
     (let [one (layout/add-panel :desktop (layout/default-layout :desktop) :param)
           two (layout/add-panel :desktop (layout/remove-panel (layout/add-panel :desktop one :param) :param-1) :param)]
@@ -218,7 +225,14 @@
           (let [detached (assoc-in done [:ui :panel-windows] {:param-1 {:phase :popped :generation 1}
                                                               :live {:phase :popped :generation 1}})
                 switched (transition detached [:panel-layout/select nil])]
-            (is (= [[:panel-window/redock :param-1]] (:dispatch-n switched)))))))
+            (is (= [[:panel-window/redock :param-1]] (:dispatch-n switched))))
+          (testing "and so does a size class whose layout lacks them"
+            (let [detached (assoc-in done [:ui :panel-windows] {:param-1 {:phase :popped :generation 1}
+                                                                :live {:phase :popped :generation 1}})
+                  resized (transition detached [:panel-layout/class :tablet])]
+              (is (= :tablet (get-in resized [:db :ui :panel-layout :class])))
+              (is (= [[:panel-window/redock :param-1]] (:dispatch-n resized)))
+              (is (nil? (:dispatch resized)) "no editing ended, so no notice"))))))
     (testing "removing a tile in edit mode"
       (is (= [:cues :live :room :tools :viz] (ids (layout/active-layout (run editing [:panel-layout/remove :param-1]))))))))
 
@@ -308,7 +322,7 @@
         (is (= 4 (count (re-seq #"inert=\"\"" editing))))
         (is (re-find #"aria-label=\"Move Room panel, position 1 of 4. Drag, or use the arrow keys.\"" editing))
         (is (re-find #"aria-label=\"Resize Room, 8 of 12 columns by 20 rows" editing))
-        (is (= 4 (count (re-seq #">Detach</button>" editing))) "every panel can be detached")
+        (is (= 4 (count (re-seq #">Detach<span class=\"sr-only\">" editing))) "every panel can be detached")
         (is (re-find #"title=\"Open Room in its own window\"" editing))
         (is (re-find #"title=\"Move Room later\" data-step=\"later\" class=\"layout-step\">Later<span class=\"sr-only\"> Room</span>" editing)
             "a step button's accessible name starts with its visible word")

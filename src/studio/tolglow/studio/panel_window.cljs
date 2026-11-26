@@ -54,10 +54,11 @@
   (let [doc (.-document popup)
         head (.-head doc)
         root (.createElement doc "main")]
-    (set! (.-title doc) (str "Tolglow · " title))
     (set! (.. doc -documentElement -lang) (.. js/document -documentElement -lang))
     (set! (.. doc -documentElement -className) (.. js/document -documentElement -className))
     (.replaceChildren head)
+    ;; After clearing the head, which holds the <title> that setting one creates.
+    (set! (.-title doc) (str "Tolglow · " title))
     (let [viewport (.createElement doc "meta")]
       (set! (.-name viewport) "viewport")
       (set! (.-content viewport) "width=device-width, initial-scale=1")

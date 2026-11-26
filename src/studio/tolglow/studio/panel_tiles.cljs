@@ -11,6 +11,7 @@
   layout switches and says so when the cue is not running."
   (:require [re-frame.core :as rf]
             [tolglow.studio.events :as events]
+            [tolglow.studio.panel-layout :as panel-layout]
             [tolglow.studio.parameter-source :as sources]
             [tolglow.studio.parameter-widgets :as widgets]
             [tolglow.studio.param-visualization :as visualization]
@@ -70,7 +71,7 @@
         selected (first (keep-indexed (fn [i {:keys [cue param]}]
                                         (when (= [cue param] [(:cue binding) (:param binding)]) i))
                                       options))]
-    [:select.tile-picker {:aria-label (or label (str "Parameter shown in " (name id)))
+    [:select.tile-picker {:aria-label (or label (str "Parameter shown in " (panel-layout/title id)))
                           :value (if selected (str selected) "")
                           :on-change #(let [v (.. % -target -value)]
                                         (rf/dispatch [:panel-layout/bind id (when (seq v) (select-keys (nth options (js/parseInt v 10)) [:cue :param]))]))}
@@ -163,4 +164,4 @@
   "Edit-mode controls for an added panel: a parameter tile's menu."
   [db {:keys [id] :as entry}]
   (when (not= :viz id)
-    [picker (:show db) entry (str "Parameter shown in " (name id))]))
+    [picker (:show db) entry]))
