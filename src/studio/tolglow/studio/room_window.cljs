@@ -42,12 +42,19 @@
       :placing (if live? (assoc current :place? false :display {:status :asking}) current)
       :placed (if live? (assoc current :display {:status :placed :label detail}) current)
       :place-failed (if live? (assoc current :place? false :display {:status detail}) current)
+      ;; detail is the display count, or {:count n :present? p} where p says
+      ;; whether the display the Room was placed on is still connected (nil
+      ;; when unknown), so losing it is noticed while other displays remain.
       :screens (if live?
-                 (let [status (get-in current [:display :status])]
+                 (let [{:keys [count present?]} (if (map? detail) detail {:count detail})
+                       status (get-in current [:display :status])]
                    (cond
-                     (and (< detail 2) (= :placed status)) (assoc current :display {:status :lost})
-                     (and (>= detail 2) (#{:lost :single} status)) (assoc current :display {:status :available})
-                     (and (< detail 2) (= :available status)) (assoc current :display {:status :single})
+                     (and (= :placed status) (or (< count 2) (false? present?)))
+                     (assoc current :display {:status :lost})
+                     (and (= :lost status) (>= count 2) (not (false? present?)))
+                     (assoc current :display {:status :available})
+                     (and (= :single status) (>= count 2)) (assoc current :display {:status :available})
+                     (and (< count 2) (= :available status)) (assoc current :display {:status :single})
                      :else current))
                  current)
       current)))
@@ -190,7 +197,9 @@
           (when-let [^js screen (.-screen js/window)]
             (when (fn? (aget screen "addEventListener"))
               (.addEventListener screen "change"
-                                 #(rf/dispatch [:room-window/screens generation (if (.-isExtended screen) 2 1)])
+                                 ;; Once display details are granted, screenschange reports instead.
+                                 #(when-not (:screens @owner)
+                                    (rf/dispatch [:room-window/screens generation (if (.-isExtended screen) 2 1)]))
                                  options)))
           ;; The window's own module realm: its engine binds to its globals.
           (set! (.-onload loader)
@@ -222,6 +231,12 @@
                        :label (or (not-empty (.-label screen)) (str "display " (inc i)))})
                     (array-seq (.-screens details)))))
 
+(defn- screen-key
+  "Identity of a connected display: its label and full rectangle."
+  [^js screen]
+  {:label (.-label screen) :left (.-left screen) :top (.-top screen)
+   :width (.-width screen) :height (.-height screen)})
+
 (defn- window-centre [^js w]
   [(+ (.-screenX w) (/ (.-outerWidth w) 2)) (+ (.-screenY w) (/ (.-outerHeight w) 2))])
 
@@ -241,7 +256,8 @@
         (js/setTimeout
          #(when (current? generation)
             (if (= target (apply screen-at screens (window-centre window)))
-              (rf/dispatch [:room-window/placed generation label])
+              (do (swap! owner assoc :placed-screen (screen-key (aget (.-screens details) target)))
+                  (rf/dispatch [:room-window/placed generation label]))
               (failed! :manual)))
          500)))))
 
@@ -250,7 +266,11 @@
     (swap! owner assoc :screens details)
     (.addEventListener details "screenschange"
                        #(when (current? generation)
-                          (rf/dispatch [:room-window/screens generation (.-length (.-screens details))]))
+                          (let [screens (array-seq (.-screens details))
+                                placed (:placed-screen @owner)]
+                            (rf/dispatch [:room-window/screens generation
+                                          {:count (count screens)
+                                           :present? (when placed (boolean (some #{placed} (map screen-key screens))))}])))
                        #js {:signal (.-signal (:abort @owner))})))
 
 (defn- place! [generation]
