@@ -34,7 +34,14 @@
   {:aim-left (cue :aim-left {:aim [-1.5 0.5 1.0]})
    :aim-right (cue :aim-right {:aim [2.0 1.0 0.5]})
    :direct (cue :direct {:pan 0.3 :tilt 0.7})
-   :wash (cue :wash {:dimmer 1})})
+   :wash (cue :wash {:dimmer 1})
+   ;; A standalone modifier over every head lower-priority lighting touched.
+   :halve {:effect {:id :halve :version 1 :outputs {}
+                    :layer {:targets :previous
+                            :transforms [{:attribute :dimmer
+                                          :value {:op :multiply
+                                                  :args [{:op :previous :attribute :dimmer :default 0} 0.5]}}]}}
+           :cue {:id :halve :version 1 :effect-id :halve}}})
 
 (defn- runtime [captured]
   (let [model (reduce-kv (fn [model id {:keys [effect cue]}]
@@ -212,6 +219,30 @@
         (is (nil? (get-in @(:state rt) [:output :values])) "Batch frames carry compact history only")
         (is (every? #(= aimed %) (frames! rt captured (range 100 501 50)))))
       (finally (show/stop! rt)))))
+
+(defn- rig-model []
+  (reduce-kv (fn [model id {:keys [effect cue]}]
+               (-> model (assoc-in [:registry :effects id] effect) (assoc-in [:registry :cues id] cue)))
+             (control/new-show {:rig {:fixtures heads}}) cues))
+
+(deftest a-standalone-modifier-leaves-held-heads-alone
+  (doseq [[label script] {"modifier launched while held"
+                          {:launch {0 [[:aim-left {:mode :one-shot :duration {:ms 100}}] [:wash {:mode :persistent}]]
+                                    300 [[:halve {:mode :persistent}]]}
+                           :ops {600 [[:instance/end :halve nil]]}}
+                          "modifier already running at release"
+                          {:launch {0 [[:wash {:mode :persistent}]]
+                                    25 [[:halve {:mode :persistent}]]
+                                    50 [[:aim-left {:mode :one-shot :duration {:ms 100}}]]}}}]
+    (testing label
+      (let [held (mapv first (record-show! (rig-model) {} script))
+            master (mapv first (master-like (rig-model) {} script))
+            aimed (position (nth held 2))
+            unheld #(reduce (fn [packet [universe index]] (assoc-in packet [universe index] 0)) % (apply concat (vals slots)))]
+        (is (every? #(some pos? (get aimed %)) (keys slots)))
+        (is (every? #(= aimed (position %)) (drop 8 held)) "Every head holds its pose before, during and after the modifier")
+        (is (= 128 (get-in (nth held 20) [3 2])) "The modifier still halves the lit head's dimmer")
+        (is (= (mapv unheld master) (mapv unheld held)) "Only the held position slots differ from the unheld renderer")))))
 
 (deftest zero-opacity-and-restart-hold-the-pose
   (let [captured (atom nil) rt (runtime captured)]

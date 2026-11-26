@@ -3,11 +3,12 @@
 
   Afterglow packs an unwritten pan or tilt channel at 0. When the last effect
   positioning a head ends, that would command a full-travel move on the next
-  frame. The frame owner instead places one bottom block in the contribution
+  frame. The frame owner instead adds one block at the end of the contribution
   stream that writes the previous frame's normalized pan/tilt for each axis no
-  effect writes this frame. Any effect that writes the axis replaces or blends
-  over it as usual. A head that was never moved packs 0 either way, so this
-  block exists only after a positioning effect has released.")
+  effect writes this frame. An axis any effect writes is not held, so that
+  effect composes against the packed default as before. A head that was never
+  moved packs 0 either way, so this block exists only after a positioning
+  effect has released.")
 
 (def ^:private writes
   "Attributes that set each position axis. Geometry solves both."
@@ -108,29 +109,30 @@
             :else (reduce #(clear %1 %2 changed) open (block-targets block))))))))
 
 (defn with-hold
-  "Prepend a hold block to the ordered contribution stream when a head moved
+  "Append a hold block to the ordered contribution stream when a head moved
   away from its packed default and no block writes that axis this frame.
   `previous` is the last committed frame output. `followers` are edge-tracking
   followers, which the renderer positions itself. Returns `blocks` unchanged
-  when there is nothing to hold."
+  when there is nothing to hold.
+
+  No other block writes a held axis, so the block's place in the stream does
+  not change its result. It goes last so that no native layer reads it: a
+  standalone modifier over `:targets :previous` takes every head in the
+  backdrop below it, and a hold placed there would add released heads."
   [patch previous blocks followers]
   (let [pose (when previous (previous-pose patch previous followers))]
-    (if (or (empty? pose)
-            ;; Such a modifier reads every head already in the native backdrop.
-            ;; A hold would add heads to it, so leave this stream as authored.
-            (some #(let [layer (:native-layer %)]
-                     (and (:inherit-backdrop? layer) (= :previous (:targets layer)))) blocks))
+    (if (empty? pose)
       blocks
       (let [open (reduce (fn [open block] (if (empty? open) (reduced open) (remove-written! open block)))
                          pose blocks)]
         (if (empty? open)
           blocks
-          (into [{:kind :assignments
-                  :assignments (into [] (for [{:keys [id]} (:fixtures patch)
-                                              :let [axes (get open id)]
-                                              :when axes
-                                              axis [:pan :tilt]
-                                              :let [value (get axes axis)]
-                                              :when value]
-                                          {:target-id id :attribute axis :value value}))}]
-                blocks))))))
+          (conj (vec blocks)
+                {:kind :assignments
+                 :assignments (into [] (for [{:keys [id]} (:fixtures patch)
+                                             :let [axes (get open id)]
+                                             :when axes
+                                             axis [:pan :tilt]
+                                             :let [value (get axes axis)]
+                                             :when value]
+                                         {:target-id id :attribute axis :value value}))}))))))
