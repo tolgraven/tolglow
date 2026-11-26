@@ -494,6 +494,13 @@
       (is (= {:icon-url "data:image/svg+xml;base64,AAAA"}
              (:feel (timeline/view {:model (live-model) :feel {:icon "data:image/svg+xml;base64,AAAA"}}))))
       (is (nil? (:feel (timeline/view {:model (live-model) :feel {:icon "not an icon" :palette [:red]}})))))
+    (testing "any show variable writer fills the slot, so nothing in it can make Studio fetch a URL"
+      (is (= {:label "Beacon" :palette ["#abc" "rgb(10, 20, 30)"]}
+             (:feel (timeline/view {:model (live-model)
+                                    :feel {:label "Beacon" :icon-url "https://example.invalid/beacon.png"
+                                           :palette ["url(https://example.invalid/p.png)" "#abc"
+                                                     "red; background-image: url(x)" "rgb(10, 20, 30)"]}}))))
+      (is (nil? (:feel (timeline/view {:model (live-model) :feel {:icon "https://example.invalid/i.svg"}})))))
     (let [rt (runtime)]
       (try
         (is (= :accepted (:status (at! rt 0 {:op :variable/set :variable :music/personality :value feel

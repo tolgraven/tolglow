@@ -403,12 +403,18 @@
 
 ;; Track feel ------------------------------------------------------------------------
 
+(def ^:private colour-text
+  "CSS colour text a palette string may hold: hex or a colour function of
+  numbers. Anything else (url(), declarations) is dropped, because any show
+  variable writer can fill the slot."
+  #"#[0-9a-fA-F]{3,8}|(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\([0-9.,%/\s+-]*(?:deg|turn|rad)?[0-9.,%/\s+-]*\)")
+
 (defn- css-colour
-  "A palette colour as CSS text: strings pass through, [r g b] in 0..1 becomes
-  #rrggbb, a gradient or split entry shows its first colour."
+  "A palette colour as CSS text: colour strings pass through, [r g b] in 0..1
+  becomes #rrggbb, a gradient or split entry shows its first colour."
   [entry]
   (cond
-    (string? entry) entry
+    (string? entry) (when (re-matches colour-text entry) entry)
     (and (vector? entry) (= 3 (count entry)) (every? number? entry))
     (apply format "#%02x%02x%02x" (map #(-> (double %) (max 0.0) (min 1.0) (* 255.0) Math/round int) entry))
     (seq (:gradient entry)) (css-colour (:color (first (:gradient entry))))
@@ -419,13 +425,15 @@
   "The active track-feel personality as the Studio slot draws it. Accepts the
   personality projection's active entry (#647: :id :name :icon SVG text,
   palette of colours, gradients or splits) or a hand-made map with :label,
-  :icon-svg or :icon-url and CSS colour strings. Other keys are dropped; nil
-  when nothing drawable is left."
+  :icon-svg or :icon-url and CSS colour strings. An image URL must be a data
+  URI, so the slot never makes Studio fetch anything. Other keys are dropped;
+  nil when nothing drawable is left."
   [feel]
   (when (map? feel)
     (let [{:keys [id label name icon icon-svg icon-url palette]} feel
+          data-uri (fn [x] (when (and (string? x) (re-find #"^data:image/" x)) x))
           svg (or icon-svg (when (and (string? icon) (re-find #"^\s*<svg" icon)) icon))
-          url (or icon-url (when (and (string? icon) (re-find #"^data:image/" icon)) icon))
+          url (or (data-uri icon-url) (data-uri icon))
           colours (into [] (comp (map css-colour) (remove nil?) (take 8)) palette)]
       (not-empty
        (cond-> {}
