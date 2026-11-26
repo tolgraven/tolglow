@@ -19,6 +19,7 @@
   `tolglow.studio.room-window`, the others through `tolglow.studio.panel-window`."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
+            [re-frame.db :as rf-db]
             [reagent.core :as r]
             [tolglow.studio.panel-window :as panel-window]
             [tolglow.studio.room-window :as room-window]))
@@ -128,6 +129,13 @@
           (or (<= w (max 1 (quot n 6))) (<= h 8)) :single
           (or (<= w (quot n 3)) (<= h 14)) :compact
           :else :full)))
+
+(defn window-tier
+  "The tier of a panel filling a window `width` by `height` CSS pixels: the full
+  width of that window's size class, and its height in grid rows."
+  [width height]
+  (let [class (size-class width)]
+    (tier class {:w (columns class) :h (js/Math.floor (/ height row-px))})))
 
 (defn add-panel
   "Add the visualization panel (once) or a new parameter tile."
@@ -344,9 +352,11 @@
 ;; The packaged Mac app serves each launch on a new loopback port, so page
 ;; storage does not survive a relaunch there. When the app's window binding
 ;; (`window.tolglowStudioWindow`, #669) carries a `layouts` copy and accepts
-;; `{type: "layouts", layouts}` messages on its `tolglowStudioWindow` handler,
-;; layouts are kept by the app per show folder as well. In a browser, or until
-;; the app provides that copy, only local storage is used.
+;; `{type: "layouts", layouts, request}` messages on its `tolglowStudioWindow`
+;; handler, layouts are kept by the app per show folder as well. The app answers
+;; each message with a `tolglow-studio-window` event on the page whose detail is
+;; `{type: "layouts", request, kept}`; it refuses a copy over its size limit. In a
+;; browser, or until the app provides that copy, only local storage is used.
 
 (defn- host-text []
   (try (let [binding (aget js/window "tolglowStudioWindow")
@@ -357,9 +367,41 @@
 (defn- host-handler []
   (some-> (aget js/window "webkit") (aget "messageHandlers") (aget "tolglowStudioWindow")))
 
-(defn- post-host! [text]
+(defonce ^:private host-requests (atom {:next 0 :pending {}}))
+
+(def host-reply-ms
+  "How long to wait for the app to say whether it kept a copy."
+  3000)
+
+(defn- host-reply! [^js event]
+  (let [^js detail (.-detail event)]
+    (when (and detail (= "layouts" (.-type detail)))
+      (let [request (.-request detail)
+            done (get-in @host-requests [:pending request])]
+        (when done
+          (swap! host-requests update :pending dissoc request)
+          (done (if (true? (.-kept detail)) :kept :refused)))))))
+
+(defonce ^:private host-listener
+  (delay (.addEventListener js/window "tolglow-studio-window" host-reply!)))
+
+(defn- post-host!
+  "Post a copy to the app; `done` later receives :kept, :refused or :silent (no
+  answer in time). False when there is no app or the post failed."
+  [text done]
   (when-let [^js handler (host-handler)]
-    (try (.postMessage handler #js {:type "layouts" :layouts text}) true (catch :default _ false))))
+    @host-listener
+    (let [request (:next (swap! host-requests update :next inc))]
+      (swap! host-requests assoc-in [:pending request] done)
+      (js/setTimeout #(when (get-in @host-requests [:pending request])
+                        (swap! host-requests update :pending dissoc request)
+                        (done :silent))
+                     host-reply-ms)
+      (try (.postMessage handler #js {:type "layouts" :layouts text :request request})
+           true
+           (catch :default _
+             (swap! host-requests update :pending dissoc request)
+             false)))))
 
 (defn- saved-at [text]
   (try (let [v (some-> text js/JSON.parse (aget "savedAt"))] (if (number? v) v 0)) (catch :default _ -1)))
@@ -385,27 +427,43 @@
            {:class (media-class)
             :saved (if-let [text (newest-text (host-text) (stored-text))] (decode text) {})})))
 
-(defn- write!
-  "Keep saved layouts in local storage and, inside the Mac app, with the app.
-  True when at least one copy was accepted."
-  [saved]
-  (let [text (encode saved (js/Date.now))
-        local? (try (if-let [s (storage)]
-                      (do (if (seq saved) (.setItem s storage-key text) (.removeItem s storage-key)) true)
-                      false)
-                    (catch :default _ false))
-        host? (post-host! text)]
-    (boolean (or local? host?))))
+(defn- write-local!
+  "Keep saved layouts in local storage. True when it accepted them."
+  [saved text]
+  (try (if-let [s (storage)]
+         (do (if (seq saved) (.setItem s storage-key text) (.removeItem s storage-key)) true)
+         false)
+       (catch :default _ false)))
 
 (def failed-notice
   "This browser did not keep the layout (storage is blocked or full). It stays in use until Studio reloads.")
 
-;; The confirmation toast is shown only once the write succeeded.
+(def host-refused-notice
+  (str "The Mac app did not keep a copy of this layout (it keeps up to 64 KB of layouts for each show folder), "
+       "so it will be gone after the app relaunches. It stays in use until then."))
+
+(defn store-toast
+  "The toast after a save as [text error?], or nil. `local?` says whether local
+  storage kept it; `host` is nil outside the Mac app, else what the app said:
+  :kept, :refused or :silent (no answer). Inside the app only the app's copy
+  survives a relaunch."
+  [local? host notice]
+  (cond
+    (or (= :kept host) (and local? (nil? host))) (when notice [notice false])
+    local? [host-refused-notice true]
+    :else [failed-notice true]))
+
+(defn- toast! [[text error?]]
+  (rf/dispatch [:studio/toast text error?]))
+
+;; The confirmation toast is shown only once the write succeeded: inside the Mac
+;; app, once the app said it kept its copy.
 (rf/reg-fx :panel-layout/store
   (fn [{:keys [saved notice]}]
-    (if (write! saved)
-      (when notice (rf/dispatch [:studio/toast notice]))
-      (rf/dispatch [:studio/toast failed-notice true]))))
+    (let [text (encode saved (js/Date.now))
+          local? (write-local! saved text)]
+      (when-not (post-host! text #(some-> (store-toast local? % notice) toast!))
+        (some-> (store-toast local? nil notice) toast!)))))
 
 (defn- layout-element [] (.querySelector js/document "#view-perform .performance-layout"))
 
@@ -454,6 +512,19 @@
 
 ;; ---------------------------------------------------------------------------
 ;; Events
+
+;; A detached panel (tolglow.studio.panel-window, tolglow.studio.room-window)
+;; adapts to its window, not to the tile it left: the window reports its size.
+(rf/reg-event-db :panel-layout/window-size
+  (fn [db [_ id width height]]
+    (if (and (number? width) (number? height) (pos? width) (pos? height))
+      (assoc-in db [:ui :window-tiers id] (window-tier width height))
+      db)))
+
+(defn detached-tier
+  "The tier of panel `id` in its own window, :full until the window reports."
+  [db id]
+  (get-in db [:ui :window-tiers id] :full))
 
 (rf/reg-event-fx :panel-layout/initialize
   [(rf/inject-cofx :panel-layout/environment)]
@@ -563,11 +634,13 @@
           {:db (update-in db [:ui :panel-layout :edit] assoc :layout next :announce (str (title id) " added at the end."))
            :panel-layout/focus [id ".layout-handle"]})))))
 
-(rf/reg-event-db :panel-layout/remove
-  (fn [db [_ id]]
-    (cond-> db
-      (and (:edit (state db)) (extra? id))
-      (edit-step (fn [_ layout] (remove-panel layout id)) id))))
+;; A removed panel's window closes now rather than staying empty until Done or
+;; Cancel. Cancel brings the panel back docked.
+(rf/reg-event-fx :panel-layout/remove
+  (fn [{:keys [db]} [_ id]]
+    (when (and (:edit (state db)) (extra? id))
+      (cond-> {:db (edit-step db (fn [_ layout] (remove-panel layout id)) id)}
+        (panel-window/detached? db id) (assoc :dispatch [:panel-window/redock id])))))
 
 (rf/reg-event-fx :panel-layout/bind
   (fn [{:keys [db]} [_ id binding]]
@@ -669,7 +742,19 @@
 ;; handle leaves the document, or when the pointer leaves the edges.
 (defonce ^:private autoscroll (atom nil))
 
-(defn- stop-autoscroll! [] (reset! autoscroll nil))
+(defn- stop-autoscroll!
+  "End auto-scroll: for every pointer, or only when `pointer-id` owns it. Another
+  pointer lifting must not stop the drag in progress."
+  ([] (reset! autoscroll nil))
+  ([pointer-id] (swap! autoscroll #(when-not (= pointer-id (:pointer-id %)) %))))
+
+(defn claim-autoscroll
+  "The auto-scroll owner after `pointer` presses a handle. A gesture already in
+  progress keeps it, as it keeps the gesture (:panel-layout/gesture-start)."
+  [owner gesture pointer]
+  (if (and gesture (not= (:pointer-id gesture) (:pointer-id pointer)))
+    (when (= (:pointer-id owner) (:pointer-id gesture)) owner)
+    pointer))
 
 (defn- visible-speed
   "Edge speed against what is visible: the visual viewport when the browser
@@ -712,8 +797,9 @@
     (when (primary-pointer? event)
       (.preventDefault event)
       (.setPointerCapture (.-currentTarget event) (.-pointerId event))
-      (reset! autoscroll {:pointer-id (.-pointerId event) :element (.-currentTarget event)
-                          :client-x (.-clientX event) :client-y (.-clientY event) :limit (scroll-limit)})
+      (swap! autoscroll claim-autoscroll (get-in @rf-db/app-db [:ui :panel-layout :edit :gesture])
+             {:pointer-id (.-pointerId event) :element (.-currentTarget event)
+              :client-x (.-clientX event) :client-y (.-clientY event) :limit (scroll-limit)})
       (let [{:keys [container-width rects]} (measure-regions)
             own (some #(when (= id (:id %)) %) rects)]
         (rf/dispatch [:panel-layout/gesture-start
@@ -725,9 +811,9 @@
 (defn- pointer-handlers [kind id]
   {:on-pointer-down (pointer-start kind id)
    :on-pointer-move track-pointer!
-   :on-pointer-up #(do (stop-autoscroll!) (rf/dispatch [:panel-layout/gesture-end (.-pointerId %)]))
-   :on-pointer-cancel #(do (stop-autoscroll!) (rf/dispatch [:panel-layout/gesture-cancel (.-pointerId %)]))
-   :on-lost-pointer-capture #(do (stop-autoscroll!) (rf/dispatch [:panel-layout/gesture-end (.-pointerId %)]))})
+   :on-pointer-up #(do (stop-autoscroll! (.-pointerId %)) (rf/dispatch [:panel-layout/gesture-end (.-pointerId %)]))
+   :on-pointer-cancel #(do (stop-autoscroll! (.-pointerId %)) (rf/dispatch [:panel-layout/gesture-cancel (.-pointerId %)]))
+   :on-lost-pointer-capture #(do (stop-autoscroll! (.-pointerId %)) (rf/dispatch [:panel-layout/gesture-end (.-pointerId %)]))})
 
 (def ^:private move-keys {"ArrowLeft" -1 "ArrowUp" -1 "ArrowRight" 1 "ArrowDown" 1 "Home" -99 "End" 99})
 
@@ -897,8 +983,10 @@
            :let [size (when layout
                         (tier class (if (and (= id (:id gesture)) (:size gesture))
                                       (zipmap [:w :h] (:size gesture)) entry)))
+                 ;; Content in its own window follows that window's size.
+                 detached (when (and (not= :room id) (panel-window/detached? db id)) (detached-tier db id))
                  content (if (extra? id)
-                           (when-let [render (:render extra)] (render entry (or size :full)))
+                           (when-let [render (:render extra)] (render entry (or detached size :full)))
                            (regions id))]]
        ^{:key id}
        [:div.layout-region
@@ -907,5 +995,5 @@
           (and editing (= id (:id gesture))) (assoc :data-gesture (name (:kind gesture)))
           (and editing gesture (= id (:target gesture))) (assoc :data-drop-target true))
         [:div.layout-content {:inert (boolean editing)}
-         (if (= :room id) content (panel-window/region db id (title id) content))]
+         (if (= :room id) content (panel-window/region db id (title id) content detached))]
         (when editing [chrome db entry index total gesture (when (extra? id) (:chrome extra))])])]))

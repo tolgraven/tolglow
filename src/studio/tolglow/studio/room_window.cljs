@@ -191,6 +191,9 @@
                          :timer (js/setInterval #(when (.-closed popup) (closed!)) 500)})
           (socket/present-preview! :room-window true)
           (.addEventListener popup "pagehide" closed! options)
+          (let [size! #(rf/dispatch [:panel-layout/window-size :room (.-innerWidth popup) (.-innerHeight popup)])]
+            (size!)
+            (.addEventListener popup "resize" size! options))
           ;; The Room window never outlives the Studio page that owns its engine.
           (.addEventListener js/window "pagehide" #(.close popup) options)
           (.addEventListener js/window "tolglow-room-window" (partial native-reply! generation) options)
@@ -386,7 +389,12 @@
 
 (defn- portal [db panel]
   (when-let [root (:root @owner)]
-    (react-dom/createPortal (r/as-element [:<> [panel db] [notice-line db]]) root)))
+    ;; The Room follows its window's size, as other panels do (panel-window).
+    (react-dom/createPortal
+     (r/as-element [:div.panel-window-content {:data-panel "room"
+                                               :data-tier (name (get-in db [:ui :window-tiers :room] :full))}
+                    [panel db] [notice-line db]])
+     root)))
 
 (defn room
   "The Room panel, docked in Studio or portalled into its own window."
