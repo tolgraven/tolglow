@@ -89,7 +89,9 @@
         effect {:id :derived :version 1 :prefabs {:music/slope prefab}
                 :blocks {[:outputs :pan] {:stages [{:block :music/slope :amount 0.05}]}}
                 :outputs {:pan 0.5}}
-        context {:frame {:time-ms 100.0 :transport {:beat 2.25} :fixtures rig}
+        ;; Compilers skip heads without the written attribute (#688).
+        heads (mapv #(assoc-in % [:channels :pan] 7) rig)
+        context {:frame {:time-ms 100.0 :transport {:beat 2.25} :fixtures heads}
                  :instance {:started-at-ms 0 :started-at-beat 2} :assignments []}
         result (first (:assignments ((compiler/compile-effect effect) context)))]
     (is (= {:id :sine :version 1 :channel :slope} (:waveform prefab)))
