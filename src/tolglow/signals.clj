@@ -147,6 +147,9 @@
 
 (defn- lookup [state id version]
   (or (if version (get-in state [:versions [id version]]) (get-in state [:waveforms id]))
+      ;; A live waveform keeps only its newest version, so a choice or
+      ;; selection recorded at an older one follows the current version.
+      (let [current (get-in state [:waveforms id])] (when (and version (:live? current)) current))
       (fail! [:waveform-id] (str "Unknown waveform or version " id " " version))))
 
 (defn- bindings [definition options]

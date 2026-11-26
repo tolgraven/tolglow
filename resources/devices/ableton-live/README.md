@@ -245,6 +245,12 @@ recording logic suppresses re-recording of that origin. `tolglow-feedback` input
 is discarded. This bridge never emits its clip-recording intents as MIDI wire
 feedback as well.
 
+Automatic setup, Capture and clip write operations (`inspect-set`,
+`ensure-track`, `configure-track`, `write-clip`, `capture-midi`, `read-clip`,
+`show-clip`, `fire-clip`, `stop-clips`) are specified on the Tolglow side in
+[Capture into Live](../../../docs/live-routing.md#capture-the-last-phrase-into-live).
+They use these receipts and are not yet implemented in `live_api.js`.
+
 ## Verified API references and host qualification limits
 
 The adapter uses these official Cycling ’74 pages, inspected on 2026-11-21:

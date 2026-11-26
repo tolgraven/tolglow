@@ -9,6 +9,7 @@
             [tolglow.audio-lfo :as lfo]
             [tolglow.audio.fixtures :as fixtures]
             [tolglow.audio.shape :as shape]
+            [tolglow.audio.shape-worker :as shape-worker]
             [tolglow.clock :as clock]
             [tolglow.connections :as connections]
             [tolglow.effects.parameter-sources :as sources]
@@ -59,6 +60,50 @@
             taken (assoc (fixture/model) :waveforms (signals/publish (signals/new-registry) other))]
         (is (thrown-with-msg? clojure.lang.ExceptionInfo #"already uses"
                               (lfo/configure taken {:lfo-id :bass :config settings})))))))
+
+(deftest a-show-has-a-bounded-number-of-audio-lfos
+  (let [full (reduce (fn [m i] (lfo/configure m {:lfo-id (keyword (str "lfo-" i)) :config {}}))
+                     (fixture/model) (range lfo/max-lfos))
+        refused (try (lfo/apply-operation full {:op :audio-lfo/configure :lfo-id :one-more :config {}})
+                     nil (catch clojure.lang.ExceptionInfo e e))]
+    (is (= lfo/max-lfos (count (get-in full [:audio-lfos :lfos]))))
+    (is (= :invalid-audio-lfo (:control/error (ex-data refused))))
+    (is (re-find #"at most 8 audio LFOs" (ex-message refused)))
+    (is (= :mid (get-in (lfo/configure full {:lfo-id :lfo-0 :config {:band :mid}}) [:audio-lfos :lfos :lfo-0 :config :band]))
+        "an existing LFO can still be changed")))
+
+(deftest the-shape-worker-finishes-jobs-off-the-calling-thread
+  (let [samples (fixtures/passage :dry-sine {:bpm 120.0 :bars 2})
+        specs {:a {:band :bass :extract :cycle :digest 11} :b {:band :sub :extract :cycle :digest 12}}
+        jobs (loop [start 0 bank (shape/new-bank 48000.0) jobs []]
+               (if (>= start (alength samples)) jobs
+                   (let [end (min (alength samples) (+ start 480))
+                         r (shape/advance-bank bank specs {:samples (java.util.Arrays/copyOfRange samples (int start) (int end))
+                                                           :sample-rate 48000.0 :started-at-ms (* 1000.0 (/ start 48000.0))
+                                                           :clock {:time-ms 0.0 :beat 0.0 :bpm 120.0 :playing? true}})]
+                     (recur end (:bank r) (into jobs (:jobs r))))))
+        published (atom [])
+        threads (atom #{})
+        worker (shape-worker/start! (fn [result] (swap! threads conj (.getName (Thread/currentThread)))
+                                      (swap! published conj result)))]
+    (try
+      (is (= [[:a 1] [:b 1]] (sort (map (juxt :id :seq) jobs))))
+      ;; Two rounds of the same LFOs in one hand-off: only the newest per LFO is kept.
+      ((:submit! worker) (concat (map #(assoc % :seq 0) jobs) jobs))
+      (is (true? ((:stop! worker) true 5000)) "a drain finishes what was handed over")
+      (is (= #{"tolglow-audio-shapes"} @threads))
+      (is (= [[:a 1] [:b 1]] (sort (for [result @published [id extraction] result] [id (:seq extraction)])))
+          "one result per LFO, from its newest job")
+      (is (every? #(= :ok (:status %)) (mapcat vals @published)))
+      (is (= 110 (Math/round (double (some #(get-in % [:a :frequency-hz]) @published)))))
+      (is (= #{11 12} (set (map :spec-digest (mapcat vals @published)))))
+      (testing "a cancelled worker drops pending work and accepts no more"
+        (let [late (atom 0) worker (shape-worker/start! (fn [_] (swap! late inc)))]
+          ((:stop! worker) false 1000)
+          ((:submit! worker) jobs)
+          (is (zero? ((:pending worker))))
+          (is (zero? @late))))
+      (finally ((:stop! worker) false 1000)))))
 
 (deftest the-template-is-the-same-table-the-owner-samples
   (let [random (java.util.Random. 676)]
@@ -149,7 +194,14 @@
     (is (= (:to (state model)) (vec (butlast (signals/glyph registry :audio/bass {:samples 9}))))
         "the picker glyph samples the published target")
     (is (thrown? clojure.lang.ExceptionInfo (signals/publish-live registry (assoc (first (signals/builtin-waveforms)) :live? true)))
-        "a live waveform never replaces a versioned one")))
+        "a live waveform never replaces a versioned one")
+    (testing "a selector choice recorded at an older version follows the current one"
+      (let [choices (:choices (signals/selector-schema (:waveforms (configured)) [:sine :audio/bass]))]
+        (is (= 1 (:version (second choices))))
+        (is (= (signals/sample registry :audio/bass {}) (signals/sample registry :audio/bass {:version 1})))
+        (is (map? (signals/select-waveform registry {:op :const :value 1.0} (mapv #(select-keys % [:id :version]) choices) {})))
+        (is (thrown? clojure.lang.ExceptionInfo (signals/sample registry :sine {:version 2}))
+            "a versioned waveform still refuses an unknown version")))))
 
 (def ^:private audio-binding
   {:type :lfo :waveform :audio/bass :period {:beats 1} :from 0.0 :to 1.0 :phase-reference :transport})

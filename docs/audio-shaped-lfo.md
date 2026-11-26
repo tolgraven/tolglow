@@ -19,13 +19,21 @@ waveform.
 
 ## How a shape is made
 
-The capture worker that already decodes each PCM block for the analyzer also
-runs one extractor per configured LFO. An extractor is immutable data; each
-block returns a new one.
+The work is split by thread. The capture thread, which already decodes each
+PCM block for the analyzer, does only what must follow the input: it filters
+each distinct band once into a ring of recent samples shared by every LFO on
+that band, accumulates each LFO's window, and when a window closes hands an
+immutable job (the window's bins, or a fresh copy of the band's samples up to
+the edge) to a separate shape worker thread. The worker does the window-end
+analysis and publishes the result. Its pending work is one job per LFO and the
+newest wins, so a slow analysis can delay a shape but never queue without
+bound or hold up capture. A show can have at most 8 audio LFOs; a ninth is
+refused with the reason.
 
-1. **Band.** A fourth-order band-pass: two Butterworth high-passes at the low
-   edge and two low-passes at the high edge (Linkwitz–Riley, −6 dB at each edge,
-   24 dB/octave outside). Bands are `:sub` 20–60 Hz, `:bass` 60–250 Hz,
+1. **Band.** A band-pass of two Linkwitz–Riley edges: two Butterworth
+   high-passes at the low edge and two low-passes at the high edge (fourth
+   order per edge, −6 dB at each edge, 24 dB/octave outside). It is not a
+   crossover: adjacent bands do not sum flat. Bands are `:sub` 20–60 Hz, `:bass` 60–250 Hz,
    `:low-mid` 250–800 Hz, `:mid` 0.8–2.5 kHz, `:high` 2.5–8 kHz, `:full` (no
    filter) or an explicit `[low high]` in Hz.
 2. **Window.** Every sample is placed on the transport's beat grid from the
@@ -37,14 +45,23 @@ block returns a new one.
 3. **Shape.** With `:extract :envelope` the window is divided into `:points`
    equal beat spans and each point is the band's RMS there, divided by the
    loudest point, so the cycle is the window's rhythm and dynamics. With
-   `:extract :cycle` the last 21–340 ms of the band at the window's end goes to
-   YIN; up to eight consecutive pitch periods are averaged, rotated so the
-   fundamental starts at zero phase rising, and stretched to 0..1. Rotation
+   `:extract :cycle` the band's samples at the window's end (21–340 ms, by the
+   band's lowest frequency) go to a bounded YIN: only the last 2 × max-lag
+   samples, after decimating band-limited audio by up to 16 so a low band costs
+   no more than a high one (`:sub` searches 150 lags at 3 kHz instead of 2400 at
+   48 kHz; `:full`, being unfiltered, is not decimated). The period is then
+   refined at the full rate, and up to eight consecutive periods are averaged,
+   rotated so the fundamental starts at zero phase rising, and stretched to
+   0..1. Rotation
    keeps successive shapes of the same tone aligned, so a morph between them
    does not wander in phase.
 4. **Silence and confidence.** A window whose band RMS is below `:silence-db`
-   (−50 dBFS by default) is `:silent`. A cycle whose YIN confidence is below
-   `:min-confidence` (0.6), or that finds no period, is `:low-confidence`.
+   (−50 dBFS by default) is `:silent`. A cycle's confidence is 1 − YIN
+   aperiodicity at the chosen period (the first dip below 0.2, else the deepest
+   in range). Below `:min-confidence` (0.8), or with no period, it is
+   `:low-confidence`. On the test material white noise scores 0.09–0.39, three
+   ringing plucked notes 0.28–0.84 by band, and a steady synth or sine
+   0.88–1.0.
 
 The worker hands the newest extraction per LFO to the show through a mailbox
 that keeps only the latest per LFO, tagged with the capture run and the
@@ -166,7 +183,7 @@ bass synth's harmonics and leaves a near-sine cycle. The retained report is
 | --- | --- | --- |
 | Dry 110 Hz sine | 7 of 7 windows `:ok` at both tempos | 7 of 7 `:ok`, 110 Hz, confidence 1.0 |
 | Delayed synth (saw and square bars, 3/8-beat echo, reverb) | 7 of 7 `:ok`; the shape is the bar's four attacks and their echoes | 7 of 7 `:ok`; the LFO morphs between the saw and square cycles |
-| Plucked phrase, then a silent bar | `ok silent ok silent ok silent ok`; hold keeps the last shape through each silent bar | the same pattern; three ringing notes give a jagged chord period |
+| Plucked phrase, then a silent bar | `ok silent ok silent ok silent ok`; hold keeps the last shape through each silent bar | the same pattern at 84 BPM; at 172 BPM two of the four played bars score below 0.8 with three notes ringing and hold the previous shape |
 
 - **Discontinuities.** The largest table change on any commit frame was 0 in
   every run: each morph starts from the shape that was showing. The LFO's
@@ -179,14 +196,25 @@ bass synth's harmonics and leaves a near-sine cycle. The retained report is
   releases by policy. A stop holds everything.
 - **Latency.** A shape is committed 4.7–19.1 ms after its window's bar line in
   the replay: up to one capture block (10 ms) plus up to one owner frame
-  (16.7 ms). It is one window late by construction: the shape of bar *n* starts
+  (16.7 ms), plus the shape worker's analysis live (below). It is one window late by construction: the shape of bar *n* starts
   morphing at the start of bar *n + 1*.
-- **Cost.** Extraction took a median 16–24 µs and a p99 27–143 µs per 10 ms
-  block per LFO. The slowest single block in a run ranged from 0.06 to 11 ms;
-  the 11 ms block was one outlier on a machine running a dozen other JVMs.
-  Sampling the morphed table took a median 2.7–3.5 µs per frame. The benchmark
-  excludes device capture and decode, the analyzer's other features, owner
-  scheduling, IPC and rendering.
+- **Cost on the capture thread.** One LFO per run: a median 12–17 µs, p99
+  21–43 µs and maximum 63–280 µs per 10 ms block, including the closing block
+  that hands off the window. The **six-LFO budget run** plays the delayed synth
+  in real time through six cycle-mode LFOs on one bar grid (`:sub`, `:bass`
+  twice, `:low-mid`, `:mid`, `:full`; five bands) with the real shape worker, at
+  70 and 180 BPM: a median 204 µs, p99 657–674 µs and maximum 1.93–1.97 ms per
+  block (the closing blocks: median 678–717 µs), against 10 ms blocks and an
+  80 ms capture buffer.
+- **Cost on the shape worker.** Finishing one window took 14 µs (envelope) to
+  2.3 ms (full-range cycle). In the six-LFO run every closed window was
+  published (4 per LFO at each tempo) at most 5.8 ms after its closing block,
+  against 1.3–3.4 s windows.
+- **Sampling** the morphed table took a median 0.2–2.5 µs per frame. The
+  benchmark excludes device capture and decode, the analyzer's other features,
+  owner scheduling, IPC and rendering, and ran on a machine shared with other
+  JVMs. Before this split, cycle-mode YIN ran over the whole ring on the
+  capture thread and a closing block took up to 51 ms for one `:full` LFO.
 
 The tests cover the band filter's pass and stop bands, cycle alignment at any
 input phase, beat-locked envelopes at 70, 120 and 180 BPM, silence and noise,
@@ -194,7 +222,10 @@ stop and resume without catch-up, block-size independence, morph continuity,
 smoothing, both silence policies, stale and duplicate extractions, one registry
 version after thirty shapes, parameter LFO sampling while stopped and on resume,
 a linked knob on the scan period, persistence and rebase, the two-tempo replay,
-and the real owner and capture worker on injected PCM.
+the bounded and decimated YIN, refined periods, confidence against noise,
+shared band fronts and handed-off copies, the shape worker's newest-wins
+hand-off, drain and cancel, the eight-LFO cap, and the real owner, capture
+worker and shape worker on injected PCM.
 
 ## Not verified and open
 

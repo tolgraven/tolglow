@@ -1,12 +1,11 @@
 (ns tolglow.audio.shape
-  "Pure band isolation and beat-windowed shape extraction for audio-shaped
-  LFOs (#676). An extractor is immutable data: each call copies the small
-  filter state, ring buffer and envelope bins it advances, so a returned state
-  is never mutated later. Nothing here opens a device, reads a clock or
-  publishes to a show; the capture worker feeds blocks and the show owner
-  commits the results."
-  (:require [afterglow.time :as time]
-            [tolglow.integrations.audio :as audio]))
+  "Band isolation and beat-windowed shape extraction for audio-shaped LFOs
+  (#676), split by thread. `advance-bank` is the capture thread's share: one
+  filter and sample ring per distinct band, each LFO's window accumulation, and
+  an immutable job when a window closes. `finish-job` is pure and does the
+  window-end analysis (bounded, decimated YIN for cycles) on a separate worker.
+  Nothing here opens a device, reads a clock or publishes to a show."
+  (:require [afterglow.time :as time]))
 
 (def bands
   "Named analysis bands in Hz. :full applies no filter."
@@ -77,7 +76,8 @@
 (defn filter-samples
   "Run samples through the design from state (two doubles per section,
   transposed direct form II). Returns [filtered new-state]; neither input is
-  modified."
+  modified. A non-finite sample is read as 0.0, so one NaN or infinity cannot
+  poison the filter state for the rest of the run."
   [design state ^doubles samples]
   (let [sections (count design)
         n (alength samples)
@@ -86,7 +86,7 @@
         coefficients (double-array (mapcat identity design))]
     (dotimes [i (min (count state) (alength z))] (aset z i (double (nth state i))))
     (dotimes [i n]
-      (loop [s 0 x (aget samples i)]
+      (loop [s 0 x (let [v (aget samples i)] (if (Double/isFinite v) v 0.0))]
         (if (= s sections)
           (aset out i x)
           (let [c (* 5 s) zi (* 2 s)
@@ -142,34 +142,131 @@
       :peak (let [peak (max (Math/abs (double low)) (Math/abs (double high)))]
               (when (> peak 1.0e-12) (mapv #(/ (Math/abs (double %)) peak) values))))))
 
+(defn decimate
+  "Average each run of factor samples into one, aligned to the array end. The
+  boxcar is the anti-alias filter; callers decimate only band-limited audio."
+  ^doubles [^doubles values factor]
+  (let [factor (long factor)]
+    (if (= 1 factor)
+      values
+      (let [n (quot (alength values) factor)
+            out (double-array n)
+            offset (- (alength values) (* n factor))]
+        (dotimes [i n]
+          (let [base (+ offset (* i factor))]
+            (aset out i (/ (double (loop [k 0 sum 0.0] (if (= k factor) sum (recur (inc k) (+ sum (aget values (+ base k)))))))
+                           (double factor)))))
+        out))))
+
+(defn- difference
+  "Squared difference of the last span samples against those lag earlier."
+  ^double [^doubles values ^long span ^long lag]
+  (let [end (alength values) start (- end span)]
+    (loop [j start sum 0.0]
+      (if (= j end) sum
+          (let [delta (- (aget values j) (aget values (- j lag)))]
+            (recur (inc j) (+ sum (* delta delta))))))))
+
+(def yin-threshold
+  "A dip in the normalised difference below this picks the period; otherwise
+  the deepest dip in range does."
+  0.2)
+
+(defn yin
+  "Bounded YIN over the last 2 × max-lag samples of values: the cumulative-mean
+  normalised difference d′ for lags 1..max-lag. Returns {:lag fractional
+  :aperiodicity d′} for the first local minimum below `yin-threshold` at or
+  above min-lag, else the deepest one in range, or nil when values are too
+  short. Confidence is 1 − aperiodicity."
+  [^doubles values min-lag max-lag]
+  (let [min-lag (long (max 2 min-lag)) max-lag (long max-lag)]
+    (when (and (< min-lag max-lag) (>= (alength values) (* 2 max-lag)))
+      (let [cmnd (double-array (+ 2 max-lag))]
+        (aset cmnd 0 1.0)
+        (loop [lag 1 total 0.0]
+          (when (<= lag (inc max-lag))
+            (let [d (if (> lag max-lag) (aget cmnd max-lag) (difference values max-lag lag))
+                  total (+ total d)]
+              (when (<= lag max-lag)
+                (aset cmnd lag (if (zero? total) 1.0 (/ (* d lag) total))))
+              (recur (inc lag) total))))
+        (aset cmnd (inc max-lag) (aget cmnd max-lag))
+        (let [dips (filter #(and (<= (aget cmnd %) (aget cmnd (dec %))) (<= (aget cmnd %) (aget cmnd (inc %))))
+                           (range min-lag max-lag))
+              lag (or (first (filter #(< (aget cmnd %) yin-threshold) dips))
+                      (when (seq dips) (apply min-key #(aget cmnd %) dips)))]
+          (when lag
+            (let [left (aget cmnd (dec lag)) center (aget cmnd lag) right (aget cmnd (inc lag))
+                  divisor (* 2.0 (- (+ left right) (* 2.0 center)))
+                  delta (if (zero? divisor) 0.0 (max -0.5 (min 0.5 (/ (- left right) divisor))))]
+              {:lag (+ lag delta) :aperiodicity (max 0.0 (min 1.0 center))})))))))
+
+(defn- refine-period
+  "Sharpen a coarse period (in samples of values) by the raw difference over
+  lags within ± radius, with parabolic interpolation."
+  [^doubles values period radius]
+  (let [low (long (max 2 (Math/floor (- period radius))))
+        high (long (Math/ceil (+ period radius)))
+        span (long (min (- (alength values) (inc high)) (* 2 high)))]
+    (if (or (< span 16) (>= high (alength values)))
+      period
+      (let [d (fn [lag] (difference values span lag))
+            best (apply min-key d (range low (inc high)))]
+        (if (or (= best low) (= best high))
+          (double best)
+          (let [left (d (dec best)) center (d best) right (d (inc best))
+                divisor (* 2.0 (- (+ left right) (* 2.0 center)))]
+            (+ best (if (zero? divisor) 0.0 (max -0.5 (min 0.5 (/ (- left right) divisor)))))))))))
+
+(defn analysis-plan
+  "How a cycle window is searched: the frequency range, the decimation factor
+  applied before YIN (one for an unfiltered band), and the decimated lag range.
+  YIN costs about max-lag² operations."
+  [band sample-rate]
+  (let [[low high] (band-range band)
+        [f-min f-max] (if low
+                        [(max 20.0 low) (min high (* 0.25 sample-rate))]
+                        [30.0 (min 2000.0 (* 0.25 sample-rate))])
+        factor (if low (long (max 1 (min 16 (Math/floor (/ sample-rate (* 8.0 f-max)))))) 1)
+        rate (/ sample-rate factor)]
+    {:frequency-range [f-min f-max] :factor factor
+     :min-lag (long (Math/floor (/ rate f-max))) :max-lag (long (Math/ceil (/ rate f-min)))}))
+
 (defn analyze-cycle
-  "Find the fundamental of a chronological band-limited window with YIN and
-  return {:shape :frequency-hz :confidence :periods :input} or a status map
-  {:status :low-confidence ...}. frequency-range bounds the period search."
-  [^doubles window sample-rate [f-min f-max] points min-confidence]
-  (let [estimate (audio/estimate-pitch window sample-rate f-min f-max 0.3)]
+  "Find the fundamental of a chronological band-limited window and return
+  {:status :ok :shape :frequency-hz :confidence :periods :input} or a
+  {:status :low-confidence} map. Bounded YIN runs on the decimated end of the
+  window, the period is refined at the full rate, and up to eight periods are
+  averaged. Confidence is 1 − YIN aperiodicity; below min-confidence the shape
+  is withheld."
+  [^doubles window sample-rate band points min-confidence]
+  (let [{:keys [factor min-lag max-lag]} (analysis-plan band sample-rate)
+        tail (let [needed (min (alength window) (* factor 2 max-lag))]
+               (java.util.Arrays/copyOfRange window (int (- (alength window) needed)) (int (alength window))))
+        estimate (yin (decimate tail factor) min-lag max-lag)]
     (if-not estimate
       {:status :low-confidence :confidence 0.0}
-      (let [{:keys [frequency confidence]} estimate
-            period (/ sample-rate frequency)
+      (let [confidence (- 1.0 (:aperiodicity estimate))
+            period (refine-period window (* factor (:lag estimate)) (max 1 factor))
+            frequency (/ sample-rate period)
             periods (long (max 1 (min 8 (dec (Math/floor (/ (alength window) period))))))
-            provisional (cycle-points window period periods 0.0 points)
-            ;; Rotate so the fundamental starts at zero phase, rising.
-            offset (let [phase (- (fundamental-phase (let [mean (/ (reduce + provisional) points)]
-                                                       (mapv #(- % mean) provisional))))]
-                     (- phase (Math/floor phase)))
-            aligned (cycle-points window period periods offset points)
-            mean (/ (reduce + aligned) points)
-            shape (normalize (mapv #(- % mean) aligned) :range)
             preview (let [span (min (alength window) (long (Math/ceil (* 2 period))))
                           start (- (alength window) span)]
-                      (mapv #(ring-sample window (+ start (* (dec span) (/ % 127.0)))) (range 128)))]
-        (cond
-          (nil? shape) {:status :low-confidence :confidence confidence :frequency-hz frequency}
-          (< confidence min-confidence) {:status :low-confidence :confidence confidence :frequency-hz frequency
-                                         :input {:kind :pcm :values preview :duration-ms (* 2000.0 (/ period sample-rate))}}
-          :else {:status :ok :shape shape :frequency-hz frequency :confidence confidence :periods periods
-                 :input {:kind :pcm :values preview :duration-ms (* 2000.0 (/ period sample-rate))}})))))
+                      (mapv #(ring-sample window (+ start (* (dec span) (/ % 127.0)))) (range 128)))
+            input {:kind :pcm :values preview :duration-ms (* 2000.0 (/ period sample-rate))}]
+        (if (< confidence min-confidence)
+          {:status :low-confidence :confidence confidence :frequency-hz frequency :input input}
+          (let [provisional (cycle-points window period periods 0.0 points)
+                ;; Rotate so the fundamental starts at zero phase, rising.
+                offset (let [phase (- (fundamental-phase (let [mean (/ (reduce + provisional) points)]
+                                                           (mapv #(- % mean) provisional))))]
+                         (- phase (Math/floor phase)))
+                aligned (cycle-points window period periods offset points)
+                mean (/ (reduce + aligned) points)
+                shape (normalize (mapv #(- % mean) aligned) :range)]
+            (if shape
+              {:status :ok :shape shape :frequency-hz frequency :confidence confidence :periods periods :input input}
+              {:status :low-confidence :confidence confidence :frequency-hz frequency :input input})))))))
 
 (defn analyze-envelope
   "Shape a window from per-point band RMS. Empty points take the previous
@@ -183,11 +280,11 @@
       {:status :ok :shape shape :input {:kind :envelope :values levels}}
       {:status :silent})))
 
-;; Extractor ---------------------------------------------------------------------
+;; Extractor bank ----------------------------------------------------------------
 
 (def default-spec
   {:band :bass :extract :envelope :window {:bars 1} :points 32
-   :silence-db -50.0 :min-confidence 0.6})
+   :silence-db -50.0 :min-confidence 0.8})
 
 (defn validate-spec
   "Return [] or path/message errors for an extractor spec."
@@ -208,28 +305,88 @@
           (when-not (and (finite? min-confidence) (<= 0 min-confidence 1))
             (problem [:min-confidence] "Minimum confidence must be 0..1"))))))
 
-(defn- frequency-search [band sample-rate]
-  (let [[low high] (or (band-range band) [30.0 2000.0])]
-    [(max 20.0 low) (min high 2000.0 (* 0.25 sample-rate))]))
-
-(defn- ring-size [band sample-rate]
-  (let [[f-min] (frequency-search band sample-rate)
-        needed (long (Math/ceil (* 4.0 (/ sample-rate f-min))))]
+(defn- ring-size
+  "Samples a band keeps: YIN's 2 × max-lag plus room for averaging, at least
+  four periods of the lowest frequency, capped at 16384."
+  [band sample-rate]
+  (let [{:keys [frequency-range]} (analysis-plan band sample-rate)
+        needed (long (Math/ceil (* 4.0 (/ sample-rate (first frequency-range)))))]
     (long (min 16384 (max 1024 (Long/highestOneBit (dec (* 2 needed))))))))
 
-(defn new-extractor
-  "Fresh extractor for one spec at one sample rate. A window that opens part
-  way through is discarded, so extraction begins at the next window edge."
-  [spec sample-rate]
-  (let [errors (validate-spec spec)]
-    (when (seq errors) (throw (ex-info "Invalid audio shape spec" {:errors errors :type ::invalid-shape}))))
-  (let [spec (merge default-spec spec)
-        design (filter-design (:band spec) sample-rate)
-        size (ring-size (:band spec) sample-rate)]
-    {:spec spec :sample-rate (double sample-rate) :design design
-     :filter (vec (repeat (* 2 (count design)) 0.0))
-     :ring (double-array size) :ring-filled 0 :ring-at 0
-     :window nil :seq 0 :status :waiting}))
+(defn new-bank
+  "An empty extractor bank for one sample rate. A bank is owned by one thread,
+  the capture worker: it keeps one band filter and one sample ring per distinct
+  band, shared by every LFO on that band, and each LFO's open window. Its
+  primitive buffers are mutated in place and never leave it; window-end jobs
+  carry fresh copies."
+  [sample-rate]
+  (when-not (and (finite? sample-rate) (<= 8000 sample-rate 192000))
+    (fail! "Sample rate must be 8–192 kHz" {:sample-rate sample-rate}))
+  {:sample-rate (double sample-rate) :fronts {} :lfos {}})
+
+(defn- new-front [band sample-rate]
+  (let [design (filter-design band sample-rate)]
+    {:band band :design design :coefficients (double-array (mapcat identity design))
+     :filter (double-array (* 2 (count design))) :ring (double-array (ring-size band sample-rate))
+     :at 0 :filled 0}))
+
+(defn- filter-block!
+  "Filter samples through a front's sections, updating its state in place."
+  ^doubles [{:keys [design ^doubles coefficients ^doubles filter]} ^doubles samples]
+  (let [sections (count design) n (alength samples) out (double-array n)]
+    (dotimes [i n]
+      (loop [s 0 x (let [v (aget samples i)] (if (Double/isFinite v) v 0.0))]
+        (if (= s sections)
+          (aset out i x)
+          (let [c (* 5 s) zi (* 2 s)
+                y (+ (* (aget coefficients c) x) (aget filter zi))]
+            (aset filter zi (- (+ (* (aget coefficients (+ c 1)) x) (aget filter (inc zi)))
+                               (* (aget coefficients (+ c 3)) y)))
+            (aset filter (inc zi) (- (* (aget coefficients (+ c 2)) x) (* (aget coefficients (+ c 4)) y)))
+            (recur (inc s) y)))))
+    out))
+
+(defn- ring-tail
+  "A fresh chronological copy of the front's ring followed by the first upto
+  samples of filtered: everything captured before that sample, at most the
+  ring's length."
+  ^doubles [{:keys [^doubles ring at filled]} ^doubles filtered upto]
+  (let [size (alength ring)
+        upto (long upto)
+        from-ring (min (long filled) (- size (min size upto)))
+        from-block (min size upto)
+        out (double-array (+ from-ring from-block))
+        start (mod (- (long at) from-ring) size)]
+    (dotimes [i from-ring] (aset out i (aget ring (mod (+ start i) size))))
+    (System/arraycopy filtered (int (- upto from-block)) out (int from-ring) (int from-block))
+    out))
+
+(defn- write-ring [{:keys [^doubles ring at filled] :as front} ^doubles filtered]
+  (let [size (alength ring) n (alength filtered)]
+    (if (>= n size)
+      (System/arraycopy filtered (int (- n size)) ring 0 (int size))
+      (dotimes [i n] (aset ring (mod (+ (long at) i) size) (aget filtered i))))
+    (assoc front :at (if (>= n size) 0 (mod (+ (long at) n) size)) :filled (min size (+ (long filled) n)))))
+
+(defn- new-lfo [spec digest points]
+  {:spec spec :digest digest :window nil :seq 0 :status :waiting
+   :squares (double-array points) :counts (long-array points) :sum-sq 0.0 :n 0})
+
+(defn- reconcile
+  "Fit the bank to the requested specs ({id spec}, each with an optional
+  :digest): new or changed specs start fresh, missing ones are dropped, and
+  a front lives exactly as long as an LFO uses its band."
+  [bank specs]
+  (let [lfos (into {} (for [[id spec] specs
+                            :let [digest (get spec :digest spec)
+                                  current (get-in bank [:lfos id])]]
+                        [id (if (= digest (:digest current)) current
+                                (let [spec (merge default-spec (dissoc spec :digest))]
+                                  (new-lfo spec digest (:points spec))))]))
+        bands (set (map (comp :band :spec) (vals lfos)))]
+    (assoc bank :lfos lfos
+           :fronts (into {} (for [band bands]
+                              [band (or (get-in bank [:fronts band]) (new-front band (:sample-rate bank)))])))))
 
 (defn- window-geometry
   "Window length and origin in transport beats for the clock's meter."
@@ -247,120 +404,129 @@
        (every? finite? [(:time-ms clock) (:beat clock) (:bpm clock)])
        (< 0 (:bpm clock) 1000)))
 
-(defn- chronological
-  "Copy of the ring's filled samples, oldest first."
-  ^doubles [^doubles ring filled at]
-  (let [size (alength ring) n (min filled size) out (double-array n)
-        start (mod (- at n) size)]
-    (dotimes [i n] (aset out i (aget ring (mod (+ start i) size))))
-    out))
+(defn- window-job
+  "The immutable hand-off for a closed window. A cycle job carries a fresh copy
+  of the band's samples up to the window edge; nothing else holds it."
+  [id {:keys [spec digest] :as lfo} window sum-sq n ^doubles squares ^longs counts front filtered at-sample sample-rate]
+  (cond-> {:id id :spec spec :digest digest :seq (inc (:seq lfo)) :sample-rate sample-rate
+           :window (assoc (select-keys window [:index :start-beat :end-beat]) :samples n)
+           :sum-sq sum-sq :n n}
+    (= :envelope (:extract spec)) (assoc :squares (vec squares) :counts (vec counts))
+    (= :cycle (:extract spec)) (assoc :samples (ring-tail front filtered at-sample))))
 
-(defn- finish-window
-  "Turn a complete accumulated window into an extraction."
-  [{:keys [spec sample-rate] :as state} window ring filled at]
+(defn- advance-lfo
+  "Run one LFO's window accumulation over a filtered block. Returns [lfo jobs]."
+  [id lfo front ^doubles filtered {:keys [started-at-ms clock sample-rate]}]
+  (let [spec (:spec lfo)
+        points (long (:points spec))
+        ^doubles squares (:squares lfo) ^longs counts (:counts lfo)
+        [length origin] (window-geometry spec clock)
+        length (double length) origin (double origin)
+        rate (/ (double (:bpm clock)) 60000.0)
+        beat0 (+ (double (:beat clock)) (* (- (double started-at-ms) (double (:time-ms clock))) rate))
+        step (* rate (/ 1000.0 (double sample-rate)))
+        n (alength filtered)
+        open! (fn [index complete?]
+                (java.util.Arrays/fill squares 0.0)
+                (java.util.Arrays/fill counts 0)
+                {:index index :start-beat (+ origin (* index length)) :end-beat (+ origin (* (inc index) length))
+                 :complete? complete?})]
+    (loop [i 0 window (:window lfo)
+           windex (long (:index (:window lfo) Long/MIN_VALUE))
+           wstart (double (:start-beat (:window lfo) 0.0))
+           sum-sq (double (:sum-sq lfo)) wn (long (:n lfo))
+           seq (long (:seq lfo)) jobs []]
+      (if (= i n)
+        [(assoc lfo :window window :sum-sq sum-sq :n wn :seq seq
+                :status (if (and window (:complete? window)) :listening :waiting))
+         jobs]
+        (let [beat (+ beat0 (* i step))
+              index (long (Math/floor (/ (- beat origin) length)))]
+          (if (and window (= index windex))
+            (let [y (aget filtered i)
+                  point (long (max 0 (min (dec points) (Math/floor (* points (/ (- beat wstart) length))))))]
+              (aset squares point (+ (aget squares point) (* y y)))
+              (aset counts point (inc (aget counts point)))
+              (recur (inc i) window windex wstart (+ sum-sq (* y y)) (inc wn) seq jobs))
+            ;; An edge: hand off the window that ended, then reprocess sample i
+            ;; in the new one. A jump in either direction starts incomplete.
+            (let [contiguous? (and window (= index (inc windex)))
+                  job (when (and contiguous? (:complete? window))
+                        (window-job id (assoc lfo :seq seq) window sum-sq wn squares counts front filtered i sample-rate))
+                  ;; A window opened on its first sample is whole too.
+                  at-edge? (<= (- beat (+ origin (* index length))) (* 1.5 step))
+                  opened (open! index (boolean (or contiguous? at-edge?)))]
+              (recur i opened index (double (:start-beat opened)) 0.0 0
+                     (if job (inc seq) seq) (cond-> jobs job (conj job))))))))))
+
+(defn advance-bank
+  "Feed one captured mono block to every requested LFO. specs maps an LFO ID
+  to its extractor spec (with an optional :digest identity); block has
+  :samples (-1..1), :sample-rate, :started-at-ms and :clock (transport at
+  capture: :time-ms, :beat, :bpm, :playing?, :meter, optional bar and phrase
+  origins). Each distinct band is filtered once into its shared ring. A stopped
+  or missing transport, invalid timing or a discontinuity drops every open
+  window: nothing is shaped from audio that is not one contiguous playing
+  window, and after play resumes the first job is the next whole window.
+
+  This is the capture thread's whole share: accumulation and copies. It
+  returns {:bank :jobs}; a job is finished by `finish-job`, on another thread."
+  [bank specs {:keys [samples sample-rate started-at-ms clock timing-valid? discontinuity?]
+               :or {timing-valid? true} :as block}]
+  (let [bank (if (= (double sample-rate) (:sample-rate bank)) bank (new-bank sample-rate))
+        bank (reconcile bank (or specs {}))
+        running? (and timing-valid? (not discontinuity?) (playing-clock? clock) (finite? started-at-ms))
+        status (if running? nil (if (playing-clock? clock) :invalid-timing :paused))]
+    (reduce-kv
+     (fn [{:keys [bank jobs]} band front]
+       (when discontinuity? (java.util.Arrays/fill ^doubles (:filter front) 0.0))
+       (let [filtered (filter-block! front samples)
+             [bank jobs] (reduce-kv
+                          (fn [[bank jobs] id lfo]
+                            (if (not= band (get-in lfo [:spec :band]))
+                              [bank jobs]
+                              (if running?
+                                (let [[lfo new-jobs] (advance-lfo id lfo front filtered block)]
+                                  [(assoc-in bank [:lfos id] lfo) (into jobs new-jobs)])
+                                [(assoc-in bank [:lfos id] (assoc lfo :window nil :sum-sq 0.0 :n 0 :status status))
+                                 jobs])))
+                          [bank jobs] (:lfos bank))]
+         {:bank (assoc-in bank [:fronts band] (write-ring front filtered)) :jobs jobs}))
+     {:bank bank :jobs []} (:fronts bank))))
+
+(defn finish-job
+  "Turn a window job into an extraction. Pure and potentially costly (cycle
+  mode runs YIN): call it off the capture thread."
+  [{:keys [spec digest seq window sum-sq n squares counts samples sample-rate]}]
   (let [{:keys [extract points silence-db min-confidence band]} spec
-        rms (Math/sqrt (/ (:sum-sq window) (max 1 (:n window))))
-        level-db (* 20.0 (Math/log10 (max rms 1.0e-9)))
-        meta {:seq (inc (:seq state)) :level-db level-db
-              :window {:index (:index window) :start-beat (:start-beat window) :end-beat (:end-beat window)
-                       :samples (:n window)}}]
-    (merge meta
+        rms (Math/sqrt (/ sum-sq (max 1 n)))
+        level-db (* 20.0 (Math/log10 (max rms 1.0e-9)))]
+    (merge {:seq seq :level-db level-db :window window :spec-digest digest}
            (cond
              (< level-db silence-db) {:status :silent}
-             (= :envelope extract) (analyze-envelope (:squares window) (:counts window))
-             :else (let [^doubles values (chronological ring filled at)]
-                     (if (< (alength values) 256)
-                       {:status :low-confidence :confidence 0.0}
-                       (analyze-cycle values sample-rate (frequency-search band sample-rate)
-                                      points min-confidence)))))))
+             (= :envelope extract) (analyze-envelope squares counts)
+             (< (alength ^doubles samples) 256) {:status :low-confidence :confidence 0.0}
+             :else (analyze-cycle samples sample-rate band points min-confidence)))))
 
-(defn- open-window [index length origin points complete?]
-  {:index index :start-beat (+ origin (* index length)) :end-beat (+ origin (* (inc index) length))
-   :complete? complete? :sum-sq 0.0 :n 0
-   :squares (vec (repeat points 0.0)) :counts (vec (repeat points 0))})
+;; Single-LFO convenience ------------------------------------------------------------
+
+(defn new-extractor
+  "A bank with one LFO, for tests, the REPL and offline replay. A window that
+  opens part way through is discarded, so extraction begins at the next edge."
+  [spec sample-rate]
+  (let [errors (validate-spec spec)]
+    (when (seq errors) (throw (ex-info "Invalid audio shape spec" {:errors errors :type ::invalid-shape}))))
+  (assoc (new-bank sample-rate) ::spec spec :status :waiting))
 
 (defn advance
-  "Feed one captured mono block. block has :samples (doubles, -1..1),
-  :sample-rate, :started-at-ms, and :clock (transport at capture: :time-ms,
-  :beat, :bpm, :playing?, :meter, optional :bar-origin-beat). A stopped or
-  missing transport, invalid timing or a discontinuity drops the open window:
-  nothing is extracted for audio that is not one contiguous playing window,
-  and after play resumes the first extraction is the next whole window.
-  Returns {:state :extractions}."
-  [state {:keys [samples sample-rate started-at-ms clock timing-valid? discontinuity?]
-          :or {timing-valid? true}}]
-  (when-not (= (double sample-rate) (:sample-rate state))
-    (fail! "Block sample rate differs from the extractor" {:sample-rate sample-rate}))
-  (let [^doubles samples samples
-        n (alength samples)
-        [filtered filter-state] (filter-samples (:design state) (if discontinuity? [] (:filter state)) samples)
-        ^doubles filtered filtered
-        ^doubles old-ring (:ring state)
-        size (alength old-ring)
-        ring (aclone old-ring)
-        running? (and timing-valid? (not discontinuity?) (playing-clock? clock) (finite? started-at-ms))
-        points (get-in state [:spec :points])]
-    (if-not running?
-      ;; Keep the filter warm and the ring current; drop the window.
-      (let [at (:ring-at state)]
-        (dotimes [i n] (aset ring (mod (+ at i) size) (aget filtered i)))
-        {:state (assoc state :filter filter-state :ring ring :ring-at (mod (+ at n) size)
-                       :ring-filled (min size (+ (:ring-filled state) n)) :window nil
-                       :status (if (playing-clock? clock) :invalid-timing :paused))
-         :extractions []})
-      (let [[length origin] (window-geometry (:spec state) clock)
-            length (double length) origin (double origin)
-            rate (/ (double (:bpm clock)) 60000.0)
-            beat0 (+ (double (:beat clock)) (* (- (double started-at-ms) (double (:time-ms clock))) rate))
-            step (* rate (/ 1000.0 (double sample-rate)))
-            ;; Accumulators for the open window live in private arrays for the
-            ;; block and are written back as vectors when it ends.
-            squares (double-array points) counts (long-array points)
-            load! (fn [window]
-                    (dotimes [p points]
-                      (aset squares p (double (nth (:squares window) p)))
-                      (aset counts p (long (nth (:counts window) p)))))
-            store (fn [window sum-sq n]
-                    (assoc window :sum-sq sum-sq :n n :squares (vec squares) :counts (vec counts)))
-            fresh (fn [index complete?]
-                    (java.util.Arrays/fill squares 0.0)
-                    (java.util.Arrays/fill counts 0)
-                    (open-window index length origin points complete?))]
-        (when-let [window (:window state)] (load! window))
-        (loop [i 0 window (:window state)
-               ;; The open window's index and start beat, unboxed for the sample loop.
-               windex (long (:index (:window state) Long/MIN_VALUE))
-               wstart (double (:start-beat (:window state) 0.0))
-               sum-sq (double (:sum-sq (:window state) 0.0)) wn (long (:n (:window state) 0))
-               at (long (:ring-at state)) filled (long (:ring-filled state))
-               seq (long (:seq state)) extractions []]
-          (if (= i n)
-            {:state (assoc state :filter filter-state :ring ring :ring-at at :ring-filled filled
-                           :window (when window (store window sum-sq wn)) :seq seq
-                           :status (if (and window (:complete? window)) :listening :waiting))
-             :extractions extractions}
-            (let [beat (+ beat0 (* i step))
-                  index (long (Math/floor (/ (- beat origin) length)))]
-              (if (and window (= index windex))
-                (let [y (aget filtered i)
-                      point (long (max 0 (min (dec points) (Math/floor (* points (/ (- beat wstart) length))))))]
-                  (aset squares point (+ (aget squares point) (* y y)))
-                  (aset counts point (inc (aget counts point)))
-                  (aset ring at y)
-                  (recur (inc i) window windex wstart (+ sum-sq (* y y)) (inc wn)
-                         (let [next (inc at)] (if (= next size) 0 next)) (min size (inc filled))
-                         seq extractions))
-                ;; An edge: close the window that ended, then reprocess sample i
-                ;; in the new one. A jump in either direction starts incomplete.
-                (let [contiguous? (and window (= index (inc windex)))
-                      extraction (when (and contiguous? (:complete? window))
-                                   (finish-window (assoc state :seq seq) (store window sum-sq wn) ring filled at))
-                      ;; A window opened on its first sample is whole too.
-                      at-edge? (<= (- beat (+ origin (* index length))) (* 1.5 step))
-                      opened (fresh index (boolean (or contiguous? at-edge?)))]
-                  (recur i opened index (double (:start-beat opened)) 0.0 0 at filled
-                         (if extraction (inc seq) seq)
-                         (cond-> extractions extraction (conj extraction))))))))))))
+  "Feed one block to a `new-extractor` bank and finish its jobs inline.
+  Returns {:state :extractions}; :status of the state is the LFO's."
+  [state block]
+  (when-not (= (double (:sample-rate block)) (:sample-rate state))
+    (fail! "Block sample rate differs from the extractor" {:sample-rate (:sample-rate block)}))
+  (let [{:keys [bank jobs]} (advance-bank state {::one (::spec state)} block)]
+    {:state (assoc bank :status (get-in bank [:lfos ::one :status]))
+     :extractions (mapv finish-job jobs)}))
 
 (defn table-value
   "Periodic linear interpolation of a shape table at phase in cycles."

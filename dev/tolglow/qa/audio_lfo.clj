@@ -19,7 +19,8 @@
             [clojure.string :as str]
             [tolglow.audio-lfo :as lfo]
             [tolglow.audio.fixtures :as fixtures]
-            [tolglow.audio.shape :as shape]))
+            [tolglow.audio.shape :as shape]
+            [tolglow.audio.shape-worker :as shape-worker]))
 
 (def tempos [84.0 172.0])
 
@@ -73,6 +74,7 @@
      :max-table-jump (round (reduce max 0.0 (map :table-jump commits)) 9)
      :latency-ms {:min (round (reduce min (map :latency-ms commits)) 2) :max (round (reduce max (map :latency-ms commits)) 2)}
      :extract-us-per-block (rounded extract-us)
+     :finish-us-per-window (rounded (:finish-us result))
      :sample-us-per-frame (rounded sample-us)}))
 
 ;; SVG ------------------------------------------------------------------------------
@@ -116,10 +118,64 @@
          (str/join (map-indexed lfo-lane runs))
          "</svg>")))
 
+;; Capture-thread budget ------------------------------------------------------------
+
+(def budget-lfos
+  "Six cycle-mode LFOs on one bar grid, mixed bands, two sharing the bass band:
+  every window closes on the same capture block."
+  {:sub {:band :sub :extract :cycle} :bass {:band :bass :extract :cycle}
+   :bass-fine {:band :bass :extract :cycle :points 63} :low-mid {:band :low-mid :extract :cycle}
+   :mid {:band :mid :extract :cycle} :full {:band :full :extract :cycle}})
+
+(defn capture-budget
+  "Play a passage in real time, 480-frame blocks at 48 kHz, through the bank
+  for six LFOs as the capture thread does, with the real shape worker
+  finishing window-end jobs. Returns the capture-side cost per block (bank plus
+  hand-off), the cost of the blocks that close windows, each LFO's results and
+  the worst delay from a window's closing block to its published shape, against
+  the window's length."
+  [bpm bars]
+  (let [sample-rate 48000.0 block 480
+        samples (fixtures/passage :delay-synth {:bpm bpm :bars bars})
+        specs (into {} (map (fn [[id spec]] [id (assoc spec :digest (hash spec))])) budget-lfos)
+        submitted (atom {})
+        delays (atom [])
+        results (atom {})
+        worker (shape-worker/start!
+                (fn [result]
+                  (doseq [[id extraction] result]
+                    (swap! results update id (fnil conj []) (:status extraction))
+                    (when-let [at (get @submitted [id (:seq extraction)])]
+                      (swap! delays conj (/ (- (:finished-ns extraction) at) 1.0e6))))))
+        origin (System/nanoTime)]
+    (try
+      (loop [start 0 bank (shape/new-bank sample-rate) costs [] edges []]
+        (if (>= (+ start block) (alength samples))
+          (do ((:stop! worker) true 5000)
+              {:bpm bpm :lfos (count specs) :bands (count (distinct (map :band (vals specs))))
+               :window-ms (* 4 (/ 60000.0 bpm))
+               :block-us (lfo/timing costs) :closing-block-us (lfo/timing edges)
+               :results (into (sorted-map) @results)
+               :shape-delay-ms {:max (reduce max 0.0 @delays) :count (count @delays)}})
+          (let [due (+ origin (long (* 1.0e9 (/ (+ start block) sample-rate))))]
+            (loop [] (let [wait (- due (System/nanoTime))] (when (pos? wait) (Thread/sleep (max 0 (quot wait 1000000)) (int (mod wait 1000000))) (recur))))
+            (let [t0 (System/nanoTime)
+                  {:keys [bank jobs]} (shape/advance-bank bank specs
+                                                          {:samples (java.util.Arrays/copyOfRange samples (int start) (int (+ start block)))
+                                                           :sample-rate sample-rate :started-at-ms (* 1000.0 (/ start sample-rate))
+                                                           :clock {:time-ms 0.0 :beat 0.0 :bpm bpm :playing? true}})
+                  handed (System/nanoTime)
+                  _ (doseq [job jobs] (swap! submitted assoc [(:id job) (:seq job)] handed))
+                  _ ((:submit! worker) jobs)
+                  cost (- (System/nanoTime) t0)]
+              (recur (+ start block) bank (conj costs cost) (cond-> edges (seq jobs) (conj cost)))))))
+      (finally ((:stop! worker) false 1000)))))
+
 (defn -main [& [out-dir]]
   (let [directory (io/file (or out-dir "target/audio-lfo-676"))
         runs (vec (for [kind fixtures/passages bpm tempos mode modes] (run kind mode bpm)))
-        report {:issue 676 :settings settings :bars bars :sample-rate 48000.0 :block-frames 480 :fps 60.0
+        budget (mapv #(capture-budget % 5) [70.0 180.0])
+        report {:issue 676 :settings settings :bars bars :capture-budget budget :sample-rate 48000.0 :block-frames 480 :fps 60.0
                 :clojure (clojure-version) :java (System/getProperty "java.version")
                 :excluded "device capture and decode, the capture worker's other analysis, owner scheduling, IPC and rendering"
                 :runs (mapv summary runs)}]
@@ -131,6 +187,10 @@
       (with-open [out (io/output-stream (io/file directory (str (name kind) "-120.wav")))]
         (.write out (fixtures/wav-bytes (fixtures/passage kind {:bpm 120.0 :bars bars}) 48000.0))))
     (println "audio-lfo report" (.getPath directory))
+    (doseq [{:keys [bpm block-us closing-block-us shape-delay-ms window-ms results]} budget]
+      (println (format "budget %3.0f BPM, 6 cycle LFOs: block us %s, closing block us %s, shape delay max %.1f ms of a %.0f ms window, results %s"
+                       bpm (pr-str ((juxt :median :p99 :max) block-us)) (pr-str ((juxt :median :max) closing-block-us))
+                       (double (:max shape-delay-ms)) window-ms (pr-str (update-vals results count)))))
     (doseq [{:keys [passage extract bpm windows max-table-jump latency-ms extract-us-per-block sample-us-per-frame]} (:runs report)]
       (println (format "%-14s %-9s %5.0f  %-62s jump %.1e  latency %s ms  extract %s us/block  sample %s us/frame"
                        (name passage) (name extract) bpm (str/join " " (map (comp name :status) windows))

@@ -38,6 +38,10 @@
 
 (rf/reg-event-db ::edit
   (fn [db [_ k v]] (update-form db #(-> % (assoc k v) (dissoc :error :notice)))))
+
+(rf/reg-event-db ::edit-stages
+  ;; The stage editor sends a function of the current stages; see block-builder/stage-list.
+  (fn [db [_ f]] (update-form db #(-> % (update :stages (comp f vec)) (dissoc :error :notice)))))
 (rf/reg-event-fx ::toggle
   (fn [{:keys [db]} _]
     (let [open? (not (:open? (form db)))]
@@ -175,7 +179,7 @@
      (when (:fixed? ui)
        [:label "Dry value or expression" [:input {:value (:base-str ui) :on-change #(edit! :base-str (text-of %))}]])
      [builder/stage-editor {:stages (:stages ui) :library (merge library (:prefabs settings))
-                            :parameters [] :transport-only? true :on-change #(edit! :stages %)}]
+                            :parameters [] :transport-only? true :on-change #(rf/dispatch-sync [::edit-stages %])}]
      [:div.button-row
       [:button.button.primary {:type "button" :disabled (or (not online?) changed? (:pending ui))
                                :on-click #(rf/dispatch [::submit :put])} "Save variable chain"]
