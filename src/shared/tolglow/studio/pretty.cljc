@@ -100,11 +100,35 @@
   (let [level (:level *limits*)]
     (if (and level (>= depth level) (collection-kind x)) too-deep x)))
 
-(defn- limited [items]
-  (if-let [n (:length *limits*)]
-    (let [head (take (inc n) items)]
-      (if (> (count head) n) (concat (take n head) [ellipsis]) head))
-    items))
+(def ^:private ^:dynamic *lazy-length*
+  ;; Under a character budget, the most elements of a lazy (uncounted)
+  ;; sequence that could be shown, or nil without a budget.
+  nil)
+
+(def ^:private ^:dynamic *lazy-allowance*
+  ;; Under a character budget, a volatile count of lazy elements the whole call
+  ;; may still realize, or nil without a budget.
+  nil)
+
+(defn- budget-reached! []
+  (throw (ex-info "Pretty-print budget reached" {::budget true})))
+
+(defn- limited
+  "`items` cut to the length limit, with the ellipsis after the last shown
+  item. A lazy sequence under a character budget is also cut to what the
+  budget could show, and its realized elements count against the call's
+  allowance, so an infinite or deeply nested lazy value stops early. Counted
+  collections keep their exact elision, so their text does not change."
+  [items lazy?]
+  (let [n (:length *limits*)
+        n (if (and lazy? *lazy-length*) (if n (min n *lazy-length*) *lazy-length*) n)]
+    (if n
+      (let [head (doall (take (inc n) items))]
+        (when (and lazy? *lazy-allowance*
+                   (neg? (vswap! *lazy-allowance* - (count head))))
+          (budget-reached!))
+        (if (> (count head) n) (concat (take n head) [ellipsis]) head))
+      items)))
 
 (defn- entries
   "What a collection at `depth` prints, in order: [key value] pairs for a map,
@@ -120,7 +144,8 @@
          (limited (case kind
                     :map (map-entries x)
                     :set (sort-shown identity x (:length *limits*))
-                    (seq x))))))
+                    (seq x))
+                  (and (= kind :list) (not (counted? x)))))))
 
 (defn- items
   "Entries with each map pair spread into its key and value."
@@ -171,7 +196,7 @@
       (do (vreset! *column* (- (count text) newline 1))
           (vswap! *newlines* inc))))
   (when (and *max-chars* (> (buffer-length) *max-chars*))
-    (throw (ex-info "Pretty-print budget reached" {::budget true}))))
+    (budget-reached!)))
 
 (defn- new-line! [column] (emit! (str "\n" (spaces column))))
 
@@ -248,6 +273,9 @@
   "Append the text of `x` at nesting `depth`, starting at the current column
   and followed on its last line by `tail` characters."
   [x tail width depth]
+  ;; Every nesting level prints at least one character, so a budget also
+  ;; bounds the depth (and the stack) of the layout.
+  (when (and *max-chars* (> depth *max-chars*)) (budget-reached!))
   (if-let [text (flat x depth (- width @*column* tail))]
     (emit! text)
     (if-let [kind (collection-kind x)]
@@ -260,25 +288,34 @@
   "Pretty-printed EDN of `value` as {:text t :truncated? b}. Takes the options
   of `edn`; with `:max-chars` it stops once the text exceeds that many
   characters and returns its first `:max-chars` characters, so the work and
-  memory stay bounded by the budget rather than by the size of `value`."
+  memory stay bounded by the budget rather than by the size of `value`. A
+  lazy value nested so deep or wide that showing the budget would mean
+  realizing far more than it shows stops earlier, with shorter text and
+  `:truncated? true`. Counted collections print exactly as `edn` would."
   [value {:keys [width column tail length level max-chars] :or {width default-width column 0 tail 0}}]
-  ;; No more than max-chars elements of one collection fit in max-chars
-  ;; characters, so with a budget the length limit never needs to exceed
-  ;; max-chars + 1: an infinite or huge lazy collection is never realized past
-  ;; what could be shown, and the visible text is the same.
-  (let [length (if max-chars (min (or length ##Inf) (inc max-chars)) length)]
-    ;; Values printed by pr-str (records, Java objects) inside get the same limits.
-    (binding [*print-length* length *print-level* level *print-meta* false
-              *limits* (when (or length level) {:length length :level level})
-              *buffer* (new-buffer) *column* (volatile! column) *newlines* (volatile! 0)
-              *max-chars* max-chars]
-      (try
-        (layout! (shown value 0) tail width 0)
-        {:text (str *buffer*) :truncated? false}
-        (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
-          (if (::budget (ex-data error))
-            {:text (subs (str *buffer*) 0 max-chars) :truncated? true}
-            (throw error)))))))
+  ;; Values printed by pr-str (records, Java objects) inside get the same limits.
+  (binding [*print-length* length *print-level* level *print-meta* false
+            *limits* (when (or length level) {:length length :level level})
+            *buffer* (new-buffer) *column* (volatile! column) *newlines* (volatile! 0)
+            *max-chars* max-chars
+            ;; No more than max-chars elements fit in max-chars characters. A
+            ;; lazy sequence is never realized past that, and the whole call
+            ;; realizes a bounded multiple of it however deep the value nests.
+            *lazy-length* (when max-chars (inc max-chars))
+            *lazy-allowance* (when max-chars (volatile! (* 64 (inc max-chars))))]
+    (try
+      (layout! (shown value 0) tail width 0)
+      {:text (str *buffer*) :truncated? false}
+      (catch #?(:clj Throwable :cljs :default) error
+        ;; A value nested deeper than the stack allows is cut where it stopped,
+        ;; like one that reached the character budget.
+        (if (and max-chars
+                 (or (::budget (ex-data error))
+                     #?(:clj (instance? StackOverflowError error)
+                        :cljs (instance? js/RangeError error))))
+          (let [text (str *buffer*)]
+            {:text (subs text 0 (min max-chars (count text))) :truncated? true})
+          (throw error))))))
 
 (defn edn
   "Pretty-printed EDN text of `value`. Options: `:width` (default 100); when
