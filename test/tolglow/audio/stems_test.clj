@@ -1,6 +1,7 @@
 (ns tolglow.audio.stems-test
   (:require [clojure.test :refer [deftest is testing]]
             [tolglow.audio.capture :as capture]
+            [tolglow.audio.stem-routes :as stem-routes]
             [tolglow.audio.stem-fixtures :as fixtures]
             [tolglow.audio.stems :as stems]))
 
@@ -141,3 +142,23 @@
                         (filter #(= :audio/onset (:type %)) @events))))
           (finally (capture/close! manager))))
       (finally (.delete file)))))
+
+(deftest stem-routes-build-and-read-ordinary-subscribers-and-patch-routes
+  (let [subscriber (stem-routes/onset-subscriber :kick :strobe {:grid {:beats 1/4}})
+        spec (-> nil
+                 (stem-routes/with-level-route :bass :wash :level {})
+                 (stem-routes/with-level-route :kick :wash :level {:feature :onset :envelope {:attack {:beats 0} :release {:beats 1/2}}})
+                 (stem-routes/with-level-route :bass :wash :level {:range [0.2 0.8]}))]
+    (is (= {:id :stem-kick-strobe :match {:type :audio/onset :emitter-id :stem/kick}
+            :actions [{:op :cue/launch :select {:ids [:strobe] :pick :first} :grid {:beats 1/4}}]}
+           subscriber))
+    (is (= 3 (:revision spec)))
+    (is (= #{"stem/bass/level" "stem/kick/onset"} (set (keys (:sources spec)))))
+    (is (= 2 (count (:routes spec))) "re-adding a route replaces it")
+    (is (= {:kick {:onsets [{:subscriber-id :stem-kick-strobe :enabled? true :actions (:actions subscriber)}]
+                   :ports [{:route-id :stem-kick-onset-wash-level :feature :onset :cue-id :wash :param :level}]}
+            :bass {:ports [{:route-id :stem-bass-level-wash-level :feature :level :cue-id :wash :param :level}]}}
+           (stem-routes/routes [subscriber {:id :other :match {:type :audio/kick} :actions []}] spec)))
+    (testing "Studio's text ids read the same"
+      (is (= [:kick] (keys (stem-routes/routes [{:id "stem-kick-strobe" :match {:type "audio/onset" :emitter-id "stem/kick"}
+                                                 :actions []}] nil)))))))

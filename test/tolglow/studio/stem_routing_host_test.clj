@@ -7,7 +7,8 @@
             [afterglow.control.model :as control]
             [tolglow.audio.stem-fixtures :as fixtures]
             [tolglow.connections :as connections]
-            [tolglow.show :as show]))
+            [tolglow.show :as show]
+            [tolglow.stems :as stems]))
 
 (def head {:id :head :position [0 0 0] :universe 1 :address 1 :channels {:dimmer 1 :red 2 :green 3 :blue 4}})
 
@@ -24,16 +25,6 @@
                                            :wash {:id :wash :version 1 :effect-id :wash}}}})
       (assoc :time-ms 0.0)
       (update :transport assoc :time-ms 0.0 :beat 0.0 :bpm 120.0 :playing? true)))
-
-(def patch
-  {:version 1 :id :stems :revision 1
-   :sources {"stem/guitar/level" {:kind :audio :range [0.0 1.0] :timeout {:beats 16}}}
-   :destinations {:level {:cue-id :wash :param :level :range [0.0 1.0] :base 0.0 :combine :max}}
-   :routes [{:id :guitar-level :source "stem/guitar/level" :destination :level}]})
-
-(def subscriber
-  {:id :kick-hits :match {:type :audio/onset :emitter-id :stem/kick}
-   :actions [{:op :cue/launch :select {:ids [:hit] :pick :first}}]})
 
 (defn- apply-at! [runtime type payload time]
   (let [receipt (show/submit! runtime type payload)]
@@ -65,11 +56,11 @@
                                                                  (= :hit (get-in % [:data :cue-id])))
                                                         (get-in % [:time :beat])) events)))
                 :frame! (fn [_]) :tracing? (constantly false) :close! (fn [])}))
-      (let [receipt (show/register-event-subscriber! runtime subscriber)]
+      ;; Route through the same REPL operations Studio's stem panel submits.
+      (let [{:keys [receipt]} (stems/route-onset! runtime :kick :hit)
+            {:keys [saved enabled]} (stems/route-level! runtime :guitar :wash :level)]
         (show/tick! runtime 0.0)
-        (is (= :accepted (:status (deref receipt 1000 ::missing)))))
-      (is (= :accepted (:status (apply-at! runtime :patch-save {:source (pr-str patch)} 0.0))))
-      (is (= :accepted (:status (apply-at! runtime :patch-enabled {:enabled? true} 0.0))))
+        (is (= [:accepted :accepted :accepted] (mapv #(:status (deref % 1000 ::missing)) [receipt saved enabled]))))
       (is (= :accepted (:status (apply-at! runtime :command {:op :cue/launch :cue-id :wash} 0.0))))
       ;; The injected stream reads faster than real time; keep the capture
       ;; clock past every sample it reads.
@@ -81,12 +72,13 @@
       (let [end (/ (:frames rendered) 48.0)]
         (doseq [t [(+ end 1) (+ end 2)]] (transport! runtime t) (show/tick! runtime t)))
       {:launches @launches :levels @levels :model (:model @(:state runtime)) :saved (show/export-show runtime)
+       :view (stems/view runtime)
        :status (show/audio-action! runtime :status {})}
       (finally (show/stop! runtime)))))
 
 (deftest kick-onsets-launch-a-cue-on-each-beat-and-a-guitar-level-drives-a-parameter
   (let [rendered (fixtures/render {:bpm 120.0 :bars 4})
-        {:keys [launches levels model status saved]} (run-stems! rendered (fn [_ _]))
+        {:keys [launches levels model status saved view]} (run-stems! rendered (fn [_ _]))
         beats launches
         kicks (mapv :beat (get-in rendered [:onsets :kick]))]
     (is (= (count kicks) (count beats)) (pr-str beats))
@@ -102,6 +94,14 @@
              (mapv (juxt :id :channel :preset) (get-in saved [:model :integrations :audio-capture :config :stems]))))
       (is (= #{"stem/guitar/level"} (set (keys (get-in saved [:model :routing :spec :sources])))))
       (is (= :stem/kick (get-in (first (get-in saved [:model :event-subscribers :subscribers])) [:match :emitter-id]))))
+    (testing "the REPL view lists each stem with its live counts and routes"
+      (is (= [:kick :snare :bass :guitar] (mapv :id view)))
+      (is (= 16 (:onset-count (first view))))
+      (is (= [{:subscriber-id :stem-kick-hit :enabled? true
+               :actions [{:op :cue/launch :select {:ids [:hit] :pick :first}}]}]
+             (get-in (first view) [:routes :onsets])))
+      (is (= [{:route-id :stem-guitar-level-wash-level :feature :level :cue-id :wash :param :level}]
+             (get-in (last view) [:routes :ports]))))
     (testing "stem ports are learned by the patch bay"
       (is (every? #(contains? (get-in model [:routing :ports]) %)
                   ["stem/kick/level" "stem/kick/onset" "stem/guitar/level" "stem/bass/onset"])))
