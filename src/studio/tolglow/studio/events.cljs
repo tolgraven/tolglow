@@ -7,6 +7,7 @@
             [tolglow.studio.operator-history :as history]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.page-routes :as pages]
+            [tolglow.studio.pretty :as pretty]
             [tolglow.studio.reactive-editor :as reactive-editor]
             [tolglow.studio.state-socket]
             [tolglow.studio.spatial-drafts :as spatial-drafts]
@@ -468,6 +469,9 @@
   (fn [db [_ message]] (if (= message (get-in db [:ui :toast :message])) (assoc-in db [:ui :toast] nil) db)))
 (rf/reg-event-fx :studio/failure (fn [_ [_ error]] {:dispatch [:studio/toast (str error) true]}))
 (rf/reg-event-db :studio/ui-set (fn [db [_ path value]] (assoc-in db (into [:ui] path) value)))
+
+(rf/reg-event-db :studio/ui-update (fn [db [_ path f]] (update-in db (into [:ui] path) f)))
+
 (rf/reg-event-db :studio/numeric-edit
   (fn [db [_ field-id text]] (assoc-in db [:ui :numeric-edits field-id] text)))
 (rf/reg-event-db :studio/numeric-blur
@@ -1172,6 +1176,7 @@
                                                           :loaded-owner (dissoc token :id)
                                                           :mode :source :auto? false :status (str id " · v" version)
                                                           :result "Loaded from the running show." :error? false
+                                                          :baseline {:source source :status (str id " · v" version)}
                                                           :publication nil :publishing? false :load-token nil})
                (or typed (get-in db [:ui :builder :reactive :base])) (assoc-in [:ui :builder] default-builder)
                typed (update-in [:ui :builder] merge {:id id :name (or (:name typed) id) :cue? false
@@ -1182,14 +1187,29 @@
     {:db (cond-> (update-in db [:ui :definition] merge {:kind "effects" :source initial-source :loaded-id nil :version 1
                                                        :loaded-owner nil
                                                        :auto? false :status "New definition" :result "" :error? false
-                                                       :publication nil :publishing? false :load-token nil})
+                                                       :baseline nil :publication nil :publishing? false :load-token nil})
            (get-in db [:ui :builder :reactive]) (assoc-in [:ui :builder] default-builder))
      :studio/nvim-source initial-source}))
-(defn- edit-definition-source [db source]
-  (let [revision (inc (get-in db [:ui :definition :edit-revision] 0))]
-    {:db (update-in db [:ui :definition] merge {:source source :status "Unpublished changes" :edit-revision revision
-                                               :error? false :result ""})
-     :dispatch-later (when (get-in db [:ui :definition :auto?]) [{:ms 850 :dispatch [:studio/auto-publish revision]}])}))
+(def ^:private auto-publish-delay-ms
+  "Quiet time after the latest edit before Publish valid edits sends it."
+  850)
+
+(defn- published-source? [definition source]
+  (= source (get-in definition [:baseline :source])))
+
+(defn- edit-definition-source
+  "Install an edited source. The status follows the source rather than the edit:
+  text equal to the published baseline (the text last loaded from or accepted by
+  the running show) reads as that baseline's status, anything else as unpublished."
+  [db source]
+  (let [definition (get-in db [:ui :definition])
+        revision (inc (:edit-revision definition 0))
+        published? (published-source? definition source)]
+    {:db (update-in db [:ui :definition] merge {:source source :edit-revision revision :error? false :result ""
+                                               :status (if published? (get-in definition [:baseline :status])
+                                                         "Unpublished changes")})
+     :dispatch-later (when (and (:auto? definition) (not published?))
+                       [{:ms auto-publish-delay-ms :dispatch [:studio/auto-publish revision]}])}))
 
 (rf/reg-event-fx :studio/definition-source
   ;; Neovim echoes text it was given (the initial load) and delivers its last edit up to
@@ -1200,8 +1220,10 @@
       (edit-definition-source db source))))
 (rf/reg-event-fx :studio/auto-publish
   (fn [{:keys [db]} [_ revision]]
-    (when (and (get-in db [:ui :definition :auto?]) (= revision (get-in db [:ui :definition :edit-revision])))
-      {:dispatch [:studio/definition-publish true]})))
+    (let [definition (get-in db [:ui :definition])]
+      (when (and (:auto? definition) (= revision (:edit-revision definition))
+                 (not (published-source? definition (:source definition))))
+        {:dispatch [:studio/definition-publish true]}))))
 (rf/reg-event-fx :studio/editor-engine
   (fn [{:keys [db]} [_ engine]]
     (cond
@@ -1263,7 +1285,7 @@
           fixtures (into #{} (map :id) (get-in db [:server-projection :view :rig :fixtures]))]
       (when (and (:reactive definition) (not (every? fixtures (:targets definition))))
         (throw (js/Error. "Choose targets from the current rig.")))
-      (pr-str definition))))
+      (pretty/edn definition))))
 
 (rf/reg-event-db :studio/builder-reactive
   (fn [db [_ edit]]
@@ -1327,23 +1349,38 @@
          :studio/http {:path "/api/definition"
                        :body (cond-> {:kind kind :source source :expected-epoch (:epoch token) :runtime-id (:runtime-id token)}
                                expected (assoc :expected-version expected))
-                       :on-success [:studio/published token automatic? built kind expected]
+                       :on-success [:studio/published token automatic? built kind expected source]
                        :on-failure [:studio/publication-error token]}}))))
 
 (rf/reg-event-fx :studio/published
-  (fn [{:keys [db]} [_ token automatic? built kind expected ack]]
+  ;; The show now runs the source that was sent. An edit that arrived while the
+  ;; request was in flight (a late Neovim delivery, say) is newer than that text and
+  ;; stays unpublished; with auto-publish on it goes out next.
+  (fn [{:keys [db]} [_ token automatic? built kind expected sent ack]]
     (when (publication-current? db token)
-      (let [id (or (:id ack) (:definition-id ack) (:id built) (get-in db [:ui :definition :loaded-id]))
+      (let [definition (get-in db [:ui :definition])
+            current? (= sent (:source definition))
+            id (or (:id ack) (:definition-id ack) (:id built) (:loaded-id definition))
           version (or (:version ack) (when expected (inc expected)) 1)
           existing-cue (when built (cue db (:id built)))
           cue-source (when built (pr-str {:id (keyword (:id built)) :version 1 :name (:name built)
                                          :effect-id (keyword (:id built)) :swatch (:color built)
                                          :params {} :duration (musical-duration (:duration-value built) (:duration-unit built)) :reload-policy :preserve-state}))]
       {:db (cond-> (update-in db [:ui :definition] merge {:publishing? false :loaded-id id :version version
-                                                        :loaded-owner (dissoc token :id) :status "Published" :error? false
-                                                        :result "Validated and published. The running show now has this definition."})
+                                                        :loaded-owner (dissoc token :id) :error? false
+                                                        :baseline {:source sent :status "Published"}}
+                                 (if current?
+                                   {:status "Published"
+                                    :result "Validated and published. The running show now has this definition."}
+                                   {:status "Unpublished changes"
+                                    :result "Published the text sent earlier. Your newer edits are not published yet."}))
              (get-in built [:reactive :base]) (assoc-in [:ui :builder :reactive :base :version] version))
        :fx (cond-> [] (not automatic?) (conj (notice "Definition validated and published."))
+             ;; Keep the edit's quiet time: publishing at once would chain a request per
+             ;; reply while the operator is still typing.
+             (and (not current?) (:auto? definition))
+             (conj [:dispatch-later {:ms auto-publish-delay-ms
+                                     :dispatch [:studio/auto-publish (:edit-revision definition)]}])
              (and built (:cue? built)) (conj [:studio/http {:path "/api/definition"
                                                           :body (cond-> {:kind "cues" :source cue-source :runtime-id (:runtime-id token) :expected-epoch (:epoch token)}
                                                                   existing-cue (assoc :expected-version (:version existing-cue)))

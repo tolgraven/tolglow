@@ -40,9 +40,17 @@
                  (if (> (System/nanoTime) end) false
                      (do (Thread/sleep 10) (recur)))))))
 
-(defn- temp-workers []
-  (set (filter #(re-matches #"tolglow-display-.*\.cjs" (.getName ^File %))
-               (.listFiles (io/file (System/getProperty "java.io.tmpdir"))))))
+(defn- with-extraction-directory
+  "Call f with a fresh directory for the packaged worker. Each test owns its own, so
+  parallel test runs on one machine never see each other's extracted workers."
+  [f]
+  (let [directory (.toFile (java.nio.file.Files/createTempDirectory
+                            "tolglow-display-test-" (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (try (f directory)
+         (finally (doseq [^File file (reverse (file-seq directory))] (.delete file))))))
+
+(defn- extracted-workers [^File directory]
+  (set (map #(.getName ^File %) (.listFiles directory))))
 
 (defn- with-playwright-peer [mode f]
   ;; Only the external browser is replaced. The real packaged Node worker,
@@ -100,57 +108,69 @@
     (with-packaged-worker source
       #(with-playwright-peer :ready
          (fn [options]
-           (let [capture (display/process-capture (assoc options :browser-executable "/browser-peer"))
-                 handle ((:open! capture))
-                 file (:script-file handle)]
-             (try
-               (is (:temporary-script? handle))
-               (is (= source (slurp file)))
-               (is (= 960 (.getWidth ^BufferedImage ((:capture! capture) handle {:title "Packaged display"}))))
-               (finally ((:close! capture) handle)))
-             (is (not (.exists ^File file)))
-             (is (false? (.isAlive ^Process (:process handle))))
-             ((:close! capture) handle)))))))
+           (with-extraction-directory
+            (fn [directory]
+              (let [capture (display/process-capture (assoc options :browser-executable "/browser-peer"
+                                                            :extraction-directory directory))
+                    handle ((:open! capture))
+                    file (:script-file handle)]
+                (try
+                  (is (:temporary-script? handle))
+                  (is (= directory (.getParentFile ^File file)))
+                  (is (= source (slurp file)))
+                  (is (= 960 (.getWidth ^BufferedImage ((:capture! capture) handle {:title "Packaged display"}))))
+                  (finally ((:close! capture) handle)))
+                (is (not (.exists ^File file)))
+                (is (= #{} (extracted-workers directory)))
+                (is (false? (.isAlive ^Process (:process handle))))
+                ((:close! capture) handle)))))))))
 
 (deftest packaged-worker-startup-failures-clean-every-owned-resource
   (let [source (slurp (io/resource "devices/push-display/worker.cjs"))]
     (with-packaged-worker source
       #(do
-         (let [before (temp-workers)
-               capture (display/process-capture {:browser-executable "/browser-peer"
-                                                 :node-executable "/missing/tolglow-node"})]
-           (is (thrown? java.io.IOException ((:open! capture))))
-           (is (= before (temp-workers))))
+         (with-extraction-directory
+           (fn [directory]
+             (let [capture (display/process-capture {:browser-executable "/browser-peer"
+                                                     :node-executable "/missing/tolglow-node"
+                                                     :extraction-directory directory})]
+               (is (thrown? java.io.IOException ((:open! capture))))
+               (is (= #{} (extracted-workers directory))))))
          (with-playwright-peer :failed
            (fn [options]
-             (let [before (temp-workers)
-                   capture (display/process-capture (assoc options :browser-executable "/browser-peer"))]
-               (let [error (try ((:open! capture)) nil (catch clojure.lang.ExceptionInfo error error))]
-                 (is (re-find #"did not become ready" (.getMessage ^Throwable error)))
-                 (is (= :startup (:stage (ex-data error))))
-                 (is (pos? (:process-id (ex-data error)))))
-               (is (= before (temp-workers))))))))))
+             (with-extraction-directory
+               (fn [directory]
+                 (let [capture (display/process-capture (assoc options :browser-executable "/browser-peer"
+                                                               :extraction-directory directory))]
+                   (let [error (try ((:open! capture)) nil (catch clojure.lang.ExceptionInfo error error))]
+                     (is (re-find #"did not become ready" (.getMessage ^Throwable error)))
+                     (is (= :startup (:stage (ex-data error))))
+                     (is (pos? (:process-id (ex-data error)))))
+                   (is (= #{} (extracted-workers directory))))))))))))
 
 (deftest cancelling-packaged-worker-startup-cleans-process-and-extraction
   (let [source (slurp (io/resource "devices/push-display/worker.cjs"))]
     (with-packaged-worker source
       #(with-playwright-peer :blocked
          (fn [{:keys [observed] :as options}]
-           (let [before (temp-workers)
-                 capture (display/process-capture (assoc options :browser-executable "/browser-peer"))
-                 result (promise)
-                 worker (Thread. (fn [] (try ((:open! capture)) (deliver result :unexpected-ready)
-                                             (catch Throwable error (deliver result error)))))]
-             (.start worker)
-             (try
-               (is (eventually (fn [] (pos? (.length ^File observed)))))
-               (.interrupt worker)
-               (is (instance? InterruptedException (deref result 5000 :timeout)))
-               (is (= before (temp-workers)))
-               (let [observation (clojure.data.json/read-str (slurp observed) :key-fn keyword)
-                     process (java.lang.ProcessHandle/of (long (:pid observation)))]
-                 (is (or (not (.isPresent process)) (not (.isAlive ^java.lang.ProcessHandle (.get process))))))
-               (finally (.interrupt worker) (.join worker 5000)))))))))
+           (with-extraction-directory
+            (fn [directory]
+              (let [capture (display/process-capture (assoc options :browser-executable "/browser-peer"
+                                                            :extraction-directory directory))
+                    result (promise)
+                    worker (Thread. (fn [] (try ((:open! capture)) (deliver result :unexpected-ready)
+                                                (catch Throwable error (deliver result error)))))]
+                (.start worker)
+                (try
+                  (is (eventually (fn [] (pos? (.length ^File observed)))))
+                  (is (= 1 (count (extracted-workers directory))))
+                  (.interrupt worker)
+                  (is (instance? InterruptedException (deref result 5000 :timeout)))
+                  (is (= #{} (extracted-workers directory)))
+                  (let [observation (clojure.data.json/read-str (slurp observed) :key-fn keyword)
+                        process (java.lang.ProcessHandle/of (long (:pid observation)))]
+                    (is (or (not (.isPresent process)) (not (.isAlive ^java.lang.ProcessHandle (.get process))))))
+                  (finally (.interrupt worker) (.join worker 5000)))))))))))
 
 (deftest latest-view-mailbox-never-runs-capture-or-sink-on-calling-thread
   (let [entered (CountDownLatch. 1) release (CountDownLatch. 1) complete (CountDownLatch. 2)

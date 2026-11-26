@@ -6,6 +6,7 @@
             [tolglow.studio.events :as events]
             [tolglow.studio.lighting-response :as response]
             [tolglow.studio.modulation :as modulation]
+            [tolglow.studio.pretty :as pretty]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.waveform :as waveform]))
 
@@ -162,7 +163,7 @@
         select-mode! (fn [next]
                        (when (= next :waveform) (rf/dispatch [::load-registry]))
                        (case next
-                         :data (change! {::edn (pr-str spec)})
+                         :data (change! {::edn (pretty/edn spec)})
                          :cue (let [{:keys [id params]} (first cues)]
                                 (change! {:cue-id id :param (first params) :default (if (number? spec) spec min)}))
                          (change! (starting-spec next options spec signals))))]
@@ -187,7 +188,7 @@
                 (for [id (distinct (cons (:signal spec) (sort-by events/wire-id (keys signals))))] [id (events/wire-id id)])
                 #(change! {:signal %})]
        :data [:label (str label " binding")
-              [:textarea {:aria-label (str label " binding") :spell-check false :value (get spec ::edn (pr-str spec))
+              [:textarea {:aria-label (str label " binding") :spell-check false :value (get spec ::edn (pretty/edn spec))
                           :on-change #(change! {::edn (.. % -target -value)})}]]
        :audio [:small "Follows the captured audio energy."]
        nil)]))

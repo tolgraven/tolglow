@@ -1,7 +1,8 @@
 (ns tolglow.studio.fixture-library
   "Re-frame fixture discovery, import review, publication and explicit rig patching."
-  (:require [clojure.string :as str] [cljs.reader :as reader] [cljs.pprint :as pprint] [re-frame.core :as rf] [reagent.core :as r]
+  (:require [clojure.string :as str] [cljs.reader :as reader] [re-frame.core :as rf] [reagent.core :as r]
             [tolglow.studio.events :as events]
+            [tolglow.studio.pretty :as pretty]
             [tolglow.studio.fog-fields :as fog]
             [afterglow.render.photometry :as photometry]))
 
@@ -22,8 +23,6 @@
 (defn- state [db] (merge defaults (get-in db [:ui :fixture-library])))
 
 (defn- store [db value] (assoc-in db [:ui :fixture-library] value))
-
-(defn- pretty [value] (with-out-str (pprint/pprint value)))
 
 (defn- parse-definition [text] (reader/read-string text))
 
@@ -150,13 +149,13 @@
                    :notice (if definition "Review the channels and diagnostics before publishing." "Choose a mode to preview this fixture."))]
       (store db (cond-> s
                   (seq modes) (assoc :modes modes :mode (if (some #{(:mode s)} modes) (:mode s) (first modes)))
-                  definition (assoc :definition definition :draft-source (pretty definition) :channel-edits {} :field-edits {}
+                  definition (assoc :definition definition :draft-source (pretty/edn definition) :channel-edits {} :field-edits {}
                                     :patch (patch-defaults db definition) :parse-error nil))))))
 (rf/reg-event-db :fixtures/new
   (fn [db _]
     (store db (assoc (state db) :selected nil :upload nil :mode "" :modes [] :diagnostics []
                     :edit-revision (inc (:edit-revision (state db)))
-                    :definition example-definition :draft-source (pretty example-definition) :channel-edits {} :field-edits {}
+                    :definition example-definition :draft-source (pretty/edn example-definition) :channel-edits {} :field-edits {}
                     :import-valid? true :draft-edited? false :published-id nil :error nil :parse-error nil
                     :patch (patch-defaults db example-definition) :notice "Set the type ID and channel offsets, then publish."))))
 (rf/reg-event-db :fixtures/edit-draft
@@ -195,7 +194,7 @@
     (let [s (state db)]
       (try
         (let [definition (form-definition s)
-              source (pretty definition)
+              source (pretty/edn definition)
               db (store db (assoc s :definition definition :draft-source source :field-edits {} :channel-edits {}))]
           (request db :publishing "/api/fixtures/publish" {:source source}
                    [:fixtures/published (:edit-revision s) definition]))
@@ -260,7 +259,7 @@
   (fn [{:keys [db]} _]
     (try
       (let [s (state db) definition (form-definition s)]
-        {:db (store db (assoc s :definition definition :draft-source (pretty definition)
+        {:db (store db (assoc s :definition definition :draft-source (pretty/edn definition)
                              :field-edits {} :channel-edits {} :parse-error nil))})
       (catch :default error {:dispatch [:fixtures/error (.-message error)]}))))
 (rf/reg-event-fx :fixtures/add-channel
@@ -272,7 +271,7 @@
         (let [attribute (keyword name) definition (form-definition s)]
           (when (contains? (:channels definition) attribute) (throw (js/Error. "That channel already exists.")))
           (let [definition (assoc-in definition [:channels attribute] 0)]
-            {:db (store db (-> s (assoc :definition definition :draft-source (pretty definition) :field-edits {}
+            {:db (store db (-> s (assoc :definition definition :draft-source (pretty/edn definition) :field-edits {}
                                         :channel-edits {attribute {:coarse ""}} :add-channel "" :published-id nil
                                         :draft-edited? true :parse-error nil)
                                 (update :edit-revision inc)))}))
@@ -284,7 +283,7 @@
             ;; Removing the controller channel also removes its physical profile.
             source (if (= attribute :fog) (assoc-in s [:field-edits :fogger] {:enabled? false}) s)
             definition (update (form-definition source) :channels dissoc attribute)]
-        {:db (store db (-> s (assoc :definition definition :draft-source (pretty definition) :field-edits {}
+        {:db (store db (-> s (assoc :definition definition :draft-source (pretty/edn definition) :field-edits {}
                                     :channel-edits {} :published-id nil :draft-edited? true :parse-error nil)
                             (update :edit-revision inc)))})
       (catch :default error {:dispatch [:fixtures/error (.-message error)]}))))

@@ -135,7 +135,7 @@ try {
   await desktop.locator('#definition-status').filter({hasText: /^Published$/}).waitFor();
   const source = await registrySource();
   assert.match(source, /:level \[:subscription \[:studio-qa\/gain\]\]/);
-  assert.match(source, /:op :multiply, :args \[0.5 \{:op :reactive, :key :level\}\]/);
+  assert.match(source, /:op :multiply\s+:args \[0\.5 \{:op :reactive\s+:key :level\}\]/);
   assert.match(source, /:transition \{:beats 1\/3\}/);
   await capture(desktop, '05-edited-owner-definition');
 

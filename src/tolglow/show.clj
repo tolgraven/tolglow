@@ -51,6 +51,7 @@
             [tolglow.modulation :as modulation]
             [tolglow.knob-candidates :as knob-candidates]
             [tolglow.knobs :as knobs]
+            [tolglow.knob-presets :as knob-presets]
             [tolglow.lighting-capacity :as capacity]
             [tolglow.lighting-scenes :as lighting-scenes]
             [tolglow.lighting-levels :as lighting-levels]
@@ -242,6 +243,7 @@
                               model (when-let [preview (get-in audition [:draft :preview])]
                                       (assoc preview :status (:status audition)
                                              :draft-revision (get-in audition [:draft :revision]))))
+            :knob-presets (knob-presets/projection model) ; knob looks (#547)
             :operator-history (operator-history/project (:id runtime) model)
             :history-command-outcomes (:history-command-outcomes snapshot [])
             :parameter-source-outcomes (:parameter-source-outcomes snapshot [])
@@ -695,6 +697,9 @@
                    ;; Generated knob candidates (#667).
                    (knob-candidates/operations operation)
                    (control/apply-domain-command model envelope knob-candidates/apply-operation)
+                   ;; Knob looks (#547).
+                   (knob-presets/operations operation)
+                   (control/apply-domain-command model envelope knob-presets/apply-operation)
                    :else (spatial/apply-command model envelope authority)))
          ;; A gesture takes over a ramped parameter from the ramp's current frame
          ;; value. Its begin writes nothing, so without this the parameter would
@@ -1018,6 +1023,10 @@
 
     ;; Linked knobs (#666): the knob value commits, then each linked write uses `command`.
     (knobs/value-operations (:op payload))
+    (knobs/set-value model payload time-ms authority command)
+
+    ;; Knob looks (#547): every stored knob commits at once, then the linked writes fan out the same way.
+    (knob-presets/value-operations (:op payload))
     (knobs/set-value model payload time-ms authority command)
 
     :else (command model payload time-ms authority)))

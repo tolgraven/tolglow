@@ -7,6 +7,7 @@
             [tolglow.compiler :as compiler]
             [tolglow.compiler.batch :as batch]
             [tolglow.show :as show]
+            [tolglow.show.position-hold :as position-hold]
             [tolglow.bench-show :as bench]
             [tolglow.bench-movers-reference :as reference]
             [clojure.java.io :as io]
@@ -80,7 +81,9 @@
                   after-admission (System/nanoTime)
                   result (engine/advance model {:time-ms time-ms :epoch (:epoch model) :fixtures fixtures} compiled mapper)
                   after-engine (System/nanoTime)
-                  output (render/resolve-contributions patch (:contributions result)
+                  ;; The show's frame owner holds heads that no layer positions (#690).
+                  blocks (position-hold/with-hold patch (:output @state) (:contributions result) #{})
+                  output (render/resolve-contributions patch blocks
                             {:master 1.0 :include-values? (not typed?) :compact-values? true
                              :previous-compact (:compact (:output @state))})
                   after-render (System/nanoTime)
@@ -228,7 +231,8 @@
                           "Logical 25ms ticks at 120BPM; targets vary by fixture position/group/layer and musical beat. Opacity cycles exact 0/1, rising/falling and simultaneous mixtures."
                           "Every head, including indices 16 onward, is checked against an independent matrix/blend/calibration/channel oracle and scalar full-model/intent/ArtDMX reference."
                           "Host timing includes enqueue/admission, actual headless show tick, rendering, reactive publication and ArtDMX capture. All-head oracle projection happens afterward, outside host duration."
-                          "Pipeline timing includes real advancing engine state, prior compact movement history, all-head projection and packet encoding."
+                          "Pipeline timing includes real advancing engine state, prior compact movement history, the show's position hold, all-head projection and packet encoding."
+                          "When every layer is transparent no effect positions a head, so it holds its last committed pan/tilt (#690); the oracle expects that pose."
                           "Both pipeline and host compiler caches are prepared before warmup. Cold definition compilation is not a measured frame phase."
                           "Instrumented-render-phases is a separate diagnostic pass: nested fixture timers report aim solving and remaining channel packing/preview work, with timer overhead. Never substitute its timing for uninstrumented deadlines."
                           "Allocated bytes cover owner/warmed effect-worker threads including result extraction; GC spans outside-timer reference checks."
