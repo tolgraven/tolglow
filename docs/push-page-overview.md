@@ -12,7 +12,8 @@ Configure the start view under `[:settings :controllers :push-display]` in the s
 
 Connect Push 2 with `:cue-variations? true` to use the overlay for the
 selected running cue. Press **Note** to cycle through full states, parameter
-rows and the regular pads. The generated pads are amber. Parameter rows follow
+rows, [knob looks](linked-knobs.md#knob-looks) and the regular pads. With no
+cue selected, **Note** opens knob looks directly. The generated pads are amber. Parameter rows follow
 the authored parameter order and Page Left and Right move through extra rows.
 Press a generated pad to apply its prospective authored state to the selected
 instance in one command.
@@ -45,8 +46,8 @@ buttons in your captured `:layout`.
 
 | Action | Control |
 | --- | --- |
-| `:variation/cycle` | Cycle full states, parameter rows and regular cues. |
-| `:variation/record` | Hold while pressing Cycle to append, or while pressing a saved pad to overwrite. |
+| `:variation/cycle` | Cycle full states, parameter rows, [knob looks](linked-knobs.md#knob-looks) and regular cues. |
+| `:variation/record` | Hold while pressing Cycle to append, or while pressing a saved pad (cue state or knob look) to overwrite. |
 | `:variation/ratio-mode` | Toggle Preferred and Free. |
 | `:variation/previous-page`, `:variation/next-page` | Move through extra parameter rows. |
 

@@ -53,10 +53,20 @@
                :personality (personality (:personality view))
                :saved-show-catalog (saved-show-catalog (:saved-show-catalog view))
                :pad-overlay (when-let [overlay (:pad-overlay view)]
-                              (if (#{:beat-ratios "beat-ratios"} (:layout overlay))
+                              (cond
+                                (#{:beat-ratios "beat-ratios"} (:layout overlay))
                                 (assoc (select-keys overlay [:layout :ratio-mode :param :title :current-ratio])
                                        :cells (mapv #(select-keys % [:position :label :selected?])
                                                     (take 16 (:cells overlay))))
+                                ;; Knob looks (#547): the top pad row's eight saved knob positions.
+                                (#{:knob-presets "knob-presets"} (:layout overlay))
+                                (assoc (select-keys overlay [:layout :title])
+                                       :cells (mapv (fn [cell]
+                                                      (-> (select-keys cell [:position :slot :state :matches? :label])
+                                                          (assoc :knobs (mapv #(select-keys % [:name :knob-id :text :missing?])
+                                                                              (take 4 (:knobs cell))))))
+                                                    (take 8 (:cells overlay))))
+                                :else
                                 (assoc (select-keys overlay [:layout :ratio-mode])
                                        :rows (vec (take 7 (:rows overlay)))
                                        :cells (vec (take 64 (:cells overlay))))))
@@ -345,6 +355,32 @@
                :aria-label (when selected? (str label ", current"))}
          (or label "—")])]]))
 
+(defn- knob-preset-overlay
+  "Knob looks (#547): one column per top-row pad. Push 3 lists only the pads
+  its captured layout has; the others read as not captured."
+  [{:keys [cells]}]
+  (let [by-slot (into {} (map (juxt :slot identity)) cells)]
+    [:section.push-targets {:aria-label "Knob looks"}
+     [:div.push-targets-heading
+      [:strong "Knob looks"]
+      [:span "Empty pad saves · Pad recalls · Record + pad overwrites"]
+      [:small "Dim · Empty / Green · Saved / White · Selected / Blue · Moved"]]
+     [:div.push-target-columns.push-knob-looks
+      (for [i (range 8) :let [{:keys [state matches? knobs] :as cell} (get by-slot i)
+                              state (some-> state name)
+                              moved? (and (= "selected" state) (false? matches?))]]
+        ^{:key i}
+        [:article {:class (cond (nil? cell) "empty" moved? "moved" (= "selected" state) "selected"
+                                (= "stored" state) "available" :else "empty")}
+         [:small (str "Look " (inc i))]
+         (cond
+           (nil? cell) [:strong "—"]
+           (= "empty" state) [:strong "Empty"]
+           :else [:<> (for [{:keys [name knob-id text missing?]} knobs]
+                        ^{:key (str knob-id)}
+                        [:span.push-knob-look-value (str (or name (widgets/label knob-id)) " " text
+                                                         (when missing? " ✕"))])])])]]))
+
 (defn- live-display [view]
   (let [cue (:cue view) effect (:effect view) accent (widgets/color-css (or (:swatch view) (:color cue)))
         active? (:active? cue) audio? (contains? #{:audio "audio"} (:display-mode view))
@@ -371,6 +407,9 @@
        (cond (:blackout? view) "BLACKOUT" (:releasing? cue) "RELEASE" active? "PLAYING" :else (widgets/label (:status view)))]]
      (cond
        (#{:beat-ratios "beat-ratios"} (get-in view [:pad-overlay :layout])) [ratio-overlay (:pad-overlay view)]
+       ;; A touched knob encoder shows its value even while knob looks are open.
+       (= :knob (:kind (knob-model view))) [knob-display (knob-model view)]
+       (#{:knob-presets "knob-presets"} (get-in view [:pad-overlay :layout])) [knob-preset-overlay (:pad-overlay view)]
        (:pad-overlay view) [variation-overlay (:pad-overlay view)]
        (get-in view [:target-picker :open?]) [target-choices (:target-picker view)]
        (knob-model view) [knob-display (knob-model view)]

@@ -300,3 +300,37 @@
     (is (str/includes? html "2 links"))
     (is (str/includes? html "Missing knob"))
     (is (nil? (display/knob-model (display/normalize-view {:touched-control {:target "master"}}))))))
+
+(deftest knob-looks-show-empty-saved-selected-and-moved-top-row-pads
+  (let [cell (fn [slot state & [extra]]
+               (merge {:position [slot 7] :slot slot :state state :label (str "Look " (inc slot))} extra))
+        knobs [{:name "Look" :knob-id :look :text "0.200"} {:name "Rate" :knob-id :rate :text "0.100" :missing? true}]
+        view {:pad-overlay {:layout :knob-presets :title "Knob looks" :ignored true
+                            :cells [(cell 0 :selected {:matches? true :knobs knobs :values {:look 0.2}})
+                                    (cell 1 :stored {:matches? false :knobs (repeat 9 (first knobs))})
+                                    (cell 2 :empty)
+                                    (cell 3 "selected" {:matches? false :knobs knobs})]}}
+        shown (display/normalize-view view)
+        html (renderToStaticMarkup (r/as-element [display/display shown]))]
+    (is (= #{:layout :title :cells} (set (keys (:pad-overlay shown)))))
+    (is (nil? (get-in shown [:pad-overlay :cells 0 :values])) "stored positions stay out of display data")
+    (is (= 4 (count (get-in shown [:pad-overlay :cells 1 :knobs]))))
+    (is (str/includes? html "Knob looks"))
+    (is (str/includes? html "Look 0.200"))
+    (is (str/includes? html "Rate 0.100 ✕"))
+    (is (= 1 (count (re-seq #"class=\"selected\"" html))))
+    (is (= 1 (count (re-seq #"class=\"moved\"" html))))
+    (is (= 1 (count (re-seq #"class=\"available\"" html))))
+    (is (= 5 (count (re-seq #"class=\"empty\"" html))) "the empty slot and four uncaptured pads")))
+
+(deftest a-touched-knob-shows-its-value-while-knob-looks-are-open
+  (let [view {:pad-overlay {:layout :knob-presets :title "Knob looks"
+                            :cells [{:position [0 7] :slot 0 :state :empty :label "Look 1"}]}
+              :touched-control {:target "knob" :knob-id "look" :editable? true}
+              :knob {:knob-id "look" :name "Look" :value 0.5 :text "0.500"
+                     :columns [{:label "tint · saturation" :text "0.600" :status "ok"}]}}
+        html (renderToStaticMarkup (r/as-element [display/display (display/normalize-view view)]))]
+    (is (str/includes? html "Knob Look, 0.500"))
+    (is (not (str/includes? html "Knob looks")) "the looks return when the encoder is released")
+    (is (str/includes? (renderToStaticMarkup (r/as-element [display/display (display/normalize-view (dissoc view :touched-control))]))
+                       "Knob looks"))))
