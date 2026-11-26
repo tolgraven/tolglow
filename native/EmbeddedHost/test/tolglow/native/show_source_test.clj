@@ -53,3 +53,19 @@
     (is (= "/shows/red/auth.edn" (get-in config [:show :credential-path])))
     (is (= {:load-file "/shows/red/last.transit" :save-file "/saved/set.transit"} (:show-state config)))
     (is (= "/data/credentials.edn" (get-in (host/launch-config "/data" "" {} identity) [:show :credential-path])))))
+
+(deftest the-on-device-host-opens-stops-and-reopens-its-included-show
+  ;; The iOS on-device Studio (no TOLGLOW_DESKTOP_WINDOW): open, stop, reopen.
+  ;; Stop must not throw, or the app reports a failed shutdown (#669).
+  (is (not= "1" (System/getenv "TOLGLOW_DESKTOP_WINDOW")))
+  (with-show
+    (fn [home]
+      (dotimes [cycle 2]
+        (let [port (host/-open (str home) "")]
+          (try
+            (is (pos-int? port) (str "cycle " cycle " opened"))
+            (with-open [socket (java.net.Socket. "127.0.0.1" (int port))]
+              (is (.isConnected socket)))
+            (finally
+              (is (nil? (host/-close)) (str "cycle " cycle " stopped without an error")))))
+        (is (thrown? java.net.ConnectException (java.net.Socket. "127.0.0.1" 1)) "sanity")))))
