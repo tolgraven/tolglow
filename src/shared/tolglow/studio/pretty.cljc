@@ -262,18 +262,23 @@
   characters and returns its first `:max-chars` characters, so the work and
   memory stay bounded by the budget rather than by the size of `value`."
   [value {:keys [width column tail length level max-chars] :or {width default-width column 0 tail 0}}]
-  ;; Values printed by pr-str (records, Java objects) inside get the same limits.
-  (binding [*print-length* length *print-level* level *print-meta* false
-            *limits* (when (or length level) {:length length :level level})
-            *buffer* (new-buffer) *column* (volatile! column) *newlines* (volatile! 0)
-            *max-chars* max-chars]
-    (try
-      (layout! (shown value 0) tail width 0)
-      {:text (str *buffer*) :truncated? false}
-      (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
-        (if (::budget (ex-data error))
-          {:text (subs (str *buffer*) 0 max-chars) :truncated? true}
-          (throw error))))))
+  ;; No more than max-chars elements of one collection fit in max-chars
+  ;; characters, so with a budget the length limit never needs to exceed
+  ;; max-chars + 1: an infinite or huge lazy collection is never realized past
+  ;; what could be shown, and the visible text is the same.
+  (let [length (if max-chars (min (or length ##Inf) (inc max-chars)) length)]
+    ;; Values printed by pr-str (records, Java objects) inside get the same limits.
+    (binding [*print-length* length *print-level* level *print-meta* false
+              *limits* (when (or length level) {:length length :level level})
+              *buffer* (new-buffer) *column* (volatile! column) *newlines* (volatile! 0)
+              *max-chars* max-chars]
+      (try
+        (layout! (shown value 0) tail width 0)
+        {:text (str *buffer*) :truncated? false}
+        (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+          (if (::budget (ex-data error))
+            {:text (subs (str *buffer*) 0 max-chars) :truncated? true}
+            (throw error)))))))
 
 (defn edn
   "Pretty-printed EDN text of `value`. Options: `:width` (default 100); when

@@ -125,13 +125,20 @@
            (str/replace (pretty/edn (array-map :a (range) :b [1 [2 [3]]]) {:length 3 :level 2}) " :b" ", :b")))))
 
 (deftest a-character-budget-bounds-the-work-not-just-the-text
+  ;; Counted rather than timed: an infinite lazy value is realized only as far
+  ;; as the budget could show, with or without a :length limit.
+  (doseq [options [{:level 10 :max-chars 8192} {:length 64 :level 10 :max-chars 8192}]]
+    (let [realized (atom 0)
+          counted (fn [] (map (fn [n] (swap! realized inc) n) (range)))
+          value (map (fn [_] (map (fn [_] (counted)) (range))) (range))
+          {:keys [text truncated?]} (pretty/edn-within value options)]
+      (is truncated? (pr-str options))
+      (is (= 8192 (count text)) (pr-str options))
+      (is (<= @realized (* 2 (inc (:max-chars options)))) (str (pr-str options) " realized " @realized))))
   (let [row (vec (range 64)) value (vec (repeat 64 (vec (repeat 64 (vec (repeat 64 row))))))
-        started (System/nanoTime)
-        {:keys [text truncated?]} (pretty/edn-within value {:length 64 :level 10 :max-chars 8192})
-        elapsed-ms (/ (- (System/nanoTime) started) 1e6)]
+        {:keys [text truncated?]} (pretty/edn-within value {:length 64 :level 10 :max-chars 8192})]
     (is truncated?)
     (is (= 8192 (count text)))
-    (is (< elapsed-ms 500) (str "took " elapsed-ms " ms"))
     (testing "under the budget the text is the unbounded layout"
       (let [definition (get-in (demo/model) [:registry :effects :breathe])
             full (pretty/edn definition)]
