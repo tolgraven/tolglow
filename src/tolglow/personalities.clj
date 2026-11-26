@@ -235,20 +235,13 @@
 (defn- weighted [parts field]
   (reduce + 0.0 (map (fn [{:keys [personality weight]}] (* weight (get-in personality field))) parts)))
 
-(defn blend
-  "Synthesise one personality from [{:personality p :weight w}]. Weights are
-  scaled to sum to one. A single part returns its personality unchanged."
+(defn- mix-parts
+  "Build the blend from parts whose weights are already scaled and rounded, as a
+  blend records them. A single part is its personality."
   [parts]
-  (when-not (and (vector? parts) (<= 1 (count parts) 4)
-                 (every? #(and (registry/finite-number? (:weight %)) (pos? (:weight %))) parts)
-                 (apply distinct? (map (comp wire-id :id :personality) parts)))
-    (throw (ex-info "Blend 1 to 4 different personalities with positive weights" {})))
-  (doseq [{:keys [personality]} parts] (validate! personality))
   (if (= 1 (count parts))
     (:personality (first parts))
-    (let [total (reduce + 0.0 (map :weight parts))
-          parts (mapv #(update % :weight (fn [weight] (rounded (/ weight total)))) parts)
-          positive (fn [weights] (into {} (keep (fn [[key weight]]
+    (let [positive (fn [weights] (into {} (keep (fn [[key weight]]
                                                   (let [weight (rounded weight)] (when (pos? weight) [key weight]))))
                                        weights))
           fixture-mix (positive (mix-shares parts [:concurrency :fixture-mix]))
@@ -269,6 +262,18 @@
                 :motion (into {} (map (fn [key] [key (rounded (weighted parts [:motion key]))])) motion-keys)}
          (some (comp seq :tags :personality) parts)
          (assoc :tags (vec (take 16 (distinct (mapcat (comp :tags :personality) parts))))))))))
+
+(defn blend
+  "Synthesise one personality from [{:personality p :weight w}]. Weights are
+  scaled to sum to one. A single part returns its personality unchanged."
+  [parts]
+  (when-not (and (vector? parts) (<= 1 (count parts) 4)
+                 (every? #(and (registry/finite-number? (:weight %)) (pos? (:weight %))) parts)
+                 (apply distinct? (map (comp wire-id :id :personality) parts)))
+    (throw (ex-info "Blend 1 to 4 different personalities with positive weights" {})))
+  (doseq [{:keys [personality]} parts] (validate! personality))
+  (let [total (reduce + 0.0 (map :weight parts))]
+    (mix-parts (mapv #(update % :weight (fn [weight] (rounded (/ weight total)))) parts))))
 
 (defn fixture-limit
   "How many of this many eligible fixtures the personality wants lit at once."
@@ -499,18 +504,29 @@
 (def ^:private builtin-summaries
   (delay (into {} (map (fn [personality] [personality (assoc (summary personality) :builtin? true)])) builtins)))
 
+(defn- current?
+  "Whether selecting the same mix now would give the captured personality. A
+  version number alone can be reused after a definition is removed."
+  [entries {:keys [mix personality]}]
+  (let [parts (mapv (fn [{:keys [id version weight]}]
+                      {:personality (get entries id) :version version :weight weight})
+                    mix)]
+    (and (every? (fn [{:keys [personality version]}] (= version (:version personality))) parts)
+         (try (= personality (mix-parts (mapv #(dissoc % :version) parts)))
+              (catch clojure.lang.ExceptionInfo _ false)))))
+
 (defn projection
   "What Studio, the REPL and device displays read: the selectable library in
   display order and the active personality, each with its icon as SVG text."
   [model]
-  (let [{:keys [mix seed personality]} (active model)
+  (let [{:keys [mix seed personality] :as selection} (active model)
         entries (library model)]
     {:version state-version
      :library (mapv #(or (get @builtin-summaries %) (assoc (summary %) :builtin? false)) (ordered-library model))
      :active (when personality
                (assoc (or (get @builtin-summaries personality) (summary personality))
                       :mix mix :seed seed
-                      :current? (every? (fn [{:keys [id version]}] (= version (:version (get entries id)))) mix)))}))
+                      :current? (current? entries selection)))}))
 
 (defn without-icons
   "The same projection for a reader that cannot use pictures, such as a text agent."

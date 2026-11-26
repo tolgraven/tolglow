@@ -224,6 +224,24 @@
                    {:op :remove :id :squircle} {:op :remove :id :missing} {:op :dance}]]
         (is (thrown? clojure.lang.ExceptionInfo (personalities/apply-operation model bad)) (pr-str bad))))))
 
+(deftest current-means-the-library-still-gives-the-captured-feel
+  (let [base (operate (operate (demo/model) {:op :put :personality custom}) {:op :select :id :studio/neon-alley})
+        blended (operate base {:op :blend :mix [{:id :studio/neon-alley :weight 2} {:id :squares :weight 1}
+                                                {:id :spirals :weight 1}]})
+        other (assoc custom :name "Someone else's alley" :geometry {:forms {:circle 1.0}})
+        replaced (fn [model] (operate (operate model {:op :remove :id :studio/neon-alley}) {:op :put :personality other}))
+        current? (fn [model] (get-in (personalities/projection model) [:active :current?]))]
+    (is (true? (current? base)))
+    (is (true? (current? blended)))
+    (testing "a definition removed and put back with other content under the same version"
+      (is (= 1 (:version (get (personalities/library (replaced base)) :studio/neon-alley))))
+      (is (false? (current? (replaced base))))
+      (is (false? (current? (replaced blended)))))
+    (testing "putting back the same content is still current"
+      (is (true? (current? (operate (operate base {:op :remove :id :studio/neon-alley}) {:op :put :personality custom})))))
+    (testing "a saved and reloaded blend is still current"
+      (is (true? (current? (persistence/thaw (demo/model) (persistence/read-string (persistence/write-string blended)))))))))
+
 (deftest saved-state-is-validated
   (let [model (operate (operate (demo/model) {:op :put :personality custom})
                        {:op :blend :mix [{:id :studio/neon-alley :weight 2} {:id :still-water :weight 1}]})

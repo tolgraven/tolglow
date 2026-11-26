@@ -91,7 +91,7 @@ With no active personality, or one that weights no sculpt form, the cue renders 
 
 ## Author, share and save
 
-Publish a definition from the REPL, or post it to `/api/personality` as Transit so keywords such as `:tags` keep their type. A changed definition needs a higher `:version`. A show definition with a built-in's ID replaces that built-in in this show, and removing it restores the built-in. A running selection keeps the revision it captured until it is selected again; the projection then reports `:current? false`.
+Publish a definition from the REPL, or post it to `/api/personality` as Transit so keywords such as `:tags` keep their type. A changed definition needs a higher `:version`. A show definition with a built-in's ID replaces that built-in in this show, and removing it restores the built-in. A running selection keeps the revision it captured until it is selected again. The projection reports `:current? false` whenever selecting the same mix now would give a different personality, including after a definition is removed and put back with other content under the same version.
 
 ```clojure
 @(show/submit! runtime :personality {:op :put :personality neon-alley})
@@ -137,7 +137,7 @@ The second command writes a contact sheet of every built-in at 24, 48 and 96 px.
           :version 1
           :mix [{:id :squircle :version 1 :weight 1.0}]
           :seed 0
-          :current? true                     ; false after the definition was edited
+          :current? true                     ; false once the library would give a different feel
           :palette [...] :motion {...} :concurrency {...}
           :forms [{:form :squircle :weight 0.666667} ...]   ; normalized, heaviest first
           :icon "<svg …>"}                   ; nil :active when no feel is chosen
