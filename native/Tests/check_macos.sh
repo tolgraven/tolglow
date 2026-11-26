@@ -31,5 +31,5 @@ xcrun --sdk macosx swiftc -D AUDIENCE_RECOVERY_FIXTURE -I "$core_bin/Modules" \
   "$core_bin"/TolglowSensorCore.build/*.o Audience/AudienceRadio.swift Audience/AudienceClient.swift \
   Tests/AudienceClient/main.swift -o DerivedData/audience-client-check
 DerivedData/audience-client-check
-xcrun --sdk macosx swiftc -swift-version 5 macOS/RoomWindows.swift Tests/RoomWindows/main.swift -o DerivedData/room-windows-check
+xcrun --sdk macosx swiftc -swift-version 5 macOS/RoomWindows.swift macOS/StudioPage.swift macOS/FolderStore.swift Tests/RoomWindows/main.swift -o DerivedData/room-windows-check
 DerivedData/room-windows-check
