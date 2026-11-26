@@ -11,6 +11,7 @@
   The choice at boundary n reads its own substream, so editing cues or
   parameters never changes the section sequence."
   (:require [afterglow.time :as time]
+            [tolglow.automation.grid :as grid]
             [tolglow.automation.random :as random]
             [tolglow.registry :as registry]))
 
@@ -63,25 +64,15 @@
         eligible (or (seq (remove #(= blocked (:id %)) sections)) sections)]
     (second (random/choose-weighted (random/derive-seed seed :section index) eligible #(:weight % 1)))))
 
-(defn- grid
-  "Beats between grid lines for a section length: one beat, bar or phrase."
-  [length meter]
-  (time/duration->beats {(ffirst length) 1} meter))
-
-(defn- start-timer [section clock boundary]
+(defn- start-timer
+  "The section's timer at clock, on the grid of its length's unit (a beat,
+  bar or phrase line) by the planner's shared rule: it follows the previous
+  boundary when that is on the grid and less than one length ago; otherwise
+  it ends on the first grid line at least its length less half a step away."
+  [section clock boundary]
   (let [timer (time/start (:length section) clock)
-        length (get-in timer [:duration :value])
-        now (:started-at timer)
-        step (grid (:length section) (get-in timer [:duration :meter]))]
-    (cond
-      ;; The next section follows the previous boundary, which is on the grid.
-      (and boundary (< (- now boundary) length)) (assoc timer :started-at boundary)
-      ;; A first section, or one after a long gap between ticks: play from now
-      ;; and end on the first grid line at least one length away, so every
-      ;; later boundary lands on the bar (or beat, or phrase) grid. Starting
-      ;; in the future only delays the timer's end.
-      :else (let [end (* step (Math/ceil (/ (+ now length) step)))]
-              (assoc timer :started-at (- end length))))))
+        {:keys [value meter]} (:duration timer)]
+    (assoc timer :started-at (grid/start value (grid/step (:length section) value meter) (:started-at timer) boundary))))
 
 (defn current
   "The section definition a section state refers to, or nil."

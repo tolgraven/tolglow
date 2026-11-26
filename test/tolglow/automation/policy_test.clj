@@ -2,6 +2,7 @@
   (:require [afterglow.control.model :as control]
             [clojure.test :refer [deftest is testing]]
             [tolglow.automation.policy :as policy]
+            [tolglow.clock :as clock]
             [tolglow.registry :as registry]
             [tolglow.spatial :as spatial]))
 
@@ -109,11 +110,76 @@
   (testing "a decision taken off the grid starts the next interval on the grid"
     (let [state (:state (policy/advance (assoc-in (model) [:transport :beat] 64.07) {:interval {:bars 1} :intent :darkness}
                                         (policy/initial-state 1 0 :grid) 0))]
-      (is (= 68.0 (:next-at-beat state)))))
+      (is (== 68 (:next-at-beat state)))))
   (testing "a half-beat interval aligns to half beats and is not due at once"
     (let [state (:state (policy/advance (assoc-in (model) [:transport :beat] 64.6) {:interval {:beats 1/2} :intent :darkness}
                                         (policy/initial-state 1 0 :grid) 0))]
-      (is (= 65.0 (double (:next-at-beat state)))))))
+      (is (== 65 (:next-at-beat state))))))
+
+(defn- decisions
+  "Beats at which auto decided over frames {:beat b :config c}; frames are
+  125 ms at 124 BPM unless given. Returns [decided-beats final-state]."
+  ([config frames] (decisions config frames (policy/initial-state 1 0 :grid)))
+  ([config frames state]
+   (loop [state state [{:keys [beat] :as f} & more] frames out []]
+     (if-not beat [out state]
+       (let [result (policy/advance (assoc-in (model) [:transport :beat] beat) (:config f config) state 0)]
+         (recur (:state result) more (cond-> out (seq (:commands result)) (conj beat))))))))
+
+(def ^:private frame-beats (* 125.0 (/ 124.0 60000.0)))
+
+(defn- frames-from [beat n] (map #(hash-map :beat (+ beat (* % frame-beats))) (range n)))
+
+(deftest a-start-gap-or-change-just-before-a-line-never-decides-twice-in-a-row
+  ;; Review of #766: re-anchoring to the last line at or before now made the
+  ;; next due point the coming line, one frame later: a catch-up decision.
+  (testing "auto enabled just before a bar line waits a full bar-ish interval"
+    (let [[decided] (decisions {:interval {:bars 1} :intent :darkness} (frames-from 3.9 30))]
+      (is (= [3.9 8] (mapv #(if (< % 4) % (long (Math/floor %))) decided)) (pr-str decided))))
+  (testing "a phrase interval enabled just before a phrase line"
+    (let [[decided] (decisions {:interval {:phrases 1} :intent :darkness} (frames-from 15.8 80))]
+      (is (= 2 (count decided)) (pr-str decided))
+      (is (<= 32 (second decided) (+ 32 frame-beats)))))
+  (testing "a frame gap that lands just before a line"
+    (let [frames (concat (frames-from 0.0 40) (frames-from 20.92 12))
+          [decided] (decisions {:interval {:beats 1} :intent :darkness} frames)
+          after (filter #(>= % 20.9) decided)]
+      (is (= 20.92 (first after)))
+      (is (<= 22 (second after) (+ 22 frame-beats)) (pr-str after))))
+  (testing "a forward jump inside an interval that lands just before the next line"
+    (let [frames (concat (frames-from 0.0 40) (frames-from 15.9 20))
+          [decided] (decisions {:interval {:bars 1} :intent :darkness} frames)
+          after (filter #(>= % 15.9) decided)]
+      (is (= 15.9 (first after)))
+      (is (<= 20 (second after) (+ 20 frame-beats)) (pr-str after))))
+  (testing "changing the interval mid-run puts the new one on its beat grid"
+    (let [frames (map-indexed (fn [i f] (cond-> f (> i 40) (assoc :config {:interval {:beats 2} :intent :darkness})))
+                              (frames-from 0.0 160))
+          [decided] (decisions {:interval {:beats 1} :intent :darkness} frames)
+          later (filter #(> % 12) decided)]
+      (is (seq later))
+      (is (every? #(< (mod % 1) (+ frame-beats 1e-9)) later) (pr-str (take 6 later)))
+      (is (every? #{2} (map - (rest (map #(long (Math/floor %)) later)) (map #(long (Math/floor %)) later))) "every second beat")))
+  (testing "a section plan entered just before a bar line"
+    (let [plan {:intent :darkness :interval {:bars 1}
+                :sections [{:id :only :length {:bars 2} :config {}}]}
+          [decided] (decisions plan (frames-from 3.9 60))
+          [_ state] (decisions plan (frames-from 3.9 1))]
+      (is (= 3.9 (first decided)))
+      (is (<= 8 (second decided) (+ 8 frame-beats)) (pr-str decided))
+      (is (== 12 (+ (get-in state [:section :timer :started-at]) (get-in state [:section :timer :duration :value])))
+          "the first section ends on the first bar line at least 1.5 bars away"))))
+
+(deftest a-rebase-off-the-grid-returns-decisions-to-the-grid
+  ;; Review of #766: clock/rebase shifts the interval timer by the seek's
+  ;; fractional offset; a due point off the grid is not kept.
+  (let [config {:interval {:bars 1} :intent :darkness}
+        [_ state] (decisions config (frames-from 0.0 41))
+        moved (clock/rebase (-> (model) (assoc-in [:transport :beat] (* 40 frame-beats)) (assoc :auto {:state state}))
+                            {:beat 50.0})
+        [decided] (decisions config (frames-from (+ 50.0 frame-beats) 120) (get-in moved [:auto :state]))]
+    (is (seq decided))
+    (is (every? #(< (mod % 4) (+ frame-beats 1e-9)) (rest decided)) (pr-str (take 5 decided)))))
 
 (deftest musical-emission-attacks-participate-in-real-prediction
   (let [show (update (model) :registry registry/publish :effects

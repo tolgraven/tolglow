@@ -34,10 +34,18 @@ page deleted later never blocks a save: the planner leaves it out and reports
 `:scope-missing`.
 
 Intervals and durations are beats, bars or phrases read from the transport.
-Milliseconds are accepted as an explicit physical option. A decision fires on
-the first frame at or after its beat, and the next interval starts where the
-previous one fell due, so beat one-shots stay within one frame of the beat at
-any tempo instead of sliding later each beat. A stopped transport
+Milliseconds are accepted as an explicit physical option. Musical timers,
+decision intervals and section plans alike, sit on the grid of their unit (a
+beat, bar or phrase line; an interval shorter than its unit, on its own
+length) by one rule
+([`tolglow.automation.grid`](../src/tolglow/automation/grid.clj)). A timer that
+follows another starts where the previous one fell due, so a decision that
+fires on the first frame after its line does not push later decisions off the
+beat. A timer with nothing on the grid to follow (a start, a changed interval,
+a gap, a seek or loop that shifted it off the grid) ends on the first grid line
+at least its length less half a step away: its first run is within half a step
+of its length and never falls due on the next frame. A decision still fires on
+the first frame at or after its line, so it is up to one frame late. A stopped transport
 makes no decision and holds every timer, so play resumes where the plan was,
 without a burst of catch-up launches.
 
@@ -97,9 +105,9 @@ cannot pass for light under a moving head.
 ## Section plans
 
 A plan alternates moods on the bar grid. The first section plays from the
-start until the first grid line at least one section length away (a bar line
-for bar lengths, a phrase line for phrase lengths), so it can run up to one
-grid step longer; every later boundary is on the grid. Each section has a musical `:length`
+start until the first grid line at least its length less half a grid step
+away (a bar line for bar lengths, a phrase line for phrase lengths), so it
+runs within half a step of its length; every later boundary is on the grid. Each section has a musical `:length`
 (beats, bars or phrases, never milliseconds), a `:weight`, an optional
 `:max-run` (how many times in a row it may repeat) and a `:config` that
 overrides the settings above while it plays. `:randomize` and `:launch` merge

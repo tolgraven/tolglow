@@ -11,6 +11,7 @@
             [tolglow.lighting-activity :as activity]
             [tolglow.registry :as registry]
             [tolglow.autopilot.signal :as signal]
+            [tolglow.automation.grid :as grid]
             [tolglow.automation.launch-params :as launch-params]
             [tolglow.automation.random :as random]
             [tolglow.automation.sections :as sections]))
@@ -551,29 +552,19 @@
        (and (nil? (:randomize config)) (seq domains) enabled?) (assoc :randomize (assoc domains :params :none))))))
 
 (defn- decision-timer
-  "The interval timer after a decision at clock. A musical interval stays on
-  its grid: the next timer starts where the previous one fell due, so a
-  decision taken on the first frame after a beat does not push every later
-  decision later by that frame's remainder. Without a previous due point
-  still within one interval (a start, a new section, a long gap) the timer
-  starts on the last grid line of its unit (beat, bar or phrase). Millisecond
-  intervals keep their physical start."
+  "The interval timer at clock. A musical interval is placed on its grid by
+  tolglow.automation.grid/start: after a decision it continues from where
+  the previous interval fell due; with no usable due point (a start, a
+  changed interval, a gap, a rebase off the grid) it ends on the first grid
+  line at least its length less half a step away, so it never falls due on
+  the next frame. Millisecond intervals keep their physical start."
   [duration clock previous]
   (let [timer (time/start duration clock)
-        {:keys [unit value]} (:duration timer)]
+        {:keys [unit value meter]} (:duration timer)]
     (if-not (= :beats unit) timer
-      (let [now (:started-at timer)
-            due (when (and previous (= :beats (get-in previous [:duration :unit])))
-                  (+ (:started-at previous) (get-in previous [:duration :value])))
-            ;; A sub-beat interval aligns to its own length, so the aligned
-            ;; timer never falls due at once.
-            step (min value (time/duration->beats {(ffirst duration) 1} (get-in timer [:duration :meter])))]
-        (assoc timer :started-at
-               (let [line (* step (Math/floor (/ (+ now 1e-9) step)))]
-                 (cond (and due (<= due now) (< (- now due) value)) due
-                       ;; Already on the grid: keep the exact coordinate.
-                       (< (abs (- line now)) 1e-9) now
-                       :else line)))))))
+      (let [due (when (and previous (= :beats (get-in previous [:duration :unit])))
+                  (+ (:started-at previous) (get-in previous [:duration :value])))]
+        (assoc timer :started-at (grid/start value (grid/step duration value meter) (:started-at timer) due))))))
 
 (defn- end-commands [model state ids force? time-ms]
   (mapv (fn [i id] (command model state :instance/end (cond-> {:instance-id id} force? (assoc :force? true)) i time-ms))
@@ -638,7 +629,7 @@
         (time/coordinate clock unit)
         (cond
           (and timer (not= duration (get-in timer [:duration :source])))
-          {:state (assoc state :interval-timer (time/start duration clock)) :commands [] :reasons (vec handed)}
+          {:state (assoc state :interval-timer (decision-timer duration clock nil)) :commands [] :reasons (vec handed)}
           (and timer (not (:done? (time/sample timer clock))))
           {:state state :commands [] :reasons (vec handed)}
           (and (nil? timer) (= :ms unit) (< time-ms (:next-at-ms state)))
