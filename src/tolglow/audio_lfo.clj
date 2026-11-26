@@ -31,6 +31,11 @@
 
 (def history-size 4)
 
+(def max-lfos
+  "Audio LFOs a show can configure. Each adds window accumulation on the
+  capture thread and, in cycle mode, a YIN pass per window on the shape worker."
+  8)
+
 (def spec-keys [:band :extract :window :points :silence-db :min-confidence])
 
 (def default-config
@@ -231,6 +236,9 @@
   (check (or (nil? config) (map? config)) "Configuration must be a map")
   (let [state (or (:audio-lfos model) (new-state))
         existing (get-in state [:lfos lfo-id])
+        _ (check (or existing (< (count (:lfos state)) max-lfos))
+                 (str "A show can have at most " max-lfos " audio LFOs. Remove one before adding another.")
+                 {:max max-lfos})
         unknown (remove (set (concat (keys default-config) [:name])) (keys config))
         _ (check (empty? unknown) (str "Unknown audio LFO settings " (vec unknown)) {:keys (vec unknown)})
         config (merge default-config (:config existing) {:name (or name (get-in existing [:config :name]) (clojure.core/name lfo-id))}
@@ -318,7 +326,9 @@
 
 ;; Offline replay ----------------------------------------------------------------
 
-(defn- timing [nanos]
+(defn timing
+  "Median, p99 and maximum of nanosecond samples, in microseconds."
+  [nanos]
   (let [sorted (vec (sort nanos)) n (count sorted)
         at (fn [q] (/ (nth sorted (min (dec n) (long (Math/floor (* q n))))) 1000.0))]
     (when (pos? n) {:median (at 0.5) :p99 (at 0.99) :max (/ (peek sorted) 1000.0) :count n})))
@@ -333,8 +343,10 @@
   Returns :commits (each with the frame, beat, latency and the largest table
   change at that frame), :frames [beat value] of the LFO scanned over the scan
   period, :steps (largest frame-to-frame value change overall and on commit
-  frames), and the median, p99 and maximum per-block extraction and per-frame
-  sampling cost in microseconds."
+  frames), and median, p99 and maximum costs in microseconds: :extract-us per
+  block on the capture side (`shape/advance-bank`), :finish-us per window-end
+  job (`shape/finish-job`, which runs on the shape worker live and inline here)
+  and :sample-us per frame."
   [^doubles samples {:keys [config sample-rate bpm block-frames fps scan]
                      :or {sample-rate 48000.0 bpm 120.0 block-frames 480 fps 60.0 scan 1.0}}]
   (let [sample-rate (double sample-rate) bpm (double bpm)
@@ -346,8 +358,8 @@
         blocks (long (Math/ceil (/ n (double block-frames))))
         duration-ms (* 1000.0 (/ n sample-rate))
         frames (long (Math/floor (/ (* duration-ms fps) 1000.0)))]
-    (loop [frame 0 block 0 extractor (shape/new-extractor (dissoc spec :digest) sample-rate)
-           pending nil model model out [] commits [] extract-ns [] sample-ns []]
+    (loop [frame 0 block 0 extractor (shape/new-bank sample-rate)
+           pending nil model model out [] commits [] extract-ns [] finish-ns [] sample-ns []]
       (if (= frame frames)
         (let [steps (map (fn [[_ a] [_ b]] (Math/abs (- (double b) (double a)))) out (rest out))
               commit-frames (set (map :frame commits))
@@ -356,30 +368,36 @@
            :steps {:max (reduce max 0.0 steps)
                    :max-on-commit (reduce max 0.0 (keep (fn [[i step]] (when (commit-frames (inc i)) step)) indexed))}
            :extract-us (timing extract-ns)
+           :finish-us (timing finish-ns)
            :sample-us (timing sample-ns)
            :blocks block :duration-ms duration-ms})
         (let [time-ms (/ (* 1000.0 frame) fps)
               ;; Deliver every block captured by this frame's time.
-              [block extractor pending extract-ns]
-              (loop [block block extractor extractor pending pending extract-ns extract-ns]
+              [block extractor pending extract-ns finish-ns]
+              (loop [block block extractor extractor pending pending extract-ns extract-ns finish-ns finish-ns]
                 (let [start (* block block-frames)
                       end (min n (+ start block-frames))
                       end-ms (* 1000.0 (/ end sample-rate))]
                   (if (or (>= start n) (> end-ms time-ms))
-                    [block extractor pending extract-ns]
+                    [block extractor pending extract-ns finish-ns]
                     (let [chunk (java.util.Arrays/copyOfRange samples (int start) (int end))
                           t0 (System/nanoTime)
-                          {:keys [state extractions]}
-                          (shape/advance extractor {:samples chunk :sample-rate sample-rate
-                                                    :started-at-ms (* 1000.0 (/ start sample-rate))
-                                                    :clock {:time-ms 0.0 :beat 0.0 :bpm bpm :playing? true
-                                                            :meter {:beats-per-bar 4}}})
-                          elapsed (- (System/nanoTime) t0)]
-                      (recur (inc block) state
-                             (if-let [e (peek extractions)]
-                               (assoc e :run-id :replay :spec-digest (:digest spec) :arrived-ms end-ms)
+                          {:keys [bank jobs]}
+                          (shape/advance-bank extractor {:replay spec}
+                                              {:samples chunk :sample-rate sample-rate
+                                               :started-at-ms (* 1000.0 (/ start sample-rate))
+                                               :clock {:time-ms 0.0 :beat 0.0 :bpm bpm :playing? true
+                                                       :meter {:beats-per-bar 4}}})
+                          elapsed (- (System/nanoTime) t0)
+                          finished (mapv (fn [job]
+                                           (let [t (System/nanoTime) e (shape/finish-job job)]
+                                             [e (- (System/nanoTime) t)])) jobs)]
+                      (recur (inc block) bank
+                             (if-let [[e] (peek finished)]
+                               (assoc e :run-id :replay :arrived-ms end-ms)
                                pending)
-                             (conj extract-ns elapsed))))))
+                             (conj extract-ns elapsed)
+                             (into finish-ns (map second) finished))))))
               beat (beat-at time-ms)
               model (assoc-in model [:transport :beat] beat)
               before (get-in model [:audio-lfos :lfos :replay])
@@ -399,4 +417,4 @@
                         :table-jump (reduce max 0.0 (map #(Math/abs (- (double %1) (double %2)))
                                                          (shape-at before beat) table))})]
           (recur (inc frame) block extractor nil admitted (conj out [beat value])
-                 (cond-> commits commit (conj commit)) extract-ns (conj sample-ns elapsed)))))))
+                 (cond-> commits commit (conj commit)) extract-ns finish-ns (conj sample-ns elapsed)))))))

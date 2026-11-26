@@ -4,6 +4,7 @@
   namespace, creating a manager and listing inputs never open a device."
   (:require [tolglow.audio.pcm :as pcm]
             [tolglow.audio.shape :as shape]
+            [tolglow.audio.shape-worker :as shape-worker]
             [tolglow.integrations.analysis :as analysis]
             [tolglow.waveforms :as waveforms])
   (:import [javax.sound.sampled AudioSystem AudioFormat DataLine$Info TargetDataLine]
@@ -234,35 +235,28 @@
            (deliver (:result run) result)))))
 
 (defn advance-shapes
-  "Advance one audio-shape extractor per requested spec over a captured block
-  (#676). specs maps an LFO ID to an extractor spec with its :digest; a changed
-  digest or sample rate starts that extractor fresh, and a spec that fails
-  validation is skipped. Returns [extractors latest], where latest maps an LFO
-  ID to its newest extraction tagged with :run-id and :spec-digest."
-  [extractors specs block run-id]
-  (if-not (and (map? specs) (seq specs))
-    [{} {}]
-    (reduce-kv
-     (fn [[out latest] id {:keys [digest] :as spec}]
-       (if-let [extractor (let [current (get extractors id)]
-                            (if (and current (= digest (:digest current))
-                                     (= (double (:sample-rate block)) (get-in current [:extractor :sample-rate])))
-                              (:extractor current)
-                              (try (shape/new-extractor (dissoc spec :digest) (:sample-rate block))
-                                   (catch clojure.lang.ExceptionInfo _ nil))))]
-         (let [{:keys [state extractions]} (shape/advance extractor block)]
-           [(assoc out id {:digest digest :extractor state})
-            (if-let [extraction (peek extractions)]
-              (assoc latest id (assoc extraction :run-id run-id :spec-digest digest))
-              latest)])
-         [out latest]))
-     [{} {}] specs)))
+  "The capture thread's share of audio-shaped LFOs (#676): feed one block to
+  the extractor bank for the requested specs ({lfo-id spec-with-:digest}; a
+  spec that fails validation is skipped). Returns [bank jobs]. Window-end
+  analysis is not done here; hand the jobs to a `shape-worker`."
+  [bank specs block]
+  (let [specs (into {} (filter (fn [[_ spec]] (empty? (shape/validate-spec (dissoc spec :digest)))))
+                    (when (map? specs) specs))
+        {:keys [bank jobs]} (shape/advance-bank (or bank (shape/new-bank (:sample-rate block))) specs block)]
+    [bank jobs]))
 
 (defn- capture! [manager run config]
   (let [last-analyzer (volatile! (analysis/new-analyzer (:analyzer-options config)))
         capture-state (volatile! (waveforms/new-capture))
         history-state (volatile! (waveforms/new-capture history-options))
-        shape-state (volatile! {})
+        shape-state (volatile! nil)
+        ;; Window-end analysis runs here, never on the capture thread.
+        shapes (shape-worker/start!
+                (fn [result]
+                  (when-not @(:cancelled? run)
+                    (callback! manager run :shapes! (:shapes! @(:callbacks run))
+                               (update-vals result #(assoc % :run-id (:run-id run))))))
+                (fn [error] (update-public! manager run update-in [:metrics :callback-errors] (fnil inc 0))))
         result
         (try
           (if @(:cancelled? run)
@@ -317,7 +311,7 @@
                                    :discontinuity? (or possible-overflow? (pos? lost) (pos? discarded))}
                             specs (when-let [specs! (:shape-specs! callbacks)]
                                     (try (specs!) (catch Exception _ nil)))
-                            [extractors shapes] (advance-shapes @shape-state specs block (:run-id run))
+                            [bank jobs] (advance-shapes @shape-state specs block)
                             captured (waveforms/capture-block @capture-state block)
                             history (waveforms/capture-block @history-state block)
                             waveform (waveforms/capture-view captured)
@@ -337,7 +331,7 @@
                         (vreset! last-analyzer state)
                         (vreset! capture-state captured)
                         (vreset! history-state history)
-                        (vreset! shape-state extractors)
+                        (vreset! shape-state bank)
                         (swap! (:state manager)
                                (fn [state]
                                  (if (identical? run (:run state))
@@ -351,7 +345,7 @@
                         (when-not @(:cancelled? run)
                           (when (seq events) (callback! manager run :events! (:events! callbacks) events))
                           (when features (callback! manager run :features! (:features! callbacks) features))
-                          (when (seq shapes) (callback! manager run :shapes! (:shapes! callbacks) shapes))
+                          ((:submit! shapes) jobs)
                           (when-let [subscriptions (:subscriptions callbacks)]
                             (let [published (analysis/publish! subscriptions events)]
                               (update-public! manager run update-in [:metrics :subscriber-errors] + (count (:errors published))))))
@@ -360,6 +354,8 @@
           (catch Throwable error
             {:status (if @(:cancelled? run) :stopped :error)
              :error (when-not @(:cancelled? run) (error-data error)) :analyzer-state @last-analyzer}))]
+    ;; Shapes of windows the input completed are still published; a stop drops them.
+    ((:stop! shapes) (= :completed (:status result)) 2000)
     (finish! manager run result @(:callbacks run))))
 
 (defn- validate-callbacks! [callbacks]

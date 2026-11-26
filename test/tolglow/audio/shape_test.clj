@@ -145,17 +145,65 @@
     (doseq [mode [:envelope :cycle]]
       (let [a (run 480 mode) b (run 1024 mode)]
         (is (= (mapv :window a) (mapv :window b)))
-        (is (every? true? (map #(close? 1.0e-6 (:shape %1) (:shape %2)) a b)) (str mode))))
-    (testing "advancing an old state again gives the same result"
-      (let [state (:state (feed (shape/new-extractor {:extract :cycle} sample-rate)
-                                (java.util.Arrays/copyOfRange samples 0 100000)
-                                {:clock-at (fn [_] (clock 132.0))}))
-            block {:samples (java.util.Arrays/copyOfRange samples 100000 100480) :sample-rate sample-rate
-                   :started-at-ms (* 1000.0 (/ 100000 sample-rate)) :clock (clock 132.0)}
-            once (shape/advance state block)
-            twice (shape/advance state block)]
-        (is (= (vec (:ring (:state once))) (vec (:ring (:state twice)))))
-        (is (= (dissoc (:state once) :ring) (dissoc (:state twice) :ring)))))))
+        (is (every? true? (map #(close? 1.0e-6 (:shape %1) (:shape %2)) a b)) (str mode))))))
+
+(defn- bank-run
+  "Feed samples to a bank in 480-frame blocks; return the bank, every job and
+  the per-block jobs."
+  [specs ^doubles samples bpm]
+  (loop [start 0 bank (shape/new-bank sample-rate) jobs []]
+    (if (>= start (alength samples))
+      {:bank bank :jobs jobs}
+      (let [end (min (alength samples) (+ start 480))
+            result (shape/advance-bank bank specs {:samples (java.util.Arrays/copyOfRange samples (int start) (int end))
+                                                   :sample-rate sample-rate :started-at-ms (* 1000.0 (/ start sample-rate))
+                                                   :clock (clock bpm)})]
+        (recur end (:bank result) (into jobs (:jobs result)))))))
+
+(deftest lfos-on-one-band-share-its-filter-and-ring
+  (let [samples (fixtures/passage :delay-synth {:bpm 120.0 :bars 2})
+        specs {:a {:band :bass :extract :cycle} :b {:band :bass :extract :envelope}
+               :c {:band :sub :extract :cycle :window {:beats 2}}}
+        {:keys [bank jobs]} (bank-run specs (java.util.Arrays/copyOfRange samples 0 (+ 96000 4800)) 120.0)]
+    (is (= #{:bass :sub} (set (keys (:fronts bank)))) "one front per distinct band")
+    (is (= [[:a 1] [:b 1] [:c 1] [:c 2]] (sort (map (juxt :id :seq) jobs))))
+    (testing "an envelope job carries its bins; a cycle job a fresh copy of the band up to the edge"
+      (let [job (some #(when (= :a (:id %)) %) jobs)
+            ^doubles copy (:samples job)
+            before (vec copy)]
+        (is (nil? (:squares job)))
+        (is (= 4096 (alength copy)) "the bass ring, no more")
+        (shape/advance-bank bank specs {:samples (double-array 480 0.25) :sample-rate sample-rate
+                                        :started-at-ms 2100.0 :clock (clock 120.0)})
+        (is (= before (vec copy)) "later blocks never touch a handed-off copy")
+        (is (= 32 (count (:squares (some #(when (= :b (:id %)) %) jobs)))))))
+    (testing "an LFO removed from the specs is dropped with its band"
+      (let [{:keys [bank]} (shape/advance-bank bank {:b (:b specs)} {:samples (double-array 480) :sample-rate sample-rate
+                                                                      :started-at-ms 2100.0 :clock (clock 120.0)})]
+        (is (= [:b] (keys (:lfos bank))))
+        (is (= [:bass] (keys (:fronts bank))))))
+    (testing "finishing a job is the same analysis as the single-LFO path"
+      (is (= :ok (:status (shape/finish-job (some #(when (= :a (:id %)) %) jobs))))))))
+
+(deftest window-end-analysis-is-bounded-and-decimated
+  (testing "YIN's lag range, after decimating band-limited audio"
+    (is (= {:frequency-range [20.0 60.0] :factor 16 :min-lag 50 :max-lag 150} (shape/analysis-plan :sub 48000.0)))
+    (is (= 16 (:factor (shape/analysis-plan :bass 48000.0))))
+    (is (= 1 (:factor (shape/analysis-plan :full 48000.0))) "an unfiltered band is never decimated")
+    (is (= 1600 (:max-lag (shape/analysis-plan :full 48000.0)))))
+  (testing "the period is refined at the full rate"
+    (doseq [[band frequency] [[:sub 41.0] [:bass 97.0] [:full 233.0]]]
+      (let [{:keys [frequency-hz status]} (shape/analyze-cycle (tone frequency 0.4) sample-rate band 32 0.8)]
+        (is (= :ok status) (str band))
+        (is (< (Math/abs (- frequency frequency-hz)) (* 0.002 frequency)) (str band " " frequency-hz)))))
+  (testing "confidence is 1 − aperiodicity, and the default threshold rejects noise"
+    (let [random (java.util.Random. 7) noise (double-array 24000)]
+      (dotimes [i 24000] (aset noise i (- (.nextDouble random) 0.5)))
+      (doseq [band [:bass :mid :full]]
+        (let [{:keys [status confidence]} (shape/analyze-cycle noise sample-rate band 32 (:min-confidence shape/default-spec))]
+          (is (= :low-confidence status) (str band))
+          (is (< confidence (:min-confidence shape/default-spec)) (str band " " confidence))))
+      (is (> (:confidence (shape/analyze-cycle (tone 110.0 0.2) sample-rate :bass 32 0.8)) 0.98)))))
 
 (deftest specs-are-validated
   (is (= [] (shape/validate-spec {})))
