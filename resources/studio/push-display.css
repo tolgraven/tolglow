@@ -137,6 +137,17 @@ body.push-display-page,body.push-display-page #app{width:960px;height:160px;min-
   min-width: 0;
 }
 #push-display .parameter-history figcaption span:last-child {flex-shrink: 0}
+#push-display .space-magnitude {
+  position: absolute;
+  bottom: 0;
+  left: 3px;
+  margin: 0;
+  padding: 0 3px;
+  font: 9px/11px ui-monospace, monospace;
+  white-space: nowrap;
+}
+#push-display .space-magnitude > b {margin-right: 3px; font: inherit}
+#push-display .push-compound-area .space-magnitude {inset: 15px 8px auto auto; font-size: 10px; line-height: 13px}
 #push-display .push-compound-area .parameter-space > svg {width: 78%; height: 100%; margin-left: 0}
 #push-display .push-compound-area .parameter-space .push-reading {
   inset: 14px 7px auto auto;

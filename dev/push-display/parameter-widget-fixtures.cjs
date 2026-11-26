@@ -58,6 +58,14 @@ const cycle = (name, beats, own) => ({id: name, param: name, name, schema: {type
 const periods = {...base, cue: {name: 'Grid periods', active: true}, 'musical-timing': {meter: meter(4, 8)},
   parameters: [cycle('1/4 beat', 0.25), cycle('1 beat', 1), cycle('1 bar', 4), cycle('4 bars', 16), cycle('1 phrase', 32),
                cycle('Phrase 4x4', 16, meter(4, 4)), cycle('Bar 7/8', 3.5, meter(3.5, 4)), cycle('Bar 3/4', 3, meter(3, 4))]};
+// One direction at four magnitudes, each axis at full scale, and a positive range.
+const vector = (name, value, bounds = [-1, 1]) => ({id: name, param: name, name,
+  schema: {type: 'vector', size: 3, bounds}, value});
+const along = amount => [0.64, 0.6, -0.48].map(c => +(c * amount).toFixed(4));
+const magnitudes = {...base, cue: {name: 'Vector magnitudes', active: true},
+  parameters: [vector('Mag 0.25', along(0.25)), vector('Mag 0.5', along(0.5)), vector('Mag 0.75', along(0.75)),
+               vector('Mag 1', along(1)), vector('+X', [1, 0, 0]), vector('+Y', [0, 1, 0]), vector('+Z', [0, 0, 1]),
+               vector('0 to 10', [3, 4, 5], [0, 10])]};
 const scenarios = {
   untouched: base,
   'single-touch': {...base, 'touched-parameter': {'instance-id': 'a', param: 'level', component: 0}},
@@ -65,7 +73,8 @@ const scenarios = {
     'touched-parameters': [{'instance-id': 'a', param: 'speed', component: 0}]},
   'compound-touch': {...base, 'touched-parameter': {'instance-id': 'a', param: 'tint', component: 0}},
   'spatial-touch': {...base, 'touched-parameter': {'instance-id': 'a', param: 'position', component: 0}},
-  'grid-periods': periods
+  'grid-periods': periods,
+  'vector-magnitudes': magnitudes
 };
 
 server.listen(Number(process.env.PORT || 0), '127.0.0.1', async () => {

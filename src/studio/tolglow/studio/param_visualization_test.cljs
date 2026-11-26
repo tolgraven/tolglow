@@ -3,7 +3,8 @@
             [tolglow.studio.param-visualization :as visual]
             [tolglow.studio.push-display :as display]
             [tolglow.studio.parameter-widgets :as widgets]
-            [tolglow.visualization.parameter-views :as views]))
+            [tolglow.visualization.parameter-views :as views]
+            [tolglow.visualization.vector-space :as vector-space]))
 
 (deftest spatial-defaults-follow-the-value-domain
   (is (= :spatial (visual/selected-mode {:type "vector" :size 3} nil)))
@@ -99,6 +100,46 @@
     (is (= {:class "push-reading" :data-components 3} attrs))
     (is (= ["X" "0.123"] [label shown]))
     (is (= "X 0.12346" title) "the title keeps destination precision")))
+
+(defn- nodes
+  "Every hiccup vector under a rendered form, components left unexpanded."
+  [form]
+  (filter vector? (tree-seq sequential? seq form)))
+
+(defn- tagged [form tag] (filter #(= tag (first %)) (nodes form)))
+
+(deftest the-vector-space-draws-the-shared-geometry-and-the-magnitude
+  (let [schema {:type :vector :size 3 :bounds [-1 1]}
+        [_ _ svg _ _ magnitude :as figure] (visual/space schema [0.6 0 0.8] [0.6 0 0.8])
+        labels (tagged svg :text.space-axis-label)
+        walls (tagged svg :polygon)
+        depth (tagged svg :polygon.space-depth)
+        arrow (vector-space/arrow [[-1 1] [-1 1] [-1 1]] [0.6 0 0.8])
+        [_ arrow-model] (first (filter #(and (fn? (first %)) (map? (second %)) (:head (second %))) (nodes svg)))]
+    (is (= :figure.parameter-space (first figure)))
+    (is (= "0 0 96 80" (get-in svg [1 :view-box])))
+    (is (= ["X" "Y" "Z"] (map last labels)))
+    (is (= (map :label vector-space/axes) (map (comp (juxt :x :y) second) labels))
+        "each letter sits on the projected centre of its high face")
+    (is (= 3 (count walls)))
+    (is (= 3 (count (distinct (map #(get-in % [1 :style :fill]) walls)))) "each wall has its own shade")
+    (is (= (map #(get-in % [1 :points]) walls) (map #(get-in % [1 :points]) depth))
+        "every wall darkens toward the far corner")
+    (is (= (:at vector-space/far-corner)
+           ((juxt :cx :cy) (second (first (tagged svg :radialGradient#space-depth))))))
+    (is (= arrow arrow-model) "the arrow is the shared model for the plotted value")
+    (is (= [:small.space-magnitude {:style {"--extent" (:extent arrow)} :title "Magnitude 1 within -1 … 1"}
+            [:b "‖v‖"] "1"]
+           magnitude))
+    (is (= "0.6, 0, 0.8, range -1 … 1, magnitude 1" (get-in svg [1 :aria-label])))
+    (testing "an orientation draws its rotated axes and reports no magnitude"
+      (let [turned (visual/space (assoc schema :semantic/type :orientation :bounds [-180 180]) [10 20 30] [10 20 30])]
+        (is (nil? (get turned 5)))
+        (is (empty? (filter #(and (fn? (first %)) (map? (second %)) (:head (second %))) (nodes turned))))))
+    (testing "labels follow the schema and the Push reading keeps its components"
+      (let [[_ _ named reading] (visual/space (assoc schema :component-labels ["Pan" "Tilt" "Roll"]) [0 0 0] [0 0 0] true)]
+        (is (= ["Pan" "Tilt" "Roll"] (map last (tagged named :text.space-axis-label))))
+        (is (= :figcaption.push-reading (first reading)))))))
 
 (def common-time {:meter {:beats-per-bar 4 :bars-per-phrase 4}})
 

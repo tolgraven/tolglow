@@ -8,7 +8,8 @@
             [tolglow.studio.parameter-widgets :as widgets]
             [tolglow.studio.visibility :refer [watch-visibility]]
             [tolglow.visualization.musical-grid :as musical-grid]
-            [tolglow.visualization.parameter-views :as views]))
+            [tolglow.visualization.parameter-views :as views]
+            [tolglow.visualization.vector-space :as vector-space]))
 
 (def zooms [0.5 1 2 4 8 16])
 
@@ -36,18 +37,8 @@
 
 (defn- unit-value [[low high] v] (max 0 (min 1 (/ (- v low) (- high low)))))
 
-(defn- screen
-  "Oblique camera, fixed portrait-free aspect for the 960 × 160 hardware row."
-  [[x y z]]
-  [(+ 55 (* 25 (- x z)))
-   (+ 36 (* -21 y) (* 10 (+ x z)))])
-
-(defn- points [positions]
-  (str/join " " (map (fn [p] (str/join "," (screen p))) positions)))
-
-(defn- segment [from to attrs]
-  (let [[x1 y1] (screen from) [x2 y2] (screen to)]
-    [:line (assoc attrs :x1 x1 :y1 y1 :x2 x2 :y2 y2)]))
+(defn- segment [[x1 y1] [x2 y2] attrs]
+  [:line (assoc attrs :x1 x1 :y1 y1 :x2 x2 :y2 y2)])
 
 (defn- rotate-euler [[x y z] [rx ry rz]]
   (let [y1 (- (* y (js/Math.cos rx)) (* z (js/Math.sin rx)))
@@ -61,7 +52,7 @@
   (let [rad? (#{:rad :radians} (tag (or (:unit schema) (:units schema))))
         angles (mapv #(if rad? % (* % (/ js/Math.PI 180))) xyz)]
     [:g (for [[i axis] (map-indexed vector [[0.85 0 0] [0 0.85 0] [0 0 0.85]])]
-          ^{:key i} [segment [0 0 0] (rotate-euler axis angles)
+          ^{:key i} [segment (vector-space/project [0 0 0]) (vector-space/project (rotate-euler axis angles))
                      {:stroke (colors i) :stroke-width 2.4 :stroke-linecap "round"}])]))
 
 (defn spatial-keyframe
@@ -119,7 +110,35 @@
     (get (or (:component-labels schema) ["X" "Y" "Z"]) component)
     component-label))
 
-(defn space [schema value plotted & [push?]]
+(def ^:private wall-colors
+  "Unlit and fully lit wall colours. A wall's shade mixes between them."
+  [[18 25 21] [98 128 106]])
+
+(defn- wall-fill [shade]
+  (let [[dark lit] wall-colors]
+    (str "rgb(" (str/join "," (map (fn [a b] (js/Math.round (+ a (* shade (- b a))))) dark lit)) ")")))
+
+(defn- magnitude-label [schema magnitude]
+  (if (#{8 16} (:dmx-bits schema))
+    (widgets/number-label schema magnitude)
+    (str (js/Number (.toPrecision magnitude 3)))))
+
+(defn- arrow-view
+  "The value arrow from the zero of the bounds, with its foot on the floor."
+  [{:keys [from to shaft-to head foot shadow]} tint]
+  [:g.space-arrow
+   [segment (first shadow) (second shadow) {:class "space-shadow"}]
+   [segment foot to {:class "space-drop"}]
+   [:ellipse.space-foot {:cx (first foot) :cy (second foot) :rx 2.6 :ry 1.1}]
+   [segment from shaft-to {:class "space-arrow-shaft" :stroke tint}]
+   [:polygon.space-arrow-head {:points (vector-space/points head) :fill tint :stroke tint}]
+   [:circle.space-origin {:cx (first from) :cy (second from) :r 1.5}]
+   [:circle.space-tip {:cx (first to) :cy (second to) :r 1.3 :fill tint}]])
+
+(defn space
+  "The 3D vector widget. The shared vector-space model supplies every drawn
+  point; this component only maps it to SVG."
+  [schema value plotted & [push?]]
   (let [actual (components schema value)
         xyz (some->> plotted (take 3) vec)
         kind (spatial-kind schema)
@@ -127,33 +146,45 @@
     (if-not (and kind (= 3 (count xyz)))
       [:span.parameter-no-sample {:role "status"} "Awaiting value"]
       (let [domain (bounds schema xyz)
-            point (mapv #(- (* 2 (unit-value domain %)) 1) xyz)
-            [x _ z] point
-            [px py] (screen point)
-            tint "var(--push-accent, #bdd49f)"
+            arrow (when-not (= kind :orientation) (vector-space/arrow [domain domain domain] xyz))
+            magnitude (some->> (:magnitude arrow) (magnitude-label schema))
             caption (domain-label schema domain)]
         [:figure.parameter-space {:aria-label (str (name kind) " in three dimensions")
                                   :data-dmx-bits (:dmx-bits schema)}
-         [:svg {:view-box "0 0 110 79" :role "img" :aria-label (str (str/join ", " xyz) ", range " caption)}
-          [:polygon.space-wall {:points (points [[-1 -1 -1] [-1 1 -1] [-1 1 1] [-1 -1 1]])}]
-          [:polygon.space-wall.side {:points (points [[-1 -1 -1] [-1 1 -1] [1 1 -1] [1 -1 -1]])}]
-          [:polygon.space-floor {:points (points [[-1 -1 -1] [1 -1 -1] [1 -1 1] [-1 -1 1]])}]
-          (for [n [-0.5 0 0.5]]
-            ^{:key n} [:g.space-grid [segment [n -1 -1] [n -1 1] {}] [segment [-1 -1 n] [1 -1 n] {}]])
+         [:svg {:view-box (str/join " " vector-space/view-box) :role "img"
+                :aria-label (str (str/join ", " xyz) ", range " caption
+                                 (when magnitude (str ", magnitude " magnitude)))}
+          [:defs
+           (let [{[x y] :at radius :radius} vector-space/far-corner]
+             [:radialGradient#space-depth {:gradientUnits "userSpaceOnUse" :cx x :cy y :r radius}
+              [:stop {:offset "0%" :stop-color "#000" :stop-opacity 0.42}]
+              [:stop {:offset "100%" :stop-color "#000" :stop-opacity 0}]])]
+          (for [{:keys [id points shade grid]} vector-space/walls]
+            ^{:key id}
+            [:g.space-wall {:data-wall (name id)}
+             [:polygon {:points (vector-space/points points) :style {:fill (wall-fill shade)}}]
+             ;; The walls darken toward the corner where they meet.
+             [:polygon.space-depth {:points (vector-space/points points) :fill "url(#space-depth)"}]
+             (for [[n {:keys [from to]}] (map-indexed vector grid)]
+               ^{:key n} [segment from to {:class "space-grid"}])])
+          (for [{:keys [axis from to]} vector-space/axes]
+            ^{:key axis} [segment from to {:class "space-axis-line" :stroke (colors axis)}])
           (if (= kind :orientation)
             [orientation schema xyz]
-            [:<> [segment [x -1 z] point {:class "space-drop"}]
-             [segment (mapv #(- (* 2 (unit-value domain %)) 1) [0 0 0])
-              point {:stroke tint :stroke-width 1.9}]
-             [:circle {:cx px :cy py :r 4 :fill tint :stroke "#e8eee0" :stroke-width 1}]])
-          (for [[i [tx ty]] (map-indexed vector [[92 36] [55 8] [14 36]])]
-            ^{:key i} [:text.space-axis {:x tx :y ty :fill (colors i)} (get labels i)])]
+            (when arrow [arrow-view arrow "var(--push-accent, #bdd49f)"]))
+          (for [{:keys [axis label]} vector-space/axes]
+            ^{:key axis} [:text.space-axis-label {:x (first label) :y (second label) :fill (colors axis)}
+                          (get labels axis)])]
          (if push?
            [:figcaption.push-reading
             (for [[axis value] (map-indexed vector (take 3 actual))]
               (with-meta (component-reading schema labels axis value true) {:key axis}))]
            [:figcaption (str/join " · " (map-indexed #(compact-number schema %1 %2) (take 3 actual)))])
-         [:small.parameter-domain caption]]))))
+         [:small.parameter-domain caption]
+         (when magnitude
+           [:small.space-magnitude {:style {"--extent" (:extent arrow)}
+                                    :title (str "Magnitude " magnitude " within " caption)}
+            [:b "‖v‖"] magnitude])]))))
 
 (defn append-sample
   ([previous clock values]
