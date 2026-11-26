@@ -8,7 +8,8 @@
             [tolglow.studio.push-scene :as scene]
             [tolglow.studio.page-overview :as pages]
             [tolglow.studio.parameter-widgets :as widgets]
-            [tolglow.studio.param-visualization :as visualization]))
+            [tolglow.studio.param-visualization :as visualization]
+            [tolglow.visualization.parameter-views :as views]))
 
 (defn- saved-show-catalog [catalog]
   (when (map? catalog)
@@ -199,9 +200,9 @@
 
 (defn- axis-reading [{:keys [schema component component-label effective-value value]}]
   (let [values (visualization/components schema (if (some? effective-value) effective-value value))
-        color? (= :color (widgets/parameter-kind schema))]
+        color? (= :color (views/color-kind schema))]
     (when-let [shown (if color?
-                       (widgets/component-amount values component-label component)
+                       (widgets/component-amount values component-label component (views/color-space schema))
                        (get values component))]
       [:output.push-axis-reading
        (widgets/number-label (get (:component-schemas schema) component (if color? {:bounds [0 1]} schema)) shown)])))

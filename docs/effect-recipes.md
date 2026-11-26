@@ -85,6 +85,41 @@ The effect-level target set and each output's targets intersect. Here the left
 head receives a total dimmer contribution of 0.5 and the right receives 0.2.
 Supported blend names are the compiler's `:replace`, `:add` and `:max`.
 
+### Mixed rigs: heads without the attribute
+
+Each output writes only to the heads that implement its attribute (#688).
+`:color` needs red, green and blue channels, `:aim` and `:direction` need pan
+and tilt, every patched head accepts `:dimmer`, and any other attribute needs
+its own channel. An effect without targets therefore lights the RGB fixtures on
+a rig that also has a hazer or a white-only par, and leaves those heads
+untouched. A group, volume or `:all` selection is narrowed the same way.
+
+The launch acknowledgement and the running instance name the heads that were
+skipped:
+
+```clojure
+@(show/submit! runtime {:op :cue/launch :cue-id :wash})
+;; => {:status :accepted :instance-id "0:1"
+;;     :target-resolution {:skipped [{:attribute :color :heads [:par :hazer]
+;;                                    :requires [:red :green :blue]}]}}
+```
+
+Naming such a head explicitly is a mistake, so the launch is refused instead.
+Explicit means output `:targets`, effect `:targets`, launch `:targets` or a
+`{:fixture-ids [...]}` selector:
+
+```clojure
+@(show/submit! runtime {:op :cue/launch :cue-id :wash :launch {:targets [:rgb :hazer]}})
+;; => {:status :rejected :code :incapable-target
+;;     :message "Explicit targets include heads that cannot take a written attribute: color on hazer (needs red, green, blue)"
+;;     :details {:conflicts [{:attribute :color :heads [:hazer] :requires [:red :green :blue]}]}}
+```
+
+The compilers apply the same filter on every frame, so a later reload or patch
+change cannot fault a frame through an incapable head. Studio launches send the
+same command and receive the same acknowledgement. Studio does not yet show the
+`:target-resolution` report.
+
 `color`, `intensity`, `zoom` and `focus` clamp their expression to the normalized
 output range. `aim` retains finite world coordinates without clamping them.
 The generic `output` constructor can address other supported scalar attributes:

@@ -6,12 +6,13 @@
     tolglow.visualization.vector-space-test
     tolglow.visualization.waveform-shapes-test
     tolglow.effects.sampling-quality-test tolglow.effects.selection-test tolglow.compute-test tolglow.fixtures.patch-test tolglow.application-test tolglow.build-manifest-test tolglow.utils.iters-test tolglow.registry-test tolglow.effects-test tolglow.signals-test tolglow.modulation-test tolglow.parameter-sources-test
-    tolglow.clock-test tolglow.transport-pause-test tolglow.observations-test tolglow.system-controls-test tolglow.aim-paths-test tolglow.studio.aim-paths-host-test
+    tolglow.clock-test tolglow.transport-pause-test tolglow.observations-test tolglow.system-controls-test tolglow.aim-paths-test tolglow.studio.aim-paths-host-test tolglow.position-hold-test
     tolglow.studio.http-transit-test tolglow.transit-test tolglow.studio.state-stream-test tolglow.studio.debug-stream-test
     tolglow.compiler-test tolglow.block-bindings-test tolglow.material-library-test tolglow.material-inputs-test
     tolglow.legacy-frame-oracle-test tolglow.worker-publication-oracle-test
     tolglow.effects.material-design-test tolglow.effects.variable-edit-test tolglow.effects.group-channels-test
-    tolglow.effects.group-channels-host-test tolglow.compiler.batch-test tolglow.predictive-keyframes-test
+    tolglow.effects.group-channels-host-test tolglow.compiler.batch-test tolglow.compiler.capability-test
+    tolglow.predictive-keyframes-test
     tolglow.perf.effect-samples-test
     tolglow.spatial.actions-test tolglow.spatial.sampling-test tolglow.spatial-cues-test tolglow.spatial-host-test tolglow.authoring.output-patch-test
     tolglow.authoring.cue-variations-test tolglow.authoring.variation-control-test

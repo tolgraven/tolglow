@@ -34,6 +34,44 @@ not establish touch interaction, visual quality or physical aiming accuracy.
 The [3D editor guide](rig-editor.md) covers fixture placement, direct path drawing,
 explicit cue creation/launch and reopening paths from saved shows.
 
+## When a positioning cue ends
+
+When the last effect writing a moving head's pan or tilt ends, the head holds
+its last committed pose. It moves again only when another effect writes that
+axis. A one-shot aim path, a released loop or a direct pan/tilt cue therefore
+leaves the head where it stopped instead of commanding pan and tilt 0 on the
+next frame. The reason is physical: a head sent back to 0 usually has to
+travel further when the next cue takes it, so its real motion is less likely
+to match what the show commands. Holding keeps it close to where the next
+command expects it. Motion is never clamped or rate-limited for the hold.
+
+The frame owner implements this in `tolglow.show.position-hold`. Each frame
+it finds the patched heads whose last committed pan or tilt is above 0 and
+that no contribution writes this frame through `:pan`, `:tilt`, `:aim` or
+`:direction` at nonzero opacity. It adds one contribution block that writes
+those normalized values, so Afterglow packs them through the normal
+coarse/fine, inverted and cross-universe path, and rich and compact history
+carry the held pose into the next aim's wrap choice. Each axis is held
+separately. A writer at any nonzero opacity takes its axis over and composes
+against the packed default as before, so a partial-opacity position cue fades
+toward pan/tilt 0 exactly as on earlier releases; a running cue at opacity 0
+writes nothing, so the head holds. Edge-tracking followers are positioned by
+the renderer and are not held. The block goes at the end of the stream, where
+no other block writes the held axes and no native layer reads it, so a
+standalone `:targets :previous` modifier neither drops a held head nor gains
+one. A head that was never moved, and any show in which position writers keep
+running, renders byte-identical packets.
+
+Other channels keep their release behaviour: dimmer, colour and other
+emitters return to their idle values when their cue ends, and blackout still
+darkens emission without moving heads. Stopping the show still sends the idle
+shutdown packet, in which pan and tilt are 0. A fixture removed from the rig
+is no longer rendered and its slots are released as before. `:show/restart`
+clears cues but does not command heads to move: they hold until a new cue
+writes them. There is no separate home command yet; launch a cue that writes
+the home pose. `tolglow.position-hold-test` checks all of this on captured
+packets ([#690](https://github.com/tolgraven/tolglow/issues/690)).
+
 ## Calibrated paired arrival
 
 Publish an opt-in point-to-point move with `:sync-arrival? true` through

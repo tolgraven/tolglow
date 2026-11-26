@@ -10,6 +10,7 @@ On a successful restart, the studio:
 - Keeps response definitions visible with `:enabled? false` and a fresh unused envelope state. Disabled responses are excluded from middleware; explicitly submitting a response starts it again.
 - Retains the routing graph, disables it, advances its generation, and clears captured gates, release tails, input queues, learned observations, and audio timestamp coalescing state. Fresh input is required after explicitly enabling it again.
 - Clears captured audio/sync variables, controller leases, and active device ownership. Device closure happens after publication outside the frame lock.
+- Leaves moving heads where they are. The cleared cues stop writing pan and tilt, so each head holds its last committed pose until a new cue writes it ([when a positioning cue ends](aim-paths.md#when-a-positioning-cue-ends)).
 - Rejects remaining queued commands from the previous epoch, including stale prepared imports and callback closures. A failed/retried restart command cannot repeat cleanup in the new epoch.
 
 The same REPL, agent, fixture-service, and reactive managers remain alive. REPL namespaces, scratch text, and local bindings survive. Existing graph definitions remain registered. Agent tool commands retain their captured epoch and cannot use old authorization to modify the new show. Fresh human input or newly emitted registered reactive actions may deliberately launch new cues.

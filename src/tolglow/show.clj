@@ -82,6 +82,7 @@
             [tolglow.show.scene-draft :as scene-draft]
             [tolglow.show.recovery :as recovery]
             [tolglow.show.lighting :as lighting]
+            [tolglow.show.position-hold :as position-hold]
             [tolglow.integrations.analysis :as analysis]
             [tolglow.integrations.mpv-session :as mpv-session]
             [tolglow.integrations.reference-position :as reference-position]
@@ -2040,8 +2041,12 @@
                                 :previous-compact (get-in before [:output :compact])}
                          hdr? (assoc :hdr hdr-opts)
                          (:observe-hdr? space) (assoc :observe-hdr? true))
+        followers (into #{} (keep :follower) (get-in model [:rig :edge-tracking]))
         resolved (effect-faults/resolve-output result
-                   #(resolve-frame patch (lighting/contributions standby % extra-blocks) render-options)
+                   ;; A head no effect positions this frame holds its last committed pose.
+                   #(resolve-frame patch (position-hold/with-hold patch (:output before)
+                                           (lighting/contributions standby % extra-blocks) followers)
+                                   render-options)
                    (if spatial-groups
                      #(spatial-cues/mask-contributions % spatial-groups spatial-levels) identity))
         ;; A renderer rejection rebuilds the result from the engine's frame

@@ -97,3 +97,23 @@
         closed (views/history-toggle schema :auto)]
     (is (= :controls (views/selected-mode schema closed)))
     (is (= :history (views/history-toggle schema closed)))))
+
+(deftest each-colour-layout-converts-from-its-own-space
+  (let [near? (fn [a b] (every? #(< (Math/abs (double %)) 1e-9) (map - a b)))]
+    (doseq [[layout value rgba] [[:rgb [1 0.5 0] [1 0.5 0 1]]
+                                 [:rgba [0 0 1 0.5] [0 0 1 0.5]]
+                                 [:rgbw [0.5 0 0 0.5] [1 0.5 0.5 1]]
+                                 [:hsl [1/3 1 0.5] [0 1 0 1]]
+                                 [:hsla [2/3 1 0.25 0.5] [0 0 0.5 0.5]]
+                                 [:hsv [0 1 1] [1 0 0 1]]
+                                 [:hsv [1.5 1 0.5] [0 0.5 0.5 1]]]
+            schema [{:type :vector :semantic/type layout} {:type "vector" :semantic/type (name layout)}]]
+      (is (= layout (views/color-space schema)))
+      (is (near? rgba (views/color-rgba layout value)) (pr-str layout value)))
+    (is (near? [1 0.5 0] (views/hsv->rgb (views/rgb->hsv [1 0.5 0]))))
+    (is (= :rgba (views/color-space {:type :color})))
+    (is (near? [1 0 0 1] (views/color-rgba :rgba [1 0 0])) "an RGB value without alpha is opaque")
+    (is (= ["R" "G" "B" "W"] (views/component-labels {:type "vector" :semantic/type "rgbw"})))
+    (is (= ["H" "S" "V"] (views/component-labels {:type :vector :semantic/type :hsv})))
+    (is (= ["X" "Y" "Z" "W"] (views/component-labels {:type :vector :size 3})))
+    (is (= ["P" "T"] (views/component-labels {:type :vector :component-labels ["P" "T"]})))))
