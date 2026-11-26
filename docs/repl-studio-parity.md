@@ -367,6 +367,15 @@ draft shows `:stale` with the code an apply would be refused with
 Stage it again to audition the changed show. A restart or a restore drops the
 draft and its scheduled apply.
 
+The audition has no beat-clock schedule of its own. A running master ramp on
+the live show reaches the Room as its current frame value, so the Room fades
+with the live show and lands on the committed level without a step. Parameter,
+opacity and variable ramps edit state the snapshot does not follow: the Room
+keeps the committed value from staging, also while such a ramp runs. Scheduled
+events and subscriber steps fire only on the live show. The audition never
+advances, commits, holds or cancels a ramp, and `show/schedule` reads the same
+with or without a draft.
+
 A retried apply returns its first receipt. An apply that reuses the command ID
 of anything else is refused with `:command-id-conflict`.
 
@@ -393,6 +402,63 @@ Open gaps, owned by [issue #531](https://github.com/tolgraven/tolglow/issues/531
   one unit. Acceptance: one undo restores the show as it was before applying.
 - Room screenshots on hardware and a captured boundary change remain to be
   recorded.
+
+## Schedule events and ramps on the beat clock
+
+Both surfaces read and change one projection: `:schedule` in the show
+snapshot. The shared commands are `:schedule/post`, `:schedule/cancel`,
+`:schedule/move`, and direct actions carrying `:at`, `:in` or `:grid`, such as
+`:param/ramp`. Positions and durations are zero-based beats, bars and phrases
+on the transport. [Beat-clock scheduling](scheduler.md)
+
+From the REPL, ramp Ember's level and launch a cue two bars ahead. Then read
+the projection that Studio shows:
+
+```clojure
+(def planned
+  @(show/post-events! runtime
+     [{:id "ember-swell" :label "Ember swell" :op :param/ramp :cue-id :ember
+       :param :level :to 0.9 :over {:bars 4} :curve :ease-in-out}
+      {:id "ice-in" :label "Ice in" :op :cue/launch :cue-id :ice :in {:bars 2}}]))
+
+(:event-ids planned)
+(show/schedule runtime :compact)
+(:ramps (show/schedule runtime))
+```
+
+In **Perform**, the cue panel's **Scheduled** list shows **Ice in · beat …**
+with **Cancel**, and the running **Ember swell** ramp with its target, end beat,
+progress bar and **Stop**. Studio reads `[:show :schedule]` from the same
+snapshot. Select **Stop** on the ramp. The level holds where the ramp left it.
+Read the outcome back in the REPL:
+
+```clojure
+(last (:recent (show/schedule runtime)))
+;; => {:event-id "ember-swell" :status :cancelled :reason :operator-cancel ...}
+```
+
+Studio's **Stop** and **Cancel** submit `{:op :schedule/cancel :event-ids [id]}`.
+Studio and the REPL are operator surfaces, so they can cancel or move any
+event. An agent can only change what it posted. Studio draws a ramp's progress
+bar from the projection's `:start` and `:end` and the transport beat. Its knob
+keeps showing the committed value until the ramp commits, because the ramp is a
+frame overlay.
+The REPL equivalent is `(show/cancel-events! runtime {:event-ids ["ice-in"]})`.
+While a ramp runs, moving the **Level** control on Ember's active card cancels
+it. `:recent` then records `:reason :human-override`, and the control keeps the
+value you set.
+
+A refusal looks the same from both sides. A batch with one invalid event, such
+as an unknown curve, returns `:status :rejected :code :invalid-schedule` with
+`Event <index>: …` and schedules nothing.
+
+**Tracked gaps.** Studio lists and cancels scheduled work, but you cannot author
+an event, ramp or reschedule there. Use the REPL, an agent or a reactive
+action. The Studio timeline in
+[issue #646](https://github.com/tolgraven/tolglow/issues/646) adds authoring and
+dragging on the same projection. Push does not display the schedule yet. Close
+these gaps when an operator can post and move an event from Studio and see it in
+the REPL projection, and when Push shows the same upcoming list.
 
 ## Reviewing a show feature
 

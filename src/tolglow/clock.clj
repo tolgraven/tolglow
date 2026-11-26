@@ -4,6 +4,7 @@
   clocks, subscriptions, devices, commands or random generators are owned here."
   (:require [afterglow.time :as time]
             [afterglow.control.sensors :as sensors]
+            [tolglow.event-subscribers :as subscribers]
             [tolglow.modulation :as modulation]
             [tolglow.integrations.patch :as patch]))
 
@@ -65,8 +66,10 @@
   changes and seeks, never for every ordinary advancing transport sample.
 
   Shift active instance beat anchors and beat timers, frame beat bookkeeping,
-  responses, beat sequence positions/windows, auto beat schedules, signal routing and modulation
-  schedules/glides/holds. Private system clock anchors and beat gate timers shift;
+  responses, beat sequence positions/windows, relative subscriber and scheduled waits, beat
+  ramps, auto beat schedules, signal routing and modulation
+  schedules/glides/holds. Absolute :at/:grid events behind the new beat are reported
+  missed. Private system clock anchors and beat gate timers shift;
   elapsed pause offsets do not. Millisecond anchors/timers, durations, IDs/tokens,
   canonical parameters, captured definitions and arbitrary effect state stay as
   they were. Absolute oscillators intentionally read the new transport beat.
@@ -111,8 +114,8 @@
                                                  offset [:responses (:id response) :state]) response)) %))
             (map? (:composition-runs model))
             (update :composition-runs #(into {} (map (fn [[id run]] [id (shift-run id run offset)])) %))
-            (seq (get-in model [:event-subscribers :runs]))
-            (update-in [:event-subscribers :runs] #(mapv (fn [run] (update run :due-beat + offset)) %))
+            (or (seq (get-in model [:event-subscribers :runs])) (seq (get-in model [:event-subscribers :ramps])))
+            (subscribers/rebase-clock offset beat)
             (:auto model) (update :auto shift-auto offset)
             (:modulation model)
             (update :modulation

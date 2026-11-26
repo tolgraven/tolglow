@@ -69,6 +69,7 @@ dialog{color:var(--text);background:#1d251a;border:1px solid #536348;border-radi
 .queued-launches ul{max-height:8rem;overflow-y:auto;list-style:none;margin:3px 0 0;padding:0}
 .queued-launches li{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:34px;border-top:1px solid var(--line)}
 .queued-launches .text-button{flex:none;min-height:44px}
+.scheduled-events progress{flex:1 1 3rem;min-width:3rem;max-width:8rem}
 
 .show-checkpoint-dialog{width:min(540px,100%);max-height:calc(100dvh - 32px);overflow:auto}
 .show-checkpoint-dialog .dialog-header{margin-bottom:10px}

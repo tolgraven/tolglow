@@ -341,6 +341,98 @@
         (is (= {:rendered 41 :skipped 0} (:frames (show/scene-draft (:runtime auditioned))))))
       (finally (show/stop! (:runtime plain)) (show/stop! (:runtime auditioned))))))
 
+(defn- ramp! [rt time-ms id ramp]
+  (accepted! rt time-ms :command
+             (merge {:op :param/ramp :event-id id :command-id id :source {:adapter :repl :session-id "test"}} ramp)))
+
+(deftest an-audition-follows-the-live-master-ramp
+  ;; Master follows the live show in an audition. A master ramp is a frame
+  ;; overlay, so the audition must take its current value, not the committed
+  ;; master, or the Room would stay at full level through a live fade.
+  (let [audition (runtime nil) applied (runtime nil)
+        both (fn [time-ms] (tick audition time-ms) (tick applied time-ms))
+        blue-level #(get-in % [:values :head-1 :emitted-color 2])]
+    (try
+      (let [live-id (launch-live! audition)
+            _ (launch-live! applied)
+            _ (run! both [50 75 100])
+            _ (run! #(ramp! % 125 "fade" {:target :master :to 0.2 :over {:beats 2}}) [audition applied])
+            staged (submit audition {:op :scene-draft/stage :draft-id "scene" :operations (operations live-id)})
+            _ (submit applied {:op :scene-draft/stage :draft-id "scene" :operations (operations live-id)})
+            taken (submit applied {:op :scene-draft/apply :draft-id "scene" :expected-draft-revision 0
+                                   :command-id "take"})
+            frames (doall (for [time-ms (range 150 1401 frame-ms)]
+                            (do (both time-ms)
+                                {:auditioned (view audition) :committed (view applied)
+                                 :master (:master (model-of audition))
+                                 :ramps (count (:ramps (show/schedule (:runtime audition))))})))
+            during (take-while #(pos? (:ramps %)) frames)
+            after (drop (count during) frames)]
+        (is (= [:accepted :accepted] (mapv (comp :status receipt) [staged taken])))
+        (is (< 30 (count during)) "the fade spans most of two beats")
+        (is (every? #(== 1.0 (:master %)) during) "the committed master does not move while the ramp runs")
+        (is (seq after))
+        (is (every? #(== 0.2 (:master %)) after) "the live owner committed the target")
+        (doseq [{:keys [auditioned committed]} frames]
+          (is (= (get-in committed [:output :values]) (get-in auditioned [:draft-output :values]))))
+        (testing "the Room fades with the ramp and lands on the committed level without a step"
+          (let [levels (map (comp blue-level :draft-output :auditioned) frames)]
+            (is (apply > (map (comp blue-level :draft-output :auditioned) (drop 4 during))))
+            (is (apply >= levels))
+            (is (near? 0.2 (last levels))))))
+      (finally (show/stop! (:runtime audition)) (show/stop! (:runtime applied))))))
+
+(deftest an-audition-leaves-ramps-to-the-live-show
+  ;; The audition holds no schedule. Live ramps run, commit and are recorded
+  ;; exactly as without a draft. Parameter, opacity and variable ramps edit
+  ;; state the draft's snapshot does not follow, so the Room does not show them.
+  (let [plain (runtime nil) auditioned (runtime nil)
+        both (fn [time-ms] (tick plain time-ms) (tick auditioned time-ms))
+        private-ember #(get-in @(:scene-draft (:runtime auditioned)) [:frame :model :instances %])
+        red-level #(get-in % [:values :head-3 :emitted-color 0])]
+    (try
+      (let [live-id (launch-live! plain)
+            _ (launch-live! auditioned)
+            _ (doseq [rt [plain auditioned]]
+                (accepted! rt 50 :command {:op :variable/set :variable :mood :value 0.0 :command-id "mood-zero"
+                                           :source {:adapter :repl :session-id "test"}}))
+            _ (run! both (range 75 301 frame-ms))
+            staged (submit auditioned {:op :scene-draft/stage :draft-id "scene" :operations edits})
+            _ (both 325)
+            staged-ember (get-in (model-of auditioned) [:instances live-id])
+            _ (doseq [rt [plain auditioned]]
+                (ramp! rt 350 "dip" {:instance-id live-id :param :level :to 0.1 :over {:beats 1}})
+                (ramp! rt 375 "veil" {:target :opacity :instance-id live-id :to 0.5 :over {:beats 1}})
+                (ramp! rt 400 "mood" {:target :variable :variable :mood :to 1.0 :over {:ms 400}}))
+            frames (doall (for [time-ms (range 425 1201 frame-ms)]
+                            (do (both time-ms)
+                                {:plain (show/schedule (:runtime plain)) :auditioned (show/schedule (:runtime auditioned))
+                                 :live (red-level (:output (view auditioned)))
+                                 :room (red-level (:draft-output (view auditioned)))
+                                 :private (select-keys (private-ember live-id) [:params :system])})))]
+        (is (= :accepted (:status (receipt staged))))
+        (testing "every ramp runs and completes on the live owner, with or without the draft"
+          (is (= (map :plain frames) (map :auditioned frames)))
+          (is (= 3 (count (:ramps (:plain (first frames))))))
+          (is (empty? (:ramps (:plain (last frames)))))
+          (is (= #{"dip" "veil" "mood"}
+                 (into #{} (comp (filter #(= :completed (:status %))) (map :event-id))
+                       (:recent (:auditioned (last frames))))))
+          (is (= @(:sent plain) @(:sent auditioned)) "every live packet byte is unchanged")
+          (is (= (model-of plain) (model-of auditioned)))
+          (is (= [0.1 0.5 1.0] [(get-in (model-of auditioned) [:instances live-id :params :level])
+                                (get-in (model-of auditioned) [:instances live-id :system :opacity])
+                                (get-in (model-of auditioned) [:variables :mood])])))
+        (testing "the private timeline keeps the values it was staged with"
+          (is (apply > (map :live (take 12 frames))) "the live cue is dipping")
+          (is (apply == (map :room frames)) "the Room shows the cue at its staged level")
+          (is (every? #(= (get-in staged-ember [:params :level]) (get-in % [:private :params :level])) frames))
+          (is (every? #(= (get-in staged-ember [:system :opacity]) (get-in % [:private :system :opacity])) frames))
+          (is (nil? (get-in @(:scene-draft (:runtime auditioned)) [:frame :model :event-subscribers])))
+          (is (= 0.0 (get-in @(:scene-draft (:runtime auditioned)) [:frame :model :variables :mood]))))
+        (is (= :auditioning (:status (show/scene-draft (:runtime auditioned))))))
+      (finally (show/stop! (:runtime plain)) (show/stop! (:runtime auditioned))))))
+
 (deftest a-held-audition-frame-never-blocks-or-changes-live-frames
   ;; The first audition frame is held open on its worker. Every live tick must
   ;; still return, so the test needs no wall-clock bound.
