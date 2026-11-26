@@ -314,7 +314,16 @@
       (is (= 1 (:failures (row))) "The abandoned frame counts as one failure")
       (finally (producer/stop! p)))))
 
-(deftest a-renderer-that-hangs-on-every-draw-reopens-a-bounded-number-of-times-then-fails-the-cue
+(defn- ticks-of [row] (+ (:slots row 0) (:dropped row 0)))
+
+(defn- wait-ticks!
+  "Wait until the instance row (a thunk) has seen n more slots come round,
+  rendered or dropped, on its real cadence."
+  [row n]
+  (let [start (ticks-of (row))]
+    (is (eventually #(>= (ticks-of (row)) (+ start n))))))
+
+(deftest a-renderer-that-hangs-on-every-draw-stops-the-cue-after-a-bounded-number-of-renderers
   (let [clock (atom 0)
         opens (atom [])
         closes (atom [])
@@ -324,48 +333,191 @@
                                         (swap! opens conj (quot @clock 1000000))
                                         (hanging-renderer :on-close #(do (swap! closes conj (.getName (Thread/currentThread))) true)))})
         status #(producer/status p)
-        row #(first (:instances (status)))
-        ;; Slots keep coming round (rendered or dropped) on the real cadence.
-        ticks! (fn [] (let [n (+ (:slots (row)) (:dropped (row)))]
-                        (is (eventually #(>= (+ (:slots (row)) (:dropped (row))) (+ n 3))))))]
+        row #(first (:instances (status)))]
     (try
       (producer/sync! p {"a" (request {})})
       (is (eventually #(= 1 (:late (row)))) "The first draw is in flight on the first renderer")
-      (doseq [k [1 2 3]]
+      (doseq [k [1 2]]
         (advance! clock (inc watchdog))
         (is (eventually #(= k (get-in (status) [:error :losses]))))
         (let [delay (get-in (status) [:error :retry-after-ms])]
-          (is (= :shader/renderer-wedged (get-in (status) [:error :code])))
-          (is (= (* producer/retry-after-ms (bit-shift-left 1 (dec k))) delay) "The delay doubles with each loss in a row")
-          (ticks!)
+          (is (= {:code :shader/renderer-wedged :instance-id "a" :blamed? true}
+                 (select-keys (:error (status)) [:code :instance-id :blamed?])))
+          (is (= k (:strikes (row))) "The stalled job's cue is blamed")
+          (is (= (* producer/retry-after-ms (bit-shift-left 1 (dec k))) delay) "The delay doubles with each recent loss")
+          (wait-ticks! row 3)
           (advance! clock (dec delay))
-          (ticks!)
+          (wait-ticks! row 3)
           (is (= k (count @opens)) "Nothing opens before the delay has passed")
           (advance! clock 1)
           (is (eventually #(= (inc k) (count @opens))))
           (is (eventually #(= (inc k) (:late (row)))) "The new renderer's draw is in flight")))
       (advance! clock (inc watchdog))
-      (is (eventually #(= :shader/renderer-unresponsive (get-in (row) [:error :code]))) "The cue is reported failed")
-      (is (= {:code :shader/renderer-unresponsive :cause :shader/renderer-wedged :losses 4 :final? true}
-             (select-keys (:error (status)) [:code :cause :losses :final?])))
+      (is (eventually #(= :shader/renderer-unresponsive (get-in (row) [:error :code]))) "The third strike stops the cue")
+      (is (= [3 true] [(:strikes (row)) (:halted? (row))]))
+      (is (re-find #"until its GLSL changes" (get-in (row) [:error :message])))
+      (is (not (get-in (status) [:error :final?])) "A loss with a cue to blame never stops the producer")
       (advance! clock 3600000)
-      (ticks!)
-      (is (= 4 (count @opens)) "No renderer opens after the fourth loss in a row")
-      (is (= [0 3001 8002 17003] @opens))
-      (is (apply < (map - (rest @opens) @opens)) "Each reopen waits longer than the last")
-      (is (eventually #(= 4 (count @closes))))
+      (wait-ticks! row 3)
+      (is (= [0 3001 8002] @opens) "A stopped cue opens no renderer; each reopen waited longer than the last")
+      (is (eventually #(= 3 (count @closes))))
       (is (every? #{"tolglow-shader-renderer-close"} @closes) "Abandoned renderers close off the cadence threads")
       (is (zero? (:abandoned (status))) "Every abandoned renderer finished closing")
-      (testing "launching again after every shader cue has ended tries a renderer again"
-        (producer/sync! p {})
-        (producer/sync! p {"b" (request {})})
-        (is (eventually #(= 5 (count @opens))))
-        (is (nil? (:error (status)))))
+      (testing "a new version of the cue renders again"
+        (producer/sync! p {"a" (assoc-in (request {}) [:shader :source] gradient-glsl)})
+        (is (eventually #(= 4 (count @opens))))
+        (is (eventually #(and (false? (:halted? (row))) (zero? (:strikes (row)))))))
+      (finally (producer/stop! p)))))
+
+(deftest a-cue-that-overruns-the-fence-stops-alone-and-its-fix-recovers-it
+  ;; heavy's frame trips Afterglow's fence timeout, after which Afterglow has
+  ;; closed the context and refuses further work. good is a healthy cue.
+  (let [clock (atom 0)
+        opens (atom 0)
+        factory (fn []
+                  (swap! opens inc)
+                  (let [dead? (atom false)]
+                    (reify producer/ShaderRenderer
+                      (compile-shader [_ _] (done-future {:compiled? true}))
+                      (render-frame [_ shader {:keys [width height]}]
+                        (cond @dead? (throw (ex-info "Shader renderer is closed" {:type :afterglow.render.gpu.shader-frames/closed}))
+                              (.contains ^String (:source shader) "HEAVY")
+                              (do (reset! dead? true)
+                                  (doto (CompletableFuture.)
+                                    (.completeExceptionally (ex-info "Shader frame did not finish" {:type :afterglow.render.gpu.shader-frames/timeout}))))
+                              :else (done-future {:pixels (byte-array (* 4 width height)) :width width :height height})))
+                      (release-shader [_ _] (done-future true))
+                      (describe-renderer [_] {:backend :test :terminated? true})
+                      (close-renderer [_] true))))
+        p (producer/create {:renderer factory :clock-ns #(deref clock) :render-timeout-ms 200})
+        good (fn [t] (request {:feed :shader/good :order 1 :uniforms {"u_time" t "u_beats" 0.0 "u_level" 0.5}}))
+        heavy (fn [src] (assoc-in (request {:feed :shader/heavy :order 2}) [:shader :source] (str index-glsl src)))
+        status #(producer/status p)
+        row (fn [id] (some #(when (= id (:instance-id %)) %) (:instances (status))))]
+    (try
+      (producer/sync! p {"good" (good 0.0) "heavy" (heavy "// HEAVY")})
+      ;; Reopen delays are 0, 4 and 8 s; move the clock past each.
+      (is (eventually #(do (advance! clock 10000) (:halted? (row "heavy"))) 5000))
+      (is (eventually #(= {:code :shader/frame-timeout :strikes 3} (select-keys (:error (row "heavy")) [:code :strikes]))))
+      (testing "the healthy cue keeps rendering on a fresh renderer"
+        (advance! clock 60000)
+        (let [rendered (:rendered (row "good"))]
+          (producer/sync! p {"good" (good 1.0) "heavy" (heavy "// HEAVY")})
+          (is (eventually #(and (> (:rendered (row "good")) rendered) (nil? (:error (row "good")))))))
+        (is (= 4 @opens) "Three renderers lost to heavy, one more for good")
+        (is (not (get-in (status) [:error :final?]))))
+      (testing "fixing heavy's GLSL in place (same instance) recovers it"
+        (producer/sync! p {"good" (good 1.0) "heavy" (heavy "// fixed")})
+        (is (eventually #(pos? (:rendered (row "heavy")))))
+        (is (= [false 0 nil] ((juxt :halted? :strikes :error) (row "heavy"))))
+        (is (= 4 @opens) "Its fix renders on the same renderer"))
+      (finally (producer/stop! p)))))
+
+(defn- periodic-wedges
+  "Run one cue on renderers that each keep finishing frames for `periods`
+  watchdog periods, then hang, until the cue stops. Returns the opens, the
+  [losses reopen-delay] pairs seen and the final row."
+  [periods]
+  (let [clock (atom 0)
+        opens (atom 0)
+        watchdog 1000
+        factory (fn []
+                  (swap! opens inc)
+                  (let [opened @clock]
+                    (reify producer/ShaderRenderer
+                      (compile-shader [_ _] (done-future {:compiled? true}))
+                      (render-frame [_ _ {:keys [width height]}]
+                        (if (< (- @clock opened) (* periods watchdog 1000000))
+                          (done-future {:pixels (byte-array (* 4 width height)) :width width :height height})
+                          (CompletableFuture.)))
+                      (release-shader [_ _] (done-future true))
+                      (describe-renderer [_] {:backend :test :terminated? true})
+                      (close-renderer [_] true))))
+        p (producer/create {:renderer factory :clock-ns #(deref clock) :watchdog-ms watchdog :render-timeout-ms 20})
+        status #(producer/status p)
+        row #(first (:instances (status)))
+        seen (atom #{})]
+    (try
+      (loop [i 0]
+        (when (and (< i 400) (not (:halted? (row))))
+          ;; New uniforms every step, so every slot needs a render.
+          (producer/sync! p {"a" (request {:fps 60 :uniforms {"u_time" (double i) "u_beats" 0.0 "u_level" 0.5}})})
+          (wait-ticks! row 2)
+          (when-let [{:keys [losses retry-after-ms]} (:error (status))]
+            (when losses (swap! seen conj [losses retry-after-ms])))
+          (advance! clock 500)
+          (recur (inc i))))
+      {:opens @opens :seen @seen :row (row)}
+      (finally (producer/stop! p)))))
+
+(deftest a-renderer-that-wedges-after-five-healthy-periods-every-time-stops-the-cue
+  ;; Healthiness is measured from opening to the renderer's last progress.
+  (testing "five periods of progress: healthy, so each reopen waits only the first delay"
+    (let [{:keys [opens seen row]} (periodic-wedges 5)]
+      (is (:halted? row) "The strikes stop the cue after three renderers")
+      (is (= :shader/renderer-unresponsive (get-in row [:error :code])))
+      (is (pos? (:rendered row)))
+      (is (= 3 opens))
+      (is (= #{[1 2000] [2 2000] [3 2000]} seen) "Every loss within the window is counted")))
+  (testing "three periods of progress (lost after 4.5): not healthy, so the delay doubles"
+    (let [{:keys [opens seen row]} (periodic-wedges 3)]
+      (is (:halted? row))
+      (is (= 3 opens))
+      (is (= #{[1 2000] [2 4000] [3 8000]} seen)))))
+
+(deftest losses-no-cue-can-be-blamed-for-give-up-only-within-the-window
+  (let [clock (atom 0)
+        opens (atom 0)
+        fail-once (atom false)
+        fail-always (atom false)
+        lost #(ex-info "Context lost" {:type :afterglow.render.gpu.native-context/context-lost})
+        factory (fn []
+                  (swap! opens inc)
+                  (reify producer/ShaderRenderer
+                    (compile-shader [_ _] (done-future {:compiled? true}))
+                    (render-frame [_ _ {:keys [width height]}]
+                      (if (or @fail-always (compare-and-set! fail-once true false))
+                        (throw (lost))
+                        (done-future {:pixels (byte-array (* 4 width height)) :width width :height height})))
+                    (release-shader [_ _] (done-future true))
+                    (describe-renderer [_] {:backend :test :terminated? true})
+                    (close-renderer [_] true)))
+        p (producer/create {:renderer factory :clock-ns #(deref clock)})
+        status #(producer/status p)
+        row #(first (:instances (status)))
+        offer! (fn [t] (producer/sync! p {"a" (request {:uniforms {"u_time" t "u_beats" 0.0 "u_level" 0.5}})}))]
+    (try
+      (offer! 0.0)
+      (is (eventually #(= 1 (:rendered (row)))))
+      (testing "losses more than the window apart reopen at once and never give up"
+        (doseq [i (range 1 6)]
+          (reset! fail-once true)
+          (offer! (double i))
+          (is (eventually #(= (inc i) (:rendered (row)))) "Reopened without the clock moving: the first delay")
+          (is (= (inc i) @opens))
+          (advance! clock (* 11 60 1000))))
+      (testing "four losses within the window stop every cue until one is edited"
+        (reset! fail-always true)
+        (offer! 10.0)
+        (doseq [[n delay] [[2 4000] [3 8000]]]
+          (is (eventually #(= [n delay] ((juxt :losses :retry-after-ms) (:error (status))))))
+          (advance! clock delay))
+        (is (eventually #(:final? (:error (status)))))
+        (is (= {:code :shader/renderer-unresponsive :cause :afterglow.render.gpu.native-context/context-lost :losses 4}
+               (select-keys (:error (status)) [:code :cause :losses])))
+        (is (eventually #(= :shader/renderer-unresponsive (get-in (row) [:error :code]))))
+        (is (= 9 @opens))
+        (advance! clock 3600000)
+        (wait-ticks! row 3)
+        (is (= 9 @opens)))
+      (testing "a new version of a running cue tries again"
+        (reset! fail-always false)
+        (producer/sync! p {"a" (assoc-in (request {:uniforms {"u_time" 11.0 "u_beats" 0.0 "u_level" 0.5}}) [:shader :source] gradient-glsl)})
+        (is (eventually #(= 10 @opens)))
+        (is (eventually #(nil? (:error (row))))))
       (finally (producer/stop! p)))))
 
 (deftest abandoned-renderers-that-keep-their-context-stop-new-ones-opening
-  ;; Each renderer lasts long enough to start a new run of losses, so only
-  ;; the contexts still held by stuck workers bound the reopening.
   (let [clock (atom 0)
         released (vec (repeatedly 3 #(atom false)))
         opens (atom 0)
@@ -379,21 +531,21 @@
         row #(first (:instances (status)))]
     (try
       (producer/sync! p {"a" (request {})})
-      (doseq [k [1 2]]
+      (doseq [[k delay] [[1 2000] [2 4000]]]
         (is (eventually #(= k (:late (row)))))
-        (advance! clock (* (inc producer/healthy-periods) watchdog))
+        (advance! clock (inc watchdog))
         (is (eventually #(= k (:abandoned (status)))))
-        (is (= 1 (get-in (status) [:error :losses])) "A long-lived renderer starts a new run")
-        (advance! clock producer/retry-after-ms)
+        (is (= delay (get-in (status) [:error :retry-after-ms])))
+        (advance! clock delay)
         (when (= 1 k) (is (eventually #(= 2 @opens)))))
       (is (eventually #(= :shader/renderer-unresponsive (get-in (row) [:error :code]))))
       (is (= 2 (get-in (status) [:error :abandoned])))
       (is (not (get-in (status) [:error :final?])))
       (is (= 2 @opens) "Two contexts held by stuck workers: no third opens")
       (reset! (released 0) true)
+      (is (= 1 (:abandoned (status))) "Status counts only contexts still held")
       (advance! clock producer/retry-after-ms)
       (is (eventually #(= 3 @opens)) "A released context lets one more open")
-      (is (= 1 (:abandoned (status))))
       (finally (producer/stop! p)))))
 
 (deftest compiles-queued-behind-one-another-do-not-trip-the-watchdog
