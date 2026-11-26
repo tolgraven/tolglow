@@ -184,7 +184,7 @@
                                         (when (and s (= (:key s) (get (:shown state) x))) (:fader s))))))
           :release-touch (changed (-> state (update :touches dissoc x) (update :sent dissoc [:fader x])))
           :move (if-let [captured (get-in state [:touches x])]
-                  (if-let [target (mixer/hydrate (mixer/context model) captured)]
+                  (if-let [target (mixer/hydrate model captured)]
                     (with-envelope envelope (changed state (mixer/write target (mixer/value-at target value))))
                     (changed state))
                   (changed state))

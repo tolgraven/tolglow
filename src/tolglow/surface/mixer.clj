@@ -34,8 +34,8 @@
             [afterglow.control.effect-selection :as effect-selection]
             [afterglow.control.params :as params]
             [clojure.string :as str]
-            [tolglow.effects.group-channels :as group-channels]
-            [tolglow.knobs :as knobs]))
+            [tolglow.knobs :as knobs]
+            [tolglow.surface.link :as link]))
 
 (def unit-schema {:type :number :bounds [0 1] :default 1.0})
 
@@ -46,13 +46,17 @@
 ;; ---------------------------------------------------------------------------
 ;; Per-refresh context
 
+(defn- groups-by-id [mixer]
+  (into {} (map (juxt :id identity))
+        (concat (mapcat #(tree-seq :groups :groups %) (:manual mixer)) (:overlay mixer))))
+
 (defn context
   "Lookups shared by every strip of one refresh: the latest instance and all
   instance IDs per cue, group rows by channel ID with member levels, solo and
   mute flags, and knobs in creation order."
   [model]
   (let [instances (vals (:instances model))
-        mixer (group-channels/projection model)
+        mixer (link/group-projection model)
         selection (effect-selection/projection model)]
     {:model model
      :latest (reduce (fn [m {:keys [cue-id order] :as i}]
@@ -60,8 +64,7 @@
                          (assoc m cue-id i) m))
                      {} instances)
      :cue-instances (reduce (fn [m {:keys [cue-id id]}] (if cue-id (update m cue-id (fnil conj []) id) m)) {} instances)
-     :groups (into {} (map (juxt :id identity))
-                   (concat (mapcat #(tree-seq :groups :groups %) (:manual mixer)) (:overlay mixer)))
+     :groups (groups-by-id mixer)
      :member-levels (into {} (map (juxt :instance-id :member-level)) (:instances mixer))
      :flags (into {} (map (juxt :id identity)) (:instances selection))
      :knobs (vec (sort-by :order (vals (get-in model [:knobs :knobs]))))}))
@@ -105,16 +108,17 @@
 
 (defn hydrate
   "Re-read a captured target from the current model, keeping its address
-  (instance, parameter, group). Nil when its instance or group is gone."
-  [ctx {:keys [kind instance-id param component channel-id knob-id] :as target}]
-  (let [model (:model ctx)]
-    (case kind
-      :param (param-target (get-in model [:instances instance-id]) param component)
-      :opacity (opacity-target (get-in model [:instances instance-id]))
-      :group-level (some-> (get-in ctx [:groups channel-id]) group-target)
-      :master (master-target model)
-      :knob (some #(when (= knob-id (:id %)) {:kind :knob :knob-id knob-id :schema unit-schema :value (:value %)}) (:knobs ctx))
-      nil)))
+  (instance, parameter, group). Nil when its instance or group is gone. Only
+  a group target builds the group projection (fader moves are frequent)."
+  [model {:keys [kind instance-id param component channel-id knob-id]}]
+  (case kind
+    :param (param-target (get-in model [:instances instance-id]) param component)
+    :opacity (opacity-target (get-in model [:instances instance-id]))
+    :group-level (some-> (get (groups-by-id (link/group-projection model)) channel-id) group-target)
+    :master (master-target model)
+    :knob (when-let [{:keys [value]} (get-in model [:knobs :knobs knob-id])]
+            {:kind :knob :knob-id knob-id :schema unit-schema :value value})
+    nil))
 
 (defn normalized
   "The target's value in [0 1], or nil."

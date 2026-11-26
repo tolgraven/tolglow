@@ -113,11 +113,25 @@
 
 (defmethod content-axis :none [_] nil)
 
+(def ^:private last-projection (atom nil))
+
+(defn group-projection
+  "group-channels/projection, remembered for the last model value seen. Device
+  refreshes read strips, the window and meters from one committed model, and
+  the projection is a pure function of it, so one model costs one projection."
+  [model]
+  (let [[seen projection] @last-projection]
+    (if (identical? seen model)
+      projection
+      (let [projection (group-channels/projection model)]
+        (reset! last-projection [model projection])
+        projection))))
+
 (defn group-strips
   "Group strips for an :effect-group-view (:manual or :overlay), in bank order.
   Manual groups list children after parents."
   [view model]
-  (let [{:keys [manual] :as mixer} (group-channels/projection model)
+  (let [{:keys [manual] :as mixer} (group-projection model)
         expanded (when (= :manual view)
                    (into #{} (map :id) (mapcat #(tree-seq :groups :groups %) manual)))]
     (into []
