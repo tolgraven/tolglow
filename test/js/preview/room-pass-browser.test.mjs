@@ -21,7 +21,8 @@ test('private Room diagnostics keep real worker presentations through each pass 
   await new Promise(ok => server.listen(0,'127.0.0.1',ok));
   const browser = await chromium.launch({executablePath:binary,headless:true,args:['--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
   try {
-    const page = await browser.newPage();
+    const page = await browser.newPage(), shaderErrors = [];
+    page.on('console', message => {if (/shader error|program not valid/i.test(message.text())) shaderErrors.push(message.text());});
     const origin = 'http://127.0.0.1:'+server.address().port;
     await page.goto(origin);
     await page.evaluate(async () => {
@@ -37,7 +38,8 @@ test('private Room diagnostics keep real worker presentations through each pass 
     assert.ok(peer, 'private worker stayed active');
     await page.evaluate(() => document.querySelector('#preview').tolglowPreview.setQuality('desktop'));
     await page.waitForFunction(() => document.querySelector('#preview').tolglowPreview.getTelemetry().quality === 'desktop');
-    for (const mode of ['full','cached-shadows','skip-fog-raymarch','present-cached-frame','full']) {
+    // The loop and composite-fallback probes rewrite the production fog shader source.
+    for (const mode of ['full','cached-shadows','skip-fog-raymarch','present-cached-frame','simple-fixed-loop','no-composite-fallback','full']) {
       await peer.evaluate(choice => self.setRoomPassMode(choice),mode);
       await page.waitForFunction(choice => {
         const p=document.querySelector('#preview').tolglowPreview.getTelemetry().passProbe;
@@ -51,12 +53,13 @@ test('private Room diagnostics keep real worker presentations through each pass 
         }));
       });
       const {timings:observations,raymarched}=await page.evaluate(() => window.finishRoomPassSample());
-      if (mode==='full' || mode==='cached-shadows') assert.ok(raymarched > 0);
+      if (['full','cached-shadows','simple-fixed-loop','no-composite-fallback'].includes(mode)) assert.ok(raymarched > 0);
       else assert.equal(raymarched,0);
       assert.ok(observations.domSubmitMs.samples > 0,mode);
       assert.ok(observations[mode==='present-cached-frame'?'replaySubmitMs':'fogSubmitMs'].samples > 0,mode);
       assert.ok(observations.gpuFenceWaitMs.p50 >= 0);
       if(process.env.ROOM_TEST_MEDIA) await page.locator('#preview').screenshot({path:process.env.ROOM_TEST_MEDIA+'/'+mode+'.png'});
     }
+    assert.deepEqual(shaderErrors, []);
   } finally {await browser.close(); await new Promise(ok => server.close(ok));}
 });
