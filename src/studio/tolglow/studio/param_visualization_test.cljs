@@ -83,9 +83,11 @@
   (let [hsl (widgets/color-tracks [(/ 1 3) 0.5 0.5] "lightness" :hsl)]
     (is (= [:hue :saturation :lightness] (mapv :id hsl)))
     (is (= [false false true] (mapv :selected? hsl)))
-    (is (= "linear-gradient(90deg,rgb(0,0,0),rgb(255,255,255))" (:gradient (last hsl))))
+    (is (= "linear-gradient(90deg,rgb(0,0,0),rgb(64,191,64),rgb(255,255,255))" (:gradient (last hsl)))
+        "the lightness track passes through the colour at one half")
     (is (= 0.5 (widgets/component-amount [(/ 1 3) 0.5 0.5] "l" 0 :hsl)))
-    (is (= 0.25 (widgets/component-amount [0.25 1 1] "hue" 0 :hsv)) "an HSV hue is read, not derived from RGB")))
+    (is (= 0.25 (widgets/component-amount [0.25 1 1] "hue" 0 :hsv)) "an HSV hue is read, not derived from RGB")
+    (is (= 0.75 (widgets/component-amount [-0.25 1 1] "hue" 0 :hsv)) "a hue track marks the wrapped hue the swatch draws")))
 
 (deftest colour-tracks-follow-the-component-a-control-edits
   (let [orange [1 0.5 0]

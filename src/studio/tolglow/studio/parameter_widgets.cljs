@@ -288,12 +288,17 @@
                     :else own)
         ids (views/color-layouts space)
         amounts (if (= space own)
-                  (mapv #(unit (get components %)) (range (count ids)))
+                  ;; A hue wraps, as on the swatch; other amounts clamp.
+                  (mapv (fn [index]
+                          (let [amount (get components index)]
+                            (if (and (= :hue (nth ids index)) (finite? amount)) (mod amount 1) (unit amount))))
+                        (range (count ids)))
                   (hsv (rgb layout components)))
         stops (fn [index]
                 (if (= :hue (nth ids index))
                   (mapv #(rgb space (assoc (visible-hue space amounts) index (/ % 6))) (range 7))
-                  [(rgb space (assoc amounts index 0)) (rgb space (assoc amounts index 1))]))]
+                  ;; Lightness passes through the full colour at one half on its way to white.
+                  (mapv #(rgb space (assoc amounts index %)) (if (= :lightness (nth ids index)) [0 0.5 1] [0 1]))))]
     (mapv (fn [index id]
             {:id id :label (views/component-letters id) :amount (nth amounts index) :selected? (= id component)
              :gradient (gradient-css (stops index))})
