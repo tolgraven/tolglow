@@ -140,11 +140,13 @@
 (defn- warm-push-3-display
   "Start the tethered Push 3 display's libusb scan in the background, so it
   overlaps the rest of startup. The value is the promise of its receipt."
-  [_ options]
+  [context options]
+  (some-> (get-in context [:modules :show]) (show/require-devices! :push-3-display))
   {:value (display/warm-push-3-usb! (select-keys options [:library]))})
 
 (defn- start-rdm [context options]
   (let [runtime (need-show context)
+        _ (show/require-devices! runtime :rdm-connect)
         manager (:rdm runtime)
         identity ((:identity! manager))]
     {:value (rdm/connect! manager options identity)

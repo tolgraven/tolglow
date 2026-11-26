@@ -48,6 +48,26 @@
   (str "This window belongs to " (or (get-in db [:window :show]) "another show")
        ". It refused the state of a different show, and its controls stay disconnected."))
 
+(defn preview-only
+  "Why this show may not open devices or arm output, or nil. The Mac app
+  starts a show preview-only while another window's show owns the devices;
+  its owner then refuses those actions with code `preview-only`."
+  [db]
+  (get-in db [:show :preview-only]))
+
+(rf/reg-sub :show-window/preview-only (fn [db _] (preview-only db)))
+
+(defn device-control
+  "Attributes for a control that opens a device or arms output: disabled, with
+  the reason, on a preview-only show."
+  [attrs reason]
+  (cond-> attrs reason (assoc :disabled true :title reason :data-preview-only true)))
+
+(defn device-note
+  "The reason next to a group of device controls, or nothing."
+  [reason]
+  (when reason [:p.small.preview-only-note {:role "note"} reason]))
+
 (defn- handler []
   (some-> (aget js/window "webkit") (aget "messageHandlers") (aget "tolglowStudioWindow")))
 

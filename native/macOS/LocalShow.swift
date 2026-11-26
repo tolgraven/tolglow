@@ -113,7 +113,9 @@ final class LocalShow: ObservableObject {
             if let sources = ApplicationSources(), sources.installed {
                 environment["TOLGLOW_APPLICATION_SOURCES"] = sources.directory.path
             }
+            environment["TOLGLOW_DESKTOP_WINDOW"] = "1"
             environment["TOLGLOW_DESKTOP_DEVICES"] = devices ? nil : "none"
+            environment["TOLGLOW_DESKTOP_DEVICE_OWNER"] = devices ? nil : ShowRegistry.shared.deviceOwner
             child.environment = environment
             if (requestedEngine ?? engine) == .native, let nativeHost {
                 child.executableURL = nativeHost

@@ -41,6 +41,8 @@
   [view]
   {:tabs [{:id 1 :view (if (view? view) view :perform)}] :active 1 :next-id 2 :closed []})
 
+(defn tab-id [id] (str "view-tab-" id))
+
 (defn active-tab [{:keys [tabs active]}] (some #(when (= active (:id %)) %) tabs))
 
 (defn active-view [state] (:view (active-tab state)))
@@ -207,7 +209,7 @@
 
 (rf/reg-fx :view-tabs/focus
   (fn [id]
-    (r/after-render #(some-> (.getElementById js/document (str "view-tab-" id)) (.focus)))))
+    (r/after-render #(some-> (.getElementById js/document (tab-id id)) (.focus)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Events
@@ -280,8 +282,16 @@
       :component-did-update publish!
       :reagent-render (fn [_] nil)})))
 
+(defn panel-attributes
+  "Attributes that make the main region the active tab's panel."
+  [db]
+  (when-let [active (:active (state db))]
+    {:role "tabpanel" :aria-labelledby (tab-id active)}))
+
 (defn strip
-  "The tab strip above the active view."
+  "The tab strip above the active view. The tablist holds only its tabs; a
+  tab's × is a pointer shortcut hidden from assistive technology, and the
+  accessible Close tab button (and Delete in the tab list) sit outside it."
   [db]
   (let [{:keys [tabs active closed] :as tabs-state} (state db)
         several? (> (count tabs) 1)]
@@ -293,23 +303,31 @@
          (for [[index {:keys [id view]}] (map-indexed vector tabs)
                :let [selected? (= id active)]]
            ^{:key id}
-           [:div.view-tab {:class (when selected? "selected") :data-view (name view)}
-            [:button.view-tab-select
-             {:type "button" :role "tab" :id (str "view-tab-" id) :aria-selected selected?
-              :aria-controls "main" :tab-index (if selected? 0 -1) :title (label view)
-              :on-click #(rf/dispatch [:view-tabs/select id])
-              :on-key-down #(key-down tabs index %)}
-             [:span.view-tab-icon {:aria-hidden true
-                                   :style {"--nav-icon" (str "url('/studio/icons/lucide/" (name (icon view)) ".svg')")}}]
-             [:span.view-tab-label (short-label view)]]
+           [:button.view-tab
+            {:type "button" :role "tab" :id (tab-id id) :aria-selected selected?
+             :class (when selected? "selected") :data-view (name view)
+             :aria-controls "main" :tab-index (if selected? 0 -1) :title (label view)
+             :aria-keyshortcuts (when several? "Delete")
+             :on-click #(rf/dispatch [:view-tabs/select id])
+             :on-key-down #(key-down tabs index %)}
+            [:span.view-tab-icon {:aria-hidden true
+                                  :style {"--nav-icon" (str "url('/studio/icons/lucide/" (name (icon view)) ".svg')")}}]
+            [:span.view-tab-label (short-label view)]
             (when several?
-              [:button.view-tab-close {:type "button" :aria-label (str "Close " (label view) " tab") :title "Close tab"
-                                       :tab-index -1 :on-click #(rf/dispatch [:view-tabs/close id])}
-               [:span {:aria-hidden true} "×"]])]))]
+              [:span.view-tab-close {:aria-hidden true :title "Close tab"
+                                     :on-click (fn [event]
+                                                 (.stopPropagation event)
+                                                 (rf/dispatch [:view-tabs/close id]))}
+               "×"])]))]
        [:button#view-tab-new.view-tab-action
         {:type "button" :aria-label "New tab" :title "New tab on this view"
          :disabled (>= (count tabs) max-tabs) :on-click #(rf/dispatch [:view-tabs/open nil])}
         [:span {:aria-hidden true} "+"]]
+       (when several?
+         [:button#view-tab-close.view-tab-action
+          {:type "button" :aria-label (str "Close " (label (active-view tabs-state)) " tab") :title "Close tab"
+           :on-click #(rf/dispatch [:view-tabs/close active])}
+          [:span {:aria-hidden true} "×"]])
        (when (seq closed)
          [:button#view-tab-reopen.view-tab-action.text-button
           {:type "button" :title (str "Reopen " (label (peek closed)))

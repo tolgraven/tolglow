@@ -1,6 +1,9 @@
 // Views of one show in tabs, and windows bound to their show (#669).
 //
-//   node dev/studio/view-tabs-qa.mjs http://127.0.0.1:4661 http://127.0.0.1:4662 target/qa/view-tabs
+//   node dev/studio/view-tabs-qa.mjs http://127.0.0.1:4661 http://127.0.0.1:4662 target/qa/view-tabs [http://127.0.0.1:4663]
+//
+// The optional fourth origin is a show started preview-only (as a second Mac
+// window would be), whose device controls must be greyed and refused.
 //
 // Run against two shows served from a production build (two runtimes, each
 // with a preview capture sink and recovery off), standing in for two Mac
@@ -13,8 +16,8 @@ import {mkdir, rm, writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {chromium} from 'playwright-core';
 
-const [originA = 'http://127.0.0.1:4661', originB = 'http://127.0.0.1:4662', directory = 'target/qa/view-tabs'] =
-  process.argv.slice(2);
+const [originA = 'http://127.0.0.1:4661', originB = 'http://127.0.0.1:4662', directory = 'target/qa/view-tabs',
+  originC = null] = process.argv.slice(2);
 const profile = join(directory, 'profile');
 await rm(profile, {recursive: true, force: true});
 await mkdir(directory, {recursive: true});
@@ -119,7 +122,7 @@ try {
   await page.click('.sidebar a[data-view="rig"]');
   const rig = await step('sidebar changes the active tab', {tabs: ['perform', 'rig'], active: 'rig'});
   assert.match(rig.title, /^Rig & space · /);
-  await page.click('#view-tabs .view-tab[data-view="perform"] .view-tab-select');
+  await page.click('#view-tabs .view-tab[data-view="perform"]');
   await step('select first tab', {tabs: ['perform', 'rig'], active: 'perform'});
   await page.locator('body').focus();
   await page.keyboard.press('3');
@@ -141,6 +144,25 @@ try {
   await host('previous');
   await step('menu: Show Previous Tab', {tabs: ['perform', 'compose', 'rig'], active: 'rig'});
   await page.screenshot({path: join(directory, 'tabs-three.png')});
+  const a11y = await page.evaluate(() => {
+    const list = document.querySelector('#view-tabs [role=tablist]');
+    const selected = list.querySelector('[role=tab][aria-selected=true]');
+    const main = document.querySelector('main#main');
+    return {
+      children: [...list.children].map(c => c.getAttribute('role')),
+      focusableInsideTabs: list.querySelectorAll('[role=tab] button, [role=tab] [tabindex], [role=tab] a').length,
+      panel: [main.getAttribute('role'), main.getAttribute('aria-labelledby')],
+      selectedId: selected.id,
+      closeOutside: !!document.querySelector('#view-tab-close') && !list.contains(document.querySelector('#view-tab-close')),
+      closeLabel: document.querySelector('#view-tab-close')?.getAttribute('aria-label'),
+    };
+  });
+  results.a11y = a11y;
+  assert.ok(a11y.children.every(r => r === 'tab'), 'the tablist holds only tabs');
+  assert.equal(a11y.focusableInsideTabs, 0, 'no focusable control inside a tab');
+  assert.deepEqual(a11y.panel, ['tabpanel', a11y.selectedId], 'main is the active tab panel');
+  assert.ok(a11y.closeOutside, 'Close tab sits outside the tablist');
+  assert.equal(a11y.closeLabel, 'Close Rig & space tab');
 
   // Close in different orders and reopen.
   await page.click('#view-tabs .view-tab[data-view="compose"] .view-tab-close');
@@ -156,7 +178,7 @@ try {
   await step('menu: Reopen Closed Tab', {tabs: ['perform', 'rig', 'compose'], active: 'compose'});
 
   // Keyboard: arrows move along the tab list, Delete closes.
-  await page.focus('#view-tabs .view-tab.selected .view-tab-select');
+  await page.focus('#view-tabs .view-tab.selected');
   await page.keyboard.press('ArrowLeft');
   await step('ArrowLeft', {tabs: ['perform', 'rig', 'compose'], active: 'rig'});
   assert.equal(await page.evaluate(() => document.activeElement?.closest('.view-tab')?.dataset.view), 'rig', 'focus follows');
@@ -267,6 +289,35 @@ try {
   await windowA.win.click('#blackout');
   await windowA.win.waitForTimeout(500);
   await windowB.win.screenshot({path: join(directory, 'window-b-rig-tab.png')});
+
+  // A preview-only show (another window owns the devices): device controls are
+  // greyed with the reason, and the owner refuses the request with a code.
+  if (originC) {
+    const c = await context.newPage();
+    c.on('pageerror', e => errors.push(e.message));
+    await c.goto(originC + '/connections', {waitUntil: 'domcontentloaded'});
+    await connected(c);
+    await c.waitForSelector('#sync-start[data-preview-only]', {timeout: 30000});
+    results.previewOnly = await c.evaluate(() => ['#sync-start', '#audio-start', '#rdm-enable', '#stage-start', '#sensor-osc-start']
+      .map(sel => { const el = document.querySelector(sel);
+        return {sel, present: !!el, disabled: el?.disabled ?? null, title: el?.title ?? null}; }));
+    for (const control of results.previewOnly.filter(x => x.present)) {
+      assert.equal(control.disabled, true, control.sel + ' is greyed');
+      assert.match(control.title, /owns this Mac's devices and output/, control.sel + ' says why');
+    }
+    assert.ok(results.previewOnly.filter(x => x.present).length >= 2, 'device controls found');
+    const idC = await identity(originC);
+    const refusal = await c.evaluate(async body => {
+      const r = await fetch('/api/sync/start', {method: 'POST', headers: {'Content-Type': 'application/json', Accept: 'application/json'},
+        body: JSON.stringify(body)});
+      return {status: r.status, body: await r.json()};
+    }, {'runtime-id': idC['runtime-id'], 'expected-epoch': idC.epoch});
+    results.previewOnlyRefusal = refusal;
+    assert.equal(refusal.status, 409);
+    assert.equal(refusal.body.details.code, 'preview-only');
+    await c.screenshot({path: join(directory, 'preview-only-connections.png')});
+    await c.close();
+  }
   results.errors = errors;
   assert.deepEqual(errors, [], 'no page errors');
   console.log('view tabs QA passed');

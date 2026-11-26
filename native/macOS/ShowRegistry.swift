@@ -10,9 +10,14 @@ import Foundation
 /// - A folder runs in at most one window. Opening it again selects that
 ///   window, because two processes would autosave and restore one show.
 /// - The first running show owns devices and physical output. A show opened
-///   while another owns them starts preview-only (`TOLGLOW_DESKTOP_DEVICES=none`),
-///   so it cannot open the first show's interfaces or arm output. Devices go
-///   to the next show started after the owner stops.
+///   while another owns them starts preview-only (`TOLGLOW_DESKTOP_DEVICES=none`,
+///   see `tolglow.desktop.launch/device-free`): it starts without DMX output
+///   or the built-in device modules, and its show owner refuses, with code
+///   `preview-only`, every action that would open RDM, audio input or returns,
+///   MIDI clock or Link, a sensor OSC listener or audience stage, AirPlay, a
+///   REPL `connect-device!` or the Push 3 display, or arm calibration output.
+///   Code that opens a device without those owner functions is not covered.
+///   Devices go to the next show started after the owner stops.
 ///
 /// Used on the main thread only. Foundation-only so `native/Tests/ShowWindows`
 /// can exercise it without AppKit.

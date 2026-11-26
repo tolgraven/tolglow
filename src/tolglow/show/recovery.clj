@@ -35,10 +35,18 @@
       (throw (ex-info "Invalid show recovery options" {})))
     (assoc options :directory (.getAbsoluteFile (io/file (or directory (default-directory)))))))
 
+(defn show-directory
+  "The directory under a recovery directory that holds one show's files."
+  [directory show-id]
+  (let [identity (.getBytes (pr-str show-id) StandardCharsets/UTF_8)]
+    (io/file directory (.formatHex (HexFormat/of) (.digest (MessageDigest/getInstance "SHA-256") identity)))))
+
+(def checkpoint-names
+  "The fixed files a show keeps in its recovery directory."
+  ["recovery.transit" "prior.checkpoint" "manual.edn"])
+
 (defn- checkpoint-file [directory show-id name]
-  (let [identity (.getBytes (pr-str show-id) StandardCharsets/UTF_8)
-        key (.formatHex (HexFormat/of) (.digest (MessageDigest/getInstance "SHA-256") identity))]
-    (io/file directory key name)))
+  (io/file (show-directory directory show-id) name))
 
 (defn- prepare-file! [path write! publish!]
   (let [file (.getAbsoluteFile (io/file path))]

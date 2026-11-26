@@ -117,3 +117,26 @@
     (is (re-find #"Close Rig &amp; space tab" html))
     (is (not (re-find #"Close" (renderToStaticMarkup (r/as-element [tabs/strip (with-tabs base (tabs/initial :perform))]))))
         "a single tab has no close button")))
+
+(deftest the-tablist-holds-only-tabs-and-main-is-their-panel
+  (let [db (with-tabs base (-> (tabs/initial :perform) (tabs/open :rig)))
+        html (renderToStaticMarkup (r/as-element [tabs/strip db]))
+        tablist (second (re-find #"role=\"tablist\"[^>]*>(.*?)</div>" html))]
+    (is (= 2 (count (re-seq #"<button" tablist))) "only the two tabs are buttons inside the tablist")
+    (is (= 2 (count (re-seq #"role=\"tab\"" tablist))))
+    (is (re-find #"aria-hidden=\"true\"[^>]*>×" tablist) "a tab's × is hidden from assistive technology")
+    (is (re-find #"aria-keyshortcuts=\"Delete\"" tablist))
+    (is (not (re-find #"view-tab-close\"[^>]*aria-label" tablist)))
+    (is (re-find #"id=\"view-tab-close\"" (subs html (+ (.indexOf html "</div>") 6))) "Close tab sits after the tablist")
+    (is (= {:role "tabpanel" :aria-labelledby "view-tab-2"} (tabs/panel-attributes db)))
+    (is (nil? (tabs/panel-attributes base)) "no tabs, no tab panel")))
+
+(deftest device-controls-grey-with-the-reason-on-a-preview-only-show
+  (let [reason "Club night owns this Mac's devices and output, so this show is preview-only."
+        db (assoc-in base [:show :preview-only] reason)]
+    (is (= reason (show-window/preview-only db)))
+    (is (nil? (show-window/preview-only base)))
+    (is (= {:disabled true :title reason :data-preview-only true :on-click :f}
+           (show-window/device-control {:disabled false :on-click :f} reason)))
+    (is (= {:disabled false} (show-window/device-control {:disabled false} nil)))
+    (is (re-find #"role=\"note\"" (renderToStaticMarkup (r/as-element [show-window/device-note reason]))))))

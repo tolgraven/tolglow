@@ -153,7 +153,8 @@
    (web/app {:snapshot! #(browser-snapshot runtime % (constantly bindings))
             :airplay-interfaces airplay/interfaces
             :airplay-media (partial airplay/studio-media (:airplay bindings))
-            :airplay-start! #(airplay/start! (:airplay bindings) (:address %))
+            :airplay-start! #(do (show/require-devices! runtime :airplay-start)
+                                 (airplay/start! (:airplay bindings) (:address %)))
             :airplay-stop! #(airplay/stop! (:airplay bindings) (:writer %))
             :airplay-publish! (fn [{:keys [path-params body]}]
                                 (airplay/publish! (:airplay bindings) (:writer path-params) (:file path-params) body))

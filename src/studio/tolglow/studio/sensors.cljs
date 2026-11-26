@@ -1,6 +1,7 @@
 (ns tolglow.studio.sensors
   "Owned browser motion acquisition; conditioning and lighting remain server-side."
   (:require ["@capacitor/motion" :refer [Motion]]
+            [tolglow.studio.show-window :as show-window]
             [cljs.reader :as reader]
             [clojure.string :as str]
             [re-frame.core :as rf]
@@ -395,7 +396,8 @@
        [:label "Bind address" [:input {:aria-label "Sensor OSC bind address" :value (:osc-host s) :on-change #(edit! [:osc-host] (.. % -target -value))}]]
        [:label "UDP port" [:input {:aria-label "Sensor OSC port" :type "number" :min 1 :max 65535 :value (:osc-port s) :on-change #(edit! [:osc-port] (.. % -target -value))}]]]
       [:div.button-row
-       [:button.button {:disabled pending? :on-click #(rf/dispatch [:sensors/action :osc/start])} "Start OSC receiver"]
+       [:button#sensor-osc-start.button (show-window/device-control {:disabled pending? :on-click #(rf/dispatch [:sensors/action :osc/start])}
+                                                                    @(rf/subscribe [:show-window/preview-only])) "Start OSC receiver"]
        [:button.button {:disabled pending? :on-click #(rf/dispatch [:sensors/action :osc/stop])} "Stop OSC receiver"]]
       [:pre (pretty/edn (get-in s [:status :udp]))]]]))
 
