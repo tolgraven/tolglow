@@ -169,17 +169,17 @@ the main unit with nothing device-specific.
 | --- | --- | --- |
 | Fader | Group strip: committed group level. Cue strip: its `:fader` binding (default `:level`) on the cue's latest instance. Needs a finger: a touch captures the target until release, across bank and mode changes; untouched messages (motor echoes) are ignored; a touched fader gets no motor message and is reasserted on release. Empty strips park at 0. | Faders need a finger touch |
 | Master fader | Lighting master (touch needed) | Master volume |
-| PAN | Encoders on one per-strip parameter: the channel's `:encoder` binding, else the first other typed parameter of the effect | Pan |
+| PAN | Encoders on one per-strip parameter: the channel's `:encoder` binding, else the first other typed parameter of the effect (see *Parameter ranges*) | Pan |
 | SEND | Encoders on each cue strip's instance opacity | Sends (one send across strips) |
 | PLUG-IN | Encoders on the selected strip's parameters across all linked encoders (16 with an extender; colour parameters as R/G/B); a selected group lists its members' opacity. EQ/INST page by the logical span. Strips light cyan. | Plug-in device control, rack chains |
 | USER | Encoders on linked knobs (#666) in creation order; extender encoder *n* is knob 8 + *n* | Macro Mapper |
 | Encoder push | Restore the default (unity for opacity and levels) | — |
 | Rings | Bipolar → boost/cut, levels → wrap, width/spread → spread, enums, booleans and angles → dot; the centre LED marks the default value | Ring modes |
 | SELECT | Select the strip (drives PLUG-IN). Again on a cue strip: toggle its launch. Again on a group: clear the selection. | Select, press again |
-| SOLO / MUTE | `:effect-selection/toggle` (#532) on the strip's instances; SHIFT or CONTROL adds instead of replacing | Solo/Mute, Shift adds |
+| SOLO / MUTE | `:effect-selection/toggle` (#532) on the strip's instances in the configured mode (exclusive by default). SHIFT adds. CONTROL inverts the configured mode for that press: it adds while the mode is exclusive, and replaces the selection while it is additive (or clears it when the strip is the whole selection). | Solo/Mute; CONTROL inverts the exclusive setting |
 | MUTE LED blinking | The strip is suppressed by another strip's solo | "Indicate tracks muted via solo" |
 | REC | Hold the cue while pressed; exact instance release | (arm) |
-| Transport SOLO | Lit with any solo. Press: store and clear every solo; press again (blinking): restore what still runs; with nothing stored, solo the selected strip. SHIFT clears the stored set. | Global Solo |
+| Transport SOLO | Lit with any solo. Press: store and clear every solo; press again (blinking): restore what still runs; with nothing stored, solo the selected strip, wherever it is on the linked surface (another member, or a page no unit shows). SHIFT clears the stored set. | Global Solo |
 | FLIP | Swap fader and encoder on cue strips in PAN | Flip |
 | BANK / CHANNEL | Move the committed window; SHIFT: first/last page | Same |
 | PLAY / STOP | Local transport. Ignored while an external clock owns play and stop (see below). LEDs follow the transport either way. | Same |
@@ -200,6 +200,44 @@ group's members. This is the mixer gain reaching the renderer, not a
 photometric measurement of the light. A nonzero meter is resent every
 `:meter-refresh-ms` (200) because the unit lets meters fall. No clip
 indication yet.
+
+**Parameter ranges.** A number or integer maps onto its hard `:bounds`,
+else its `:recommended` range. A number with neither is left out of the PAN
+fallback and the PLUG-IN list, and an explicit `:fader` or `:encoder`
+binding to one binds nothing, so the strip shows no value. It gets no guessed
+range, as [modulation](modulation.md) skips it; before #741 such a parameter
+was treated as [0 1], so one turn jumped it into that range. An encoder
+detent moves a number from its current value by 1 % of its range (0.1 % with
+SHIFT), and an integer by one, limited only by the hard bounds, so a value
+outside a recommended range is not pulled into it.
+
+**CONTROL with additive Solo or Mute.** The shared
+`:effect-selection/toggle` has an additive flag but no exclusive override,
+so when the configured mode is additive, CONTROL sends two additive toggles
+computed from the committed flags: one that drops the other selected
+instances, then one that adds this strip's missing instances. Both are
+validated and dispatched in order on the MIDI input thread. Studio and the
+REPL have no single-press exclusive gesture yet (see
+[parity](repl-studio-parity.md#solo-or-mute-running-effects)).
+
+**Input cost.** The session runs a full feedback refresh after every
+input, so a fader message costs that refresh, not just the profile's input
+step. Measured in the pooled REPL on the M4 Pro (60 instances, 24 manual
+groups, 32 strips, load average 2), median and 90th percentile per
+touched fader move, with the owner's acknowledgement returned immediately:
+
+| Step | Cue fader | Group fader |
+| --- | --- | --- |
+| Profile input only | 1.4–1.5 µs | 8 µs |
+| `session/receive!` with its refresh, new model each move | 520–540 µs (p90 550–570) | 510–520 µs (p90 550) |
+| `session/receive!` with its refresh, unchanged model | 420 µs | 400–410 µs |
+
+The figures exclude the owner applying the command. In a running show the
+MIDI input thread also waits, without using the CPU, for the owner's
+acknowledgement (up to one owner cycle), and the refresh then sees the new
+model. None of this runs on the frame clock. The review of #738 measured
+565–670 µs at load average 7–9; the 12 µs and 135 µs on #738 were the input
+step alone.
 
 **PLAY/STOP and Link.** When Ableton Link follows play and stop (start/stop
 sync on, the default) or another external clock is selected, the show's

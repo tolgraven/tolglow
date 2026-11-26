@@ -35,8 +35,8 @@
                 cue-ids)
         (assoc-in [:registry :cues :c0 :color] [1 0 0]))))
 
-(defn- harness []
-  (let [runtime (show/create-runtime {:model (model) :workspace-options nil})
+(defn- harness [& [initial-model]]
+  (let [runtime (show/create-runtime {:model (or initial-model (model)) :workspace-options nil})
         time (atom 0)
         receivers (atom {})
         sent (atom {})
@@ -267,6 +267,103 @@
             (input! :main [0x90 47 127] [0x80 47 0] [0x90 46 127] [0x80 46 0])
             (input! :main [0x90 17 127])
             (is (= [false true] (get (selected) i0))))))
+      (finally (show/stop! runtime)))))
+
+(deftest control-inverts-the-configured-solo-and-mute-mode-and-shift-adds
+  (let [{:keys [runtime input!] :as h} (harness)]
+    (try
+      (desk! h)
+      (doseq [cue [:c0 :c1 :c2 :c3]] (launch! h cue))
+      (let [[i0 i1 i2 i3] (map #(:id (latest h %)) [:c0 :c1 :c2 :c3])
+            selected (fn [field] (into #{} (keep #(when (field %) (:id %)))
+                                       (:instances (:effect-selection (show/snapshot runtime)))))
+            control! (fn [note] (input! :main [0x90 72 127] [0x90 note 127] [0x80 note 0] [0x80 72 0]))
+            shift! (fn [note] (input! :main [0x90 70 127] [0x90 note 127] [0x80 note 0] [0x80 70 0]))
+            press! (fn [note] (input! :main [0x90 note 127] [0x80 note 0]))]
+        (testing "with the default exclusive Solo, CONTROL adds"
+          (press! 9)
+          (is (= #{i0} (selected :soloed?)))
+          (control! 12)
+          (is (= #{i0 i3} (selected :soloed?))))
+        (testing "with additive Solo, a plain press adds, CONTROL replaces and SHIFT still adds"
+          (accepted! h {:op :effect-selection/configure :modes {:solo :additive}})
+          (press! 8)
+          (is (= #{i0 i1 i2 i3} (selected :soloed?)) "The group strip joins")
+          (control! 9)
+          (is (= #{i0} (selected :soloed?)) "CONTROL+SOLO leaves only this strip")
+          (control! 8)
+          (is (= #{i1 i2} (selected :soloed?)) "Another strip replaces it")
+          (control! 8)
+          (is (= #{} (selected :soloed?)) "CONTROL on the whole selection clears it")
+          (shift! 9)
+          (shift! 12)
+          (is (= #{i0 i3} (selected :soloed?))))
+        (testing "Mute follows its own configured mode"
+          (press! 17)
+          (control! 20)
+          (is (= #{i0 i3} (selected :muted?)) "Exclusive Mute: CONTROL adds")
+          (press! 20)
+          (is (= #{i3} (selected :muted?)) "A plain exclusive press replaces")))
+      (finally (show/stop! runtime)))))
+
+(deftest transport-solo-finds-a-strip-selected-on-the-extender
+  (let [{:keys [runtime input! owner!] :as h} (harness)]
+    (try
+      (let [{:keys [refresh!]} (desk! h)
+            soloed #(vec (keep (fn [i] (when (:soloed? i) (:id i))) (:instances (:effect-selection (show/snapshot runtime)))))]
+        (launch! h :c7)
+        (launch! h :c0)
+        (refresh!)
+        (testing "the extender's first strip is the ninth row, cue c7"
+          (input! :ext [0x90 24 127] [0x80 24 0])
+          (is (= [:cue :c7] (:selected (layout h)))))
+        (testing "with nothing soloed or stored, the main unit's transport SOLO solos it"
+          (input! :main [0x90 90 127] [0x80 90 0])
+          (is (= [(:id (latest h :c7))] (soloed))))
+        (testing "and also when the selected strip is on no unit's current page"
+          (input! :main [0x90 90 127] [0x80 90 0])
+          (input! :main [0x90 70 127] [0x90 90 127] [0x80 90 0] [0x80 70 0])
+          (is (= [] (soloed)) "Stored and cleared, then SHIFT forgot the stored set")
+          (owner! #(deref (show/unlink-surfaces! runtime "desk") 1000 ::missing))
+          (is (= [0 [:cue :c7]] ((juxt :first (comp :selected :layout)) (surface/strip-placement (model-of h) "xt-main")))
+              "Alone, the main unit shows rows 1-8; c7 is the ninth")
+          (input! :main [0x90 90 127] [0x80 90 0])
+          (is (= [(:id (latest h :c7))] (soloed)))))
+      (finally (show/stop! runtime)))))
+
+(def ^:private drift
+  {:id :drift :version 1
+   :params {:level {:type :number :default 0.5 :bounds [0 1]}
+            :rate {:type :number :default 5.0}
+            :speed {:type :number :default 2.0 :recommended [0 4]}
+            :steps {:type :integer :default 3 :bounds [0 4]}}
+   :outputs {:dimmer {:op :param :key :level}}})
+
+(deftest unbounded-numbers-get-no-guessed-range
+  (let [m (-> (model)
+              (assoc-in [:registry :effects :drift] drift)
+              (assoc-in [:registry :cues :d0] {:id :d0 :version 1 :effect-id :drift :priority 0 :name "D0"}))
+        {:keys [runtime] :as h} (harness m)]
+    (try
+      (launch! h :d0)
+      (let [ctx (mixer/context (model-of h))
+            row {:cue-id :d0}]
+        (testing "PLUG-IN and the PAN fallback leave out a number with neither bounds nor a recommended range"
+          (is (= ["level" "speed" "steps"] (mapv :label (mixer/items ctx {:encoder-mode :plug-in} row))))
+          (is (= :speed (:param (:encoder (mixer/strip ctx {:encoder-mode :pan} row))))))
+        (testing "an explicit binding to it binds nothing rather than treating it as [0 1]"
+          (is (nil? (:encoder (mixer/strip ctx {:encoder-mode :pan} (assoc row :encoder :rate)))))
+          (is (nil? (:fader (mixer/strip ctx {:encoder-mode :pan} (assoc row :fader :rate))))))
+        (let [speed (:encoder (mixer/strip ctx {:encoder-mode :pan} row))]
+          (testing "a recommended range scales the step; turns move from the value and only hard bounds limit them"
+            (is (= {:mode :wrap :position 6 :center? true} (mixer/ring speed)))
+            (is (< (Math/abs (- 2.04 (:value (mixer/turn speed 1 false)))) 1e-9))
+            (is (< (Math/abs (- 6.004 (:value (mixer/turn (assoc speed :value 6.0) 1 true)))) 1e-9)
+                "A value above the recommended range is not pulled into it")
+            (is (= 1.0 (:value (mixer/turn (:fader (mixer/strip ctx {:encoder-mode :pan} row)) 80 false))))))
+        (testing "integers step by one within their bounds"
+          (let [steps (some #(when (= "steps" (:label %)) (:target %)) (mixer/items ctx {:encoder-mode :plug-in} row))]
+            (is (= [4 4 1] (mapv #(:value (mixer/turn steps % false)) [1 5 -2]))))))
       (finally (show/stop! runtime)))))
 
 (deftest meters-scribble-colours-and-stop-are-byte-exact

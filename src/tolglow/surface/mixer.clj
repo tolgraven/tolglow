@@ -22,9 +22,13 @@
       :user     linked knobs (#666) in creation order.
   - Ring modes come from the target's schema; the centre LED marks the
     default value.
+  - Numbers map onto their hard bounds, else their recommended range; a
+    number with neither is left off the encoders and faders, as modulation
+    skips it, instead of being treated as [0 1].
   - SOLO and MUTE are :effect-selection/toggle (#532) on the strip's
-    instances. Scribble colours follow the cue swatch or effect category by
-    hue; selected-strip modes light every item strip cyan, as the script does
+    instances in the configured mode; SHIFT adds, CONTROL inverts the mode
+    (selection-toggle). Scribble colours follow the cue swatch or effect
+    category by hue; selected-strip modes light every item strip cyan, as the script does
     in plug-in mode; empty strips are black.
   - Meters show each strip's effective output level: instance opacity times
     group levels (and the fader parameter for cue strips), zero while solo or
@@ -67,16 +71,25 @@
      :groups (groups-by-id mixer)
      :member-levels (into {} (map (juxt :instance-id :member-level)) (:instances mixer))
      :flags (into {} (map (juxt :id identity)) (:instances selection))
+     :modes (:modes selection)
      :knobs (vec (sort-by :order (vals (get-in model [:knobs :knobs]))))}))
 
 ;; ---------------------------------------------------------------------------
 ;; Targets: {:kind :param|:group-level|:opacity|:master|:knob ... :schema :value}
 
-(defn- bounds [schema] (or (:bounds schema) [0 1]))
+(defn- domain
+  "The range a number or integer maps onto: its hard :bounds, else its
+  :recommended range. Nil for an unbounded number, which gets no guessed
+  range, as modulation skips it (docs/modulation.md)."
+  [schema]
+  (or (:bounds schema) (:recommended schema)))
+
+(defn- numeric? [schema] (contains? #{:number :integer} (:type schema)))
 
 (defn- param-target
   "A typed parameter (or one component of a vector parameter) on an instance;
-  nil when the instance lacks it or its type has no scalar mapping."
+  nil when the instance lacks it, its type has no scalar mapping, or it is a
+  number without bounds or a recommended range."
   [instance param component]
   (when instance
     (let [schema (get-in instance [:definition :params param])
@@ -87,7 +100,8 @@
                    {:type :number :default (get (:default schema) component)
                     :bounds (if (= :color (:type schema)) (params/color-bounds schema) (:bounds schema))}
                    schema)]
-      (when (and scalar (or (nil? component) component?) (contains? scalar-types (:type scalar)))
+      (when (and scalar (or (nil? component) component?) (contains? scalar-types (:type scalar))
+                 (or (not (numeric? scalar)) (domain scalar)))
         (cond-> {:kind :param :instance-id (:id instance) :param param :schema scalar
                  :value (if component? (nth whole component) whole)}
           component? (assoc :component component :whole-value whole))))))
@@ -123,7 +137,7 @@
 (defn normalized
   "The target's value in [0 1], or nil."
   [{:keys [schema value]}]
-  (let [[low high] (bounds schema)]
+  (let [[low high] (domain schema)]
     (case (:type schema)
       (:number :integer) (when (and (number? value) (number? low) (number? high))
                            (if (= low high) 0.0 (min 1.0 (max 0.0 (/ (- (double value) low) (- (double high) low))))))
@@ -133,9 +147,9 @@
       nil)))
 
 (defn value-at
-  "The schema value at a normalized position."
+  "The schema value at a normalized position of its domain."
   [{:keys [schema]} n]
-  (let [[low high] (bounds schema) n (min 1.0 (max 0.0 (double n)))]
+  (let [[low high] (domain schema) n (min 1.0 (max 0.0 (double n)))]
     (case (:type schema)
       :number (+ low (* n (- high low)))
       :integer (long (Math/round (double (+ low (* n (- high low))))))
@@ -154,22 +168,36 @@
     :master {:op :master/set :value value}
     :knob {:op :knob/set :knob-id (:knob-id target) :value value}))
 
-(defn- step [{:keys [schema]} fine?]
-  (case (:type schema)
-    :boolean 1.0
-    :enum (/ 1.0 (max 1 (dec (count (or (:values schema) (:options schema))))))
-    :integer (let [[low high] (bounds schema)] (/ 1.0 (max 1 (- high low))))
-    (if fine? (:fine encoder-step) (:coarse encoder-step))))
+(defn- step [{:keys [schema]}]
+  (/ 1.0 (max 1 (dec (count (or (:values schema) (:options schema)))))))
+
+(defn- within-bounds
+  "x clamped to the schema's hard bounds; a recommended range is not a limit."
+  [schema x]
+  (if-let [[low high] (:bounds schema)] (min high (max low x)) x))
 
 (defn turn
   "Command for a relative encoder turn of delta detents, or nil. Knobs use the
-  shared knob nudge; other targets write an absolute schema value."
+  shared knob nudge. Numbers move from their current value by a coarse or
+  fine fraction of their domain per detent and integers by one, both within
+  the hard bounds only, so a value outside a recommended range does not jump
+  into it; booleans and enums step through their values."
   [target delta fine?]
   (when (and target (integer? delta) (not (zero? delta)))
-    (if (= :knob (:kind target))
-      (knobs/encoder-command (:knob-id target) delta fine?)
-      (when-let [n (normalized target)]
-        (write target (value-at target (+ n (* (step target fine?) delta))))))))
+    (let [{:keys [schema value]} target]
+      (cond
+        (= :knob (:kind target)) (knobs/encoder-command (:knob-id target) delta fine?)
+        (= :number (:type schema))
+        (when-let [[low high] (when (number? value) (domain schema))]
+          (write target (double (within-bounds schema (+ (double value)
+                                                         (* delta (if fine? (:fine encoder-step) (:coarse encoder-step))
+                                                            (- (double high) (double low))))))))
+        (= :integer (:type schema))
+        (when (number? value)
+          (write target (long (Math/round (double (within-bounds schema (+ value delta)))))))
+        :else
+        (when-let [n (normalized target)]
+          (write target (value-at target (+ n (* (step target) delta)))))))))
 
 (defn reset
   "Command restoring a target's default (unity for levels and opacity), or nil."
@@ -186,7 +214,7 @@
   [target]
   (when-let [n (some-> target normalized)]
     (let [{:keys [type default] :as schema} (:schema target)
-          [low high] (bounds schema)
+          [low high] (domain schema)
           label (some-> (:param target) name)
           mode (cond
                  (contains? #{:knob :opacity :group-level :master} (:kind target)) :wrap
@@ -216,7 +244,8 @@
     ;; Enum values are any portable data, not only keywords.
     (= :enum (:type schema)) (if (keyword? value) (name value) (str value))
     (= :integer (:type schema)) (str value)
-    (and (number? value) (let [[low high] (bounds schema)] (and (== 0 low) (== 1 high))) (not= :param kind))
+    (and (number? value) (not= :param kind)
+         (let [[low high] (domain schema)] (and (number? low) (number? high) (== 0 low) (== 1 high))))
     (str (Math/round (* 100.0 (double value))) "%")
     (number? value) (trim-number value)
     :else (str value)))
@@ -369,16 +398,47 @@
                {:op :instance/end :instance-id (:id instance) :force? (= :releasing (:phase instance))}
                {:op :cue/launch :cue-id (:cue-id s) :launch {:mode :persistent}})])))
 
-(defn selection-toggle
-  "Solo or Mute for a strip's instances; nil when the strip has none.
-  additive? keeps the other selected strips (SHIFT or CONTROL)."
-  [control s additive?]
-  (when-let [selector (:selector s)]
-    (when (seq (:instance-ids s))
-      {:op :effect-selection/toggle :control control :selector selector :additive? (boolean additive?)})))
+(defn- toggle-command [control selector additive?]
+  {:op :effect-selection/toggle :control control :selector selector :additive? additive?})
 
-(defn soloed-instance-ids [ctx]
-  (into [] (comp (filter (comp :soloed? val)) (map key)) (:flags ctx)))
+(defn- selected-instance-ids [ctx control]
+  (let [field (case control :solo :soloed? :mute :muted?)]
+    (into [] (comp (filter (comp field val)) (map key)) (:flags ctx))))
+
+(defn selection-toggle
+  "Solo or Mute commands for a strip's instances; empty when it has none.
+  modifier picks the mode, as the operator's Live script does:
+    nil        the configured mode (:effect-selection/configure)
+    :additive  keep the other selected strips (SHIFT)
+    :invert    the opposite of the configured mode (CONTROL)
+  With a configured :additive mode, :invert replaces the selection with this
+  strip's instances, or clears them when they are the whole selection. The
+  shared toggle has no exclusive override, so that takes two additive toggles
+  computed from the committed flags: one drops the other strips, one adds
+  this strip's missing instances. Both are dispatched in order and validated
+  as usual."
+  [ctx control s modifier]
+  (let [selector (:selector s) targets (:instance-ids s)]
+    (if-not (and selector (seq targets))
+      []
+      (let [configured (get-in ctx [:modes control] :exclusive)
+            mode (case modifier
+                   :additive :additive
+                   :invert (if (= :additive configured) :exclusive :additive)
+                   configured)]
+        (if (or (= mode configured) (= :additive mode))
+          [(toggle-command control selector (= :additive mode))]
+          (let [current (selected-instance-ids ctx control)
+                target-set (set targets)
+                current-set (set current)]
+            (if (= target-set current-set)
+              [(toggle-command control selector true)]
+              (into []
+                    (keep (fn [ids] (when (seq ids) (toggle-command control {:instance-ids ids} true))))
+                    [(filterv (complement target-set) current)
+                     (filterv (complement current-set) targets)]))))))))
+
+(defn soloed-instance-ids [ctx] (selected-instance-ids ctx :solo))
 
 (defn global-solo
   "The transport SOLO button, as in the script: with any solo, store the set
@@ -392,7 +452,7 @@
                     :stored soloed}
       (seq alive) {:commands [{:op :effect-selection/toggle :control :solo :selector {:instance-ids alive} :additive? true}]
                    :stored []}
-      :else {:commands (keep identity [(selection-toggle :solo selected-strip false)]) :stored []})))
+      :else {:commands (selection-toggle ctx :solo selected-strip nil) :stored []})))
 
 ;; ---------------------------------------------------------------------------
 ;; Colours (the script's hue matching with a white cut-off)

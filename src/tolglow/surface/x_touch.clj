@@ -13,14 +13,16 @@
 
   Buttons (main unit; the extender has strip controls only):
     SELECT      select the strip; again: toggle a cue's launch, or clear a group
-    SOLO/MUTE   :effect-selection/toggle on the strip's instances; SHIFT or
-                CONTROL keeps the others (additive)
+    SOLO/MUTE   :effect-selection/toggle on the strip's instances in the
+                configured mode; SHIFT keeps the others (additive), CONTROL
+                inverts the configured exclusive/additive mode
     REC         hold a cue while pressed (exact instance release)
     PAN/SEND/PLUG-IN/USER   encoder mode; the lit mode again returns to PAN
     EQ/INST     previous/next encoder page in PLUG-IN and USER
     FLIP        swap fader and encoder on cue strips in PAN
     BANK/CHANNEL  move the committed window; SHIFT: first/last page
-    transport SOLO  clear and store all solos, restore, or solo the selection
+    transport SOLO  clear and store all solos, restore, or solo the selected
+                strip wherever it is on the linked surface
     PLAY/STOP   local transport only; ignored while an external source
                 (Link with start/stop sync) owns play and stop
   Faders need a finger: a touch captures the strip's target until release,
@@ -80,10 +82,13 @@
         rows (vec ((:rows options) model))
         {:keys [first index span layout]} ((:placement options) model)
         resolved (mapv #(mixer/strip ctx layout (get rows (+ first %))) (range strip-count))
+        ;; The selected row anywhere on the logical surface: another member or page.
+        selected-row (when-let [selected (:selected layout)] (some #(when (= selected (mixer/row-key %)) %) rows))
         items (when (contains? mixer/item-modes (:encoder-mode layout))
-                (mixer/items ctx layout (some #(when (= (:selected layout) (mixer/row-key %)) %) rows)))
+                (mixer/items ctx layout selected-row))
         item-at (fn [x] (get items (+ index x (* span (:page layout 0)))))]
-    {:ctx ctx :layout layout :span span :strips resolved :items items :item-at item-at}))
+    {:ctx ctx :layout layout :span span :strips resolved :selected-row selected-row
+     :items items :item-at item-at}))
 
 (defn- encoder-target [{:keys [items item-at strips]} x]
   (if items (:target (item-at x)) (:encoder (get strips x))))
@@ -102,7 +107,8 @@
 (defn- strip-button [options state v envelope x row pressed?]
   (let [s (get (:strips v) x)
         layout (:layout v)
-        additive? (or (modifier? state :shift) (modifier? state :control))]
+        ;; As in the operator's script, CONTROL inverts the configured mode; SHIFT adds.
+        selection (cond (modifier? state :shift) :additive (modifier? state :control) :invert)]
     (case row
       0 (if pressed?
           (if (or (get-in state [:hold-keys x]) (not= :cue (:kind s)))
@@ -114,8 +120,8 @@
             (let [result (bindings/end-hold (:holds state) gesture envelope)]
               {:state (-> state (assoc :holds (:state result)) (update :hold-keys dissoc x)) :commands (:commands result)})
             (changed state)))
-      1 (if pressed? (with-envelope envelope (changed state (mixer/selection-toggle :solo s additive?))) (changed state))
-      2 (if pressed? (with-envelope envelope (changed state (mixer/selection-toggle :mute s additive?))) (changed state))
+      1 (if pressed? (with-envelope envelope (apply changed state (mixer/selection-toggle (:ctx v) :solo s selection))) (changed state))
+      2 (if pressed? (with-envelope envelope (apply changed state (mixer/selection-toggle (:ctx v) :mute s selection))) (changed state))
       3 (if pressed?
           (with-envelope envelope (apply changed state (mixer/select (:surface-id options) layout s)))
           (changed state)))))
@@ -159,7 +165,7 @@
       (= :global-solo button)
       (if (modifier? state :shift)
         (changed (assoc state :stored-solo []))
-        (let [selected (some #(when (= (:selected layout) (:key %)) %) (:strips v))
+        (let [selected (mixer/strip ctx layout (:selected-row v))
               {:keys [commands stored]} (mixer/global-solo ctx (:stored-solo state) selected)]
           (with-envelope envelope (apply changed (assoc state :stored-solo stored) commands))))
 
