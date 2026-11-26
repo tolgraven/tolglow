@@ -263,6 +263,10 @@
   (fn [{:keys [json-params]}]
     (heartbeat! (get-in json-params [:source :session-id]))
     (let [payload (cond-> json-params
+                    ;; Only a device's own connection may speak as that surface (#705).
+                    (and (= operation :command) (= "control-surface" (some-> (:op json-params) namespace))
+                         (#{:surface "surface"} (get-in json-params [:source :adapter])))
+                    (assoc-in [:source :adapter] :web)
                     (and (= operation :command) (= :page/put (:op json-params))
                          (vector? (get-in json-params [:page :cells])))
                     (update-in [:page :cells] #(into {} (map (fn [{:keys [x y cue-id]}] [[x y] cue-id])) %))

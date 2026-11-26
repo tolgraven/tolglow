@@ -160,3 +160,26 @@
     (is (= :stale-clip (:code (live/request! conn :read-clip {:clip-id "clip:missing"}))))
     (is (= [{:type :cc :channel 16} {:type :note-on :channel 15}]
            (live/feed-routing desired [{:type :cc :channel 1} {:type :note-on :channel 2}])))))
+
+(deftest setup-capture-and-read-back-survive-the-companion-json-wire
+  ;; The companion answers over loopback HTTP as JSON: enumerations arrive as
+  ;; strings and beats as doubles.
+  (let [set (fake/create {:tracks [{:name "Bass" :arm? true :monitor :in :input {:port "Keystep" :channel 3}}]})
+        connect-json #(live/open (fake/json-transport set) {:session-id "json"})
+        setup (live/setup! (connect-json) desired)]
+    (is (:ready? setup) (pr-str (:problems setup)))
+    (is (= [:in :auto :auto] (mapv :monitor (get-in setup [:set :tracks]))))
+    (let [conn (connect-json)]
+      (is (:ready? (live/setup! conn desired)))
+      (is (empty? (writes conn)) "a ready Set needs no writes over the wire either"))
+    (let [phrase (assoc phrase :notes [{:id "n0" :cue-id :wash :start 1/2 :length 5/4 :params {:level 0.5}}]
+                        :lanes [{:cue-id :wash :param :level :points [{:beat 3/2 :value 0.25 :note "n0"}]}])
+          conn (connect-json)
+          result (live/capture! conn setup {:phrase phrase :layout layout})
+          back (live/import-clips! conn (:clips result) layout {:meter (:meter phrase)})]
+      (is (:complete? result))
+      (is (= (clip/comparable (clip/clips->phrase (clip/phrase->clips phrase layout) layout {:meter (:meter phrase)}))
+             (clip/comparable back))
+          "exact beats and 14-bit values come back")
+      (fake/rename-track! set (get-in setup [:tracks 2]) "My lanes")
+      (is (= :track-renamed (:code (second (:receipts (live/capture! (connect-json) setup {:phrase phrase :layout layout})))))))))

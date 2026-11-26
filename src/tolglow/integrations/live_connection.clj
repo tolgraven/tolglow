@@ -78,7 +78,8 @@
         (update :controllers (fn [cs] (mapv #(update % :beat wire-beat) cs))))))
 
 (defn- normalize-track [track]
-  (-> track (update :kind keywordize) (update :monitor keywordize)))
+  (cond-> (-> track (update :kind keywordize) (update :monitor keywordize))
+    (:clips track) (update :clips (partial mapv #(update % :length-beats wire-beat)))))
 
 (defn normalize-result
   "Bring a result decoded from JSON back to Tolglow data: enumerations become

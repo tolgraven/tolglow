@@ -12,7 +12,9 @@
   Like the real companion, it sits on one track (appended as \"MIDI\" unless
   :companion? is false); setup adopts that track for the host capture track.
   `(transport live {:json? true})` sends every payload and receipt through JSON,
-  as the loopback HTTP companion does."
+  as the loopback HTTP companion does.
+  `json-transport` is the same as `(transport live {:json? true})` with the
+  receipt read exactly as live-transport reads it."
   (:require [clojure.data.json :as json]))
 
 (defn create
@@ -164,6 +166,18 @@
        (assoc t :request! (fn [handle id op payload]
                             (through-json ((:request! t) handle id op (through-json payload)))))
        t))))
+
+(defn json-transport
+  "transport through JSON both ways: the Set receives the payload as the
+  companion would decode it, and the reply is read as live-transport reads it
+  (keyword keys, keyword :status, every other value as JSON gave it)."
+  [live]
+  (let [inner (transport live)]
+    (assoc inner :request!
+           (fn [handle id op payload]
+             (let [payload (json/read-str (json/write-str payload) :key-fn keyword)
+                   receipt ((:request! inner) handle id op payload)]
+               (update (json/read-str (json/write-str receipt) :key-fn keyword) :status keyword))))))
 
 (defn inject-fault! [live op & faults] (swap! live update-in [:faults op] concat faults))
 
