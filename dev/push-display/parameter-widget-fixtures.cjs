@@ -46,10 +46,13 @@ const parameters = [
   null,
   {id: 'shape', param: 'shape', name: 'Shape', schema: {type: 'enum', choices: ['sine', 'saw', 'square']}, value: 'saw'}
 ];
+// Registered waveform glyphs as a show projects them (tolglow.signals/glyph);
+// waveform-shapes-test fails when this file and the registry disagree.
+const glyphs = JSON.parse(fs.readFileSync(path.join(__dirname, 'waveform-glyphs.json'), 'utf8'));
 const meter = (beats, bars) => ({'beats-per-bar': beats, 'bars-per-phrase': bars});
 const base = {title: 'Tolglow', page: 'main', status: 'ready', bpm: 124, master: 1, 'instance-id': 'a',
   cue: {name: 'Ember', active: true}, effect: {name: 'Ember wash'}, 'parameter-view': 'auto', parameters,
-  'musical-timing': {meter: meter(4, 4)},
+  'musical-timing': {meter: meter(4, 4)}, 'waveform-glyphs': glyphs,
   labels: ['Ember', 'Drift', 'Strobe', 'Sweep', '', '', '', '']};
 // One sine cycle per encoder. Only the period and the meter differ.
 const cycle = (name, beats, own) => ({id: name, param: name, name, schema: {type: 'number', bounds: [0, 1]}, value: 0.5,
@@ -66,6 +69,20 @@ const magnitudes = {...base, cue: {name: 'Vector magnitudes', active: true},
   parameters: [vector('Mag 0.25', along(0.25)), vector('Mag 0.5', along(0.5)), vector('Mag 0.75', along(0.75)),
                vector('Mag 1', along(1)), vector('+X', [1, 0, 0]), vector('+Y', [0, 1, 0]), vector('+Z', [0, 0, 1]),
                vector('0 to 10', [3, 4, 5], [0, 10])]};
+// Shape choices: plain enums, legacy oscillator names, a registered selector
+// and, for contrast, a geometry enum that must stay text.
+const choice = (name, schema, value) => ({id: name, param: name, name, schema, value});
+const selector = {type: 'number', bounds: [0, 3], step: 1, 'semantic/type': 'waveform-selector', label: 'Waveform',
+  choices: glyphs.map((g, i) => ({value: i, id: g.id, label: g.name}))};
+const shapeGlyphs = {...base, cue: {name: 'Shape glyphs', active: true},
+  parameters: [choice('Shape', {type: 'enum', values: ['sine', 'saw', 'square']}, 'sine'),
+               choice('Shape', {type: 'enum', values: ['sine', 'saw', 'square']}, 'saw'),
+               choice('Shape', {type: 'enum', values: ['sine', 'saw', 'square']}, 'square'),
+               choice('Legacy osc', {type: 'enum', values: ['sine', 'triangle', 'sawtooth', 'square']}, 'triangle'),
+               choice('Legacy osc', {type: 'enum', values: ['sine', 'triangle', 'sawtooth', 'square']}, 'sawtooth'),
+               choice('Waveform', selector, 2),
+               choice('Volume', {type: 'enum', values: ['sphere', 'rounded-box']}, 'sphere'),
+               choice('Osc mode', {type: 'enum', values: ['sine', 'random']}, 'random')]};
 const scenarios = {
   untouched: base,
   'single-touch': {...base, 'touched-parameter': {'instance-id': 'a', param: 'level', component: 0}},
@@ -74,7 +91,8 @@ const scenarios = {
   'compound-touch': {...base, 'touched-parameter': {'instance-id': 'a', param: 'tint', component: 0}},
   'spatial-touch': {...base, 'touched-parameter': {'instance-id': 'a', param: 'position', component: 0}},
   'grid-periods': periods,
-  'vector-magnitudes': magnitudes
+  'vector-magnitudes': magnitudes,
+  'shape-glyphs': shapeGlyphs
 };
 
 server.listen(Number(process.env.PORT || 0), '127.0.0.1', async () => {
@@ -96,7 +114,8 @@ server.listen(Number(process.env.PORT || 0), '127.0.0.1', async () => {
           .map(el => (slot.dataset.encoder ?? 'area') + ':' + el.className + ':' + el.textContent.trim())));
       const count = selector => page.locator(selector).count();
       console.log(name, JSON.stringify({ms: Math.round(result['capture-ms']), areas: await count('.push-compound-area'),
-        spaces: await count('.parameter-space'), colours: await count('.parameter-color'), overflow}));
+        spaces: await count('.parameter-space'), colours: await count('.parameter-color'),
+        glyphs: await count('.shape-glyph'), overflow}));
     }
     // History mode needs a sequence of active observations on one show clock.
     let result;

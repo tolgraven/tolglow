@@ -9,10 +9,12 @@
             [tolglow.composition.response :as response]
             [tolglow.controllers.parameter-display :as parameter-display]
             [tolglow.effects :as fx]
+            [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.oscillator :as oscillator]
             [tolglow.registry :as registry]
             [tolglow.signals :as signals]
-            [tolglow.visualization.musical-grid :as musical-grid])
+            [tolglow.visualization.musical-grid :as musical-grid]
+            [tolglow.visualization.waveform-shapes :as waveform-shapes])
   (:import [java.util Objects]))
 
 (defn- fail! [message data] (throw (ex-info message (assoc data :type ::invalid-projection))))
@@ -335,6 +337,18 @@
                        :bands (into {} (map (fn [band] [band (rms #(get-in % [:bands band] 0.0))])) [:low :mid :high])}))]
       (assoc waveform :bins (mapv combine (partition-all width bins))))))
 
+(defn- attach-waveform-glyphs
+  "Ship the catalog glyphs a view needs, once per view, only when a parameter
+  chooses between registered waveforms. Both surfaces match choices to it
+  through `waveform-shapes/choices`."
+  [view catalog]
+  (let [used (into #{} (comp (keep :schema) (mapcat #(waveform-shapes/choices % catalog)) (map :waveform))
+                   (:parameters view))]
+    (cond-> view
+      (seq used) (assoc :waveform-glyphs (into [] (comp (filter #(used (keyword (:id %))))
+                                                       (map #(select-keys % [:id :name :glyph])))
+                                               catalog)))))
+
 (defn project-display
   "Enrich a queued device view on its capture worker. A stale selection cannot
   display newer-instance data under an old label. Audio data is already bounded."
@@ -382,7 +396,8 @@
                                            (assoc parameter :preview-samples [] :preview-status :unavailable
                                                   :preview-message (.getMessage error))))
                                     (assoc parameter :preview-samples [] :preview-status :stale)) parameter))) parameters)))
-      audio-waveform (assoc :audio-waveform (display-audio audio-waveform)))))
+      audio-waveform (assoc :audio-waveform (display-audio audio-waveform))
+      true (attach-waveform-glyphs (parameter-sources/waveform-options model)))))
 
 (defn new-capture
   "Explicit streaming summary state. Defaults retain 256 columns of 20ms each.

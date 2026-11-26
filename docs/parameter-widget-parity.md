@@ -12,6 +12,7 @@ advances an oscillator, opens a device, or creates synthetic readings.
 | Numeric min/max/current/unit | Shared SVG rotary, endpoints, units, exact-value field and accessible range | Bounds, bipolar zero, integer steps, rapid keyboard repeats and real pointer operations pass |
 | Base versus modulated value | Optional base/effective markers from actual modulation projection | No invented ghost values; Push needs the corresponding host metadata |
 | Choice and enum | Selected label, adjacent options and selection position | Numeric choice storage preserved; optimized passive display checked |
+| Waveform shape choice | Registered waveform glyphs: a radio group in Studio, the selected shape over a glyph strip on Push | Glyphs sampled from the registered definitions on the server and matched by one shared function (#655); other enums stay text |
 | Boolean | Explicit switch and On/Off label | Rendering verified; physical controller behavior has its own lane |
 | Color/vector/range | Colour swatch with component gradient tracks, bounded vector component tracks and range endpoints | Push marks the hue, saturation or brightness component its encoder turns; a colour never opens the 3D vector widget (#655); richer web component pickers remain open |
 | Generated waveform | Always-visible compact result plus slope, angular velocity, jagginess, cycles and sample detail | Actual Ring preview changes when another live parameter changes; 513-sample detail and selector verified |

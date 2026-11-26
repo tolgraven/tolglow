@@ -4,7 +4,8 @@
             [tolglow.studio.push-display :as display]
             [tolglow.studio.parameter-widgets :as widgets]
             [tolglow.visualization.parameter-views :as views]
-            [tolglow.visualization.vector-space :as vector-space]))
+            [tolglow.visualization.vector-space :as vector-space]
+            [tolglow.visualization.waveform-shapes :as shapes]))
 
 (deftest spatial-defaults-follow-the-value-domain
   (is (= :spatial (visual/selected-mode {:type "vector" :size 3} nil)))
@@ -311,3 +312,57 @@
         closed (visual/history-toggle schema :auto)]
     (is (= :controls (visual/selected-mode schema closed)))
     (is (= :history (visual/history-toggle schema closed)))))
+
+;; The catalog shape a Push view or a Studio snapshot carries after JSON.
+(def glyph-catalog
+  [{:id "pulse" :name "Pulse" :glyph [1 1 0 0 1]} {:id "saw" :name "Saw" :glyph [0 0.25 0.5 0.75 0]}
+   {:id "sine" :name "Sine" :glyph [0.5 1 0.5 0 0.5]} {:id "triangle" :name "Triangle" :glyph [0 0.5 1 0.5 0]}])
+
+(deftest push-shape-enums-draw-the-registered-glyphs
+  (let [schema {:type "enum" :choices ["sine" "saw" "square"]}
+        parameter {:id "shape" :param "shape" :schema schema :value "saw"}
+        [component glyphs value] (visual/push {:waveform-glyphs glyph-catalog} parameter)
+        figure (widgets/shape-view glyphs value)
+        strip (tagged figure :span)]
+    (is (= widgets/shape-view component))
+    (is (= ["Sine" "Saw" "Pulse"] (map :label glyphs)) "the legacy square name draws the registered pulse")
+    (is (= [0 0.25 0.5 0.75 0] (:glyph (second glyphs))))
+    (is (= [:div.shape-choice-value "Saw"] (second figure)))
+    (is (= [widgets/shape-glyph [0 0.25 0.5 0.75 0] {:width 100 :height 34}] (nth figure 2))
+        "the selected shape draws large from its catalog glyph")
+    (is (= [nil "selected" nil] (map #(get-in % [1 :class]) strip)))
+    (is (= (map :glyph glyphs) (map #(second (nth % 2)) strip)))
+    (is (= [:span.typed-choice-position "2 / 3"] (last figure)))
+    (is (= :svg.shape-glyph (first (widgets/shape-glyph [0 1 0]))))
+    (testing "without a catalog, or for any other enum, the choice stays text"
+      (is (= widgets/typed-display (first (visual/push {} parameter))))
+      (is (= widgets/typed-display
+             (first (visual/push {:waveform-glyphs glyph-catalog}
+                                 (assoc parameter :schema {:type "enum" :values ["sphere" "rounded-box"]}))))))))
+
+(defn- key-event [key buttons]
+  #js {:key key :preventDefault (fn [])
+       :currentTarget #js {:parentNode #js {:children (into-array buttons)}}})
+
+(deftest studio-shape-pickers-are-radio-groups-of-glyphs
+  (let [shapes (shapes/choices {:type "enum" :values ["sine" "saw" "square"]} glyph-catalog)
+        sent (atom [])
+        focused (atom nil)
+        buttons (mapv (fn [i] #js {:focus #(reset! focused i)}) (range 3))
+        picker (widgets/shape-picker "Shape" shapes "saw" #(swap! sent conj %))
+        radios (tagged picker :button)
+        handler (fn [index event] ((get-in (nth radios index) [1 :on-key-down]) event))]
+    (is (= {:role "radiogroup" :aria-label "Shape"} (second picker)))
+    (is (= ["radio" "radio" "radio"] (map #(get-in % [1 :role]) radios)))
+    (is (= [false true false] (map #(get-in % [1 :aria-checked]) radios)))
+    (is (= [-1 0 -1] (map #(get-in % [1 :tab-index]) radios)) "only the selection is in the tab order")
+    (is (= [[widgets/shape-glyph [0.5 1 0.5 0 0.5]] [:span "Sine"]] (drop 2 (first radios))))
+    ((get-in (first radios) [1 :on-click]))
+    (handler 1 (key-event "ArrowRight" buttons))
+    (handler 2 (key-event "ArrowRight" buttons))
+    (handler 0 (key-event "ArrowLeft" buttons))
+    (handler 1 (key-event "End" buttons))
+    (is (= ["sine" "square" "sine" "square" "square"] @sent) "the schema's own values go back, wrapping at the ends")
+    (is (= 2 @focused))
+    (handler 1 (key-event "a" buttons))
+    (is (= 5 (count @sent)) "other keys do nothing")))

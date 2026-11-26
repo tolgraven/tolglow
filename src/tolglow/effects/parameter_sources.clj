@@ -14,14 +14,35 @@
 
 (defn- waveforms [model] (or (:waveforms model) @builtins))
 
+(defn- shape-glyph
+  "The picker glyph of a waveform, sampled from its registered definition. A
+  waveform that cannot be sampled has no glyph and its picker stays text."
+  [registry {:keys [id version]}]
+  (try (signals/glyph registry id {:version version})
+       (catch Exception _ nil)))
+
 (defn- options [registry]
   (->> (:waveforms registry) vals (sort-by (comp str :id))
-       (mapv #(select-keys % [:id :name :range :params :version]))))
+       (mapv #(assoc (select-keys % [:id :name :range :params :version]) :glyph (shape-glyph registry %)))))
 
 (def ^:private builtin-options (delay (options @builtins)))
 
-(defn waveform-options [model]
-  (if-let [registry (:waveforms model)] (options registry) @builtin-options))
+;; The catalog is projected on every snapshot. A registry is immutable data, so
+;; the glyphs of the last registry seen are kept until the registry changes.
+(def ^:private cached-options (atom [nil nil]))
+
+(defn waveform-options
+  "The waveform catalog Studio and the Push display read: identity, name,
+  range, parameters and the picker glyph of each registered waveform."
+  [model]
+  (if-let [registry (:waveforms model)]
+    (let [[seen result] @cached-options]
+      (if (identical? seen registry)
+        result
+        (let [result (options registry)]
+          (reset! cached-options [registry result])
+          result)))
+    @builtin-options))
 
 (defn- require! [condition message]
   (when-not condition (throw (ex-info message {:type ::invalid-binding}))))
@@ -265,7 +286,7 @@
   (try (double (time/duration->beats period (if (= :transport phase-reference)
                                               (:meter transport-clock)
                                               (:timing-meter instance))))
-       (catch clojure.lang.ExceptionInfo _ nil)))
+       (catch Exception _ nil)))
 
 (defn- sample-one [model instance transport-clock private-clock previous result param {:keys [binding] :as entry}]
   (let [id (:id instance)

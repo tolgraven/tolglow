@@ -5,6 +5,7 @@
             [tolglow.studio.numeric-display :as numeric]
             [tolglow.visualization.musical-grid :as musical-grid]
             [tolglow.visualization.parameter-views :as views]
+            [tolglow.visualization.waveform-shapes :as shapes]
             [thi.ng.color.core :as color]))
 
 (defn label [value]
@@ -341,8 +342,65 @@
                [:output (number-label {:bounds [0 1]} amount)]])]
            [:div.color-readout [:b "RGB"] readout]])))))
 
+(defn shape-glyph
+  "One registered waveform cycle as supplied by the server catalog. Purely
+  decorative: the choice's label carries its name."
+  [glyph & [{:keys [width height] :or {width 40 height 16}}]]
+  (when-let [points (shapes/points glyph width height 1.5)]
+    [:svg.shape-glyph {:view-box (str "0 0 " width " " height) :preserve-aspect-ratio "none" :aria-hidden true
+                       :focusable false}
+     [:polyline {:points points :fill "none" :stroke "currentColor" :stroke-width 1.4
+                 :stroke-linejoin "round" :vector-effect "non-scaling-stroke"}]]))
+
+(defn shape-view
+  "A waveform choice on a device display: the selected shape large, then a
+  strip of the neighbouring choices with the selection marked."
+  [shapes value]
+  (let [selected (shapes/selected-index shapes value)
+        count-shapes (count shapes)
+        start (max 0 (min (max 0 (- count-shapes 4)) (dec (or selected 0))))
+        current (when selected (get shapes selected))]
+    [:div.shape-choice
+     [:div.shape-choice-value (if current (:label current) (label value))]
+     (if current
+       [shape-glyph (:glyph current) {:width 100 :height 34}]
+       [:div.shape-choice-empty])
+     [:div.shape-choice-strip
+      (for [[index shape] (map-indexed vector (take 4 (drop start shapes)))]
+        ^{:key index} [:span {:class (when (= (+ start index) selected) "selected") :title (:label shape)}
+                       [shape-glyph (:glyph shape) {:width 24 :height 12}]])]
+     [:span.typed-choice-position (str (if (some? selected) (inc selected) "—") " / " count-shapes)]]))
+
+(defn shape-picker
+  "Choose a waveform by its shape. A radio group of registered glyphs; arrow
+  keys move the selection like a native radio group."
+  [title shapes value change!]
+  (let [selected (shapes/selected-index shapes value)
+        last-index (dec (count shapes))
+        move! (fn [event index]
+                (let [target (cond (< index 0) last-index (> index last-index) 0 :else index)
+                      buttons (.. event -currentTarget -parentNode -children)]
+                  (.preventDefault event)
+                  (change! (:value (get shapes target)))
+                  (some-> (aget buttons target) .focus)))]
+    [:div.shape-picker {:role "radiogroup" :aria-label title}
+     (for [[index shape] (map-indexed vector shapes)]
+       ^{:key index}
+       [:button {:type "button" :role "radio" :aria-checked (= index selected)
+                 :tab-index (if (= index (or selected 0)) 0 -1)
+                 :on-click #(change! (:value shape))
+                 :on-key-down #(case (.-key %)
+                                 ("ArrowRight" "ArrowDown") (move! % (inc index))
+                                 ("ArrowLeft" "ArrowUp") (move! % (dec index))
+                                 "Home" (move! % 0)
+                                 "End" (move! % last-index)
+                                 nil)}
+        [shape-glyph (:glyph shape)]
+        [:span (:label shape)]])]))
+
 (defn- choice-view [schema value]
-  (let [choices (vec (or (:choices schema) (map #(hash-map :value % :label (label %)) (or (:values schema) (:options schema)))))
+  (let [choices (vec (or (some->> (:choices schema) seq (mapv #(if (map? %) % {:value % :label (label %)})))
+                         (map #(hash-map :value % :label (label %)) (or (:values schema) (:options schema)))))
         selected (first (keep-indexed #(when (= value (:value %2)) %1) choices))
         count-choices (count choices)
         start (max 0 (min (max 0 (- count-choices 3)) (dec (or selected 0))))]

@@ -4,7 +4,8 @@
             [reagent.core :as r]
             [re-frame.core :as rf]
             [tolglow.studio.events :as events]
-            [tolglow.studio.parameter-widgets :as widgets]))
+            [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.visualization.waveform-shapes :as shapes]))
 
 (def channels
   [[:value "Value"] [:slope "Slope"] [:angular-velocity "Angular velocity"] [:jagginess "Jagginess"]])
@@ -152,6 +153,13 @@
        :clock (when (clock-bound? (get-in instance [:definition :params]))
                 [(get-in db [:show :time-ms]) (get-in db [:show :transport]) (:system instance)])
        :waveform-revision (get-in db [:show :waveform-revision])})))
+
+(rf/reg-sub :waveform/catalog (fn [db _] (get-in db [:server-projection :view :parameter-waveforms])))
+
+(defn shape-choices
+  "Glyph choices when a schema chooses between registered waveforms, else nil."
+  [schema]
+  (shapes/choices schema @(rf/subscribe [:waveform/catalog])))
 
 (rf/reg-sub :waveform/entry (fn [db [_ key]] (entry db key)))
 (rf/reg-sub :waveform/session (fn [db _] (request-token db)))
@@ -349,10 +357,12 @@
                   (and (not actual?) (:params context)) (assoc :context-params (:params context)))]
     [:div.waveform-picker {:data-waveform-param (wire parameter)}
      [:div.waveform-choice-row
-      [:select {:aria-label title :value selected
-                 :on-change #(change! (:value (get choices (js/parseInt (.. % -target -value) 10))))}
-       (for [[index item] (map-indexed vector choices)]
-         ^{:key index} [:option {:value index} (or (:label item) (widgets/label (:id item)))])]
+      (if-let [glyphs (shape-choices schema)]
+        [widgets/shape-picker title glyphs value change!]
+        [:select {:aria-label title :value selected
+                  :on-change #(change! (:value (get choices (js/parseInt (.. % -target -value) 10))))}
+         (for [[index item] (map-indexed vector choices)]
+           ^{:key index} [:option {:value index} (or (:label item) (widgets/label (:id item)))])])
       (when category [:span.waveform-category {:style {"--waveform-category" (get category-colors category "#a8b99a")}}
                       (widgets/label category)])]
      [compact-preview-component key selection options (:settings e) token]

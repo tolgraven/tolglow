@@ -9,7 +9,8 @@
             [tolglow.studio.visibility :refer [watch-visibility]]
             [tolglow.visualization.musical-grid :as musical-grid]
             [tolglow.visualization.parameter-views :as views]
-            [tolglow.visualization.vector-space :as vector-space]))
+            [tolglow.visualization.vector-space :as vector-space]
+            [tolglow.visualization.waveform-shapes :as shapes]))
 
 (def zooms [0.5 1 2 4 8 16])
 
@@ -373,7 +374,10 @@
                  [:output.push-signal-value (widgets/value-label schema shown)
                   (when-let [unit (widgets/unit-label schema)] [:small unit])]]
                 (remove nil? [(widgets/grid-period grid)]))
-          [widgets/typed-display parameter])))))
+          ;; A choice between registered waveforms draws their shapes.
+          (if-let [glyphs (shapes/choices schema (:waveform-glyphs view))]
+            [widgets/shape-view glyphs shown]
+            [widgets/typed-display parameter]))))))
 
 (rf/reg-sub ::clock
   (fn [db _]

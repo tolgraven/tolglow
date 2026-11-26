@@ -50,6 +50,12 @@
                          (select-keys (:preset view) [:saved? :changed? :record? :action]))
                :touched-control (when (map? (:touched-control view))
                                   (select-keys (:touched-control view) [:target :editable?])))
+        (cond-> (seq (:waveform-glyphs view))
+          ;; Registered waveform glyphs for shape choices, bounded like the rest.
+          (assoc :waveform-glyphs (into [] (comp (take 32) (filter map?)
+                                                 (map #(-> (select-keys % [:id :name :glyph])
+                                                           (update :glyph (fn [g] (vec (take 129 g)))))))
+                                        (:waveform-glyphs view))))
         (assoc :parameters (vec (take 8 (:parameters view)))
                :active-effects (vec (take 8 (:active-effects view)))
                :cells (vec (take 8 (:cells view))) :labels (vec (take 8 (:labels view)))))))

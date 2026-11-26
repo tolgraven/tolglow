@@ -295,7 +295,8 @@
 (defn- parameter-control [instance parameter schema & [handlers options]]
   (let [value (get-in instance [:params parameter] (:default schema))
         choices (:choices schema)
-        type (cond (waveform/waveform-schema? schema) "waveform" (seq choices) "choice" :else (:type schema "number"))
+        shapes (when-not (waveform/waveform-schema? schema) (waveform/shape-choices schema))
+        type (cond (waveform/waveform-schema? schema) "waveform" shapes "shape" (seq choices) "choice" :else (:type schema "number"))
         change! (or (:change handlers) #(input! [:studio/param-set (:id instance) parameter %]))
         component! (or (:component handlers) #(input! [:studio/param-component (:id instance) parameter %1 %2]))
         source (when-not handlers (sources/reading instance parameter))
@@ -308,6 +309,7 @@
      (case type
        "waveform" [waveform/picker (:id instance) parameter schema value change!
                    {:params (:params instance) :live? (nil? handlers)}]
+       "shape" [widgets/shape-picker title shapes value change!]
        "choice" (let [selected (or (first (keep-indexed #(when (= value (:value %2)) %1) choices)) 0)]
                   [:select {:aria-label title :value selected :on-change #(change! (:value (get choices (js/parseInt (input-value %) 10))))}
                    (for [[index choice] (map-indexed vector choices)]

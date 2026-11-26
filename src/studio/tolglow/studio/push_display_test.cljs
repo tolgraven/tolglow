@@ -19,6 +19,14 @@
     (is (nil? (get-in result [:db :push-display :ignored])))
     (is (= {:attack {:beats 0.5}} (get-in result [:db :push-display :effect :envelope])))))
 
+(deftest waveform-glyphs-are-bounded-display-data
+  (let [entry {:id "saw" :name "Saw" :glyph (vec (range 200)) :params {:duty 0.5}}
+        glyphs (:waveform-glyphs (display/normalize-view {:waveform-glyphs (concat [7] (repeat 40 entry))}))]
+    (is (= 31 (count glyphs)) "at most 32 entries are read and non-maps are dropped")
+    (is (= #{:id :name :glyph} (set (keys (first glyphs)))))
+    (is (= 129 (count (:glyph (first glyphs)))))
+    (is (not (contains? (display/normalize-view {}) :waveform-glyphs)))))
+
 (deftest typed-values-share-labels-with-web-controls
   (is (= "Triangle" (widgets/value-label {:choices [{:value 1 :label "Triangle"}]} 1)))
   (is (= "On" (widgets/value-label {:type :boolean} true)))
