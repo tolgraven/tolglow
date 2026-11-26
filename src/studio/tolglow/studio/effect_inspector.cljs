@@ -7,7 +7,8 @@
             [tolglow.studio.fixture-picker :as picker]
             [tolglow.studio.events :as events]
             [tolglow.studio.keyframe-editor :as keyframes]
-            [tolglow.studio.parameter-widgets :as widgets]))
+            [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.studio.pretty :as pretty]))
 
 (defn- wire [id] (events/wire-id id))
 
@@ -172,7 +173,7 @@
    (when (some? (:time-ms fault)) [:span (str "Show time " (:time-ms fault) " ms")])
    (for [[i cause] (map-indexed vector (:causes fault))]
      ^{:key i} [:div [:strong (:class cause)] [:p (:message cause)]
-                (when (seq (:location cause)) [:pre (pr-str (:location cause))])
+                (when (seq (:location cause)) [:pre (pretty/edn (:location cause))])
                 (when (seq (:trace cause))
                   [:pre (str/join "\n" (map #(str (:class %) "/" (:method %) "  " (:file %) ":" (:line %)) (:trace cause)))])])
    (when-let [trace (or (:stacktrace fault) (:stack fault))]

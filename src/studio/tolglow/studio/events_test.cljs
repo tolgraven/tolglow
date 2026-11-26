@@ -784,7 +784,8 @@
     (is (= "Unpublished changes" (get-in edited [:ui :definition :status])))
     (is (= 2 (get-in publication [:studio/http :body :expected-version])))
     (is (str/includes? (get-in publication [:studio/http :body :source]) ":transition {:beats 1/2}"))
-    (is (str/includes? (get-in publication [:studio/http :body :source]) (pr-str (:outputs typed))))
+    (is (str/includes? (get-in publication [:studio/http :body :source]) "\n :version 2\n"))
+    (is (= (:outputs typed) (:outputs (reader/read-string (get-in publication [:studio/http :body :source])))))
     (is (= 3 (get-in (transition (:db republish) (:dispatch republish)) [:studio/http :body :expected-version])))
     (is (= [:studio/editor-error "The show changed. Reload the definition from the registry."]
            (:dispatch (transition replaced [:studio/definition-publish]))))

@@ -87,6 +87,40 @@ subscription with Studio's Ring `/api/state` projection
 ([test](../test/tolglow/effects/state_migration_test.clj)); the rendered
 inspector has not had a browser review for this policy.
 
+## Read a definition as Studio shows it
+
+The **Definitions** editor and its Neovim buffer show a registry entry as
+pretty-printed EDN. The host and Studio share one printer,
+[`tolglow.studio.pretty`](../src/shared/tolglow/studio/pretty.cljc), so the REPL
+prints the same text from the same data:
+
+```clojure
+(require '[tolglow.studio.pretty :as pretty])
+(println (pretty/edn (get-in (:model (show/export-show runtime)) [:registry :effects :ember])))
+```
+
+A collection stays on one line when it fits 100 columns. Otherwise every map
+entry gets its own line; a value that does not fit after its key starts the next
+line, indented two columns past the key, so deep expressions drift right slowly
+(only very deep ones, such as the showcase `:confetti` expression, still pass the
+width). A vector of scalars fills its lines, except a keyword-argument vector
+(`[:key value …]` with at least one value that is not a keyword), which puts each
+pair on its own line; a vector of keywords only, such as a target list, fills its
+lines. `:id`, `:version` and `:name` come
+first; small maps keep their authored order and larger maps sort their keys. The text reads back to the same data and has no trailing newline,
+so the Neovim echo of a loaded definition matches it exactly. The layout is a
+view only: publication reads any EDN layout, and the registry stores data.
+ClojureScript prints whole floats such as `1.0` as `1`, so text that Studio
+generates (**Generate EDN**) can differ from the host's text in those numbers.
+Studio's read-only data views (debug event data, sensor UDP status, fault
+locations, RDM readback and job results) use the same printer, and tool-call
+JSON in the Assistant is indented by two spaces. The Develop REPL console
+pretty-prints a data result or error data with the same printer, inside the
+REPL's existing bounds (64 items per collection, 10 levels, 8192 characters per
+result). Printing stops at the character bound, and a map or set longer than
+64 items shows the first 64 that `pr` would show, sorted, so a huge result costs
+no more than the text shown. Strings and other values print as `pr` prints them.
+
 ## View recent cues
 
 In **Perform**, the **Recent cues** tab puts the latest successful launch in

@@ -7,6 +7,7 @@
             [reagent.core :as r]
             [tolglow.studio.block-trace :as trace]
             [tolglow.studio.modulation :as motion]
+            [tolglow.studio.pretty :as pretty]
             [tolglow.studio.parameter-widgets :as widget]
             [tolglow.studio.signal-picker :as signal]))
 
@@ -214,9 +215,25 @@
      [:button.text-button {:type "button" :aria-expanded @open? :on-click #(swap! open? not)} "Assign blocks"]
      (when @open? [editor definition bindings change!])]))
 
+(defn- keyed-block-map
+  "`:blocks` and the map printed as pretty/edn lays out a map entry whose key
+  starts at `key-column`: after the key when it fits there, otherwise on the
+  next line indented two columns past the key."
+  [bindings key-column tail]
+  (let [indent #(apply str (repeat % " "))
+        hung (pretty/edn bindings {:column (+ key-column 8) :tail tail})]
+    (str ":blocks"
+         (if (str/includes? hung "\n")
+           (str "\n" (indent (+ key-column 2)) (pretty/edn bindings {:column (+ key-column 2) :tail tail}))
+           (str " " hung)))))
+
 (defn write-bindings
   "Splice the :blocks map using reader coordinates. Preserve other forms,
-  comments, indentation and surrounding whitespace in the source editor."
+  comments, indentation and surrounding whitespace in the source editor. In
+  pretty-printed source the entry gets the lines a fresh print would give it,
+  moving the map after its key or onto the next line as its new size needs. A
+  block map that sat on one line among other entries stays on one line; one
+  laid out some other way is pretty-printed from the column it starts at."
   [source bindings]
   (let [definition (reader/read (readers/indexing-push-back-reader source))
         old (:blocks definition)
@@ -224,10 +241,28 @@
         offset (fn [line col] (+ (dec col) (reduce + (map #(inc (count %)) (take (dec line) lines)))))
         {:keys [line column end-line end-column]} (meta (or old definition))
         end (offset end-line end-column)
+        ;; The definition's entries start one column after its opening brace.
+        entry-column (:column (meta definition))
         result (cond
                  (= (or old {}) bindings) source
-                 old (str (subs source 0 (offset line column)) (pr-str bindings) (subs source end))
-                 :else (str (subs source 0 (dec end)) "\n :blocks " (pr-str bindings) (subs source (dec end))))]
+                 old (let [start (offset line column)
+                           tail (count (re-find #"^[\]})]*" (subs source end)))
+                           prefix (subs source (- start (dec column)) start)
+                           above (when (> line 1) (nth lines (- line 2)))
+                           ;; [key column, index where the key starts] for the two layouts pretty/edn prints.
+                           [key-column key-start]
+                           (if-let [[_ spaces] (re-matches #"( *):blocks +" prefix)]
+                             [(count spaces) (+ (- start (dec column)) (count spaces))]
+                             (when-let [[_ spaces] (and (re-matches #" *" prefix) above (re-matches #"( *):blocks *" above))]
+                               [(count spaces) (+ (- start (dec column) 1 (count above)) (count spaces))]))]
+                       (cond
+                         key-column (str (subs source 0 key-start) (keyed-block-map bindings key-column tail) (subs source end))
+                         (str/includes? (subs source start end) "\n")
+                         (str (subs source 0 start) (pretty/edn bindings {:column (dec column) :tail tail}) (subs source end))
+                         :else (str (subs source 0 start) (pretty/edn bindings {:width ##Inf}) (subs source end))))
+                 :else (str (subs source 0 (dec end)) "\n" (apply str (repeat entry-column " "))
+                            (keyed-block-map bindings entry-column 1)
+                            (subs source (dec end))))]
     (when-not (= (assoc (edn/read-string source) :blocks bindings)
                  (update (edn/read-string result) :blocks #(or % {})))
       (throw (js/Error. "Could not locate the block map in this source.")))

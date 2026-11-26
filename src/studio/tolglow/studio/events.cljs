@@ -7,6 +7,7 @@
             [tolglow.studio.operator-history :as history]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.page-routes :as pages]
+            [tolglow.studio.pretty :as pretty]
             [tolglow.studio.reactive-editor :as reactive-editor]
             [tolglow.studio.state-socket]
             [tolglow.studio.spatial-drafts :as spatial-drafts]
@@ -1260,7 +1261,7 @@
           fixtures (into #{} (map :id) (get-in db [:server-projection :view :rig :fixtures]))]
       (when (and (:reactive definition) (not (every? fixtures (:targets definition))))
         (throw (js/Error. "Choose targets from the current rig.")))
-      (pr-str definition))))
+      (pretty/edn definition))))
 
 (rf/reg-event-db :studio/builder-reactive
   (fn [db [_ edit]]
