@@ -56,7 +56,7 @@ try {
   const panel = page.getByRole('region', { name: 'Track feel', exact: true });
   await panel.waitFor();
   await panel.getByText('No track feel').waitFor();
-  const choices = panel.getByRole('radiogroup', { name: 'Personality' });
+  const choices = panel.getByRole('group', { name: 'Personality' });
 
   // Closed, the panel is one row; the summary opens it from the keyboard.
   const closed = await panel.boundingBox();
@@ -65,8 +65,7 @@ try {
   await panel.locator('summary').focus();
   await page.keyboard.press('Enter');
   await choices.waitFor();
-  const radios = choices.getByRole('radio');
-  assert.equal(await radios.count(), initial.personalities.library.length);
+  assert.equal(await choices.getByRole('button').count(), initial.personalities.library.length);
 
   // Every icon is the SVG the show projected, decoded by the browser as an image.
   const icons = await choices.locator('img.personality-icon').evaluateAll(async images => {
@@ -90,12 +89,12 @@ try {
   }
 
   // Select from Studio; the committed projection and the header follow.
-  const squircle = choices.getByRole('radio', { name: 'Apple-hardware-level corner obsession' });
+  const squircle = choices.getByRole('button', { name: 'Apple-hardware-level corner obsession' });
   let state = await operate(() => squircle.click());
   assert.equal(state.active.id, 'squircle');
   await page.waitForFunction(() => document.querySelector('.personality-current strong')?.textContent === 'Apple-hardware-level corner obsession');
-  assert.equal(await squircle.getAttribute('aria-checked'), 'true');
-  assert.equal(await choices.locator('[aria-checked="true"]').count(), 1);
+  assert.equal(await squircle.getAttribute('aria-pressed'), 'true');
+  assert.equal(await choices.locator('[aria-pressed="true"]').count(), 1);
   const shown = await panel.locator('.personality-current img.personality-icon').evaluate(async image => {
     await image.decode();
     return { src: image.src, width: image.getBoundingClientRect().width };
@@ -117,7 +116,7 @@ try {
   const accepted = await repl('(select-keys @(tolglow.show/submit! runtime :personality {:op :select :id :zigzag-shaky :seed 5}) [:status :active])');
   assert.equal(accepted, '{:status :accepted, :active {:mix [{:id :zigzag-shaky, :version 1, :weight 1.0}], :seed 5}}');
   await page.waitForFunction(() => document.querySelector('.personality-current strong')?.textContent === 'Zig to the zag but shaky');
-  await choices.getByRole('radio', { name: 'Zig to the zag but shaky', checked: true }).waitFor();
+  await choices.getByRole('button', { name: 'Zig to the zag but shaky', pressed: true }).waitFor();
   await panel.getByText('seed 5', { exact: false }).waitFor();
 
   // Blend from Studio with the keyboard-reachable controls.
@@ -131,7 +130,7 @@ try {
   assert.deepEqual(state.active.mix.map(part => [part.id, part.weight]), [['zigzag-shaky', 0.65], ['still-water', 0.35]]);
   assert.equal(state.active.seed, 5, 'a blend keeps the seed');
   await page.waitForFunction(() => /65% Zig to the zag but shaky \+ 35% Still water/.test(document.querySelector('.personality-current strong')?.textContent || ''));
-  assert.equal(await choices.locator('[aria-checked="true"]').count(), 0, 'a blend is not one library entry');
+  assert.equal(await choices.locator('[aria-pressed="true"]').count(), 0, 'a blend is not one library entry');
 
   // Reshuffle changes only the seed.
   const before = state.active;
@@ -156,13 +155,13 @@ try {
   });
   const [rejection] = await Promise.all([
     page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/personality'),
-    choices.getByRole('radio', { name: 'Squares and rectangles' }).click(),
+    choices.getByRole('button', { name: 'Squares and rectangles' }).click(),
   ]);
   assert.equal(rejection.status(), 422);
   await panel.getByRole('alert').filter({ hasText: 'Unknown personality' }).waitFor();
   await page.unroute('**/api/personality');
   assert.deepEqual((await feel()).active.mix, state.active.mix);
-  assert.equal(await choices.locator('[aria-checked="true"]').count(), 0, 'the view still shows the committed blend');
+  assert.equal(await choices.locator('[aria-pressed="true"]').count(), 0, 'the view still shows the committed blend');
   const expectedProblems = problems.splice(0).filter(text => !/422/.test(text));
   assert.deepEqual(expectedProblems, [], 'only the provoked 422 may reach the console');
 

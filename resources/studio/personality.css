@@ -15,7 +15,7 @@
 .personality-choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
 .personality-choices button { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 7px 10px 7px 8px; text-align: left; background: var(--raised); border: 1px solid var(--line); border-radius: 12px; }
 .personality-choices button span { min-width: 0; font-size: 12px; line-height: 1.25; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.personality-choices button[aria-checked="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.personality-choices button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .personality-blend { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; align-items: end; gap: 12px; margin-top: 14px; }
 .personality-blend label { display: grid; gap: 4px; min-width: 0; color: var(--muted); font-size: 12px; }
 .personality-blend label > span { display: flex; justify-content: space-between; gap: 8px; }

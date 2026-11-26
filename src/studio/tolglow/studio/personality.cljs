@@ -153,11 +153,11 @@
           [:p.small.muted.personality-detail
            (str (form-summary (:forms active)) " · seed " (:seed active)
                 (when (false? (:current? active)) " · edited since it was selected"))])
-        [:div.personality-choices {:role "radiogroup" :aria-label "Personality"}
+        [:div.personality-choices {:role "group" :aria-label "Personality"}
          (for [{:keys [id name] :as entry} library
                :let [selected? (= id single)]]
            ^{:key (option-key id)}
-           [:button {:type "button" :role "radio" :aria-checked selected? :disabled disabled? :title (:description entry)
+           [:button {:type "button" :aria-pressed selected? :disabled disabled? :title (:description entry)
                      :on-click #(rf/dispatch [::send {:op :select :id id}])}
             [icon {:svg (:icon entry) :size 40 :label ""}]
             [:span name]])]
