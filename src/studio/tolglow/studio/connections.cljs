@@ -15,6 +15,7 @@
             [tolglow.studio.fog-control :as fog-control]
             [tolglow.studio.audio-scope :as audio-scope]
             [tolglow.studio.audio-lfo :as audio-lfo]
+            [tolglow.studio.stems :as stems]
             [tolglow.studio.events :as events]
             [tolglow.studio.projection :as projection]))
 
@@ -28,7 +29,7 @@
           :mappings {} :parameters {}}})
 
 (def audio-defaults {:input "" :sample-rate "48000" :channels "1" :input-channel ""
-                     :block-frames "480" :buffer-blocks "8" :big-endian? false :analyzer-options {}})
+                     :block-frames "480" :buffer-blocks "8" :big-endian? false :analyzer-options {} :stems []})
 
 (def defaults {:visible? false :generation 0 :pending #{} :errors {} :sync nil :audio nil :section-reference nil
                :ports [] :inputs [] :sync-form sync-defaults :audio-form audio-defaults
@@ -153,11 +154,13 @@
                        :buffer-blocks (integer! (:buffer-blocks form) "Buffer blocks" 2 64)
                        :big-endian? (:big-endian? form false) :analyzer-options (:analyzer-options form {})}
                       (if mixer {:mixer-index (:mixer-index mixer) :mixer-name (:name mixer)} {:default? true}))
-        input-channel (assoc :input-channel input-channel)))))
+        input-channel (assoc :input-channel input-channel)
+        (seq (:stems form)) (assoc :stems (stems/payload (:stems form) channels))))))
 
 (defn- audio-form [config]
   (merge audio-defaults (select-keys config [:sample-rate :channels :input-channel :block-frames :buffer-blocks :big-endian? :analyzer-options])
-         {:expected-name (:mixer-name config) :input (cond (:default? config) "system" (some? (:mixer-index config)) (str (:mixer-index config)) :else "")}))
+         {:expected-name (:mixer-name config) :stems (stems/form-rows config)
+          :input (cond (:default? config) "system" (some? (:mixer-index config)) (str (:mixer-index config)) :else "")}))
 
 (rf/reg-sub :connections/state (fn [db _] (state db)))
 (rf/reg-event-fx :connections/open
@@ -741,6 +744,7 @@
                                   :on-click #(rf/dispatch [:connections/action :audio-stop])} "Stop capture"]]
       [:div.audio-level [:label {:html-for "audio-level"} "Signal energy · RMS"] [:meter#audio-level {:min 0 :max 1 :value (max 0 (min 1 (:rms features 0)))}]]
       [audio-scope/panel]
+      [stems/panel s]
       [:div.connection-metrics
        [:div [:span "Level"] [:strong (value-text (:energy-dbfs features) 1) [:small " dBFS"]]]
        [:div [:span "Confidence"] [:strong (if (number? (:confidence features)) (str (js/Math.round (* 100 (:confidence features))) "%") "—")]]

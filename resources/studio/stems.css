@@ -1,0 +1,28 @@
+/* Instrument stems (#675): src/studio/tolglow/studio/stems.cljs */
+.stem-panel{border-top:1px solid var(--line);padding-top:10px;display:grid;gap:10px;min-width:0}
+.stem-panel>summary{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px;cursor:pointer;list-style:none}
+.stem-panel>summary::-webkit-details-marker{display:none}
+.stem-editor{display:grid;gap:8px}
+.stem-row{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(64px,.6fr) minmax(0,1fr) auto;gap:8px;align-items:end}
+.stem-row label,.stem-route-form label{display:grid;gap:4px;font-size:10px;color:var(--muted);min-width:0}
+.stem-row input,.stem-row select,.stem-route-form select{width:100%;font-size:11px;padding:6px 7px;min-height:36px}
+.stem-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.stem-card{border:1px solid var(--line);border-radius:10px;background:var(--raised);padding:10px 12px;display:grid;gap:8px;min-width:0}
+.stem-head{display:flex;align-items:center;gap:8px;min-width:0}
+.stem-head strong{font-size:13px;font-weight:500}
+.stem-meta{font-size:10px;color:var(--muted);margin-left:auto;white-space:nowrap}
+.stem-onset{width:10px;height:10px;border-radius:50%;background:#26301f;border:1px solid #45543d;flex:none;transition:background .25s,box-shadow .25s}
+.stem-onset.lit{background:#e2c48f;border-color:#e2c48f;box-shadow:0 0 8px #e2c48f;transition:none}
+.stem-level{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums}
+.stem-level meter{width:100%;height:10px}
+.stem-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 10px}
+.stem-metrics div{display:grid;gap:2px;min-width:0}
+.stem-metrics small{font-size:9px;color:var(--muted)}
+.stem-metrics strong{font-size:12px;font-weight:400;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.stem-routes{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+.stem-route{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:11px;padding:4px 8px;border-radius:6px;background:#141b12;border-left:3px solid #8fb7d8}
+.stem-route[data-kind=onset]{border-left-color:#e2c48f}
+.stem-route-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:end}
+.stem-route-form .button{font-size:11px;min-height:36px;white-space:nowrap}
+@media(max-width:520px){.stem-row{grid-template-columns:minmax(0,1fr) minmax(64px,.7fr)}.stem-route-form{grid-template-columns:1fr}}
+@media(pointer:coarse){.stem-row input,.stem-row select,.stem-route-form select,.stem-route-form .button{min-height:44px;font-size:16px}.stem-panel .icon-button,.stem-panel .text-button{min-height:44px;min-width:44px}}
