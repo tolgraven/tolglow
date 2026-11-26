@@ -282,15 +282,21 @@
 (deftest midi-only-push-3-reaches-its-hold-deadline-without-a-host-schedule
   ;; #694: no :display and no :schedule!, through the show host on the wall
   ;; clock. Demo cues are expressive, so the gesture modifier makes the pad wait.
+  ;; The session stamps input and deadline checks with the show's device clock,
+  ;; the later of the committed frame time and the live clock. A frame is
+  ;; committed at its output deadline, so this clock can lead wall time by up to
+  ;; one output period, and the lead differs between press and refresh. The hold
+  ;; is 100 ms on that clock, which is what the bounds below compare.
   (let [runtime (show/start! {:workspace-options nil :workers 1 :frame-rate 40 :model (demo/model)}
                              (constantly nil))
-        receive (atom nil) launched (promise) ended (promise) started (System/nanoTime)
-        elapsed-ms #(quot (- (System/nanoTime) started) 1000000)
+        receive (atom nil) launched (promise) ended (promise)
+        live-ms @#'show/now-ms
+        device-ms #(max (get-in @(:state runtime) [:model :time-ms] 0) (live-ms runtime))
         submit! show/submit!]
     (with-redefs [show/submit! (fn [runtime & [command :as args]]
                                  (when (map? command)
                                    (case (:op command)
-                                     :cue/launch (deliver launched (assoc command ::at (elapsed-ms)))
+                                     :cue/launch (deliver launched command)
                                      :instance/end (deliver ended command)
                                      nil))
                                  (apply submit! runtime args))]
@@ -305,13 +311,15 @@
                                :send! (fn [_ _]) :close! (fn [_])}})]
           (is (some? (:schedule @(:resources device))) "the session owns its refresh cadence")
           (@receive [0xb5 42 127])
-          (let [pressed (elapsed-ms)]
+          ;; Both clocks only move forward, so reading before the note-on gives
+          ;; a time no later than the session's own press stamp.
+          (let [pressed (device-ms)]
             (@receive [0x93 12 96])
             (let [launch (deref launched 2000 ::timeout)]
               (is (map? launch) "a held pad becomes a hold without further input")
               (when (map? launch)
                 (is (= [:ember :held] [(:cue-id launch) (get-in launch [:launch :mode])]))
-                (is (<= (+ pressed 100) (::at launch) (+ pressed 1000))))))
+                (is (<= (+ pressed 100) (:time-ms launch) (+ pressed 1000))))))
           (@receive [0x83 12 0])
           (is (= :instance/end (:op (deref ended 2000 ::timeout))))
           (@receive [0xb5 42 0]))
