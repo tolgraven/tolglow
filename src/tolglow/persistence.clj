@@ -547,7 +547,9 @@
         model (cond-> model sampled? effect-keyframes/without-checkpoints)]
     ;; A sampled temporary value may already be in the captured frame or
     ;; predictive windows. The restore path can regenerate them safely.
-    (cond-> {:schema-version schema-version :model (validate-model (prepare-edit-history (cue-timing/without-queue model)))}
+    ;; An unkept generated knob candidate (#667) is a draft, never saved.
+    (cond-> {:schema-version schema-version
+             :model (validate-model (prepare-edit-history (cue-timing/without-queue (dissoc model :knob-candidates))))}
       (and (some? frame-output) (not sampled?)) (assoc :frame-output (validate-frame-output model frame-output)))))
 
 (defn freeze

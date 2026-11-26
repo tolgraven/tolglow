@@ -1774,6 +1774,26 @@
       (is (nil? (:missed (control {:draft draft :status :auditioning
                                    :last-outcome {:status :applied :draft-id "scene" :draft-revision 2}})))))))
 
+(deftest the-capture-button-posts-capture-and-shows-the-server-summary
+  (let [requested (transition base [:connections/capture])
+        [effect request] (first (:fx requested))
+        token (connections/token (:db requested))
+        summary {:status "captured" :capture-id 2 :bars 4 :notes 3 :cues ["wash" "aim"] :lane-points 1}
+        done (transition (:db requested) [:connections/captured token :capture summary])
+        stale (transition (:db requested) [:connections/captured [:other] :capture summary])
+        markup (fn [db] (renderToStaticMarkup (r/as-element [connections/connection-view db (connections/state db)])))]
+    (is (= :studio/http effect))
+    (is (= ["/api/capture/capture" {}] [(:path request) (:body request)]))
+    (is (contains? (get-in requested [:db :connections :pending]) :capture))
+    (is (= summary (get-in done [:db :connections :capture])))
+    (is (not (contains? (get-in done [:db :connections :pending]) :capture)))
+    (is (nil? stale) "a reply for another show session is ignored")
+    (is (= "Capture 2 · 4 bars · 3 activations of wash, aim · 1 parameter move" (connections/capture-text summary)))
+    (is (= "Nothing ran in the captured bars" (connections/capture-text {:status "empty" :message "Nothing ran in the captured bars"})))
+    (is (str/includes? (markup (:db done)) "Download MIDI clip"))
+    (is (str/includes? (markup (:db done)) "/api/capture/last.mid"))
+    (is (not (str/includes? (markup base) "Download MIDI clip")))))
+
 (deftest an-edit-after-new-is-what-publishes
   ;; Studio dispatches New synchronously, so an edit typed straight after it lands on the
   ;; new source rather than being replaced by it.

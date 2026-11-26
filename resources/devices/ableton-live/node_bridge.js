@@ -158,7 +158,8 @@ function createBridge({ sendToMax, log = () => {}, timeoutMs = 3000, maxBody = 6
       clearTimeout(pending.timer);
       const result = { id, "protocol-version": 1, status: "indeterminate", error: { code: "bridge-stopped", message: "Bridge stopped before execution acknowledgement" } };
       remember(id, pending.body, result, pending.handshake);
-      for (const response of pending.responses) reply(response, 503, result);
+      // 504, not 503: the request already reached Max, so this is not a refusal.
+      for (const response of pending.responses) reply(response, 504, result);
     }
     requests.clear();
     if (current) await new Promise(resolve => current.close(resolve));

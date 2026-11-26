@@ -15,12 +15,12 @@ steps.
    existing Drum Rack. Open the blank effect in Max.
 3. Open `tolglow-live-bridge.maxpat` in Max. Copy its patcher contents into the
    Max MIDI Effect's editing window, replacing that blank patch's objects.
-4. Keep `live_api.js`, `parameter_observers.js`, `max_adapter.js` and `node_bridge.js` together beside the
+4. Keep `live_api.js`, `live_session.js`, `parameter_observers.js`, `max_adapter.js` and `node_bridge.js` together beside the
    saved device, and include this folder in the device/project search path.
-   `max_adapter.js` includes `live_api.js`; Node uses a relative `require` of it.
+   `max_adapter.js` includes `live_api.js` and `live_session.js`; Node uses a relative `require` of it.
 5. Save the actual Max for Live device from that Live-connected editing window
    as an `.amxd`. Use Max's dependency collection/device freezing workflow when
-   packaging it, then verify all four scripts resolve from the packaged copy.
+   packaging it, then verify all five scripts resolve from the packaged copy.
    Merely renaming the JSON `.maxpat` to `.amxd` does not compile a device.
 6. Create or choose an existing MIDI clip on the track. Enter the **zero-based**
    track, clip-slot and Drum Rack device indices and click **Pair destination**.
@@ -246,10 +246,15 @@ is discarded. This bridge never emits its clip-recording intents as MIDI wire
 feedback as well.
 
 Automatic setup, Capture and clip write operations (`inspect-set`,
-`ensure-track`, `configure-track`, `write-clip`, `capture-midi`, `read-clip`,
+`ensure-track`, `configure-track`, `write-clip`, `extend-clip`, `capture-midi`, `read-clip`,
 `show-clip`, `fire-clip`, `stop-clips`) are specified on the Tolglow side in
 [Capture into Live](../../../docs/live-routing.md#capture-the-last-phrase-into-live).
-They use these receipts and are not yet implemented in `live_api.js`.
+`live_session.js` implements them with these receipts. Keep it beside the other
+scripts when saving the device; `max_adapter.js` includes it. The patch adds
+thirty automatable `Tolglow lane k` parameters for controller lanes. Drop the
+saved companion on a new, empty MIDI track once: setup adopts that track for
+capture. It refuses a track that holds clips or other devices unless the
+track's name starts with "Tolglow".
 
 ## Verified API references and host qualification limits
 

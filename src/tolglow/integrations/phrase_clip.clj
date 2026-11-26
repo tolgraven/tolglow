@@ -212,6 +212,29 @@
          cc-ch (assoc base :notes [] :controllers controllers)})
       {:skipped (vec (distinct @skipped))})))
 
+(defn controller-lanes
+  "Controller events as compact lanes for the companion:
+  [{:controller coarse :points [[beat v14] ..]}], one point per beat that
+  touches the lane. A coarse-only or fine-only write keeps the other half,
+  as the playback decoder does."
+  [controllers]
+  (let [coarse-of (fn [c] (cond (some #{c} coarse-controllers) c
+                                (some #{(- c 32)} coarse-controllers) (- c 32)))]
+    (->> controllers
+         (keep (fn [{:keys [controller] :as e}] (when-let [c (coarse-of controller)] (assoc e ::coarse c))))
+         (group-by ::coarse)
+         (sort-by key)
+         (mapv (fn [[coarse events]]
+                 {:controller coarse
+                  :points (first
+                           (reduce (fn [[points regs] [beat es]]
+                                     (let [regs (reduce (fn [r {:keys [controller value]}]
+                                                          (assoc r (if (= controller coarse) :msb :lsb) value))
+                                                        regs es)]
+                                       [(conj points [beat (+ (* 128 (:msb regs)) (:lsb regs))]) regs]))
+                                   [[] {:msb 0 :lsb 0}]
+                                   (sort-by key (group-by :beat events))))})))))
+
 (defn- by-cc [layout]
   (into {} (for [lane (:lanes layout), [i {:keys [cc]}] (map-indexed vector (:components lane))]
              [cc [lane i]])))
@@ -220,10 +243,21 @@
   "Decode clip descriptions (as from phrase->clips, Live or an SMF) back into a
   phrase. Controller values at a note's start become that activation's launch
   values; later values become lane points on the latest activation of the cue
-  that is running at that beat. Values with no running activation are returned
-  under :orphans in meta. Coarse-only edits keep the last fine value."
+  that is running at that beat. A value written while no activation of its cue
+  runs is held for that cue's next launch, unless another value of the same
+  lane comes first, as a controller sent before a note would be; only values
+  with no later launch are returned under :orphans in meta. Coarse-only edits
+  keep the last fine value. With :grid-beats, note edges and controller beats
+  are quantised with the capture grid's rounding (phrase-capture/quantize-beat)."
   [clips layout {:keys [meter grid-beats source]}]
-  (let [clips (vals clips)
+  (let [q (if grid-beats #(capture/quantize-beat grid-beats %) rationalize)
+        clips (->> (vals clips)
+                   (map (fn [c]
+                          (-> c
+                              (update :notes (partial mapv (fn [{:keys [start duration] :as n}]
+                                                             (let [s (q start) e (q (+ (rationalize start) (rationalize duration)))]
+                                                               (assoc n :start s :duration (if (> e s) (- e s) (or grid-beats (rationalize duration))))))))
+                              (update :controllers (partial mapv #(update % :beat q)))))))
         length (apply max (map :length-beats clips))
         meter (or meter (some :meter clips) {:beats-per-bar 4 :bars-per-phrase 4})
         pitch->cue (into {} (map (fn [[cue {:keys [pitch]}]] [pitch cue])) (:cues layout))
@@ -265,9 +299,17 @@
                                                 (< beat (+ (:start %) (:length %))))
                                           notes)]
                    (last (sort-by (juxt :start :id) candidates))))
+        lane-key (fn [lane] [(:cue-id lane) (:param lane)])
+        lane-beats (reduce (fn [m {:keys [beat lane]}] (update m (lane-key lane) (fnil conj []) beat)) {} (:out decoded))
+        ;; The launch a value held before a note belongs to: the cue's next note,
+        ;; when no other value of the same lane arrives before that note starts.
+        held-for (fn [{:keys [beat lane]}]
+                   (when-let [note (first (filter #(and (= (:cue-id lane) (:cue-id %)) (> (:start %) beat)) notes))]
+                     (when-not (some #(and (> % beat) (<= % (:start note))) (lane-beats (lane-key lane)))
+                       note)))
         result (reduce (fn [{:keys [notes points orphans]} {:keys [beat lane value] :as v}]
-                         (if-let [note (attach v)]
-                           (if (= beat (:start note))
+                         (if-let [note (or (attach v) (held-for v))]
+                           (if (or (= beat (:start note)) (< beat (:start note)))
                              {:notes (assoc-in notes [(Long/parseLong (subs (:id note) 1)) :params (:param lane)] value)
                               :points points :orphans orphans}
                              {:notes notes :orphans orphans
@@ -413,10 +455,14 @@
 
 (defn player
   "A decoder for MIDI played back from Live clips in this layout. source is
-  merged into each command's :source; origin is always :live-playback."
+  merged into each command's :source; origin is always :live-playback.
+  track-channels {track-id layout-channel} (live-connection/track-channels)
+  maps an event's :track-id to its layout channel: Live clips keep no MIDI
+  channel, so the companion reports which track played."
   ([layout] (player layout {}))
-  ([layout source]
-   {:layout layout :by-cc (by-cc layout)
+  ([layout source] (player layout source {}))
+  ([layout source track-channels]
+   {:layout layout :by-cc (by-cc layout) :track-channels track-channels
     :pitch->cue (into {} (map (fn [[cue {:keys [pitch]}]] [pitch cue])) (:cues layout))
     :source (merge {:type :ableton :adapter :live-clip} source {:origin :live-playback})
     :registers {} :lane-values {} :runs [] :serial 0}))
@@ -439,7 +485,14 @@
   a pending run are applied when its receipt arrives."
   [player events envelope-fn]
   (let [chs (set (channels (:layout player)))
-        events (filter #(contains? chs (:channel %)) events)
+        by-track (:track-channels player)
+        ;; With a track map, playback from any other track (the companion moved
+        ;; onto a musician's track) is not a capture track and is dropped.
+        events (->> events
+                    (keep #(if-let [ch (get by-track (:track-id %))]
+                             (assoc % :channel ch)
+                             (when-not (and (seq by-track) (:track-id %)) %)))
+                    (filter #(contains? chs (:channel %))))
         rank #(case (:type %) :note-off 0 :cc 1 :note-on (if (pos? (or (:velocity %) 0)) 2 0) 3)
         n (volatile! 0)
         env #(envelope-fn (dec (vswap! n inc)))]
@@ -466,7 +519,8 @@
                                     (assoc-in [:fresh [(:cue-id lane) (:param lane)]] v))
                          run (latest-run player (:cue-id lane))]
                      (cond
-                       (nil? run) {:player player :commands commands}
+                       ;; Held for the cue's next launch, as a controller before a note.
+                       (nil? run) {:player (assoc-in player [:held [(:cue-id lane) (:param lane)]] v) :commands commands}
                        (:instance-id run)
                        (let [cmd (command player (env) :param/set {:instance-id (:instance-id run) :param (:param lane) :value v})]
                          ;; Collapse coarse+fine writes of one value at one beat into the last.
@@ -478,12 +532,13 @@
                        :else {:player (update-run player (:id run) #(assoc-in % [:updates (:param lane)] v))
                               :commands commands}))))))
          2 (if-let [cue-id (get-in player [:pitch->cue note])]
-             ;; Only values written at this beat belong to the launch; older
-             ;; lane values addressed earlier activations.
-             (let [params (into {} (for [[[c p] v] (:fresh player) :when (= c cue-id)] [p v]))
+             ;; The launch takes values written at this beat and values held since
+             ;; the cue last ran; values written during an earlier run stayed there.
+             (let [params (into {} (for [[[c p] v] (merge (:held player) (:fresh player)) :when (= c cue-id)] [p v]))
                    cmd (command player (env) :cue/launch {:cue-id cue-id :launch {:mode :persistent :params params}})
                    id (:serial player)]
                {:player (-> player (update :serial inc)
+                            (update :held #(into {} (remove (fn [[[c _] _]] (= c cue-id))) %))
                             (update :runs conj {:id id :pitch note :cue-id cue-id :command-id (:command-id cmd)}))
                 :commands (conj commands cmd)})
              acc)
@@ -515,7 +570,7 @@
   [player envelope-fn]
   (let [n (volatile! 0)
         env #(envelope-fn (dec (vswap! n inc)))]
-    {:player (assoc player :runs [] :registers {} :lane-values {})
+    {:player (assoc player :runs [] :registers {} :lane-values {} :held {})
      :commands (vec (for [{:keys [instance-id]} (:runs player) :when instance-id]
                       (command player (env) :instance/end {:instance-id instance-id})))}))
 

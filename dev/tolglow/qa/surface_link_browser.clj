@@ -42,8 +42,13 @@
       (Thread/sleep 300)
       (accepted! @(show/link-surfaces! host "desk" ["xt-main" "xt-ext"]) "link the surfaces")
       (node! origin directory "browser")
-      ;; REPL -> Studio: page the window back and check the open page follows.
+      (let [layout (-> (show/snapshot host) :control-surfaces :logical first :layout)]
+        (println "Studio set the encoder mode:" layout)
+        (when-not (= :plug-in (:encoder-mode layout)) (throw (ex-info "Studio's encoder mode did not commit" layout))))
+      ;; REPL -> Studio: page the window back, choose USER with a selected strip,
+      ;; and check the open page follows.
       (accepted! @(show/bank-surface! host "desk" :first) "bank from the REPL")
+      (accepted! @(show/surface-layout! host "desk" {:encoder-mode :user :selected [:cue :ember]}) "set the layout from the REPL")
       (println "REPL banked desk to" (-> (show/snapshot host) :control-surfaces :logical first :window))
       (node! origin directory "repl")
       (finally (app/stop! host) (shutdown-agents)))))
