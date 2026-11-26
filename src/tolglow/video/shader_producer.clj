@@ -20,9 +20,10 @@
   is recorded with its time and the next renderer opens after an
   exponentially growing delay. A loss is blamed on the cue whose job stalled
   or whose frame overran Afterglow's fence; after `:max-strikes` on the same
-  shader that cue alone stops rendering until its GLSL changes, while the
-  others carry on. Only losses no cue can be blamed for make the producer
-  give up (`:max-losses` within `:loss-window-ms`). A slot whose
+  shader within `:loss-window-ms` that cue alone goes dark and gives up its
+  slot until its GLSL changes or it is launched again, while the others
+  carry on. Only losses no cue can be blamed for make the producer give up
+  (`:max-losses` within the window), and then every cue goes dark. A slot whose
   program, uniforms and target are unchanged re-uses the published frame, so
   a paused instance or a stopped transport costs nothing.
 
@@ -189,6 +190,13 @@
     :watch (atom nil)
     ;; Recent renderer losses, oldest first: [{:at-ns :blamed? :code}].
     :losses (atom [])
+    ;; Submitting a job and recording it happen under one lock, numbered, so
+    ;; the recorded order is the order of the renderer's queue.
+    :submit-lock (Object.)
+    :job-seq (atom 0)
+    ;; instance id -> {:shader :request-shader :code :strikes :feed :effect ...}:
+    ;; cues stopped for the renderer losses their shader caused.
+    :halted (atom {})
     ;; Renderers dropped by this producer whose close has not finished.
     :abandoned (atom #{})
     :now-ms now-ms
@@ -270,34 +278,53 @@
   {:shader/renderer-unresponsive "This cue's shader stalled the GPU renderer"
    :shader/frame-timeout "This cue's frames overran Afterglow's GPU fence timeout"})
 
+(defn- effective-shader
+  "The shader instance id renders: the request's, or its last working
+  program while the request's does not compile."
+  [entry request]
+  (let [{:keys [program failed]} @entry]
+    (if (and failed (= failed (:shader request))) program (:shader request))))
+
+(defn- recent-strikes
+  "Strike times of entry's `shader` within the loss window."
+  [producer e shader now]
+  (when (= shader (get-in e [:strikes :shader]))
+    (let [window-ns (* (long (:loss-window-ms producer)) 1000000)]
+      (filterv #(< (- (long now) (long %)) window-ns) (get-in e [:strikes :at])))))
+
+(defn- halt!
+  "Stop instance id, whose shader caused `strikes` renderer losses: its frame
+  leaves the feed now, and the next `sync!` frees its admission slot and
+  pixel-budget share."
+  [producer id entry request shader code strikes]
+  (swap! (:halted producer) assoc id {:shader shader :request-shader (:shader request) :code code :strikes strikes
+                                      :feed (:feed request) :effect (:effect request) :fps (:fps request)
+                                      :width (:width request) :height (:height request)
+                                      :message (str (halt-messages code) " " strikes " times; it stays stopped until its GLSL changes or it is launched again")})
+  (swap! (:published producer) dissoc id)
+  (swap! entry update :failures (fnil inc 0)))
+
 (defn- strike!
-  "Blame instance id's current shader for a renderer loss. After
-  :max-strikes on the same shader the cue stops rendering. True when the
-  instance is running."
-  [producer id code]
+  "Blame instance id's `shader` (the shader of the job that failed) for a
+  renderer loss. Strikes count within the loss window, per shader; a shader
+  the cue no longer renders (a new version saved meanwhile) is not struck.
+  After :max-strikes the cue stops. True when the instance is running."
+  [producer id shader code]
   (when-let [entry (when (some? id) (get @(:entries producer) id))]
-    (let [shader (:shader (get @(:requests producer) id))
-          limit (long (:max-strikes producer))]
-      (swap! entry (fn [e]
-                     (let [n (if (= shader (get-in e [:strikes :shader])) (inc (long (get-in e [:strikes :count] 0))) 1)]
-                       (cond-> (assoc e :strikes {:shader shader :count n})
-                         (>= n limit) (assoc :halted {:shader shader :code code :strikes n})))))
+    (let [request (get @(:requests producer) id)]
+      (when (and request (= shader (effective-shader entry request)))
+        (let [now (clock producer)
+              e (swap! entry (fn [e] (assoc e :strikes {:shader shader :at (conj (or (recent-strikes producer e shader now) []) now)})))
+              n (count (get-in e [:strikes :at]))]
+          (when (>= n (long (:max-strikes producer)))
+            (halt! producer id entry request shader code n))))
       true)))
 
 (defn- halted?
-  "True while the cue renders the shader that was stopped; a new version of
-  the cue clears the stop and its strikes."
-  [entry request]
-  (when-let [{:keys [shader code strikes]} (:halted @entry)]
-    (if (= shader (:shader request))
-      (do (when-not (= code (get-in @entry [:error :code]))
-            (swap! entry #(-> % (update :failures (fnil inc 0))
-                              (assoc :error {:code code :strikes strikes
-                                             :message (str (halt-messages code) " " strikes " times; it stays stopped until its GLSL changes")}))))
-          true)
-      (do (swap! entry (fn [e] (cond-> (dissoc e :halted :strikes)
-                                 (= code (get-in e [:error :code])) (dissoc :error))))
-          false))))
+  "True while instance id is stopped for the shader it is still offered with."
+  [producer id request]
+  (when-let [h (get @(:halted producer) id)]
+    (= (:request-shader h) (:shader request))))
 
 (defn- drop-renderer!
   "Forget a renderer whose context Afterglow already closed (its fence timeout
@@ -319,7 +346,7 @@
               ;; Healthy: the renderer kept finishing jobs for a while after it opened.
               healthy? (>= (- (long (or progress-ns now)) (long (or opened-ns now)))
                            (* (long healthy-periods) (long (:watchdog-ms producer)) 1000000))
-              blamed? (or blamed? (and wedged? (strike! producer (:instance-id data) :shader/renderer-unresponsive)))
+              blamed? (or blamed? (and wedged? (strike! producer (:instance-id data) (:shader data) :shader/renderer-unresponsive)))
               cause (or (:code data) (:type data) :shader/renderer-failed)
               counts? (not (or blamed? (= :afterglow.render.gpu.shader-frames/closed (:type data))))
               window-ns (* (long (:loss-window-ms producer)) 1000000)
@@ -328,6 +355,8 @@
               unblamed (count (filter :counts? recent))
               final? (and counts? (>= unblamed (long (:max-losses producer))))]
           (reset! (:losses producer) recent)
+          ;; Giving up: every cue goes dark rather than holding its last frame.
+          (when final? (reset! (:published producer) {}))
           (reset! (:renderer-error producer)
                   (merge (select-keys data [:instance-id :stalled-ms])
                          (when instance-id {:instance-id instance-id})
@@ -346,12 +375,17 @@
               (.setDaemon true)
               (.start))))))))
 
-(defn- track!
-  "Note job f, submitted to renderer r for instance id. Returns f."
-  [producer r id ^Future f]
-  (let [now (clock producer)]
-    (swap! (:watch producer) #(if (identical? r (:renderer %)) (assoc-in % [:pending f] {:at-ns now :instance-id id}) %))
-    f))
+(defn- submit!
+  "Submit a job for instance id (nil for an audition) rendering `shader` to
+  renderer r by calling `f`, and record it. Afterglow's enqueue never
+  blocks; doing both under one lock with a sequence number makes the
+  recorded order the order of r's queue. Returns the job's Future."
+  [producer r id shader f]
+  (locking (:submit-lock producer)
+    (let [^Future fut (f)
+          job {:at-ns (clock producer) :seq (swap! (:job-seq producer) inc) :instance-id id :shader shader}]
+      (swap! (:watch producer) #(if (identical? r (:renderer %)) (assoc-in % [:pending fut] job) %))
+      fut)))
 
 (defn- sweep!
   "Forget r's finished jobs; a finished job is progress. r's watch, or nil
@@ -370,16 +404,17 @@
 
 (defn- stalled
   "When renderer r has had work queued without finishing any job for longer
-  than the watchdog: {:stalled-ms :instance-id} for its oldest job. A job
-  counts from the later of its submission and r's last progress, so jobs
-  queued behind one another on the one worker never add up."
+  than the watchdog: {:stalled-ms :instance-id :shader} for its oldest job,
+  the one at the head of the worker's queue. A job counts from the later of
+  its submission and r's last progress, so jobs queued behind one another on
+  the one worker never add up."
   [producer r]
   (when-let [{:keys [pending progress-ns]} (sweep! producer r)]
     (when (seq pending)
-      (let [[_ {:keys [at-ns instance-id]}] (apply min-key (comp :at-ns val) pending)
+      (let [[_ {:keys [at-ns instance-id shader]}] (apply min-key (comp :seq val) pending)
             ms (since-ms producer (max (long at-ns) (long progress-ns)))]
         (when (> ms (double (:watchdog-ms producer)))
-          {:stalled-ms ms :instance-id instance-id})))))
+          {:stalled-ms ms :instance-id instance-id :shader shader})))))
 
 (defn- wedged-error [data]
   (ex-info "The shader renderer stopped responding" (assoc data :code :shader/renderer-wedged)))
@@ -428,7 +463,7 @@
     (let [program (:program @entry)]
       (when (and program (not (shader-in-use? producer program id)))
         (when-let [r @(:renderer producer)]
-          (try (track! producer r id (release-shader r program)) (catch Exception _ nil)))))))
+          (try (submit! producer r id program #(release-shader r program)) (catch Exception _ nil)))))))
 
 (defn- ensure-program!
   "Compile the request's shader when it changed. Returns the program to render
@@ -442,7 +477,7 @@
       program
       (let [started (System/nanoTime)]
         (try
-          (await-job producer r (track! producer r id (compile-shader r wanted)))
+          (await-job producer r (submit! producer r id wanted #(compile-shader r wanted)))
           (swap! entry assoc :program wanted :failed nil :error nil
                  :compile-ms (/ (- (System/nanoTime) started) 1.0e6))
           (swap! entry update :compiles (fnil inc 0))
@@ -471,8 +506,11 @@
         frame (source/frame {:source-id (:feed request) :width (:width result) :height (:height result)
                              :pixels (:pixels result) :sequence sequence :captured-at-ms now
                              :label (str "Shader · " (name (first (:effect request))))})]
-    ;; An instance that ended while its frame rendered publishes nothing.
-    (when (identical? entry (get @(:entries producer) id))
+    ;; An instance that ended, stopped or lost its renderer for good while its
+    ;; frame rendered publishes nothing.
+    (when (and (identical? entry (get @(:entries producer) id))
+               (not (contains? @(:halted producer) id))
+               (not (:final? @(:renderer-error producer))))
       (swap! (:published producer) assoc id {:feed (:feed request) :order (:order request) :frame frame}))
     (swap! entry (fn [e]
                    (-> e
@@ -490,14 +528,14 @@
                        (update :published-at push-sample now))))))
 
 (defn- renderer-lost!
-  "After instance id's job on renderer r failed with e: when Afterglow has
+  "After instance id's job rendering `shader` on renderer r failed with e: when Afterglow has
   closed the context, drop r. A frame that overran the fence is this cue's
   fault; a closed context is a consequence of another failure."
-  [producer id r e]
+  [producer id shader r e]
   (let [type (:type (ex-data e))]
     (when (renderer-lost type)
       (let [blamed? (and (= :afterglow.render.gpu.shader-frames/timeout type)
-                         (strike! producer id :shader/frame-timeout))]
+                         (strike! producer id shader :shader/frame-timeout))]
         (drop-renderer! producer r e {:blamed? blamed? :instance-id (when blamed? id)})))))
 
 (defn- collect-late!
@@ -525,7 +563,7 @@
                (catch Exception e
                  (swap! entry #(-> % (update :failures (fnil inc 0))
                                    (assoc :error {:code (:code (ex-data e) :shader/render-failed) :message (ex-message e)})))
-                 (renderer-lost! producer id renderer e)))
+                 (renderer-lost! producer id (first (:input job)) renderer e)))
           false))))
 
 (defn- tick!
@@ -539,7 +577,7 @@
           (swap! entry update :dropped (fnil inc 0))
           (do
             (swap! entry update :slots (fnil inc 0))
-            (if-let [r (when-not (halted? entry request) (renderer! producer))]
+            (if-let [r (when-not (halted? producer id request) (renderer! producer))]
               (try
                 (when-let [program (ensure-program! producer id entry request r)]
                   (let [uniforms (if (= program (:shader request))
@@ -549,7 +587,7 @@
                         input [program uniforms target]]
                     (if (and (= input (:rendered-input @entry)) (get @(:published producer) id))
                       (swap! entry update :unchanged (fnil inc 0))
-                      (let [job {:future (track! producer r id (render-frame r program (assoc target :uniforms uniforms)))
+                      (let [job {:future (submit! producer r id program #(render-frame r program (assoc target :uniforms uniforms)))
                                  :renderer r :request request :input input :uniforms uniforms :started (System/nanoTime)}]
                         (swap! entry assoc :in-flight job)
                         (let [result (await-future (:future job) (:render-timeout-ms producer))]
@@ -557,16 +595,17 @@
                           (sweep! producer r)
                           (publish! producer id entry job result))))))
                 (catch Exception e
-                  (let [code (:code (ex-data e))]
+                  (let [code (:code (ex-data e))
+                        failed-shader (first (:input (:in-flight @entry)))]
                     (if (= :shader/late code)
                       ;; Keep the job: a later slot publishes it when it lands.
                       (swap! entry #(-> % (update :late (fnil inc 0)) (assoc :error {:code :shader/late :message (ex-message e)})))
                       (do (swap! entry #(-> % (dissoc :in-flight) (update :failures (fnil inc 0))
                                             (assoc :error {:code (or code :shader/render-failed) :message (ex-message e)})))
-                          (renderer-lost! producer id r e))))))
+                          (renderer-lost! producer id failed-shader r e))))))
               ;; The producer has given up on the renderer: this cue has failed.
               (let [error @(:renderer-error producer)]
-                (when (and (not (:halted @entry))
+                (when (and (not (halted? producer id request))
                            (= :shader/renderer-unresponsive (:code error))
                            (not= (:code error) (:code (:error @entry))))
                   (swap! entry #(-> % (update :failures (fnil inc 0))
@@ -626,9 +665,18 @@
   [producer requests]
   (when-not @(:stopped? producer)
     (let [requests (or requests {})
+          ;; A stopped cue stays stopped while it is offered with the same
+          ;; shader; a new version or a new launch clears it.
+          halted (let [h @(:halted producer)
+                       stale (keep (fn [[id {:keys [request-shader]}]]
+                                     (when (not= request-shader (:shader (get requests id))) id))
+                                   h)]
+                   (if (seq stale) (apply swap! (:halted producer) dissoc stale) h))
           ;; The newest launches render: walk back from the newest within the
           ;; instance and pixel-rate limits; older instances stop rendering.
-          admitted (loop [[[id r] & more] (reverse (sort-by (juxt (comp :order val) (comp str key)) requests))
+          ;; A stopped cue takes no slot or pixel-budget share.
+          admitted (loop [[[id r] & more] (reverse (sort-by (juxt (comp :order val) (comp str key))
+                                                            (apply dissoc requests (keys halted))))
                           admitted #{} rate 0]
                      (if (or (nil? id) (= max-instances (count admitted)))
                        admitted
@@ -673,7 +721,11 @@
   [producer]
   (prune-abandoned! producer)
   (let [requests @(:requests producer)
-        published @(:published producer)]
+        published @(:published producer)
+        entries @(:entries producer)
+        halted @(:halted producer)
+        now (clock producer)
+        stopped (fn [h] (select-keys h [:code :strikes :message]))]
     {:renderer (some-> @(:renderer producer) describe-renderer (select-keys [:backend :renderer :version :programs :targets :renders :compile-failures :queued]))
      :error (when-let [{:keys [at-ns retry-after-ms] :as e} @(:renderer-error producer)]
               (cond-> (dissoc e :at-ns)
@@ -683,25 +735,37 @@
      :abandoned (count @(:abandoned producer))
      :pixel-budget (:max-pixel-rate producer)
      ;; Older launches beyond the instance or pixel-rate limit do not render.
-     :refused (vec (sort (map str (keys (apply dissoc (or @(:last-offered producer) {}) (keys requests))))))
+     :refused (vec (sort (map str (keys (apply dissoc (or @(:last-offered producer) {}) (concat (keys requests) (keys halted)))))))
      :instances
-     (vec (for [[id entry] (sort-by (comp str key) @(:entries producer))
-                :let [e @entry r (get requests id) f (:frame (get published id))]]
-            (merge {:instance-id id :feed (:feed e) :effect (:effect e) :fps (:fps e)
-                    :width (:width r) :height (:height r)
-                    :slots (:slots e 0) :rendered (:rendered e 0) :dropped (:dropped e 0)
-                    :unchanged (:unchanged e 0) :failures (:failures e 0)
-                    :late (:late e 0) :throttled (:throttled e 0)
-                    :compiles (:compiles e 0) :compile-failures (:compile-failures e 0)
-                    ;; Renderer losses blamed on the cue's current shader, and whether it stopped.
-                    :strikes (if (= (:shader r) (get-in e [:strikes :shader])) (get-in e [:strikes :count] 0) 0)
-                    :halted? (some? (:halted e))
-                    :sequence (:sequence f) :captured-at-ms (:captured-at-ms f) :first-frame-ms (:first-frame-ms e)
-                    :paused? (:paused? r false)
-                    :render-ms-median (median (:render-ms e)) :draw-ms-median (median (:draw-ms e))
-                    :last-render (:last-render e)
-                    :last-working? (and (some? (:failed e)) (some? (:program e)))}
-                   (when (:error e) {:error (:error e)}))))}))
+     (vec (sort-by (comp str :instance-id)
+                   (concat
+                    (for [[id entry] entries
+                          :let [e @entry r (get requests id) f (:frame (get published id)) h (get halted id)]]
+                      (merge {:instance-id id :feed (:feed e) :effect (:effect e) :fps (:fps e)
+                              :width (:width r) :height (:height r)
+                              :slots (:slots e 0) :rendered (:rendered e 0) :dropped (:dropped e 0)
+                              :unchanged (:unchanged e 0) :failures (:failures e 0)
+                              :late (:late e 0) :throttled (:throttled e 0)
+                              :compiles (:compiles e 0) :compile-failures (:compile-failures e 0)
+                              ;; Renderer losses blamed on the shader the cue renders, within the window.
+                              :strikes (if h (:strikes h) (count (recent-strikes producer e (effective-shader entry r) now)))
+                              :halted? (some? h)
+                              :sequence (:sequence f) :captured-at-ms (:captured-at-ms f) :first-frame-ms (:first-frame-ms e)
+                              :paused? (:paused? r false)
+                              :render-ms-median (median (:render-ms e)) :draw-ms-median (median (:draw-ms e))
+                              :last-render (:last-render e)
+                              :last-working? (and (some? (:failed e)) (some? (:program e)))}
+                             (cond h {:error (stopped h)} (:error e) {:error (:error e)})))
+                    ;; A stopped cue no longer has a cadence; it is still listed.
+                    (for [[id h] halted :when (not (contains? entries id))]
+                      (merge (zipmap [:slots :rendered :dropped :unchanged :failures :late :throttled :compiles :compile-failures] (repeat 0))
+                             (select-keys h [:feed :effect :fps :width :height :strikes])
+                             {:instance-id id :halted? true :paused? false :last-working? false :error (stopped h)})))))}))
+
+(defn active?
+  "True while any shader instance renders or is listed as stopped."
+  [producer]
+  (boolean (or (seq @(:entries producer)) (seq @(:halted producer)))))
 
 (defn samples
   "Raw per-instance timing samples (render ms, draw ms, publish times) for
@@ -717,7 +781,7 @@
   calling thread, which waits; never call it from the lighting frame."
   [producer shader]
   (if-let [r (renderer! producer)]
-    (try (await-job producer r (track! producer r nil (compile-shader r shader))) {:compiled? true}
+    (try (await-job producer r (submit! producer r nil shader #(compile-shader r shader))) {:compiled? true}
          (catch clojure.lang.ExceptionInfo e
            (let [d (ex-data e)]
              {:compiled? false :stage (:stage d) :log (:log d) :message (ex-message e)

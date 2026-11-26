@@ -369,27 +369,34 @@
         (is (eventually #(and (false? (:halted? (row))) (zero? (:strikes (row)))))))
       (finally (producer/stop! p)))))
 
+(defn- fence-factory
+  "Renderers on which a draw for which (overrun? shader) is true trips
+  Afterglow's fence timeout; Afterglow has then closed the context and
+  refuses further work. Other draws finish at once."
+  [opens overrun?]
+  (fn []
+    (swap! opens inc)
+    (let [dead? (atom false)]
+      (reify producer/ShaderRenderer
+        (compile-shader [_ _] (done-future {:compiled? true}))
+        (render-frame [_ shader {:keys [width height]}]
+          (cond @dead? (throw (ex-info "Shader renderer is closed" {:type :afterglow.render.gpu.shader-frames/closed}))
+                (overrun? shader)
+                (do (reset! dead? true)
+                    (doto (CompletableFuture.)
+                      (.completeExceptionally (ex-info "Shader frame did not finish" {:type :afterglow.render.gpu.shader-frames/timeout}))))
+                :else (done-future {:pixels (byte-array (* 4 width height)) :width width :height height})))
+        (release-shader [_ _] (done-future true))
+        (describe-renderer [_] {:backend :test :terminated? true})
+        (close-renderer [_] true)))))
+
+(defn- heavy? [shader] (.contains ^String (:source shader) "HEAVY"))
+
 (deftest a-cue-that-overruns-the-fence-stops-alone-and-its-fix-recovers-it
-  ;; heavy's frame trips Afterglow's fence timeout, after which Afterglow has
-  ;; closed the context and refuses further work. good is a healthy cue.
+  ;; heavy's frame trips Afterglow's fence timeout; good is a healthy cue.
   (let [clock (atom 0)
         opens (atom 0)
-        factory (fn []
-                  (swap! opens inc)
-                  (let [dead? (atom false)]
-                    (reify producer/ShaderRenderer
-                      (compile-shader [_ _] (done-future {:compiled? true}))
-                      (render-frame [_ shader {:keys [width height]}]
-                        (cond @dead? (throw (ex-info "Shader renderer is closed" {:type :afterglow.render.gpu.shader-frames/closed}))
-                              (.contains ^String (:source shader) "HEAVY")
-                              (do (reset! dead? true)
-                                  (doto (CompletableFuture.)
-                                    (.completeExceptionally (ex-info "Shader frame did not finish" {:type :afterglow.render.gpu.shader-frames/timeout}))))
-                              :else (done-future {:pixels (byte-array (* 4 width height)) :width width :height height})))
-                      (release-shader [_ _] (done-future true))
-                      (describe-renderer [_] {:backend :test :terminated? true})
-                      (close-renderer [_] true))))
-        p (producer/create {:renderer factory :clock-ns #(deref clock) :render-timeout-ms 200})
+        p (producer/create {:renderer (fence-factory opens heavy?) :clock-ns #(deref clock) :render-timeout-ms 200})
         good (fn [t] (request {:feed :shader/good :order 1 :uniforms {"u_time" t "u_beats" 0.0 "u_level" 0.5}}))
         heavy (fn [src] (assoc-in (request {:feed :shader/heavy :order 2}) [:shader :source] (str index-glsl src)))
         status #(producer/status p)
@@ -411,6 +418,146 @@
         (is (eventually #(pos? (:rendered (row "heavy")))))
         (is (= [false 0 nil] ((juxt :halted? :strikes :error) (row "heavy"))))
         (is (= 4 @opens) "Its fix renders on the same renderer"))
+      (finally (producer/stop! p)))))
+
+(deftest a-stopped-cue-goes-dark-and-frees-its-slot
+  ;; Two launches on one feed; the pixel budget admits only the newer one.
+  (let [clock (atom 0)
+        opens (atom 0)
+        cost (* 200 1 30)
+        armed (atom false)
+        p (producer/create {:renderer (fence-factory opens #(and @armed (heavy? %))) :clock-ns #(deref clock) :render-timeout-ms 200
+                            :max-pixel-rate cost})
+        older (request {:order 1})
+        newer (fn [t] (assoc-in (request {:order 2 :uniforms {"u_time" t "u_beats" 0.0 "u_level" 0.5}})
+                                [:shader :source] (str index-glsl "// HEAVY")))
+        offered {"older" older "newer" (newer 0.0)}
+        status #(producer/status p)
+        row (fn [id] (some #(when (= id (:instance-id %)) %) (:instances (status))))]
+    (try
+      (producer/sync! p offered)
+      (is (= ["older"] (:refused (status))))
+      (is (eventually #(get-in (producer/frames p) [:instance-frames "newer" :shader/index-strip])) "The newer launch renders first")
+      (reset! armed true)
+      ;; New uniforms each step, until the third overrun stops the cue; no
+      ;; offer after that until the checks below.
+      (let [t (atom 0.0)]
+        (is (eventually #(do (advance! clock 10000)
+                             (or (:halted? (row "newer"))
+                                 (do (producer/sync! p {"older" older "newer" (newer (swap! t + 0.01))}) false)))
+                        5000)))
+      (is (nil? (get-in (producer/frames p) [:frames :shader/index-strip])) "The stopped cue's feed goes dark at once")
+      (is (not (contains? (:instance-frames (producer/frames p)) "newer")))
+      (producer/sync! p {"older" older "newer" (newer 99.0)})
+      (is (= [] (:refused (status))) "The stopped cue's slot and pixel-budget share are free")
+      (is (eventually #(get-in (producer/frames p) [:instance-frames "older" :shader/index-strip]))
+          "The older launch on the same feed renders")
+      (is (= (get-in (producer/frames p) [:instance-frames "older" :shader/index-strip])
+             (get-in (producer/frames p) [:frames :shader/index-strip]))
+          "The feed falls back to it")
+      (is (= {:halted? true :strikes 3} (select-keys (row "newer") [:halted? :strikes]))
+          "The stopped cue is still listed")
+      (is (= :shader/frame-timeout (get-in (row "newer") [:error :code])))
+      (finally (producer/stop! p)))))
+
+(deftest strikes-expire-outside-the-loss-window
+  ;; A healthy cue hit by three isolated fence timeouts an hour apart (another
+  ;; app's GPU contention, a driver hiccup) is never stopped.
+  (let [clock (atom 0)
+        opens (atom 0)
+        overrun (atom false)
+        p (producer/create {:renderer (fence-factory opens (fn [_] (compare-and-set! overrun true false)))
+                            :clock-ns #(deref clock) :render-timeout-ms 200})
+        row #(first (:instances (producer/status p)))
+        offer! (fn [t] (producer/sync! p {"a" (request {:uniforms {"u_time" t "u_beats" 0.0 "u_level" 0.5}})}))]
+    (try
+      (doseq [hour [1 2 3]]
+        (offer! (double (* 10 hour)))
+        (let [rendered (:rendered (row) 0)]
+          (is (eventually #(> (:rendered (row)) rendered))))
+        (reset! overrun true)
+        (offer! (+ 0.5 (* 10 hour)))
+        (is (eventually #(= (inc hour) @opens)) "The overrun drops the renderer; the next opens at once")
+        (is (= 1 (:strikes (row))) "Older strikes have expired")
+        (advance! clock 3600000))
+      (is (false? (:halted? (row))))
+      (offer! 99.0)
+      (is (eventually #(nil? (:error (row)))))
+      (finally (producer/stop! p)))))
+
+(deftest a-stall-is-blamed-on-the-job-at-the-head-of-the-queue
+  ;; A's draw is queued first and hangs on the one worker. A's submitting
+  ;; thread is then held up before it returns (as a preempted thread would
+  ;; be) while B submits: B's job must not be recorded ahead of A's.
+  (let [clock (atom 0)
+        p (promise)
+        stuck (java.util.concurrent.CountDownLatch. 1)
+        a-queued (java.util.concurrent.CountDownLatch. 1)
+        watchdog 1000
+        a? #(.contains ^String (:source %) "A-SHADER")
+        factory (fn []
+                  (let [worker (Executors/newSingleThreadExecutor)]
+                    (reify producer/ShaderRenderer
+                      (compile-shader [_ _] (done-future {:compiled? true}))
+                      (render-frame [_ shader {:keys [width height]}]
+                        (if (a? shader)
+                          (let [f (.submit worker ^Callable (fn [] (.await stuck) nil))
+                                deadline (+ (System/currentTimeMillis) 300)]
+                            (.countDown a-queued)
+                            ;; Hold this thread until B's job is recorded, or 300 ms.
+                            (while (and (< (System/currentTimeMillis) deadline)
+                                        (not (some #(= "B" (:instance-id %)) (vals (:pending @(:watch @p))))))
+                              (Thread/sleep 2))
+                            f)
+                          (.submit worker ^Callable (fn [] {:pixels (byte-array (* 4 width height)) :width width :height height}))))
+                      (release-shader [_ _] (done-future true))
+                      (describe-renderer [_] {:backend :test :terminated? true})
+                      (close-renderer [_] (.shutdownNow worker) true))))
+        _ (deliver p (producer/create {:renderer factory :clock-ns #(deref clock) :watchdog-ms watchdog :render-timeout-ms 20}))
+        p @p
+        a (assoc-in (request {:order 1 :feed :shader/a}) [:shader :source] (str index-glsl "// A-SHADER"))
+        b (request {:order 2 :feed :shader/b})
+        row (fn [id] (some #(when (= id (:instance-id %)) %) (:instances (producer/status p))))]
+    (try
+      (producer/sync! p {"A" a})
+      (is (.await a-queued 3 java.util.concurrent.TimeUnit/SECONDS) "A's draw is on the worker's queue")
+      (producer/sync! p {"A" a "B" b})
+      (is (eventually #(and (pos? (:late (row "A"))) (pos? (:late (row "B"))))) "Both draws are queued")
+      (advance! clock (inc watchdog))
+      (is (eventually #(= :shader/renderer-wedged (get-in (producer/status p) [:error :code]))))
+      (is (= "A" (get-in (producer/status p) [:error :instance-id])))
+      (is (= [1 0] [(:strikes (row "A")) (:strikes (row "B"))]))
+      (finally (.countDown stuck) (producer/stop! p)))))
+
+(deftest a-stall-strikes-the-shader-that-stalled-not-a-version-saved-meanwhile
+  (let [clock (atom 0)
+        opens (atom 0)
+        watchdog 1000
+        ;; Draws of index-glsl hang; any other shader renders.
+        factory (fn []
+                  (swap! opens inc)
+                  (reify producer/ShaderRenderer
+                    (compile-shader [_ _] (done-future {:compiled? true}))
+                    (render-frame [_ shader {:keys [width height]}]
+                      (if (= index-glsl (:source shader))
+                        (CompletableFuture.)
+                        (done-future {:pixels (byte-array (* 4 width height)) :width width :height height})))
+                    (release-shader [_ _] (done-future true))
+                    (describe-renderer [_] {:backend :test :terminated? true})
+                    (close-renderer [_] true)))
+        p (producer/create {:renderer factory :clock-ns #(deref clock) :watchdog-ms watchdog :render-timeout-ms 20})
+        row #(first (:instances (producer/status p)))]
+    (try
+      (producer/sync! p {"a" (request {})})
+      (is (eventually #(pos? (:late (row)))))
+      ;; The operator saves a new version while the old one's draw is stuck.
+      (producer/sync! p {"a" (assoc-in (request {}) [:shader :source] gradient-glsl)})
+      (advance! clock (inc watchdog))
+      (is (eventually #(= :shader/renderer-wedged (get-in (producer/status p) [:error :code]))))
+      (is (= "a" (get-in (producer/status p) [:error :instance-id])))
+      (is (zero? (:strikes (row))) "The new version is not struck")
+      (advance! clock producer/retry-after-ms)
+      (is (eventually #(get-in (producer/frames p) [:instance-frames "a"])) "The new version renders")
       (finally (producer/stop! p)))))
 
 (defn- periodic-wedges
@@ -506,6 +653,7 @@
         (is (= {:code :shader/renderer-unresponsive :cause :afterglow.render.gpu.native-context/context-lost :losses 4}
                (select-keys (:error (status)) [:code :cause :losses])))
         (is (eventually #(= :shader/renderer-unresponsive (get-in (row) [:error :code]))))
+        (is (= {:frames {} :instance-frames {}} (producer/frames p)) "Every cue goes dark")
         (is (= 9 @opens))
         (advance! clock 3600000)
         (wait-ticks! row 3)
