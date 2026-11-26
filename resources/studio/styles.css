@@ -82,5 +82,16 @@ dialog{color:var(--text);background:#1d251a;border:1px solid #536348;border-radi
 .checkpoint-actions{display:flex;gap:6px}
 .show-checkpoint-dialog button{min-height:44px}
 .checkpoint-confirm p{margin:12px 0;line-height:1.5}
+.checkpoint-note{margin:6px 0 0;max-width:34em;line-height:1.5}
+.show-folder-info{margin-top:16px;padding-top:4px}
+.show-folder-info h3{font-size:13px;margin:0 0 4px}
+.show-folder-explanation p{font-size:12px;line-height:1.55;margin:8px 0}
+.show-folder-explanation code{overflow-wrap:anywhere}
+.show-folder-notice{border:1px solid #4d5d42;background:#1f281b;border-radius:10px;padding:14px 16px;margin-bottom:20px;display:grid;gap:14px}
+.show-folder-notice-part>strong{font-size:13px}
+.show-folder-notice-part>p{font-size:12px;line-height:1.55;margin:8px 0}
+.show-folder-notice-part+.show-folder-notice-part{border-top:1px solid var(--line);padding-top:14px}
+.show-folder-notice .button-row{margin:10px 0 0}
+.show-folder-notice button{min-height:44px}
 @media(max-width:420px){.mobile-file-actions{flex-wrap:wrap;column-gap:12px;row-gap:0}}
 .cue-macro-dialog :is(select,button),#add-to-saved-macro{min-width:44px;min-height:44px}

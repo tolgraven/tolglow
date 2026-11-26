@@ -817,6 +817,45 @@ its Room view does not yet compare `:frame-revision` with `:draft-revision`, so
 it can show the previous value's frame for a frame or two during a sweep
 ([issue #737](https://github.com/tolgraven/tolglow/issues/737)).
 
+## Take or dismiss the checkpoint from before the update
+
+A show folder opened in the Mac app keeps its own recovery, named by its
+`.tolglow-folder-id`. The working and prior checkpoints that desktop shows
+autosaved to the shared directory before that change are frozen once, at the
+first Mac folder claim, and offered to every Mac show folder as `:legacy` and
+`:legacy-prior`; they are never restored at startup. Both surfaces read
+`show/recovery-status` and call the same functions; Studio reaches them through
+`/api/show/checkpoints`, `/api/show/checkpoints/restore` with `kind legacy` or
+`legacy-prior`, and `/api/show/checkpoints/dismiss-legacy`. [Show files](show-files.md#the-checkpoint-from-before-per-folder-recovery) · [Issue #742](https://github.com/tolgraven/tolglow/issues/742)
+
+```clojure
+(select-keys (show/recovery-status runtime) [:checkpoints :folder])
+@(show/load-latest-show! runtime :legacy)   ; restore it into this folder
+(show/dismiss-legacy-recovery! runtime)     ; or stop offering both to every folder
+```
+
+In Studio, **Restore show** lists **Checkpoint from before the update** and
+**Previous session from before the update** with their saved times, **Restore**
+and **Dismiss**, each behind a confirmation, and its **Show folder** section
+explains the identity file. A note above the view says when one is waiting,
+with the saved times, and, on a folder's first open, what `.tolglow-folder-id`
+is; a closed note stays closed after a reload. After a REPL restore or
+dismissal the waiting note in an open Studio goes away with the next state
+frame. After a Studio restore, `show/recovery-status` no longer lists them in
+any folder. A refusal reads the same: once taken, the REPL restore throws
+naming the folder that took them, a second dismissal returns false, and
+Studio's **Dismiss** shows "The checkpoint from before the update is no longer
+offered". While one window is restoring, the other's restore or dismissal is
+refused with `:legacy-busy` on both surfaces.
+
+Studio's own REPL session (**Open Clojure REPL**, `/api/repl/eval`) binds
+`runtime` to the same show map that now carries its recovery owner; before
+#742 that map lacked it, so `show/recovery-status` returned nil there.
+Checked by `test/tolglow/desktop_test.clj` through the real desktop entry point,
+Studio's routes and the REPL session, by Studio's event tests, and by
+`lein run -m tolglow.qa.show-folder` in headless Chrome. No foreground Mac
+window has shown the note yet.
+
 ## Let the show wander with a section plan
 
 Both surfaces send the same `:auto` request (`POST /api/auto` from Studio,

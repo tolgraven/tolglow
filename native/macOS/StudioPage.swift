@@ -75,7 +75,8 @@ final class StudioPage: NSObject, ObservableObject, WKScriptMessageHandler {
         return String(data: data, encoding: .utf8)
     }
 
-    /// A tab menu action: new, close, reopen, next or previous.
+    /// A tab menu action (new, close, reopen, next or previous), or
+    /// "checkpoints" to open the page's Show checkpoints dialog.
     func send(_ action: String) {
         view?.evaluateJavaScript(
             "window.dispatchEvent(new CustomEvent('tolglow-view-tabs', {detail: {action: '\(action)'}}))")

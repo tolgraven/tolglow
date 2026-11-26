@@ -68,7 +68,7 @@
 (defn -main [& [directory]]
   (let [dir (io/file (or directory "target/parameter-precision"))
         host (app/start! {:init {:components [:show] :modules [:web-server]}
-                          :show {:model (model) :workspace-options nil} :web-server {:host "127.0.0.1" :port 0}})]
+                          :show {:model (model) :workspace-options nil :recovery false} :web-server {:host "127.0.0.1" :port 0}})]
     (try
       (.mkdirs dir)
       (let [id (capture! host dir)

@@ -246,6 +246,8 @@
       "reopen" (operate db reopen)
       "next" (operate db step 1)
       "previous" (operate db step -1)
+      ;; File › Show Folder and Checkpoints… (#742): the same dialog as Restore show.
+      "checkpoints" {:dispatch [:checkpoints/open]}
       nil)))
 
 ;; ---------------------------------------------------------------------------

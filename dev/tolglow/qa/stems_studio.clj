@@ -28,7 +28,7 @@
         rendered (fixtures/render {:bpm (double (get-in model [:transport :bpm] 120.0)) :bars 32})
         _ (fixtures/write-wav! rendered wav)
         runtime (app/start! {:init {:components [:show] :modules [:web-server]}
-                             :show {:model model :workspace-options nil}
+                             :show {:model model :workspace-options nil :recovery false}
                              :web-server {:host "127.0.0.1" :port (Long/parseLong (str port))}})]
     (try
       (accepted! (:receipt (stems/route-onset! runtime :kick :flash)))
