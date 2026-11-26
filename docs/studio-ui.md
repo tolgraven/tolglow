@@ -341,6 +341,14 @@ phone (up to 600 px, 2 columns), tablet (601–1199 px, 6 columns) and desktop
 this browser's local storage (`tolglow.studio.panel-layouts`, version 2; the
 single-layout version 1 becomes "Layout 1"), not in the show document, a
 backup or the portable settings API; another device or browser keeps its own.
+In the packaged Mac app the loopback port, and with it the page's storage,
+changes on every launch. When the app's window binding (#669,
+`window.tolglowStudioWindow`) carries a `layouts` copy, Studio uses whichever
+of that copy and local storage was saved last (each records `savedAt`), and
+every save also posts `{type: "layouts", layouts}` to the app's
+`tolglowStudioWindow` message handler so the app can keep it per show folder.
+A save counts as kept when either copy was accepted. Until the app provides
+and stores that copy, the Mac app keeps layouts only for one launch.
 Editing a new layout starts from a measurement of the built-in layout on
 screen. A saved layout is repaired on load: unknown panels are dropped, missing
 Perform panels come back at a default size, invalid tile bindings are cleared

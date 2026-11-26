@@ -515,6 +515,33 @@ for (const viewport of viewports) {
     assert.deepEqual(named[viewport.cls].layouts.map(l => l.name), ['Layout 1']);
     assert.equal(named[viewport.cls].active, null);
 
+    // The Mac app's window binding (#669): a host copy of the layouts is used
+    // when it is newer than the page's, and saving also posts a host copy.
+    if (viewport.name === 'desktop') {
+      const hostCopy = JSON.stringify({version: 2, savedAt: Date.now() + 60000, classes: {desktop: {active: 'From the app',
+        layouts: [{name: 'From the app', panels: [{id: 'room', w: 12, h: 20}, {id: 'cues', w: 6, h: 20}]}]}}});
+      const host = await context.newPage();
+      host.on('pageerror', e => errors.push('host page: ' + e.message));
+      await host.addInitScript(copy => {
+        window.__posted = [];
+        window.tolglowStudioWindow = Object.freeze({runtimeId: '', show: 'qa', layouts: copy});
+        window.webkit = {messageHandlers: {tolglowStudioWindow: {postMessage: m => window.__posted.push(JSON.parse(JSON.stringify(m)))}}};
+      }, hostCopy);
+      await host.goto(origin + '/', {waitUntil: 'domcontentloaded'});
+      await host.waitForSelector('#view-perform .custom-layout', {timeout: 60000});
+      const hostOrder = await host.evaluate(() => [...document.querySelectorAll('#view-perform .performance-layout > .layout-region')].map(e => e.dataset.panel));
+      assert.deepEqual(hostOrder, ['room', 'cues', 'live', 'tools'], 'the newer app copy is used');
+      await host.locator('#edit-layout').click();
+      await host.waitForSelector('#view-perform .editing-layout');
+      await host.locator('#layout-done').click();
+      await host.waitForSelector('#view-perform .editing-layout', {state: 'detached'});
+      const posted = await host.evaluate(() => window.__posted.filter(m => m.type === 'layouts'));
+      assert.equal(posted.length, 1, 'saving posts one host copy');
+      assert.equal(JSON.parse(posted[0].layouts).classes.desktop.active, 'From the app');
+      record.hostStore = {usedHostCopy: true, posted: posted.length};
+      await host.close();
+    }
+
     await page.locator('#end-all').evaluate(button => button.click());
     assert.deepEqual(errors, [], 'no page errors');
     record.passed = true;

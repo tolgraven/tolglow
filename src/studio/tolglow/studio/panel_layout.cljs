@@ -317,9 +317,13 @@
         :else {}))
     (catch :default _ {})))
 
-(defn encode [saved]
+(defn encode
+  "Stored JSON for saved layouts. `saved-at` (epoch ms) lets a reader prefer
+  the newer of two copies."
+  [saved & [saved-at]]
   (js/JSON.stringify
    (clj->js {:version 2
+             :savedAt (or saved-at 0)
              :classes (into {} (for [[class {:keys [active layouts]}] saved :when (seq layouts)]
                                  [(name class) {:active active
                                                 :layouts (mapv (fn [{:keys [name panels]}]
@@ -337,6 +341,38 @@
 (defn- stored-text []
   (try (some-> (storage) (.getItem storage-key)) (catch :default _ nil)))
 
+;; The packaged Mac app serves each launch on a new loopback port, so page
+;; storage does not survive a relaunch there. When the app's window binding
+;; (`window.tolglowStudioWindow`, #669) carries a `layouts` copy and accepts
+;; `{type: "layouts", layouts}` messages on its `tolglowStudioWindow` handler,
+;; layouts are kept by the app per show folder as well. In a browser, or until
+;; the app provides that copy, only local storage is used.
+
+(defn- host-text []
+  (try (let [binding (aget js/window "tolglowStudioWindow")
+             text (when (some? binding) (aget binding "layouts"))]
+         (when (string? text) text))
+       (catch :default _ nil)))
+
+(defn- host-handler []
+  (some-> (aget js/window "webkit") (aget "messageHandlers") (aget "tolglowStudioWindow")))
+
+(defn- post-host! [text]
+  (when-let [^js handler (host-handler)]
+    (try (.postMessage handler #js {:type "layouts" :layouts text}) true (catch :default _ false))))
+
+(defn- saved-at [text]
+  (try (let [v (some-> text js/JSON.parse (aget "savedAt"))] (if (number? v) v 0)) (catch :default _ -1)))
+
+(defn newest-text
+  "Of the app's copy and the page's copy, the one saved last (the page's on a
+  tie, since a reload keeps the app's copy from when the window opened)."
+  [host local]
+  (cond (nil? host) local
+        (nil? local) host
+        (> (saved-at host) (saved-at local)) host
+        :else local))
+
 (defn media-class []
   (if (fn? (aget js/window "matchMedia"))
     (size-class (.-matches (js/matchMedia (:phone media-queries)))
@@ -347,13 +383,19 @@
   (fn [cofx _]
     (assoc cofx :panel-layout/environment
            {:class (media-class)
-            :saved (if-let [text (stored-text)] (decode text) {})})))
+            :saved (if-let [text (newest-text (host-text) (stored-text))] (decode text) {})})))
 
-(defn- write! [saved]
-  (try (if-let [s (storage)]
-         (do (if (seq saved) (.setItem s storage-key (encode saved)) (.removeItem s storage-key)) true)
-         false)
-       (catch :default _ false)))
+(defn- write!
+  "Keep saved layouts in local storage and, inside the Mac app, with the app.
+  True when at least one copy was accepted."
+  [saved]
+  (let [text (encode saved (js/Date.now))
+        local? (try (if-let [s (storage)]
+                      (do (if (seq saved) (.setItem s storage-key text) (.removeItem s storage-key)) true)
+                      false)
+                    (catch :default _ false))
+        host? (post-host! text)]
+    (boolean (or local? host?))))
 
 (def failed-notice
   "This browser did not keep the layout (storage is blocked or full). It stays in use until Studio reloads.")

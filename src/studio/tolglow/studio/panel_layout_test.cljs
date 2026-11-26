@@ -58,6 +58,17 @@
       (is (= {:tablet {:active "Layout 1" :layouts [{:name "Layout 1" :panels (layout/default-layout :tablet)}]}}
              (layout/decode "{\"version\":1,\"layouts\":{\"watch\":[],\"tablet\":[]}}"))))))
 
+(deftest the-newer-of-the-app-and-page-copies-wins
+  (let [older (layout/encode {:desktop {:active nil :layouts [{:name "Old" :panels (layout/default-layout :desktop)}]}} 1000)
+        newer (layout/encode {:desktop {:active nil :layouts [{:name "New" :panels (layout/default-layout :desktop)}]}} 2000)]
+    (is (= newer (layout/newest-text newer older)))
+    (is (= newer (layout/newest-text older newer)))
+    (is (= older (layout/newest-text older older)) "a tie keeps the page copy")
+    (is (= older (layout/newest-text nil older)))
+    (is (= newer (layout/newest-text newer nil)))
+    (is (= newer (layout/newest-text "not json" newer)) "an unreadable app copy loses")
+    (is (= "New" (get-in (layout/decode newer) [:desktop :layouts 0 :name])) "the timestamp does not disturb decoding")))
+
 (deftest added-panels-tiers-and-bindings
   (testing "parameter tiles and the visualization panel survive repair; bad bindings are dropped"
     (let [repaired (layout/normalize :desktop [{:id "param-3" :w 1 :h 6 :binding {:cue " ember " :param "level"}}
