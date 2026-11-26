@@ -29,7 +29,13 @@
   and a saved show keeps links and windows with every surface detached.
   Device ports, sessions and per-member gestures stay with the transport.
   Content spaces are a registry (content-cells, content-size, content-axis),
-  so a cue grid can be added without changing this namespace."
+  so a cue grid can be added without changing this namespace.
+
+  Each logical surface also carries a committed layout state (#706 slice 2):
+  the encoder mode, its page, the selected cell and flip. It lives beside the
+  window (on the link, or on an unlinked surface viewport) and moves with it,
+  so every linked member shows the same mode and selection. Layouts such as
+  tolglow.surface.mixer read it; :control-surface/layout changes it."
   (:require [tolglow.effects.group-channels :as group-channels]
             [tolglow.surface.descriptor :as descriptor]))
 
@@ -39,11 +45,35 @@
 
 (def operations
   #{:control-surface/attach :control-surface/detach :control-surface/remove
-    :control-surface/link :control-surface/unlink :control-surface/bank})
+    :control-surface/link :control-surface/unlink :control-surface/bank
+    :control-surface/layout})
 
 (def modes #{:mirror :extend :follow})
 
 (def directions #{:right :left :down :up})
+
+(def encoder-modes
+  "Encoder assignments a layout can show (see tolglow.surface.mixer)."
+  #{:pan :send :plug-in :user})
+
+(def layout-defaults {:encoder-mode :pan :page 0 :selected nil :flip? false})
+
+(defn- cell-key? [k]
+  (and (vector? k) (= 2 (count k)) (keyword? (first k))
+       (let [id (second k)] (or (keyword? id) (and (string? id) (seq id))
+                                (and (vector? id) (= 2 (count id)))))))
+
+(defn layout-errors
+  "Problems with a layout patch, or nil. Keys are optional; nil :selected
+  clears the selection."
+  [patch]
+  (cond
+    (not (map? patch)) "A layout is a map"
+    (not (every? (set (keys layout-defaults)) (keys patch))) "A layout takes :encoder-mode :page :selected :flip?"
+    (and (contains? patch :encoder-mode) (not (contains? encoder-modes (:encoder-mode patch)))) "Unknown encoder mode"
+    (and (contains? patch :page) (not (and (nat-int? (:page patch)) (<= (:page patch) 1024)))) "A page is 0..1024"
+    (and (some? (:selected patch)) (not (cell-key? (:selected patch)))) "Select a cell key such as [:cue :ember]"
+    (and (contains? patch :flip?) (not (boolean? (:flip? patch)))) "Flip is boolean"))
 
 (defn- reject! [code message details]
   (throw (ex-info message {:control/error code :details details})))
@@ -174,7 +204,9 @@
          :viewport (:viewport leader) :members members :leader leader
          :packed (when (= :extend mode) (pack (:direction link :right) members))
          :content (get-in state [:surfaces (:surface-id leader) :viewports (:viewport leader) :content])
-         :window (if link (:window link) (get-in state [:surfaces target :viewports viewport :window]))}))))
+         :window (if link (:window link) (get-in state [:surfaces target :viewports viewport :window]))
+         :layout (merge layout-defaults
+                        (if link (:layout link) (get-in state [:surfaces target :viewports viewport :layout])))}))))
 
 (defn- span
   "Cells one page of the logical surface covers: the packed extent for extend,
@@ -259,6 +291,25 @@
     (get-in (state model) [:surfaces surface-id :viewports :strips :window :x] 0)
     (or (some-> (resolved model surface-id :strips false) (member-window surface-id) :x) 0)))
 
+(defn strip-placement
+  "Where a strip surface sits in its logical surface, for layouts:
+  :first   the first strip it shows (strip-offset);
+  :index   its first strip's place within one logical page (0 for the leader,
+           a lone unit or a mirror; 8 for an extender to the right of an
+           X-Touch; offset x leader width for a follower);
+  :span    the strips one logical page covers (16 for main plus extender);
+  :logical-id and the committed :layout (layout-defaults when unset).
+  Until its attach commits, a device is a lone unit at its own last window."
+  [model surface-id]
+  (let [view (when (attached? model surface-id) (resolved model surface-id :strips false))
+        origin (some-> view (member-window surface-id))]
+    (if (and view origin)
+      {:logical-id (:id view) :first (:x origin) :index (- (:x origin) (get-in view [:window :x]))
+       :span (:columns (span view)) :layout (:layout view)}
+      {:logical-id surface-id :first (strip-offset model surface-id) :index 0
+       :span (or (get-in (state model) [:surfaces surface-id :viewports :strips :geometry 0]) 8)
+       :layout (merge layout-defaults (get-in (state model) [:surfaces surface-id :viewports :strips :layout]))})))
+
 ;; Settings and projection
 
 (defn settings
@@ -283,7 +334,7 @@
   (when-let [{:keys [link? members cells] :as view} (resolved model target viewport)]
     {:id (:id view) :link? link? :mode (:mode view) :direction (when (= :extend (:mode view)) (:direction view))
      :viewport (:viewport view) :window (:window view) :span (span view) :size (:size view)
-     :limit (limits view (:size view))
+     :limit (limits view (:size view)) :layout (:layout view)
      :members (mapv (fn [{:keys [surface-id attached? shape] :as member}]
                       (let [{:keys [x y] :as origin} (member-window view surface-id)]
                         (assoc (select-keys member [:surface-id :viewport :offset :attached?])
@@ -347,18 +398,22 @@
   (assoc-in model state-path (apply f (state model) args)))
 
 (defn- dissolve
-  "Remove a link, leaving each member at the window it showed."
+  "Remove a link, leaving each member at the window it showed, with the
+  link's layout state."
   [model link-id]
   (let [view (resolved model link-id nil false)
+        layout (get-in (state model) [:links link-id :layout])
         model (update-state model update :links dissoc link-id)]
     (if-not view
       model
       (update-state model
                     (fn [current]
                       (reduce (fn [current {:keys [surface-id viewport]}]
-                                (let [shown (member-window view surface-id)]
-                                  (if (and shown (get-in current [:surfaces surface-id :viewports viewport]))
-                                    (assoc-in current [:surfaces surface-id :viewports viewport :window] shown)
+                                (let [shown (member-window view surface-id)
+                                      path [:surfaces surface-id :viewports viewport]]
+                                  (if (and shown (get-in current path))
+                                    (cond-> (assoc-in current (conj path :window) shown)
+                                      layout (assoc-in (conj path :layout) layout))
                                     current)))
                               current (:members view)))))))
 
@@ -437,8 +492,10 @@
                 (update-state model assoc-in [:surfaces surface-id]
                               {:id surface-id :descriptor descriptor-id :role role :attached? true
                                :viewports (into {} (map (fn [[viewport content]]
-                                                          [viewport {:geometry (get groups viewport) :content content
-                                                                     :window (get-in previous [:viewports viewport :window] {:x 0 :y 0})}]))
+                                                          (let [layout (get-in previous [:viewports viewport :layout])]
+                                                            [viewport (cond-> {:geometry (get groups viewport) :content content
+                                                                               :window (get-in previous [:viewports viewport :window] {:x 0 :y 0})}
+                                                                        layout (assoc :layout layout))])))
                                                 viewports)})
                 :control-surface/attached {:surface-id surface-id})))
 
@@ -478,10 +535,14 @@
       (reject! :surface-linked "A surface viewport belongs to one link" {:surface-id taken}))
     (let [model (if (get-in current [:links link-id]) (dissolve model link-id) model)
           leader (first members)
-          before (member-window (resolved model (:surface-id leader) (:viewport leader) false) (:surface-id leader))
+          leader-view (resolved model (:surface-id leader) (:viewport leader) false)
+          before (member-window leader-view (:surface-id leader))
+          ;; The leader's mode and selection carry over, as its window does.
+          layout (when (not= layout-defaults (:layout leader-view)) (:layout leader-view))
           linked (update-state model assoc-in [:links link-id]
                                (cond-> {:id link-id :mode mode :members members :window {:x 0 :y 0}}
-                                 (= :extend mode) (assoc :direction direction)))]
+                                 (= :extend mode) (assoc :direction direction)
+                                 layout (assoc :layout layout)))]
       (transition model (keep-window linked link-id (:surface-id leader) (or before {:x 0 :y 0}))
                   :control-surface/linked {:link-id link-id :mode mode :surface-ids (vec ids)}))))
 
@@ -521,7 +582,10 @@
   :control-surface/unlink {:link-id}
   :control-surface/bank {:target link-or-surface-id :viewport?} with :move
     (:previous :next :channel-previous :channel-next :first :last :up :down
-    :top :bottom), :to {:x :y}, or :reveal a cell key such as [:cue :ember]."
+    :top :bottom), :to {:x :y}, or :reveal a cell key such as [:cue :ember].
+  :control-surface/layout {:target link-or-surface-id :viewport? :set patch}
+    merges :encoder-mode (:pan :send :plug-in :user), :page, :selected (a
+    cell key or nil) and :flip? into the logical surface's layout state."
   [model {:keys [op surface-id link-id target viewport] :as command}]
   (let [current (state model)]
     (case op
@@ -555,6 +619,22 @@
                        [:surfaces (:id view) :viewports (:viewport view) :window])]
           (transition model (update-state model assoc-in path next-window)
                       :control-surface/banked {:target (:id view) :viewport (:viewport view) :window next-window})))
+
+      :control-surface/layout
+      (let [view (logical (state model) target viewport)
+            patch (:set command)]
+        (when-not view
+          (reject! :unknown-surface "No surface viewport or link with that ID" {:target target :viewport viewport}))
+        (when-let [error (layout-errors patch)]
+          (reject! :invalid-value error {:set patch}))
+        (let [path (if (:link? view) [:links (:id view) :layout]
+                       [:surfaces (:id view) :viewports (:viewport view) :layout])
+              layout (merge (:layout view) patch)
+              stored (into {} (remove (fn [[k v]] (= v (get layout-defaults k)))) layout)]
+          (transition model (update-state model (fn [current]
+                                                  (if (seq stored) (assoc-in current path stored)
+                                                      (update-in current (pop path) dissoc :layout))))
+                      :control-surface/layout-changed {:target (:id view) :viewport (:viewport view) :layout layout})))
 
       (reject! :unknown-operation "Unknown surface operation" {:op op}))))
 
@@ -590,11 +670,13 @@
     (and (map? s) (id? id) (= id (:id s)) groups (keyword? role) (contains? #{nil true false} attached?)
          (map? viewports) (= (set (keys viewports)) (set (keys groups)))
          (every? (fn [[viewport v]]
-                   (and (= (get groups viewport) (:geometry v)) (content? (:content v)) (window? (:window v))))
+                   (and (= (get groups viewport) (:geometry v)) (content? (:content v)) (window? (:window v))
+                        (nil? (layout-errors (:layout v {})))))
                  viewports))))
 
 (defn- saved-link? [surfaces id {:keys [mode direction members] :as l}]
   (and (map? l) (id? id) (= id (:id l)) (window? (:window l)) (not (contains? surfaces id))
+       (nil? (layout-errors (:layout l {})))
        (contains? modes mode) (or (nil? direction) (contains? directions direction))
        (vector? members) (<= 2 (count members) 16) (apply distinct? (map :surface-id members))
        (every? #(and (map? %) (keyword? (:viewport %)) (get-in surfaces [(:surface-id %) :viewports (:viewport %)])

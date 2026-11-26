@@ -33,6 +33,7 @@
             [tolglow.controllers.page-overview :as page-overview]
             [tolglow.controllers.push-variations :as push-variations]
             [tolglow.surface.link :as surface]
+            [tolglow.surface.x-touch :as x-touch]
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
             [tolglow.effects.material-design :as material-design]
@@ -122,7 +123,6 @@
             [afterglow.reactive.clock :as reactive-clock]
             [tolglow.agents :as agents]
             [afterglow.control.devices.repl :as devices]
-            [afterglow.control.devices.x-touch :as x-touch]
             [taoensso.timbre :as timbre]
             [tolglow.composition.response :as response]
             [tolglow.composition.envelope :as envelope])
@@ -2935,6 +2935,19 @@
 
 (def ^:private device-command-wait-ms 5000)
 
+(defn- external-transport-fn
+  "model -> true while an external clock owns play and stop: any selected
+  source other than :manual, except Ableton Link with start/stop sync off
+  (tempo-only Link leaves playback local). A surface's PLAY and STOP then
+  stay quiet instead of fighting Live (#706 slice 2)."
+  [runtime]
+  (fn [model]
+    (boolean
+     (when-let [manager (try (connections/sync (:connections runtime)) (catch Exception _ nil))]
+       (let [{:keys [selected-source follow-transport?]}
+             (session/clock-at manager (get-in model [:transport :time-ms] (now-ms runtime)))]
+         (and (some? selected-source) (not= :manual selected-source) (not (false? follow-transport?))))))))
+
 (defn- surface-command!
   "Enqueue a host surface command without waiting: the owner may be ticked by
   the caller, and a device reads a missing surface as strip 0. A watcher off
@@ -2981,7 +2994,11 @@
   the first strips, followed by any configured cue channels. Each X-Touch or
   extender registers a control surface under its session ID; its window is
   show data, moved by its bank buttons, Studio and :control-surface/bank. Join
-  separately connected surfaces with link-surfaces!."
+  separately connected surfaces with link-surfaces!. X-Touch units run the
+  Tolglow mixer layout (tolglow.surface.x-touch): encoder modes, selection,
+  Solo/Mute and the other layout state are committed per logical surface,
+  see surface-layout!. :color-match (:hue, :rgb or :off) picks how strip
+  colours map to the eight scribble colours."
   [runtime kind {:keys [session-id ::restore-lease ::reconnect-lease] :as options}]
   (let [id session-id epoch (get-in @(:state runtime) [:model :epoch])]
     (when-not (and (string? id) (seq id)) (throw (ex-info "Device requires session-id" {})))
@@ -3000,24 +3017,24 @@
                           {:adapter kind :session-id id})
             operator-id (when push-source (str (name kind) "/" id "/" (UUID/randomUUID)))
             open! (case kind :push-2 devices/open-push-2! :push-3 devices/open-push-3!
-                         :push-3-midi devices/open-push-3-midi! :seaboard devices/open-seaboard! :x-touch devices/open-x-touch!
+                         :push-3-midi devices/open-push-3-midi! :seaboard devices/open-seaboard! :x-touch x-touch/connect!
                          :midi devices/open-midi! :osc devices/open-osc! :sensor devices/open-sensor!
                          (throw (ex-info "Unknown device kind" {:kind kind})))
             push-3-variation-pads? (and (= kind :push-3) (true? (:cue-variation-pads? options)))
             x-touch? (= :x-touch kind)
             ;; Validates the cue channel bindings before any port opens.
-            _ (when x-touch? (x-touch/profile (select-keys options [:channels])))
+            _ (when x-touch? (x-touch/validate-channels! (vec (:channels options []))))
             surface-content (when x-touch?
                               {:type :mixer-strips :effect-group-view effect-group-view
                                :cue-strips (vec (:channels options []))})
             options (cond-> (dissoc options ::restore-lease ::reconnect-lease)
                       x-touch?
-                      (assoc :channels []
-                             :group-channels #(surface/strip-channels % id surface-content)
-                             :group-level-command (fn [group value]
-                                                    {:op :effect-groups/level-set :channel-id group :value value})
-                             :model-bank #(surface/strip-offset % id)
-                             :bank-command (fn [move] {:op :control-surface/bank :target id :viewport :strips :move move}))
+                      ;; The Tolglow mixer layout (#706 slice 2) reads strips, window and
+                      ;; layout state from the committed surface link.
+                      (assoc :surface-id id
+                             :rows #(surface/strip-channels % id surface-content)
+                             :placement #(surface/strip-placement % id)
+                             :external-transport? (external-transport-fn runtime))
                       push-source (assoc :operator-gestures? true :target-search targets/search
                                          :launch-receipt cue-timing/receipt)
                       (or push-3-variation-pads? (and push-source (true? (:cue-variations? options))))
@@ -3112,6 +3129,17 @@
   [runtime target move]
   (submit! runtime (merge {:op :control-surface/bank :target target :source {:adapter :repl :session-id "repl"}}
                           (if (keyword? move) {:move move} move))))
+
+(defn surface-layout!
+  "Change a surface's or link's committed layout state: a map with
+  :encoder-mode (:pan :send :plug-in :user), :page, :selected (a cell key such
+  as [:cue :ember] or [:group [:manual :mix]], or nil) and :flip?. The
+  X-Touch buttons commit the same command. Returns the receipt promise.
+
+    @(surface-layout! runtime \"desk\" {:encoder-mode :plug-in :selected [:cue :ember]})"
+  [runtime target patch]
+  (submit! runtime {:op :control-surface/layout :target target :set patch
+                    :source {:adapter :repl :session-id "repl"}}))
 
 (defn expressive-preview
   "Preview the selected cue's expressive mapping using the connected device's
