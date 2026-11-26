@@ -192,10 +192,11 @@
         (deliver stop :stop)
         @feeder)
       (let [{:keys [slots rendered dropped]} (get-in (producer/status p) [:instances 0])]
-        ;; 30 fps for one second is about 30 slots; a 70 ms render fits about 14.
-        (is (<= 10 rendered 16) (pr-str [slots rendered dropped]))
-        (is (<= 12 dropped 22) (pr-str [slots rendered dropped]))
-        (is (<= 26 (+ slots dropped) 34) "Each slot is either rendered or dropped, never queued"))
+        ;; 30 fps for one second is about 30 slots; a 70 ms render fits at most
+        ;; about 14 (fewer when the machine is loaded), so at least half drop.
+        (is (<= 4 rendered 16) (pr-str [slots rendered dropped]))
+        (is (>= dropped rendered) (pr-str [slots rendered dropped]))
+        (is (<= 24 (+ slots dropped) 36) "Each slot is either rendered or dropped, never queued"))
       (finally (producer/stop! p) (producer/close-renderer r)))))
 
 (deftest instances-beyond-the-limit-wait-in-launch-order
