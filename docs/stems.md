@@ -38,6 +38,11 @@ file's rate and channel count:
 `:file-paced? false` reads as fast as possible and places the recording in
 the past, for offline analysis.
 
+The file must be an existing regular `.wav` or `.aiff` file; anything else
+(a FIFO, a device, another format) is refused before it is opened. Only the
+REPL starts a file replay: Studio's `/api/audio/start` refuses `:file`, since
+Studio has no recording picker and the path would name any file on the host.
+
 ## What each stem measures
 
 `tolglow.audio.stems` is pure: state and blocks in, features and events out.
@@ -47,7 +52,7 @@ the past, for offline analysis.
 | Band | The stem's band through the shared Linkwitz–Riley filters of `tolglow.audio.shape` ([#676](https://github.com/tolgraven/tolglow/issues/676)). A named band (`:bass`, `:high`, …) or `[low high]` Hz. |
 | Envelope | Peak follower with the stem's attack and release. `:level` is the envelope over the floor-to-full-scale decibel range, 0–1. |
 | Onset | In 4 ms hops: the envelope rose `:rise-db` above the quietest of the last 20 ms, sits above `:floor-db` and within `:range-db` of the stem's slowly decaying peak, the detector has re-armed, and the gate has passed. |
-| Gate | `:min-interval` in beats, converted at the captured tempo clamped to **70–180 BPM** (120 without a clock). The default sixth of a beat is 143 ms at 70 BPM and 56 ms at 180. |
+| Gate | `:min-interval` in beats, converted at the captured tempo clamped to **70–180 BPM** (120 without a clock). The default sixth of a beat is 143 ms at 70 BPM and 56 ms at 180. A gate shorter than 20 ms at 180 BPM (`{:ms 19}`, `{:beats 1/32}`) is refused, so no stem emits more than 50 onsets a second. |
 | Bleed | All stems share hops. A candidate is held 8 ms, then rejected as bleed if another stem had an onset within 12 ms whose peak was `:isolation-db` (18 dB) louder. Rejections are counted per stem. |
 
 Presets set band, envelope and gate per instrument (`:kick :snare :hats :bass

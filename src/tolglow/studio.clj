@@ -216,7 +216,13 @@
             :workspace! #(show/application-operation! runtime development/operation! %1 %2)
             :terminal! #(show/application-operation! runtime development/terminal-operation! %1 %2)
             :app-agent! #(show/application-operation! runtime development/app-agent-operation! %1 %2)
-            :audio! #(show/audio-action! runtime %1 %2)
+            ;; Studio has no recording picker: a :file replay (#675) names a
+            ;; path on this machine, so only the REPL may start one.
+            :audio! (fn [op payload]
+                      (when (and (= :start op) (map? payload) (or (contains? payload :file) (contains? payload "file")))
+                        (throw (ex-info "Replay a recording from the REPL (tolglow.stems/replay-file!), not from Studio"
+                                        {:audio/error :invalid-config})))
+                      (show/audio-action! runtime op payload))
             :sensor! (fn [op payload]
                        (show/sensor-action! runtime op
                          (if (= op :sample) (sensor-osc/decode-json (json/write-str (web/json-data (dissoc payload :runtime-id :expected-epoch)))) payload)))

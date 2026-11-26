@@ -23,6 +23,12 @@
 
 (def fallback-bpm 120.0)
 
+(def min-gate-ms
+  "Shortest onset gate a stem may have at the fastest design tempo: at most
+  50 onsets a second per stem, so 16 stems cannot flood the show owner's
+  event queue with launches."
+  20.0)
+
 (def defaults
   {:band nil :gain-db 0.0 :attack-ms 2.0 :release-ms 120.0 :floor-db -54.0 :range-db 20.0
    :rise-db 6.0 :rearm-db 3.0 :hold-decay-db-per-s 3.0 :isolation-db 18.0 :min-interval {:beats 1/6}})
@@ -66,9 +72,18 @@
   [id feature]
   (str "stem/" (name id) "/" (name feature)))
 
+(defn interval-ms
+  "Minimum milliseconds between two onsets for a {:beats n} or {:ms n} gate."
+  [duration bpm]
+  (let [[unit value] (first duration)]
+    (case unit
+      :ms (double value)
+      :beats (* (double value) (/ 60000.0 (double bpm))))))
+
 (defn- duration-ok? [duration]
   (and (empty? (time/validate-duration duration)) (pos? (val (first duration)))
-       (contains? #{:beats :ms} (key (first duration)))))
+       (contains? #{:beats :ms} (key (first duration)))
+       (>= (interval-ms duration (second tempo-range)) min-gate-ms)))
 
 (defn- canonical-stem [channels index stem]
   (when-not (and (map? stem) (every? stem-keys (keys stem)))
@@ -117,14 +132,6 @@
   [clock]
   (let [[lo hi] tempo-range bpm (:bpm clock)]
     (if (and (finite? bpm) (pos? bpm)) (clamp (double bpm) lo hi) fallback-bpm)))
-
-(defn interval-ms
-  "Minimum milliseconds between two onsets for a {:beats n} or {:ms n} gate."
-  [duration bpm]
-  (let [[unit value] (first duration)]
-    (case unit
-      :ms (double value)
-      :beats (* (double value) (/ 60000.0 (double bpm))))))
 
 (defn- design [band sample-rate] (shape/filter-design (or band :full) sample-rate))
 

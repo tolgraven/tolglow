@@ -66,12 +66,25 @@
   open a device; safe for validating a portable connections document."
   [config] (settings config))
 
+(defn- recording-file
+  "The recording a :file input names, refused unless it is an existing regular
+  WAV or AIFF file. A FIFO or device would block the capture worker forever,
+  and JavaSound would otherwise also render MIDI and other formats."
+  ^File [path]
+  (let [file (.getAbsoluteFile (File. (str path)))]
+    (when-not (re-find #"(?i)\.(wav|wave|aif|aiff|aifc)$" (.getName file))
+      (throw (failure :file-format "A replayed recording must be a .wav or .aiff file")))
+    (when-not (.isFile file)
+      (throw (failure :file-format "The recording is not an existing regular file")))
+    file))
+
 (defn file-format
   "Read a recording's sample rate, channel count and length without opening a
   device. Use it to fill a :file capture configuration."
   [path]
-  (let [format (.getFormat (AudioSystem/getAudioFileFormat (File. (str path))))
-        frames (.getFrameLength (AudioSystem/getAudioFileFormat (File. (str path))))]
+  (let [file-format (AudioSystem/getAudioFileFormat (recording-file path))
+        format (.getFormat file-format)
+        frames (.getFrameLength file-format)]
     {:sample-rate (double (.getSampleRate format)) :channels (.getChannels format)
      :frames (when (pos? frames) frames)}))
 
@@ -90,7 +103,7 @@
   PCM. Paced by default, so the show hears it in real time; :file-paced? false
   reads as fast as the worker can (offline analysis)."
   [{:keys [file sample-rate channels big-endian? file-paced?]} now-ms]
-  (let [source (AudioSystem/getAudioInputStream (File. ^String file))
+  (let [source (AudioSystem/getAudioInputStream (recording-file file))
         format (.getFormat source)
         _ (when-not (and (== (double sample-rate) (double (.getSampleRate format))) (= channels (.getChannels format)))
             (.close source)

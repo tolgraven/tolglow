@@ -162,3 +162,33 @@
     (testing "Studio's text ids read the same"
       (is (= [:kick] (keys (stem-routes/routes [{:id "stem-kick-strobe" :match {:type "audio/onset" :emitter-id "stem/kick"}
                                                  :actions []}] nil)))))))
+
+(deftest an-onset-gate-shorter-than-twenty-ms-at-180-bpm-is-refused
+  ;; Sixteen stems with a 1 ms gate on bursty material reached about 2000
+  ;; onsets a second, each a possible cue launch.
+  (is (= {:ms 20} (:min-interval (first (stems/validate-config [{:id :hit :channel 1 :min-interval {:ms 20}}] 1)))))
+  (is (= {:beats 1/16} (:min-interval (first (stems/validate-config [{:id :hit :channel 1 :min-interval {:beats 1/16}}] 1)))))
+  (doseq [gate [{:ms 1} {:ms 19.9} {:beats 1/32}]]
+    (is (thrown? clojure.lang.ExceptionInfo (stems/validate-config [{:id :hit :channel 1 :min-interval gate}] 1)) (pr-str gate))))
+
+(deftest a-file-input-reads-only-a-regular-wav-or-aiff-file
+  (let [dir (.toFile (java.nio.file.Files/createTempDirectory "tolglow-stems-files" (make-array java.nio.file.attribute.FileAttribute 0)))
+        fifo (java.io.File. dir "pipe.wav")
+        text (doto (java.io.File. dir "notes.txt") (spit "not audio"))
+        junk (doto (java.io.File. dir "junk.wav") (spit "RIFF\u0000\u0000"))
+        folder (doto (java.io.File. dir "folder.wav") (.mkdir))
+        open! (fn [path] (capture/open-java-sound! {:file (str path) :sample-rate 48000.0 :channels 1}))]
+    (try
+      (.waitFor (.start (ProcessBuilder. ["mkfifo" (str fifo)])))
+      (is (.exists fifo))
+      ;; A FIFO would block the capture worker in open; it is refused first.
+      (is (= :file-format (try (open! fifo) nil (catch Exception e (:audio/error (ex-data e))))))
+      (is (= :file-format (try (capture/file-format fifo) nil (catch Exception e (:audio/error (ex-data e))))))
+      (is (= :file-format (try (open! text) nil (catch Exception e (:audio/error (ex-data e))))))
+      (is (= :file-format (try (open! folder) nil (catch Exception e (:audio/error (ex-data e))))))
+      (is (= :file-format (try (open! (java.io.File. dir "missing.wav")) nil (catch Exception e (:audio/error (ex-data e))))))
+      ;; A malformed header fails cleanly instead of hanging or replaying noise.
+      (is (thrown? Exception (open! junk)))
+      (finally
+        (doseq [f [fifo text junk folder]] (.delete ^java.io.File f))
+        (.delete dir)))))

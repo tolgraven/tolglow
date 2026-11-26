@@ -4,11 +4,14 @@
   level driving a cue parameter through the signal patch, with a transport
   stop part-way. Injected PCM only; no device is opened."
   (:require [clojure.test :refer [deftest is testing]]
+            [clojure.data.json :as json]
             [afterglow.control.model :as control]
             [tolglow.audio.stem-fixtures :as fixtures]
             [tolglow.connections :as connections]
             [tolglow.show :as show]
-            [tolglow.stems :as stems]))
+            [tolglow.stems :as stems]
+            [tolglow.studio :as studio])
+  (:import [java.io ByteArrayInputStream]))
 
 (def head {:id :head :position [0 0 0] :universe 1 :address 1 :channels {:dimmer 1 :red 2 :green 3 :blue 4}})
 
@@ -138,3 +141,21 @@
         (is (apply = held) (pr-str (distinct held)))
         (is (< 0.0 (first held)))
         (is (not= (first held) (reduce max after)))))))
+
+(deftest studio-cannot-start-a-file-replay
+  ;; Studio has no recording picker; a :file path over HTTP is refused before
+  ;; anything is opened, and the REPL keeps replay-file!.
+  (let [opened (atom 0)
+        runtime (show/create-runtime {:model (model) :workspace-options nil
+                                      :audio-options {:open-source! (fn [_] (swap! opened inc) (throw (ex-info "no" {})))}})]
+    (try
+      (let [response ((studio/handler runtime)
+                      {:request-method :post :uri "/api/audio/start" :headers {"host" "localhost"}
+                       :body (ByteArrayInputStream.
+                              (.getBytes (json/write-str {:file "/etc/hosts.wav" :sample-rate 48000 :channels 1
+                                                          :runtime-id (:id runtime) :expected-epoch 0}) "UTF-8"))})]
+        (is (<= 400 (:status response) 499) (pr-str response))
+        (is (re-find #"REPL" (str (:body response))))
+        (is (not (:running? (show/audio-action! runtime :status {}))))
+        (is (zero? @opened)))
+      (finally (show/stop! runtime)))))
