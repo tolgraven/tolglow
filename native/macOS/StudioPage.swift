@@ -52,11 +52,27 @@ final class StudioPage: NSObject, ObservableObject, WKScriptMessageHandler {
             tabCount = body["count"] as? Int ?? 0
             if let folderPath, let tabs = body["tabs"] as? String { FolderStore.tabs.save(tabs, for: folderPath) }
         case "layouts":
-            // Panel layouts (#668): the page posts its saved JSON on every save.
-            if let folderPath, let layouts = body["layouts"] as? String { FolderStore.layouts.save(layouts, for: folderPath) }
+            // Panel layouts (#668): the page posts its saved JSON on every save and
+            // counts the save as kept only once the app says it kept its copy.
+            let kept = folderPath.flatMap { folder in
+                (body["layouts"] as? String).map { FolderStore.layouts.save($0, for: folder) }
+            } ?? false
+            if let request = body["request"] as? Int,
+               let json = Self.layoutsReply(request: request, kept: kept) {
+                message.webView?.evaluateJavaScript(
+                    "window.dispatchEvent(new CustomEvent('tolglow-studio-window', {detail: \(json)}))")
+            }
         default:
             return
         }
+    }
+
+    /// The page's answer to a layouts message: whether the copy was kept (a copy
+    /// over the store's limit is refused). Nil when it cannot be encoded.
+    static func layoutsReply(request: Int, kept: Bool) -> String? {
+        let detail: [String: Any] = ["type": "layouts", "request": request, "kept": kept]
+        guard let data = try? JSONSerialization.data(withJSONObject: detail) else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
     /// A tab menu action (new, close, reopen, next or previous), or

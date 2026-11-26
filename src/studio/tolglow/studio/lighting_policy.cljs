@@ -2,6 +2,7 @@
   "Live controls for independent output budgets, optical response and perceived activity."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
+            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.events :as events]
             [tolglow.studio.lighting-response :as response-editor]
             [tolglow.studio.lighting-scenes :as scenes]
@@ -127,8 +128,8 @@
 
 (defn- toggle [section label enabled? disabled?]
   [:label.policy-toggle
-   [:input {:type "checkbox" :disabled disabled? :checked (boolean enabled?)
-            :on-change #(rf/dispatch [::send section {:enabled? (.. % -target -checked)}])}]
+   [checkbox/input {:disabled disabled? :checked (boolean enabled?)
+                    :on-change #(rf/dispatch-sync [::send section {:enabled? (.. % -target -checked)}])}]
    label])
 
 (defn- percent-input [label value on-change]

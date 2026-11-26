@@ -4,6 +4,7 @@
             [reagent.core :as r]
             [tolglow.authoring.output-patch :as patch]
             [tolglow.studio.block-inspector :as block-inspector]
+            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.fixture-picker :as picker]
             [tolglow.studio.events :as events]
             [tolglow.studio.keyframe-editor :as keyframes]
@@ -150,8 +151,8 @@
           (for [[i label] (map-indexed vector (if (= :color (:attribute row)) ["R" "G" "B"] ["X" "Y" "Z"]))]
             ^{:key i} [choice (str label " source") (options 1) (get xyz i) #(swap! draft assoc-in [:xyz i] %)]))
         [number-field "Scale" draft :scale] [number-field "Offset" draft :offset]
-        [:label.cue-patch-clamp [:input {:type "checkbox" :checked clamp?
-                                          :on-change #(swap! draft assoc :clamp? (.. % -target -checked))}] "Clamp"]
+        [:label.cue-patch-clamp [checkbox/input {:checked clamp?
+                                                  :on-change #(swap! draft assoc :clamp? (.. % -target -checked))}] "Clamp"]
         (when clamp? [:<> [number-field "Minimum" draft :low] [number-field "Maximum" draft :high]])
         [:button.button {:type "button" :disabled (or busy? stale? (some nil? selected))
                          :on-click (fn []

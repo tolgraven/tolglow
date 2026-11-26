@@ -2,6 +2,7 @@
   "Streaming agent chat and runtime-only provider settings through Ring APIs."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
+            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.events :as events]
             [tolglow.studio.pretty :as pretty]))
 
@@ -228,8 +229,8 @@
         [:summary "Custom endpoint"] [provider-endpoint form false]])
      (when saved-key?
        [:label.checkbox-label.provider-clear
-        [:input {:type "checkbox" :checked (boolean (:clear-credential? form))
-                 :on-change #(input! [:provider-form :clear-credential?] (.. % -target -checked))}]
+        [checkbox/input {:checked (boolean (:clear-credential? form))
+                         :on-change #(input! [:provider-form :clear-credential?] (.. % -target -checked))}]
         "Clear saved key"])
      (when-let [error (get-in db [:chat :provider-error])]
        [:p.chat-error {:role "alert"} error])

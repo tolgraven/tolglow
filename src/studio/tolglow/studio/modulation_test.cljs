@@ -97,3 +97,16 @@
     (is (= [0.2 0.8] (:domain (first (filter #(= "level" (:id %)) params)))))
     (is (modulation/held? held "4:1" :level))
     (is (not (modulation/held? (assoc-in held [:transport :beat] 12) "4:1" :level)))))
+
+(deftest a-range-checkbox-sets-its-bounds-and-state-in-one-event
+  ;; One synchronous event, so the controlled checkbox keeps its new state (tolglow.studio.checkbox).
+  (let [on (:db (transition base [:modulation/range-enabled :level "0.2" "0.8" true]))
+        off (:db (transition on [:modulation/range-enabled :level "0.2" "0.8" false]))]
+    (is (= {:low "0.2" :high "0.8" :enabled? true} (get-in on [:ui :modulation :ranges "level"])))
+    (is (= {:low "0.2" :high "0.8" :enabled? false} (get-in off [:ui :modulation :ranges "level"])))
+    (is (= (get-in (:db (transition (:db (transition (:db (transition base [:modulation/range :level :low "0.2"]))
+                                                       [:modulation/range :level :high "0.8"]))
+                                    [:modulation/range :level :enabled? true]))
+                   [:ui :modulation :ranges])
+           (get-in on [:ui :modulation :ranges]))
+        "the same as the three separate edits it replaces")))

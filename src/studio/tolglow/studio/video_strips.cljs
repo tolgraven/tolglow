@@ -7,6 +7,7 @@
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
             [reagent.core :as r]
+            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.events :as events]
             [tolglow.studio.projection :as projection]
             [tolglow.video.mapping :as mapping]))
@@ -156,7 +157,10 @@
     [:div.video-sources
      [:ul.video-source-list
       (for [[id _] (sort-by (comp str key) (:sources settings))]
-        ^{:key (str id)} [source-row (merge {:id id} (get statuses id)) (= id (:source ui))])]
+        ^{:key (str id)} [source-row (merge {:id id} (get statuses id)) (= id (:source ui))])
+      ;; A running shader cue's feed (#673) can carry strips too.
+      (for [{:keys [id] :as row} (:sources status) :when (= :shader (:kind row))]
+        ^{:key (str id)} [source-row row (= id (:source ui))])]
      [:div.video-source-actions
       [:button.text-button {:type "button"
                             :on-click #(edit! {:op :put-source :id :test-grid :source {:kind :test-pattern :width 640 :height 360}})}
@@ -264,7 +268,8 @@
             [strip-overlay strip (get colors (:id strip) []) width height (= selected (:id strip)) (drag! (:id strip))])]]))))
 
 (defn- strip-editor [mapping strip aspect]
-  (let [put! #(rf/dispatch [::edit-strip (:id mapping) (:id strip) % aspect])]
+  ;; Synchronous: the strip draft changes before a controlled input is restored.
+  (let [put! #(rf/dispatch-sync [::edit-strip (:id mapping) (:id strip) % aspect])]
     [:div.video-strip-editor
      [:h3 (str "Strip " (wire-id (:id strip)))
       [:span.small.muted (str " · " (if (:layout strip) (str "layout " (wire-id (:layout strip)))
@@ -274,7 +279,7 @@
       [:button.text-button {:type "button" :on-click #(put! [:rotate 15])} "↻ 15°"]
       [:button.text-button {:type "button" :on-click #(put! [:length 0.9])} "Shorter"]
       [:button.text-button {:type "button" :on-click #(put! [:length (/ 1 0.9)])} "Longer"]
-      [:label.video-check [:input {:type "checkbox" :checked (boolean (:reverse? strip))
+      [:label.video-check [checkbox/input {:checked (boolean (:reverse? strip))
                        :on-change #(put! [:reverse (.. % -target -checked)])}] " First pixel at the far end"]]
      [:div.form-row
       [:label "Sampling height"

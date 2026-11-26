@@ -34,6 +34,8 @@
 
 (deftest settings-validate-and-edit-through-one-operation-shape
   (is (= [] (mapping/settings-errors {})))
+  (is (= [[:sources :shader/cam]] (map :path (mapping/settings-errors {:sources {:shader/cam {:kind :test-pattern}}})))
+      "shader cue feeds own the shader namespace (#673)")
   (is (= [] (mapping/settings-errors {:sources {:s {:kind :syphon :app "A" :name "B" :max-width 1920 :max-height 1080}}})))
   (is (= [[:sources :s :max-width] [:sources :s :max-height]]
          (map :path (mapping/settings-errors {:sources {:s {:kind :syphon :app "A" :name "B" :max-width 100000 :max-height "1"}}})))

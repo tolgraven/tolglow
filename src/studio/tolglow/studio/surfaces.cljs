@@ -4,6 +4,7 @@
   the committed :control-surfaces projection."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
+            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.projection :as projection]))
 
 (def ^:private ui-path [:ui :surfaces])
@@ -206,8 +207,8 @@
        [:header.surface-panel-heading
         [:h3 "Surfaces"]
         [:label.checkbox-label
-         [:input {:type "checkbox" :checked (boolean (get-in surfaces [:settings :follow-selection?]))
-                  :on-change #(rf/dispatch [:surfaces/follow-toggle (.. % -target -checked)])}]
+         [checkbox/input {:checked (boolean (get-in surfaces [:settings :follow-selection?]))
+                          :on-change #(rf/dispatch [:surfaces/follow-toggle (.. % -target -checked)])}]
          "Follow selection"]]
        (when error [:p.surface-panel-error {:role "alert"} error])
        (for [logical (:logical surfaces)]

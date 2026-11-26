@@ -4,6 +4,7 @@
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
             [reagent.core :as r]
+            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.events :as events]
             [tolglow.studio.audio-returns :as audio-returns]
             [tolglow.studio.modulation :as modulation]))
@@ -247,10 +248,10 @@
       [input-field index route :input-low "Source min"] [input-field index route :input-high "Source max"]
       [input-field index route :low "Output min"] [input-field index route :high "Output max"]
       [select-field index route :curve "Curve" curves]
-      [:label.checkbox-label [:input {:type "checkbox" :checked (:invert? route) :on-change #(edit! index :invert? (.. % -target -checked))}] "Invert"]]
+      [:label.checkbox-label [checkbox/input {:checked (:invert? route) :on-change #(edit! index :invert? (.. % -target -checked))}] "Invert"]]
      (when (= "power" (:curve route)) [input-field index route :exponent "Power exponent"])
      [:details.patch-envelope [:summary "Envelope and response"]
-      [:label.checkbox-label [:input {:type "checkbox" :checked (:envelope? route) :on-change #(edit! index :envelope? (.. % -target -checked))}] "Shape each gate with ADSR"]
+      [:label.checkbox-label [checkbox/input {:checked (:envelope? route) :on-change #(edit! index :envelope? (.. % -target -checked))}] "Shape each gate with ADSR"]
       (when (:envelope? route)
         [:div.patch-controls [input-field index route :attack "Attack"] [select-field index route :attack-unit "Attack units" units]
          [input-field index route :decay "Decay"] [select-field index route :decay-unit "Decay units" units]

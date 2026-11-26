@@ -1,6 +1,6 @@
 # Video on LED strips (2D mapping)
 
-Run Resolume or another Syphon sender on the same Mac, pick its feed, and lay pixel strips over the picture. Each strip pixel takes the colour under its share of the strip. The result is an ordinary effect output, so a video cue sits in the cue grid next to every other cue. [Issue #672](https://github.com/tolgraven/tolglow/issues/672)
+Run Resolume or another Syphon sender on the same Mac, pick its feed, and lay pixel strips over the picture. Each strip pixel takes the colour under its share of the strip. The result is an ordinary effect output, so a video cue sits in the cue grid next to every other cue. [Issue #672](https://github.com/tolgraven/tolglow/issues/672) · To project the same sources onto planes, wavy sheets or spheres in the room, see [video on 3D surfaces](video-surfaces.md).
 
 ## Sources
 
@@ -110,7 +110,7 @@ TOLGLOW_VIDEO_BRIDGE=$PWD/target/video-bridge/TolglowVideoBridge lein run -m tol
 
 The packaged Studio app does not bundle the helper yet. Until it does, set `TOLGLOW_VIDEO_BRIDGE` before starting the show. The app's `LocalShow.swift` passes its environment to the show process.
 
-**Browser clients.** Studio in any browser sees the latched frame as JPEG stills and the sampled colours. It never receives the Syphon texture. A full-rate preview in the Mac window, and GPU readback shared with #673 shader feeds, need the paired Afterglow fork's GPU transport.
+**Browser clients.** Studio in any browser sees the latched frame as JPEG stills and the sampled colours. It never receives the Syphon texture. A full-rate preview in the Mac window needs the paired Afterglow fork's GPU transport. Shader cues publish their frames into the same latch under feed ids, so strips map onto them like any source; see [Shader cues](shader-cues.md).
 
 ## Cost
 

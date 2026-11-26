@@ -116,7 +116,8 @@
     (aset this "rig" rig)
     (aset this "jsRig" js-rig)
     (doseq [[k js-key cache] [[:sculpt-guide "sculpt-guide" "sculptGuide"] [:volume-guides "volume-guides" "volumeGuides"]
-                              [:glass-meshes "glass-meshes" "glassMeshes"] [:glass-volumes "glass-volumes" "glassVolumes"]]]
+                              [:glass-meshes "glass-meshes" "glassMeshes"] [:glass-volumes "glass-volumes" "glassVolumes"]
+                              [:video-surfaces "video-surfaces" "videoSurfaces"]]]
       (let [guide (get show k)]
         (when-not (identical? guide (aget this js-key))
           (aset this js-key guide)

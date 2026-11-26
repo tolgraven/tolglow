@@ -65,7 +65,8 @@
     tolglow.preview.airplay-test
     tolglow.personalities-test tolglow.personalities.icon-test tolglow.personalities-host-test
     tolglow.showcase-test tolglow.venues.gig-2023-test
-    tolglow.video-strips-test tolglow.studio.video-strips-host-test])
+    tolglow.video-strips-test tolglow.studio.video-strips-host-test
+    tolglow.video-surfaces-test tolglow.studio.video-surfaces-host-test tolglow.video-shader-test])
 
 (def suites
   {"pure" pure-tests

@@ -38,6 +38,36 @@
   (let [^bytes px (:pixels frame) i (* 4 (+ x (* y (long (:width frame)))))]
     [(bit-and 0xff (aget px (+ i 2))) (bit-and 0xff (aget px (+ i 1))) (bit-and 0xff (aget px i))]))
 
+(defn- gain-table
+  "sRGB byte -> sRGB byte after scaling its linear light by gain."
+  ^bytes [gain]
+  (let [table (byte-array 256)]
+    (dotimes [i 256]
+      (let [c (/ i 255.0)
+            linear (* (double gain) (if (<= c 0.04045) (/ c 12.92) (Math/pow (/ (+ c 0.055) 1.055) 2.4)))
+            e (if (<= linear 0.0031308) (* 12.92 linear) (- (* 1.055 (Math/pow linear (/ 1 2.4))) 0.055))]
+        (aset table i (unchecked-byte (Math/round (* 255.0 (max 0.0 (min 1.0 e))))))))
+    table))
+
+(defn scaled-pixels
+  "BGRA bytes of frame with its light scaled by gain in [0,1], in linear
+  light like a dimmer. Gain 1 returns the frame's own (immutable) array;
+  any other gain returns a new array. Alpha is kept."
+  ^bytes [frame gain]
+  (let [^bytes px (:pixels frame) gain (max 0.0 (min 1.0 (double gain)))]
+    (if (>= gain 1.0)
+      px
+      (let [^bytes table (gain-table gain)
+            out (byte-array (alength px))]
+        (loop [i 0]
+          (when (< i (alength px))
+            (aset out i (aget table (bit-and 0xff (aget px i))))
+            (aset out (+ i 1) (aget table (bit-and 0xff (aget px (+ i 1)))))
+            (aset out (+ i 2) (aget table (bit-and 0xff (aget px (+ i 2)))))
+            (aset out (+ i 3) (aget px (+ i 3)))
+            (recur (+ i 4))))
+        out))))
+
 (defprotocol VideoSource
   (latest [source] "The newest complete frame, or nil before the first one.")
   (describe [source] "Portable status: :kind, :label, :connected? and :error.")

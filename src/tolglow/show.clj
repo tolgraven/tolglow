@@ -138,7 +138,10 @@
             [tolglow.video.mapping :as video-mapping]
             [tolglow.video.preview :as video-preview]
             [tolglow.video.sampler :as video-sampler]
-            [tolglow.video.source :as video-source])
+            [tolglow.video.shader :as video-shader]
+            [tolglow.video.shader-producer :as shader-producer]
+            [tolglow.video.source :as video-source]
+            [tolglow.video.surface-cues :as video-surface-cues])
   (:import [java.util Arrays UUID]
            [java.util.concurrent LinkedBlockingQueue]))
 
@@ -237,8 +240,12 @@
             :autopilot (get-in model [:variables :lighting/autopilot] {:enabled? false})
             :audio/energy (get-in model [:variables :audio/energy])
             :lighting-scenes (lighting-scenes/snapshot model (scene-eligible-ids runtime fixtures))
-            :video (when (or (seq (get-in model [:settings :video :sources])) (seq (get-in model [:settings :video :mappings])))
-                     (video-preview/project (:video runtime) (:video-latch snapshot) fixtures (:video-preview-plans runtime)))
+            :video (let [shaders (when (seq @(get-in runtime [:shader-video :entries]))
+                                   (shader-producer/status (:shader-video runtime)))]
+                     (when (or shaders (seq (get-in model [:settings :video :sources])) (seq (get-in model [:settings :video :mappings]))
+                               (seq (get-in model [:settings :video :surfaces])))
+                       (video-preview/project (:video runtime) (:video-latch snapshot) fixtures (:video-preview-plans runtime) model
+                                              (:video-surface-views runtime) shaders)))
             :personalities (:projection (personality-views runtime model))
             :receiver-surfaces (:receivers optics)
             :surface-aim (get-in model [:variables :surface-aim] {})
@@ -454,6 +461,11 @@
     {:enabled? true :buffer (phrase-capture/new-buffer options) :layout {}
      :cost {:samples 0 :total-ns 0 :max-ns 0 :last-ns 0} :captures 0 :last nil}))
 
+(def default-video-waiters
+  "Projector page requests (waiting or being served a frame) a show allows at
+  once unless :max-video-waiters says otherwise; more get 503."
+  8)
+
 (defn- new-live-runs
   "Owner state for the run record (#683). options is false to disable, or
   live-runs/new-record options; each runtime gets its own record ID so its
@@ -615,7 +627,14 @@
       :compile (cached-compile compiler-context)
       ;; Video sources open on their own thread, outside the lighting frame (#672).
       :video (video-hub/create (:video-options options {}))
-      :video-preview-plans (video-sampler/plan-cache 16)}]
+      ;; Shader cues render on their own cadence, outside the lighting frame (#673).
+      :shader-video (shader-producer/create (:shader-options options {}))
+      ;; Notified after every committed frame; projector pages wait on it.
+      :video-frame-signal (Object.)
+      :video-waiters (java.util.concurrent.atomic.AtomicInteger. 0)
+      :video-waiter-cap (:max-video-waiters options default-video-waiters)
+      :video-preview-plans (video-sampler/plan-cache 16)
+      :video-surface-views (video-preview/surface-cache)}]
        (reset! runtime-ref runtime)
        runtime)))
 
@@ -1180,14 +1199,16 @@
     :spatial-cue (spatial-cues/spawn model payload time-ms command)
     :autopilot-authored (autopilot/accept-authored model payload time-ms command)
     :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
-    :video-mapping (do
+    :video-mapping (if (= :surface-cue (:op payload))
+                     (video-surface-cues/spawn model payload time-ms command)
+                    (do
                      ;; Refuse a file source outside the show directory here,
                      ;; with its code, rather than saving it and listing it unavailable.
                      (when (and (= :put-source (:op payload)) (#{:image :feed} (get-in payload [:source :kind]))
                                 (contains? (:source payload) :file))
                        (video-source/resolve-file (get-in payload [:source :file]) (:roots (:video runtime))))
                      {:model (update-in model [:settings :video] video-mapping/apply-operation payload)
-                      :ack {:status :accepted}})
+                      :ack {:status :accepted}}))
     :personality (personalities/apply-operation model payload)
     :event-subscriber (let [inline-registration (::inline-registration payload)]
                         (when (and inline-registration (nil? (get-in runtime [:event-callbacks :inline-handlers])))
@@ -1245,6 +1266,15 @@
           errors (registry/validate-definition kind definition)]
       (when (seq errors) (throw (ex-info "Invalid definition" {:errors errors})))
       (when (= :effects kind) (compiler/compile-effect (prefabs/capture (prefabs/catalog model) definition)))
+      ;; A shader cue that alone exceeds the show's pixel budget could never render (#673).
+      (when (and (= :effects kind) runtime (video-shader/shader? definition))
+        (let [[w h] (get-in definition [:shader :size])
+              rate (* w h (get-in definition [:shader :fps] video-shader/default-fps))
+              budget (shader-producer/pixel-budget (:shader-video runtime))]
+          (when (> rate budget)
+            (let [message (str "This shader renders " rate " pixels per second; the show's budget is " budget)]
+              (throw (ex-info message {:code :shader/over-budget :rate rate :budget budget
+                                       :errors [{:path [:shader :size] :message message}]}))))))
       (update (command model {:op :registry/publish :kind kind :definition definition} time-ms)
               :ack merge {:kind kind :id (:id definition) :version (:version definition)}))
     :material-edit
@@ -2362,7 +2392,8 @@
                           :responses (:responses model)
                           :adaptive-intervals (get-in sampling [:inputs :keyframe-intervals])})
         ;; Video frames latch once per lighting frame and hold while stopped (#672).
-        video-latch (video-hub/latch (:video runtime) model (:video-latch before))
+        video-latch (video-hub/latch (:video runtime) model (:video-latch before)
+                                     (shader-producer/frames (:shader-video runtime)))
         frame-input (merge {:time-ms time-ms :epoch (:epoch model) :show-id (:show-id model)
                             video-output/input-key video-latch
                             :keyframes (:keyframes before) :keyframe-params input-overrides
@@ -2503,6 +2534,8 @@
                   updated (advance-light-scenes runtime (lighting/publish with-fog frame) patch frame time-ms bypass?)]
               (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
      :output frame :variable-observation variables :video-latch video-latch
+     ;; The light gain the fixtures rendered with; projector outputs follow it (#673).
+     :projector-gain (if (:blackout? render-options) 0.0 (double (:master render-options)))
      ::waveforms/response-frame response-frame
      ::show-events/intent-emissions (:intent-emissions result)
      :preview-hdr (when (:hdr? frame-input) (or hdr-opts {}))
@@ -2968,8 +3001,13 @@
            (when (and (realized? receipt) (= :accepted (:status @receipt)))
              (reopen-restoring-device! runtime device)))
          (rdm/reconcile! (:rdm runtime))
-         (when @(:running runtime)
-           (video-hub/request-reconcile! (:video runtime) (get-in @(:state runtime) [:model :settings :video :sources]))))))))
+         (let [model (:model @(:state runtime))]
+           (when @(:running runtime)
+             (video-hub/request-reconcile! (:video runtime) (get-in model [:settings :video :sources])))
+           ;; Hand the committed shader uniforms to their producer; it never
+           ;; renders here, and a stopped producer ignores them (#673).
+           (shader-producer/sync! (:shader-video runtime) (video-shader/requests model))
+           (let [signal (:video-frame-signal runtime)] (locking signal (.notifyAll signal)))))))))
 
 (defn- prepare-rig-edit [model proposed]
   (let [basis (:rig model)
@@ -3196,6 +3234,7 @@
                                  (.shutdownNow ^java.util.concurrent.ExecutorService @(:audition-worker runtime)))
                               #(duplex/stop! (:audio-returns runtime))
                               #(video-hub/stop! (:video runtime))
+                              #(shader-producer/stop! (:shader-video runtime))
                               #(development/close! (:development runtime))
                               #(connections/close! (:connections runtime))
                               (fn [] (locking (:devices runtime)
@@ -4077,18 +4116,118 @@
         (sensors/stop-osc! manager))
       (throw (ex-info "Unknown sensor operation" {:operation operation})))))
 
+(defn projector-gain
+  "Light gain a projector output follows: what the fixtures rendered with in
+  the last committed frame (0 in blackout, else the effective master, which
+  includes master ramps and lighting-capacity limits). Before the first frame,
+  the committed blackout and master."
+  [state]
+  (or (:projector-gain state)
+      (let [model (:model state)]
+        (if (pause-look/blackout? model) 0.0 (double (:master model 1.0))))))
+
+(defn- known-video-source? [model id]
+  (or (contains? (get-in model [:settings :video :sources]) id)
+      (some #(and (video-shader/shader? %) (= id (video-shader/feed-id %)))
+            (vals (get-in model [:registry :effects])))))
+
+(defn- next-video-frame!
+  "Wait up to :wait-ms for a latched frame of :source other than sequence
+  :after (or for a different projector gain than :gain-after). Returns
+  {:status :frame :frame :gain :pixels}, :none after the wait, :unknown for a
+  source the show does not have, or :busy past the show's :max-video-waiters
+  (default `default-video-waiters`). Waits on
+  the frame signal, never polls. :follow-master? false gives the raw feed."
+  [runtime {:keys [source after gain-after wait-ms follow-master?] :or {after -1 wait-ms 1000 follow-master? true}}]
+  (let [^java.util.concurrent.atomic.AtomicInteger waiters (:video-waiters runtime)
+        signal (:video-frame-signal runtime)
+        current (fn []
+                  (let [{:keys [model video-latch] :as state} @(:state runtime)]
+                    [model (get-in video-latch [:frames source])
+                     (if follow-master? (projector-gain state) 1.0)]))
+        fresh? (fn [f gain] (and f (or (not= (long (:sequence f 0)) (long after))
+                                       (and gain-after (not= (double gain) (double gain-after))))))
+        deadline (+ (System/nanoTime) (* 1000000 (long (max 0 (min 2000 wait-ms)))))
+        [model f gain] (current)]
+    (cond
+      (not (or f (known-video-source? model source))) {:status :unknown}
+      ;; Serving a frame counts as well as waiting for one: the cap bounds
+      ;; both Jetty threads and frame bandwidth.
+      (> (.incrementAndGet waiters) (long (:video-waiter-cap runtime default-video-waiters)))
+      (do (.decrementAndGet waiters) {:status :busy})
+      :else
+      (try
+        (if (fresh? f gain)
+          {:status :frame :frame f :gain gain :pixels (video-source/scaled-pixels f gain)}
+          (loop []
+            (let [remaining (quot (- deadline (System/nanoTime)) 1000000)]
+              (if (pos? remaining)
+                (do (locking signal (.wait signal (long remaining)))
+                    (let [[_ f gain] (current)]
+                      (if (fresh? f gain)
+                        {:status :frame :frame f :gain gain :pixels (video-source/scaled-pixels f gain)}
+                        (recur))))
+                {:status :none}))))
+        (finally (.decrementAndGet waiters))))))
+
 (defn video-action!
-  "Video sources and strip mappings (#672) for Ring and the REPL.
-  :status       source status and sampled strip colours from the latched frame
+  "Video sources, strip mappings (#672) and 3D surfaces (#674) for Ring and the REPL.
+  :status       source status, sampled strip colours from the latched frame and
+                each surface with the heads in contact
   :edit         apply one `tolglow.video.mapping/apply-operation` edit through
-                the show queue; sources reconcile after it commits
+                the show queue; sources reconcile after it commits.
+                {:op :surface-cue :surface id} spawns and launches a cue
+                projecting that surface (`tolglow.video.surface-cues/spawn`)
   :syphon       list Syphon servers through the native helper
-  :frame-jpeg   bytes of a latched frame, {:source id :max-width px}"
+  :frame-jpeg   bytes of a latched frame, {:source id :max-width px}
+  :frame        the latched frame record of {:source id}, or nil
+  :next-frame   what a projector page draws next: wait for a newer latched
+                frame of {:source id :after seq}, scaled by blackout and grand
+                master unless {:follow-master? false}; see next-video-frame!
+  :shaders      shader producer status (#673): per instance cadence, frames,
+                drops, timings and compile errors
+  :audition     compile {:effect-id id :glsl text} (or a whole {:shader …}
+                with {:params …}) on the GPU worker without publishing;
+                returns {:compiled? …} with the driver log. Blocks the
+                caller, never the lighting frame
+  :save-glsl    publish {:effect-id :glsl :expected-version} as the effect's
+                next version through the definition command; returns its
+                receipt. Running instances reload it, and a version that
+                does not compile keeps rendering the last working one"
   [runtime operation payload]
   (case operation
     :status (let [state @(:state runtime)]
               (video-preview/project (:video runtime) (:video-latch state) (get-in state [:model :rig :fixtures])
-                                     (:video-preview-plans runtime)))
+                                     (:video-preview-plans runtime) (:model state) (:video-surface-views runtime)
+                                     (shader-producer/status (:shader-video runtime))))
+    :frame (get-in @(:state runtime) [:video-latch :frames (:source payload)])
+    :next-frame (next-video-frame! runtime payload)
+    :shaders (shader-producer/status (:shader-video runtime))
+    :audition (let [{:keys [effect-id shader]} payload
+                    ;; Studio's projection carries ids as text.
+                    effect-id (cond-> effect-id (string? effect-id) keyword)
+                    effect (when effect-id (get-in @(:state runtime) [:model :registry :effects effect-id]))
+                    shader (or shader (:shader effect))
+                    ;; The cue's own parameters type the uniform expressions:
+                    ;; the registered effect's when it names one.
+                    errors (compiler/definition-errors :effects {:id :shader/audition :version 1
+                                                                 :params (if effect (:params effect) (:params payload {}))
+                                                                 :shader (cond-> shader (:glsl payload) (assoc :glsl (:glsl payload)))})]
+                (if (seq errors)
+                  {:compiled? false :message (:message (first errors)) :errors errors}
+                  (shader-producer/audition! (:shader-video runtime)
+                                             (video-shader/afterglow-shader (cond-> shader (:glsl payload) (assoc :glsl (:glsl payload)))))))
+    :save-glsl (let [{:keys [effect-id glsl expected-version]} payload
+                     effect-id (cond-> effect-id (string? effect-id) keyword)
+                     effect (get-in @(:state runtime) [:model :registry :effects effect-id])]
+                 (if-not (video-shader/shader? effect)
+                   (doto (promise) (deliver {:status :rejected :message "No shader effect with that id"}))
+                   ;; The next version through the ordinary definition command,
+                   ;; guarded by the caller's session like every definition edit.
+                   (submit! runtime :definition (cond-> (merge {:kind :effects
+                                                                :definition (-> effect (assoc-in [:shader :glsl] glsl) (update :version inc))}
+                                                               (select-keys payload [:runtime-id :expected-epoch]))
+                                                  expected-version (assoc :expected-version expected-version)))))
     :edit (let [receipt (submit! runtime :video-mapping (dissoc payload :runtime-id :expected-epoch))]
             receipt)
     :syphon (video-hub/list-syphon (:video runtime))

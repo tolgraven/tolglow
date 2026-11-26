@@ -99,3 +99,31 @@
     (is (= rendered (builder/update-stage rendered 2 assoc :amount 1)))
     (is (= [{:block :optics/gel}] (builder/remove-stage rendered 0)))
     (is (= rendered (builder/remove-stage rendered 5)))))
+
+(deftest stage-edits-find-their-stage-by-id
+  ;; Callbacks are made at render. Edits made before the next render must each reach
+  ;; the stage they were made for, not whichever stage now sits at its rendered index.
+  (let [rendered [{:block :optics/through-water} {:block :optics/gel} {:block :scale}]
+        [water gel scale] (map-indexed builder/stage-id rendered)
+        remove-water #(builder/edit-stage % water builder/remove-stage)
+        amount #(builder/edit-stage % gel (fn [stages i] (builder/update-stage stages i assoc :amount 0.4)))
+        later #(builder/edit-stage % water (fn [stages i] (builder/move-stage stages i (inc i))))
+        coordinates #(builder/edit-stage % water (fn [stages i] (builder/update-stage stages i assoc :coordinates :surface-uv)))]
+    (testing "two taps on one Remove inside a frame remove one stage"
+      (is (= [{:block :optics/gel} {:block :scale}] (-> rendered remove-water remove-water))))
+    (testing "a blur, the tap that caused it and a later edit compose"
+      (is (= [{:block :optics/gel :amount 0.4} {:block :optics/through-water :coordinates :surface-uv} {:block :scale}]
+             (-> rendered amount later coordinates))))
+    (testing "an edit for a removed stage changes nothing"
+      (let [removed (remove-water rendered)]
+        (is (= removed (coordinates removed)))
+        (is (= [{:block :optics/gel}] (builder/edit-stage removed scale builder/remove-stage)))))
+    (testing "IDs survive edits and never reach the EDN or equality"
+      (let [edited (-> rendered amount later)]
+        (is (= [gel water scale] (map-indexed builder/stage-id edited)))
+        (is (= "[{:block :optics/gel, :amount 0.4} {:block :optics/through-water} {:block :scale}]" (pr-str edited)))
+        (is (not (str/includes? (pretty/edn {:stages edited}) "position")))))
+    (testing "an added stage has an ID of its own"
+      (let [a (builder/new-stage :scale) b (builder/new-stage :scale)]
+        (is (= a b {:block :scale}))
+        (is (not= (builder/stage-id 0 a) (builder/stage-id 0 b)))))))

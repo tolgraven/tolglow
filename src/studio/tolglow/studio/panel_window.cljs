@@ -84,18 +84,15 @@
               (swap! owners assoc-in [id :frame] (.requestAnimationFrame popup tick))))]
     (swap! owners assoc-in [id :frame] (.requestAnimationFrame popup tick))))
 
-(defn- room-only-host?
-  "The packaged Mac app answers every blank `window.open` with its single
-  Room window (native/macOS/RoomWindows.swift): opening a panel there would
-  close the Room's or another panel's window, title it as the Room and report
-  its closing as the Room's. Panels stay docked in the app until it hosts
-  them."
-  []
-  (some? (some-> js/globalThis (aget "webkit") (aget "messageHandlers") (aget "tolglowRoomWindow"))))
+(defn report-size!
+  "Tell the layout how large panel `id`'s window is, so its content follows the
+  window (:panel-layout/window-size)."
+  [id ^js popup]
+  (rf/dispatch [:panel-layout/window-size id (.-innerWidth popup) (.-innerHeight popup)]))
 
 (defn- open! [{:keys [id generation title width height]}]
   (let [fail! #(rf/dispatch [:panel-window/failed id generation %])
-        ^js popup (when (and (fn? (aget js/window "open")) (not (room-only-host?)))
+        ^js popup (when (fn? (aget js/window "open"))
                     (try (.open js/window "" (str "tolglow-panel-" (name id) "-" token "-" generation)
                                 (str "popup,width=" width ",height=" height))
                          (catch :default _ nil)))]
@@ -112,6 +109,17 @@
           (swap! owners assoc id {:generation generation :window popup :root root :abort abort
                                   :timer (js/setInterval #(when (.-closed popup) (closed!)) 500)})
           (.addEventListener popup "pagehide" closed! options)
+          ;; The packaged Mac app hosts this window natively and reports its closing.
+          (room-window/identify-window! popup "panel" (name id))
+          (.addEventListener js/window "tolglow-room-window"
+                             (fn [^js event]
+                               (let [^js detail (.-detail event)]
+                                 (when (and detail (= "closed" (.-status detail)) (= "panel" (.-role detail))
+                                            (= (name id) (.-id detail)))
+                                   (closed!))))
+                             options)
+          (report-size! id popup)
+          (.addEventListener popup "resize" #(report-size! id popup) options)
           ;; A panel window never outlives the Studio page that owns its state.
           (.addEventListener js/window "pagehide" #(.close popup) options)
           (keep-rendering! id generation popup)
@@ -186,14 +194,18 @@
      [:p.small.muted.panel-window-note
       (str "Changes here and in the " title " window are the same show. Close that window or press Redock to bring it back.")]]))
 
-(defn- portal [db id content]
+(defn- portal [db id content tier]
   (when-let [root (get-in @owners [id :root])]
     (when (#{:popping :popped} (:phase (state db id)))
-      (react-dom/createPortal (r/as-element content) root))))
+      ;; data-panel and data-tier select the same tier rules as a layout tile.
+      (react-dom/createPortal
+       (r/as-element [:div.panel-window-content {:data-panel (name id) :data-tier (name (or tier :full))} content])
+       root))))
 
 (defn region
-  "A panel's content, docked in its tile or portalled into its own window."
-  [db id title content]
+  "A panel's content, docked in its tile or portalled into its own window, where
+  it shows at `tier`, the window's own."
+  [db id title content & [tier]]
   (if (detached? db id)
-    [:<> [placeholder db id title] [portal db id content]]
+    [:<> [placeholder db id title] [portal db id content tier]]
     content))

@@ -1,6 +1,7 @@
 (ns tolglow.studio.fog-control
   (:require [re-frame.core :as rf]
-            [reagent.core :as r]))
+            [reagent.core :as r]
+            [tolglow.studio.checkbox :as checkbox]))
 
 (rf/reg-sub :fog-control/settings (fn [db _] (get-in db [:show :settings :fog-control])))
 (rf/reg-sub :fog-control/live (fn [db _] (get-in db [:show :output :fog-control])))
@@ -56,10 +57,10 @@
          (for [{:keys [id name]} fixtures
                :let [selected? (selected? fog-fixture-ids id) mode (get-in pumps [id :mode])]]
            ^{:key (str id)}
-           [:label [:input {:type "checkbox" :disabled pending? :checked (boolean selected?)
-                            :on-change #(change! :fog-fixture-ids
-                                          (select-pump fog-fixture-ids id))}]
+           [:label [checkbox/input {:disabled pending? :checked (boolean selected?)
+                                    :on-change #(change! :fog-fixture-ids
+                                                  (select-pump fog-fixture-ids id))}]
             (str (or name id) (when (and selected? mode) (str " · " (cljs.core/name mode))))])])
-      [:label [:input {:type "checkbox" :checked (boolean enabled?)
-                       :disabled (or pending? (and (not enabled?) (empty? fog-fixture-ids)))
-                       :on-change #(change! :enabled? (.. % -target -checked))}] "Arm automatic fog control"]]]))
+      [:label [checkbox/input {:checked (boolean enabled?)
+                               :disabled (or pending? (and (not enabled?) (empty? fog-fixture-ids)))
+                               :on-change #(change! :enabled? (.. % -target -checked))}] "Arm automatic fog control"]]]))
