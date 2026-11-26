@@ -3,6 +3,7 @@
   Afterglow numeric IR. Compilation and evaluation never start output."
   (:require [afterglow.render.ir :as ir]
             [tolglow.compiler.blocks :as blocks]
+            [tolglow.compiler.capability :as capability]
             [tolglow.effects.reactive :as reactive]
             [afterglow.runtime.keyframes :as keyframes]
             [afterglow.runtime.keyframes.values :as keyframe-values]
@@ -184,7 +185,7 @@
   attribute->expression map or ordered output descriptors. Numeric expressions
   use afterglow.render.ir; {:op :tween :spec ...} is an output-level time tween.
   Definition/output :targets select stable fixture IDs, intersected when both
-  are present. Optional :envelope scales :attributes (default [:dimmer]).
+  are present. Each output skips patched heads that lack its attribute (#688). Optional :envelope scales :attributes (default [:dimmer]).
   A captured rig lets targeted scalar effects reuse their selection while the
   show presents that same immutable fixture vector.
   Scalar outputs and linear RGB components are normalized to [0,1], while
@@ -242,7 +243,8 @@
                      (fn [fixture]
                        (let [rows (keep-indexed
                           (fn [i {:keys [attribute blend targets evaluate frame-only? sampled-value]}]
-                            (when (or (nil? targets) (some #{(:id fixture)} targets))
+                            (when (and (or (nil? targets) (some #{(:id fixture)} targets))
+                                       (capability/capable? fixture attribute))
                               (let [value (try
                                             (if frame-only? sampled-value
                                                 (evaluate (assoc env :fixture fixture :position (:position fixture [0 0 0])
@@ -272,6 +274,26 @@
       (cond-> step
         block-plan (vary-meta blocks/step-info block-plan)
         (predictable-outputs? definition) keyframes/predictable)))))
+
+(defn definition-errors
+  "Path/message errors that keep a registry definition from being published or
+  saved, relative to the definition. Effects must also compile against their
+  own parameters, so an output still reading a parameter the revision removed
+  is reported at its expression path (#703). An expression the compiler cannot
+  read at all, such as `{:op :add :args 0}`, is an error at the definition root.
+  Empty when the definition is valid."
+  [kind definition]
+  (let [errors (registry/validate-definition kind definition)]
+    (cond
+      (seq errors) errors
+      (not= :effects kind) []
+      :else (try (compile-effect definition) []
+                 (catch clojure.lang.ExceptionInfo cause
+                   (or (not-empty (:errors (ex-data cause)))
+                       [{:path [] :message (ex-message cause)}]))
+                 (catch Exception cause
+                   [{:path [] :message (str "Effect does not compile: "
+                                            (or (ex-message cause) (.getName (class cause))))}])))))
 
 (defn demo-definitions
   "Portable example effects for the studio, REPL, and deterministic tests."

@@ -7,6 +7,7 @@
             [tolglow.studio.operator-history :as history]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.page-routes :as pages]
+            [tolglow.studio.pretty :as pretty]
             [tolglow.studio.reactive-editor :as reactive-editor]
             [tolglow.studio.state-socket]
             [tolglow.studio.spatial-drafts :as spatial-drafts]
@@ -1189,7 +1190,12 @@
      :dispatch-later (when (get-in db [:ui :definition :auto?]) [{:ms 850 :dispatch [:studio/auto-publish revision]}])}))
 
 (rf/reg-event-fx :studio/definition-source
-  (fn [{:keys [db]} [_ source]] (edit-definition-source db source)))
+  ;; Neovim echoes text it was given (the initial load) and delivers its last edit up to
+  ;; 200 ms late, possibly after that text was published. Neither is a new edit, so keep
+  ;; the status, result and pending auto-publish of the text Studio already holds.
+  (fn [{:keys [db]} [_ source]]
+    (when (not= source (get-in db [:ui :definition :source]))
+      (edit-definition-source db source))))
 (rf/reg-event-fx :studio/auto-publish
   (fn [{:keys [db]} [_ revision]]
     (when (and (get-in db [:ui :definition :auto?]) (= revision (get-in db [:ui :definition :edit-revision])))
@@ -1255,7 +1261,7 @@
           fixtures (into #{} (map :id) (get-in db [:server-projection :view :rig :fixtures]))]
       (when (and (:reactive definition) (not (every? fixtures (:targets definition))))
         (throw (js/Error. "Choose targets from the current rig.")))
-      (pr-str definition))))
+      (pretty/edn definition))))
 
 (rf/reg-event-db :studio/builder-reactive
   (fn [db [_ edit]]

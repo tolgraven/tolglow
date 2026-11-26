@@ -22,6 +22,7 @@
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
             [tolglow.effects.group-channels :as group-channels]
+            [tolglow.surface.link :as surface]
             [tolglow.modulation :as modulation]
             [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.lighting-capacity :as capacity]
@@ -130,7 +131,13 @@
       (check-errors! (registry/validate-definition kind definition) path)
       (check! (and (= id (:id definition)) (= version (:version definition))
                    (integer? version) (pos? version)) path "Registry identity/version does not match its entry")
-      (when (= kind :effects) (compiler/compile-effect definition)))
+      ;; Current and cue-pinned effects must compile. A superseded revision an
+      ;; older owner admitted with a dangling expression (#703) stays verbatim in
+      ;; history rather than blocking every later backup once it is replaced.
+      (when (and (= kind :effects)
+                 (or (= definition (get-in r [:effects id]))
+                     (some #(and (= id (:effect-id %)) (= version (:effect-version %))) (vals (:cues r)))))
+        (check-errors! (compiler/definition-errors kind definition) path)))
     (doseq [kind [:effects :cues :fixtures] [id definition] (get r kind)]
       (when-let [historical (get-in r [:versions [kind id (:version definition)]])]
         (check! (= definition historical) [:registry kind id] "Current definition conflicts with its historical version"))
@@ -163,8 +170,7 @@
                  (#{:persistent :held :timed :one-shot} (:launch-mode instance))
                  (control/reload-policies (or (:reload-policy instance) :pinned)))
             path "Invalid captured running instance")
-    (check-errors! (registry/validate-definition :effects definition) (conj path :definition))
-    (compiler/compile-effect definition)
+    (check-errors! (compiler/definition-errors :effects definition) (conj path :definition))
     (system/validate-state instance)
     (parameter-sources/validate-saved! model instance)
     (when-let [window (:tolglow.effects.keyframes/saved instance)]
@@ -368,6 +374,11 @@
        (catch clojure.lang.ExceptionInfo error
          (fail! (:path (ex-data error) [:settings :effect-group-channels]) (ex-message error))))
   (when-let [s (get-in model [:settings :fog-control])] (fog-control/settings s))
+  ;; Control surfaces and links (#705, #706): a malformed link would break every snapshot.
+  (try (surface/validate-state! model)
+       (when-let [s (get-in model [:settings :controllers])] (surface/validate-settings! s))
+       (catch clojure.lang.ExceptionInfo error
+         (fail! [:extensions :tolglow.surface.link/state] (ex-message error))))
   (lighting-scenes/validate-state! model)
   (try (personalities/validate-state! model)
        (catch clojure.lang.ExceptionInfo error
@@ -398,7 +409,9 @@
             [:transport] "Transport needs finite beat, supported BPM and play state")
     (time/normalize-meter (:meter transport))
     (when (contains? transport :time-ms)
-      (check! (nonnegative? (:time-ms transport)) [:transport :time-ms] "Transport time must be nonnegative")))
+      (check! (nonnegative? (:time-ms transport)) [:transport :time-ms] "Transport time must be nonnegative"))
+    (when (contains? transport :held-ms)
+      (check! (nonnegative? (:held-ms transport)) [:transport :held-ms] "Held transport time must be nonnegative")))
   (doseq [key [:frame-number] :when (contains? model key)]
     (check! (natural? (get model key)) [key] "Frame count must be nonnegative"))
   (when (contains? model :last-frame-time-ms)
@@ -579,7 +592,9 @@
   (validate-document! document)
   (check! (and (natural? (:epoch current-model)) (natural? (:revision current-model)))
           [:current-model] "Current model needs valid epoch/revision")
-  (let [saved (-> (:model document) cue-timing/without-queue saved-audio/restore validate-model audio-return/disarm)
+  ;; Device sessions never survive a restore, so every surface loads detached.
+  (let [saved (-> (:model document) cue-timing/without-queue saved-audio/restore validate-model audio-return/disarm
+                  surface/detach-all)
         epoch (inc (max (:epoch current-model) (:epoch saved)))
         ordered (sort-by (juxt :order :id) (vals (:instances saved)))
         ids (into {} (map-indexed (fn [i instance] [(:id instance) (str epoch ":" (inc i))]) ordered))

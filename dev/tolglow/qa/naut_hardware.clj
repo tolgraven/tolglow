@@ -607,10 +607,10 @@
 
 (defn- connect-options [scenario layout transport]
   (case (:device scenario)
-    ;; open-push-3! only adds a refresh cadence when a :display is given; without
-    ;; one, hold deadlines never fire, so the kit supplies the same scheduler.
+    ;; Afterglow owns the MIDI-only hold cadence since afterglow#162 (#694), so the
+    ;; kit no longer supplies a :schedule!.
     :push-3 {:session-id "naut-push-3" :user-mode? true :expression-mode :poly-aftertouch
-             :schedule! (transports/scheduler 20) :cue-gestures? true
+             :cue-gestures? true
              :layout layout :midi transport
              :encoder-bindings {:encoder-1 {:param :level} :master {:target :master}}
              :button-bindings {:mute :blackout :right :page-right :left :page-left :select :cue-gesture}

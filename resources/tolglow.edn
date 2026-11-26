@@ -1,10 +1,11 @@
 {:description "Tolglow"
  :hz 40
  :init {:components [:show]
-        :modules [:fixtures :cue-pages :show-state :rdm :sensors :sensor-osc :osc :clock-sync :audio :waveforms :prefabs :variable-blocks :expressive
+        :modules [:push-3-display :fixtures :cue-pages :show-state :rdm :sensors :sensor-osc :osc :clock-sync :audio :waveforms :prefabs :variable-blocks :expressive
                   :hdr :autopilot :spatial :lighting-capacity :lighting-budget :output-response :lighting-activity :fog-control :lighting-scenes :agents :web-server]
         :post []}
  :web-server {:enabled true :host "127.0.0.1" :port 8500}
+ :push-3-display {:enabled false}
  :fixtures {:enabled false}
  :cue-pages {:enabled false}
  :show-state {:enabled false}

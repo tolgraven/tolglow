@@ -12,7 +12,7 @@ In Studio, open the performance controls and choose a **Response** for attack an
 
 For example, a light rising from darkness to full over one beat in **Reach in duration** mode reaches half output after half a beat. If the target changes at that point, the renderer starts the next transition from the level already reached. Each interval advances toward the latest sampled target. Earlier intervals contribute their actual elapsed time. A continuously changing target may keep the light in motion until the target settles. Each emitter tracks its own target, so changing blue leaves a steady red fade on schedule.
 
-Use `:ms`, `:beats`, `:bars` or `:phrases` for either timed response. Musical durations follow the show’s transport and stay in place when its beat stops advancing. **Blend per frame** follows each advancing render timestamp once. Re-rendering a timestamp adds no second blend. A slower render rate produces fewer blend steps over the same wall time.
+Use `:ms`, `:beats`, `:bars` or `:phrases` for either timed response. Musical durations follow the show’s transport and stay in place when its beat stops advancing. Millisecond durations and blends follow the show clock, so a transport stop freezes the response at its current level and play continues from there ([transport stop](clock-domains.md#transport-stop)). Blackout, master zero, calibration and the ambient pause look bypass it. **Blend per frame** follows each advancing render timestamp once. Re-rendering a timestamp adds no second blend. A slower render rate produces fewer blend steps over the same wall time.
 
 ## Scope and map the response
 

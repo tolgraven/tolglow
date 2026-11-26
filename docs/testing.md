@@ -162,6 +162,8 @@ See [compatibility repairs](compatibility-progress.md) and the historical/curren
   transport cleanup. Native Wayang/MIDI/OSC activation remains opt-in and was
   not performed in tests. Tethered Push 3 display routing also has a libusb
   recording backend and native-size raster replay. See [physical qualification](push-display-packaging.md#tethered-push-3).
+  The early libusb start is tested with Afterglow's background start replaced, and
+  with the real one pointed at a missing library. Tests never scan USB.
 - **Authoring/integration:** deterministic definitions/compilation/composition,
   constrained seeded policy, schema-aware mappings, provider stream parsing,
   actual local HTTP cancellation/timeout and scripted tool calls against the
@@ -181,7 +183,10 @@ checks the theme, the pinned cue buffer, versioned findings, reload/close/reopen
 remount and bounded state. `node dev/studio/code-cue-recovery-qa.mjs <origin>
 <capture-dir>` edits a running cue invalidly in Neovim, through the pinned engine
 with the host as validator and through the Definitions editor, and checks that the
-running instance keeps its last good version until a valid edit replaces it. Both
+running instance keeps its last good version until a valid edit replaces it. In the
+Definitions editor it also checks the status at each step: selecting Neovim leaves it
+clean, a publication reply survives the later delivery of the published text, and a
+different edit marks the definition unpublished. Both
 take `CHROMIUM_PATH`. Headless Chromium is not the packaged app's WKWebView,
 Safari or a terminal Neovim.
 

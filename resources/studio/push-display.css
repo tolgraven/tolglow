@@ -242,6 +242,7 @@ body.push-display-page,body.push-display-page #app{width:960px;height:160px;min-
 #push-display .push-compound-area .color-swatch {grid-row: 1 / span 2; height: auto; min-height: 20px}
 #push-display .push-compound-area .color-readout {grid-column: 2; grid-row: 2; display: flex; justify-content: flex-end; font-size: 10px}
 #push-display .push-compound-area .color-channels {grid-column: 2; grid-row: 1; align-content: center; gap: 6px}
+#push-display .push-compound-area .parameter-color[data-space=rgbw] .color-channels {gap: 1px}
 #push-display .push-compound-area .color-channel {grid-template-columns: 12px minmax(0, 1fr) 44px; gap: 8px; font-size: 11px}
 #push-display .push-compound-area .color-track {height: 10px}
 #push-display .push-compound-area .color-track > i {top: -3px; height: 16px}

@@ -1,9 +1,12 @@
 (ns tolglow.studio.push-display-test
   (:require [thi.ng.color.core :as color]
             [cljs.test :refer-macros [deftest is]]
+            [clojure.string :as str]
+            ["react-dom/server" :refer [renderToStaticMarkup]]
             [re-frame.db :as db]
             [re-frame.interceptor :as interceptor]
             [re-frame.registrar :as registrar]
+            [reagent.core :as r]
             [tolglow.studio.push-display :as display]
             [tolglow.studio.parameter-widgets :as widgets]))
 
@@ -242,3 +245,23 @@
     (is (= [] (areas (view [color level] touch))) "a single slot followed by another parameter stays in place")
     (is (= [{:start 0 :width 8}] (areas (view [color] touch))))
     (is (= [] (areas (view [level] {:instance-id "a" :param "level"}))) "scalars never expand")))
+
+(deftest the-push-display-draws-each-colour-layout-in-its-own-space
+  ;; A device snapshot carries its schema through JSON, so the layout is text.
+  (doseq [[layout value css letters] [["rgb" [1 0.5 0] "rgb(255,128,0)" ["R" "G" "B"]]
+                                      ["rgba" [0 0 1 0.5] "rgb(0,0,255)" ["R" "G" "B"]]
+                                      ["rgbw" [0.5 0 0 0.5] "rgb(255,128,128)" ["R" "G" "B" "W"]]
+                                      ["hsl" [(/ 1 3) 1 0.5] "rgb(0,255,0)" ["H" "S" "L"]]
+                                      ["hsla" [(/ 2 3) 1 0.25 0.5] "rgb(0,0,128)" ["H" "S" "L"]]
+                                      ["hsv" [0 1 1] "rgb(255,0,0)" ["H" "S" "V"]]]
+          touched? [false true]
+          :let [tint {:id "tint" :param "tint" :name "Tint" :value value
+                      :schema {:type "vector" :size (count value) :semantic/type layout :bounds [0 1]}}
+                view (cond-> {:instance-id "a" :parameters [(assoc tint :component 0)]}
+                       touched? (assoc :touched-parameter {:instance-id "a" :param "tint" :component 0}))
+                html (renderToStaticMarkup (r/as-element [display/display (display/normalize-view view)]))
+                where (str layout (when touched? " touched"))]]
+    (is (str/includes? html (str "background:" css)) where)
+    (is (= letters (mapv second (re-seq #"<span class=\"color-channel-name\">([^<]+)</span>" html)))
+        where)
+    (is (= (contains? #{"rgba" "hsla"} layout) (str/includes? html "α")) where)))

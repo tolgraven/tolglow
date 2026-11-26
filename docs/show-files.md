@@ -72,8 +72,23 @@ No secret is recovered by evaluating a show document.
 
 The model's registry is checked for matching IDs/versions, supported definition
 schemas, historical/current consistency and valid current cue references and
-parameters. Every effect definition, including captured running versions, is
-compiled through the actual declarative compiler to catch unsupported DSL forms.
+parameters. Every current or cue-pinned effect definition, and every captured
+running version, is compiled through the actual declarative compiler
+(`tolglow.compiler/definition-errors`) to catch unsupported DSL forms. Errors
+name the definition, for example `[:registry :effects :wash :outputs 1 :value :key]`.
+A superseded historical revision is checked structurally and kept verbatim; it
+is not compiled, so one bad revision admitted by an older owner stops blocking
+backups once a corrected revision replaces it (#703).
+
+The owner runs the same `definition-errors` on every new `:registry/publish`
+(`tolglow.spatial/apply-command`, which the Studio editor, agents, REPL forms,
+subscribers and compositions all reach). A revision whose output still reads a
+parameter it removed is rejected with code `:invalid-definition` and
+`:details {:errors [{:path [:outputs 1 :value :key] :message "Expression
+references an unknown parameter"}]}`. A `:cue/put` gets the same cue checks the
+backup applies, and a cue may not pin a superseded revision that does not
+compile (error path `[:effect-version]`), so a show the owner accepted always
+saves.
 The rig passes the actual patch compiler, including channel collisions and
 coarse/fine/universe addressing. Pages must reference registered cues.
 

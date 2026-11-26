@@ -72,7 +72,10 @@ current editor. Publication feedback appears beside the editor settings.
 On a phone the registry scrolls horizontally and leaves the code below it
 available for editing. The text editor and the Bruvbox Neovim editor share the
 same publication action. EDN source is loaded from the server, validated,
-compiled and published. The visual builder
+compiled and published. The server prints a loaded definition as pretty-printed
+EDN, and **Generate EDN** uses the same layout
+([shared printer](repl-studio-parity.md#read-a-definition-as-studio-shows-it)).
+The visual builder
 creates RGB constant color effects with an adjustable intensity parameter,
 duration and attack/release envelope, optionally with a matching cue. This is a
 small working code-free subset; it is not yet a general visual expression graph.
@@ -141,7 +144,10 @@ stage reaches the next one. **Add private or variable binding** accepts a privat
 varying name or a space-separated show variable path such as `weather density`.
 
 **Write stages to EDN** updates the block map in the current draft and preserves
-surrounding source and comments. **Validate & publish** sends that definition to
+surrounding source and comments. In a pretty-printed definition the block map
+gets the lines a fresh print would give it, after `:blocks` or on the next line
+as its size needs; a block map written on one line among other entries stays on
+one line. **Validate & publish** sends that definition to
 the show. With **Publish valid edits** enabled the normal live-edit policy applies.
 In the visual RGB builder, use **Assign blocks** before **Generate EDN**.
 
@@ -447,7 +453,9 @@ Opening or restoring a session never evaluates source.
 Evaluation uses the direct SSE endpoint and preserves session/runtime/epoch/run
 identity on every callback. The transcript bounds history to 100 requests and
 300 events per request; the JVM separately bounds source, printed values and
-stdout. Persisted history restores source and final result/error. The current
+stdout. A data result (map, vector, set or sequence) and error data print over
+several lines with the [shared printer](repl-studio-parity.md#read-a-definition-as-studio-shows-it)
+inside those bounds; strings and other values print on one line as before. Persisted history restores source and final result/error. The current
 window also retains streamed output when later history polls arrive. Closing the
 drawer detaches its stream and polling; interruption is a separate explicit
 cooperative request, not a hard-kill guarantee.

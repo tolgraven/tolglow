@@ -96,24 +96,30 @@
   release tails, timed durations, output tweens, :time expressions and step
   deltas) reads the same private time it had when the transport stopped.
   Explicitly paused instances keep their own frozen clock. Every instance also
-  counts the held time in :system :transport-held-ms. Millisecond scheduler
-  ramps, response envelopes and the auto planner's millisecond interval shift
-  by the same amount. Millisecond sequences keep their own
-  pause-aware logical clock, and spatial physics already reads :playing?.
-  Host :time-ms, deadlines, leases, observation ages, sensor and routing input
-  envelopes, fog estimates and physical output timing are not show progress and
-  stay on the wall clock. The function is pure and persisted state carries the
-  result, so a save made during a stop resumes from the held position."
+  counts the held time in :system :transport-held-ms, and the show counts it
+  in [:transport :held-ms], which global millisecond signal phases subtract
+  from host time. Millisecond scheduler ramps, response envelopes, routing ADSR
+  envelopes and the auto planner's millisecond interval shift by the same
+  amount. Millisecond sequences keep their own pause-aware logical clock, and
+  spatial physics already reads :playing?. Host :time-ms, deadlines, leases,
+  observation ages and timeouts, sensor and routing input smoothing, fog
+  estimates, the audio fog pulse and physical output timing are not show
+  progress and stay on the wall clock. The function is pure and persisted state
+  carries the result, so a save made during a stop resumes from the held
+  position."
   [model held-ms]
   (when-not (and (time/finite-number? held-ms) (<= 0 held-ms))
     (fail! "Held time must be finite nonnegative milliseconds" {:path [:held-ms]}))
   (if (zero? held-ms) model
       (cond-> model
+        ;; The show-level count, read by global millisecond phases.
+        (map? (:transport model)) (update-in [:transport :held-ms] (fnil + 0) held-ms)
         (map? (:instances model))
         (update :instances #(into {} (map (fn [[id instance]] [id (hold-instance instance held-ms)])) %))
         (seq (:responses model)) (update :responses #(mapv (fn [r] (hold-response r held-ms)) %))
         (seq (get-in model [:event-subscribers :ramps])) (subscribers/hold-clock held-ms)
-        (:auto model) (update :auto hold-auto held-ms))))
+        (:auto model) (update :auto hold-auto held-ms)
+        (get-in model [:routing :state]) (update-in [:routing :state] patch/hold-clock held-ms))))
 
 (defn rebase
   "Rebase known musical domains to a captured external clock, preserving local
