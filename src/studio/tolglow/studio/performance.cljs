@@ -2,6 +2,7 @@
   "System controls over the shared command boundary. Snapshot groups provide
   category membership; this UI does not infer categories or run effect clocks."
   (:require [clojure.string :as str]
+            [tolglow.studio.surfaces]
             [clojure.set :as set]
             [re-frame.core :as rf]
             [reagent.core :as r]
@@ -603,10 +604,13 @@
         {:keys [state key target instances]} @(rf/subscribe [:performance/instance id])
         editing @(rf/subscribe [::sources/selection id])
         priority (sources/priority-destination show)
-        scope (resolve-monitor (driven-controls instance controls) (get-in state [:monitor id]) monitor)]
+        scope (resolve-monitor (driven-controls instance controls) (get-in state [:monitor id]) monitor)
+        strip (get (:instances @(rf/subscribe [:surfaces/on-surface])) id)]
     [:article.live-effect-card {:data-live-instance id :aria-label (str title " · " id)
                                 :data-reorder-source (= id source-id)
                                 :data-density (if expanded? "detail" "strip")
+                                ;; Outlined while a surface's session box shows its cue strip (#705).
+                                :data-on-surface (boolean strip)
                                 :data-wide (boolean (or expanded? (> (count controls) 3)))
                                 :class (str (when faulted? "has-fault ") (when paused? "paused ") (when (= "releasing" (:phase instance)) "releasing"))
                                 :style {"--cue-color" (widgets/color-css (:swatch cue))}}
@@ -615,6 +619,7 @@
        [:h3 title]
        [:div.live-effect-meta
         [:span.live-effect-phase (cond faulted? "Fault" paused? "Paused" :else (widgets/label (:phase instance)))]
+        (when strip [:span.surface-strip-badge {:title "Shown on this control surface strip"} strip])
         (when-let [label (case (:suppressed-by selection-row) :mute "Muted" :solo "Excluded by Solo" nil)]
           [:span.live-selection-state {:data-suppressed-by (name (:suppressed-by selection-row))} label])
         (when duplicate? [:span.live-effect-phase (str "Launch " id)])
@@ -632,7 +637,8 @@
          [:button.live-effect-expand {:type "button" :aria-expanded expanded?
                                       :aria-label (str (if expanded? "Collapse " "Expand ") title " controls"
                                                        (when duplicate? (str " for launch " id)))
-                                      :on-click #(rf/dispatch [:performance/card-toggle id (select-keys show [:runtime-id :epoch])])}
+                                      :on-click #(do (rf/dispatch [:performance/card-toggle id (select-keys show [:runtime-id :epoch])])
+                                                     (rf/dispatch [:surfaces/follow [:instance id]]))}
           (if expanded? "Compact" "Detail")])]]
      (when (seq controls)
        [:div.live-effect-body

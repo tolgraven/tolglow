@@ -8,6 +8,7 @@
             [tolglow.persistence :as persistence]
             [tolglow.show :as show]
             [tolglow.spatial.cues :as spatial]
+            [tolglow.surface.link :as surface]
             [tolglow.studio :as studio]
             [tolglow.studio.web :as web]
             [tolglow.transit :as transit])
@@ -165,7 +166,8 @@
       (let [device (show/connect-device! runtime :x-touch
                                          {:session-id "group-mcu" :effect-group-view :manual :schedule! nil
                                           :transport transport :channels [{:cue-id :first}]})
-            bank #(get-in (device-session/snapshot device) [:local :bank])
+            ;; The bank is the surface's committed window (#705).
+            bank #(surface/strip-offset (committed-model runtime) "group-mcu")
             ack #(:last-ack (device-session/snapshot device))
             first-id (launch! runtime (swap! time inc) :first)
             last-id (launch! runtime (swap! time inc) :last)]
