@@ -256,10 +256,13 @@ window-dependent pulse jump, serialize/reload registry history, lower composite
 templates, and execute selector boundaries and derived-channel effects through
 both real scalar and typed compilers, including final DMX-byte parity.
 
-Audio-derived wavetable sources remain future work. A table-backed registry kind
-needs explicit sample rate, cycle alignment, interpolation, normalization,
-provenance and bounded storage; it must define how compiled effects snapshot a
-table and how replacement revisions hot-reload. It should not introduce an
-unowned audio callback or an unrelated waveform clock. General runtime parameter
+Audio-derived wavetables are [audio-shaped LFOs](audio-shaped-lfo.md). Such a
+waveform is `:live? true`: its template is a table of at most 63 points as
+periodic linear interpolation over `fract(phase)`, its `:source` names the LFO,
+band and mode, and `publish-live` keeps only its newest version, so a shape
+every bar does not grow history. A lowered effect snapshots the table it was
+built with; a parameter LFO samples the owner's morphing table at the frame's
+transport beat. Extraction runs on the capture worker; morph progress follows
+the transport beat rather than a separate waveform clock. General runtime parameter
 bindings likewise need explicit target selection, range mapping, ownership and
 composition order before they are integrated with manual/MPE/agent control.

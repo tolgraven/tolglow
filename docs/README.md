@@ -100,6 +100,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Registered signals](signals.md) | Waveform versions, selectors and derivative units |
 | [Push page overview](push-page-overview.md) | Browse cue layouts, authored swatches and type colors |
 | [Live waveform projections](waveform-projections.md) | Current signal parameters, captured PCM history and bounded Push data |
+| [Audio-shaped LFOs](audio-shaped-lfo.md) | A band of the captured input shaped once per window into a live registered waveform that morphs slowly; REPL, Studio and two-tempo measurements |
 | [Dependency upgrades](dependency-upgrades.md) | Registry-verified versions, migrations and updated build/test evidence |
 | [X-Touch](xtouch.md) | Verified MCU/extender protocol, adapter and color research |
 | [Sync](sync-progress.md) | Selected clock and explicit MIDI, Pro DJ Link and Live bridge sessions |
