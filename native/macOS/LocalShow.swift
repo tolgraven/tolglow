@@ -129,7 +129,11 @@ final class LocalShow: ObservableObject {
             child.terminationHandler = { [weak self] finished in
                 try? FileManager.default.removeItem(at: directory)
                 Task { @MainActor in
-                    guard let self, self.process === finished else { return }
+                    // A closed window's LocalShow is usually gone before its
+                    // process exits; the folder and the devices must still be
+                    // released, or no window could open that folder again.
+                    guard let self else { ShowRegistry.shared.release(id); return }
+                    guard self.process === finished else { return }
                     ShowRegistry.shared.release(id)
                     self.readiness?.cancel()
                     self.process = nil
