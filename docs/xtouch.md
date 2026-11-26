@@ -171,15 +171,37 @@ configuration of its own.
 @(show/bank-surface! runtime "desk" :last)
 ```
 
-Paging decisions: a window steps by the attached members' width (16 for main
-plus extender, 8 when one is detached). Everything that fits starts at strip
-1. Otherwise pages stay on multiples of eight, so with 20 strips the second
-page shows strips 17–20 on the main unit and leaves the extender blank. A
-member that disconnects is marked unavailable and keeps its place; reconnecting
-under the same session ID rejoins the link. Links and windows are saved with
-the show; surfaces load detached. Touch ownership, held cues and motor feedback
-stay per unit: a fader held across a bank change keeps writing the strip it
-touched. See [REPL and Studio parity](repl-studio-parity.md#link-control-surfaces-and-move-their-session-box)
+Link modes, all saved with the show as
+`{:mode :members [{:surface-id :viewport :offset}] :direction :window}`:
+
+- **extend** (`:direction` `:right`, `:left`, `:down` or `:up`) packs each
+  member beside the previous one by its actual width, so a 4-strip unit next
+  to an 8-strip one leaves no gap or overlap. The window pages by the whole
+  span (16 for main plus extender).
+- **mirror** shows the leader's window on every member and pages by the
+  leader's width.
+- **follow** keeps each later member `:offset` pages after the leader (for
+  example a Studio page one page to the right of a Push) and pages by the
+  leader's width, so following never makes the leader skip pages.
+
+Members link when their descriptors declare the same content axis for the
+named viewports (`:channels` for X-Touch `:strips` and Push `:encoders`), not
+when the viewport names match. Everything that fits starts at strip 1.
+Otherwise windows stay on multiples of the leader's width, so with 20 strips
+the second page shows strips 17–20 on whichever unit sits at the window's left
+edge.
+
+While a member is unavailable (disconnected or handed to Live) the extend
+layout is repacked over the attached members only: the window, paging,
+`:last` and reveal cover just the units that are there, so a lone main unit or
+a lone extender pages through every strip from 1. The full layout returns when
+the unit reattaches under the same session ID. A connected surface belongs to
+its device: only its own connection can attach over it or remove it, and
+detaching or removing an unknown surface is refused. Links and windows are
+saved with the show; surfaces load detached. Touch ownership, held cues and
+motor feedback stay per unit: a fader held across a bank change keeps writing
+the strip it touched. See
+[REPL and Studio parity](repl-studio-parity.md#link-control-surfaces-and-move-their-session-box)
 and issues #705 and #706.
 
 ### Hardware run

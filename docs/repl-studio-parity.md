@@ -604,7 +604,7 @@ right, page the window and read it back:
                                          :effect-group-view :manual})
 (show/connect-device! runtime :x-touch {:session-id "xt-ext" :input-index 5 :output-index 11
                                          :extender? true})
-@(show/link-surfaces! runtime "desk" ["xt-main" "xt-ext"])          ; or {:mode :mirror}
+@(show/link-surfaces! runtime "desk" ["xt-main" "xt-ext"])          ; or {:mode :mirror}, {:mode :follow :offset {:x 1}}
 @(show/bank-surface! runtime "desk" :next)                           ; :first :last :previous ...
 @(show/bank-surface! runtime "desk" {:reveal [:group [:manual :mix]]})
 (map (juxt :id :mode :window) (:logical (:control-surfaces (show/snapshot runtime))))
@@ -614,8 +614,8 @@ right, page the window and read it back:
 
 In Studio, **Perform → Group mixer → Surfaces** shows a session box per link or
 unlinked surface: its name and mode, "Strips 17–20 of 20", and ⏮ ‹ › ⏭ bank
-buttons. **Link** joins two unlinked surfaces (extended to the right or left, or
-mirrored) and **Unlink** dissolves a link. Group rows on a surface are outlined
+buttons. **Link** joins two unlinked surfaces (extended to the right or left,
+mirrored, or followed one page to the right) and **Unlink** dissolves a link. Group rows on a surface are outlined
 and badged with the surface and strip (`xt-main 3`); **In the mix** outlines and
 badges the cards whose cue strip is on a surface. With **Follow selection** on,
 focusing a group's volume, opening a group, or opening a card moves each surface
@@ -624,8 +624,8 @@ a REPL move and a Studio move all update the open session boxes and both units.
 A refused move (an unknown surface, a cell that is not on it) shows its reason;
 a follow move for a cell a surface does not hold is ignored quietly.
 
-**Tracked gaps.** Studio has no form for an arbitrary `:at` offset or an up/down
-link; the REPL accepts both. A Studio page component is not yet a surface of its
+**Tracked gaps.** Studio has no form for up/down links, follow offsets other
+than one page, or a member's non-default viewport; the REPL accepts all three. A Studio page component is not yet a surface of its
 own (#706 slice 5). Close these gaps when Studio can place a member anywhere and
 a Studio grid can mirror or follow a Push page.
 

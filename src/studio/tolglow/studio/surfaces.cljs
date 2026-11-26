@@ -54,10 +54,22 @@
                     (keyword? move) (assoc :move move)
                     (map? move) (merge move))))))
 
+(def link-choices
+  "The Studio link form's choices: the shared :control-surface/link payload
+  for a leader and one more surface."
+  {"right" {:mode :extend :direction :right} "left" {:mode :extend :direction :left}
+   "mirror" {:mode :mirror} "follow" {:mode :follow :offset {:x 1 :y 0}}})
+
+(defn link-payload [link-id leader other choice]
+  (let [{:keys [mode direction offset]} (get link-choices choice)]
+    (cond-> {:op :control-surface/link :link-id link-id :mode mode
+             :members [{:surface-id leader} (cond-> {:surface-id other} offset (assoc :offset offset))]}
+      direction (assoc :direction direction))))
+
 (rf/reg-event-fx :surfaces/link
-  (fn [{:keys [db]} [_ link-id viewport members]]
-    (when (and (connected? db) (not (str/blank? link-id)) (< 1 (count members)))
-      (command db {:op :control-surface/link :link-id link-id :viewport viewport :members members}))))
+  (fn [{:keys [db]} [_ link-id leader other choice]]
+    (when (and (connected? db) (not (str/blank? link-id)) (not= leader other) (contains? link-choices choice))
+      (command db (link-payload link-id leader other choice)))))
 
 (rf/reg-event-fx :surfaces/unlink
   (fn [{:keys [db]} [_ link-id]]
@@ -114,8 +126,8 @@
       (str "Strips " first-cell "–" (max first-cell last-cell) " of " (:columns size))
       "No strips")))
 
-(defn- member-names [members]
-  (str/join (if (apply = (map :at members)) " = " " · ")
+(defn- member-names [mode members]
+  (str/join (if (= :mirror mode) " = " " · ")
             (map (fn [{:keys [surface-id attached?]}] (str surface-id (when-not attached? " (unavailable)"))) members)))
 
 (defn session-box
@@ -123,7 +135,7 @@
   [{:keys [id viewport mode window limit members] :as logical} disabled?]
   (let [bank #(rf/dispatch [:surfaces/bank id viewport %])]
     [:div.surface-box {:data-surface id :data-mode (name mode)}
-     [:span.surface-box-name {:title (member-names members)}
+     [:span.surface-box-name {:title (member-names mode members)}
       (str id (when (not= :single mode) (str " · " (name mode))))]
      [:span.surface-box-range {:role "status"} (range-label logical)]
      [:span.surface-box-buttons
@@ -146,16 +158,14 @@
                      (.preventDefault event)
                      (let [fields (js/FormData. (.-currentTarget event))
                            first-id (.get fields "first") second-id (.get fields "second")
-                           mode (.get fields "mode")
-                           at (case mode "mirror" {:x 0 :y 0} "left" {:x -1 :y 0} {:x 1 :y 0})]
+                           choice (.get fields "mode")]
                        (when (not= first-id second-id)
-                         (rf/dispatch [:surfaces/link (str first-id "+" second-id) nil
-                                       [{:surface-id first-id :at {:x 0 :y 0}} {:surface-id second-id :at at}]]))))}
+                         (rf/dispatch [:surfaces/link (str first-id "+" second-id) first-id second-id choice]))))}
        [:select {:name "first" :aria-label "First surface" :default-value (first choices)}
         (for [id choices] ^{:key id} [:option {:value id} id])]
        [:select {:name "mode" :aria-label "How to link" :default-value "right"}
         [:option {:value "right"} "extended to the right by"] [:option {:value "left"} "extended to the left by"]
-        [:option {:value "mirror"} "mirrored by"]]
+        [:option {:value "mirror"} "mirrored by"] [:option {:value "follow"} "followed one page right by"]]
        [:select {:name "second" :aria-label "Second surface" :default-value (second choices)}
         (for [id choices] ^{:key id} [:option {:value id} id])]
        [:button.button {:type "submit" :disabled disabled?} "Link"]])))

@@ -12,10 +12,10 @@
    :surfaces [{:id "xt-main" :attached? true} {:id "xt-ext" :attached? true}]
    :logical [{:id "desk" :link? true :viewport :strips :mode :extend
               :window {:x 16 :y 0} :span {:columns 16 :rows 1} :size {:columns 20 :rows 1} :limit {:x 16 :y 0}
-              :members [{:surface-id "xt-main" :at {:x 0 :y 0} :attached? true :window {:x 16 :y 0}
+              :members [{:surface-id "xt-main" :viewport :strips :attached? true :window {:x 16 :y 0}
                          :cells [{:key [:group [:manual :g16]] :group-id [:manual :g16] :position {:x 0 :y 0}}
                                  {:key [:cue :c1] :cue-id :c1 :instance-id "3:7" :position {:x 3 :y 0}}]}
-                        {:surface-id "xt-ext" :at {:x 1 :y 0} :attached? true :window {:x 24 :y 0} :cells []}]}]})
+                        {:surface-id "xt-ext" :viewport :strips :attached? true :window {:x 24 :y 0} :cells []}]}]})
 
 (def base
   {:session "surface-session" :connection {:connected? true}
@@ -61,3 +61,14 @@
     (let [db (:db (transition base [:surfaces/unlink "desk"]))
           id (get-in db [:ui :surfaces :pending])]
       (is (= "Refused" (get-in (:db (transition db [:surfaces/failed id "Refused"])) [:ui :surfaces :error]))))))
+
+(deftest the-link-form-sends-the-shared-link-shape
+  (is (= {:op :control-surface/link :link-id "a+b" :mode :extend :direction :left
+          :members [{:surface-id "a"} {:surface-id "b"}]}
+         (surfaces/link-payload "a+b" "a" "b" "left")))
+  (is (= {:op :control-surface/link :link-id "a+b" :mode :follow
+          :members [{:surface-id "a"} {:surface-id "b" :offset {:x 1 :y 0}}]}
+         (surfaces/link-payload "a+b" "a" "b" "follow")))
+  (let [request (second (first (:fx (transition base [:surfaces/link "a+b" "a" "b" "mirror"]))))]
+    (is (= {:op :control-surface/link :mode :mirror} (select-keys (:body request) [:op :mode]))))
+  (is (nil? (transition base [:surfaces/link "a+a" "a" "a" "mirror"]))))
