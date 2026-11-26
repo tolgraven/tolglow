@@ -262,6 +262,50 @@ Use `true` in the same command to suspend patterns from the REPL.
                {:scope :section-patterns :values {:override? false}})
 ```
 
+## Choose the track feel
+
+In **Perform**, open **Track feel** above **In the mix**. On a narrow screen,
+first select **Live**. Pick a personality by its icon, mix a second one in with
+**Blend with** and **Share**, draw new shapes with **Reshuffle shapes**, or
+return to the authored looks with **Clear feel**. The closed row always shows
+the committed selection.
+
+Read that selection in the running REPL, then change it there and watch the
+open panel follow. Both sides submit the `:personality` operation to the show
+owner. IDs are the library's keyword or text IDs, weights are relative shares
+and the seed is an integer.
+
+```clojure
+(require '[tolglow.show :as show])
+
+(get-in (show/snapshot runtime) [:personalities :active])
+
+@(show/submit! runtime :personality {:op :select :id :zigzag-shaky :seed 5})
+@(show/submit! runtime :personality
+               {:op :blend :mix [{:id :zigzag-shaky :weight 0.65} {:id :still-water :weight 0.35}]})
+@(show/submit! runtime :personality {:op :select :id :no-such-feel})
+```
+
+The last form is refused with `"Unknown personality"` and `{:id :no-such-feel}`.
+Studio shows the same message under the panel when its own request is refused,
+and the committed selection stays on both sides. Studio's **Reshuffle shapes**
+chooses a random seed, while the REPL names one. Studio blends the heaviest
+current part with one other personality; the REPL can mix up to four.
+
+Reviewed at `0ecbe763` and rechecked at `23485c2c` (same Studio sources, master
+merged) with the optimized build in headless Chrome 155 through
+the application's own REPL session: a Studio selection was read from the REPL,
+a REPL selection updated the open panel, and the refusal matched on both
+sides. [Operator guide](personalities.md) ·
+[Browser check](../dev/studio/personality-picker-qa.mjs)
+
+Gaps, tracked in [issue #647](https://github.com/tolgraven/tolglow/issues/647):
+Studio cannot author or remove a personality or import a sharing package, and
+its sculpt tool does not offer the personality input on a volume cue. Use the
+`:put`, `:remove` and `:import` operations and the `:spatial-cue` spawn request
+from the REPL. Close them when an operator can do each from Studio and read
+the same committed library and cue definition in the REPL.
+
 ## Reconnect a local track reference
 
 Supply the local mpv socket and track catalog in the host's `:section-reference`
@@ -367,8 +411,10 @@ change or a backward beat jump reports the apply as missed. The audition itself
 follows the jump: its private musical anchors take the same rebase as the live
 show's. While an apply is scheduled, Discard is the only way to cancel it.
 
-The draft is a snapshot of the show at staging. Only the transport, master and
-blackout follow the live show afterwards; a later live launch, parameter edit
+The draft is a snapshot of the show at staging. Only the transport, master,
+blackout and the active track feel follow the live show afterwards, since a
+draft cannot stage a feel and an apply runs under the live one. The audition
+never changes the feel. A later live launch, parameter edit
 or settings change is not in the Room until you stage again. If the rig, any
 cue or effect definition, or the material library changes after staging, the
 draft shows `:stale` with the code an apply would be refused with
