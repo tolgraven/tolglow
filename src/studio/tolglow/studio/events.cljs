@@ -605,14 +605,17 @@
   [db]
   (when-let [{:keys [draft status pending-apply stale last-outcome]} (get-in db [:server-projection :view :scene-draft])]
     (when draft
-      {:id (:id draft) :revision (:revision draft) :operations (count (:operations draft))
-       :status (keyword status) :due-beat (:due-beat pending-apply)
-       :stale (some-> stale keyword)
-       :missed (when (and (= :missed (keyword (:status last-outcome)))
-                          (= [(:id draft) (:revision draft)] [(:draft-id last-outcome) (:draft-revision last-outcome)]))
-                 {:due-beat (:due-beat last-outcome) :code (some-> (:code last-outcome) keyword)})
-       :pending? (= (:id draft) (get-in db [:scene-draft-request :draft-id]))
-       :connected? (true? (get-in db [:connection :connected?]))})))
+      (cond-> {:id (:id draft) :revision (:revision draft) :operations (count (:operations draft))
+               :status (keyword status) :due-beat (:due-beat pending-apply)
+               :stale (some-> stale keyword)
+               :missed (when (and (= :missed (keyword (:status last-outcome)))
+                                  (= [(:id draft) (:revision draft)]
+                                     [(:draft-id last-outcome) (:draft-revision last-outcome)]))
+                         {:due-beat (:due-beat last-outcome) :code (some-> (:code last-outcome) keyword)})
+               :pending? (= (:id draft) (get-in db [:scene-draft-request :draft-id]))
+               :connected? (true? (get-in db [:connection :connected?]))}
+        ;; An audition-only draft, such as a generated knob candidate (#667).
+        (:preview draft) (assoc :preview (:preview draft))))))
 
 (def ^:private scene-draft-reasons
   {:stale-patch "the rig changed" :stale-registry "a cue or effect changed"
