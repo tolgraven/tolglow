@@ -47,6 +47,7 @@
             [tolglow.registry :as registry]
             [tolglow.integrations.ableton :as ableton]
             [tolglow.integrations.live-runs :as live-runs]
+            [tolglow.integrations.live-launcher :as live-launcher]
             [tolglow.integrations.phrase-capture :as phrase-capture]
             [tolglow.integrations.phrase-clip :as phrase-clip]
             [tolglow.aim-paths :as aim-paths]
@@ -611,6 +612,8 @@
       :sync-input (atom {:epoch (:epoch model) :events []})
       :phrase-capture (atom (new-phrase-capture (get options :phrase-capture {})))
       :live-runs (atom (new-live-runs (get options :live-runs {})))
+      ;; The cue launcher's last Live setup and pad-clip write (#228).
+      :live-launcher (atom {})
       :connections owned :devices (atom {}) :device-reconnects (atom {}) :surface-refusals (atom {}) :development development
       :rdm (rdm/create (merge (:rdm-options options)
                              {:state rdm-state :model! #(get @(:state @runtime-ref) :model)
@@ -4015,6 +4018,90 @@
      (locking (:player-lock @state)
        (swap! state (fn [s] (assoc s :mirror mirror
                                    :player (if-let [p (:player s)] (live-runs/with-mirror p mirror) (live-runs/player mirror))))))
+     result)))
+
+(defn- wire-name [x] (if (keyword? x) (subs (str x) 1) (str x)))
+
+(defn- launcher-page
+  "The cue page a Live bridge maps: page-id when given, otherwise the first
+  page by ID, as sync-action! :configure chooses it."
+  [model page-id]
+  (let [pages (sort-by (comp str :id) (vals (:pages model)))]
+    (if (some? page-id)
+      (or (some #(when (= (wire-name page-id) (wire-name (:id %))) %) pages)
+          (throw (ex-info "No such cue page" {:page-id page-id :http/status 404})))
+      (first pages))))
+
+(defn- launcher-for [runtime page-id]
+  (let [model (:model @(:state runtime))
+        live (get-in (sync/export-state (connections/sync (:connections runtime))) [:config :live])
+        page (launcher-page model page-id)]
+    (when-not page (throw (ex-info "This show has no cue page" {:http/status 404})))
+    (live-launcher/pads (ableton/bind-registry-ids live (:registry model)) (:registry model) page)))
+
+(defn live-launcher-action!
+  "The cue launcher (#228) for the REPL and Studio: a cue page played from one
+  Drum Rack track in Push's 64 Pads layout.
+    :status payload {:page-id id} -> live-launcher/pads for that page (default
+            the first page, as the Live bridge maps it) under the bridge's
+            saved note mappings and :pad-layout, with :setup (the last Live
+            setup) and :clip (the last pad clip written).
+  Setting the launcher up in Live and writing pad clips need a companion
+  connection, which the runtime does not own yet: run setup-live-launcher!
+  and write-live-launcher-clip! from the REPL. Studio shows their results."
+  [runtime operation payload]
+  (case operation
+    :status (let [launcher (launcher-for runtime (:page-id payload))
+                  {:keys [setup clip]} @(:live-launcher runtime)]
+              (cond-> launcher
+                (= (wire-name (:page-id launcher)) (wire-name (:page-id setup))) (assoc :setup (dissoc setup :page-id))
+                (= (wire-name (:page-id launcher)) (wire-name (:page-id clip))) (assoc :clip (dissoc clip :page-id))))
+    (throw (ex-info "Unknown launcher operation" {:operation operation}))))
+
+(defn live-launcher
+  "The 64 pads of a cue page as Studio's Ableton Live panel shows them (see
+  live-launcher-action!)."
+  ([runtime] (live-launcher runtime nil))
+  ([runtime page-id] (live-launcher-action! runtime :status {:page-id page-id})))
+
+(defn setup-live-launcher!
+  "Set the cue launcher up in Live over a companion connection
+  (live-connection/open on the companion that sits on the launcher track):
+  name the track after the page, insert a Drum Rack after the companion,
+  name and colour one chain per mapped pad, read it back. Keeps the result
+  for live-launcher and returns it. options: {:page-id id}."
+  ([runtime conn] (setup-live-launcher! runtime conn {}))
+  ([runtime conn {:keys [page-id]}]
+   (let [launcher (launcher-for runtime page-id)
+         result (assoc (live-launcher/setup! conn (live-launcher/desired launcher)) :page-id (:page-id launcher))]
+     (swap! (:live-launcher runtime) assoc :setup result)
+     result)))
+
+(defn write-live-launcher-clip!
+  "Write the runtime's run record as a clip of pad hits on the launcher track
+  set up by setup-live-launcher!. options: :page-id, :from-beat/:to-beat
+  (show-transport beats; default the whole bars around the takes), :name,
+  :slot-index, :looping?. Returns {:receipt :clip-id :notes ..} with the
+  takes it holds and those it skipped."
+  ([runtime conn] (write-live-launcher-clip! runtime conn {}))
+  ([runtime conn options]
+   (let [launcher (launcher-for runtime (:page-id options))
+         setup (:setup @(:live-launcher runtime))
+         _ (when-not (and setup (= (wire-name (:page-id setup)) (wire-name (:page-id launcher))) (:ready? setup))
+             (throw (ex-info "Set the launcher up for this page first (setup-live-launcher!)"
+                             {:page-id (:page-id launcher) :problems (:problems setup)})))
+         bpb (get-in @(:state runtime) [:model :transport :meter :beats-per-bar] 4)
+         clip (live-launcher/pad-clip (live-runs-record runtime) launcher
+                                      (merge {:beats-per-bar bpb} (select-keys options [:from-beat :to-beat])))
+         receipt (when (:clip clip) (live-launcher/write-clip! conn setup (:clip clip) options))
+         result (cond-> (-> (dissoc clip :clip)
+                            (assoc :page-id (:page-id launcher) :notes (count (get-in clip [:clip :notes]))
+                                   :length-beats (get-in clip [:clip :length-beats])))
+                  receipt (assoc :status (:status receipt) :clip-id (get-in receipt [:result :clip-id])
+                                 :slot-index (get-in receipt [:result :slot-index])
+                                 :error (or (:error receipt) (when (:code receipt) {:code (:code receipt)})))
+                  (nil? receipt) (assoc :status :nothing-to-write))]
+     (swap! (:live-launcher runtime) assoc :clip result)
      result)))
 
 (defn sync-action!
