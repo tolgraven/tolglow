@@ -3,8 +3,10 @@
 The new `afterglow.control.codecs.x-touch` and
 `afterglow.control.devices.x-touch` modules implement a source-verified MCU-mode
 subset for the full-size X-Touch and XT extender. The profile composes the shared
-control model, bindings, session lifecycle and injectable MIDI transport. It has
-not been tested on physical hardware. X-Touch Compact/Mini and XCTL Ethernet are
+control model, bindings, session lifecycle and injectable MIDI transport.
+Scribble text, colours, motor faders and linked banking were run on an X-Touch
+and X-Touch-Ext (firmware 1.22) on 2026-11-26; touch, encoders and button input
+from a hand on the hardware are not yet verified. X-Touch Compact/Mini and XCTL Ethernet are
 different protocol/mode targets and are not covered by this implementation.
 
 ## Inspected references and provenance
@@ -120,13 +122,12 @@ selected ports or an injected transport; it never discovers a device on require.
 Its default feedback scheduler is owned and stopped by the session. Pass
 `:schedule! nil` for an externally driven refresh loop or tests.
 
-`connect-group!` accepts an explicitly ordered `:units` vector with one main unit
-and any extenders. Each has a distinct session ID and ports/transport. Offsets
-follow the supplied physical order, including a main unit between extenders.
-Main bank buttons move the whole group's width and channel buttons move one
-slot. `bank-group!` provides explicit host control. `close-group!` closes every
-session; a later startup failure closes earlier opened units. No port discovery
-or cross-device global atom is involved.
+Afterglow's `connect-group!` still accepts an ordered `:units` vector with one
+main unit and extenders, but Tolglow no longer uses it. Tolglow attaches each
+unit as its own surface and links them (below). With `:model-bank` and
+`:bank-command` a host owns the bank: every unit reads the committed window
+and the main unit sends bank and channel buttons (SHIFT for first and last) as
+commands instead of changing its own bank.
 
 ```clojure
 (require '[afterglow.control.devices.x-touch :as x-touch])
@@ -146,6 +147,48 @@ or cross-device global atom is involved.
 The indices above are placeholders for explicitly selected local ports, not
 discovery results. A host must retain its show epoch in callbacks, as the studio
 does for other controllers, and reject stale input across full-show restores.
+
+## Surfaces, links and the session box
+
+Each X-Touch or X-Touch-Ext connected with `show/connect-device!` attaches as
+its own control surface (`tolglow.surface.link`, descriptor
+`:behringer/x-touch` or `:behringer/x-touch-ext`). A link joins the `:strips`
+viewport of several surfaces into one logical surface: **extend** places the
+next unit one bank to the right (or left, up, down), **mirror** shows the same
+window on both. The window (the session box) is show data: the main unit's
+BANK and CHANNEL buttons, SHIFT+BANK for the first and last page, Studio's
+session box buttons and `show/bank-surface!` all commit the same
+`:control-surface/bank` command, and every member follows on its next feedback.
+Linked members show the first member's strips, so an extender needs no strip
+configuration of its own.
+
+```clojure
+(show/connect-device! runtime :x-touch {:session-id "xt-main" :input-index 0 :output-index 6
+                                         :effect-group-view :manual})
+(show/connect-device! runtime :x-touch {:session-id "xt-ext" :input-index 5 :output-index 11
+                                         :extender? true})
+@(show/link-surfaces! runtime "desk" ["xt-main" "xt-ext"])
+@(show/bank-surface! runtime "desk" :last)
+```
+
+Paging decisions: a window steps by the attached members' width (16 for main
+plus extender, 8 when one is detached). Everything that fits starts at strip
+1. Otherwise pages stay on multiples of eight, so with 20 strips the second
+page shows strips 17–20 on the main unit and leaves the extender blank. A
+member that disconnects is marked unavailable and keeps its place; reconnecting
+under the same session ID rejoins the link. Links and windows are saved with
+the show; surfaces load detached. Touch ownership, held cues and motor feedback
+stay per unit: a fader held across a bank change keeps writing the strip it
+touched. See [REPL and Studio parity](repl-studio-parity.md#link-control-surfaces-and-move-their-session-box)
+and issues #705 and #706.
+
+### Hardware run
+
+`lein run -m tolglow.qa.xtouch-link-hardware` attaches the two units on this
+Mac, links, banks, sets one fader per unit, mirrors, and leaves both units at
+rest (faders at 0, rings and LEDs off, LCDs blank, scribble colours black). It
+opens only the two MCU ports and has no rig output. Run on 2026-11-26 with Live
+quit; see the PR for the receipt and the timetable of what the units showed.
 
 ### Committed effect group levels
 
@@ -174,8 +217,8 @@ committed value on release. Flip and encoders apply to the cue channels. Use
 `(show/effect-group-channels runtime)` to inspect membership and the effective
 levels of member instances. Studio's command endpoint updates the same levels.
 
-Suspend and reconnect clear touches. A standalone session reinitializes its
-configured bank and a coordinated extender follows the group's current bank.
+Suspend and reconnect clear touches. The bank is the surface's committed
+window, so a reconnected unit returns to it.
 
 ## Verification and remaining work
 
