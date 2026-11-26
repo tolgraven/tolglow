@@ -153,7 +153,8 @@
    (web/app {:snapshot! #(browser-snapshot runtime % (constantly bindings))
             :airplay-interfaces airplay/interfaces
             :airplay-media (partial airplay/studio-media (:airplay bindings))
-            :airplay-start! #(airplay/start! (:airplay bindings) (:address %))
+            :airplay-start! #(do (show/require-devices! runtime :airplay-start)
+                                 (airplay/start! (:airplay bindings) (:address %)))
             :airplay-stop! #(airplay/stop! (:airplay bindings) (:writer %))
             :airplay-publish! (fn [{:keys [path-params body]}]
                                 (airplay/publish! (:airplay bindings) (:writer path-params) (:file path-params) body))
@@ -174,6 +175,8 @@
                                  (when (keyword? id) (get definitions (subs (str id) 1))))))
             :export! #(show/export-show-source runtime)
             :checkpoint! (partial checkpoint-action! runtime)
+            :show-identity! #(let [model (:model @(:state runtime))]
+                               {:runtime-id (:id runtime) :show-id (:show-id model) :epoch (:epoch model)})
             :fog-calibration! #(let [model (:model @(:state runtime))]
                                  {:runtime-id (:id runtime) :epoch (:epoch model)
                                   :fixtures (fog-scan/fixtures model)

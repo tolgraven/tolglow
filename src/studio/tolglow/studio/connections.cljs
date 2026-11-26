@@ -2,6 +2,7 @@
   "Explicit connection controls. Reading status never acquires a device; every
   start, stop, clock selection and Live handoff is a named re-frame event."
   (:require [clojure.string :as str]
+            [tolglow.studio.show-window :as show-window]
             [afterglow.sync.peer :as pairing]
             [re-frame.core :as rf]
             [tolglow.studio.compute-client :as compute-client]
@@ -778,8 +779,10 @@
                                                [field s [:audio-form :block-frames] "Frames per block" {:input-mode "numeric" :disabled (or running? pending?)}]
                                                [field s [:audio-form :buffer-blocks] "Buffer blocks" {:input-mode "numeric" :disabled (or running? pending?)}]]]
       [:div.button-row
-       [:button#audio-start.button.primary {:type "button" :disabled (or (nil? audio) running? pending? (str/blank? (get-in s [:audio-form :input])))
-                                            :on-click #(rf/dispatch [:connections/audio-start])} "Start capture"]
+       [:button#audio-start.button.primary (show-window/device-control
+                                            {:type "button" :disabled (or (nil? audio) running? pending? (str/blank? (get-in s [:audio-form :input])))
+                                             :on-click #(rf/dispatch [:connections/audio-start])}
+                                            @(rf/subscribe [:show-window/preview-only])) "Start capture"]
        [:button#audio-stop.button {:type "button" :disabled (or (not running?) pending?)
                                   :on-click #(rf/dispatch [:connections/action :audio-stop])} "Stop capture"]]
       [:div.audio-level [:label {:html-for "audio-level"} "Signal energy · RMS"] [:meter#audio-level {:min 0 :max 1 :value (max 0 (min 1 (:rms features 0)))}]]
@@ -849,10 +852,13 @@
      [:div.connection-actions.panel
       [:div [status-chip active? (str "Synchronization · " (or (get-in s [:sync :state]) "loading"))]
        [:p.small.muted "Save pairings without opening devices, or connect the enabled adapters explicitly."]]
+      [show-window/device-note @(rf/subscribe [:show-window/preview-only])]
       [:div.button-row
        [:button#sync-save.button {:type "button" :disabled disabled? :on-click #(rf/dispatch [:connections/configure false])} "Save configuration"]
-       [:button#sync-start.button.primary {:type "button" :disabled (or disabled? (not-any? #(get-in s [:sync-form % :enabled?]) [:midi :beat-link :link :live]))
-                                          :on-click #(rf/dispatch [:connections/configure true])} "Connect enabled adapters"]
+       [:button#sync-start.button.primary (show-window/device-control
+                                          {:type "button" :disabled (or disabled? (not-any? #(get-in s [:sync-form % :enabled?]) [:midi :beat-link :link :live]))
+                                           :on-click #(rf/dispatch [:connections/configure true])}
+                                          @(rf/subscribe [:show-window/preview-only])) "Connect enabled adapters"]
        [:button#sync-stop.button {:type "button" :disabled (or (not active?) pending?) :on-click #(rf/dispatch [:connections/action :stop])} "Disconnect"]]]
      [:div.connections-layout [midi-panel s disabled?] [beat-link-panel s disabled?] [link-panel s disabled?]
       [live-panel s (get-in db [:show :cues]) disabled?] [capture-panel s] [live-runs-panel s] [audio-panel s] [section-reference-panel s]
