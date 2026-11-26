@@ -2,23 +2,26 @@
 // in the Definitions editor (#732), in headless Chrome:
 //   - Playwright's check()/uncheck() on #auto-publish, #builder-cue, the
 //     reactive "Evaluate when inputs change" box and the Perform auto-launch
-//     "Choose cues by visual activity" box; each must keep its new state at
-//     once (check() fails when a click is undone for a frame).
+//     "Choose cues by visual activity" box, a Parameter motion target and
+//     (with the video QA show) a video strip's "First pixel at the far end";
+//     each must keep its new state at once (check() fails when a click is
+//     undone for a frame).
 //   - A publication refused while a newer edit was typed: the newer text stays
 //     Unpublished changes and Publish valid edits sends it after the quiet time.
 //   - Generated EDN reads Unpublished changes, not "Generated EDN".
 //   - Two taps on one stage's Remove inside one task remove one stage.
 //
-//   node dev/studio/definition-controls-qa.mjs http://127.0.0.1:18721 target/qa/definition-controls
+//   node dev/studio/definition-controls-qa.mjs http://127.0.0.1:18721 target/qa/definition-controls http://127.0.0.1:18722
 //
-// Run against a production build on a capture-only host (preview output).
+// Run against a production build on a capture-only host (preview output). The
+// optional third origin is `tolglow.qa-video-studio/start!` (preview only).
 // Headless Chrome is not iPad Safari or the packaged app's WKWebView.
 import assert from 'node:assert/strict';
 import {mkdir, writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {chromium} from 'playwright-core';
 
-const [origin = 'http://127.0.0.1:18721', output = 'target/qa/definition-controls'] = process.argv.slice(2);
+const [origin = 'http://127.0.0.1:18721', output = 'target/qa/definition-controls', videoOrigin] = process.argv.slice(2);
 await mkdir(output, {recursive: true});
 const show = await (await fetch(origin + '/api/state', {headers: {accept: 'application/json'}})).json();
 assert.equal(show.status.output.type, 'preview', 'a capture-only host');
@@ -133,6 +136,35 @@ try {
   await page.locator('#auto-status').waitFor({state: 'attached'});
   await page.locator('details.auto-panel:has(#auto-status)').evaluate(details => { details.open = true; });
   await toggle('Choose cues by visual activity', page.getByLabel('Choose cues by visual activity'));
+
+  // A Parameter motion target: a local form edit (:modulation/toggle).
+  await page.locator('.modulation-disclosure').click();
+  await page.locator('#modulation-scope').waitFor({timeout: 10000});
+  const targets = page.locator('[aria-label="Modulation targets"] input[type=checkbox]');
+  for (const scope of ['effects', 'categories', 'cues', 'instances']) {
+    await page.locator('#modulation-scope').selectOption(scope);
+    await page.waitForTimeout(200);
+    if (await targets.count()) { results.modulationScope = scope; break; }
+  }
+  assert.ok(await targets.count() > 0, 'a modulation target to toggle');
+  await toggle('Parameter motion target', targets.first());
+
+  // A video strip's direction: the local strip draft (::edit-strip).
+  if (videoOrigin) {
+    await page.goto(videoOrigin + '/rig');
+    const panel = page.getByRole('region', {name: 'Video strip mapping'});
+    await panel.waitFor({timeout: 30000});
+    await panel.scrollIntoViewIfNeeded();
+    await page.waitForFunction(() => document.querySelectorAll('#video-strips .video-source').length >= 1);
+    await panel.locator('.video-source').filter({hasText: 'Test pattern'}).getByRole('button').click();
+    await page.waitForFunction(() => document.querySelectorAll('#video-strips .video-strip').length >= 2, null, {timeout: 20000});
+    const line = await panel.locator('.video-strip').nth(1).locator('.video-strip-line').boundingBox();
+    await page.mouse.click(line.x + line.width / 2, line.y + line.height / 2);
+    await panel.locator('.video-strip-editor').waitFor({timeout: 10000});
+    await toggle('video strip direction', panel.getByLabel('First pixel at the far end'));
+  } else {
+    results['video strip direction'] = 'skipped: no video QA origin';
+  }
   assert.deepEqual(errors, [], 'no page errors');
   results.passed = true;
   console.log(JSON.stringify(results));

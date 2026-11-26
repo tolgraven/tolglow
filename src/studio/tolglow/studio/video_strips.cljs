@@ -265,7 +265,8 @@
             [strip-overlay strip (get colors (:id strip) []) width height (= selected (:id strip)) (drag! (:id strip))])]]))))
 
 (defn- strip-editor [mapping strip aspect]
-  (let [put! #(rf/dispatch [::edit-strip (:id mapping) (:id strip) % aspect])]
+  ;; Synchronous: the strip draft changes before a controlled input is restored.
+  (let [put! #(rf/dispatch-sync [::edit-strip (:id mapping) (:id strip) % aspect])]
     [:div.video-strip-editor
      [:h3 (str "Strip " (wire-id (:id strip)))
       [:span.small.muted (str " · " (if (:layout strip) (str "layout " (wire-id (:layout strip)))

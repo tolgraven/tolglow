@@ -3,12 +3,15 @@
 
   React restores a controlled checkbox to its rendered `checked` value as soon
   as the change event ends. Reagent renders on the next animation frame, so a
-  checkbox whose handler already changed the state it renders from would show
-  its old state for one frame (and an automated `check()` would see the click
-  undone). Rendering pending updates before the event ends lets React keep the
-  new state instead. A handler that only sends a request keeps showing the
-  committed state until the reply changes it, which is the point of a
-  controlled checkbox."
+  checkbox would show its old state for one frame (and an automated `check()`
+  would see the click undone). Rendering pending updates before the event ends
+  lets React keep the new state instead.
+
+  That only helps when the handler has already changed the state the box
+  renders from, so a handler must change app-db or a local atom synchronously
+  (`rf/dispatch-sync`, `swap!`). An `rf/dispatch` lands on a later tick, after
+  React restored the old state. A handler that only sends a request and keeps
+  no pending state shows the committed state until the reply changes it."
   (:require [reagent.core :as r]))
 
 (defn input

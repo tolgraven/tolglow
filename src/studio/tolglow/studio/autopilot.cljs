@@ -93,7 +93,7 @@
 (defn- enable [section label on? disabled?]
   [:label.policy-toggle
    [checkbox/input {:checked (boolean on?) :disabled disabled? :aria-label label
-                    :on-change #(rf/dispatch [::enable section (.. % -target -checked)])}] label])
+                    :on-change #(rf/dispatch-sync [::enable section (.. % -target -checked)])}] label])
 
 (defn- scope-field [scope change!]
   (let [groups @(rf/subscribe [::policy/group-ids])

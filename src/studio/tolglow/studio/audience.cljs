@@ -45,7 +45,8 @@
       db)))
 
 (defn- select! [id included?]
-  (rf/dispatch [::change id "/api/sensors/audience-zone" {:included? included?}]))
+  ;; Synchronous: the checkbox shows the pending inclusion at once (tolglow.studio.checkbox).
+  (rf/dispatch-sync [::change id "/api/sensors/audience-zone" {:included? included?}]))
 
 (defn- arm! [id session-id armed?]
   (rf/dispatch [::change id "/api/sensors/arm" {:session-id session-id :armed? armed?}]))

@@ -4,7 +4,8 @@
 
 (defn- percent [x] (str (js/Math.round (* 100 x)) "%"))
 
-(defn- change! [key value] (rf/dispatch [:connections/set-capacity {key value}]))
+;; Synchronous: the draft shows at once, which a controlled checkbox needs (tolglow.studio.checkbox).
+(defn- change! [key value] (rf/dispatch-sync [:connections/set-capacity {key value}]))
 
 (defn- toggle [title key value pending?]
   [:label [checkbox/input {:checked (boolean value) :disabled pending?

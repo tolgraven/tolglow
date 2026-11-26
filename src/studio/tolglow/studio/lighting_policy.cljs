@@ -129,7 +129,7 @@
 (defn- toggle [section label enabled? disabled?]
   [:label.policy-toggle
    [checkbox/input {:disabled disabled? :checked (boolean enabled?)
-                    :on-change #(rf/dispatch [::send section {:enabled? (.. % -target -checked)}])}]
+                    :on-change #(rf/dispatch-sync [::send section {:enabled? (.. % -target -checked)}])}]
    label])
 
 (defn- percent-input [label value on-change]
