@@ -85,8 +85,9 @@ the host's agent turnaround, kept apart from frame timing.
 
 - *Agent responses.* For each section line: the beat the change was accepted,
   how late that was, *carry-over launches* (looks the previous mood launched
-  between the line and the change) and whether the suggestion landed in a
-  later section than it was for (stale).
+  from the line until the change landed, including on the frame that crossed
+  the line) and whether the suggestion landed in a later section than it was
+  for (stale).
 - *Phrasing.* Each auto section the planner entered, on or off the bar and
   phrase grid. The first section after an agent change begins with that change
   and is reported at it. Auto launches: how many started exactly on a beat and
@@ -168,6 +169,23 @@ real-time `play!` is not frame-for-frame repeatable; use `run-take` for that.
   the first club rehearsal found beat one-shots sliding off the beat at
   124 BPM (a 125 ms frame is 0.258 beats and each interval started from the
   late frame). Musical intervals now start where the previous one fell due.
+
+## What the first rehearsal found
+
+- Beat one-shots slid off the beat at 124 BPM: each interval started from the
+  frame that took the decision. Fixed in the planner (see Verification).
+- `configure_auto` applies when it arrives. An agent answering a section line
+  on the first frame past it lands up to a frame late, and on that frame the
+  previous mood still decides once: on seed 670 the groove launched 3 looks on
+  the breakdown's first frame, the return 2 on the quiet's, and the agent's
+  change then released them. Answering a frame early would launch the new mood
+  just before the line instead. A configuration that takes effect on a given
+  bar, as scheduled events do, would remove both; that is a planner decision
+  for the operator.
+- A Push-sourced write cancels an agent ramp with `:human-override` only when
+  its source adapter is the device profile (`:push-3`), as real Push sessions
+  send. Tests that use `{:adapter :push}` (for example the R1o scenario) are
+  read as non-human and record `:superseded`.
 
 ## Not yet
 

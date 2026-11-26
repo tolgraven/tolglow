@@ -133,7 +133,12 @@
   [passage agent-log auto-launches]
   (mapv (fn [{:keys [section section-beat accepted-beat suggested-beat status receipts tools]}]
           (let [after (sort (keep #(let [b (start-beat %)] (when (>= b (- accepted-beat eps)) b)) auto-launches))
-                carry (filter #(let [b (start-beat %)] (and (>= b (- section-beat eps)) (< b (- accepted-beat eps)))) auto-launches)
+                ;; The previous mood can still decide on the frame that crosses
+                ;; the line, just before the agent's change lands on that frame:
+                ;; such a launch was already committed (seen) by then.
+                carry (filter #(and (>= (start-beat %) (- section-beat eps))
+                                    (<= (:seen-beat % (start-beat %)) (+ accepted-beat eps)))
+                              auto-launches)
                 landed (:id (passage/section-at passage accepted-beat))]
             {:section section :section-beat section-beat :position (bar-label section-beat)
              :suggested-beat suggested-beat :accepted-beat accepted-beat
@@ -200,6 +205,9 @@
         (str "The agent's change for " (name (:section r)) " landed " (:late-beats r) " beats after the section line"
              (when (pos? (:carry-over-launches r)) (str "; the previous mood launched " (:carry-over-launches r) " looks into it"))
              "."))
+      (for [r responses :when (and (<= (:late-beats r) late-threshold-beats) (pos? (:carry-over-launches r)))]
+        (str "On the " (name (:section r)) " line the previous mood launched " (:carry-over-launches r)
+             " looks before the agent's change landed " (:late-beats r) " beats later."))
       (for [r responses :when (:stale? r)]
         (str "The agent's suggestion for " (name (:section r)) " landed in " (name (:landed-in r))
              "; nothing in the show refuses a stale configure_auto."))
@@ -241,7 +249,7 @@
               (map (fn [r] [(:section r) (:position r) (:accepted-beat r) (:late-beats r) (:carry-over-launches r) (:first-launch-beat r)
                             (str/join ", " (map (fn [[k v]] (str k " " (fmt v))) (:receipts r)))])
                    responses))
-       "\nCarry-over launches are auto launches the previous mood made between the section line and the agent's change.\n"
+       "\nCarry-over launches are auto launches the previous mood made from the section line until the agent's change landed, including on the frame that crossed the line.\n"
        "\n## Phrasing\n\n"
        (let [{:keys [launches on-beat max-after-beat frame-beats beyond-one-frame]} launch-timing]
          (str launches " auto launches: " on-beat " exactly on a beat, the latest " max-after-beat

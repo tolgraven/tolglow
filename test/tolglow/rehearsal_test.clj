@@ -29,7 +29,12 @@
       (is (= [:groove :breakdown :return :quiet] (mapv :section responses)))
       (is (every? #(= {"configure_auto" :accepted} (:receipts %)) responses) (pr-str (map :receipts responses)))
       (is (every? #(<= 0 (:late-beats %) 0.26) responses))
-      (is (every? #(zero? (:carry-over-launches %)) responses)))
+      ;; configure_auto applies when it arrives: on the frame that crosses a
+      ;; line the previous mood decides once more, just before the change.
+      ;; One decision: up to two cues and their emission companions.
+      (is (every? #(<= (:carry-over-launches %) 4) responses))
+      (is (= (count (filter (comp pos? :carry-over-launches) responses))
+             (count (filter #(re-find #"previous mood launched" %) flags)))))
     (testing "plan boundaries sit on the bar grid and launches start within one frame of their beat"
       (is (seq (remove :with-agent-change? boundaries)))
       (is (every? :on-bar? (remove :with-agent-change? boundaries)) (pr-str boundaries))
