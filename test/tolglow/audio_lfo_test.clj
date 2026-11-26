@@ -149,7 +149,14 @@
     (is (= (:to (state model)) (vec (butlast (signals/glyph registry :audio/bass {:samples 9}))))
         "the picker glyph samples the published target")
     (is (thrown? clojure.lang.ExceptionInfo (signals/publish-live registry (assoc (first (signals/builtin-waveforms)) :live? true)))
-        "a live waveform never replaces a versioned one")))
+        "a live waveform never replaces a versioned one")
+    (testing "a selector choice recorded at an older version follows the current one"
+      (let [choices (:choices (signals/selector-schema (:waveforms (configured)) [:sine :audio/bass]))]
+        (is (= 1 (:version (second choices))))
+        (is (= (signals/sample registry :audio/bass {}) (signals/sample registry :audio/bass {:version 1})))
+        (is (map? (signals/select-waveform registry {:op :const :value 1.0} (mapv #(select-keys % [:id :version]) choices) {})))
+        (is (thrown? clojure.lang.ExceptionInfo (signals/sample registry :sine {:version 2}))
+            "a versioned waveform still refuses an unknown version")))))
 
 (def ^:private audio-binding
   {:type :lfo :waveform :audio/bass :period {:beats 1} :from 0.0 :to 1.0 :phase-reference :transport})

@@ -77,7 +77,8 @@
 (defn filter-samples
   "Run samples through the design from state (two doubles per section,
   transposed direct form II). Returns [filtered new-state]; neither input is
-  modified."
+  modified. A non-finite sample is read as 0.0, so one NaN or infinity cannot
+  poison the filter state for the rest of the run."
   [design state ^doubles samples]
   (let [sections (count design)
         n (alength samples)
@@ -86,7 +87,7 @@
         coefficients (double-array (mapcat identity design))]
     (dotimes [i (min (count state) (alength z))] (aset z i (double (nth state i))))
     (dotimes [i n]
-      (loop [s 0 x (aget samples i)]
+      (loop [s 0 x (let [v (aget samples i)] (if (Double/isFinite v) v 0.0))]
         (if (= s sections)
           (aset out i x)
           (let [c (* 5 s) zi (* 2 s)

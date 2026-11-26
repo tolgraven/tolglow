@@ -48,7 +48,12 @@
       (let [whole (first (shape/filter-samples design [] (tone 90.0 0.1)))
             [a state] (shape/filter-samples design [] (java.util.Arrays/copyOfRange (tone 90.0 0.1) 0 2000))
             [b _] (shape/filter-samples design state (java.util.Arrays/copyOfRange (tone 90.0 0.1) 2000 4800))]
-        (is (= (vec whole) (into (vec a) b)))))))
+        (is (= (vec whole) (into (vec a) b)))))
+    (testing "a non-finite sample does not poison the filter state"
+      (let [input (doto (tone 90.0 0.1) (aset 100 Double/NaN) (aset 200 Double/POSITIVE_INFINITY))
+            [out state] (shape/filter-samples design [] input)]
+        (is (every? #(Double/isFinite %) out))
+        (is (every? #(Double/isFinite %) state))))))
 
 (deftest a-cycle-is-one-aligned-period-of-the-band
   (let [points 32
