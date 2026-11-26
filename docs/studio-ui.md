@@ -42,8 +42,11 @@ engine retires them.
 Auto mode is a disclosure beneath the inspector. It configures cue interval,
 count, page/all scope, launch mode and duration through `/api/auto`; the server's
 policy supplies cue selection and emission dependencies. Persistent mode leaves
-instances active until explicitly released. This is a policy-driven local mode,
-not an LLM that autonomously invents new definitions.
+instances active until explicitly released. **Vary marked parameters within
+their ranges** randomizes launch values inside each schema's domain, and **Keep
+the section plan** retains a plan saved from the REPL; a status line names the
+current section and last decision. This is a policy-driven local mode, not an
+LLM that autonomously invents new definitions. [Auto show](auto-show.md)
 
 Response envelopes have a separate disclosure. An attack/release gate multiplies
 named numeric parameters globally, across the selected effect type, or on the

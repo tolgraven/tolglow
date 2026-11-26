@@ -798,6 +798,43 @@ boolean and vector destinations are not generated. Close this gap when a Push
 encoder sweeps the same candidate in the Room
 ([issue #667](https://github.com/tolgraven/tolglow/issues/667)).
 
+## Let the show wander with a section plan
+
+Both surfaces send the same `:auto` request (`POST /api/auto` from Studio,
+`show/submit! runtime :auto …` at the REPL, `configure_auto` for agents) and
+read the same `:auto` projection in the snapshot: `:enabled?`, `:config`, the
+current `:section` and the last decision's `:reasons`. [Auto show](auto-show.md)
+
+From the REPL, start the R1o example's plan, read the section and the last
+decision, then hand one look to yourself:
+
+```clojure
+(require '[tolglow.automation.red-show :as red-show])
+@(show/submit! runtime :auto (red-show/auto-config 217))
+(select-keys (:auto (show/snapshot runtime)) [:section :reasons])
+;; Any edit of an auto look hands it over; auto never ends it again.
+@(show/submit! runtime :command {:op :param/set :instance-id "<auto instance>" :param :level :value 0.4})
+```
+
+In Studio, **Perform → Tools → Let it wander** shows **Keep the section plan
+(red, purple, quiet, strobe)** for a plan started at the REPL and a status line
+such as **Section quiet · Moving in darkness**. Ticking **Vary marked
+parameters within their ranges** and pressing **Start auto** sends
+`:randomize {:params :marked}` with `:keep-plan? true`; the REPL then reads the
+same four sections with the palette kept. A REPL stop turns the header to
+**Auto mode · off** and the plan stays on offer. A refusal reads the same from
+both sides: a count of 70 returns `:status :rejected` with `Invalid auto config:
+Count must be an integer from 1 to 64 at [:count]`, Studio shows that message,
+and the committed config is unchanged. Checked in headless Chrome by
+`tolglow.qa.auto-show-browser`.
+
+**Tracked gaps.** Studio cannot author or edit a section plan, palette, ranges,
+category filters or a lit limit; it keeps the ones the REPL saved. The REPL
+reads which instances were handed over only from the reasons of the decision
+that noticed it. Push has no auto-mode control. Close these when a performer can
+build a plan in Studio and start or stop auto mode from Push, both reading the
+same projection ([issue #217](https://github.com/tolgraven/tolglow/issues/217)).
+
 ## Reviewing a show feature
 
 - **Find it from either side.** Name the view, control label and public REPL entry point. Include the shared command, input units, identifiers and scope so an operator who knows one surface can recognize the other.

@@ -1393,23 +1393,59 @@
 
 (defn auto-activity [db]
   (let [form (get-in db [:ui :auto-form])
-        saved (get-in db [:show :auto :config :activity-target])]
+        ;; A signal binding set from the REPL is kept by the plan, not this slider.
+        saved (let [target (get-in db [:show :auto :config :activity-target])] (when (number? target) target))]
     {:enabled? (get form :target-activity? (some? saved))
      :target (or (:activity-target form) saved 0.5)}))
 
+(defn auto-plan
+  "The section plan and filters saved on the show's auto config, if any."
+  [db]
+  (let [config (get-in db [:show :auto :config])]
+    (when (or (seq (:sections config)) (:categories config) (:max-lit config)) config)))
+
+(defn auto-keeps-plan? [db]
+  (and (some? (auto-plan db)) (get-in db [:ui :auto-form :keep-plan?] true)))
+
+(def ^:private auto-reason-text
+  {:eligible "chose cues" :added-emission "added light for a moving cue"
+   :intentional-darkness "moving in darkness" :unsatisfied-emission "nothing in scope lights the moving heads"
+   :empty-scope "no eligible cues" :lit-limit "the room already has its light"
+   :cut "cut to the new section" :release "released the last section"
+   :show-restarted "the show restarted" :planner-failed "auto mode stopped"})
+
+(defn auto-summary
+  "One line describing the planner's current section and last decision."
+  [db]
+  (let [{:keys [section reasons]} (get-in db [:show :auto])
+        decision (last reasons)
+        handed (some #(when (= :performer-took-over (keyword (:reason %))) (count (:instance-ids %))) reasons)
+        refused (some #(when (= :launch-refused (keyword (:reason %))) (count (:refused %))) reasons)
+        text (get auto-reason-text (keyword (:reason decision)))]
+    (str/join " · " (cond-> []
+                      section (conj (str "Section " (wire-id section)))
+                      text (conj (str/capitalize text))
+                      (:message decision) (conj (:message decision))
+                      handed (conj (str "handed " handed " to a performer"))
+                      refused (conj (str "skipped " refused " refused cue" (when (> refused 1) "s")))))))
+
 (rf/reg-event-fx :studio/auto-start
   (fn [{:keys [db]} _]
-    (let [{:keys [interval-value interval-unit count scope mode duration-value duration-unit seed]} (get-in db [:ui :auto-form])
+    (let [{:keys [interval-value interval-unit count scope mode duration-value duration-unit seed randomize?]} (get-in db [:ui :auto-form])
           {:keys [enabled? target]} (auto-activity db)]
       {:studio/http {:path "/api/auto"
                      :body (cond-> {:enabled? true :interval (musical-duration interval-value interval-unit) :count count
                                     :scope (if (= scope "all") "all" {:page-id (get-in db [:ui :page-id])})
                                     :launch {:mode mode :duration (musical-duration duration-value duration-unit)}
                                     :seed (or seed (get-in db [:show :auto :config :seed]) 42)}
-                             enabled? (assoc :activity-target target))
+                             enabled? (assoc :activity-target target)
+                             randomize? (assoc :randomize {:params "marked"})
+                             (auto-keeps-plan? db) (assoc :keep-plan? true))
                      :on-success [:studio/success "Auto mode started. You can keep playing alongside it."]}})))
 (rf/reg-event-fx :studio/auto-stop
-  (fn [_ _] {:studio/http {:path "/api/auto" :body {:enabled? false} :on-success [:studio/success "Auto mode stopped."]}}))
+  (fn [{:keys [db]} _]
+    {:studio/http {:path "/api/auto" :body (cond-> {:enabled? false} (auto-keeps-plan? db) (assoc :keep-plan? true))
+                   :on-success [:studio/success "Auto mode stopped."]}}))
 
 (defn response-definition [db]
   (let [{:keys [id params scope attack-value decay-value sustain release-value unit curve]
