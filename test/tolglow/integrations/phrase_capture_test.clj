@@ -78,7 +78,7 @@
                      3.0 (end "d" "i2")
                      9.0 (set-param "e" "i1" :level 0.9)
                      10.0 (launch "f" "i3" :strobe))]
-    (is (every? #(>= (:beat %) 5.0) (:events buffer)) "events older than one bar before beat 10 are folded away")
+    (is (every? #(>= (:beat %) 2.0) (:events buffer)) "events older than one bar plus one margin bar before beat 10 are folded away")
     (let [phrase (capture/capture buffer {:end-beat 12})]
       (is (= [{:cue-id :wash :start 0 :length 4 :params {:level 0.3} :carried-in? true :held-at-end? true}
               {:cue-id :strobe :start 2 :length 2 :params {} :carried-in? false :held-at-end? true}]
@@ -134,3 +134,39 @@
                    (capture/observe-model (model 2.0 1000 ["a" "b"] {"a" (assoc-in a [:command :time-ms] 4500) "b" b})))]
     (is (= 1 (:discontinuities buffer)))
     (is (= [[:launch 2.0]] (mapv (juxt :kind :beat) (:events buffer))) "the launch after the seek keeps its own beat")))
+
+(deftest a-capture-ending-on-the-earlier-bar-line-keeps-its-whole-window
+  ;; Pressed at 9.9 with two bars kept, the capture ends on bar line 8 and covers
+  ;; [0 8). The strobe at [1/2 3/2) is older than two bars before 9.9.
+  (let [buffer (feed (capture/new-buffer {:bars 2})
+                     0.5 (launch "a" "i1" :strobe)
+                     1.5 (end "b" "i1")
+                     4.0 (launch "c" "i2" :wash)
+                     9.9 (set-param "d" "i2" :level 0.5))]
+    (is (= [0 8] (capture/phrase-window buffer {})))
+    (is (= [[:strobe 1/2 1 false] [:wash 4 4 false]]
+           (mapv (juxt :cue-id :start :length :carried-in?) (:notes (capture/capture buffer)))))))
+
+(deftest remembered-command-ids-stay-bounded
+  (let [buffer (reduce (fn [b i] (capture/observe b (assoc (accepted (str "m" i) :master/set {:value 0.5}) :beat (* i 0.001) :bpm 120.0)))
+                       (capture/new-buffer {:bars 1 :max-events 16}) (range 2000))
+        order (:seen-order buffer)]
+    (is (<= 16 (count (:seen buffer)) 32))
+    (is (= (set order) (:seen buffer)))
+    (is (not (instance? clojure.lang.APersistentVector$SubVector order))
+        "a subvec would keep every ID ever appended in its backing vector")))
+
+(deftest observe-model-reads-only-history-after-the-newest-observed-command
+  (let [model (fn [order]
+                {:epoch 0 :transport {:beat 1.0 :bpm 120.0 :time-ms 500}
+                 :instances (into {} (for [i (range 40)] [(str "i" i) {:phase :running}]))
+                 :control {:history-order order
+                           :history (into {} (for [id order]
+                                               [id (assoc-in (launch id (str "i" (subs id 1)) :wash) [:command :time-ms] 500)]))}})
+        ids (mapv #(str "c" %) (range 40))
+        ;; A buffer that remembers fewer IDs than the history holds must not
+        ;; observe evicted history entries again.
+        buffer (capture/observe-model (capture/new-buffer {:bars 1 :max-events 8}) (model ids))
+        again (capture/observe-model buffer (model ids))]
+    (is (= 40 (:serial buffer)) "every launch was appended once")
+    (is (= (:serial buffer) (:serial again)) "nothing was appended twice")))

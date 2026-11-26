@@ -7,7 +7,12 @@
   It follows the documented Live Object Model where it is known and makes no
   claim about undocumented behaviour: Capture MIDI here takes whole bars ending
   at the nearest bar line, which real Live decides heuristically. Faults can
-  be injected per operation to exercise lost acknowledgements.")
+  be injected per operation to exercise lost acknowledgements.
+
+  `transport` hands Clojure data across unchanged. `json-transport` puts the
+  same Set behind the JSON encoding the companion's loopback HTTP endpoint
+  uses (see live-transport), so tests can check what survives the wire."
+  (:require [clojure.data.json :as json]))
 
 (defn create
   "tracks: existing musician tracks, e.g. [{:name \"Bass\" :arm? true}]."
@@ -141,6 +146,18 @@
                                (execute live op payload))]
                  (assoc receipt :id id)))
    :close! (fn [_] nil)})
+
+(defn json-transport
+  "transport through JSON both ways: the Set receives the payload as the
+  companion would decode it, and the reply is read as live-transport reads it
+  (keyword keys, keyword :status, every other value as JSON gave it)."
+  [live]
+  (let [inner (transport live)]
+    (assoc inner :request!
+           (fn [handle id op payload]
+             (let [payload (json/read-str (json/write-str payload) :key-fn keyword)
+                   receipt ((:request! inner) handle id op payload)]
+               (update (json/read-str (json/write-str receipt) :key-fn keyword) :status keyword))))))
 
 (defn inject-fault! [live op & faults] (swap! live update-in [:faults op] concat faults))
 

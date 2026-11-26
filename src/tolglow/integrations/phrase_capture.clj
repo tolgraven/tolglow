@@ -56,8 +56,12 @@
       :serial 0 :dropped 0 :discontinuities 0
       :ignore-origins (get options :ignore-origins echo-origins)})))
 
-(defn- retention-beats [buffer]
-  (* (:bars buffer) (get-in buffer [:meter :beats-per-bar])))
+(defn- retention-beats
+  "One bar more than :bars. A capture ends on the bar line nearest the latest
+  beat, up to half a bar before it, so its window starts up to half a bar (plus
+  half a grid step of quantisation) before :bars back from the latest beat."
+  [buffer]
+  (* (inc (:bars buffer)) (get-in buffer [:meter :beats-per-bar])))
 
 (defn- fold-baseline
   "Fold events leaving retention into per-activation state, so an activation
@@ -79,11 +83,17 @@
     (assoc buffer :events (subvec kept excess) :dropped (+ (:dropped buffer) excess)
                   :baseline (reduce fold-baseline (:baseline buffer) old))))
 
-(defn- remember-id [buffer id]
+(defn- remember-id
+  "Remember between max-events and twice that many command IDs. Eviction copies
+  the kept IDs into a fresh vector: conj onto a subvec appends to its backing
+  vector, which would otherwise keep every ID ever seen."
+  [buffer id]
   (let [order (conj (:seen-order buffer) id)
-        evict (max 0 (- (count order) (* 2 (:max-events buffer))))]
-    (assoc buffer :seen (apply disj (conj (:seen buffer) id) (take evict order))
-                  :seen-order (subvec order evict))))
+        seen (conj (:seen buffer) id)]
+    (if (> (count order) (* 2 (:max-events buffer)))
+      (let [evict (- (count order) (:max-events buffer))]
+        (assoc buffer :seen (apply disj seen (subvec order 0 evict)) :seen-order (into [] (subvec order evict))))
+      (assoc buffer :seen seen :seen-order order))))
 
 (defn- reset-for-epoch [buffer epoch]
   (assoc buffer :epoch epoch :last-beat nil :events [] :baseline {} :open {} :suppressed #{}
@@ -182,7 +192,9 @@
 (defn observe-model
   "Read newly accepted commands from a committed show model and fold them in.
   Each command's beat is derived from its :time-ms against the model transport,
-  so capture precision does not depend on owner cadence within one tempo."
+  so capture precision does not depend on owner cadence within one tempo.
+  Only the history entries after the newest one already observed are read, so
+  a cycle without new commands costs no scan of the bounded history."
   [buffer model]
   (let [{:keys [beat bpm meter time-ms]} (:transport model)
         bpm (or bpm 120.0)
@@ -198,6 +210,10 @@
         buffer (if (and (:last-beat buffer) (< beat (- (:last-beat buffer) 1e-9)))
                  (advance-clock buffer {:beat beat :bpm bpm :meter meter})
                  buffer)
+        order (get-in model [:control :history-order])
+        ;; History order is append-only within an epoch.
+        fresh (reverse (take-while #(not (contains? (:seen buffer) %))
+                                   (if (vector? order) (rseq order) (reverse order))))
         buffer (reduce (fn [buffer id]
                          (if (contains? (:seen buffer) id) buffer
                              (let [{:keys [command ack]} (get history id)
@@ -206,7 +222,7 @@
                                (observe buffer (cond-> {:command command :ack ack :beat (max (or (:last-beat buffer) 0.0) (beat-at command))
                                                         :bpm bpm :meter meter}
                                                  (some? value) (assoc :value value))))))
-                       buffer (get-in model [:control :history-order]))
+                       buffer fresh)
         buffer (advance-clock buffer {:beat beat :bpm bpm :meter meter})
         running (set (keep (fn [[id instance]] (when (not= :ended (:phase instance)) id)) (:instances model)))]
     (observe-ended buffer running beat)))

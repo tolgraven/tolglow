@@ -147,10 +147,15 @@ below are a protocol the companion has yet to implement. Nothing in this
 section has been run in a licensed Live Set.
 
 **Capture buffer.** `tolglow.integrations.phrase-capture` keeps the last N
-bars (default 8) of accepted cue launches, releases and parameter writes. The
-host calls `observe-model` after each owner cycle. Each command's beat comes
-from its `:time-ms` against the committed transport, so owner cadence does not
-move it. `capture` returns a *phrase* on the beat grid (default a sixteenth).
+bars (default 8, plus one margin bar) of accepted cue launches, releases and
+parameter writes. The host calls `observe-model` after each owner cycle; it
+reads only the history entries after the newest one it has observed. Each
+command's beat comes from its `:time-ms` against the committed transport. The
+show stamps a command with the time of the owner cycle that drains it, so
+capture resolves one owner cycle before the grid quantises it. While the
+transport is stopped the beat stands still, so commands accepted during a stop
+land on the stop beat and the phrase has no gap for the stop.
+`capture` returns a *phrase* on the beat grid (default a sixteenth).
 The phrase ends on the bar line nearest the Capture press. It holds one note
 per activation (start, length, launch values) and one lane of points per cue
 parameter. Beats are exact rationals relative to the phrase start. An
@@ -159,7 +164,11 @@ at that moment. One that is still running at the end is held to the end. A
 backwards seek starts a new phrase. A show restart clears the buffer.
 Commands whose source origin is `:live-playback` or `:tolglow-feedback` are not
 captured, and neither is anything addressed to an instance those commands
-launched, so replaying a clip does not record it again.
+launched, so replaying a clip does not record it again. Overlapping
+activations of one cue are kept as separate notes on the same pitch, but MIDI
+cannot say which release ends which note: a Standard MIDI File, Live's clip
+editor and the playback decoder pair them first in, first out, so their
+lengths are not preserved. One clip per run (#683) removes this.
 
 ```clojure
 (require '[tolglow.integrations.phrase-capture :as capture]
@@ -186,7 +195,10 @@ tracks. `phrase->clips` writes launch values at their note's start.
 `clips->phrase` reads them back the same way. A later value attaches to the
 latest running activation of its cue. A value with no running activation is
 reported as an orphan and is not applied. The first encode quantises values to
-1/16383 of their range. After that, decoding and encoding are a fixed point.
+1/16383 of their range. After that, decoding and encoding are a fixed point,
+and decoded numbers stay inside their bounds. A value outside the encoded
+range (possible when a parameter has only `:recommended` bounds) is reported
+as skipped instead of being clamped.
 `clip->smf`/`smf->clip` carry a clip in a Standard MIDI File (960 PPQ, tempo
 and time signature, releases before controllers before note-ons within a
 tick).
@@ -201,7 +213,10 @@ one-clip-per-run tracks of #683.
 
 **Connection boundary.** `tolglow.integrations.live-connection` sends data
 operations over the existing companion transport shape (`:open!`, `:request!`,
-`:close!`). Receipts are `executed`, `rejected` or `indeterminate`. Operations:
+`:close!`). Receipts are `executed`, `rejected` or `indeterminate`. Replies that crossed
+the companion's JSON wire have their enumerations (`:kind`, `:monitor`,
+`:code`) turned back into keywords and their clip beats into exact rationals;
+`fake-live/json-transport` tests that path. Operations:
 `inspect-set`, `ensure-track`, `configure-track`, `write-clip`, `capture-midi`,
 `read-clip`, `show-clip`, `fire-clip`, `stop-clips`. Every write names the
 track it expects. A non-executed receipt stops the sequence and is never
@@ -249,7 +264,10 @@ reruns, lost acknowledgements, deleted and disarmed tracks, renamed tracks,
 duplicates and Exclusive Arm. The simulated Set is test code
 (`test/tolglow/integrations/fake_live.clj`). It does not claim real Live
 behaviour where that is undocumented, for example how Capture MIDI picks the
-clip length.
+clip length. Its `write-clip` stores controller events as given, which the
+real buffer route cannot do (see the known gap above), so the buffer-route
+round trip proves the encoding and the edit and replay path, not a Live write
+of the controller lanes.
 
 ## Verified Live APIs and limits
 

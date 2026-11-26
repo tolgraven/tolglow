@@ -68,8 +68,10 @@
     :boolean (when (boolean? value) (if value 1 0))
     :enum (let [i (.indexOf ^java.util.List values value)]
             (when-not (neg? i) (if (= 1 (count values)) 0 (/ i (dec (count values))))))
+    ;; A value outside the encoded range (possible when only :recommended
+    ;; bounds exist) does not fit the lane; clamping it would replay another value.
     (let [[low high] bounds]
-      (when (finite? value) (max 0.0 (min 1.0 (/ (- (double value) low) (- high low))))))))
+      (when (and (finite? value) (<= low value high)) (/ (- (double value) low) (- high low))))))
 
 (defn- fraction->component [{:keys [type bounds values]} v14]
   (let [f (/ (double v14) max-14-bit)]
@@ -77,7 +79,9 @@
       :boolean (>= v14 8192)
       :enum (nth values (Math/round (* f (dec (count values)))))
       :integer (let [[low high] bounds] (long (Math/round (+ low (* f (- high low))))))
-      (let [[low high] bounds] (+ low (* f (- high low)))))))
+      ;; low + f(high - low) can round one ulp past high, which the value's
+      ;; own bounds would then refuse on replay.
+      (let [[low high] bounds] (min high (max low (+ low (* f (- high low)))))))))
 
 (defn encode-value
   "Encode a parameter value for a lane as a vector of 14-bit integers, one per

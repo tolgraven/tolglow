@@ -162,3 +162,14 @@
     (is (= [{:type :note-off :note 36 :velocity 0 :channel 1}] (clip/feed-messages layout {:kind :end :cue-id :wash})))
     (is (= [] (clip/feed-messages layout {:kind :launch :cue-id :unknown})))
     (is (re-find #"ch 2 cc  1/33 :wash :level" (clip/describe-layout layout)))))
+
+(deftest decoded-numbers-stay-inside-their-bounds
+  (let [lane (fn [bounds] {:components (clip/components {:type :number :bounds bounds})})]
+    (testing "the top code decodes to the upper bound, not one ulp past it"
+      (let [l (lane [-3.7926394860949153 4.70649252237781])]
+        (is (= 4.70649252237781 (clip/decode-value l [16383])))
+        (is (= -3.7926394860949153 (clip/decode-value l [0])))))
+    (testing "a value outside a recommended-only range is not clamped into it"
+      (let [l {:components (clip/components {:type :number :recommended [0.0 1.0]})}]
+        (is (= [16383] (clip/encode-value l 1.0)))
+        (is (nil? (clip/encode-value l 2.5)))))))

@@ -57,6 +57,33 @@
 (defn close! [{:keys [transport handle]}]
   (when-let [close (:close! transport)] (close handle)))
 
+(defn- wire-beat [x] (if (and (number? x) (not (rational? x))) (rationalize x) x))
+
+(defn- wire-keyword [x] (if (string? x) (keyword x) x))
+
+(defn- wire-track [track]
+  (cond-> (-> track (update :kind wire-keyword) (update :monitor wire-keyword))
+    (:clips track) (update :clips (partial mapv #(update % :length-beats wire-beat)))))
+
+(defn- wire-clip [clip]
+  (-> clip
+      (update :length-beats wire-beat)
+      (update :notes (partial mapv #(-> % (update :start wire-beat) (update :duration wire-beat))))
+      (update :controllers (partial mapv #(update % :beat wire-beat)))))
+
+(defn- wire-receipt
+  "A receipt that crossed the companion's JSON wire (live-transport) has
+  strings where this namespace compares keywords (:kind, :monitor, :code) and
+  doubles where it compares exact beats. Restore those shapes; receipts that
+  are already Clojure data pass through unchanged."
+  [op receipt]
+  (cond-> (update receipt :code wire-keyword)
+    (nil? (:code receipt)) (dissoc :code)
+    (and (= op :inspect-set) (get-in receipt [:result :tracks]))
+    (update-in [:result :tracks] (partial mapv wire-track))
+    (and (= op :configure-track) (get-in receipt [:result :track])) (update-in [:result :track] wire-track)
+    (and (= op :read-clip) (get-in receipt [:result :clip])) (update-in [:result :clip] wire-clip)))
+
 (defn request!
   "Send one operation and return its validated receipt. Never retries."
   [{:keys [transport handle session-id counter log]} op payload]
@@ -66,7 +93,7 @@
     (when-not (and (map? receipt) (= id (:id receipt)) (#{:executed :rejected :indeterminate} (:status receipt)))
       (fail! "Live connection returned an invalid receipt" {:op op :id id}))
     (swap! log conj {:id id :op op :status (:status receipt)})
-    receipt))
+    (wire-receipt op receipt)))
 
 (defn operations-sent
   "Operations this connection sent, in order, for diagnostics and tests."
