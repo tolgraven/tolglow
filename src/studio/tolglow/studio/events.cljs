@@ -593,6 +593,87 @@
   (fn [{:keys [db]} [_ owner {:keys [instance-id]}]]
     (when (and instance-id (current-show? (:show db) owner))
       {:db (assoc-in db [:ui :selected-instance] instance-id)})))
+
+(defn scene-draft-control
+  "The staged Room draft as Studio shows it, or nil. :stale is the refusal an
+  apply would get. :missed is the last scheduled apply of this draft revision
+  that did not land, as `show/scene-draft` reports it under :last-outcome."
+  [db]
+  (when-let [{:keys [draft status pending-apply stale last-outcome]} (get-in db [:server-projection :view :scene-draft])]
+    (when draft
+      {:id (:id draft) :revision (:revision draft) :operations (count (:operations draft))
+       :status (keyword status) :due-beat (:due-beat pending-apply)
+       :stale (some-> stale keyword)
+       :missed (when (and (= :missed (keyword (:status last-outcome)))
+                          (= [(:id draft) (:revision draft)] [(:draft-id last-outcome) (:draft-revision last-outcome)]))
+                 {:due-beat (:due-beat last-outcome) :code (some-> (:code last-outcome) keyword)})
+       :pending? (= (:id draft) (get-in db [:scene-draft-request :draft-id]))
+       :connected? (true? (get-in db [:connection :connected?]))})))
+
+(def ^:private scene-draft-reasons
+  {:stale-patch "the rig changed" :stale-registry "a cue or effect changed"
+   :stale-prefabs "the material library changed"
+   :clock-changed "the clock source changed" :clock-moved-back "the beat moved back"})
+
+(defn scene-draft-note
+  "The banner's status text for a draft control: when it applies, why it is
+  stale, and a scheduled apply that missed its boundary."
+  [{:keys [status due-beat stale missed]}]
+  (let [reason #(get scene-draft-reasons % (some-> % name))]
+    (str (case status
+           :scheduled (str " · applies at beat " due-beat)
+           :stale (str " · stale: " (reason (or stale :stale-patch)) ". Stage it again")
+           :error " · audition failed"
+           "")
+         (when (and missed (not= :scheduled status))
+           (str " · the apply at beat " (:due-beat missed) " was missed"
+                (when-let [why (reason (:code missed))] (str ": " why)))))))
+
+(defn room-show
+  "The show the Room preview renders. A staged draft's audition frame replaces
+  only the Room's fixture values; every other preview keeps the live frame."
+  [db]
+  (let [show (or (:server-presentation db) (:show db))]
+    (if-let [values (get-in show [:draft-output :values])]
+      (assoc-in show [:output :values] values)
+      show)))
+
+(defn- scene-draft-fx [db unique op fields]
+  (let [{:keys [id revision]} (scene-draft-control db)]
+    (when id
+      {:db (assoc db :scene-draft-request {:id unique :draft-id id})
+       :fx [(-> (command db op (merge {:draft-id id :expected-draft-revision revision} fields)
+                         [:studio/scene-draft-result unique])
+                (assoc-in [1 :fields :command-id] unique)
+                (assoc-in [1 :on-failure] [:studio/scene-draft-failed unique]))]})))
+
+(rf/reg-event-fx :studio/scene-draft-apply [(rf/inject-cofx :studio/unique)]
+  (fn [{:keys [db unique]} [_ grid]]
+    (scene-draft-fx db unique "scene-draft/apply" (when grid {:grid grid}))))
+
+(rf/reg-event-fx :studio/scene-draft-discard [(rf/inject-cofx :studio/unique)]
+  (fn [{:keys [db unique]} _]
+    (scene-draft-fx db unique "scene-draft/discard" nil)))
+
+(rf/reg-event-fx :studio/scene-draft-result
+  (fn [{:keys [db]} [_ id {:keys [status due-beat discarded? message]}]]
+    (when (= id (get-in db [:scene-draft-request :id]))
+      {:db (dissoc db :scene-draft-request)
+       :dispatch (cond
+                   ;; A reply such as "pending" confirms nothing; the banner shows what the show did.
+                   (not (#{:accepted "accepted" :scheduled "scheduled"} status))
+                   [:studio/failure (str "Room draft: " (or message "The show has not confirmed this")
+                                         ". Check the banner before trying again.")]
+                   discarded? [:studio/toast "Room draft discarded."]
+                   (#{:scheduled "scheduled"} status) [:studio/toast (str "Room draft applies at beat " due-beat ".")]
+                   :else [:studio/toast "Room draft applied to the show."])})))
+
+(rf/reg-event-fx :studio/scene-draft-failed
+  (fn [{:keys [db]} [_ id message]]
+    (when (= id (get-in db [:scene-draft-request :id]))
+      {:db (dissoc db :scene-draft-request)
+       :dispatch [:studio/failure (str "Room draft: " message)]})))
+
 (rf/reg-event-fx :studio/end-all
   (fn [{:keys [db]} _] {:fx (mapv #(command db "instance/end" {:instance-id (:id %)}) (get-in db [:show :instances]))}))
 

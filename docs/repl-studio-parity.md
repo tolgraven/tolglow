@@ -304,6 +304,105 @@ From the running REPL, use the IDs from `show/snapshot`, preserving keyword and 
 
 To retry an uncertain reply, resubmit `append-request` unchanged. If it has expired, inspect the committed slots before starting another append. The shared operation saves cue membership and leaves running instances in place.
 
+## Audition a scene in the Room
+
+Stage several cue and effect changes as one Room draft, watch them in the
+Room, then apply them as one show transaction or discard them. Live output
+keeps sending the committed show while the draft is staged. Stage, apply and
+discard are ordinary owner commands, so the REPL, Studio and any adapter
+receive the same acknowledgements and refusals.
+[Draft model and transaction](../src/tolglow/show/scene_draft.clj) · [Issue #531](https://github.com/tolgraven/tolglow/issues/531)
+
+```clojure
+(require '[tolglow.show :as show])
+
+;; Each stage captures the current show; a revision keeps the draft ID.
+@(show/submit! runtime {:op :scene-draft/stage :draft-id "chorus"
+                        :operations [{:op :cue/launch :cue-id :indigo}
+                                     {:op :effect/launch :effect-id :sweep}]})
+
+(show/scene-draft runtime)   ; draft, status, rendered/skipped frames, scheduled apply, last outcome
+
+;; Apply now, or on the next bar of the show transport. One command ID,
+;; one revision and one history entry cover every staged operation.
+@(show/submit! runtime {:op :scene-draft/apply :draft-id "chorus"
+                        :expected-draft-revision 0 :grid {:bars 1}})
+
+@(show/submit! runtime {:op :scene-draft/discard :draft-id "chorus"})
+```
+
+In Studio, a staged draft shows **Draft audition** above **The Room** with its
+ID, revision and number of staged operations. Only the Room renders the
+draft's private frames, published in the snapshot as `:draft-output` with the
+draft ID and revision. `:output` and every other preview stay live. **Apply**, **Apply on next bar** and **Discard** send the same commands
+with the displayed revision. A stale revision, changed rig or registry, or a
+retired instance is refused and reported in both places. The banner names a
+stale draft's changed dependency and keeps a missed scheduled apply with its
+reason, which `show/scene-draft` returns as `:stale` and `:last-outcome`.
+
+The audition renders through the live frame function with its own clock,
+instance state, keyframes, modulation and response history, on the CPU with
+its own compiler and caches. It never sends packets, plans fog, polls display
+leases, raises events or invokes callbacks. Input stages that belong to the
+live show (sensors, subscribers, automatic policy, audio returns and patch
+routing) do not run in the audition. Each frame is queued on an audition
+worker after the live frame is published and its owner time measured, so it
+never holds the owner lock or delays a live slot. A frame is skipped and
+counted while the previous one is still rendering or when the live frame used
+more than half its period. The Room can therefore lag the live frame by a
+frame or more.
+
+A quantized apply fires where grid cue launches fire, after the cycle's queued
+input, so an earlier Discard or instance end is applied first. A clock source
+change or a backward beat jump reports the apply as missed. The audition itself
+follows the jump: its private musical anchors take the same rebase as the live
+show's. While an apply is scheduled, Discard is the only way to cancel it.
+
+The draft is a snapshot of the show at staging. Only the transport, master and
+blackout follow the live show afterwards; a later live launch, parameter edit
+or settings change is not in the Room until you stage again. If the rig, any
+cue or effect definition, or the material library changes after staging, the
+draft shows `:stale` with the code an apply would be refused with
+(`:stale-patch`, `:stale-registry`, `:stale-prefabs`) and stops rendering.
+Stage it again to audition the changed show. A restart or a restore drops the
+draft and its scheduled apply.
+
+The audition has no beat-clock schedule of its own. A running master ramp on
+the live show reaches the Room as its current frame value, so the Room fades
+with the live show and lands on the committed level without a step. Parameter,
+opacity and variable ramps edit state the snapshot does not follow: the Room
+keeps the committed value from staging, also while such a ramp runs. Scheduled
+events and subscriber steps fire only on the live show. The audition never
+advances, commits, holds or cancels a ramp, and `show/schedule` reads the same
+with or without a draft.
+
+A retried apply returns its first receipt. An apply that reuses the command ID
+of anything else is refused with `:command-id-conflict`.
+
+To repeat the browser check on a preview-only show, build Studio with
+`npm run studio:build`, then run `lein run -m tolglow.qa.scene-audition
+target/scene-audition`. It stages a draft through `/api/command`, compares the
+Room canvas with the live values in `/api/state`, applies on the next bar from
+the banner, then makes a second draft stale with a live cue edit and discards
+it. Set `CHROMIUM_PATH`, and `CHROMIUM_ARGS` to choose the GPU backend.
+
+Open gaps, owned by [issue #531](https://github.com/tolgraven/tolglow/issues/531):
+
+- Studio cannot compose a draft yet. Stage it from the REPL or another adapter;
+  Studio shows, applies and discards it. Acceptance: compose and revise a draft
+  from the cue grid, then inspect the same revision with `show/scene-draft`.
+- A staged operation must name a cue by the ID type the registry holds. A live
+  `:cue/launch` also finds a text-ID cue addressed by keyword, as JSON adapters
+  send it; inside a draft that launch is refused with `:unknown-cue`.
+  Acceptance: the same launch stages and applies from `/api/command`.
+- The Push simulator and rig views still show the live frame. Acceptance: the
+  Push Room shows the draft frames and a draft indicator.
+- There is no structural undo for launches and definitions anywhere in the
+  show. An applied draft is one history entry, so such an undo can treat it as
+  one unit. Acceptance: one undo restores the show as it was before applying.
+- Room screenshots on hardware and a captured boundary change remain to be
+  recorded.
+
 ## Schedule events and ramps on the beat clock
 
 Both surfaces read and change one projection: `:schedule` in the show
