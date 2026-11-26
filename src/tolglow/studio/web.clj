@@ -204,7 +204,9 @@
                 (close []
                   (when (compare-and-set! closed? false true)
                     (when-let [cancel! @cancel] (cancel!)))
-                  (proxy-super close)))
+                  ;; A typed `this` keeps the super call reflection-free for
+                  ;; the compiled host, which has no reflection metadata.
+                  (let [^PipedInputStream this this] (proxy-super close))))
         output (PipedOutputStream. input)
         emit! (fn [event]
                 (locking output
