@@ -104,10 +104,16 @@
 ;; ---------------------------------------------------------------------------
 ;; Input
 
-(defn- selection-commands [state envelope ctx control s modifier]
-  ;; An exclusive add waits for its acknowledgement; :ack then sends the drop.
+(defn- selection-commands
+  "An exclusive add marks local state so that :ack, called synchronously in
+  the same dispatch, sends the drop for its accepted acknowledgement. The
+  session assigns command IDs after the profile returns, so the marker is
+  scoped to this input instead: the next input or refresh clears it, as
+  does any Solo/Mute acknowledgement. An add whose receipt never resolves
+  (dispatch fails) therefore leaves nothing pending."
+  [state envelope ctx control s modifier]
   (let [{:keys [commands exclusive-add?]} (mixer/selection-toggle ctx control s modifier)
-        state (cond-> (dissoc state :exclusive-add)
+        state (cond-> state
                 exclusive-add? (assoc :exclusive-add (select-keys (first commands) [:control :selector])))]
     (with-envelope envelope (apply changed state commands))))
 
@@ -181,7 +187,8 @@
 (defn input
   "Pure MCU input -> local state and owner command templates."
   [options state raw model envelope]
-  (let [{:keys [group at type value delta] :as event} (descriptor/x-touch-event (:surface-id options) raw)
+  (let [state (dissoc state :exclusive-add)
+        {:keys [group at type value delta] :as event} (descriptor/x-touch-event (:surface-id options) raw)
         [x y] at
         extender? (:extender? options)]
     (if (nil? event)
@@ -317,6 +324,7 @@
                            [x meter])))
                      (map-indexed vector projected))]
     {:state (-> state
+                (dissoc :exclusive-add)
                 (update :sent merge desired)
                 (update :meters into (map (fn [[x level]] [x [level now]])) meters)
                 (assoc :shown (mapv :key projected)))
@@ -366,7 +374,11 @@
   "Refuse configured cue channels whose :fader or :encoder binding names a
   number with neither :bounds nor :recommended in the cue's current effect:
   it gets no guessed range, so it would bind nothing. A later definition edit
-  that removes a range shows \"!range\" on the strip instead."
+  that removes a range shows \"!range\" on the strip instead.
+  This reads the cue's current registry effect, while a strip reads its
+  running instance's captured definition, so for an instance launched
+  before a definition edit the two can disagree in either direction; the
+  strip then still shows \"!range\" when its own definition has no range."
   [model channels]
   (let [unranged (vec (for [{:keys [cue-id] :as channel} channels
                             :let [effect-id (get-in model [:registry :cues cue-id :effect-id])
@@ -415,10 +427,11 @@
               (let [result (bindings/acknowledge-hold (:holds state) (:gesture-id command) ack)]
                 {:state (assoc state :holds (:state result)) :commands (:commands result)})
 
-              (and (:exclusive-add state) (= :effect-selection/toggle (:op command))
-                   (= (:exclusive-add state) (select-keys command [:control :selector])))
+              ;; Any Solo/Mute acknowledgement ends a pending exclusive add.
+              (= :effect-selection/toggle (:op command))
               {:state (dissoc state :exclusive-add)
-               :commands (if-let [drop (mixer/exclusive-drop ack)]
+               :commands (if-let [drop (when (= (:exclusive-add state) (select-keys command [:control :selector]))
+                                         (mixer/exclusive-drop ack))]
                            [(merge drop (select-keys command [:show-id :epoch]))]
                            [])}
 

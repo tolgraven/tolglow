@@ -409,6 +409,49 @@
           (is (= #{i0 i3} (soloed)))))
       (finally (show/stop! runtime)))))
 
+(deftest an-add-whose-receipt-never-resolves-leaves-no-pending-drop
+  (let [{:keys [runtime] :as h} (harness)]
+    (try
+      (desk! h)
+      (doseq [cue [:c0 :c3 :c4]] (launch! h cue))
+      (accepted! h {:op :effect-selection/configure :modes {:solo :additive}})
+      (let [hang? (atom true)
+            dispatched (atom [])
+            receiver (atom nil)
+            ;; A second session on the attached main surface; its owner receipts
+            ;; never resolve while hang? is set, as after a device-command timeout.
+            unit (x-touch/connect! {:session-id "xt-hang" :surface-id "xt-main" :schedule! nil
+                                    :rows #(surface/strip-channels % "xt-main" {:type :mixer-strips :effect-group-view :manual
+                                                                               :cue-strips (:channels main-options)})
+                                    :placement #(surface/strip-placement % "xt-main")
+                                    :model! #(model-of h)
+                                    :now-ms! (constantly 0)
+                                    :dispatch! (fn [command]
+                                                 (swap! dispatched conj (select-keys command [:op :selector]))
+                                                 (if @hang?
+                                                   {:status :pending :command-id (:command-id command)}
+                                                   (submit! h (dissoc command :source :command-id))))
+                                    :transport {:open! (fn [r] (reset! receiver r) :t) :send! (fn [_ _]) :close! (fn [_])}})
+            input! (fn [& messages] (doseq [bytes messages] (@receiver bytes)))
+            marker #(get-in (device-session/snapshot unit) [:local :exclusive-add])
+            soloed #(into #{} (keep (fn [i] (when (:soloed? i) (:id i)))) (:instances (:effect-selection (show/snapshot runtime))))]
+        (try
+          (input! [0x90 72 127] [0x90 13 127])
+          (is (= [{:op :effect-selection/toggle :selector {:cue-ids [:c4]}}] @dispatched) "Only the add was sent")
+          (is (some #(str/includes? % "synchronous") (:errors (device-session/snapshot unit))) "The pending receipt failed the dispatch")
+          (device-session/refresh! unit)
+          (is (nil? (marker)) "A refresh clears the pending add")
+          (input! [0x80 13 0] [0x80 72 0])
+          (is (nil? (marker)))
+          (reset! hang? false)
+          (testing "a later matching toggle drops nothing"
+            (input! [0x90 70 127] [0x90 9 127] [0x80 9 0] [0x90 12 127] [0x80 12 0] [0x90 13 127] [0x80 13 0] [0x80 70 0])
+            (is (= #{(:id (latest h :c0)) (:id (latest h :c3)) (:id (latest h :c4))} (soloed)))
+            (is (= [{:cue-ids [:c0]} {:cue-ids [:c3]} {:cue-ids [:c4]}] (mapv :selector (rest @dispatched)))
+                "Three additive toggles and no drop"))
+          (finally (device-session/close! unit))))
+      (finally (show/stop! runtime)))))
+
 (def ^:private drift
   {:id :drift :version 1
    :params {:count {:type :integer :default 2}

@@ -212,7 +212,10 @@ fader is absolute. A fresh `show/connect-device!` refuses a channel whose
 `:fader` or `:encoder` binding names such a number in the cue's current
 effect (`:x-touch/error :unranged-binding`); add a range to the parameter.
 If a later definition edit removes the range, a reconnect still succeeds,
-that strip binds nothing and row 2 shows `!range`. An encoder detent moves a number from its current value by
+that strip binds nothing and row 2 shows `!range`. The connect check reads
+the cue's current registry effect, while a strip reads its running
+instance's captured definition, so for an instance launched before an edit
+they can disagree; the strip's `!range` follows the instance. An encoder detent moves a number from its current value by
 1 % of its range (0.1 % with SHIFT), and an integer by one, limited only by
 the hard bounds, so a value outside a recommended range is not pulled into
 it.
