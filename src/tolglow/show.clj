@@ -2124,7 +2124,7 @@
   result installs only while the same draft is staged. Pending clock rebases
   are applied first, in the order the live show took them. `live` is the
   committed model of the frame that queued this one: its transport, master,
-  blackout and master ramp reach the private timeline."
+  blackout, master ramp and track feel reach the private timeline."
   [runtime draft live time-ms]
   (let [state (:scene-draft runtime)
         same? #(identical? draft (:draft %))]
@@ -2133,6 +2133,9 @@
         (let [;; Shift the private musical anchors by each offset the live model took.
               model (-> (reduce show-clock/rebase (or next-model (:model frame)) rebases)
                         (merge (select-keys live [:transport :master :blackout?]))
+                        ;; A draft cannot stage a feel and applying replays it on the live
+                        ;; model, so the Room shows the live track feel.
+                        (personalities/adopt-state live)
                         (composition/advance time-ms))
               rendered (render-audition-frame (merge runtime caches) frame model time-ms
                                               (audition-ramps live time-ms))]

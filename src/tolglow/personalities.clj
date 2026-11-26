@@ -336,6 +336,14 @@
 
 (defn state [model] (get-in model [:extensions state-key]))
 
+(defn adopt-state
+  "model with source's saved personalities, or with none when source has none.
+  A private timeline such as a Room audition reads the live feel this way."
+  [model source]
+  (if-let [saved (state source)]
+    (assoc-in model [:extensions state-key] saved)
+    (cond-> model (contains? (:extensions model) state-key) (update :extensions dissoc state-key))))
+
 (defn library
   "Every personality this show can select, by ID. A show definition replaces a
   built-in with the same ID."

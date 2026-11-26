@@ -402,8 +402,10 @@ change or a backward beat jump reports the apply as missed. The audition itself
 follows the jump: its private musical anchors take the same rebase as the live
 show's. While an apply is scheduled, Discard is the only way to cancel it.
 
-The draft is a snapshot of the show at staging. Only the transport, master and
-blackout follow the live show afterwards; a later live launch, parameter edit
+The draft is a snapshot of the show at staging. Only the transport, master,
+blackout and the active track feel follow the live show afterwards, since a
+draft cannot stage a feel and an apply runs under the live one. The audition
+never changes the feel. A later live launch, parameter edit
 or settings change is not in the Room until you stage again. If the rig, any
 cue or effect definition, or the material library changes after staging, the
 draft shows `:stale` with the code an apply would be refused with

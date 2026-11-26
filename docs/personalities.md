@@ -89,6 +89,8 @@ While a personality is active, the cue draws one sculpt form from its weights an
 
 With no active personality, or one that weights no sculpt form, the cue renders its authored shape exactly as before. A cue without the declaration is never reshaped. A bouncing ball or a cylinder cannot declare this input. [Captured-output test](../test/tolglow/personalities_host_test.clj)
 
+A Room audition (`:scene-draft/stage`) renders under the live show's active feel, also when it changes after staging, because applying the draft runs under that feel. The audition never changes the selection.
+
 ## Author, share and save
 
 Publish a definition from the REPL, or post it to `/api/personality` as Transit so keywords such as `:tags` keep their type. A changed definition needs a higher `:version`. A show definition with a built-in's ID replaces that built-in in this show, and removing it restores the built-in. A running selection keeps the revision it captured until it is selected again. The projection reports `:current? false` whenever selecting the same mix now would give a different personality, including after a definition is removed and put back with other content under the same version.

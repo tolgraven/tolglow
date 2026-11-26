@@ -39,7 +39,8 @@
         capture! (fn [universes _frame-id]
                    (reset! captured (mapv #(bit-and 255 %) (take 25 (get universes 1)))))]
     (assoc (show/create-runtime {:model (assoc (control/new-show {}) :rig {:fixtures fixtures})
-                                 :batch? batch? :workspace-options nil :sink {:send! capture!}})
+                                 :batch? batch? :workspace-options nil :sink {:send! capture!}
+                                 :audition {:max-live-share ##Inf}})
            ::captured captured)))
 
 (defn- tick! [rt now]
@@ -293,6 +294,32 @@
               (is (= :rounded-box (get-in signal [:volume :shape])))
               (is (< (Math/abs (- 0.6 side)) 1.0e-9) "a box drawn from the sphere spans its live diameter")))
           (finally (show/stop! rt)))))))
+
+(deftest a-room-audition-follows-the-live-feel-and-never-changes-it
+  ;; A draft cannot stage a feel, and applying replays it on the live model, so
+  ;; the audition reads the live selection like it reads the live master.
+  (let [rt (runtime true)
+        frame! (fn [now] (tick! rt now) (is (show/await-audition rt 5000)) (show/snapshot rt))
+        lit (fn [values] (count (filter #(pos? (get-in % [:emitted-color 0] 0)) (vals values))))
+        unused {:id :unused :version 1 :outputs {:dimmer {:op :const :value 0.0}}}]
+    (try
+      (accept! rt 0 :spatial-cue feel-volume)
+      (is (= :accepted (:status (submit! rt 25 :command
+                                         {:op :scene-draft/stage :draft-id "room" :operations [{:op :registry/publish :kind :effects
+                                                                         :definition unused}]}))))
+      (let [before (frame! 50)]
+        (is (= :auditioning (get-in before [:scene-draft :status])))
+        (is (= 25 (lit (get-in before [:output :values])) (lit (get-in before [:draft-output :values])))))
+      (accept! rt 75 :personality {:op :select :id :spirals})
+      (let [saved (personalities/state (:model @(:state rt)))
+            after (last (mapv frame! [100 125 150]))]
+        (is (= :auditioning (get-in after [:scene-draft :status])) "a feel change does not make the draft stale")
+        (is (= 13 (lit (get-in after [:output :values]))))
+        (is (= (get-in after [:output :values]) (get-in after [:draft-output :values]))
+            "the Room shows the feel the live show would apply the draft under")
+        (is (identical? saved (personalities/state (:model @(:state rt)))) "the audition leaves the live feel alone")
+        (is (= 13 (count (filter pos? (output rt))))))
+      (finally (show/stop! rt)))))
 
 (deftest only-a-static-morphable-volume-can-declare-the-input
   (let [rt (runtime true)]
