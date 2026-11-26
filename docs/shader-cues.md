@@ -71,7 +71,7 @@ GLSL compilation, GPU dispatch and readback belong to Afterglow (`afterglow.rend
 
 ### Feed references
 
-The latch's `:frames` map is keyed by source id. It holds the hub sources from #672 and every running shader feed. A feed id resolves to the frame of the newest-launched running instance on that feed. Each instance's own frame is also kept under `:instance-frames`, and a shader cue's own `{:op :video}` output reads that frame first. So two instances of the same cue with different parameters each drive their own strip. Other consumers read the feed id: other cues, Room surfaces (#674) and the projector page. A paused instance keeps its frame. A stopped transport holds every frame.
+The latch's `:frames` map is keyed by source id. It holds the hub sources from #672 and every running shader feed. A feed id resolves to the frame of the newest-launched running instance on that feed. Each instance's own frame is also kept under `:instance-frames`, and a shader cue's own `{:op :video}` output reads that frame first. So two instances of the same cue with different parameters each drive their own strip. Other consumers read the feed id: other cues, the projector page, and [video surfaces](video-surfaces.md) (#674). A surface whose `:source` is `:shader/<id>` lights the heads in contact from the shader's last frame (`tolglow.video-shader-test` covers this), and a surface cue that is itself a shader cue reads its own instance frame first. A paused instance keeps its frame. A stopped transport holds every frame.
 
 ### Frame lifetime
 

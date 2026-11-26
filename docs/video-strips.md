@@ -1,6 +1,6 @@
 # Video on LED strips (2D mapping)
 
-Run Resolume or another Syphon sender on the same Mac, pick its feed, and lay pixel strips over the picture. Each strip pixel takes the colour under its share of the strip. The result is an ordinary effect output, so a video cue sits in the cue grid next to every other cue. [Issue #672](https://github.com/tolgraven/tolglow/issues/672)
+Run Resolume or another Syphon sender on the same Mac, pick its feed, and lay pixel strips over the picture. Each strip pixel takes the colour under its share of the strip. The result is an ordinary effect output, so a video cue sits in the cue grid next to every other cue. [Issue #672](https://github.com/tolgraven/tolglow/issues/672) · To project the same sources onto planes, wavy sheets or spheres in the room, see [video on 3D surfaces](video-surfaces.md).
 
 ## Sources
 

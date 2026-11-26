@@ -189,7 +189,7 @@
 
 (defn latch
   "The video frame input for one lighting frame: newest frames by source id,
-  frames held for paused instances, and the mapping settings. Pure apart from
+  frames held for paused instances, and the mapping and surface settings. Pure apart from
   reading each source's latest frame. `produced` is the shader producer's
   {:frames :instance-frames} (#673): its feeds join the source frames, and a
   shader instance's own frame is kept under :instance-frames. While the
@@ -216,7 +216,8 @@
       :instance-frames (select-keys instance-frames (keys (:instances model)))
       :held held
       :frozen? (not playing?)
-      :mappings (get-in model [:settings :video :mappings] {})})))
+      :mappings (get-in model [:settings :video :mappings] {})
+      :surfaces (get-in model [:settings :video :surfaces] {})})))
 
 (defn status
   "Portable source status for Studio and the REPL."

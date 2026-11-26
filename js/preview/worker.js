@@ -195,7 +195,7 @@ function applyState(message, outputOnly = false) {
   engine.setLightingMode(state.lightingMode);
   if (state.snapshot) {
     const snapshot = state.snapshot;
-    for (const key of ['sculpt-guide', 'spatial-volumes', 'volume-guides', 'glass-meshes', 'glass-volumes'])
+    for (const key of ['sculpt-guide', 'spatial-volumes', 'volume-guides', 'glass-meshes', 'glass-volumes', 'video-surfaces'])
       if (!Object.hasOwn(snapshot, key)) snapshot[key] = engine.snapshot?.[key];
     if (!snapshot.rig && engine.snapshot) snapshot.rig = engine.snapshot.rig;
     if (!Object.hasOwn(snapshot, 'editor')) snapshot.editor = engine.snapshot?.editor;

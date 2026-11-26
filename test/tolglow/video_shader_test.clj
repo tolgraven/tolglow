@@ -719,3 +719,31 @@
           (is (= 3 (get-in @(:state runtime) [:model :instances id :effect-version])))
           (is (false? (:last-working? (row))))))
       (finally (show/stop! runtime)))))
+
+(deftest a-video-surface-samples-a-running-shader-feed-by-id
+  ;; The shared feed contract with #674: a surface names :shader/<id> as its
+  ;; source and lights the heads in contact from the shader's last frame.
+  (let [r (test-renderer programs)
+        tube {:id :tube :shape :path :color-layout :rgb :universe 1 :address 1 :pixels 8 :points [[-3.5 0.0 0.1] [3.5 0.0 0.1]]}
+        runtime (show/create-runtime
+                 {:model (-> (demo/model)
+                             (assoc :rig (layout/materialize {:fixtures [] :pixel-layouts [tube]}))
+                             (assoc-in [:settings :video :surfaces]
+                                       {:wall {:id :wall :source :shader/index-strip :shape :plane :position [0 0 0]
+                                               :size-m [8 4] :contact {:distance-m 0.25}}}))
+                  :workspace-options nil :shader-options {:renderer r}})
+        rgb (fn [n] (let [^bytes u (get-in @(:state runtime) [:output :universes 1])]
+                      (mapv #(bit-and 0xff (aget u (+ (* 3 n) %))) (range 3))))]
+    (try
+      (publish! runtime (dissoc strip-effect :outputs) 0)
+      (launch! runtime :index-strip 25)
+      (let [t (tick-until runtime 50 #(get-in @(:state runtime) [:video-latch :frames :shader/index-strip]))
+            reply (show/submit! runtime :video-mapping {:op :surface-cue :surface :wall :priority 10})]
+        (show/tick! runtime (+ t 25))
+        (accepted! reply)
+        (tick-until runtime (+ t 50) #(pos? (second (rgb 0))))
+        (let [pixels (mapv rgb (range 8))]
+          (is (every? #(= (linear-byte 128) (second %)) pixels) (pr-str pixels))
+          (is (apply < (map first pixels)) "Red follows the shader's texel index along the wall")
+          (is (= (linear-byte 12) (first (first pixels))) "The first head sits 1/16 across a 200-texel feed")))
+      (finally (show/stop! runtime)))))
