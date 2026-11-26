@@ -63,6 +63,27 @@
    :knobs (:knobs model)
    :variables (into {} (remove (comp subscribers/reserved-variable? key)) (:variables model))})
 
+(defn- room-shows!
+  "The Room's private model holds every candidate link resolved at value."
+  [rt value]
+  (let [room (get-in @(:scene-draft rt) [:frame :model])
+        c (candidate rt)
+        live (model rt)]
+    (doseq [{:keys [destination] :as link} (:links c)
+            :let [{:keys [schema]} ((entries live c) (:id link))
+                  expected (knobs/resolve-value link schema value)
+                  ids (keep #(when (= (:cue-id destination) (:cue-id %)) (:id %)) (vals (:instances room)))]]
+      (is (seq ids) (:id link))
+      (doseq [id ids]
+        (case (:kind destination)
+          :param (is (= expected (get-in room [:instances id :params (:param destination)])) (:id link))
+          :lfo (let [binding (get-in room [:instances id :parameter-bindings (:param destination) :binding])]
+                 (is (= expected (case (:field destination)
+                                   :period (get-in binding [:period :beats])
+                                   (:from :to) (get binding (:field destination))
+                                   nil (get-in binding [:inputs (:input destination)])))
+                     (:id link))))))))
+
 (defn- audition-frames! [rt t0]
   (doseq [t (range t0 (+ t0 100) 20)]
     (show/tick! rt t)
@@ -264,4 +285,131 @@
         (is (= "Agent motion" (get-in (model rt) [:knobs :knobs (:knob-id kept) :name])))
         (is (= {:adapter :agent :session-id "agent-run"}
                (get-in (model rt) [:control :history "agent-1" :command :source]))))
+      (finally (show/stop! rt)))))
+
+(deftest refusals-carry-codes-and-the-agent-schema-matches-the-command
+  (let [rt (runtime)
+        declaration (some #(when (= "knob_candidate" (:name %)) %) agent/default-tools)]
+    (try
+      (setup! rt)
+      (is (= [:rejected :unknown-character] ((juxt :status :code) (submit! rt 100 {:op :knob-candidate/generate :character "sparkle"}))))
+      (doseq [[i size] (map-indexed vector [[1 9] [3] "4" ["2" "4"]])]
+        (is (= [:rejected :invalid-size] ((juxt :status :code) (submit! rt (+ 110 i) {:op :knob-candidate/generate :size size})))
+            (pr-str size)))
+      (is (= [:rejected :invalid-seed] ((juxt :status :code) (submit! rt 120 {:op :knob-candidate/generate :seed 1.5}))))
+      (testing "the two size bounds come in either order, as the tool schema allows"
+        (is (empty? (agent/validate-arguments (:parameters declaration) {"op" "generate" "size" [8 2]})))
+        (is (seq (agent/validate-arguments (:parameters declaration) {"op" "generate" "size" [1 9]})))
+        (is (empty? (agent/validate-arguments (:parameters declaration) {"op" "generate" "include-knob-driven?" true})))
+        (let [ack (tool! rt 130 "knob_candidate" {:op "generate" :seed 4 :size [6 4]} "agent-size")]
+          (is (= [:accepted :ready] ((juxt :status :candidate-status) ack)))
+          (is (= [4 6] (get-in (candidate rt) [:recipe :size])))
+          (is (= [4 6] (get-in (view rt) [:session :options :size])))
+          (is (<= 4 (count (:links (candidate rt))) 6))))
+      (finally (show/stop! rt)))))
+
+(deftest sweeping-an-audition-keeps-its-private-timeline-and-compile-caches
+  (let [rt (runtime)]
+    (try
+      (let [ids (setup! rt)
+            before (live-state (model rt))]
+        (submit! rt 100 {:op :knob-candidate/generate :seed 11})
+        (is (= :accepted (:status (submit! rt 110 {:op :knob-candidate/audition :value 0.2}))))
+        (audition-frames! rt 120)
+        (let [staged @(:scene-draft rt)
+              revision (get-in staged [:draft :revision])]
+          (doseq [[i value] (map-indexed vector [0.4 0.6 0.8 1.0])
+                  :let [t (+ 300 (* 200 i))
+                        ack (submit! rt t {:op :knob-candidate/audition :value value})]]
+            (is (= [:accepted true (+ revision i 1) value] ((juxt :status :retuned? :draft-revision :value) ack)))
+            (audition-frames! rt (+ t 10))
+            (room-shows! rt value))
+          (let [swept @(:scene-draft rt)]
+            (is (identical? (:timeline staged) (:timeline swept)) "one private timeline for the whole sweep")
+            (is (identical? (:caches staged) (:caches swept)) "the private compile caches are kept")
+            (is (< (get-in staged [:frame :model :time-ms]) (get-in swept [:frame :model :time-ms]))
+                "the private timeline keeps running")
+            (is (= {:value 1.0 :status :auditioning :draft-revision (+ revision 4)}
+                   (select-keys (:audition (view rt)) [:value :status :draft-revision])))
+            (is (= (get-in (show/scene-draft rt) [:draft :revision]) (+ revision 4)))
+            (is (= before (live-state (model rt))) "the live show is unchanged"))
+          (testing "a committed live change restages a fresh private copy"
+            (let [[cue id] (first ids)
+                  _ (is (= :accepted (:status (submit! rt 1200 {:op :instance/opacity-set :instance-id id :value 0.5}))))
+                  ack (submit! rt 1210 {:op :knob-candidate/audition :value 0.5})]
+              (is (= :accepted (:status ack)) (pr-str cue))
+              (is (not (:retuned? ack)))
+              (is (not (identical? (:timeline staged) (:timeline @(:scene-draft rt)))))
+              (audition-frames! rt 1220)
+              (room-shows! rt 0.5)))
+          (testing "an edit restages too, so a removed link leaves the Room"
+            (let [timeline (:timeline @(:scene-draft rt))
+                  link (first (:links (candidate rt)))]
+              (is (= :accepted (:status (submit! rt 1400 {:op :knob-candidate/unlink :link-id (:id link)}))))
+              (is (not (identical? timeline (:timeline @(:scene-draft rt)))))
+              (audition-frames! rt 1410)
+              (room-shows! rt 0.5)
+              (is (:retuned? (submit! rt 1600 {:op :knob-candidate/audition :value 0.7})) "and sweeps coalesce again")))))
+      (finally (show/stop! rt)))))
+
+(deftest a-restart-drops-the-candidate-and-an-audition-needs-a-running-cue
+  (let [rt (runtime)]
+    (try
+      (setup! rt)
+      (submit! rt 100 {:op :knob-candidate/generate :seed 11})
+      (submit! rt 110 {:op :knob-candidate/audition :value 0.5})
+      (is (some? (show/scene-draft rt)))
+      (is (= :accepted (:status (submit! rt 120 {:op :show/restart}))))
+      (testing "the candidate and its session go with the launches it came from"
+        (is (nil? (candidate rt)))
+        (is (nil? (show/scene-draft rt)))
+        (is (= {:characters (:characters (view rt))} (view rt)))
+        (is (= [:rejected :no-candidate] ((juxt :status :code) (submit! rt 130 {:op :knob-candidate/audition :value 0.5}))))
+        (is (= :rejected (:status (submit! rt 140 {:op :knob-candidate/reroll}))) "nothing to reroll"))
+      (testing "a later candidate does not reuse an earlier ID"
+        (setup! rt)
+        (submit! rt 200 {:op :knob-candidate/generate :seed 11})
+        (is (= "candidate-2" (:id (candidate rt)))))
+      (testing "released cues leave nothing to audition"
+        (doseq [id (keys (:instances (model rt)))]
+          (submit! rt 300 {:op :instance/end :instance-id id :force? true}))
+        (is (empty? (filter #(= :running (:phase %)) (vals (:instances (model rt))))))
+        (is (some? (candidate rt)) "a cue release keeps the candidate, like a knob keeps its links")
+        (is (= [:rejected :no-running-cues]
+               ((juxt :status :code) (submit! rt 310 {:op :knob-candidate/audition :value 0.5})))))
+      (finally (show/stop! rt)))))
+
+(deftest a-fresh-candidate-leaves-out-destinations-a-kept-knob-drives
+  (let [rt (runtime)]
+    (try
+      (setup! rt)
+      (submit! rt 100 {:op :knob-candidate/generate :seed 21})
+      (let [first-links (:links (candidate rt))
+            first-destinations (set (map knobs/destination-key first-links))
+            kept (submit! rt 110 {:op :knob-candidate/keep :name "Lift"})
+            _ (submit! rt 120 {:op :knob-candidate/generate :seed 21})
+            second-candidate (candidate rt)
+            excluded (filter #(= :knob-driven (:reason %)) (:excluded (generate/eligibility (model rt) {:avoid (generate/knob-driven (model rt))})))]
+        (is (= "generated-1" (:knob-id kept)))
+        (is (= :ready (:status second-candidate)))
+        (is (not-any? first-destinations (map knobs/destination-key (:links second-candidate))))
+        (is (= (sort-by pr-str first-destinations) (get-in second-candidate [:recipe :avoid])))
+        (is (= (count first-links) (count excluded)))
+        (is (every? #(= ["generated-1"] (:knob-ids %)) excluded))
+        (testing "the second knob repeats from its recipe although both knobs now drive destinations"
+          (submit! rt 130 {:op :knob-candidate/keep :name "Second"})
+          (submit! rt 140 {:op :knob-candidate/generate :from-knob "generated-2"})
+          (is (= (:links second-candidate) (:links (candidate rt))))
+          (is (= (:recipe second-candidate) (:recipe (candidate rt)))))
+        (testing "sharing is an explicit opt-in that each shared link explains"
+          (let [shared (for [seed (range 30)
+                             :let [ack (submit! rt (+ 200 seed) {:op :knob-candidate/generate :seed seed
+                                                                 :include-knob-driven? true})]
+                             e (get-in (candidate rt) [:explain])
+                             :when (:shared-with e)]
+                         [ack e])]
+            (is (seq shared))
+            (is (every? (fn [[_ e]] (some #{"generated-1" "generated-2"} (:shared-with e))) shared))
+            (is (= [:rejected :invalid-knob-candidate]
+                   ((juxt :status :code) (submit! rt 300 {:op :knob-candidate/generate :include-knob-driven? "yes"})))))))
       (finally (show/stop! rt)))))

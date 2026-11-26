@@ -33,8 +33,9 @@
 
 (defn- fail!
   ([message] (fail! message {}))
-  ([message details]
-   (throw (ex-info message {:control/error :invalid-knob-candidate :details details}))))
+  ([message details] (fail! :invalid-knob-candidate message details))
+  ([code message details]
+   (throw (ex-info message {:control/error code :details details}))))
 
 (defn- state [model] (:knob-candidates model))
 
@@ -51,16 +52,36 @@
 
 (defn- options-of
   "Generation options from a command. Form and JSON surfaces send text, so
-  character and cue IDs are accepted as strings."
-  [{:keys [character cue-ids size]}]
+  character and cue IDs are accepted as strings. A size is the two link-count
+  bounds in either order, as the agent tool's schema allows; it is kept as
+  [min max]. :include-knob-driven? offers destinations existing knobs drive."
+  [{:keys [character cue-ids size include-knob-driven?]}]
   (when (and (some? cue-ids) (not (and (sequential? cue-ids) (every? #(or (keyword? %) (string? %)) cue-ids))))
     (fail! "Cue IDs are a list of cue identifiers"))
   (when (and (some? size) (not (and (sequential? size) (= 2 (count size)))))
-    (fail! "Size is [min max] links"))
+    (fail! :invalid-size (str "Size is [min max] links within " generate/min-links "–" generate/max-links)
+           {:size size}))
+  (when-not (or (nil? include-knob-driven?) (boolean? include-knob-driven?))
+    (fail! "include-knob-driven? is true or false"))
   (cond-> {}
     character (assoc :character (keywordish character))
     (seq cue-ids) (assoc :cue-ids (vec cue-ids))
-    size (assoc :size (vec size))))
+    size (assoc :size (if (every? integer? size) (vec (sort size)) (vec size)))
+    include-knob-driven? (assoc :include-knob-driven? true)))
+
+(defn- knob-driven-options
+  "Eligibility options for destinations existing knobs drive. A recipe avoids
+  exactly the destinations it recorded, whatever knobs exist now (including
+  the knob it was kept as), so it repeats. A fresh generation avoids every
+  knob-driven destination unless :include-knob-driven? shares them."
+  [model options recipe]
+  (let [driven (generate/knob-driven model)]
+    (cond
+      recipe (when-let [avoid (seq (:avoid recipe))]
+               {:avoid (into {} (map (fn [d] [d (get driven d [])])) avoid)})
+      (empty? driven) nil
+      (:include-knob-driven? options) {:shared driven}
+      :else {:avoid driven})))
 
 (defn- default-seed
   "A seed from the command ID when none is given. Replaying the command ID
@@ -132,14 +153,16 @@
 (defn- from-recipe
   "Regenerate a candidate exactly from a saved recipe against the current show.
   Replayed edits pass the same checks as a live edit."
-  [model recipe personality]
+  [model recipe personality driven]
   (when-not (and (map? recipe) (integer? (:seed recipe)) (registry/data? recipe))
     (fail! "A recipe needs an integer :seed"))
+  (when-not (or (nil? (:avoid recipe)) (and (vector? (:avoid recipe)) (every? map? (:avoid recipe))))
+    (fail! "A recipe's :avoid is a vector of knob destinations"))
   (when-not (= generate/generator-version (:generator recipe generate/generator-version))
     (fail! "The recipe was made by a different generator version" {:generator (:generator recipe)}))
   (check-edits! (:edits recipe))
   (let [options (select-keys recipe [:character :size :cue-ids])
-        eligibility (generate/eligibility model options)
+        eligibility (generate/eligibility model (merge options driven))
         generated (generate/generate eligibility personality (assoc options :seed (:seed recipe)))]
     (if-not (and (= :ready (:status generated)) (seq (:edits recipe)))
       generated
@@ -185,15 +208,18 @@
     :knob-candidate/generate
     (let [recipe (recipe-of model command)
           _ (when (and (contains? command :seed) (not (integer? (:seed command))))
-              (fail! "A seed is an integer"))
+              (fail! :invalid-seed "A seed is an integer" {:seed (:seed command)}))
           personality (personality-for model recipe)
           options (if recipe (select-keys recipe [:character :size :cue-ids]) (options-of command))
+          driven (knob-driven-options model options recipe)
           seed (cond recipe (:seed recipe) (contains? command :seed) (:seed command) :else (default-seed command))
           candidate (if recipe
-                      (from-recipe model recipe personality)
-                      (generate/generate (generate/eligibility model options) personality (assoc options :seed seed)))
+                      (from-recipe model recipe personality driven)
+                      (generate/generate (generate/eligibility model (merge options driven)) personality
+                                         (assoc options :seed seed)))
           candidate (cond-> candidate (= :ready (:status candidate)) (assoc :name (generated-name command candidate)))]
       (install model (cond-> {:options options :seed seed :seen []}
+                       driven (assoc :knob-driven driven)
                        personality (assoc :personality (select-keys personality [:id :version])))
                candidate
                [{:type :knob-candidate/generated :status (:status candidate) :seed seed}]))
@@ -201,9 +227,10 @@
     :knob-candidate/reroll
     (let [{:keys [session]} (state model)
           _ (when-not session (fail! "Generate a candidate first"))
-          {:keys [options seed seen personality]} session
+          {:keys [options seed seen personality knob-driven]} session
           feel (when personality (personality-for model {:personality personality}))
-          next-candidate (generate/reroll (generate/eligibility model options) feel options seed (set seen))
+          next-candidate (generate/reroll (generate/eligibility model (merge options knob-driven)) feel options seed
+                                          (set seen))
           next-candidate (cond-> next-candidate
                            (= :ready (:status next-candidate))
                            (assoc :name (generated-name command next-candidate)))]
@@ -253,16 +280,41 @@
        :events [{:type :knob-candidate/discarded :candidate-id (:id current)}]
        :result {:candidate-id (:id current)}})))
 
+(defn restart
+  "A show restart ends every launch a candidate was generated from, so the
+  candidate and its reroll session go with them, like the Room draft, surface
+  sessions and composition runs. The ID counter stays, so a later candidate
+  never reuses an earlier candidate's ID."
+  [model]
+  (if-let [next-id (get-in model [:knob-candidates :next-id])]
+    (assoc model :knob-candidates {:next-id next-id})
+    (dissoc model :knob-candidates)))
+
 ;; ---------------------------------------------------------------------------
 ;; Room audition
+
+(defn running-destinations?
+  "True when a running launch carries at least one of the candidate's link
+  destinations, so an audition has something to show."
+  [model candidate]
+  (let [running (filter #(= :running (:phase %)) (vals (:instances model)))]
+    (boolean (some (fn [{{:keys [cue-id instance-id]} :destination}]
+                     (some #(if instance-id (= instance-id (:id %)) (= cue-id (:cue-id %))) running))
+                   (:links candidate)))))
 
 (defn audition-model
   "The private Room model with the candidate's links resolved at knob value and
   written in, through the knob API's resolution and the shared command path.
-  Only the private copy changes; nothing here reaches the live show."
+  Only the private copy changes; nothing here reaches the live show. A sweep
+  writes into the same running private model again (see the show's audition
+  retune), so the private copy's command receipts are cleared first: a write
+  with an earlier write's command ID would otherwise replay as a duplicate."
   [private candidate value]
   (let [knob {:id draft-id :name "Candidate" :value (double value) :links (:links candidate) :order 0}
-        staged (assoc private :knobs {:schema-version knobs/schema-version :next-order 1 :knobs {draft-id knob}})
+        staged (-> private
+                   (assoc-in [:control :history] {})
+                   (assoc-in [:control :history-order] [])
+                   (assoc :knobs {:schema-version knobs/schema-version :next-order 1 :knobs {draft-id knob}}))
         {resolved :model result :result} (knobs/apply-operation staged {:op :knob/set :knob-id draft-id :value (double value)})]
     (-> (reduce (fn [model [index {:keys [op] :as write}]]
                   (case op

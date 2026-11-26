@@ -30,13 +30,32 @@ options always give the same candidate.
 
 Every running launch is scanned, or only the cues in `:cue-ids`. A destination
 is addressed by cue ID, so it follows relaunches, and listed once even when a
-cue runs twice.
+cue runs twice. A namespaced cue is named by its full text (`"show/wash"`); a
+bare name selects a cue only when one cue has it. Labels and link IDs keep the
+namespace too (`show/wash-level`), so cues that differ only by namespace never
+share a link ID.
 
 | Offered | Left out, with a reason |
 | --- | --- |
 | Number, integer and colour parameters with bounds and a known role | `:unsupported-type` (vector, enum, boolean, gradient, range: linked by hand) |
 | A bound waveform's gain (`:to`), period and registered inputs such as `:duty` | `:modulated`: the base value of a parameter a waveform drives (writing it would hold the waveform; its waveform fields are offered instead) |
+| | `:knob-driven`: an existing knob already drives it (see below) |
 | | `:unbounded`, `:seed-parameter`, `:no-role`, `:no-parameters`, `:not-running`, `:cue-missing` |
+
+#### Destinations an existing knob drives
+
+A destination a saved knob already drives is left out with reason
+`:knob-driven`, naming the knob, so a kept candidate does not fight an older
+knob ("last committed write wins", [linked knobs](linked-knobs.md)). A knob link
+addressed to a running launch by instance ID counts for that launch's cue.
+`:include-knob-driven? true` on generate offers those destinations anyway; each
+such link's explanation then carries `:shared-with` and the knob IDs.
+`generate/knob-driven` lists them from a model.
+
+The recipe records the destinations a generation left out (`:avoid`), and a
+repeat avoids exactly those whatever knobs exist now. Without that, the knob a
+candidate is kept as would drive its own destinations and the recipe could not
+repeat.
 
 A **role** says what a destination does musically. It comes from the schema
 first (a colour type, a beat-ratio or beat-unit period) and otherwise from the
@@ -122,7 +141,8 @@ eligible labels and every excluded parameter with its reason:
 All surfaces send the same owner commands with the usual receipts.
 
 ```clojure
-{:op :knob-candidate/generate :seed 11}                      ; also :character, :cue-ids, :size [min max], :name
+{:op :knob-candidate/generate :seed 11}                      ; also :character, :cue-ids, :size [min max], :name,
+                                                             ; :include-knob-driven? true
 {:op :knob-candidate/generate :from-knob "generated-1"}      ; repeat a kept knob's recipe, or :recipe {...}
 {:op :knob-candidate/reroll}                                 ; next seed with a different mapping
 {:op :knob-candidate/audition :value 0.75}                   ; sweep in the Room
@@ -134,9 +154,15 @@ All surfaces send the same owner commands with the usual receipts.
 
 - **Generate** without `:seed` takes one from the command ID and reports it, so
   a replayed command gives the same candidate. The receipt has
-  `:candidate-status` `:ready` or `:insufficient`.
+  `:candidate-status` `:ready` or `:insufficient`. `:size` is the two link-count
+  bounds (2–8) in either order and is kept as `[min max]`.
+- **Refusals** carry a `:code`: `:invalid-seed`, `:unknown-character`,
+  `:invalid-size`, or `:invalid-knob-candidate` for other malformed input.
 - **Reroll** tries the next seeds until the character or destination set
-  differs from every candidate of this session, up to sixteen seeds.
+  differs from every candidate of this session, up to sixteen seeds. It stops
+  at a seed with no playable mapping. When the candidate it returns repeats an
+  earlier one (every seed repeated, or it stopped after a repeat), it carries
+  `:repeated? true`.
 - **Edits** are validated against the running show by the knob API, recorded
   in the recipe and replayed when it is regenerated. A candidate keeps at least
   two links.
@@ -144,6 +170,11 @@ All surfaces send the same owner commands with the usual receipts.
   links and its recipe. The new knob writes nothing until it moves, like any
   knob created at a value.
 - **Discard** drops the draft.
+- **`:show/restart`** drops the candidate and its reroll session, as it drops
+  the launches it was drafted from, the Room draft, surface sessions and
+  composition runs. The candidate ID counter continues, so a later candidate
+  never reuses an earlier ID. Regenerating instead would find nothing running
+  right after the restart.
 
 ### Recipes
 
@@ -152,6 +183,7 @@ A kept knob stores `:recipe`:
 ```clojure
 {:generator 1 :seed 13 :character :colour
  :size [3 6] :cue-ids [...]              ; when given
+ :avoid [{:kind :param :cue-id :strobe :param :rate}] ; knob-driven destinations left out
  :personality {:id :squircle :version 1} ; when a feel shaped it
  :edits [{:op :unlink :link-id "..."} {:op :link :link {...}}]}
 ```
@@ -175,9 +207,20 @@ the knobs and every destination are untouched.
   (`{:kind :knob-candidate :candidate-id :value :name}`), so
   `:scene-draft/apply` refuses it with `:preview-draft`. Keep or discard the
   candidate instead.
-- Each audition, reroll or edit restages it, so the Room follows the current
-  candidate at the last swept value. Keeping or discarding ends it, as does
-  `:scene-draft/discard` with that draft ID.
+- A reroll or an edit restages it with a fresh private copy, so the Room
+  follows the current candidate at the last swept value. Keeping or discarding
+  ends it, as does `:scene-draft/discard` with that draft ID.
+- **Sweeps coalesce.** While the candidate and the committed show are unchanged
+  since staging, a new audition value bumps the draft revision and queues a
+  *retune*: the audition worker writes the links at the new value into its
+  running private model before its next frame, keeping the private compile
+  caches and timeline. The receipt says `:retuned? true`. Any committed live
+  change (a new show revision), another candidate, an edit, or a stale or failed
+  audition stages a fresh copy instead, as before.
+- An audition is refused with `:no-running-cues` when none of the candidate's
+  cues is running (after their launches were released); there is nothing of
+  the knob to show. A restart drops the candidate, so an audition after it is
+  refused with `:no-candidate`.
 - One Room draft is staged at a time. A candidate audition waits for another
   draft to be applied or discarded (`:draft-active`), and the other way round.
 - The snapshot's `:knob-candidates :audition` gives the swept value, the Room
@@ -245,6 +288,8 @@ explanation or why too few parameters were eligible the same way.
   waveform bindings, knobs and variables stay unchanged; apply refused; keep,
   turn, save, reload and regenerate from the recipe; edits replayed; too few
   parameters; discard; command replay; the agent tool.
+- `dev/tolglow/bench_knob_candidate_sweep.clj` measures the owner tick and the
+  Room frame while a candidate is swept on the showcase rig (below).
 - `dev/tolglow/qa/knob_candidates_browser.clj` drives the production Studio
   build in headless Chrome against the showcase rig: generate, sweep, reroll
   twice, keep, too few parameters, phone width, then a REPL generation and
@@ -253,6 +298,28 @@ explanation or why too few parameters were eligible the same way.
 ```
 CHROMIUM_PATH=... lein with-profile +dev run -m tolglow.qa.knob-candidates-browser target/knob-candidates-browser 4520
 ```
+
+### Sweep cost (#737)
+
+`bin/repl run tolglow.bench-knob-candidate-sweep 300` on the showcase rig with
+five cues and their waveforms, seed 11: one new audition value every fourth
+logical 23 ms owner tick, 300 values after 40 warm-up values, each audition
+frame awaited with a spin. Apple M4 Pro (14 cores), JDK 25, pooled REPL, load
+average 3.2 from other work. Software CPU frames only; no output, GPU or
+display costs are included.
+
+| Median (p90), ms | Restage every value (before) | Coalesced |
+| --- | --- | --- |
+| Owner tick that takes an audition value | 2.09 (2.46) | 0.39 (0.47) |
+| Owner tick without one | 0.40 (0.56) | 0.38 (0.44) |
+| Room frame right after a value | 6.57 (7.12) | 0.41 (0.48) |
+| Room frame otherwise | 0.38 (0.45) | 0.37 (0.42) |
+
+"Before" forces the previous path (a fresh private copy and compile caches per
+value) through the same code. A sleeping wait for each Room frame instead of a
+spin makes macOS move both threads to slower cores during a long audition, and
+every number then rises over the run; that is a property of the harness, not of
+the show.
 
 ## Not yet
 
@@ -266,3 +333,6 @@ CHROMIUM_PATH=... lein with-profile +dev run -m tolglow.qa.knob-candidates-brows
   endpoints.
 - No preference learning (#677) or rehearsal policy (#217) chooses between
   candidates yet; the score is a fixed heuristic.
+- Studio has no control for `:include-knob-driven?` and does not show a link's
+  `:shared-with`; the REPL and the agent tool have both. Knob-driven exclusions
+  appear in Studio only in the too-few-parameters explanation.

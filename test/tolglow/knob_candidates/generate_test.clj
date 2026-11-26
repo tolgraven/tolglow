@@ -238,3 +238,96 @@
     (is (< 5 (:seed second-candidate) (:seed third-candidate)))
     (is (= second-candidate (generate/generate eligibility nil {:seed (:seed second-candidate)}))
         "a reroll is reproducible from its own seed")))
+
+(deftest a-reroll-that-stops-after-a-repeat-says-it-repeated
+  (let [reroll-from #'generate/reroll-from
+        repeat {:status :ready :seed 6 :character :energy
+                :links [{:id "pulse-level" :destination {:kind :param :cue-id :pulse :param :level}}]}
+        seen #{(generate/candidate-signature repeat)}
+        too-few {:status :insufficient :message "No playable mapping"}]
+    (testing "seed 6 repeats and seed 7 has no playable mapping: the repeat comes back marked"
+      (is (= (assoc repeat :repeated? true) (reroll-from {6 repeat 7 too-few} 5 seen))))
+    (testing "a first seed with no playable mapping is reported as it is"
+      (is (= too-few (reroll-from {6 too-few} 5 seen))))
+    (testing "a new mapping after a repeat is not marked"
+      (let [fresh (assoc repeat :seed 7 :character :motion)]
+        (is (= fresh (reroll-from {6 repeat 7 fresh} 5 seen)))))
+    (testing "sixteen repeats in a row"
+      (is (= (assoc repeat :repeated? true) (reroll-from (constantly repeat) 5 seen))))))
+
+(deftest refused-options-carry-a-code
+  (let [eligibility (generate/eligibility (show))
+        refusal (fn [options]
+                  (try (generate/generate eligibility nil options) nil
+                       (catch clojure.lang.ExceptionInfo error
+                         [(:control/error (ex-data error)) (ex-message error)])))]
+    (is (= :invalid-seed (first (refusal {:seed 1.5}))))
+    (is (= [:unknown-character "Unknown character; choose one of energy, colour, motion"]
+           (refusal {:seed 1 :character :sparkle})))
+    (doseq [size [[1 9] [8 2] [3] 3 ["2" "4"]]]
+      (is (= :invalid-size (first (refusal {:seed 1 :size size}))) (pr-str size)))
+    (is (nil? (refusal {:seed 1 :size [2 8]})))))
+
+(defn- knob [model knob-id links]
+  (:model (knobs/apply-operation model {:op :knob/create :knob-id knob-id :name knob-id :links links})))
+
+(deftest destinations-existing-knobs-drive-are-left-out-unless-shared
+  (let [level {:kind :param :cue-id :pulse :param :level}
+        rate {:kind :param :cue-id :pulse :param :rate}
+        base (show)
+        pulse-id (some #(when (= :pulse (:cue-id %)) (:id %)) (vals (:instances base)))
+        model (-> base
+                  (knob "lift" [{:id "l" :destination level :range [0.2 0.9]}])
+                  ;; Addressed to the running launch, so it also covers the cue's rate.
+                  (knob "push" [{:id "r" :destination (assoc (dissoc rate :cue-id) :instance-id pulse-id) :range [1.0 6.0]}]))
+        driven (generate/knob-driven model)
+        avoided (generate/eligibility model {:avoid driven})
+        shared (generate/eligibility model {:shared driven})
+        on? (fn [destination] #(= destination (:destination %)))]
+    (is (= {level ["lift"] rate ["push"] {:kind :param :instance-id pulse-id :param :rate} ["push"]} driven))
+    (testing "left out, with the knob that drives each"
+      (is (not-any? (some-fn (on? level) (on? rate)) (:eligible avoided)))
+      (is (= #{["pulse · level" ["lift"]] ["pulse · rate" ["push"]]}
+             (set (for [x (:excluded avoided) :when (= :knob-driven (:reason x))] [(:label x) (:knob-ids x)]))))
+      (is (= (dec (dec (count (:eligible (generate/eligibility model))))) (count (:eligible avoided)))))
+    (testing "no candidate drives them, and its recipe records exactly what it avoided"
+      (doseq [seed (range 30)
+              :let [c (generate/generate avoided nil {:seed seed})]]
+        (is (= :ready (:status c)))
+        (is (not-any? (some-fn (on? level) (on? rate)) (:links c)))
+        (is (= (sort-by pr-str [level rate]) (get-in c [:recipe :avoid])))))
+    (testing "shared on request, and explained"
+      (is (= ["lift"] (:driven-by (some #(when ((on? level) %) %) (:eligible shared)))))
+      (let [shared-links (for [seed (range 60)
+                               :let [c (generate/generate shared nil {:seed seed :character :energy})]
+                               e (:explain c) :when (:shared-with e)]
+                           e)]
+        (is (seq shared-links))
+        (is (every? #(#{["lift"] ["push"]} (:shared-with %)) shared-links))
+        (is (every? #(nil? (get-in (generate/generate shared nil {:seed % :character :energy}) [:recipe :avoid]))
+                    (range 10)))))))
+
+(defn- namespaced-show []
+  (let [cues {:a/pulse {:id :a/pulse :effect-id :pulse :version 1}
+              :b/pulse {:id :b/pulse :effect-id :pulse :version 1}}
+        base (control/new-show {:show-id :gen :rig rig :transport {:playing? true :beat 0.0 :bpm 120.0}
+                                :registry {:effects (select-keys effects [:pulse]) :cues cues}})]
+    (reduce (fn [model cue] (first (launch model cue))) base [:a/pulse :b/pulse])))
+
+(deftest cues-that-differ-only-by-namespace-keep-distinct-link-ids
+  (let [model (namespaced-show)
+        eligibility (generate/eligibility model)
+        candidates (map #(generate/generate eligibility nil {:seed % :size [4 8]}) (range 40))
+        ids (set (mapcat #(map :id (:links %)) candidates))]
+    (is (= #{"a/pulse · level" "b/pulse · level"} (set (filter #(re-find #"level$" %) (map :label (:eligible eligibility))))))
+    (is (every? #(= :ready (:status %)) candidates))
+    (is (every? ids ["a/pulse-level" "b/pulse-level"]) "each cue's link keeps its namespace")
+    (doseq [{:keys [links explain]} candidates]
+      (is (apply distinct? (map :id links)))
+      (is (some? (knob model "kept" links)) "keeping never collides on a link ID")
+      (doseq [{:keys [link-id correlated-with]} explain :when correlated-with]
+        (is (= (subs link-id 0 7) (subs correlated-with 0 7)) "correlated pairs stay on one cue")))
+    (testing "a selection names a namespaced cue by its full text; a bare shared name is ambiguous"
+      (is (= [:a/pulse] (get-in (generate/eligibility model {:cue-ids ["a/pulse"]}) [:selection :cue-ids])))
+      (is (= #{:a/pulse} (set (map #(get-in % [:destination :cue-id]) (:eligible (generate/eligibility model {:cue-ids ["a/pulse"]}))))))
+      (is (= [:cue-missing] (map :reason (:excluded (generate/eligibility model {:cue-ids ["pulse"]}))))))))
