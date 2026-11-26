@@ -1,0 +1,31 @@
+/* Generated knob candidates (#667): src/studio/tolglow/studio/knob_candidates.cljs */
+.knob-candidates-panel{margin-top:20px}
+.candidates-body{display:grid;gap:12px;padding:14px 16px 16px}
+.candidate-form{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px}
+.candidate-form label{display:grid;gap:4px;font-size:10px;color:var(--muted)}
+.candidate-form select,.candidate-form input{font-size:11px;padding:6px 7px;min-height:36px}
+.candidate-form input{width:84px}
+.candidate-cues,.candidate-recipes{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.candidate-cue{font-size:11px;padding:5px 9px;min-height:32px;border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--muted);cursor:pointer}
+.candidate-cue[aria-pressed=true]{border-color:var(--accent);color:var(--text);background:var(--raised)}
+.candidate-card{border:1px solid var(--line);border-radius:10px;background:var(--raised);padding:12px 14px;display:grid;gap:8px}
+.candidate-head{display:grid;gap:4px}
+.candidate-name{font-size:13px;padding:6px 7px}
+.candidate-sweep{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;font-size:11px;color:var(--muted)}
+.candidate-links{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.candidate-link{border-top:1px solid var(--line);padding-top:8px;display:grid;gap:4px}
+.candidate-link-head{display:flex;align-items:baseline;gap:8px;font-size:11px}
+.candidate-link-label{color:#bbc6b5;min-width:0;overflow-wrap:anywhere;margin-right:auto}
+.candidate-role{font-size:10px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:1px 7px;white-space:nowrap}
+.candidate-link-value{font-variant-numeric:tabular-nums;color:var(--text);white-space:nowrap}
+.candidate-link-shape{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:11px;font-variant-numeric:tabular-nums}
+.candidate-link-shape .text-button{margin-left:auto}
+.candidate-swatches{display:inline-flex;gap:2px}
+.candidate-swatch{width:14px;height:14px;border-radius:3px;border:1px solid var(--line)}
+.candidate-why{margin:0;color:var(--muted)}
+.candidate-pair{color:var(--accent)}
+.candidate-insufficient{border:1px dashed var(--line);border-radius:10px;padding:10px 12px;font-size:12px}
+.candidate-insufficient p{margin:0 0 6px}
+.candidate-excluded{margin:0;padding-left:16px;display:grid;gap:2px;font-size:11px}
+@media(pointer:coarse){.candidate-form select,.candidate-form input,.candidate-name{min-height:44px;font-size:16px}.candidate-cue,.knob-candidates-panel .text-button,.knob-candidates-panel .button{min-height:44px;min-width:44px}}
+@media(max-width:520px){.candidate-sweep{grid-template-columns:1fr auto}.candidate-sweep>span{grid-column:1/-1}}

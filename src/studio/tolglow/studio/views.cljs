@@ -20,6 +20,7 @@
             [tolglow.studio.connections :as connections]
             [tolglow.studio.events :as events]
             [tolglow.studio.keyframe-editor :as keyframes]
+            [tolglow.studio.knob-candidates :as knob-candidates]
             [tolglow.studio.knobs :as knobs]
             [tolglow.studio.reactive-editor :as reactive-editor]
             [tolglow.studio.expressive-mapping :as expressive]
@@ -435,9 +436,19 @@
                :on-change #(when-let [v (number-value %)] (input! [:studio/preview-setting key v]))}]])])
 
 (defn- scene-draft-banner [db]
-  (when-let [{:keys [id revision operations status pending? connected?] :as control} (events/scene-draft-control db)]
+  (when-let [{:keys [id revision operations status pending? connected? preview] :as control} (events/scene-draft-control db)]
     (let [busy? (or pending? (not connected?))
           scheduled? (= :scheduled status)]
+      (if preview
+        ;; A generated knob candidate (#667) auditions here; it is kept or discarded from its panel.
+        [:div.scene-draft-banner {:role "status" :aria-label "Room draft audition" :data-draft-id id}
+         [:div [:strong "Knob candidate"]
+          [:span.small.muted (str " · " (:name preview) " at " (.toFixed (js/Number (:value preview)) 2)
+                                  (events/scene-draft-note control))]
+          [:p.small.muted "The Room shows the candidate. Keep or discard it in Generate a knob; live output is unchanged."]]
+         [:div.button-row
+          [:button.text-button {:type "button" :disabled busy?
+                                :on-click #(send! [:studio/scene-draft-discard])} "Stop audition"]]]
       [:div.scene-draft-banner {:role "status" :aria-label "Room draft audition" :data-draft-id id}
        [:div [:strong "Draft audition"]
         [:span.small.muted (str " · " id " · revision " revision " · " operations " staged"
@@ -451,7 +462,7 @@
         [:button.button {:type "button" :disabled (or busy? scheduled? (#{:stale :error} status))
                          :on-click #(send! [:studio/scene-draft-apply {:bars 1}])} "Apply on next bar"]
         [:button.text-button {:type "button" :disabled busy?
-                              :on-click #(send! [:studio/scene-draft-discard])} "Discard"]]])))
+                              :on-click #(send! [:studio/scene-draft-discard])} "Discard"]]]))))
 
 (defn- preview-panel [db]
   [:section#preview-panel.preview-panel.panel {:aria-label "Live fixture preview"
@@ -620,7 +631,7 @@
      [:div.performance-layout {:class (when (get-in db [:ui :preview-expanded?]) "preview-expanded")}
       [:div.performance-launch [cue-grid db]]
       [:div.performance-live [section-pattern-panel db] [personality/panel] [performance/board db parameter-control]
-       [effect-group-mixer/panel] [knobs/panel db]
+       [effect-group-mixer/panel] [knobs/panel db] [knob-candidates/panel db]
        [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
       [:div.performance-room [room-window/room db preview-panel]]
       [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]]]))
