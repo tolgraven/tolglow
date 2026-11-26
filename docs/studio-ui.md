@@ -72,7 +72,10 @@ current editor. Publication feedback appears beside the editor settings.
 On a phone the registry scrolls horizontally and leaves the code below it
 available for editing. The text editor and the Bruvbox Neovim editor share the
 same publication action. EDN source is loaded from the server, validated,
-compiled and published. The visual builder
+compiled and published. The server prints a loaded definition as pretty-printed
+EDN, and **Generate EDN** uses the same layout
+([shared printer](repl-studio-parity.md#read-a-definition-as-studio-shows-it)).
+The visual builder
 creates RGB constant color effects with an adjustable intensity parameter,
 duration and attack/release envelope, optionally with a matching cue. This is a
 small working code-free subset; it is not yet a general visual expression graph.
@@ -141,7 +144,8 @@ stage reaches the next one. **Add private or variable binding** accepts a privat
 varying name or a space-separated show variable path such as `weather density`.
 
 **Write stages to EDN** updates the block map in the current draft and preserves
-surrounding source and comments. **Validate & publish** sends that definition to
+surrounding source and comments. The block map is pretty-printed from the column
+where it starts, so a loaded definition keeps its layout. **Validate & publish** sends that definition to
 the show. With **Publish valid edits** enabled the normal live-edit policy applies.
 In the visual RGB builder, use **Assign blocks** before **Generate EDN**.
 

@@ -14,6 +14,7 @@
             [tolglow.transit :as transit]
             [reitit.ring :as ring]
             [tolglow.studio.page-routes :as pages]
+            [tolglow.studio.pretty :as pretty]
             [ring.middleware.content-type :refer [wrap-content-type]]
             [ring.middleware.head :refer [wrap-head]]
             [ring.middleware.params :refer [assoc-query-params]]
@@ -337,7 +338,7 @@
     "/api/definition" (fn [{:keys [query-params]}]
                         (if-let [definition (definition! (keyword (get query-params "kind" "effects"))
                                                          (keyword (get query-params "id" "")))]
-                          (ok (cond-> {:source (pr-str definition)}
+                          (ok (cond-> {:source (pretty/edn definition)}
                                 (= "true" (get query-params "data")) (assoc :definition definition)))
                           (data-response 404 {:message "Definition not found"})))
     "/api/export" (fn [_] {:status 200 :headers {"Content-Type" transit-type

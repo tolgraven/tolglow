@@ -7,6 +7,7 @@
             [reagent.core :as r]
             [tolglow.studio.block-trace :as trace]
             [tolglow.studio.modulation :as motion]
+            [tolglow.studio.pretty :as pretty]
             [tolglow.studio.parameter-widgets :as widget]
             [tolglow.studio.signal-picker :as signal]))
 
@@ -216,7 +217,9 @@
 
 (defn write-bindings
   "Splice the :blocks map using reader coordinates. Preserve other forms,
-  comments, indentation and surrounding whitespace in the source editor."
+  comments, indentation and surrounding whitespace in the source editor. The
+  block map is pretty-printed from the column it starts at, so splicing into
+  pretty-printed source gives the lines a fresh print of that map would."
   [source bindings]
   (let [definition (reader/read (readers/indexing-push-back-reader source))
         old (:blocks definition)
@@ -224,10 +227,17 @@
         offset (fn [line col] (+ (dec col) (reduce + (map #(inc (count %)) (take (dec line) lines)))))
         {:keys [line column end-line end-column]} (meta (or old definition))
         end (offset end-line end-column)
+        ;; The definition's entries start one column after its opening brace.
+        entry-column (:column (meta definition))
         result (cond
                  (= (or old {}) bindings) source
-                 old (str (subs source 0 (offset line column)) (pr-str bindings) (subs source end))
-                 :else (str (subs source 0 (dec end)) "\n :blocks " (pr-str bindings) (subs source (dec end))))]
+                 old (str (subs source 0 (offset line column))
+                          (pretty/edn bindings {:column (dec column)
+                                                :tail (count (re-find #"^[\]})]*" (subs source end)))})
+                          (subs source end))
+                 :else (str (subs source 0 (dec end)) "\n" (apply str (repeat entry-column " ")) ":blocks "
+                            (pretty/edn bindings {:column (+ entry-column 8) :tail 1})
+                            (subs source (dec end))))]
     (when-not (= (assoc (edn/read-string source) :blocks bindings)
                  (update (edn/read-string result) :blocks #(or % {})))
       (throw (js/Error. "Could not locate the block map in this source.")))
