@@ -48,6 +48,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Showcase show](showcase-show.md) | Run, replay and change the showcase venue, its ported and new cues and its recorded 32-bar scheduler timeline |
 | [Musical timeline](timeline.md) | See fired and upcoming events, ramps, captured audio, sections, the beat grid and level meters around now, in Studio and from the REPL |
 | [Linked knobs](linked-knobs.md) | Map one normalized knob to several typed destinations with per-link range, curve, direction and exact beat-ratio steps; override, conflict and dangling-target rules |
+| [Generated knobs](generated-knobs.md) | Generate, audition in the Room, reroll, edit and keep a playable knob mapping from the running cues, deterministic under a seed and repeatable from its saved recipe |
 | [Event and DMX inspection](studio-event-stream.md) | Committed typed events, actual handler delivery and raw channel data for a selected universe |
 | [Studio state stream](state-stream.md) | Typed show snapshots, acknowledged deltas, backpressure and reconnect |
 | [Codebase survey](codebase-survey.md) | Historical entry points, behavior and coupling |

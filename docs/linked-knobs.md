@@ -28,6 +28,9 @@ functions, so a full backup saves it and a restore validates it.
                          :range [0.2 1.0] :direction :up :curve :linear :input [0 1]}]}}}
 ```
 
+A knob made from a generated candidate also keeps the `:recipe` it came
+from, so it can be regenerated ([generated knobs](generated-knobs.md#recipes)).
+
 A link has these fields:
 
 | Field | Meaning |
@@ -300,3 +303,7 @@ as for any other live parameter edit. Applying the draft replays its steps on
 the live show, which keeps the knob and the values it last wrote.
 `tolglow.knob-sweep-test/a-room-audition-never-commits-knob-or-destination-state`
 checks this.
+
+A generated knob candidate is auditioned differently: its own audition-only
+Room draft carries the candidate's resolved values on the private copy and can
+never be applied ([generated knobs](generated-knobs.md#room-audition)).

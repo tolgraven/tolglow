@@ -584,6 +584,42 @@ display data are ready ([Push](linked-knobs.md#push),
 when Studio can set non-numeric endpoints and a Push encoder turns the same knob
 and shows the same resolved values.
 
+## Generate a knob and keep it
+
+Both surfaces read `:knob-candidates` in the show snapshot and send the same
+owner commands: `:knob-candidate/generate`, `/reroll`, `/audition`, `/link`,
+`/unlink`, `/keep` and `/discard`. The projection carries the candidate's seed,
+character, score, explanation, recipe and links resolved at the swept value,
+or the reason too few parameters were eligible, plus the Room audition's value
+and draft revision. Agents use the same commands through the `knob_candidate`
+tool. [Generated knobs](generated-knobs.md)
+
+From the REPL, generate one, sweep it in the Room, reroll and keep it:
+
+```clojure
+@(show/submit! runtime :command {:op :knob-candidate/generate :seed 11})
+@(show/submit! runtime :command {:op :knob-candidate/audition :value 1.0})
+@(show/submit! runtime :command {:op :knob-candidate/reroll})
+@(show/submit! runtime :command {:op :knob-candidate/keep :name "Lift"})
+;; Later, or after a reload: the same links from the kept knob's recipe.
+@(show/submit! runtime :command {:op :knob-candidate/generate :from-knob "generated-1"})
+```
+
+In Studio, **Perform → Live → Generate a knob** has **Character**, **Seed**,
+cue chips and **Generate**, a **Sweep in the Room** slider, the links with
+their explanations, **Reroll**, **Drop**, **Keep as knob**, **Discard** and
+**Repeat a kept knob**. The Room banner reads **Knob candidate** while one is
+auditioned. A REPL generation or audition moves the open panel and slider. A
+refusal reads the same from both sides: auditioning with no candidate returns
+`:status :rejected :code :no-candidate`, and applying the candidate's Room
+draft as a scene returns `:code :preview-draft`.
+
+**Tracked gaps.** A Push encoder cannot sweep a candidate yet (it reuses the
+linked-knob Push binding, which waits on an Afterglow adapter change). Enum,
+boolean and vector destinations are not generated. Close this gap when a Push
+encoder sweeps the same candidate in the Room
+([issue #667](https://github.com/tolgraven/tolglow/issues/667)).
+
 ## Reviewing a show feature
 
 - **Find it from either side.** Name the view, control label and public REPL entry point. Include the shared command, input units, identifiers and scope so an operator who knows one surface can recognize the other.
