@@ -548,6 +548,22 @@
         (when (seq errors) (fail! ::invalid-overrides "Overlay does not fit the captured effect" {:errors errors}))
         (update-in context [:instance :params] merge values)) context)))
 
+(defn candidate-overrides
+  "Restrict overrides that do not follow a hot reload, such as ramp overlays,
+  to the values a pending candidate's schemas accept. Instances without a
+  candidate keep theirs, and the last-good revision reads the unrestricted map."
+  [model overrides]
+  (reduce-kv (fn [result id values]
+               (if-let [candidate (some->> (get-in model [:instances id]) (reload-candidate model))]
+                 (let [schemas (:params candidate {})
+                       kept (into {} (filter (fn [[param value]]
+                                               (and (contains? schemas param)
+                                                    (params/valid-value? (get schemas param) value))))
+                                  values)]
+                   (if (seq kept) (assoc result id kept) (dissoc result id)))
+                 result))
+             (or overrides {}) (or overrides {})))
+
 (def last-good-frame
   "Frame inputs that mark a step as evaluated on the engine's reload fallback."
   {::last-good? true})

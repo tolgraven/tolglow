@@ -352,6 +352,27 @@
     (is (= 0.2 (get-in (overlay (update context :frame merge modulation/last-good-frame)) [:instance :params :level])))
     (is (thrown? clojure.lang.ExceptionInfo (modulation/reload-middleware {"0:1" {:level 0.9}} nil)))))
 
+(deftest overrides-that-do-not-follow-a-reload-are-restricted-to-the-candidates-schema
+  (let [two {:id :wash :version 1 :params {:level {:type :number :default 0.0 :bounds [0.0 1.0]}
+                                           :gain {:type :number :default 1.0 :bounds [0.0 1.0]}}}
+        show (-> (model two)
+                 (assoc-in [:instances "0:1" :reload-policy] :preserve-state)
+                 (assoc-in [:instances "0:2"] (assoc (instance "0:2" two) :order 1)))
+        ramped {"0:1" {:level 0.9 :gain 0.4} "0:2" {:level 0.9 :gain 0.4} "gone" {:level 0.1}}
+        publish (fn [params] (assoc-in show [:registry :effects :wash] (assoc two :version 2 :params params)))]
+    (is (= ramped (modulation/candidate-overrides show ramped)) "No candidate, nothing restricted")
+    (is (= {} (modulation/candidate-overrides show nil)))
+    (testing "a removed parameter and a value outside the candidate's bounds are dropped for the candidate only"
+      (is (= (assoc ramped "0:1" {:level 0.9})
+             (modulation/candidate-overrides (publish {:level (get-in two [:params :level])}) ramped)))
+      (is (= (assoc ramped "0:1" {:gain 0.4})
+             (modulation/candidate-overrides
+               (publish (assoc-in (:params two) [:level :bounds] [0.0 0.5])) ramped))))
+    (testing "an instance left with nothing has no entry, and the last-good view restricts nothing"
+      (let [emptied (publish {:other {:type :number :default 0.0 :bounds [0.0 1.0]}})]
+        (is (= (dissoc ramped "0:1") (modulation/candidate-overrides emptied ramped)))
+        (is (= ramped (modulation/candidate-overrides (modulation/last-good-view emptied) ramped)))))))
+
 (deftest save-and-restore-remap-identities-without-resetting-seeds-or-next-beats
   (let [show (with-owner (model) {:seed 41 :params [:level] :select {:instance-ids ["0:1"]}})
         original (modulation/advance nil show (frame 1/4))

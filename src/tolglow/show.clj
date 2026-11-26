@@ -1688,15 +1688,16 @@
   "Sample modulation for the frame that rejects a pending hot reload, from the
   same prior controller state as the candidate samples. Return the engine's
   reload fallback and the state behind it, or nil when both outcomes read the
-  same inputs. An outcome whose own controllers cannot advance has no fallback."
-  [model candidate candidate-samples samples spatial-overrides time-ms]
+  same inputs. An outcome whose own controllers cannot advance has no fallback.
+  Ramp overlays do not follow a candidate, so both outcomes rest on the same ones."
+  [model candidate candidate-samples samples ramp-params spatial-overrides time-ms]
   (when-let [result (try (modulation/advance (:modulation model) (modulation/last-good-view model)
                                              {:time-ms time-ms :transport (:transport model)})
                          (catch clojure.lang.ExceptionInfo _ nil))]
     (let [sampled #(select-keys % [:overrides :priorities :priority-overrides])]
       (when (or (not= (:state result) (:state candidate)) (not= (:overrides result) (:overrides candidate))
                 (not= (sampled samples) (sampled candidate-samples)))
-        (let [overrides (merge-with merge (:overrides result) (:overrides samples) spatial-overrides)]
+        (let [overrides (merge-with merge ramp-params (:overrides result) (:overrides samples) spatial-overrides)]
           {:modulation result :parameter-samples samples :overrides overrides
            :frame (assoc modulation/last-good-frame
                          :keyframe-params overrides
@@ -1880,10 +1881,13 @@
                                                                   {:time-ms time-ms :transport (:transport model)})
                            last-good (when last-good-samples
                                        (last-good-inputs model modulation-result parameter-samples last-good-samples
-                                                         (get-in space [:fields :overrides]) time-ms))
+                                                         (:params ramp-frame) (get-in space [:fields :overrides]) time-ms))
                            model (assoc model :modulation (:state modulation-result))
                            ;; Active modulation and waveform bindings take precedence over a ramp overlay.
-                           input-overrides (merge-with merge (:params ramp-frame) (:overrides modulation-result) (:overrides parameter-samples)
+                           ;; A ramp does not follow a pending reload: its candidate reads only
+                           ;; the ramped parameters its schemas still accept.
+                           input-overrides (merge-with merge (modulation/candidate-overrides model (:params ramp-frame))
+                                                       (:overrides modulation-result) (:overrides parameter-samples)
                                                        (get-in space [:fields :overrides]))
                            modulation-middleware (if last-good
                                                    (modulation/reload-middleware input-overrides (:overrides last-good))
@@ -1995,7 +1999,9 @@
                                       #(resolve-frame patch (lighting/contributions standby % extra-blocks) render-options)
                                       (if spatial-groups
                                         #(spatial-cues/mask-contributions % spatial-groups spatial-levels) identity))
-                           result (:result resolved)
+                           ;; A renderer rejection rebuilds the result from the engine's frame
+                           ;; model, which carries the ramp overlay: take it out of that one too.
+                           result (update (:result resolved) :model subscribers/without-frame-overlays model ramp-frame)
                            ;; Commit the controller and waveform state behind the inputs the
                            ;; engine read, so a rejected reload leaves no trace in either.
                            last-good? (= :fallback (:reload-inputs result))

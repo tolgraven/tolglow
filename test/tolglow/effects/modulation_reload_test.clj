@@ -60,8 +60,17 @@
 (defn- instance [runtime cue-id]
   (get-in @(:state runtime) [:model :instances (instance-id runtime cue-id)]))
 
-(defn- controllers [runtime]
-  (get-in @(:state runtime) [:model :modulation :controllers]))
+(defn- observed
+  "What one committed frame leaves behind, apart from its captured universe.
+  Ramps are compared without their runtime-specific event identity."
+  [runtime]
+  (let [{:keys [model status resolved-param-overrides]} @(:state runtime)]
+    {:controllers (get-in model [:modulation :controllers])
+     :ramps (mapv #(select-keys % [:destination :from :to :base :curve :unit :start :end])
+                  (get-in model [:event-subscribers :ramps]))
+     :committed (into {} (map (juxt :cue-id (juxt :effect-version :params))) (vals (:instances model)))
+     :overrides resolved-param-overrides
+     :error (:error status)}))
 
 (defn- publish!
   "Publish every definition in one owner cycle and render that frame."
@@ -81,8 +90,7 @@
           (let [acks (if-let [definitions (get publications t)]
                        (publish! runtime definitions t)
                        (do (show/tick! runtime t) nil))]
-            {:time-ms t :acks acks :dmx (peek @output) :controllers (controllers runtime)
-             :error (get-in @(:state runtime) [:status :error])}))
+            (merge (observed runtime) {:time-ms t :acks acks :dmx (peek @output)})))
         times))
 
 (def times (vec (range 50 651 50)))
@@ -357,3 +365,111 @@
                 "Held layer priority tiers differ at these frame times")
             (is (every? nil? (map :error (:frames actual)))))
           (finally (show/stop! broken) (show/stop! control)))))))
+
+(def gained-wash
+  "A wash whose dimmer is its modulated level times a gain that a ramp moves."
+  (-> wash
+      (assoc-in [:params :gain] {:type :number :default 1.0 :bounds [0.0 1.0]})
+      (assoc :outputs {:dimmer {:op :multiply :args [(param :level) (param :gain)]}})))
+
+(defn- ramp!
+  "Start two-beat ramps on [cue param target] destinations in one owner cycle."
+  [runtime destinations t]
+  (let [replies (mapv (fn [[cue param to]]
+                        (show/submit! runtime {:op :param/ramp :instance-id (instance-id runtime cue) :param param
+                                               :to to :over {:beats 2} :source {:adapter :repl :session-id "ramps"}}))
+                      destinations)]
+    (show/tick! runtime t)
+    (mapv #(:status (deref % 2000 ::timeout)) replies)))
+
+(deftest running-ramps-compose-with-both-reload-outcomes
+  ;; The ramps run from 100 ms to 1100 ms, so every captured frame is mid-ramp.
+  (let [cues [:wash :modulator]
+        ramps [[:wash :gain 0.2] [:modulator :level 1.0]]
+        run (fn [show-model publications options]
+              (let [broken-output (atom []) control-output (atom [])
+                    broken (runtime broken-output show-model options)
+                    control (runtime control-output show-model (dissoc options :failing-compile))
+                    capture (fn [rt output publications]
+                              (doseq [cue cues] (apply! rt {:op :cue/launch :cue-id cue} 0))
+                              (let [started (ramp! rt ramps 100)]
+                                (reset! output [])
+                                {:started started
+                                 :frames (mapv (fn [t]
+                                                 (when-let [definitions (get publications t)] (publish! rt definitions t))
+                                                 (when-not (get publications t) (show/tick! rt t))
+                                                 (merge (observed rt) {:time-ms t :dmx (peek @output)}))
+                                               times)}))]
+                (try
+                  {:control (capture control control-output (:control-publications options {}))
+                   :broken (capture broken broken-output publications)
+                   :owner (instance broken :modulator)}
+                  (finally (show/stop! broken) (show/stop! control)))))
+        matches (fn [{:keys [control broken]}]
+                  (is (= [:accepted :accepted] (:started control) (:started broken)))
+                  (is (= 2 (count (:ramps (peek (:frames control))))) "Both ramps are still running at the last frame")
+                  (is (< 4 (count (distinct (map #(nth (:dmx %) 0) (:frames control))))) "The owner's ramped level moves head-1")
+                  (doseq [[field label] [[:dmx "Captured DMX"] [:controllers "Controller state"]
+                                         [:ramps "Running ramps"] [:committed "Committed versions and parameters"]
+                                         [:overrides "Resolved parameter overrides"]]]
+                    (is (= [] (differing field (:frames control) (:frames broken))) (str label " differs at these frame times")))
+                  (is (every? nil? (map :error (:frames broken)))))]
+    (doseq [policy [:preserve-state :restart]
+            stage [:reload :compile :evaluate :output]]
+      (testing (str policy " rejected at " stage)
+        (let [show-model (model {:modulator policy} [gained-wash owner])
+              publish (assoc (rejected-revision owner stage) :modulation changed-modulation)
+              result (run show-model {300 [publish]} (when (= :compile stage) {:failing-compile [:modulator 2]}))]
+          (is (= [1 stage] [(:effect-version (:owner result)) (get-in (:owner result) [:reload-fault :stage])]))
+          (matches result))))
+    (testing "an accepted reload keeps the ramps and takes over on its frame"
+      (let [show-model (model {:modulator :preserve-state} [gained-wash owner])
+            publish (assoc owner :version 2 :modulation changed-modulation)
+            {:keys [control broken owner]} (run show-model {300 [publish]} {})
+            before #(filterv (fn [frame] (< (:time-ms frame) 300)) (:frames %))]
+        (is (= [2 nil] [(:effect-version owner) (:reload-fault owner)]))
+        (is (= [] (differing :dmx (before control) (before broken))))
+        (is (= [] (differing :ramps (:frames control) (:frames broken))) "The takeover leaves both ramps running")
+        (is (= (mapv (comp second :modulator :committed) (:frames control))
+               (mapv (comp second :modulator :committed) (:frames broken)))
+            "The owner's committed level stays the ramp's start value until the ramp commits")))))
+
+(deftest a-renderer-rejected-reload-does-not-commit-a-running-ramps-frame-value
+  ;; No modulation here: the engine silences the candidate for one frame and
+  ;; rebuilds its result from the frame model that carries the ramp overlay.
+  (let [aimed {:id :aimed :version 1 :name "Aimed" :targets [:head-3]
+               :params {:level level} :outputs {:dimmer (param :level)}}
+        show-model (model {:aimed :preserve-state} [aimed])
+        output (atom []) rt (runtime output show-model)]
+    (try
+      (apply! rt {:op :cue/launch :cue-id :aimed} 0)
+      (is (= [:accepted] (ramp! rt [[:aimed :level 1.0]] 100)))
+      (is (= [:accepted] (publish! rt [(rejected-revision aimed :output)] 300)))
+      (let [rejected (instance rt :aimed)]
+        (is (= [1 :output] [(:effect-version rejected) (get-in rejected [:reload-fault :stage])]))
+        (is (= 0.5 (get-in rejected [:params :level])) "The committed level is still the ramp's start value")
+        (is (= 1 (count (get-in @(:state rt) [:model :event-subscribers :ramps])))))
+      (show/tick! rt 350)
+      (is (= 1 (count (get-in @(:state rt) [:model :event-subscribers :ramps]))) "The ramp is not cancelled as overridden")
+      (show/tick! rt 1200)
+      (is (= 1.0 (get-in (instance rt :aimed) [:params :level])) "It completes and commits its target")
+      (finally (show/stop! rt)))))
+
+(deftest an-accepted-reload-that-drops-a-ramped-parameter-is-not-faulted-by-the-ramp
+  (doseq [modulated? [false true]]
+    (testing (if modulated? "beside a controller on its other parameter" "without modulation")
+      (let [show-model (model {:wash :preserve-state :modulator :pinned}
+                              (cond-> [gained-wash] modulated? (conj owner)))
+            plain (assoc wash :version 2)
+            output (atom []) rt (runtime output show-model)]
+        (try
+          (doseq [cue (cond-> [:wash] modulated? (conj :modulator))] (apply! rt {:op :cue/launch :cue-id cue} 0))
+          (is (= [:accepted] (ramp! rt [[:wash :gain 0.2]] 100)))
+          (is (= [:accepted] (publish! rt [plain] 300)))
+          (let [reloaded (instance rt :wash)]
+            (is (= [2 nil nil] [(:effect-version reloaded) (:reload-fault reloaded) (:fault reloaded)]))
+            (is (= #{:level} (set (keys (:params reloaded))))))
+          (show/tick! rt 350)
+          (is (empty? (get-in @(:state rt) [:model :event-subscribers :ramps])) "The ramp ends with its destination")
+          (is (nil? (get-in @(:state rt) [:status :error])))
+          (finally (show/stop! rt)))))))
