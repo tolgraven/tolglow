@@ -117,7 +117,10 @@ the move samples elapsed milliseconds over the held interval instead:
 - A meter change has no effect, because the meter is captured at launch.
 - Stopping the transport no longer freezes the move: it continues in
   milliseconds and arrives on schedule. A stateless sample cannot freeze and
-  later resume without a jump.
+  later resume without a jump. Likewise a move launched while the transport
+  is stopped starts at once at the stopped tempo instead of waiting for
+  playback. A Link pause or a pause look does not hold it either; pause the
+  instance (`:instance/pause`) to freeze it.
 
 Limits: a timed or one-shot slot keeps its own musical duration, so after a
 tempo rise the slot can end before the held move arrives. A replayed command

@@ -242,11 +242,13 @@
 (defn- commanded-move
   "Publish the two-bar paired move at 120 BPM, launch it at 0 ms on a capture
   sink and tick every 25 ms. `changes` maps a frame time to transport changes
-  admitted in that owner cycle; a change at 0 follows the launch command.
+  admitted in that owner cycle, or to :instance/pause or :instance/resume for
+  the launched instance; a change at 0 follows the launch command.
   Returns one {:t :packet :words} per frame and the launched instance.
   :twin? launches the same outputs as an ordinary effect, which has no
-  synchronized-path launch handling and reads the beat clock alone."
-  [changes & {:keys [twin? until-ms] :or {until-ms 4500}}]
+  synchronized-path launch handling and reads the beat clock alone.
+  :stopped? stops the transport before the launch command."
+  [changes & {:keys [twin? stopped? until-ms] :or {until-ms 4500}}]
   (let [captured (atom nil)
         runtime (show/create-runtime
                  {:workspace-options nil
@@ -256,8 +258,11 @@
         frame (fn [t]
                 {:t t :packet @captured
                  :words (update-vals head-words (fn [axes] (update-vals axes #(apply word @captured %))))})
-        change! (fn [t] (when-let [transport (get changes t)]
-                          (show/submit! runtime :command {:op :transport/set :transport transport})))]
+        launched (volatile! nil)
+        change! (fn [t] (when-let [change (get changes t)]
+                          (show/submit! runtime :command (if (keyword? change)
+                                                           {:op change :instance-id @launched}
+                                                           {:op :transport/set :transport change}))))]
     (try
       (let [spec (assoc paths/synchronized-spec :targets ["far-travel" "slow-motor"] :duration {:bars 2})
             published (post! runtime "/api/aim-path" spec 0)
@@ -265,11 +270,14 @@
             _ (when twin?
                 (submit-at! runtime :command {:op :registry/publish :kind :effects
                                               :definition (-> definition (dissoc :editor) (assoc :id :twin :version 1))} 0))
+            _ (when stopped?
+                (assert (= :accepted (:status (submit-at! runtime :command {:op :transport/set :transport {:playing? false}} 0)))))
             launch (show/submit! runtime :command (if twin? {:op :effect/launch :effect-id :twin}
                                                       {:op :cue/launch :cue-id :paired}))
             changed (change! 0)
             _ (show/tick! runtime 0)
             launch (deref launch 1000 ::missing)
+            _ (vreset! launched (:instance-id launch))
             first-frame (frame 0)
             instance (get-in @(:state runtime) [:model :instances (:instance-id launch)])
             frames (into [first-frame]
@@ -393,3 +401,22 @@
     (is (= arrive-together (pan-arrivals frames))
         "A stateless sample cannot freeze and resume without a jump, so the held move keeps going")
     (is (= [] (frames-apart unchanged frames 1)))))
+
+(deftest launching-a-held-move-while-the-transport-is-stopped-runs-it-at-once
+  (let [unchanged (:frames (commanded-move {}))
+        {:keys [frames instance]} (commanded-move {} :stopped? true)]
+    (is (= {:beats 8 :ms 4000.0} (get-in instance [:state :tolglow.compiler/launch-tempo]))
+        "A stopped transport keeps its tempo, so the launch holds two bars at 120 BPM")
+    (is (= [] (rate-violations frames)))
+    (is (= arrive-together (pan-arrivals frames))
+        "The move does not wait for playback; it arrives on its launch interval")
+    (is (= [] (frames-apart unchanged frames 1)))))
+
+(deftest pausing-a-held-move-freezes-it-across-a-tempo-change
+  (let [{:keys [frames]} (commanded-move {1000 :instance/pause 1500 {:bpm 480} 2000 :instance/resume} :until-ms 5500)
+        pans (into {} (map (juxt :t #(update-vals (:words %) :pan))) frames)]
+    (is (apply = (map pans (range 975 2001 25)))
+        "The pause holds the pose of the last frame evaluated before it")
+    (is (= [] (rate-violations frames)) "Resuming at the faster tempo keeps the launch pace")
+    (is (= {:far-travel 5025 :slow-motor 5025} (pan-arrivals frames))
+        "Arrival moves later by the 1025 ms the instance clock was held")))
