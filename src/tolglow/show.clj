@@ -1575,7 +1575,17 @@
         (vreset! (:capacity-audio runtime) {:epoch (:epoch model) :received-ms (- time-ms age)
                                            :audio/energy (get-in captured [:features :audio/energy])})))
     (if (= (:epoch model) (:epoch captured))
+      (let [;; Stems drive show progress (#675): while the transport is stopped
+            ;; their onsets launch nothing and their levels stop feeding routes,
+            ;; and play resumes from fresh audio with no backlog.
+            stopped? (false? (get-in model [:transport :playing?]))
+            onset? #(= :audio/onset (:type %))
+            suppressed (if stopped? (count (filter onset? (:events captured))) 0)
+            captured (cond-> captured
+                       stopped? (update :events #(vec (remove onset? %)))
+                       (and stopped? (:features captured)) (update :features assoc :stems-held? true))]
       (cond-> model
+        (pos? suppressed) (update-in [:variables :audio :suppressed-onsets] (fnil + 0) suppressed)
         (seq (:shapes captured)) (audio-lfo/admit (:shapes captured))
         (:features captured) (routing/admit-audio (:features captured))
         (:features captured) (analysis/publish-features (:features captured))
@@ -1584,7 +1594,7 @@
             m (:events captured)))
         (seq (:events captured)) (assoc-in [:variables :audio :events] (:events captured))
         (seq (:events captured)) (timeline/remember-sections (:events captured))
-        (seq (:events captured)) (update-in [:variables :audio :event-count] (fnil + 0) (count (:events captured)))) model)))
+        (seq (:events captured)) (update-in [:variables :audio :event-count] (fnil + 0) (count (:events captured))))) model)))
 
 (defn section-reference-callbacks
   "Get callbacks for the attached reference session in the current show epoch.
