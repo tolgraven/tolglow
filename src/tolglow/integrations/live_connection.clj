@@ -121,7 +121,7 @@
   "Channels Tolglow feeds capture tracks on, one per track. Live clips do not
   keep a channel, so clip playback reaches the companion on channel 1; the
   companion drops input on the feed channel (Tolglow's own monitored feed) and
-  forwards everything else as playback on the track's layout channel."
+  tags everything else as playback from its track (see track-channels)."
   [16 15 14 13])
 
 (defn desired-setup
@@ -143,8 +143,15 @@
      :tracks (vec (for [[ch feed] (map vector chs feed-channels)]
                     (cond-> {:channel ch :name (get names ch (default-name ch)) :kind :midi
                              :arm? true :monitor :auto :input {:port port :channel feed}
-                             :feed-channel feed :playback-channel ch}
+                             :feed-channel feed}
                       (= ch (:channel layout)) (assoc :host? true))))}))
+
+(defn track-channels
+  "{track-id layout-channel} for a ready setup. Live clips carry no MIDI
+  channel: the companion tags clip playback with its source track, and the
+  playback decoder (phrase-clip/player) maps it back to the layout channel."
+  [setup]
+  (into {} (map (fn [[ch id]] [id ch])) (:tracks setup)))
 
 (defn feed-routing
   "Rewrite layout-channel feed messages (clip/feed-messages) onto each capture
@@ -157,9 +164,9 @@
   (let [matches (filter #(and (= name (:name %)) (= :midi (:kind %))) (:tracks set-snapshot))]
     (when (= 1 (count matches)) (first matches))))
 
-(defn- track-state [track] (select-keys track [:arm? :monitor :input :playback-channel]))
+(defn- track-state [track] (select-keys track [:arm? :monitor :input]))
 
-(defn- wanted-state [spec] (select-keys spec [:arm? :monitor :input :playback-channel]))
+(defn- wanted-state [spec] (select-keys spec [:arm? :monitor :input]))
 
 (defn verify-setup
   "Compare an inspected Set with the desired setup. Returns

@@ -107,12 +107,12 @@
   MIDI Live plays for [0 16) beats through the playback decoder into a fresh
   show at bpm. Returns what a playback-observing buffer captured, the default
   buffer (which must ignore playback) and the decoded commands."
-  [live conn clips layout bpm]
+  [live conn clips layout track-channels bpm]
   (let [{:keys [rt state tick!]} (harness bpm :buffer-options {:ignore-origins #{}})
         default-buffer (atom (capture/new-buffer {:bars 4}))
         n (atom 0)
         envelope (fn [_] {:command-id (str "playback-" (swap! n inc))})
-        player (atom (clip/player layout {:bridge-id "fake"}))
+        player (atom (clip/player layout {:bridge-id "fake"} track-channels))
         decoded (atom [])
         submit-all! (fn [beat commands]
                       (let [replies (mapv #(vector % (show/submit! rt :command %)) commands)]
@@ -161,7 +161,9 @@
                                              cs))))]]))
 
 (defn- round-trip [bpm replay-bpm]
-  (let [live (fake/create {:tracks [{:name "Bass" :arm? true :input {:port "Keyboard" :channel 1}}]})
+  (let [live (fake/create {:tracks [{:name "Bass" :arm? true :input {:port "Keyboard" :channel 1}}]
+                           ;; Controller lanes as companion-parameter envelopes on each capture track.
+                           :envelope-lanes? true})
         conn (live/open (fake/transport live {:json? true}) {:session-id (str "capture-" bpm)})
         h (perform! (harness bpm))
         phrase (try (capture/capture (:buffer @(:state h)) {:end-beat 16})
@@ -174,7 +176,7 @@
         _ (doseq [[ch f] (edit nil layout)]
             (fake/edit-clip! live (:clip-id (first (filter #(= ch (:channel %)) (:clips captured)))) f))
         edited (decode)
-        replay (replay! live conn (:clips captured) layout replay-bpm)]
+        replay (replay! live conn (:clips captured) layout (live/track-channels setup) replay-bpm)]
     {:phrase phrase :layout layout :setup setup :captured captured :before-edit before-edit
      :edited edited :replay replay :live live :conn conn}))
 

@@ -13,6 +13,10 @@
   :companion? is false); setup adopts that track for the host capture track.
   `(transport live {:json? true})` sends every payload and receipt through JSON,
   as the loopback HTTP companion does.
+  Writing controller events with write-clip is refused unless the Set is
+  created with :envelope-lanes? true, which models the companion's lane
+  parameters on every capture track (the real companion has them only on its
+  own track; see live-companion-contract-test).
   `json-transport` is the same as `(transport live {:json? true})` with the
   receipt read exactly as live-transport reads it."
   (:require [clojure.data.json :as json]))
@@ -20,8 +24,9 @@
 (defn create
   "tracks: existing musician tracks, e.g. [{:name \"Bass\" :arm? true}]."
   ([] (create {}))
-  ([{:keys [tracks tempo exclusive-arm? can-capture-midi? capture-bars companion?]
-     :or {tracks [] tempo 120.0 exclusive-arm? false can-capture-midi? true capture-bars 4 companion? true}}]
+  ([{:keys [tracks tempo exclusive-arm? can-capture-midi? capture-bars companion? envelope-lanes?]
+     :or {tracks [] tempo 120.0 exclusive-arm? false can-capture-midi? true capture-bars 4 companion? true
+          envelope-lanes? false}}]
    (atom {:tracks (vec (map-indexed (fn [i t] (merge {:track-id (str "track:" (inc i)) :kind :midi :arm? false
                                                       :monitor :auto :input {:port "Keyboard" :channel 1}
                                                       :slots {} :history []} t))
@@ -29,6 +34,7 @@
                                                                            :input {:port "All Ins" :channel nil}}))))
           :next-id 100 :tempo tempo :signature {:beats-per-bar 4 :bars-per-phrase 4}
           :exclusive-arm? exclusive-arm? :can-capture-midi? can-capture-midi? :capture-bars capture-bars
+          :envelope-lanes? envelope-lanes?
           :song-beat 0 :playing {} :selected nil :faults {} :requests []})))
 
 (defn- next-id! [live prefix]
@@ -38,7 +44,7 @@
   (first (keep-indexed (fn [i t] (when (= track-id (:track-id t)) i)) (:tracks state))))
 
 (defn- public-track [track]
-  (-> (select-keys track [:track-id :name :kind :arm? :monitor :input :playback-channel])
+  (-> (select-keys track [:track-id :name :kind :arm? :monitor :input])
       (assoc :clips (vec (for [[slot c] (sort-by key (:slots track))]
                            {:clip-id (:clip-id c) :slot-index slot :name (:name c)
                             :length-beats (get-in c [:clip :length-beats])})))))
@@ -101,7 +107,7 @@
       :configure-track (let [[i code] (check-track state payload)]
                          (if code (rejected code)
                              (do (swap! live (fn [s]
-                                               (let [s (update-in s [:tracks i] merge (cond-> (select-keys payload [:arm? :monitor :input :playback-channel])
+                                               (let [s (update-in s [:tracks i] merge (cond-> (select-keys payload [:arm? :monitor :input])
                                                                                    (string? (:monitor payload)) (update :monitor keyword)))]
                                                  ;; Exclusive Arm as a preference: arming one track disarms the rest.
                                                  (if (and (:exclusive-arm? s) (:arm? payload))
@@ -109,7 +115,13 @@
                                                    s))))
                                  {:status :executed :result {:track (public-track (get-in @live [:tracks i]))}})))
       :write-clip (let [[i code] (check-track state payload)]
-                    (if code (rejected code)
+                    (cond
+                      code (rejected code)
+                      ;; The LOM cannot write MIDI CC into a clip. Controllers become
+                      ;; companion-parameter envelopes, which a test must opt into.
+                      (and (seq (get-in payload [:clip :controllers])) (not (:envelope-lanes? state)))
+                      (rejected :controllers-unsupported)
+                      :else
                         (let [slot (or (:slot-index payload) (first-empty-slot (get-in state [:tracks i])))]
                           (if (get-in state [:tracks i :slots slot]) (rejected :slot-occupied)
                               (let [id (next-id! live "clip")]
@@ -220,9 +232,9 @@
     (->> (for [[track-id {:keys [clip-id] :as p}] (:playing state)
                :let [start (:from p)
                      {:keys [track-index entry]} (find-clip state clip-id)
-                     ;; The companion forwards clip playback on the track's layout channel.
-                     channel (or (get-in state [:tracks track-index :playback-channel])
-                                 (get-in state [:tracks track-index :input :channel]))
+                     ;; Live clips keep no channel: playback reaches the companion on
+                     ;; channel 1, tagged with the track that played it.
+                     channel 1
                      {:keys [length-beats notes controllers]} (:clip entry)]
                loop (range (long (Math/floor (/ (- from start) length-beats)))
                            (inc (long (Math/ceil (/ (- to start) length-beats)))))

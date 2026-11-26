@@ -38,16 +38,16 @@ test("setup adopts the companion's track, creates the next and configures both b
   assert.deepEqual(live.request("ensure-track", { name: "Tolglow Lanes", kind: "midi" }).result,
     { "track-id": lanes.result["track-id"], "created?": false }, "a rerun finds the track by name");
   const configured = live.request("configure-track", { "track-id": cues.result["track-id"], "expected-name": "Tolglow Cues",
-    "arm?": true, monitor: "auto", input: { port: "Tolglow", channel: 16 }, "playback-channel": 1 });
+    "arm?": true, monitor: "auto", input: { port: "Tolglow", channel: 16 } });
   assert.equal(configured.status, "executed");
   assert.deepEqual(configured.result.track.input, { port: "Tolglow", channel: 16 });
   assert.equal(configured.result.track["arm?"], true);
-  assert.equal(configured.result.track["playback-channel"], 1);
+  assert.equal(configured.result.track["companion?"], true);
   assert.equal(live.song.tracks[0].props.arm, 1, "the musician's armed track is untouched");
-  const refused = live.request("configure-track", { "track-id": lanes.result["track-id"], "expected-name": "Tolglow Lanes",
-    "arm?": true, input: { port: "Tolglow", channel: 15 }, "playback-channel": 2 });
-  assert.equal(refused.status, "rejected");
-  assert.equal(refused.error.code, "playback-needs-companion");
+  const lanesConfigured = live.request("configure-track", { "track-id": lanes.result["track-id"], "expected-name": "Tolglow Lanes",
+    "arm?": true, input: { port: "Tolglow", channel: 15 } });
+  assert.equal(lanesConfigured.status, "executed");
+  assert.equal(lanesConfigured.result.track["companion?"], undefined);
 });
 
 test("configuration refuses before writing: unknown port, stale track, renamed track, duplicates", () => {
@@ -145,16 +145,17 @@ test("show, fire and stop act on the named clip and tracks", () => {
   assert.equal(live.request("show-clip", { "clip-id": "clip:424242" }).error.code, "live-object-missing");
 });
 
-test("echo rule: the feed channel is dropped, playback is forwarded on the layout channel, lanes play back as CC pairs", () => {
+test("echo rule: the feed channel is dropped, playback is tagged with its track, lanes play back as CC pairs", () => {
   const live = liveSet({ tracks: [{ name: "Tolglow Capture" }] });
-  live.request("configure-track", { "track-id": "track:" + live.song.tracks[0].id, input: { port: "Tolglow", channel: 16 }, "playback-channel": 3 });
+  const track = "track:" + live.song.tracks[0].id;
+  live.request("configure-track", { "track-id": track, input: { port: "Tolglow", channel: 16 } });
   live.request("handoff", { mode: "lighting" });
   assert.equal(live.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 16 }), null, "Tolglow's own monitored feed");
   assert.deepEqual(live.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 }),
-    { type: "note-on", note: 36, velocity: 127, channel: 3, origin: "live-playback" });
+    { type: "note-on", note: 36, velocity: 127, channel: 1, "track-id": track, origin: "live-playback" });
   assert.deepEqual(live.adapter.lane(6, 1), [
-    { type: "cc", controller: 7, value: 127, channel: 3, origin: "live-playback" },
-    { type: "cc", controller: 39, value: 127, channel: 3, origin: "live-playback" }]);
+    { type: "cc", controller: 7, value: 127, channel: 1, origin: "live-playback", "track-id": track },
+    { type: "cc", controller: 39, value: 127, channel: 1, origin: "live-playback", "track-id": track }]);
   assert.deepEqual(live.adapter.lane(1, 8192 / 16383).map(e => e.value), [64, 0]);
   live.request("handoff", { mode: "live" });
   assert.deepEqual(live.adapter.lane(1, 0.5), [], "Live mode forwards nothing");

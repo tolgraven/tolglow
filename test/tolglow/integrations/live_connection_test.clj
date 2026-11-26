@@ -23,9 +23,9 @@
     (is (:ready? first-run) (pr-str (:problems first-run)))
     (is (= [[:ensure-track :executed] [:configure-track :executed] [:ensure-track :executed] [:configure-track :executed]]
            (:applied first-run)))
-    (is (= [{:name "Tolglow Cues" :arm? true :monitor :auto :input {:port "Tolglow" :channel 16} :playback-channel 1}
-            {:name "Tolglow Lanes" :arm? true :monitor :auto :input {:port "Tolglow" :channel 15} :playback-channel 2}]
-           (mapv #(select-keys % [:name :arm? :monitor :input :playback-channel]) (get-in first-run [:set :tracks])))
+    (is (= [{:name "Tolglow Cues" :arm? true :monitor :auto :input {:port "Tolglow" :channel 16}}
+            {:name "Tolglow Lanes" :arm? true :monitor :auto :input {:port "Tolglow" :channel 15}}]
+           (mapv #(select-keys % [:name :arm? :monitor :input]) (get-in first-run [:set :tracks])))
         "each track is fed on its own channel, which clip playback never uses")
     (is (= "track:1" (get-in first-run [:tracks 1])) "the cue track is the track the companion was placed on")
     (let [conn (connect set)
@@ -101,8 +101,13 @@
       (is (= :executed (:shown result)) "the clip that was written is still shown"))))
 
 (deftest capture-routes-are-exclusive-and-honest
-  (testing "the buffer route never invokes Capture MIDI"
+  (testing "the LOM writes no MIDI CC: controllers need the companion's envelope lanes"
     (let [set (fake/create) conn (connect set)
+          result (live/capture! conn (live/setup! conn desired) {:phrase phrase :layout layout})]
+      (is (not (:complete? result)))
+      (is (= :controllers-unsupported (:code (second (:receipts result)))))))
+  (testing "the buffer route never invokes Capture MIDI"
+    (let [set (fake/create {:envelope-lanes? true}) conn (connect set)
           result (live/capture! conn (live/setup! conn desired) {:phrase phrase :layout layout})]
       (is (:complete? result))
       (is (some #{:write-clip} (live/operations-sent conn)))
@@ -145,7 +150,7 @@
       "a feed channel equal to a playback channel would echo"))
 
 (deftest json-results-come-back-as-tolglow-data
-  (let [set (fake/create)
+  (let [set (fake/create {:envelope-lanes? true})
         conn (live/open (fake/transport set {:json? true}) {:session-id "wire"})
         setup (live/setup! conn desired)
         clip {:clip/version 1 :length-beats 4 :meter {:beats-per-bar 7/2 :bars-per-phrase 4}
@@ -164,7 +169,8 @@
 (deftest setup-capture-and-read-back-survive-the-companion-json-wire
   ;; The companion answers over loopback HTTP as JSON: enumerations arrive as
   ;; strings and beats as doubles.
-  (let [set (fake/create {:tracks [{:name "Bass" :arm? true :monitor :in :input {:port "Keystep" :channel 3}}]})
+  (let [set (fake/create {:tracks [{:name "Bass" :arm? true :monitor :in :input {:port "Keystep" :channel 3}}]
+                          :envelope-lanes? true})
         connect-json #(live/open (fake/json-transport set) {:session-id "json"})
         setup (live/setup! (connect-json) desired)]
     (is (:ready? setup) (pr-str (:problems setup)))
@@ -183,3 +189,20 @@
           "exact beats and 14-bit values come back")
       (fake/rename-track! set (get-in setup [:tracks 2]) "My lanes")
       (is (= :track-renamed (:code (second (:receipts (live/capture! (connect-json) setup {:phrase phrase :layout layout})))))))))
+
+(deftest playback-is-mapped-by-track-not-by-channel
+  (let [set (fake/create {:envelope-lanes? true})
+        conn (connect set)
+        setup (live/setup! conn desired)
+        written (live/capture! conn setup {:phrase phrase :layout layout})
+        channels (live/track-channels setup)]
+    (is (= {(get-in setup [:tracks 1]) 1 (get-in setup [:tracks 2]) 2} channels))
+    (doseq [c (:clips written)] (live/request! conn :fire-clip {:clip-id (:clip-id c)}))
+    (let [events (fake/playback set 0 4)
+          {:keys [commands]} (clip/play (clip/player layout {} channels) (filter #(zero? (:song-beat %)) events)
+                                        (fn [n] {:command-id (str "p" n)}))]
+      (is (every? #(= 1 (:channel %)) events) "Live clips play back on channel 1 whatever track they are on")
+      (is (= [[:cue/launch :wash {:level (clip/decode-value (first (:lanes layout)) (clip/encode-value (first (:lanes layout)) 0.5))}]]
+             (mapv (juxt :op :cue-id (comp :params :launch)) commands))
+          "the lane track's controllers reach the cue launch through its track mapping")
+      (is (= #{1 2} (into #{} (map #(get channels (:track-id %))) events))))))

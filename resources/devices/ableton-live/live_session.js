@@ -50,7 +50,7 @@
     this.hostPath = options.hostPath || "this_device canonical_parent";
     this.devicePath = options.devicePath || "this_device";
     this.sampleBeats = options.sampleBeats || 0.25;
-    this.feedChannel = null; this.playbackChannel = null;
+    this.feedChannel = null;
   }
 
   Session.prototype.object = function (path) {
@@ -100,7 +100,7 @@
       kind: midi ? "midi" : "audio", "arm?": armable && !!this.read(track, "arm"),
       monitor: MONITOR[Number(this.read(track, "current_monitoring_state"))] || null,
       input: this.routing(track), clips: clips};
-    if (id === this.hostTrackId()) { result["companion?"] = true; result["playback-channel"] = this.playbackChannel; }
+    if (id === this.hostTrackId()) result["companion?"] = true;
     return result;
   };
   Session.prototype.slotPathByIndex = function (index, slot) { return "live_set tracks " + index + " clip_slots " + slot; };
@@ -151,11 +151,8 @@
   Session.prototype.configureTrack = function (payload, mark) {
     var track = this.track(payload["track-id"], payload["expected-name"]), input = payload.input, self = this;
     var monitor = payload.monitor === undefined ? undefined : MONITOR.indexOf(payload.monitor);
-    var playback = payload["playback-channel"], host = Number(track.id) === this.hostTrackId();
+    var host = Number(track.id) === this.hostTrackId();
     if (monitor !== undefined && monitor < 0) fault("monitor", "Monitoring is in, auto or off");
-    if (playback !== undefined && playback !== null && !integer(playback, 1, 16)) fault("playback-channel", "Playback channel is 1-16");
-    if (playback !== undefined && playback !== null && !host)
-      fault("playback-needs-companion", "Only a track with the companion can forward clip playback; place another companion on this track");
     if (payload["arm?"] && !this.read(track, "can_be_armed")) fault("not-armable", "This track cannot be armed");
     var type, channel;
     // Resolve every routing before the first write, so a missing port changes nothing.
@@ -173,7 +170,6 @@
     }
     if (monitor !== undefined) { mark(); track.set("current_monitoring_state", monitor); }
     if (payload["arm?"] !== undefined) { mark(); track.set("arm", payload["arm?"] ? 1 : 0); }
-    if (playback !== undefined && host) this.playbackChannel = playback;
     return {track: this.describeTrack(Number(track.id), this.trackIndex(track))};
   };
 
@@ -358,21 +354,25 @@
     }
   };
 
-  // The echo rule: Tolglow's own feed arrives on the feed channel and is
-  // dropped; clip playback (channel-less in Live) is forwarded on the layout
-  // channel the track was configured with.
+  // The echo rule: Tolglow's own feed arrives on the track's feed channel and
+  // is dropped. Everything else on the companion's track is clip playback,
+  // which carries no MIDI channel in Live, so it is tagged with the source
+  // track; Tolglow maps that track to its layout channel.
   Session.prototype.route = function (event) {
     if (this.feedChannel !== null && event.channel === this.feedChannel) return null;
-    if (this.playbackChannel !== null) event.channel = this.playbackChannel;
+    var host = this.hostTrackId();
+    if (host) event["track-id"] = "track:" + host;
     return event;
   };
 
   // An automated lane parameter plays back as the coarse and fine controller pair.
   Session.prototype.laneEvents = function (lane, value) {
     if (!integer(lane, 1, COARSE.length) || !finite(value)) fault("lane", "Unknown lane parameter");
-    var v14 = Math.round(Math.max(0, Math.min(1, value)) * MAX14), channel = this.playbackChannel || 1;
-    return [{type: "cc", controller: COARSE[lane - 1], value: v14 >> 7, channel: channel, origin: "live-playback"},
-      {type: "cc", controller: COARSE[lane - 1] + 32, value: v14 & 127, channel: channel, origin: "live-playback"}];
+    var v14 = Math.round(Math.max(0, Math.min(1, value)) * MAX14), host = this.hostTrackId(), out = [
+      {type: "cc", controller: COARSE[lane - 1], value: v14 >> 7, channel: 1, origin: "live-playback"},
+      {type: "cc", controller: COARSE[lane - 1] + 32, value: v14 & 127, channel: 1, origin: "live-playback"}];
+    if (host) out.forEach(function (e) { e["track-id"] = "track:" + host; });
+    return out;
   };
 
   return {Session: Session, OPERATIONS: OPERATIONS, COARSE: COARSE, lanePoints: lanePoints};

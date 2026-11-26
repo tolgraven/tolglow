@@ -413,10 +413,14 @@
 
 (defn player
   "A decoder for MIDI played back from Live clips in this layout. source is
-  merged into each command's :source; origin is always :live-playback."
+  merged into each command's :source; origin is always :live-playback.
+  track-channels {track-id layout-channel} (live-connection/track-channels)
+  maps an event's :track-id to its layout channel: Live clips keep no MIDI
+  channel, so the companion reports which track played."
   ([layout] (player layout {}))
-  ([layout source]
-   {:layout layout :by-cc (by-cc layout)
+  ([layout source] (player layout source {}))
+  ([layout source track-channels]
+   {:layout layout :by-cc (by-cc layout) :track-channels track-channels
     :pitch->cue (into {} (map (fn [[cue {:keys [pitch]}]] [pitch cue])) (:cues layout))
     :source (merge {:type :ableton :adapter :live-clip} source {:origin :live-playback})
     :registers {} :lane-values {} :runs [] :serial 0}))
@@ -439,7 +443,10 @@
   a pending run are applied when its receipt arrives."
   [player events envelope-fn]
   (let [chs (set (channels (:layout player)))
-        events (filter #(contains? chs (:channel %)) events)
+        by-track (:track-channels player)
+        events (->> events
+                    (map #(if-let [ch (get by-track (:track-id %))] (assoc % :channel ch) %))
+                    (filter #(contains? chs (:channel %))))
         rank #(case (:type %) :note-off 0 :cc 1 :note-on (if (pos? (or (:velocity %) 0)) 2 0) 3)
         n (volatile! 0)
         env #(envelope-fn (dec (vswap! n inc)))]

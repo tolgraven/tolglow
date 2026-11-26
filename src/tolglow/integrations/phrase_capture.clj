@@ -38,6 +38,12 @@
     (when-not (pos? beats) (fail! "A capture grid needs a positive musical duration" {:grid grid}))
     (rationalize beats)))
 
+(def ^:private no-events
+  "Retained events in arrival order. A persistent queue drops expired events
+  from the front in constant time each, so pruning on the owner thread costs
+  only the events that actually leave retention."
+  clojure.lang.PersistentQueue/EMPTY)
+
 (defn new-buffer
   "Create an empty capture buffer. Options: :bars retained (default 8), :grid as
   a musical duration (default a sixteenth note, {:beats 1/4}), :meter,
@@ -52,7 +58,7 @@
        (fail! "A capture buffer needs 1-64 bars and a positive event bound" {:bars bars :max-events max-events}))
      {:bars bars :grid grid :grid-beats (grid-beats grid meter) :meter meter :max-events max-events
       :epoch nil :last-beat nil :bpm nil
-      :events [] :baseline {} :open {} :suppressed #{} :seen #{} :seen-order []
+      :events no-events :baseline {} :open {} :suppressed #{} :seen #{} :seen-order []
       :serial 0 :dropped 0 :discontinuities 0
       :ignore-origins (get options :ignore-origins echo-origins)})))
 
@@ -75,13 +81,16 @@
 
 (defn- prune [buffer]
   (let [horizon (when-let [beat (:last-beat buffer)] (- beat (retention-beats buffer)))
-        [old kept] (if horizon
-                     [(filterv #(< (:beat %) horizon) (:events buffer)) (filterv #(>= (:beat %) horizon) (:events buffer))]
-                     [[] (:events buffer)])
-        excess (max 0 (- (count kept) (:max-events buffer)))
-        old (into old (subvec kept 0 excess))]
-    (assoc buffer :events (subvec kept excess) :dropped (+ (:dropped buffer) excess)
-                  :baseline (reduce fold-baseline (:baseline buffer) old))))
+        limit (:max-events buffer)]
+    ;; Beats arrive in transport order (a backwards seek starts a new queue), so
+    ;; expired events are at the front.
+    (loop [events (:events buffer) baseline (:baseline buffer) dropped (:dropped buffer)]
+      (let [event (peek events)
+            expired? (and event horizon (< (:beat event) horizon))
+            excess? (> (count events) limit)]
+        (if (or expired? excess?)
+          (recur (pop events) (fold-baseline baseline event) (if expired? dropped (inc dropped)))
+          (assoc buffer :events events :baseline baseline :dropped dropped))))))
 
 (defn- remember-id
   "Remember between max-events and twice that many command IDs. Eviction copies
@@ -96,7 +105,7 @@
       (assoc buffer :seen seen :seen-order order))))
 
 (defn- reset-for-epoch [buffer epoch]
-  (assoc buffer :epoch epoch :last-beat nil :events [] :baseline {} :open {} :suppressed #{}
+  (assoc buffer :epoch epoch :last-beat nil :events no-events :baseline {} :open {} :suppressed #{}
                 :seen #{} :seen-order []))
 
 (defn- advance-clock
@@ -113,7 +122,7 @@
         last-beat (:last-beat buffer)]
     (if (and last-beat (< beat (- last-beat 1e-9)))
       (let [baseline (reduce fold-baseline (:baseline buffer) (:events buffer))]
-        (assoc buffer :last-beat beat :events [] :discontinuities (inc (:discontinuities buffer))
+        (assoc buffer :last-beat beat :events no-events :discontinuities (inc (:discontinuities buffer))
                       ;; Activations still running continue from the seek target.
                       :baseline (into {} (for [[id entry] baseline] [id (assoc entry :launch beat)]))))
       (assoc buffer :last-beat (max beat (or last-beat beat))))))
