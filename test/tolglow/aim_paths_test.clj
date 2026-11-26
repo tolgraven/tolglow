@@ -8,6 +8,7 @@
             [tolglow.event-subscribers :as sub]
             [tolglow.spatial :as spatial]
             [tolglow.registry :as registry]
+            [tolglow.persistence :as persistence]
             [tolglow.show.scene-draft :as draft]
             [tolglow.composition.tween :as tween]))
 
@@ -264,6 +265,25 @@
                                            :show-id (:show-id model) :epoch (:epoch model) :time-ms 0
                                            :source {:adapter :test}})))
           "A retried stretched launch returns the same receipt, stretch report included"))))
+
+(deftest stretched-instances-of-every-musical-unit-pass-show-validation
+  (let [rig (control/new-show {:rig {:fixtures paired-heads}})]
+    (doseq [[duration bpm expected] [[{:beats 5} 170 {:beats (/ 17.0 3)}]
+                                     [{:bars 1} 180 {:bars 1.5}]
+                                     [{:phrases 1} 960 {:phrases 2.0}]]
+            :let [effect (paths/definition rig (assoc synchronized-spec :duration duration))
+                  model (-> rig
+                            (assoc-in [:registry :effects (:id effect)] effect)
+                            (assoc-in [:registry :cues :paired-cue] {:id :paired-cue :effect-id (:id effect) :version 1}))
+                  result (launch-at-bpm model bpm {:mode :one-shot})
+                  instance (get-in result [:model :instances (get-in result [:ack :instance-id])])
+                  [unit span] (first (get-in instance [:definition :duration]))]]
+      (is (= duration (:duration effect)) (str duration " is published unstretched at 120 BPM"))
+      (is (= (key (first expected)) unit))
+      (is (near? (val (first expected)) span))
+      (is (= #{{unit span}} (set (map #(get-in % [:value :spec :keyframes 1 :at]) (get-in instance [:definition :outputs])))))
+      (is (= effect (paths/published-definition instance)))
+      (is (map? (persistence/validate-model (:model result))) "A show saved mid-move validates"))))
 
 (deftest room-audition-stretches-only-its-private-copy-and-apply-stretches-at-the-live-tempo
   (let [rig (control/new-show {:rig {:fixtures paired-heads}})

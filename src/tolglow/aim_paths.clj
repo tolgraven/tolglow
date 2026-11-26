@@ -171,6 +171,16 @@
         (assoc :duration duration)
         (update :outputs (partial mapv #(update-in % [:value :spec :keyframes] last-at))))))
 
+(defn published-definition
+  "The registry definition an instance was launched from. A launch-stretched
+  synchronized arrival runs a private copy; this restores its musical span."
+  [{:keys [definition arrival-stretch]}]
+  (let [musical (:musical-duration arrival-stretch)]
+    (if (and (map? musical) (= 1 (count musical)) (= :synchronized-aim-path (get-in definition [:editor :type]))
+             (= (:duration definition) (:duration arrival-stretch)))
+      (stretch-definition definition musical)
+      definition)))
+
 (defn stretch-launch
   "Apply launch-stretch to an accepted launch result. The new instance runs a
   stretched private copy of the published move on the same beat clock, and its

@@ -88,7 +88,8 @@ musical unit and a longer span, for example `{:beats 5}` launched at 170 BPM
 becomes `{:beats 5.67}`, which lasts the 2 s minimum at that tempo. The move stays
 on the beat clock, so it pauses on transport stop and resumes from where it
 was. A one-shot launch lives until the stretched arrival unless the cue or
-launch sets its own duration. The published definition is unchanged. The
+launch sets its own duration. The published definition is unchanged, and a
+show saved during the move restores the stretched instance. The
 launch acknowledgement and the instance carry `:arrival-stretch`, for example
 `{:musical-duration {:beats 5} :duration {:beats 5.67} :musical-ms 1764.7
 :duration-ms 2000.0 :stretched-by-ms 235.3 :bpm 170}`. A launch that needs no

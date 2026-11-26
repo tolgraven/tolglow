@@ -13,6 +13,7 @@
             [afterglow.render.frame :as render]
             [afterglow.time :as time]
             [tolglow.registry :as registry]
+            [tolglow.aim-paths :as aim-paths]
             [tolglow.authoring.variation-control :as variations]
             [tolglow.cue-timing :as cue-timing]
             [tolglow.persistence.audio :as saved-audio]
@@ -171,7 +172,8 @@
     (when-let [recorded (or (get-in r [:versions [:effects (:effect-id instance) (:effect-version instance)]])
                            (let [current (get-in r [:effects (:effect-id instance)])]
                              (when (= (:version current) (:effect-version instance)) current)))]
-      (check! (= recorded definition) (conj path :definition) "Captured definition conflicts with registry version"))
+      (check! (= recorded (aim-paths/published-definition instance)) (conj path :definition)
+              "Captured definition conflicts with registry version"))
     (doseq [key [:started-at-beat :release-at-beat] :when (contains? instance key)]
       (check! (registry/finite-number? (get instance key)) (conj path key) "Beat coordinate must be finite"))
     (doseq [key [:duration-ms :release-duration-ms] :when (contains? instance key)]

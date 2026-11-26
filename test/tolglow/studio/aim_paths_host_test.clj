@@ -295,6 +295,27 @@
         (is (<= (worst-rate-excess (into moving resumed)) 1.0)))
       (finally (show/stop! runtime)))))
 
+(deftest show-saved-during-a-stretched-arrival-restores-and-still-arrives-together
+  (let [captured (atom nil)
+        runtime (capturing-runtime captured)
+        spec (assoc paths/synchronized-spec :targets ["far-travel" "slow-motor"] :duration {:beats 5})]
+    (try
+      (post! runtime "/api/aim-path" spec 0)
+      (submit-at! runtime :command {:op :transport/set :transport {:bpm 170}} 0)
+      (is (some? (:arrival-stretch (submit-at! runtime :command {:op :cue/launch :cue-id :paired} 0))))
+      (let [moving (run-frames! runtime captured (range 0 1001 25))
+            saved (show/export-show runtime)
+            published (get-in @(:state runtime) [:model :registry :effects :paired])]
+        (is (= published (get-in saved [:model :registry :effects :paired])) "The save keeps the published move")
+        (is (= :accepted (:status (submit-at! runtime :import {:source (pr-str saved)} 1000))))
+        (let [restored (vals (get-in @(:state runtime) [:model :instances]))
+              resumed (run-frames! runtime captured (range 1000 2201 25))]
+          (is (= 1 (count restored)))
+          (is (some? (:arrival-stretch (first restored))) "The restored instance still reports its stretch")
+          (is (= #{2000} (set (vals (arrival-frame (into moving (rest resumed))))))
+              "The restored move keeps its stretched arrival and the heads arrive together")))
+      (finally (show/stop! runtime)))))
+
 (defn- committed-pan-deg [runtime fixture]
   (let [{:keys [values compact]} (:output @(:state runtime))
         row (or (get values (:id fixture))
