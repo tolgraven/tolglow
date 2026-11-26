@@ -32,7 +32,7 @@ async function addLink(page, card, destination, fields) {
   await assert.doesNotReject(card.locator('li.knob-link').nth(before).waitFor());
 }
 
-async function browserPhase(page) {
+async function browserPhase(page, browser) {
   await page.goto(origin + '/perform');
   const panel = page.getByRole('region', {name: 'Linked knobs'});
   await panel.waitFor();
@@ -68,6 +68,33 @@ async function browserPhase(page) {
   await page.waitForFunction(() =>
     document.querySelector('[aria-label="sweep · width resolved value"]')?.textContent === '0.225');
 
+  // A fast drag: every intermediate position is an input event. Turns stay in
+  // order, so the owner ends on the last position and the slider never jumps back.
+  const slider = card.getByLabel('Look knob');
+  const seen = [];
+  const positions = Array.from({length: 64}, (_, i) => (i + 10) / 100);
+  for (const position of positions) {
+    await slider.evaluate((element, value) => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      setter.call(element, String(value));
+      element.dispatchEvent(new Event('input', {bubbles: true}));
+      element.dispatchEvent(new Event('change', {bubbles: true}));
+    }, position);
+    seen.push(Number(await slider.inputValue()));
+  }
+  await assert.doesNotReject(async () => {
+    for (let attempt = 0; attempt < 40; attempt++) {
+      if ((await state(page)).knobs.knobs[0].value === 0.73) return;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    throw new Error('the owner did not end on the last dragged position');
+  });
+  assert.deepEqual(seen, positions, 'the slider followed every turn without jumping back');
+  await page.waitForFunction(() => document.querySelector('[aria-label="Look value"]')?.textContent === '0.730');
+  await slider.fill('0.5');
+  await page.waitForFunction(() =>
+    document.querySelector('[aria-label="sweep · width resolved value"]')?.textContent === '0.225');
+
   // The REPL reads the same committed projection and destination values.
   const show = await state(page);
   const knob = show.knobs.knobs[0];
@@ -87,7 +114,31 @@ async function browserPhase(page) {
   assert.equal(await card.locator('li.knob-link').count(), 4);
 
   await panel.screenshot({path: join(directory, 'knobs-panel-studio.png')});
-  return {texts, pending, alert, links: knob.links.map(link => [link.label, link.resolved.text, link.status])};
+  // Target sizes at this desktop width, reported rather than asserted.
+  const targets = await panel.evaluate(root => [...root.querySelectorAll('button, input, select, summary')]
+    .filter(element => element.offsetParent)
+    .map(element => {
+      const box = element.getBoundingClientRect();
+      return [element.getAttribute('aria-label') || element.textContent.trim(), Math.round(box.width), Math.round(box.height)];
+    }));
+  // On a touch screen every panel control is at least 44 px tall.
+  const touch = await browser.newContext({viewport: {width: 1024, height: 1366}, hasTouch: true, isMobile: true});
+  try {
+    const tablet = await touch.newPage();
+    await tablet.goto(origin + '/perform');
+    const touchPanel = tablet.getByRole('region', {name: 'Linked knobs'});
+    await touchPanel.locator('article.knob-card').first().waitFor();
+    assert.ok(await tablet.evaluate(() => matchMedia('(pointer: coarse)').matches));
+    const small = await touchPanel.evaluate(root => [...root.querySelectorAll('button, input, select, summary')]
+      .filter(element => element.offsetParent)
+      .map(element => [element.getAttribute('aria-label') || element.textContent.trim(),
+                       Math.round(element.getBoundingClientRect().height)])
+      .filter(([, height]) => height < 44));
+    assert.deepEqual(small, [], 'touch targets under 44 px');
+  } finally {
+    await touch.close();
+  }
+  return {texts, pending, alert, targets, links: knob.links.map(link => [link.label, link.resolved.text, link.status])};
 }
 
 async function replPhase(page) {
@@ -119,7 +170,7 @@ try {
   page.setDefaultTimeout(8000);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  const report = await (phase === 'repl' ? replPhase(page) : browserPhase(page)).catch(async error => {
+  const report = await (phase === 'repl' ? replPhase(page) : browserPhase(page, browser)).catch(async error => {
     await page.screenshot({path: join(directory, `knobs-${phase}-failure.png`), fullPage: true});
     throw error;
   });

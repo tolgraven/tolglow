@@ -24,4 +24,4 @@
 .knob-create{display:flex;gap:8px}
 .knob-create input{flex:1}
 .knob-error{color:var(--danger);font-size:11px;margin:0}
-@media(pointer:coarse){.knob-link-controls select,.knob-range-input,.knob-add-grid input,.knob-add-grid select{min-height:44px;font-size:16px}}
+@media(pointer:coarse){.knob-link-controls select,.knob-range-input,.knob-add-grid input,.knob-add-grid select,.knob-create input{min-height:44px;font-size:16px}.knobs-panel .text-button,.knobs-panel .button{min-height:44px;min-width:44px}.knob-add-link summary{min-height:44px;display:flex;align-items:center}}
