@@ -12,8 +12,10 @@
 #view-perform .performance-layout.custom-layout{display:grid;grid-template-columns:repeat(var(--layout-columns),minmax(0,1fr));grid-template-areas:none;grid-template-rows:none;grid-auto-rows:var(--layout-row);grid-auto-flow:row dense;column-gap:var(--layout-gap);row-gap:0;align-items:stretch}
 #view-perform .custom-layout>.layout-region{display:block;position:relative;min-width:0;min-height:0;padding-bottom:var(--layout-gap)}
 #view-perform .custom-layout>.layout-region>.layout-content{display:block;height:100%;min-height:0}
-#view-perform .custom-layout .layout-content>.performance-launch,#view-perform .custom-layout .layout-content>.performance-live,#view-perform .custom-layout .layout-content>.performance-room{display:block;height:100%;margin:0;overflow:auto;overscroll-behavior:contain}
-#view-perform .custom-layout .layout-content>.performance-tools{display:grid;align-content:start;height:100%;margin:0;overflow:auto;overscroll-behavior:contain}
+/* Tiles scroll on their own and hand the page back at their ends, so a wheel or
+   touch over a tile can still scroll the page. */
+#view-perform .custom-layout .layout-content>.performance-launch,#view-perform .custom-layout .layout-content>.performance-live,#view-perform .custom-layout .layout-content>.performance-room{display:block;height:100%;margin:0;overflow:auto}
+#view-perform .custom-layout .layout-content>.performance-tools{display:grid;align-content:start;height:100%;margin:0;overflow:auto}
 /* The Room fills its tile: the 3D view takes whatever the controls leave. */
 #view-perform .custom-layout .performance-room>#preview-panel{display:flex;flex-direction:column;min-height:100%}
 #view-perform .custom-layout .performance-room>#preview-panel>.preview-stage{flex:1 1 auto;height:auto;min-height:160px}
