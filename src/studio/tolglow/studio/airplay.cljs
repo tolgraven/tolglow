@@ -39,7 +39,8 @@
         session (atom nil)
         alive? (atom true)
         video (atom nil)
-        canvas #(.getElementById js/document canvas-id)
+        ;; The Room may be in its own window: look in this control's document.
+        canvas #(.getElementById (or (some-> @video .-ownerDocument) js/document) canvas-id)
         notify! #(rf/dispatch [:studio/toast (or (.-message %) (str %)) true])
         stop-remote! #(-> (control! "stop" {:writer %}) (.catch (fn [_])))
         stop! (fn []

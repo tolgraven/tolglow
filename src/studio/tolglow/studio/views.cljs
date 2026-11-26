@@ -13,6 +13,7 @@
             [tolglow.studio.camera-controls :as camera-controls]
             [tolglow.studio.preview-playback :as playback]
             [tolglow.studio.airplay :as airplay]
+            [tolglow.studio.room-window :as room-window]
             [tolglow.studio.block-builder :as block-builder]
             [tolglow.studio.material-designer :as materials]
             [tolglow.studio.connections :as connections]
@@ -418,12 +419,14 @@
                                               :class (when (get-in db [:ui :preview-expanded?]) "expanded")}
    [:div.panel-top [:div [:span.section-label "THE ROOM"] [:span#fixture-count.muted.small (str (count (get-in db [:show :rig :fixtures])) " fixtures")]]
     [:div.preview-size-controls
-     (when (= :perform (get-in db [:ui :view])) [:<> [playback/control "preview"] [airplay/control "preview"]])
+     (when (or (= :perform (get-in db [:ui :view])) (room-window/popped? db))
+       [:<> [room-window/controls db] [playback/control "preview"] [airplay/control "preview"]])
      [:button.text-button.preview-fullscreen-tools
       {:type "button" :aria-pressed (boolean (get-in db [:ui :fullscreen-preview-controls?]))
        :on-click #(set-ui! [:fullscreen-preview-controls?] (not (get-in db [:ui :fullscreen-preview-controls?])))} "Controls"]
-     [:button.text-button.preview-expand-control {:type "button" :aria-pressed (boolean (get-in db [:ui :preview-expanded?]))
-                            :on-click #(send! [:studio/preview-expand])} (if (get-in db [:ui :preview-expanded?]) "Compact" "Expand")]
+     (when-not (room-window/popped? db)
+       [:button.text-button.preview-expand-control {:type "button" :aria-pressed (boolean (get-in db [:ui :preview-expanded?]))
+                              :on-click #(send! [:studio/preview-expand])} (if (get-in db [:ui :preview-expanded?]) "Compact" "Expand")])
      [:button.icon-button {:type "button" :aria-label "Fullscreen preview" :title "Fullscreen preview"
                             :on-click #(input! [:studio/preview-fullscreen])} "⛶"]]]
    [spatial-preview/scene (or (:server-presentation db) (:show db)) (get-in db [:server-projection :view :settings :spatial]) :perform]
@@ -578,7 +581,7 @@
       [:div.performance-live [section-pattern-panel db] [performance/board db parameter-control]
        [effect-group-mixer/panel]
        [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
-      [:div.performance-room [preview-panel db]]
+      [:div.performance-room [room-window/room db preview-panel]]
       [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]]]))
 
 (defn- slot-parameter-editor [db index slot]
