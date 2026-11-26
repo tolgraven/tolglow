@@ -398,3 +398,24 @@
         (is (every? false? (map :limited? (:sources group))))
         (is (= :limited (:status group))))
       (finally (show/stop! rt)))))
+
+(deftest a-scene-borrows-only-looks-whose-copied-outputs-compile
+  ;; A scene copies a source's outputs and parameters, not its reactive inputs.
+  ;; It published a revision the backup refused (#703); now the source is
+  ;; skipped and the group falls back to a generated look.
+  (let [rt (local false) clock (atom 0) issue #(issue! rt clock %1 %2)
+        reactive {:id :settling :version 1 :name "Settling" :targets [:right]
+                  :reactive {:inputs {:level [:subscription [:wash/level 2/3]]} :transition {:beats 1/2}}
+                  :outputs {:dimmer {:op :reactive :key :level}}}]
+    (try
+      (is (= :accepted (:status (issue :command {:op :registry/publish :kind :effects :definition reactive}))))
+      (is (= :accepted (:status (issue :lighting-scene {:op :apply :group-id :wash :target 0.5 :effect-ids [:settling]}))))
+      (let [model (:model @(:state rt))
+            scene (get-in model [:registry :effects "Lighting scene :wash"])]
+        (is (nil? (:source-effect-id (group! rt :wash))))
+        (is (not-any? #(= :reactive (get-in % [:value :op])) (:outputs scene)) (pr-str scene))
+        (is (map? (persistence/freeze model)) "the show still backs up"))
+      (is (= :rejected (:status (issue :lighting-scene {:op :apply :group-id :wash :target 0.5 :effect-ids [:settling]
+                                                         :allow-generated? false})))
+          "without a generated fallback there is no permitted look")
+      (finally (show/stop! rt)))))
