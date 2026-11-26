@@ -192,7 +192,16 @@
                (get-in current [:recipe :edits])))
         (let [kept (submit! rt 140 {:op :knob-candidate/keep})
               _ (submit! rt 150 {:op :knob-candidate/generate :from-knob (:knob-id kept)})]
-          (is (= (:links current) (:links (candidate rt))) "the recipe replays the edits")))
+          (is (= (:links current) (:links (candidate rt))) "the recipe replays the edits"))
+        (testing "a recipe's edits are checked like live edits before they replay"
+          (let [out-of-bounds (assoc a :range [-50.0 50.0] :destination {:kind :param :cue-id :strobe :param :duty})
+                recipe {:generator generate/generator-version :seed 4 :size [4 6]}
+                refused (submit! rt 160 {:op :knob-candidate/generate
+                                         :recipe (assoc recipe :edits [{:op :link :link out-of-bounds}])})
+                malformed (submit! rt 170 {:op :knob-candidate/generate :recipe (assoc recipe :edits [{:op :bogus}])})]
+            (is (= [:rejected :invalid-knob] ((juxt :status :code) refused)))
+            (is (= [:rejected :invalid-knob-candidate] ((juxt :status :code) malformed)))
+            (is (= (:links current) (:links (candidate rt))) "a refused recipe leaves the candidate alone"))))
       (finally (show/stop! rt)))))
 
 (deftest a-selection-with-too-few-parameters-says-why

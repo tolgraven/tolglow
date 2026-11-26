@@ -120,19 +120,35 @@
               :unlink (update c :links #(vec (remove (fn [l] (= link-id (:id l))) %)))))
           candidate edits))
 
+(defn- check-edits!
+  "A recipe's edits come from a saved knob, so check their shape before replay."
+  [edits]
+  (when-not (and (or (nil? edits) (vector? edits))
+                 (every? #(or (and (= :link (:op %)) (map? (:link %)))
+                              (and (= :unlink (:op %)) (some? (:link-id %))))
+                         edits))
+    (fail! "Recipe edits are :link steps with a link map and :unlink steps with a link ID")))
+
 (defn- from-recipe
-  "Regenerate a candidate exactly from a saved recipe against the current show."
+  "Regenerate a candidate exactly from a saved recipe against the current show.
+  Replayed edits pass the same checks as a live edit."
   [model recipe personality]
   (when-not (and (map? recipe) (integer? (:seed recipe)) (registry/data? recipe))
     (fail! "A recipe needs an integer :seed"))
   (when-not (= generate/generator-version (:generator recipe generate/generator-version))
     (fail! "The recipe was made by a different generator version" {:generator (:generator recipe)}))
+  (check-edits! (:edits recipe))
   (let [options (select-keys recipe [:character :size :cue-ids])
         eligibility (generate/eligibility model options)
         generated (generate/generate eligibility personality (assoc options :seed (:seed recipe)))]
-    (cond-> generated
-      (and (= :ready (:status generated)) (seq (:edits recipe)))
-      (-> (replay-edits (:edits recipe)) (assoc :edited? true) (assoc-in [:recipe :edits] (:edits recipe))))))
+    (if-not (and (= :ready (:status generated)) (seq (:edits recipe)))
+      generated
+      (let [edited (replay-edits generated (:edits recipe))]
+        (when-not (<= generate/min-links (count (:links edited)) generate/max-links)
+          (fail! (str "The recipe's edits leave " (count (:links edited)) " links; a candidate keeps "
+                      generate/min-links " to " generate/max-links)))
+        (check-links! model (:links edited))
+        (-> edited (assoc :edited? true) (assoc-in [:recipe :edits] (:edits recipe)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Owner operations
