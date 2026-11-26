@@ -100,8 +100,8 @@
 
 (def phrase-accents
   "An event subscriber: every phrase boundary fires a blinder hit, and three
-  bars later a one-bar burst of strobe on the ribbon or the tubes. The show's
-  seed decides which."
+  bars later a one-bar dimmer sweep or halo bloom. The show's seed decides
+  which."
   {:id :phrase-accents :enabled? true
    :match {:type :clock/phrase :category :clock}
    :actions [{:op :cue/launch :select {:ids [:blinder-hit] :pick :first}
