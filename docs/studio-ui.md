@@ -378,7 +378,9 @@ the window and by Redock. Throughout it checks that the running cue keeps its
 instance ID, that the card and Room canvas stay the same DOM nodes where no
 panel was detached, and that there is one socket and one preview worker. It
 is not evidence for iPad Safari, a physical touch screen or the packaged Mac
-app, whose WKWebView may not open panel windows.
+app. The app answers every blank `window.open` with its single Room window
+(`native/macOS/RoomWindows.swift`), so there Detach keeps panels other than the
+Room docked and says it is unsupported until the app hosts panel windows.
 
 ## API and lifecycle
 

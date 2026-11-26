@@ -546,7 +546,19 @@ for (const viewport of viewports) {
       const posted = await host.evaluate(() => window.__posted.filter(m => m.type === 'layouts'));
       assert.equal(posted.length, 1, 'saving posts one host copy');
       assert.equal(JSON.parse(posted[0].layouts).classes.desktop.active, 'From the app');
-      record.hostStore = {usedHostCopy: true, posted: posted.length};
+      // The app answers window.open with its one Room window, so a panel
+      // other than the Room stays docked there and says so.
+      await host.evaluate(() => { window.webkit.messageHandlers.tolglowRoomWindow = {postMessage() {}}; });
+      let hostPopup = false;
+      host.on('popup', () => { hostPopup = true; });
+      await host.locator('#edit-layout').click();
+      await host.waitForSelector('#view-perform .editing-layout');
+      await host.locator('#view-perform [data-panel="live"] .layout-detach').click();
+      await host.waitForFunction(() => document.body.textContent.includes('cannot open a panel in its own window'), null, {timeout: 5000});
+      assert.equal(hostPopup, false, 'no window opens for a panel in the Mac app');
+      assert.equal(await host.locator('#view-perform [data-detached="live"]').count(), 0, 'Live stays docked in the Mac app');
+      await host.locator('#layout-cancel').click();
+      record.hostStore = {usedHostCopy: true, posted: posted.length, panelWindowRefused: true};
       await host.close();
     }
 

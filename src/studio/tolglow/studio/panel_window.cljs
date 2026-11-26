@@ -84,9 +84,18 @@
               (swap! owners assoc-in [id :frame] (.requestAnimationFrame popup tick))))]
     (swap! owners assoc-in [id :frame] (.requestAnimationFrame popup tick))))
 
+(defn- room-only-host?
+  "The packaged Mac app answers every blank `window.open` with its single
+  Room window (native/macOS/RoomWindows.swift): opening a panel there would
+  close the Room's or another panel's window, title it as the Room and report
+  its closing as the Room's. Panels stay docked in the app until it hosts
+  them."
+  []
+  (some? (some-> js/globalThis (aget "webkit") (aget "messageHandlers") (aget "tolglowRoomWindow"))))
+
 (defn- open! [{:keys [id generation title width height]}]
   (let [fail! #(rf/dispatch [:panel-window/failed id generation %])
-        ^js popup (when (fn? (aget js/window "open"))
+        ^js popup (when (and (fn? (aget js/window "open")) (not (room-only-host?)))
                     (try (.open js/window "" (str "tolglow-panel-" (name id) "-" token "-" generation)
                                 (str "popup,width=" width ",height=" height))
                          (catch :default _ nil)))]
