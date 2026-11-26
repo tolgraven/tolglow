@@ -8,6 +8,7 @@
             [tolglow.event-subscribers :as sub]
             [tolglow.spatial :as spatial]
             [tolglow.registry :as registry]
+            [tolglow.show.scene-draft :as draft]
             [tolglow.composition.tween :as tween]))
 
 (def model {:rig {:fixtures [{:id :mover :channels {:pan [1 2] :tilt [3 4]}}
@@ -230,6 +231,64 @@
           instance (get-in timed [:model :instances (get-in timed [:ack :instance-id])])]
       (is (= {:beats 2} (:duration instance)) "An explicit launch lifetime is the operator's, not the stretch's")
       (is (some? (:arrival-stretch instance))))))
+
+(deftest retried-launch-never-stretches-an-instance-that-is-already-running
+  (let [rig (control/new-show {:rig {:fixtures paired-heads}})
+        effect (paths/definition rig (assoc synchronized-spec :duration {:beats 5}))
+        model (-> rig
+                  (assoc-in [:registry :effects (:id effect)] effect)
+                  (assoc-in [:registry :cues :paired-cue] {:id :paired-cue :effect-id (:id effect) :version 1}))
+        command {:op :cue/launch :cue-id :paired-cue :command-id "once" :show-id (:show-id model)
+                 :epoch (:epoch model) :time-ms 0 :source {:adapter :test} :launch {:mode :one-shot}}
+        first-launch (spatial/apply-command model command)
+        id (get-in first-launch [:ack :instance-id])
+        running (get-in first-launch [:model :instances id])
+        faster (assoc-in (:model first-launch) [:transport :bpm] 170)
+        retried (spatial/apply-command faster command)]
+    (is (nil? (:arrival-stretch running)) "Five beats at 120 BPM launch unstretched")
+    (is (= (:ack first-launch) (:ack retried)) "A retry returns the original receipt")
+    (is (= faster (:model retried)) "A retry after the tempo rose leaves the running instance alone")
+    (is (empty? (:events retried)))
+    (let [stretched (launch-at-bpm model 170 nil)
+          again (spatial/apply-command (:model stretched) (assoc command :command-id "launch-170" :launch nil))]
+      (is (some? (get-in stretched [:ack :arrival-stretch])))
+      (is (= (:model stretched) (:model (spatial/apply-command (:model stretched)
+                                                               {:op :cue/launch :cue-id :paired-cue :command-id "launch-170"
+                                                                :show-id (:show-id model) :epoch (:epoch model) :time-ms 0
+                                                                :source {:adapter :test}})))
+          "A retried stretched launch is not stretched twice")
+      (is (= :rejected (get-in again [:ack :status])) "Reusing the ID with other data is still a conflict")
+      (is (= (:ack stretched)
+             (:ack (spatial/apply-command (:model stretched)
+                                          {:op :cue/launch :cue-id :paired-cue :command-id "launch-170"
+                                           :show-id (:show-id model) :epoch (:epoch model) :time-ms 0
+                                           :source {:adapter :test}})))
+          "A retried stretched launch returns the same receipt, stretch report included"))))
+
+(deftest room-audition-stretches-only-its-private-copy-and-apply-stretches-at-the-live-tempo
+  (let [rig (control/new-show {:rig {:fixtures paired-heads}})
+        effect (paths/definition rig (assoc synchronized-spec :duration {:beats 5}))
+        live (-> rig
+                 (assoc-in [:registry :effects (:id effect)] effect)
+                 (assoc-in [:registry :cues :paired-cue] {:id :paired-cue :effect-id (:id effect) :version 1}))
+        fast (assoc-in live [:transport :bpm] 170)
+        staged (:draft (draft/stage fast nil {:draft-id "room" :operations [{:op :cue/launch :cue-id :paired-cue}]} 0))
+        auditioned (first (vals (get-in staged [:model :instances])))
+        apply-at (fn [model] (draft/apply-draft model staged {:command-id "apply" :show-id (:show-id model) :epoch (:epoch model)
+                                                              :source {:adapter :test} :time-ms 0
+                                                              :expected-draft-revision 0}))
+        applied-fast (apply-at fast)
+        applied-slow (apply-at live)
+        instance #(first (vals (get-in % [:model :instances])))]
+    (is (some? (:arrival-stretch auditioned)) "The audition frame shows the stretched move")
+    (is (empty? (:instances fast)) "Staging commits nothing live")
+    (is (= effect (get-in staged [:model :registry :effects :paired])))
+    (is (= :accepted (get-in applied-fast [:ack :status])))
+    (is (= (:definition auditioned) (:definition (instance applied-fast))) "Apply stretches at the live tempo")
+    (is (= effect (get-in applied-fast [:model :registry :effects :paired])))
+    (is (= :accepted (get-in applied-slow [:ack :status])))
+    (is (nil? (:arrival-stretch (instance applied-slow))) "Applied after the tempo fell, the move needs no stretch")
+    (is (identical? effect (:definition (instance applied-slow))))))
 
 (deftest launch-refuses-a-path-solved-against-another-mount-or-calibration
   (let [rig (assoc-in model [:rig :fixtures] paired-heads)

@@ -175,11 +175,13 @@
   "Apply launch-stretch to an accepted launch result. The new instance runs a
   stretched private copy of the published move on the same beat clock, and its
   musical lifetime grows to match unless the cue or launch set its own. The
-  instance and acknowledgement carry the :arrival-stretch report."
+  instance, acknowledgement and retry receipt carry the :arrival-stretch report.
+  A retried command ID returns its receipt and never touches the instance."
   [{:keys [ack] :as result} model command]
   (let [id (:instance-id ack)
         instance (get-in result [:model :instances id])
-        stretch (when (and (= :accepted (:status ack)) instance) (launch-stretch model command))
+        retry? (contains? (get-in model [:control :history]) (:command-id command))
+        stretch (when (and (= :accepted (:status ack)) instance (not retry?)) (launch-stretch model command))
         cue (when (= :cue/launch (:op command)) (get-in model [:registry :cues (:cue-id command)]))]
     (if-not (and stretch (= (:effect stretch) (:definition instance)))
       result
@@ -196,7 +198,9 @@
         (-> result
             (assoc-in [:model :instances id] stretched)
             (update :events (partial mapv #(if (launched? %) (assoc % :instance stretched) %)))
-            (assoc-in [:ack :arrival-stretch] report))))))
+            (assoc-in [:ack :arrival-stretch] report)
+            (cond-> (get-in result [:model :control :history (:command-id command)])
+              (assoc-in [:model :control :history (:command-id command) :ack :arrival-stretch] report)))))))
 
 (defn definition
   "Create a revision of an aim-only effect for selected moving heads.
