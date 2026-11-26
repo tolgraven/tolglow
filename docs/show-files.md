@@ -85,7 +85,10 @@ The owner runs the same `definition-errors` on every new `:registry/publish`
 subscribers and compositions all reach). A revision whose output still reads a
 parameter it removed is rejected with code `:invalid-definition` and
 `:details {:errors [{:path [:outputs 1 :value :key] :message "Expression
-references an unknown parameter"}]}`, so a show the owner accepted always saves.
+references an unknown parameter"}]}`. A `:cue/put` gets the same cue checks the
+backup applies, and a cue may not pin a superseded revision that does not
+compile (error path `[:effect-version]`), so a show the owner accepted always
+saves.
 The rig passes the actual patch compiler, including channel collisions and
 coarse/fine/universe addressing. Pages must reference registered cues.
 

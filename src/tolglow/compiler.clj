@@ -277,7 +277,9 @@
   "Path/message errors that keep a registry definition from being published or
   saved, relative to the definition. Effects must also compile against their
   own parameters, so an output still reading a parameter the revision removed
-  is reported at its expression path (#703). Empty when the definition is valid."
+  is reported at its expression path (#703). An expression the compiler cannot
+  read at all, such as `{:op :add :args 0}`, is an error at the definition root.
+  Empty when the definition is valid."
   [kind definition]
   (let [errors (registry/validate-definition kind definition)]
     (cond
@@ -286,7 +288,10 @@
       :else (try (compile-effect definition) []
                  (catch clojure.lang.ExceptionInfo cause
                    (or (not-empty (:errors (ex-data cause)))
-                       [{:path [] :message (ex-message cause)}]))))))
+                       [{:path [] :message (ex-message cause)}]))
+                 (catch Exception cause
+                   [{:path [] :message (str "Effect does not compile: "
+                                            (or (ex-message cause) (.getName (class cause))))}])))))
 
 (defn demo-definitions
   "Portable example effects for the studio, REPL, and deterministic tests."
