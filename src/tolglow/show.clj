@@ -264,7 +264,8 @@
                                            #(mapv (fn [[[x y] cue]] {:x x :y y :cue-id cue})
                                                   (sort-by key %)))) (sort-by (comp str :id) (vals (:pages model))))
             :recent-page (recent-page-snapshot model)
-            :auto (select-keys (:auto model) [:enabled? :config :reasons])
+            :auto (cond-> (select-keys (:auto model) [:enabled? :config :reasons])
+                    (get-in model [:auto :state :section]) (assoc :section (get-in model [:auto :state :section :id])))
             :responses (vec (:responses model))
             :effect-group-channels (group-channels/projection model)
             :control-surfaces (surface/with-refusals (surface/projection model) ; surfaces, links, session boxes (#705)
@@ -1331,7 +1332,9 @@
                   (reduce (fn [m c] (:model (command m c time-ms))) model
                           (:commands (policy/stop-plan model old-state time-ms))) model)
           enabled? (true? (:enabled? payload))
-          config (dissoc payload :enabled? :seed :expected-epoch)
+          config (cond->> (policy/normalize-config (dissoc payload :enabled? :seed :expected-epoch :keep-plan?))
+                   ;; Studio's start keeps a plan authored at the REPL (#217).
+                   (:keep-plan? payload) (policy/keep-plan (get-in model [:auto :config])))
           state (when enabled? (policy/initial-state (:seed payload 0) time-ms (str (UUID/randomUUID))))]
       (when enabled?
         (let [fixtures (get-in model [:rig :fixtures])
@@ -1411,18 +1414,30 @@
       {:patch patch :meter (delay (capacity-plan! runtime patch))
        :previous-budget (get-in @(:state runtime) [:lighting-history :budget])})))
 
+(defn- advance-auto-plan [model time-ms {:keys [state commands reasons]}]
+  (let [[model state] (reduce (fn [[m s] c]
+                                (let [{:keys [model ack]} (command m c time-ms)]
+                                  [model (if (and (= :cue/launch (:op c)) (= :accepted (:status ack)) (:instance-id ack))
+                                           (policy/record-launch s (:instance-id ack) (get-in model [:instances (:instance-id ack)])) s)]))
+                              [model state] commands)]
+    ;; Keep the last decision's reasons visible between decisions.
+    (cond-> (assoc-in model [:auto :state] state)
+      (seq reasons) (assoc-in [:auto :reasons] reasons))))
+
 (defn- advance-auto [model time-ms runtime]
   (if (get-in model [:auto :enabled?])
     (let [fixtures (get-in model [:rig :fixtures])
-          {:keys [state commands reasons]} (policy/advance (assoc model :fixtures fixtures)
-                                              (get-in model [:auto :config]) (get-in model [:auto :state])
-                                              time-ms (auto-plans runtime fixtures))
-          [model state] (reduce (fn [[m s] c]
-                                  (let [{:keys [model ack]} (command m c time-ms)]
-                                    [model (if (and (= :cue/launch (:op c)) (= :accepted (:status ack)) (:instance-id ack))
-                                             (policy/record-launch s (:instance-id ack)) s)]))
-                                [model state] commands)]
-      (-> model (assoc-in [:auto :state] state) (assoc-in [:auto :reasons] reasons))) model))
+          planned (try (policy/advance (assoc model :fixtures fixtures)
+                                       (get-in model [:auto :config]) (get-in model [:auto :state])
+                                       time-ms (auto-plans runtime fixtures))
+                       ;; A planner failure stops auto mode with its reason; the
+                       ;; show keeps rendering (#217).
+                       (catch clojure.lang.ExceptionInfo e
+                         {:failed {:reason :planner-failed :message (.getMessage e)}}))]
+      (if-let [failure (:failed planned)]
+        (-> model (assoc-in [:auto :enabled?] false) (assoc-in [:auto :reasons] [failure]))
+        (advance-auto-plan model time-ms planned)))
+    model))
 
 (defn- output-retirement [runtime {:keys [compiled retirement] :as context}]
   (let [{wire-context :context wire-plan :plan :keys [possible] :as wire} @(:wire-retirement runtime)]

@@ -36,6 +36,7 @@
             [tolglow.composition :as composition]
             [tolglow.agents :as agents]
             [tolglow.autopilot.actions :as conductor-actions]
+            [tolglow.automation.policy :as policy]
             [tolglow.spatial :as spatial]
             [tolglow.video.mapping :as video-mapping]
             [tolglow.spatial.actions :as spatial-actions]
@@ -258,6 +259,17 @@
       (check-errors! (time/validate-duration duration) [:auto :config :interval])
       (check! (pos? (val (first duration))) [:auto :config :interval] "Auto interval must be positive"))
     (when (:interval-timer state) (timer! (:interval-timer state) [:auto :state :interval-timer]))
+    (when-let [section (:section state)]
+      (check! (and (map? section) (natural? (:index section)) (pos-int? (:run section)) (map? (:timer section)))
+              [:auto :state :section] "Auto section state needs an index, run and timer")
+      (timer! (:timer section) [:auto :state :section :timer]))
+    (when (contains? state :owned-launches)
+      (check! (and (vector? (:owned-launches state))
+                   (every? #(and (map? %) (string? (:instance-id %))) (:owned-launches state)))
+              [:auto :state :owned-launches] "Auto launch records need instance IDs"))
+    (when (and enabled? (map? config))
+      (let [errors (policy/validate-config config)]
+        (check! (empty? errors) [:auto :config] (str "Invalid auto config: " (pr-str (vec (take 3 errors)))))))
     (doseq [key [:next-at-ms :next-at-beat] :when (contains? state key)]
       (check! (registry/finite-number? (get state key)) [:auto :state key] "Auto boundary must be finite"))))
 

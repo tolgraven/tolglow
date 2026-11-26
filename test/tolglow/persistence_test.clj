@@ -52,11 +52,14 @@
                           :held {36 {:instance-id id :command-id "pending"}}
                           :clip-links {:ember {:track-id "lighting" :clip-id "verse"}}
                           :recorded #{[:main 0 "old"]} :record-order [[:main 0 "old"]]))
-        auto (assoc (policy/initial-state 12345 4000 "auto-before")
+        auto (assoc (policy/record-launch (policy/initial-state 12345 4000 "auto-before") id (get-in model [:instances id]))
                     :tick 7 :epoch 0 :owned-instance-ids [id "0:ended"]
+                    :section {:id :verse :index 2 :run 1
+                              :timer (time/start {:bars 4} {:beat 8 :time-ms 4000 :meter time/default-meter})}
                     :interval-timer (time/start {:bars 2} {:beat 8 :time-ms 4000 :meter time/default-meter}))]
     (assoc (:model held)
-           :auto {:enabled? true :config {:interval {:bars 2} :count 1 :scope :all} :state auto}
+           :auto {:enabled? true :config {:interval {:bars 2} :count 1 :scope :all
+                                          :sections [{:id :verse :length {:bars 4}}]} :state auto}
            :integrations {:ableton bridge :audio {:input-gain 0.8} :extensions {:vendor/mapping {:version 3}}}
            :responses [{:id :response :select {:instance-ids [id]} :params [:level]
                         :envelope {:attack {:beats 1}} :state {:started-at-ms 4000 :started-at-beat 8}}]
@@ -362,6 +365,9 @@
     (is (= {:adapter :restore :epoch 10} (:source held)))
     (is (= :held (:launch-mode held)))
     (is (= (get-in model [:auto :state :interval-timer]) (:interval-timer auto-state)))
+    (is (= (get-in model [:auto :state :section]) (:section auto-state)))
+    (is (every? ids (map :instance-id (:owned-launches auto-state))) "launch records follow the rekeyed instance")
+    (is (= 1 (count (:commands (policy/stop-plan result auto-state 4000)))))
     (is (every? ids (map :instance-id (:commands (policy/stop-plan result auto-state 4000)))))))
 
 (deftest ableton-links-and-configuration-roundtrip-with-fresh-live-session
