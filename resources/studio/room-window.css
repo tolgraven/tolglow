@@ -1,0 +1,9 @@
+/* The Room in its own window and its placeholder in Studio (room_window.cljs). */
+.room-window-body{display:grid;gap:6px;padding:12px}
+.room-window-body p{margin:0}
+.room-window-notice{margin:0;font-size:11px;line-height:1.5;color:var(--accent)}
+body.room-window{margin:0;height:100vh;overflow:hidden;background:#101310}
+body.room-window>#view-perform{height:100%;display:flex;flex-direction:column}
+body.room-window #view-perform>#preview-panel{flex:1;min-height:0;display:flex;flex-direction:column;border:0;border-radius:0}
+body.room-window #view-perform>#preview-panel>.preview-stage{flex:1;height:auto;min-height:180px}
+body.room-window #view-perform>.room-window-notice{padding:6px 12px;border-top:1px solid var(--line);background:var(--panel)}
