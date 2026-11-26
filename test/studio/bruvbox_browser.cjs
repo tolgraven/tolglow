@@ -1,4 +1,5 @@
-// Explicit real-browser/WASM gate; start the capture-only studio first.
+// Explicit real-browser/WASM gate; start the capture-only studio first and build it
+// with npm run studio:build. STUDIO_CHROMIUM or CHROMIUM_PATH names the browser.
 // STUDIO_URL=http://127.0.0.1:8500 node test/studio/bruvbox_browser.cjs
 const { chromium } = require('playwright-core');
 const assert = require('node:assert/strict');
@@ -13,7 +14,7 @@ const crypto = require('node:crypto');
     assert.equal(crypto.createHash('sha256').update(fs.readFileSync(path.join(root, file.path))).digest('hex'), file.sha256);
   }
   const browser = await chromium.launch({
-    executablePath: process.env.STUDIO_CHROMIUM || '/usr/bin/chromium',
+    executablePath: process.env.STUDIO_CHROMIUM || process.env.CHROMIUM_PATH || '/usr/bin/chromium',
     args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
   });
   try {
@@ -304,7 +305,52 @@ const crypto = require('node:crypto');
     assert.equal(typeof display.special, 'number');
     assert.equal(display.pixel, display.special);
     assert.deepEqual(display.failures, []);
+
+    // A remount can repeat the buffer number, changedtick and digest; only the session tells them apart.
+    // Many edit and finding cycles leave a bounded number of marks, findings and observers.
+    const remount = await page.evaluate(async source => {
+      const { NeovimEngine } = await globalThis.tolglowLoadEngine('neovim');
+      const mount = async () => {
+        const host = document.createElement('div');
+        host.style.cssText = 'position:fixed;inset:20px;width:800px;height:420px;z-index:1000';
+        document.body.append(host);
+        const editor = new NeovimEngine(host, { pinBuffer: true, fileName: '/home/user/cue.clj' });
+        await editor.start(source);
+        return { editor, host };
+      };
+      const note = [{ lnum: 0, col: 0, message: 'Draft diagnostic', severity: 1 }];
+      const first = await mount();
+      const firstDraft = await first.editor.draft();
+      first.editor.stop(); first.host.remove();
+      const second = await mount();
+      try {
+        const editor = second.editor, nvim = editor.nvim, secondDraft = await editor.draft(), buf = secondDraft.bufferId;
+        const lateFromFirstMount = await editor.setDraftDiagnostics(firstDraft, note);
+        const stoppedFirstMount = await first.editor.setDraftDiagnostics(firstDraft, note);
+        const count = () => nvim.request('nvim_exec_lua', [
+          "local buf=...; local marks=0; local spaces=0; for _, id in pairs(vim.api.nvim_get_namespaces()) do spaces=spaces+1; marks=marks+#vim.api.nvim_buf_get_extmarks(buf,id,0,-1,{}) end; return {marks=marks, namespaces=spaces, findings=#vim.diagnostic.get(buf), autocmds=#vim.api.nvim_get_autocmds({buffer=buf})}", [buf],
+        ]);
+        const sizes = [];
+        let applied = 0;
+        for (let cycle = 0; cycle < 60; cycle++) {
+          await editor.setText(`(def cycle ${cycle})\n(def label "Cue ☃")`);
+          if (await editor.setDraftDiagnostics(await editor.draft(), note)) applied++;
+          if (cycle === 5 || cycle === 59) sizes.push(await count());
+        }
+        return { firstDraft, secondDraft, lateFromFirstMount, stoppedFirstMount, applied, sizes };
+      } finally { second.editor.stop(); second.host.remove(); }
+    }, original);
+    assert.equal(remount.secondDraft.bufferId, remount.firstDraft.bufferId);
+    assert.equal(remount.secondDraft.changedtick, remount.firstDraft.changedtick);
+    assert.equal(remount.secondDraft.sourceSha256, remount.firstDraft.sourceSha256);
+    assert.notEqual(remount.secondDraft.sessionId, remount.firstDraft.sessionId);
+    assert.equal(remount.lateFromFirstMount, false);
+    assert.equal(remount.stoppedFirstMount, false);
+    assert.equal(remount.applied, 60);
+    assert.deepEqual(remount.sizes[1], remount.sizes[0]);
+    assert.equal(remount.sizes[1].findings, 1);
+    assert.ok(remount.sizes[1].marks <= 4, `extmarks ${remount.sizes[1].marks}`);
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ status: 'passed', checks: ['pinned theme source hashes', 'native Bruvbox name and highlight RGB values', 'native 16-color terminal palette', 'actual buffer and cursor preserved', 'shared CSS palette', 'pinned cue across native scratch windows', 'UTF-8 draft digest and changedtick', 'stale and racing diagnostics rejected', 'owned diagnostics cleared on edit', 'one observer through reload, unload and reopen', 'late replies to a closed or stopped editor refused', 'finding message and underline shown while typing', 'clean browser/editor teardown'], native: result.native, css: result.css }, null, 2));
+    console.log(JSON.stringify({ status: 'passed', checks: ['pinned theme source hashes', 'native Bruvbox name and highlight RGB values', 'native 16-color terminal palette', 'actual buffer and cursor preserved', 'shared CSS palette', 'pinned cue across native scratch windows', 'UTF-8 draft digest and changedtick', 'stale and racing diagnostics rejected', 'owned diagnostics cleared on edit', 'one observer through reload, unload and reopen', 'late replies to a closed or stopped editor refused', 'finding message and underline shown while typing', 'remount refused by session', 'bounded marks, findings and observers', 'clean browser/editor teardown'], native: result.native, css: result.css }, null, 2));
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
