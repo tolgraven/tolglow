@@ -137,6 +137,8 @@
             [tolglow.video.mapping :as video-mapping]
             [tolglow.video.preview :as video-preview]
             [tolglow.video.sampler :as video-sampler]
+            [tolglow.video.shader :as video-shader]
+            [tolglow.video.shader-producer :as shader-producer]
             [tolglow.video.source :as video-source])
   (:import [java.util Arrays UUID]
            [java.util.concurrent LinkedBlockingQueue]))
@@ -218,8 +220,10 @@
             :autopilot (get-in model [:variables :lighting/autopilot] {:enabled? false})
             :audio/energy (get-in model [:variables :audio/energy])
             :lighting-scenes (lighting-scenes/snapshot model (scene-eligible-ids runtime fixtures))
-            :video (when (or (seq (get-in model [:settings :video :sources])) (seq (get-in model [:settings :video :mappings])))
-                     (video-preview/project (:video runtime) (:video-latch snapshot) fixtures (:video-preview-plans runtime)))
+            :video (let [shaders (when (seq @(get-in runtime [:shader-video :entries]))
+                                   (shader-producer/status (:shader-video runtime)))]
+                     (when (or shaders (seq (get-in model [:settings :video :sources])) (seq (get-in model [:settings :video :mappings])))
+                       (video-preview/project (:video runtime) (:video-latch snapshot) fixtures (:video-preview-plans runtime) shaders)))
             :personalities (:projection (personality-views runtime model))
             :receiver-surfaces (:receivers optics)
             :surface-aim (get-in model [:variables :surface-aim] {})
@@ -547,6 +551,8 @@
       :compile (cached-compile compiler-context)
       ;; Video sources open on their own thread, outside the lighting frame (#672).
       :video (video-hub/create (:video-options options {}))
+      ;; Shader cues render on their own cadence, outside the lighting frame (#673).
+      :shader-video (shader-producer/create (:shader-options options {}))
       :video-preview-plans (video-sampler/plan-cache 16)}]
        (reset! runtime-ref runtime)
        runtime)))
@@ -2101,7 +2107,8 @@
                           :responses (:responses model)
                           :adaptive-intervals (get-in sampling [:inputs :keyframe-intervals])})
         ;; Video frames latch once per lighting frame and hold while stopped (#672).
-        video-latch (video-hub/latch (:video runtime) model (:video-latch before))
+        video-latch (video-hub/latch (:video runtime) model (:video-latch before)
+                                     (shader-producer/frames (:shader-video runtime)))
         frame-input (merge {:time-ms time-ms :epoch (:epoch model) :show-id (:show-id model)
                             video-output/input-key video-latch
                             :keyframes (:keyframes before) :keyframe-params input-overrides
@@ -2695,8 +2702,12 @@
            (when (and (realized? receipt) (= :accepted (:status @receipt)))
              (reopen-restoring-device! runtime device)))
          (rdm/reconcile! (:rdm runtime))
-         (when @(:running runtime)
-           (video-hub/request-reconcile! (:video runtime) (get-in @(:state runtime) [:model :settings :video :sources]))))))))
+         (let [model (:model @(:state runtime))]
+           (when @(:running runtime)
+             (video-hub/request-reconcile! (:video runtime) (get-in model [:settings :video :sources])))
+           ;; Hand the committed shader uniforms to their producer; it never
+           ;; renders here, and a stopped producer ignores them (#673).
+           (shader-producer/sync! (:shader-video runtime) (video-shader/requests model))))))))
 
 (defn- prepare-rig-edit [model proposed]
   (let [basis (:rig model)
@@ -2920,6 +2931,7 @@
                                  (.shutdownNow ^java.util.concurrent.ExecutorService @(:audition-worker runtime)))
                               #(duplex/stop! (:audio-returns runtime))
                               #(video-hub/stop! (:video runtime))
+                              #(shader-producer/stop! (:shader-video runtime))
                               #(development/close! (:development runtime))
                               #(connections/close! (:connections runtime))
                               (fn [] (locking (:devices runtime)
@@ -3680,12 +3692,27 @@
   :edit         apply one `tolglow.video.mapping/apply-operation` edit through
                 the show queue; sources reconcile after it commits
   :syphon       list Syphon servers through the native helper
-  :frame-jpeg   bytes of a latched frame, {:source id :max-width px}"
+  :frame-jpeg   bytes of a latched frame, {:source id :max-width px}
+  :frame        the latched frame record of {:source id}, or nil
+  :shaders      shader producer status (#673): per instance cadence, frames,
+                drops, timings and compile errors
+  :audition     compile {:shader {:glsl … :uniforms …}} on the GPU worker
+                without publishing; returns {:compiled? …} with the log.
+                Blocks the caller, never the lighting frame"
   [runtime operation payload]
   (case operation
     :status (let [state @(:state runtime)]
               (video-preview/project (:video runtime) (:video-latch state) (get-in state [:model :rig :fixtures])
-                                     (:video-preview-plans runtime)))
+                                     (:video-preview-plans runtime) (shader-producer/status (:shader-video runtime))))
+    :frame (get-in @(:state runtime) [:video-latch :frames (:source payload)])
+    :shaders (shader-producer/status (:shader-video runtime))
+    :audition (let [shader (:shader payload)
+                    ;; The cue's own parameters type the uniform expressions.
+                    errors (compiler/definition-errors :effects {:id :shader/audition :version 1
+                                                                 :params (:params payload {}) :shader shader})]
+                (if (seq errors)
+                  {:compiled? false :message (:message (first errors)) :errors errors}
+                  (shader-producer/audition! (:shader-video runtime) (video-shader/afterglow-shader shader))))
     :edit (let [receipt (submit! runtime :video-mapping (dissoc payload :runtime-id :expected-epoch))]
             receipt)
     :syphon (video-hub/list-syphon (:video runtime))

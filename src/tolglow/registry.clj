@@ -336,6 +336,8 @@
                                (validate-parameter schema [:params k]))) params))
            (when (contains? definition :layer) (validate-layer (:layer definition)))
            (if (and (or (true? (:show-control? definition)) (map? (:modulation definition))
+                        ;; A shader cue can drive only a direct output (#673).
+                        (map? (:shader definition))
                         (and (vector? (get-in definition [:layer :transforms]))
                              (seq (get-in definition [:layer :transforms]))))
                     (or (nil? (:outputs definition))

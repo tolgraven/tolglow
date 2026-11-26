@@ -36,6 +36,7 @@
             [tolglow.studio.spatial :as spatial]
             [tolglow.studio.spatial-preview :as spatial-preview]
             [tolglow.studio.video-strips :as video-strips]
+            [tolglow.studio.shader-cues :as shader-cues]
             [tolglow.studio.modulation :as modulation]
             [tolglow.studio.navigation :as nav]
             [tolglow.studio.operator-history :as history]
@@ -840,6 +841,7 @@
      [rig-editor/panel db]
      (when (= :rig (get-in db [:ui :view])) [spatial/panel])
      (when (= :rig (get-in db [:ui :view])) [video-strips/panel])
+     (when (= :rig (get-in db [:ui :view])) [shader-cues/panel])
      [:details.rig-plan-alternative [:summary "Top-down placement alternative"] [rig-plan rig]]
      [:div.rig-layout
       [:section.panel [:div.panel-top [:span.section-label "ROOM & FIXTURES"] [button "add-fixture" "Add RGBW head +" [:studio/rig-add] "text-button"]]

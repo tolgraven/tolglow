@@ -190,22 +190,33 @@
 (defn latch
   "The video frame input for one lighting frame: newest frames by source id,
   frames held for paused instances, and the mapping settings. Pure apart from
-  reading each source's latest frame."
-  [hub model previous]
-  (let [playing? (not (false? (get-in model [:transport :playing?])))
-        frames (if (or playing? (nil? previous))
-                 (into {} (keep (fn [[id {:keys [source]}]]
-                                  (when-let [f (try (source/latest source) (catch Exception _ nil))] [id f])))
-                       @(:sources hub))
-                 (:frames previous))
-        held (into {} (for [[id instance] (:instances model)
-                            :when (get-in instance [:system :paused?])]
-                        ;; The frames this instance read on its last running frame.
-                        [id (or (get-in previous [:held id]) (:frames previous) frames)]))]
-    {:frames frames
-     :held held
-     :frozen? (not playing?)
-     :mappings (get-in model [:settings :video :mappings] {})}))
+  reading each source's latest frame. `produced` is the shader producer's
+  {:frames :instance-frames} (#673): its feeds join the source frames, and a
+  shader instance's own frame is kept under :instance-frames. While the
+  transport is stopped both stay as they were; a paused instance keeps its
+  own frame."
+  ([hub model previous] (latch hub model previous nil))
+  ([hub model previous produced]
+   (let [playing? (not (false? (get-in model [:transport :playing?])))
+         fresh? (or playing? (nil? previous))
+         frames (if fresh?
+                  (into (into {} (keep (fn [[id {:keys [source]}]]
+                                         (when-let [f (try (source/latest source) (catch Exception _ nil))] [id f])))
+                              @(:sources hub))
+                        (:frames produced))
+                  (:frames previous))
+         paused (into #{} (keep (fn [[id instance]] (when (get-in instance [:system :paused?]) id))) (:instances model))
+         instance-frames (if fresh?
+                           (merge (:instance-frames produced {}) (select-keys (:instance-frames previous) paused))
+                           (:instance-frames previous {}))
+         held (into {} (for [id paused]
+                         ;; The frames this instance read on its last running frame.
+                         [id (or (get-in previous [:held id]) (:frames previous) frames)]))]
+     {:frames frames
+      :instance-frames (select-keys instance-frames (keys (:instances model)))
+      :held held
+      :frozen? (not playing?)
+      :mappings (get-in model [:settings :video :mappings] {})})))
 
 (defn status
   "Portable source status for Studio and the REPL."

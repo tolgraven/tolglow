@@ -384,6 +384,31 @@
     "/api/sensors" (read-action sensor! :status "Sensor inputs unavailable")
     "/api/video" (read-action video! :status "Video mapping unavailable")
     "/api/video/syphon" (read-action video! :syphon "Video mapping unavailable")
+    "/api/video/shaders" (read-action video! :shaders "Video mapping unavailable")
+    ;; The projector page's frame pump (#673): wait up to `wait` ms for a
+    ;; latched frame other than sequence `after`, then send its BGRA8 pixels. 204 when
+    ;; nothing newer arrived, so a page holds its last picture.
+    "/api/video/next" (available video! "Video mapping unavailable"
+                        (fn [request]
+                          (let [{:keys [source after wait]} (query-fields request {:source nil :after "-1" :wait "1000"})
+                                id (when source (if (str/starts-with? source ":") (keyword (subs source 1)) source))
+                                after (or (parse-long after) -1)
+                                deadline (+ (System/nanoTime) (* 1000000 (max 0 (min 2000 (or (parse-long wait) 1000)))))
+                                frame (when id
+                                        (loop []
+                                          (let [f (video! :frame {:source id})]
+                                            ;; Not merely newer: a feed that moves to a newer instance restarts its count.
+                                            (cond (and f (not= (long (:sequence f 0)) after)) f
+                                                  (< (System/nanoTime) deadline) (do (Thread/sleep 4) (recur))
+                                                  :else nil))))]
+                            (if frame
+                              {:status 200
+                               :headers {"Content-Type" "application/octet-stream" "Cache-Control" "no-store"
+                                         "X-Frame-Width" (str (:width frame)) "X-Frame-Height" (str (:height frame))
+                                         "X-Frame-Sequence" (str (:sequence frame))
+                                         "Access-Control-Expose-Headers" "X-Frame-Width, X-Frame-Height, X-Frame-Sequence"}
+                               :body (java.io.ByteArrayInputStream. ^bytes (:pixels frame))}
+                              {:status 204 :headers {"Cache-Control" "no-store"} :body ""}))))
     "/api/video/frame" (available video! "Video mapping unavailable"
                          (fn [request]
                            (let [{:keys [source width]} (query-fields request {:source nil :width "640"})
@@ -438,6 +463,7 @@
    (post-actions "/api/workspaces/" workspace! ok {"create" :create "write" :write "check" :check "stage" :stage})
    (post-actions "/api/repl/" repl! ok {"session" :session "scratch" :scratch "interrupt" :interrupt})
    (post-actions "/api/waveforms/" waveform! ok {"preview" :preview})
+   (post-actions "/api/video/shader/" video! ok {"audition" :audition} "Video mapping unavailable")
    (post-actions "/api/fixtures/" fixture! acknowledgement
                  {"search" :search "refresh" :refresh "fetch" :fetch "import" :import "publish" :publish "patch" :patch})
    (post-actions "/api/rdm/" rdm! acknowledgement

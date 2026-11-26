@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tolglow video output</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; cursor: none; }
+  canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; object-fit: contain;
+           image-rendering: pixelated; display: block; }
+</style>
+</head>
+<body>
+<!-- A borderless projector destination for one video feed (#673). Open it as
+     /studio/video-output.html?source=:shader/plasma on the projector's
+     screen in a full-screen or kiosk browser window. It shows only the feed:
+     no controls, no cursor, black when there is no frame. -->
+<canvas id="output" width="1" height="1"></canvas>
+<script>
+(() => {
+  const params = new URLSearchParams(location.search);
+  const source = params.get('source');
+  const canvas = document.getElementById('output');
+  const context = canvas.getContext('2d', { alpha: false });
+  const stats = { frames: 0, empty: 0, errors: 0, lastSequence: -1, width: 0, height: 0, startedAt: performance.now(), drawMs: [] };
+  window.tolglowVideoOutput = stats;
+  if (!source) return;
+  let image = null;
+  async function pump() {
+    for (;;) {
+      try {
+        const response = await fetch(`/api/video/next?source=${encodeURIComponent(source)}&after=${stats.lastSequence}&wait=1000`, { cache: 'no-store' });
+        if (response.status === 204) { stats.empty++; continue; }
+        if (!response.ok) { stats.errors++; await new Promise(r => setTimeout(r, 500)); continue; }
+        const width = Number(response.headers.get('X-Frame-Width'));
+        const height = Number(response.headers.get('X-Frame-Height'));
+        const sequence = Number(response.headers.get('X-Frame-Sequence'));
+        const bgra = new Uint8Array(await response.arrayBuffer());
+        const started = performance.now();
+        if (canvas.width !== width || canvas.height !== height || !image) {
+          canvas.width = width; canvas.height = height;
+          image = context.createImageData(width, height);
+        }
+        const rgba = image.data;
+        for (let i = 0; i < bgra.length; i += 4) {
+          rgba[i] = bgra[i + 2]; rgba[i + 1] = bgra[i + 1]; rgba[i + 2] = bgra[i]; rgba[i + 3] = 255;
+        }
+        context.putImageData(image, 0, 0);
+        stats.frames++; stats.lastSequence = sequence; stats.width = width; stats.height = height;
+        stats.drawMs.push(performance.now() - started);
+        if (stats.drawMs.length > 256) stats.drawMs.shift();
+      } catch (e) {
+        stats.errors++;
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+  }
+  pump();
+})();
+</script>
+</body>
+</html>

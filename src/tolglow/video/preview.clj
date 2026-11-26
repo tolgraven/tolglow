@@ -42,12 +42,31 @@
                                                   (range (count (:targets strip))))})
                                  (:strips plan) offsets)}))])))
 
+(defn shader-sources
+  "Status rows for the shader feeds in the latch (#673), in the same shape as
+  hub sources, so strips can be mapped onto a running shader cue's feed."
+  [latch shader-status now-ms]
+  (vec (for [[feed rows] (sort-by (comp str key) (group-by :feed (:instances shader-status)))
+             :let [f (get-in latch [:frames feed])
+                   errors (keep :error rows)
+                   age (when-let [t (:captured-at-ms f)] (max 0 (- now-ms t)))]]
+         (merge {:id feed :kind :shader :label (str "Shader · " (name feed)) :connected? (some? f)
+                 :instances (mapv :instance-id rows) :fps (:fps (first rows))
+                 :frozen? (boolean (:frozen? latch))
+                 ;; A static shader publishes once; it is not stale while its cue runs.
+                 :stale? (nil? f) :age-ms age}
+                (when f {:width (:width f) :height (:height f) :sequence (:sequence f)})
+                (when (seq errors) {:error (:message (first errors)) :code (:code (first errors))})))))
+
 (defn project
   "The :video key of the show snapshot."
-  [video-hub latch fixtures cache]
-  {:sources (hub/status video-hub latch)
-   :frozen? (boolean (:frozen? latch))
-   :mappings (mapping-samples latch fixtures cache)})
+  ([video-hub latch fixtures cache] (project video-hub latch fixtures cache nil))
+  ([video-hub latch fixtures cache shader-status]
+   (cond-> {:sources (into (hub/status video-hub latch)
+                           (when shader-status (shader-sources latch shader-status ((:now-ms video-hub)))))
+            :frozen? (boolean (:frozen? latch))
+            :mappings (mapping-samples latch fixtures cache)}
+     shader-status (assoc :shaders shader-status))))
 
 (def max-jpeg-dimension
   "Largest served preview width or height, whatever the caller asks for."

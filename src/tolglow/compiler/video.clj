@@ -62,7 +62,9 @@
                (let [input (get frame input-key)
                      mapping-spec (get-in input [:mappings mapping])
                      frames (or (get-in input [:held (:id instance)]) (:frames input))
-                     f (get frames (:source mapping-spec))]
+                     ;; A shader cue samples its own instance's frame first (#673).
+                     f (or (get-in input [:instance-frames (:id instance) (:source mapping-spec)])
+                           (get frames (:source mapping-spec)))]
                  (if-not (and mapping-spec f)
                    {}
                    (let [placed (into mapping/default-placement
