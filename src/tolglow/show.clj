@@ -247,7 +247,7 @@
             :responses (vec (:responses model))
             :effect-group-channels (group-channels/projection model)
             :control-surfaces (surface/with-refusals (surface/projection model) ; surfaces, links, session boxes (#705)
-                                                     (some-> (:surface-refusals runtime) deref))
+                                                     (some-> (:surface-refusals runtime) deref (dissoc ::sequence)))
             :effect-events (get-in model [:variables :runtime] {:event-sequence 0 :events []})
             :patch (routing/snapshot model)
             :modulation {:controllers (mapv #(select-keys % [:id :config :ticks :next-beat :owner-instance-id])
@@ -2941,17 +2941,23 @@
   the owner thread logs a refusal and keeps it for the snapshot's
   :control-surfaces until that surface's next accepted host command."
   [runtime epoch surface-id command]
-  (let [receipt (submit! runtime (merge {:source {:adapter :surface :session-id surface-id} :expected-epoch epoch}
+  (let [refusals (:surface-refusals runtime)
+        ;; Watchers finish in any order; only the latest command for a surface
+        ;; may record or clear its refusal.
+        sequence (-> (swap! refusals update-in [::sequence surface-id] (fnil inc 0)) (get-in [::sequence surface-id]))
+        latest? #(= sequence (get-in % [::sequence surface-id]))
+        receipt (submit! runtime (merge {:source {:adapter :surface :session-id surface-id} :expected-epoch epoch}
                                         command))]
     (.start (doto (Thread. (fn []
-                             (let [{:keys [status] :as ack} (deref receipt 30000 {:status :timeout})]
+                             (let [{:keys [status] :as ack} (deref receipt 30000 {:status :timeout})
+                                   refusal (merge {:op (:op command)} (select-keys ack [:status :code :message]))]
                                (cond
-                                 (= :accepted status) (swap! (:surface-refusals runtime) dissoc surface-id)
+                                 (= :accepted status)
+                                 (swap! refusals #(cond-> % (latest? %) (dissoc surface-id)))
                                  @(:running runtime)
                                  (do (timbre/warn "Control surface command refused" surface-id (:op command)
                                                   (select-keys ack [:status :code :message]))
-                                     (swap! (:surface-refusals runtime) assoc surface-id
-                                            (merge {:op (:op command)} (select-keys ack [:status :code :message])))))))
+                                     (swap! refusals #(cond-> % (latest? %) (assoc surface-id refusal)))))))
                            "tolglow-surface-command")
               (.setDaemon true)))
     receipt))
