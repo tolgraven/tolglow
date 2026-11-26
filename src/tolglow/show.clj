@@ -3734,7 +3734,8 @@
       (throw (ex-info "Unknown sensor operation" {:operation operation})))))
 
 (def max-video-waiters
-  "Projector pages that may wait for a frame at once; more are refused."
+  "Projector page requests (waiting or being served a frame) at once; more
+  are refused."
   8)
 
 (defn projector-gain
@@ -3766,20 +3767,23 @@
         deadline (+ (System/nanoTime) (* 1000000 (long (max 0 (min 2000 wait-ms)))))
         [model f gain] (current)]
     (cond
-      (fresh? f gain) {:status :frame :frame f :gain gain :pixels (video-source/scaled-pixels f gain)}
       (not (or f (known-video-source? model source))) {:status :unknown}
+      ;; Serving a frame counts as well as waiting for one: the cap bounds
+      ;; both Jetty threads and frame bandwidth.
       (> (.incrementAndGet waiters) max-video-waiters) (do (.decrementAndGet waiters) {:status :busy})
       :else
       (try
-        (loop []
-          (let [remaining (quot (- deadline (System/nanoTime)) 1000000)]
-            (if (pos? remaining)
-              (do (locking signal (.wait signal (long remaining)))
-                  (let [[_ f gain] (current)]
-                    (if (fresh? f gain)
-                      {:status :frame :frame f :gain gain :pixels (video-source/scaled-pixels f gain)}
-                      (recur))))
-              {:status :none})))
+        (if (fresh? f gain)
+          {:status :frame :frame f :gain gain :pixels (video-source/scaled-pixels f gain)}
+          (loop []
+            (let [remaining (quot (- deadline (System/nanoTime)) 1000000)]
+              (if (pos? remaining)
+                (do (locking signal (.wait signal (long remaining)))
+                    (let [[_ f gain] (current)]
+                      (if (fresh? f gain)
+                        {:status :frame :frame f :gain gain :pixels (video-source/scaled-pixels f gain)}
+                        (recur))))
+                {:status :none}))))
         (finally (.decrementAndGet waiters))))))
 
 (defn video-action!

@@ -1,7 +1,7 @@
 (ns tolglow.bench-shader-cues
   "Shader cue cost as cue count rises (#673), on Afterglow's native GPU path.
 
-    lein with-profile +native-gpu run -m tolglow.bench-shader-cues [seconds] [out.edn]
+    lein with-profile +native-gpu run -m tolglow.bench-shader-cues [seconds] [out.edn] [large]
 
   Starts a scheduled 40 Hz show with a capture sink (no physical output) and
   a 200-pixel strip. For each video rate (25 and 30 fps) and cue count (0, 1,
@@ -52,7 +52,7 @@
 (defn- cpu-ns []
   (.getProcessCpuTime ^com.sun.management.OperatingSystemMXBean (ManagementFactory/getOperatingSystemMXBean)))
 
-(defn- run-once [n fps seconds]
+(defn- run-once [n fps seconds & [definitions]]
   (let [sends (atom [])
         sink {:send! (fn [_ _] (swap! sends conj (System/nanoTime))) :close! (fn [& _])}
         runtime (show/start! {:model (-> (demo/model)
@@ -64,7 +64,7 @@
         reply! (fn [& args] (deref (apply show/submit! runtime args) 5000 {:status :timeout}))
         frame-ms (atom [])]
     (try
-      (doseq [d (workload n fps)]
+      (doseq [d (or definitions (workload n fps))]
         (reply! :definition {:kind :effects :definition d})
         (reply! :definition {:kind :cues :definition {:id (:id d) :effect-id (:id d) :priority 10 :reload-policy :preserve-state}})
         (reply! {:op :cue/launch :cue-id (:id d)}))
@@ -130,8 +130,17 @@
             (flush)
             result)))))
 
-(defn -main [& [seconds out]]
-  (let [results (run (if seconds (Double/parseDouble seconds) 8))
+(defn run-large
+  "One 2D plasma at 1920 × 1080, then one at 4096 × 2160 (the largest
+  target), both at 30 fps: frame array allocation and GC against the 40 Hz
+  lighting interval."
+  [seconds]
+  (vec (for [[w h] [[1920 1080] [4096 2160]]]
+         (assoc (run-once 1 30 seconds [(ex/plasma {:id :bench-large :size [w h] :fps 30})]) :size [w h]))))
+
+(defn -main [& [seconds out mode]]
+  (let [seconds (if seconds (Double/parseDouble seconds) 8)
+        results (if (= "large" mode) (run-large seconds) (run seconds))
         report {:machine {:os (System/getProperty "os.name") :os-version (System/getProperty "os.version")
                           :arch (System/getProperty "os.arch") :java (System/getProperty "java.version")
                           :processors (.availableProcessors (Runtime/getRuntime))}

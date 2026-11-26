@@ -204,7 +204,22 @@ An ordinary effect wrapping an independently scheduled producer is enough for th
 - "GPU draw time" sums the time from the first GL call to the signalled fence, per second, over all cues. It bounds GPU execution. At 8 cues it was 15 % of one second.
 - Apple's timer query returned negative values on this driver, so no driver-timed GPU figure is reported.
 
+**Large frames** (`… bench-shader-cues 8 docs/benchmarks/2026-11-26-shader-cues-large.edn large`, [raw](benchmarks/2026-11-26-shader-cues-large.edn)): one 2D plasma at 30 fps, after the review's fixes.
+
+| Target | Lighting interval p50 / p95 / p99 / max (ms) | Intervals > 5 ms off | Rendered / dropped | Render p50 / p95 (ms) | GC in 8 s |
+| --- | --- | ---: | --- | --- | --- |
+| 1920 × 1080 | 24.85 / 27.98 / 28.71 / 29.75 | 0 % | 240 / 0 | 3.27 / 4.40 | 6 collections, 152 ms |
+| 4096 × 2160 | 24.86 / 28.30 / 30.86 / 34.31 | 3 % | 237 / 1 | 8.55 / 17.06 | 18 collections, 274 ms |
+
+A 4096 × 2160 feed allocates about 1 GB/s of frame arrays. It triples the collections and starts to widen the lighting interval's tail: 3 % of intervals were more than 5 ms off, against none at 1080p. This is why the pixel-rate budget stops at one such feed.
+
+**Projector waiters**: the QA show, with 60 Python clients pulling `/api/video/next` as a page does (backing off 500 ms after a 503).
+- On the live 640 × 360 feed, 8 were served or waiting at any time and the rest got 503.
+- `GET /api/video/shaders` took 3.5 / 11.7 / 36 ms (p50 / p95 / max), against 2.8 / 3.0 / 21 ms with no clients.
+- On an unknown source every request got 404 at once, and the status call stayed at 2.6 ms.
+- Before the cap and the frame signal, the review measured 1.66 s with 60 waiters on an unknown source.
+
 **Not covered**
 - Studio clients, preview JPEGs, the projector page's transfer, network and physical output.
 - Software WebGL was not used.
-- No 1080p feed and no more than 8 cues were measured.
+- More than 8 cues were not measured.
