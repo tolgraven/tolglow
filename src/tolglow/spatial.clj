@@ -100,7 +100,8 @@
 (defn apply-command
   "Resolve a cue's selected fixture scope on every Tolglow control surface,
   including subscriber callbacks, composition steps and simulated admissions.
-  Every such launch also passes the synchronized aim path launch checks."
+  Every such launch also passes the synchronized aim path launch checks and
+  stretches a musical arrival the current tempo makes too fast for the heads."
   ([model command] (apply-command model command nil))
   ([model command authority]
    (if-not (#{:cue/launch :effect/launch} (:op command))
@@ -119,7 +120,7 @@
                                        {:command-id (:command-id command) :status :rejected :code :invalid-target
                                         :message (ex-message error) :details (ex-data error)})})))]
        (if-let [scoped (:command prepared)]
-         (targets/remember (control/apply-command model scoped) scoped)
+         (targets/remember (aim-paths/stretch-launch (control/apply-command model scoped) model scoped) scoped)
          {:model model :events [] :ack (:ack prepared)})))))
 
 (defn- stage [model events]

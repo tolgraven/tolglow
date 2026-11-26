@@ -44,6 +44,15 @@
     (sort-by str (keep (fn [[k schema]] (when (numeric-types (:type schema)) k)) schemas))
     (filter #(contains? schemas %) params)))
 
+(defn- response-clock
+  "The instance's private clock, with transport holds added back: a transport
+  stop shifts response anchors and the private clock alike, while an explicit
+  pause still holds the response for that instance."
+  [frame instance]
+  (if-let [held (get-in instance [:system :transport-held-ms])]
+    (cond-> frame (number? (:time-ms frame)) (update :time-ms + held))
+    frame))
+
 (defn compile-response
   "Validate and compile one response to context -> context middleware.
 
@@ -51,6 +60,11 @@
   :params [:level] (or explicit :all numeric params), :operation :multiply
   (:replace/:add/:max also supported), :range [0 1], :envelope {...},
   :state {:started-at-ms ... :released-at-ms ...}}.
+
+  The envelope samples the instance's private frame clock, so an explicitly
+  paused instance holds its response. Millisecond state anchors are show-level
+  and the owner shifts them across a stopped transport (tolglow.clock/hold);
+  the instance's :transport-held-ms puts its private time back on that domain.
 
   Omitted selectors match all running instances; supplied selectors intersect,
   and an empty selector vector matches none. Responses are applied in caller
@@ -84,7 +98,7 @@
                 values (registry/resolve-params schemas (:params instance {}))
                 selected (target-params schemas params)]
             (if (empty? selected) context
-              (let [{:keys [value done?]} (sample state frame)
+              (let [{:keys [value done?]} (sample state (response-clock frame instance))
                     amount (tween/interpolate (first range) (second range) value)
                     updated
                     (reduce (fn [values key]

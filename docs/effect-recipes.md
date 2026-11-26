@@ -126,9 +126,11 @@ converting a musical period into a fixed millisecond deadline.
 (fx/pulse {:period {:bars 1} :duty (fx/param :duty)})
 ```
 
-`:period {:ms 1000}` is an explicit physical/wall-time option. It follows
-supplied milliseconds and therefore continues while the musical transport is
-paused. No helper fetches wall time itself.
+`:period {:ms 1000}` is an explicit millisecond period. It reads the
+instance's private millisecond clock, which stands still while the transport is
+stopped, so it pauses and resumes like a musical period. No helper fetches wall
+time itself. See [transport stop](clock-domains.md#transport-stop) for the rule
+and its exceptions.
 
 `cycles` exposes the continuous phase expression for custom composition:
 

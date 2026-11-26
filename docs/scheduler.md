@@ -82,8 +82,9 @@ A destination for `:param/set` and `:param/ramp` is chosen with `:target`:
 | `:variable` | `:variable` | A number or a numeric vector (any portable value for a set). Runtime-owned variables are reserved: `:runtime`, `:spatial`, `:sensors`, `:sync`, `:audio`, `:audience`, `:surface-aim` and the `audio/`, `fog/`, `lighting/`, `sensor/`, `sync/` and `spatial/` namespaces |
 
 `:over` takes one positive `{:beats n}`, `{:bars n}` or `{:phrases n}`. `{:ms n}`
-is an explicit boundary unit. It runs on the owner's logical millisecond clock,
-including while the transport is paused. `:curve` takes any
+is an explicit boundary unit. It runs on the owner's millisecond clock and,
+like a beat ramp, stands still while the transport is stopped: play resumes it
+with the time it had left ([transport stop](clock-domains.md#transport-stop)). `:curve` takes any
 `afterglow.render.easing` curve: `:linear` (default), `:ease-in`, `:ease-out`,
 `:ease-in-out`, `:sine`, `:smoothstep`, `:step`, `{:type :power :exponent 3}`,
 `{:type :cubic-bezier :points [x1 y1 x2 y2]}` or `{:type :spring ...}`. A
@@ -263,7 +264,9 @@ Push, the REPL and agents read this one projection. Keep the shape stable: the
 `:status` is one of `:fired`, `:rejected` (with `:message`), `:missed`,
 `:cancelled` or `:completed` (ramps). `:category` is one of `:cue`,
 `:instance`, `:param`, `:ramp`, `:master`, `:variable`, `:macro`, `:scene` or
-`:callback`. Values are not rounded.
+`:callback`. Values are not rounded. A ramp outcome (`:completed` or
+`:cancelled`) also keeps the ramp's `:from`, `:curve`, `:unit`, `:over`,
+`:start` and `:end`, so the [timeline](timeline.md) can still draw it as a bar.
 
 The projection changes only when the schedule changes. It does not publish a
 ramp's live value. A consumer derives progress from `:start`, `:end` and the

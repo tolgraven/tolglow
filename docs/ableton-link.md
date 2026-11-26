@@ -12,7 +12,7 @@ Under **Connections → Paused lighting**, choose the behavior that fits the roo
 
 | Mode | Emission while the show is paused |
 | --- | --- |
-| Use the running cues | Continue evaluating cues with the musical transport frozen. This is the default for new shows and existing show files. Explicit wall-time effects can continue. |
+| Use the running cues | Continue evaluating cues with the musical transport frozen. Millisecond-timed envelopes, ramps, tweens and durations hold too ([transport stop](clock-domains.md#transport-stop)). This is the default for new shows and existing show files. |
 | Blackout | Set emitter intensity to zero for the duration of the pause. Resume returns authority to the running cues. |
 | Ambient color | Apply the selected color and brightness to the rig. The initial setting is warm amber at 8%. Direct emitter writes from running effects are overridden and the strobe channel is set to zero. Pan, tilt, focus and other fixture controls continue following the show. |
 

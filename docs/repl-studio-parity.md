@@ -507,13 +507,22 @@ A refusal looks the same from both sides. A batch with one invalid event, such
 as an unknown curve, returns `:status :rejected :code :invalid-schedule` with
 `Event <index>: …` and schedules nothing.
 
+**On the timeline.** The **Timeline** panel in Perform draws the same schedule
+around now: pending events to the right of the centre line, fired ones to the
+left, ramps as bars with their easing curve. Read what it draws with
+`(show/timeline runtime {:bars 8})`. Select an event and choose **Cancel
+event**, or a running ramp and **Stop ramp**. Both submit the same
+`:schedule/cancel` by event ID, and the outcome appears in
+`(:recent (show/schedule runtime))` and as a cancelled marker on the timeline.
+An event cancelled from the REPL moves on the open timeline in the same way.
+[Musical timeline](timeline.md)
+
 **Tracked gaps.** Studio lists and cancels scheduled work, but you cannot author
 an event, ramp or reschedule there. Use the REPL, an agent or a reactive
-action. The Studio timeline in
-[issue #646](https://github.com/tolgraven/tolglow/issues/646) adds authoring and
-dragging on the same projection. Push does not display the schedule yet. Close
-these gaps when an operator can post and move an event from Studio and see it in
-the REPL projection, and when Push shows the same upcoming list.
+action. Authoring and dragging on the timeline is not built. Push does not
+display the schedule yet. Close these gaps when an operator can post and move an
+event from Studio and see it in the REPL projection, and when Push shows the
+same upcoming list.
 
 ## Turn one knob across several cues
 
@@ -594,7 +603,7 @@ Studio and Push read one committed response sample instead of evaluating the res
 
 Studio does not display these lease faults yet. Close the gap when Studio shows the same fault records as the REPL. [Issue #533](https://github.com/tolgraven/tolglow/issues/533) · [PR #624](https://github.com/tolgraven/tolglow/pull/624)
 
-Calibrated paired aim arrival uses one host operation from both surfaces. In Studio, **Rig & space → Draw path → Arrive together using calibrated motor rates** lists, reopens, publishes and converts synchronized paths. Studio always sends `:sync-arrival?` explicitly and shows the solved arrival time or the refusal. The REPL submits the same `:aim-path` operation and reads `:arrival-duration-ms` from the acknowledgement. Launch refusals (`:stale-calibration`, `:tempo-exceeds-motor-rate`, `:start-wrap-mismatch`) come back from the shared launch command on both surfaces. [Aim paths](aim-paths.md#calibrated-paired-arrival) · [Issue #481](https://github.com/tolgraven/tolglow/issues/481)
+Calibrated paired aim arrival uses one host operation from both surfaces. In Studio, **Rig & space → Draw path → Arrive together using calibrated motor rates** lists, reopens, publishes and converts synchronized paths. Studio always sends `:sync-arrival?` explicitly and shows the solved arrival time or the refusal. The REPL submits the same `:aim-path` operation and reads `:arrival-duration-ms` from the acknowledgement. Launch refusals (`:stale-calibration`, `:start-wrap-mismatch`) come back from the shared launch command on both surfaces. A launch at a tempo too fast for the motors is stretched rather than refused on both surfaces. The shared launch acknowledgement and the running instance carry `:arrival-stretch`; the REPL reads it from the acknowledgement, but Studio's cue grid does not display it yet. [Aim paths](aim-paths.md#calibrated-paired-arrival) · [Issue #481](https://github.com/tolgraven/tolglow/issues/481)
 
 ```clojure
 @(show/submit! runtime :aim-path {:id :paired :sync-arrival? true :targets [:head-a :head-b]

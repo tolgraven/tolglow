@@ -37,11 +37,16 @@
         :navigation-speed (when (fn? (aget engine "setNavigationSpeed")) (js-invoke engine "setNavigationSpeed" value))
         :navigation-move (when (fn? (aget engine "moveCamera")) (js-invoke engine "moveCamera" (first value) (second value)))
         nil))))
+(defn- preview-document
+  "The document showing the Perform Room, which may be its own window."
+  []
+  (or (some-> (preview-engine @engines :perform) (aget "canvas") .-ownerDocument) js/document))
+
 (rf/reg-fx :studio/preview-layout
   (fn [expanded?]
     (r/after-render
       (fn []
-        (when-let [panel (.getElementById js/document "preview-panel")]
+        (when-let [panel (.getElementById (preview-document) "preview-panel")]
           (when (= expanded? (.contains (.-classList panel) "expanded"))
             (when-let [canvas (.querySelector panel "#preview")]
               (.scrollIntoView canvas #js {:block "nearest" :inline "nearest"}))
@@ -49,11 +54,12 @@
               (js-invoke engine "resize"))))))))
 (rf/reg-fx :studio/preview-fullscreen
   (fn [_]
-    (when-let [panel (.getElementById js/document "preview-panel")]
-      (let [active (or (.-fullscreenElement js/document) (aget js/document "webkitFullscreenElement"))
-            target (if (= active panel) js/document panel)
+    (when-let [panel (.getElementById (preview-document) "preview-panel")]
+      (let [doc (.-ownerDocument panel)
+            active (or (.-fullscreenElement doc) (aget doc "webkitFullscreenElement"))
+            target (if (= active panel) doc panel)
             method (if (= active panel)
-                     (if (fn? (aget js/document "exitFullscreen")) "exitFullscreen" "webkitExitFullscreen")
+                     (if (fn? (aget doc "exitFullscreen")) "exitFullscreen" "webkitExitFullscreen")
                      (if (fn? (aget panel "requestFullscreen")) "requestFullscreen" "webkitRequestFullscreen"))]
         (if (fn? (aget target method))
           (-> (js/Promise.resolve (js-invoke target method))
@@ -152,14 +158,35 @@
                         (when (some? @(canvas-rate component)) ((:clear! cadence)))))]
     (observations/bind! component engine request count-frame)))
 
+(defn- local-data
+  "Values from another window's realm fail js->clj's plain-object test. Copy
+  them into this realm first."
+  [this value]
+  (if (and (aget this "foreign") (some? value)) (js/structuredClone value) value))
+
+(defn- external-window!
+  "A Room in its own window keeps rendering while that window is visible,
+  although Studio, not the Room window, has keyboard focus."
+  [this canvas]
+  (let [doc (.-ownerDocument canvas)
+        publish! #(.dispatchEvent canvas (js/CustomEvent. "tolglow-preview-external"
+                                                          #js {:detail #js {:owner "room-window" :active (not (.-hidden doc))}}))]
+    (publish!)
+    (.addEventListener doc "visibilitychange" publish!)
+    (aset this "external-release" #(.removeEventListener doc "visibilitychange" publish!))))
+
 (def preview
   (r/create-class
     {:display-name "room-preview"
      :component-did-mount
      (fn [this]
        (let [root (aget this "root")
-             owner (get (r/argv this) 2 :perform)]
+             owner (get (r/argv this) 2 :perform)
+             ;; Load the engine in the window that shows this canvas.
+             host (.. root -ownerDocument -defaultView)
+             load-engine (or (aget host "tolglowLoadEngine") (aget js/globalThis "tolglowLoadEngine"))]
          (aset this "alive" true)
+         (aset this "foreign" (not (identical? host js/window)))
          (let [rate (canvas-rate this)
                cadence (bitmap-cadence #(.now js/performance) #(reset! rate %))
                changed (get (r/argv this) 3)
@@ -169,26 +196,27 @@
            (aset this "bitmapCadence" cadence)
            (aset this "activity-handler" handler)
            (.addEventListener (.querySelector root "canvas") "tolglow-preview-activity" handler))
-         (let [handler #(rf/dispatch-sync [:rig-editor/interaction (js->clj (.-detail %) :keywordize-keys true)])]
+         (let [handler #(rf/dispatch-sync [:rig-editor/interaction (js->clj (local-data this (.-detail %)) :keywordize-keys true)])]
            (aset this "rig-editor-handler" handler)
            (.addEventListener (.querySelector root "canvas") "tolglow-editor" handler))
          (let [handler #(rf/dispatch [:studio/preview-resize])]
            (aset this "fullscreen-handler" handler)
            (.addEventListener js/document "fullscreenchange" handler)
            (.addEventListener js/document "webkitfullscreenchange" handler))
-         (-> (js-invoke js/globalThis "tolglowLoadEngine" "preview")
+         (-> (load-engine "preview")
              (.then (fn [module]
                       (when (aget this "alive")
                         (let [engine (js/Reflect.construct (aget module "RoomPreview")
                                                           #js [(.querySelector root "canvas")
                                                                (.querySelector root ".preview-status")])]
                           (aset this "engine" engine)
+                          (when (aget this "foreign") (external-window! this (.querySelector root "canvas")))
                           (swap! engines assoc-in [:previews owner] engine)
                           (when (fn? (aget engine "onNavigationChange"))
                             (aset this "navigation-unsubscribe"
                                   (js-invoke engine "onNavigationChange"
                                              #(when (identical? engine (preview-engine @engines nil))
-                                                (rf/dispatch [:camera-navigation/observed (js->clj % :keywordize-keys true)])))))
+                                                (rf/dispatch [:camera-navigation/observed (js->clj (local-data this %) :keywordize-keys true)])))))
                           (observe-preview! this engine (nth (r/argv this) 4 nil))
                           (when-let [show (second (r/argv this))] (update-preview! this engine show))
                           (rf/dispatch [:studio/preview-ready (every? #(fn? (aget engine %)) ["setWorkLight" "setQuality" "setCamera"]) owner])))))
@@ -208,9 +236,11 @@
        (when-let [handler (aget this "fullscreen-handler")]
          (.removeEventListener js/document "fullscreenchange" handler)
          (.removeEventListener js/document "webkitfullscreenchange" handler))
+       (when-let [release (aget this "external-release")] (release))
        (when-let [engine (aget this "engine")]
          (observations/bind! this engine nil)
-         (js-invoke engine "dispose")
+         ;; A closed Room window may already have torn down its realm.
+         (try (js-invoke engine "dispose") (catch :default _ nil))
          (let [owner (get (r/argv this) 2 :perform)]
            (when (identical? engine (preview-engine @engines owner)) (swap! engines update :previews dissoc owner))))
        (when-let [handler (aget this "activity-handler")]

@@ -557,7 +557,9 @@
   (merge {:event-id (:event-id ramp) :op :param/ramp :category :ramp :status status
           :destination (:destination ramp) :at-beat (double (get-in model [:transport :beat] 0))
           :time-ms (:time-ms model)}
-         (select-keys ramp [:label :source :to])
+         ;; The planned span and curve stay with the outcome so a timeline can
+         ;; still draw a finished ramp as a bar (#646).
+         (select-keys ramp [:label :source :to :from :curve :unit :over :start :end])
          extra))
 
 (defn- remove-ramps [model pred status extra]
@@ -1263,6 +1265,16 @@
                           (seq (:ramps s))
                           (update :ramps (partial mapv #(if (= :beats (:unit %))
                                                           (-> % (update :start + offset) (update :end + offset)) %)))))))))
+
+(defn hold-clock
+  "Keep millisecond ramps where they were across held-ms of stopped transport.
+  Beat ramps and waits already stand still with the transport beat."
+  [model held-ms]
+  (if (seq (get-in model [:event-subscribers :ramps]))
+    (update-in model [:event-subscribers :ramps]
+               (partial mapv #(if (= :ms (:unit %))
+                                (-> % (update :start + held-ms) (update :end + held-ms)) %)))
+    model))
 
 (defn restart [model]
   (cond-> model (:event-subscribers model) (update :event-subscribers assoc :runs [] :ramps [] :recent [])))

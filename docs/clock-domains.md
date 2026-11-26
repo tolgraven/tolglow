@@ -53,6 +53,55 @@ or existing transport wall time. The normal engine tick advances model
 state are validated before the new model is returned. Optional source/source-epoch
 metadata is retained in transport for host discontinuity detection.
 
+## Transport stop
+
+Stopping the transport pauses every change over time, and play resumes it from
+where it was. Nothing is told to end and nothing is given time to finish. A move,
+ramp or tween towards a target is a parameter driven by a modulator, so it
+pauses like any other effect. Resuming never catches up on the stopped interval.
+
+Beat progress stands still because the transport beat stops. Millisecond
+progress has no frozen coordinate of its own, so the show owner applies
+`tolglow.clock/hold` once per frame whose preceding transport state was stopped,
+before commands and advancement:
+
+| Owned state | What holding does |
+| --- | --- |
+| Running instances | `:system :clock-offset-ms` and `:transport-held-ms` grow by the held interval, so the private clock reads the same time it had at the stop. This covers system attack/release, authored envelopes and release tails, timed durations, output tweens, `:time` expressions, `:period {:ms …}` oscillators and step deltas. |
+| Explicitly paused instances | Only `:transport-held-ms` grows. Their private clock is already frozen and `:instance/resume` recomputes the offset over the whole pause, stop included. |
+| Scheduler ramps with `:over {:ms …}` | `:start` and `:end` shift by the held interval. |
+| Response envelopes | Millisecond start/release anchors shift. Each selected instance samples its private clock plus its `:system :transport-held-ms`, so a stop holds the response for every instance while an explicit pause still holds it for that instance only. |
+| Auto planner with a millisecond interval | Interval timer and `:next-at-ms` shift. Beat intervals already wait for play. |
+| Millisecond sequences | Unchanged: their logical clock accumulates only intervals that began playing. |
+| Spatial physics | Unchanged: the simulation reads `:playing?` and advances no physical time while stopped. |
+
+All of this lives in saved state, so a show saved during a stop resumes from
+the held position after import. A Room scene-draft audition replays the same
+holds as the live show. Link play/stop following drives the same transport
+`:playing?` state as a local stop, so it takes the same path.
+
+These keep the wall clock on purpose, because they are not show progress:
+
+- **Safety and paused-lighting looks.** Blackout, the ambient pause look,
+  master and the show blackout act immediately.
+- **Explicit `:instance/pause`.** An operator pause is its own control and
+  outlives transport stop and play.
+- **Output timing.** Physical packet deadlines, presentation scheduling and
+  frame timestamps follow the device clock.
+- **Inputs and their shaping.** Sensor and routing envelopes, smoothing, gates
+  and observation timeouts follow live input, which keeps arriving during a stop,
+  like a fader the operator moves. Parameters fed by them stay live.
+- **Physical estimates.** The venue fog estimate decays as real fog does. The
+  Room preview's own interpolation and fog drawing are presentation and never
+  advance show state.
+- **Leases and liveness.** Held web launches expire after a client disappears,
+  measured in host time.
+
+`tolglow.transport-pause-test` checks each category through the real show owner
+and a capture sink: start the change, stop part-way, hold five seconds, play,
+and require the output to stay frozen and continue without a jump. Beat
+scenarios run at 70, 120 and 180 BPM.
+
 ## Covered state
 
 The transformation visits explicit owned fields, not arbitrary recursively

@@ -19,8 +19,10 @@
                     (-> (js-invoke js/globalThis "tolglowLoadEngine" "preview")
                         (.then (fn [module]
                                  (when (alive?)
-                                   (let [canvas (.getElementById js/document canvas-id)]
-                                     (when (js-invoke module "canPresentCanvas" canvas video)
+                                   ;; The Room may be in its own window: use this control's document.
+                                   (let [doc (.-ownerDocument video)
+                                         canvas (.getElementById doc canvas-id)]
+                                     (when (js-invoke module "canPresentCanvas" canvas video doc)
                                        (reset! capture
                                                (js/Reflect.construct (aget module "CanvasPlayback")
                                                  #js [canvas video changed! failed!]))
