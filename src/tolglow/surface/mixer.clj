@@ -79,29 +79,35 @@
 
 (defn- domain
   "The range a number or integer maps onto: its hard :bounds, else its
-  :recommended range. Nil for an unbounded number, which gets no guessed
-  range, as modulation skips it (docs/modulation.md)."
+  :recommended range. Nil when it has neither: such a number gets no guessed
+  range, as modulation skips it (docs/modulation.md), and such an integer
+  only takes relative steps."
   [schema]
   (or (:bounds schema) (:recommended schema)))
 
-(defn- numeric? [schema] (contains? #{:number :integer} (:type schema)))
+(defn- component-schema
+  "The scalar schema of one component of a colour, vector or range parameter."
+  [schema component]
+  (cond-> {:type :number :default (get (:default schema) component)
+           :bounds (if (= :color (:type schema)) (params/color-bounds schema) (:bounds schema))}
+    (and (not= :color (:type schema)) (:recommended schema)) (assoc :recommended (:recommended schema))))
+
+(defn- unranged-number? [scalar] (and (= :number (:type scalar)) (nil? (domain scalar))))
 
 (defn- param-target
   "A typed parameter (or one component of a vector parameter) on an instance;
   nil when the instance lacks it, its type has no scalar mapping, or it is a
-  number without bounds or a recommended range."
+  number without bounds or a recommended range. An integer without either
+  is a target for relative encoder steps only (normalized is nil)."
   [instance param component]
   (when instance
     (let [schema (get-in instance [:definition :params param])
           whole (get-in instance [:params param])
           component? (and (integer? component) (not= :gradient (:type schema)) (vector? whole)
                           (< -1 component (count whole)))
-          scalar (if component?
-                   {:type :number :default (get (:default schema) component)
-                    :bounds (if (= :color (:type schema)) (params/color-bounds schema) (:bounds schema))}
-                   schema)]
+          scalar (if component? (component-schema schema component) schema)]
       (when (and scalar (or (nil? component) component?) (contains? scalar-types (:type scalar))
-                 (or (not (numeric? scalar)) (domain scalar)))
+                 (not (unranged-number? scalar)))
         (cond-> {:kind :param :instance-id (:id instance) :param param :schema scalar
                  :value (if component? (nth whole component) whole)}
           component? (assoc :component component :whole-value whole))))))
@@ -109,6 +115,16 @@
 (defn- binding-entry [entry]
   (cond (keyword? entry) {:param entry}
         (map? entry) entry))
+
+(defn unranged-binding
+  "The parameter key when a channel binding (a keyword or {:param :component})
+  names a number with neither :bounds nor :recommended in a definition's
+  params, else nil. Such a binding binds nothing; hosts report it."
+  [params binding]
+  (when-let [{:keys [param component]} (binding-entry binding)]
+    (when-let [schema (get params param)]
+      (when (unranged-number? (if (integer? component) (component-schema schema component) schema))
+        param))))
 
 (defn- group-target [{:keys [id level]}]
   {:kind :group-level :channel-id id :schema unit-schema :value (double (or level 1.0))})
@@ -147,12 +163,13 @@
       nil)))
 
 (defn value-at
-  "The schema value at a normalized position of its domain."
+  "The schema value at a normalized position of its domain; nil for a
+  number or integer without one."
   [{:keys [schema]} n]
   (let [[low high] (domain schema) n (min 1.0 (max 0.0 (double n)))]
     (case (:type schema)
-      :number (+ low (* n (- high low)))
-      :integer (long (Math/round (double (+ low (* n (- high low))))))
+      :number (when low (+ low (* n (- high low))))
+      :integer (when low (long (Math/round (double (+ low (* n (- high low)))))))
       :boolean (>= n 0.5)
       :enum (let [values (vec (or (:values schema) (:options schema)))]
               (nth values (long (Math/round (* n (dec (count values))))))))))
@@ -303,7 +320,9 @@
   "Resolve one strip row (from tolglow.surface.link/strip-channels) for the
   committed layout. Returns nil for an empty strip, else
   {:key :kind :label :color :instance-ids :selector :fader :encoder :meter
-   :solo :mute :suppressed? :selected?}. flip? swaps fader and encoder on cue
+   :solo :mute :suppressed? :selected? :unranged}. :unranged names an
+  explicit :fader or :encoder binding to a number without a range, which
+  binds nothing. flip? swaps fader and encoder on cue
   strips in :pan mode."
   [ctx {:keys [encoder-mode selected flip?]} row]
   (when row
@@ -328,12 +347,17 @@
                         :send (opacity-target instance)
                         nil)
               [fader encoder] (if (and flip? (= :pan encoder-mode)) [encoder fader] [fader encoder])
-              level (if (= :param (:kind fader)) (or (normalized fader) 1.0) 1.0)]
+              ;; A fader is absolute: an integer without a range cannot be one.
+              fader (when (and fader (normalized fader)) fader)
+              level (if (= :param (:kind fader)) (or (normalized fader) 1.0) 1.0)
+              unranged (when instance
+                         (some #(unranged-binding (get-in instance [:definition :params]) (get row %)) [:fader :encoder]))]
           (merge {:key [:cue cue-id] :kind :cue :cue-id cue-id
                   :label (or (:label row) (get-in model [:registry :cues cue-id :name]) (name cue-id))
                   :color (or (rgb (:color row)) (cue-color model cue-id)) :instance-ids ids
                   :selector {:cue-ids [cue-id]} :instance instance
                   :fader fader :encoder encoder :selected? (= selected [:cue cue-id])
+                  :unranged unranged
                   :meter (* level (reduce max 0.0 (map #(contribution ctx %) ids)))}
                  (flags ctx ids)))))))
 
@@ -406,37 +430,54 @@
     (into [] (comp (filter (comp field val)) (map key)) (:flags ctx))))
 
 (defn selection-toggle
-  "Solo or Mute commands for a strip's instances; empty when it has none.
-  modifier picks the mode, as the operator's Live script does:
+  "Solo or Mute for a strip's instances: {:commands :exclusive-add?}, with
+  no commands when the strip has none. modifier picks the mode, as the
+  operator's Live script does:
     nil        the configured mode (:effect-selection/configure)
     :additive  keep the other selected strips (SHIFT)
     :invert    the opposite of the configured mode (CONTROL)
   With a configured :additive mode, :invert replaces the selection with this
   strip's instances, or clears them when they are the whole selection. The
-  shared toggle has no exclusive override, so that takes two additive toggles
-  computed from the committed flags: one drops the other strips, one adds
-  this strip's missing instances. Both are dispatched in order and validated
-  as usual."
+  shared toggle has no per-action exclusive mode, so this takes two additive
+  toggles in two owner cycles, and the pair is not atomic:
+    - the strip already wholly selected among others: one toggle drops the
+      others;
+    - otherwise the first toggle adds the strip through its own selector
+      (:exclusive-add? true). The host sends exclusive-drop for its
+      acknowledgement only after it is accepted, so Solo or Mute stays
+      active in every committed frame, and a refused or empty add drops
+      nothing. A selection another client makes between the two cycles
+      survives the drop."
   [ctx control s modifier]
   (let [selector (:selector s) targets (:instance-ids s)]
     (if-not (and selector (seq targets))
-      []
+      {:commands []}
       (let [configured (get-in ctx [:modes control] :exclusive)
             mode (case modifier
                    :additive :additive
                    :invert (if (= :additive configured) :exclusive :additive)
                    configured)]
         (if (or (= mode configured) (= :additive mode))
-          [(toggle-command control selector (= :additive mode))]
+          {:commands [(toggle-command control selector (= :additive mode))]}
           (let [current (selected-instance-ids ctx control)
                 target-set (set targets)
                 current-set (set current)]
-            (if (= target-set current-set)
-              [(toggle-command control selector true)]
-              (into []
-                    (keep (fn [ids] (when (seq ids) (toggle-command control {:instance-ids ids} true))))
-                    [(filterv (complement target-set) current)
-                     (filterv (complement current-set) targets)]))))))))
+            (cond
+              (= target-set current-set) {:commands [(toggle-command control selector true)]}
+              (every? current-set targets)
+              {:commands [(toggle-command control {:instance-ids (filterv (complement target-set) current)} true)]}
+              :else {:commands [(toggle-command control selector true)] :exclusive-add? true})))))))
+
+(defn exclusive-drop
+  "The second step of an exclusive selection-toggle: for the accepted
+  acknowledgement of its additive add, the toggle that drops every other
+  selected instance, or nil. Nothing is dropped when the add was refused,
+  matched no instance, or left the strip unselected."
+  [{:keys [status control instance-ids selected-instance-ids]}]
+  (let [selected (set selected-instance-ids) targets (set instance-ids)]
+    (when (and (= :accepted status) (seq targets) (every? selected targets))
+      (let [others (filterv (complement targets) selected-instance-ids)]
+        (when (seq others) (toggle-command control {:instance-ids others} true))))))
 
 (defn soloed-instance-ids [ctx] (selected-instance-ids ctx :solo))
 
@@ -452,7 +493,7 @@
                     :stored soloed}
       (seq alive) {:commands [{:op :effect-selection/toggle :control :solo :selector {:instance-ids alive} :additive? true}]
                    :stored []}
-      :else {:commands (selection-toggle ctx :solo selected-strip nil) :stored []})))
+      :else {:commands (:commands (selection-toggle ctx :solo selected-strip nil)) :stored []})))
 
 ;; ---------------------------------------------------------------------------
 ;; Colours (the script's hue matching with a white cut-off)

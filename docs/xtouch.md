@@ -202,22 +202,40 @@ photometric measurement of the light. A nonzero meter is resent every
 indication yet.
 
 **Parameter ranges.** A number or integer maps onto its hard `:bounds`,
-else its `:recommended` range. A number with neither is left out of the PAN
-fallback and the PLUG-IN list, and an explicit `:fader` or `:encoder`
-binding to one binds nothing, so the strip shows no value. It gets no guessed
-range, as [modulation](modulation.md) skips it; before #741 such a parameter
-was treated as [0 1], so one turn jumped it into that range. An encoder
-detent moves a number from its current value by 1 % of its range (0.1 % with
-SHIFT), and an integer by one, limited only by the hard bounds, so a value
-outside a recommended range is not pulled into it.
+else its `:recommended` range; a vector or range component uses the
+parameter's. A number with neither gets no guessed range, as
+[modulation](modulation.md) skips it (before #741 it was treated as [0 1],
+so one turn jumped it into that range): it is left out of the PAN fallback
+and the PLUG-IN list. An integer with neither stays on the encoders, where
+it steps by one, but has no ring position and is never a fader, since a
+fader is absolute. A fresh `show/connect-device!` refuses a channel whose
+`:fader` or `:encoder` binding names such a number in the cue's current
+effect (`:x-touch/error :unranged-binding`); add a range to the parameter.
+If a later definition edit removes the range, a reconnect still succeeds,
+that strip binds nothing and row 2 shows `!range`. An encoder detent moves a number from its current value by
+1 % of its range (0.1 % with SHIFT), and an integer by one, limited only by
+the hard bounds, so a value outside a recommended range is not pulled into
+it.
 
 **CONTROL with additive Solo or Mute.** The shared
-`:effect-selection/toggle` has an additive flag but no exclusive override,
-so when the configured mode is additive, CONTROL sends two additive toggles
-computed from the committed flags: one that drops the other selected
-instances, then one that adds this strip's missing instances. Both are
-validated and dispatched in order on the MIDI input thread. Studio and the
-REPL have no single-press exclusive gesture yet (see
+`:effect-selection/toggle` has an additive flag but no per-action exclusive
+mode, so with an additive default CONTROL takes two additive toggles in two
+owner cycles, and the pair is **not atomic**:
+
+- If the strip is already wholly selected among others, one toggle drops
+  the others.
+- Otherwise the first toggle adds the strip through its own selector (the
+  cue, or the group's members). Only when its acknowledgement shows it was
+  accepted and left the strip selected does the unit send the second, which
+  drops every other instance that acknowledgement lists as selected. Solo or
+  Mute therefore stays active in every committed frame (the strip joins one
+  cycle early), and a refused or empty add, for example when the strip's
+  instance ended meanwhile, drops nothing.
+- A selection another client (Studio, another surface) makes between the
+  two cycles survives the drop, so the result is then not exclusive.
+
+#749 tracks a per-action `:mode` on the shared toggle, which makes this one
+command and gives Studio and the REPL a single-press exclusive gesture (see
 [parity](repl-studio-parity.md#solo-or-mute-running-effects)).
 
 **Input cost.** The session runs a full feedback refresh after every

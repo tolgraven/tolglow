@@ -104,6 +104,13 @@
 ;; ---------------------------------------------------------------------------
 ;; Input
 
+(defn- selection-commands [state envelope ctx control s modifier]
+  ;; An exclusive add waits for its acknowledgement; :ack then sends the drop.
+  (let [{:keys [commands exclusive-add?]} (mixer/selection-toggle ctx control s modifier)
+        state (cond-> (dissoc state :exclusive-add)
+                exclusive-add? (assoc :exclusive-add (select-keys (first commands) [:control :selector])))]
+    (with-envelope envelope (apply changed state commands))))
+
 (defn- strip-button [options state v envelope x row pressed?]
   (let [s (get (:strips v) x)
         layout (:layout v)
@@ -120,8 +127,8 @@
             (let [result (bindings/end-hold (:holds state) gesture envelope)]
               {:state (-> state (assoc :holds (:state result)) (update :hold-keys dissoc x)) :commands (:commands result)})
             (changed state)))
-      1 (if pressed? (with-envelope envelope (apply changed state (mixer/selection-toggle (:ctx v) :solo s selection))) (changed state))
-      2 (if pressed? (with-envelope envelope (apply changed state (mixer/selection-toggle (:ctx v) :mute s selection))) (changed state))
+      1 (if pressed? (selection-commands state envelope (:ctx v) :solo s selection) (changed state))
+      2 (if pressed? (selection-commands state envelope (:ctx v) :mute s selection) (changed state))
       3 (if pressed?
           (with-envelope envelope (apply changed state (mixer/select (:surface-id options) layout s)))
           (changed state)))))
@@ -190,8 +197,10 @@
                                         (when (and s (= (:key s) (get (:shown state) x))) (:fader s))))))
           :release-touch (changed (-> state (update :touches dissoc x) (update :sent dissoc [:fader x])))
           :move (if-let [captured (get-in state [:touches x])]
-                  (if-let [target (mixer/hydrate model captured)]
-                    (with-envelope envelope (changed state (mixer/write target (mixer/value-at target value))))
+                  (if-some [target (mixer/hydrate model captured)]
+                    (if-some [position (mixer/value-at target value)]
+                      (with-envelope envelope (changed state (mixer/write target position)))
+                      (changed state))
                     (changed state))
                   (changed state))
           (changed state))
@@ -239,9 +248,11 @@
                   fader (:fader s)]
               {:key (:key s)
                :label (if items (:label item "") (:label s ""))
-               :value (if items
-                        (mixer/value-text (:target item))
-                        (mixer/value-text (or encoder fader)))
+               :value (cond
+                        items (mixer/value-text (:target item))
+                        ;; An explicit binding to a number without a range binds nothing.
+                        (:unranged s) "!range"
+                        :else (mixer/value-text (or encoder fader)))
                :color (cond items (if item 6 0) s (match (:color s)) :else 0)
                ;; Empty strips, including those past the last row, park at 0.
                :fader (or (some-> fader mixer/normalized) 0.0)
@@ -351,6 +362,24 @@
                       {:x-touch/error :invalid-profile})))
     channels))
 
+(defn validate-channel-ranges!
+  "Refuse configured cue channels whose :fader or :encoder binding names a
+  number with neither :bounds nor :recommended in the cue's current effect:
+  it gets no guessed range, so it would bind nothing. A later definition edit
+  that removes a range shows \"!range\" on the strip instead."
+  [model channels]
+  (let [unranged (vec (for [{:keys [cue-id] :as channel} channels
+                            :let [effect-id (get-in model [:registry :cues cue-id :effect-id])
+                                  params (get-in model [:registry :effects effect-id :params])]
+                            role [:fader :encoder]
+                            :let [param (mixer/unranged-binding params (get channel role))]
+                            :when param]
+                        {:cue-id cue-id role param}))]
+    (when (seq unranged)
+      (throw (ex-info "X-Touch channels bind numbers without :bounds or a :recommended range; add one to the parameter"
+                      {:x-touch/error :unranged-binding :channels unranged})))
+    channels))
+
 (defn profile
   "Afterglow session profile for one unit. Options:
     :surface-id            the attached surface (the session ID)
@@ -381,10 +410,19 @@
      :input (partial input options)
      :feedback (partial feedback options)
      :ack (fn [state command ack]
-            (if-let [gesture (:gesture-id command)]
-              (let [result (bindings/acknowledge-hold (:holds state) gesture ack)]
+            (cond
+              (:gesture-id command)
+              (let [result (bindings/acknowledge-hold (:holds state) (:gesture-id command) ack)]
                 {:state (assoc state :holds (:state result)) :commands (:commands result)})
-              {:state state :commands []}))
+
+              (and (:exclusive-add state) (= :effect-selection/toggle (:op command))
+                   (= (:exclusive-add state) (select-keys command [:control :selector])))
+              {:state (dissoc state :exclusive-add)
+               :commands (if-let [drop (mixer/exclusive-drop ack)]
+                           [(merge drop (select-keys command [:show-id :epoch]))]
+                           [])}
+
+              :else {:state state :commands []}))
      :stop (partial stop options)}))
 
 (defn connect!

@@ -331,30 +331,130 @@
           (is (= [(:id (latest h :c7))] (soloed)))))
       (finally (show/stop! runtime)))))
 
+(defn- selection-frames
+  "Run f while recording, after every owner tick, the committed Solo and Mute
+  sets and the instances the renderer includes."
+  [runtime f]
+  (let [frames (atom []) tick! show/tick!]
+    (with-redefs [show/tick! (fn [& args]
+                               (let [result (apply tick! args)
+                                     {:keys [instances included-instance-ids solo-active?]}
+                                     (:effect-selection (show/snapshot runtime))]
+                                 (swap! frames conj {:solo (into #{} (keep #(when (:soloed? %) (:id %))) instances)
+                                                     :mute (into #{} (keep #(when (:muted? %) (:id %))) instances)
+                                                     :solo-active? solo-active?
+                                                     :included (set included-instance-ids)})
+                                 result))]
+      (f))
+    ;; Consecutive ticks that commit the same selection count as one frame.
+    (vec (dedupe @frames))))
+
+(deftest control-keeps-solo-and-mute-active-in-every-committed-frame
+  (let [{:keys [runtime input!] :as h} (harness)]
+    (try
+      (desk! h)
+      (doseq [cue [:c0 :c1 :c2 :c3 :c4 :c5]] (launch! h cue))
+      (accepted! h {:op :effect-selection/configure :modes {:solo :additive :mute :additive}})
+      (let [[i0 i1 i2 i3 i4 i5] (map #(:id (latest h %)) [:c0 :c1 :c2 :c3 :c4 :c5])
+            control! (fn [note] (selection-frames runtime #(input! :main [0x90 72 127] [0x90 note 127] [0x80 note 0] [0x80 72 0])))
+            press! (fn [note] (input! :main [0x90 note 127] [0x80 note 0]))
+            toggle! (fn [control ids] (accepted! h {:op :effect-selection/toggle :control control
+                                                    :selector {:instance-ids ids} :additive? true}))]
+        (testing "c0 and c3 soloed, c4 and c5 running: CONTROL+SOLO on c4 adds it, then drops the others"
+          (press! 9)
+          (press! 12)
+          (let [frames (control! 13)]
+            (is (= [#{i0 i3 i4} #{i4}] (mapv :solo frames)))
+            (is (every? :solo-active? frames) "Solo stays active in every committed frame")
+            (is (not-any? #(contains? (:included %) i5) frames) "c5, which nobody soloed, never plays")))
+        (testing "a strip whose instances partly overlap the selection: the group (c1, c2) with c0 and c1 soloed"
+          (toggle! :solo [i4])
+          (toggle! :solo [i0 i1])
+          (is (= [#{i0 i1 i2} #{i1 i2}] (mapv :solo (control! 8)))))
+        (testing "a strip wholly selected among others needs only the drop"
+          (toggle! :solo [i0 i3])
+          (is (= [#{i1 i2}] (mapv :solo (control! 8))) "One owner cycle")
+          (toggle! :solo [i1 i2]))
+        (testing "Mute: the other muted strips stay muted until the strip is muted"
+          (press! 17)
+          (press! 20)
+          (let [frames (control! 21)]
+            (is (= [#{i0 i3 i4} #{i4}] (mapv :mute frames)))
+            (is (every? #(not-any? (:included %) [i0 i3]) (butlast frames)) "c0 and c3 never unmute early"))))
+      (finally (show/stop! runtime)))))
+
+(deftest control-drops-nothing-when-its-add-fails
+  (let [{:keys [runtime input!] :as h} (harness)]
+    (try
+      (desk! h)
+      (doseq [cue [:c0 :c1 :c2 :c3 :c4]] (launch! h cue))
+      (accepted! h {:op :effect-selection/configure :modes {:solo :additive}})
+      (let [[i0 i1 _ i3 i4] (map #(:id (latest h %)) [:c0 :c1 :c2 :c3 :c4])
+            soloed #(into #{} (keep (fn [i] (when (:soloed? i) (:id i)))) (:instances (:effect-selection (show/snapshot runtime))))
+            ;; The end is queued before the press, so the unit still sees the instance
+            ;; but the owner applies the end before the unit's add.
+            ending! (fn [id note]
+                      (show/submit! runtime :command {:op :instance/end :instance-id id :force? true
+                                                      :source {:adapter :repl :session-id "xt-test"}})
+                      (input! :main [0x90 72 127] [0x90 note 127] [0x80 note 0] [0x80 72 0]))]
+        (input! :main [0x90 9 127] [0x80 9 0] [0x90 12 127] [0x80 12 0])
+        (is (= #{i0 i3} (soloed)))
+        (testing "a cue strip whose instance ends first: the add matches nothing, so nothing is dropped"
+          (ending! i4 13)
+          (is (nil? (get-in (model-of h) [:instances i4])))
+          (is (= #{i0 i3} (soloed))))
+        (testing "a group strip whose member ends first: the add is refused, so nothing is dropped"
+          (ending! i1 8)
+          (is (nil? (get-in (model-of h) [:instances i1])))
+          (is (= #{i0 i3} (soloed)))))
+      (finally (show/stop! runtime)))))
+
 (def ^:private drift
   {:id :drift :version 1
-   :params {:level {:type :number :default 0.5 :bounds [0 1]}
+   :params {:count {:type :integer :default 2}
+            :level {:type :number :default 0.5 :bounds [0 1]}
+            :pos {:type :vector :size 2 :default [0.5 0.0] :recommended [-1 1]}
             :rate {:type :number :default 5.0}
             :speed {:type :number :default 2.0 :recommended [0 4]}
             :steps {:type :integer :default 3 :bounds [0 4]}}
    :outputs {:dimmer {:op :param :key :level}}})
 
-(deftest unbounded-numbers-get-no-guessed-range
-  (let [m (-> (model)
-              (assoc-in [:registry :effects :drift] drift)
-              (assoc-in [:registry :cues :d0] {:id :d0 :version 1 :effect-id :drift :priority 0 :name "D0"}))
-        {:keys [runtime] :as h} (harness m)]
+(defn- drift-harness []
+  (harness (-> (model)
+               (assoc-in [:registry :effects :drift] drift)
+               (assoc-in [:registry :cues :d0] {:id :d0 :version 1 :effect-id :drift :priority 0 :name "D0"}))))
+
+(deftest unranged-numbers-get-no-guessed-range
+  (let [{:keys [runtime] :as h} (drift-harness)]
     (try
       (launch! h :d0)
       (let [ctx (mixer/context (model-of h))
-            row {:cue-id :d0}]
-        (testing "PLUG-IN and the PAN fallback leave out a number with neither bounds nor a recommended range"
-          (is (= ["level" "speed" "steps"] (mapv :label (mixer/items ctx {:encoder-mode :plug-in} row))))
-          (is (= :speed (:param (:encoder (mixer/strip ctx {:encoder-mode :pan} row))))))
-        (testing "an explicit binding to it binds nothing rather than treating it as [0 1]"
-          (is (nil? (:encoder (mixer/strip ctx {:encoder-mode :pan} (assoc row :encoder :rate)))))
-          (is (nil? (:fader (mixer/strip ctx {:encoder-mode :pan} (assoc row :fader :rate))))))
-        (let [speed (:encoder (mixer/strip ctx {:encoder-mode :pan} row))]
+            row {:cue-id :d0}
+            item (fn [label] (some #(when (= label (:label %)) (:target %)) (mixer/items ctx {:encoder-mode :plug-in} row)))]
+        (testing "PLUG-IN leaves out a number with neither bounds nor a recommended range; an integer stays for relative steps"
+          (is (= ["count" "level" "speed" "steps"] (mapv :label (mixer/items ctx {:encoder-mode :plug-in} row))))
+          (is (= :count (:param (:encoder (mixer/strip ctx {:encoder-mode :pan} row)))) "The PAN fallback"))
+        (testing "an unranged integer turns by one, with no ring position and no fader"
+          (is (= [5 0 -1] (mapv #(:value (mixer/turn (item "count") % false)) [3 -2 -3])))
+          (is (nil? (mixer/ring (item "count"))))
+          (is (= "2" (mixer/value-text (item "count"))))
+          (is (nil? (:fader (mixer/strip ctx {:encoder-mode :pan} (assoc row :fader :count)))))
+          (is (nil? (:fader (mixer/strip ctx {:encoder-mode :pan, :flip? true} row))) "FLIP does not make it a fader"))
+        (testing "an explicit binding to an unranged number binds nothing and is flagged"
+          (let [s (mixer/strip ctx {:encoder-mode :pan} (assoc row :encoder :rate :fader :rate))]
+            (is (= [nil nil :rate] ((juxt :encoder :fader :unranged) s))))
+          (is (= ["D0" "!range"]
+                 ((juxt :label :value)
+                  (first (x-touch/project {:surface-id "xt" :rows (constantly [(assoc row :encoder :rate)])
+                                           :placement (constantly {:first 0 :index 0 :span 8 :layout surface/layout-defaults})}
+                                          {} (model-of h)))))))
+        (testing "a vector component with only a recommended range maps onto it"
+          (let [pos (:encoder (mixer/strip ctx {:encoder-mode :pan} (assoc row :encoder {:param :pos :component 0})))]
+            (is (= 0.75 (mixer/normalized pos)))
+            (is (= {:op :param/set :param :pos :value [0.52 0.0]}
+                   (select-keys (update (mixer/turn pos 1 false) :value #(mapv (fn [x] (/ (Math/round (* 1e9 x)) 1e9)) %))
+                                [:op :param :value])))))
+        (let [speed (item "speed")]
           (testing "a recommended range scales the step; turns move from the value and only hard bounds limit them"
             (is (= {:mode :wrap :position 6 :center? true} (mixer/ring speed)))
             (is (< (Math/abs (- 2.04 (:value (mixer/turn speed 1 false)))) 1e-9))
@@ -362,8 +462,21 @@
                 "A value above the recommended range is not pulled into it")
             (is (= 1.0 (:value (mixer/turn (:fader (mixer/strip ctx {:encoder-mode :pan} row)) 80 false))))))
         (testing "integers step by one within their bounds"
-          (let [steps (some #(when (= "steps" (:label %)) (:target %)) (mixer/items ctx {:encoder-mode :plug-in} row))]
-            (is (= [4 4 1] (mapv #(:value (mixer/turn steps % false)) [1 5 -2]))))))
+          (is (= [4 4 1] (mapv #(:value (mixer/turn (item "steps") % false)) [1 5 -2])))))
+      (finally (show/stop! runtime)))))
+
+(deftest connecting-refuses-a-channel-bound-to-an-unranged-number
+  (let [{:keys [runtime transport]} (drift-harness)]
+    (try
+      (let [error (try (show/connect-device! runtime :x-touch {:session-id "xt" :schedule! nil :transport (transport :main)
+                                                               :channels [{:cue-id :d0 :fader :rate}]})
+                       nil
+                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+        (is (= {:x-touch/error :unranged-binding :channels [{:cue-id :d0 :fader :rate}]} error))
+        (is (empty? @(:devices runtime)) "No session opened"))
+      (is (some? (show/connect-device! runtime :x-touch {:session-id "xt" :schedule! nil :transport (transport :main)
+                                                         :channels [{:cue-id :d0 :fader :speed :encoder :count}]}))
+          "A recommended range and an unranged integer encoder are accepted")
       (finally (show/stop! runtime)))))
 
 (deftest meters-scribble-colours-and-stop-are-byte-exact
