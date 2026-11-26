@@ -45,7 +45,9 @@
 (def resync-ms
   "A sample this far from the held start time is a jump in the transport, such
   as a clock source correcting its phase, rather than receive jitter. It is
-  followed at once."
+  followed at once, unless the sample itself arrived this much later than the
+  promptest recent one: then the page or the stream stalled and the sample is
+  ignored."
   100)
 
 (defn sample-key
@@ -66,7 +68,10 @@
       previous
       {:key key :generation (or generation 0)
        :beat (or (:beat transport) 0) :bpm (tempo (:bpm transport))
-       :playing? (boolean (:playing? transport)) :at now-ms})))
+       :playing? (boolean (:playing? transport)) :at now-ms
+       ;; Local receive time less the server time the beat belongs to: a
+       ;; constant clock offset plus this sample's delivery delay.
+       :lag (when (number? (:time-ms transport)) (- now-ms (:time-ms transport)))})))
 
 (defn beat-at
   "Interpolated transport beat at local time `now-ms`."
@@ -157,28 +162,36 @@
   lock moves to that least-delayed sample once it is more than the tolerance
   away and holds through samples that were delayed longer. A new tempo, a new
   transport generation or a jump beyond receive jitter starts a fresh
-  estimate from the sample.
+  estimate from the sample. A sample whose own server time shows it arrived
+  more than `resync-ms` later than the promptest one in the window is a stall
+  of the page or the stream, not a transport jump, and changes nothing.
 
   `lock` is nil or a map of :start, :duration, :generation, the :key of its
-  latest sample and :recent, a vector of [local-ms offset-from-start] for
+  latest sample and :recent, a vector of [local-ms offset-from-start lag] for
   each sample in the window."
-  [lock {:keys [at generation key] :as anchor}]
+  [lock {:keys [at generation key lag] :as anchor}]
   (let [duration (beat-duration-ms anchor)
         target (start-time anchor)
         offset (when (and lock (= duration (:duration lock)) (= generation (:generation lock)))
-                 (phase-offset-ms target (:start lock) duration))]
+                 (phase-offset-ms target (:start lock) duration))
+        window (filterv #(< (- at (first %)) latency-window-ms) (:recent lock))
+        least-lag (some->> (seq (keep #(nth % 2 nil) window)) (apply min))
+        stalled? (and offset lag least-lag (> (- lag least-lag) resync-ms))]
     (cond
       (and lock (= key (:key lock))) lock
 
+      stalled? (assoc lock :key key :recent window)
+
       (or (nil? offset) (> (js/Math.abs offset) resync-ms))
-      {:start target :duration duration :generation generation :key key :recent [[at 0]]}
+      {:start target :duration duration :generation generation :key key :recent [[at 0 lag]]}
 
       :else
-      (let [recent (conj (filterv #(< (- at (first %)) latency-window-ms) (:recent lock)) [at offset])
+      (let [recent (conj window [at offset lag])
             least (apply min (map second recent))]
         (if (> (js/Math.abs least) sync-tolerance-ms)
           (assoc lock :key key :start (+ (:start lock) least)
-                 :recent (mapv (fn [[sampled-at from-start]] [sampled-at (- from-start least)]) recent))
+                 :recent (mapv (fn [[sampled-at from-start sample-lag]] [sampled-at (- from-start least) sample-lag])
+                               recent))
           (assoc lock :key key :recent recent))))))
 
 (def ^:private held-within-ms

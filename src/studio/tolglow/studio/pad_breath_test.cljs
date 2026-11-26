@@ -252,9 +252,10 @@
   (let [animation (counting-animation "pad-breath")
         state (atom {:now 5000 :grid :grid :animations [animation] :writes [] :timers {} :walks 0})
         ctl (breath/controller (fake-host state))
-        sample! (fn [now delay]
+        ;; `shift` moves the transport itself forward by that many beats.
+        sample! (fn [now delay & [shift]]
                   (swap! state assoc :now now)
-                  (breath/sample! ctl {:beat (+ 8.25 (/ (- now 5000 delay) 500)) :bpm 120 :playing? true
+                  (breath/sample! ctl {:beat (+ 8.25 (or shift 0) (/ (- now 5000 delay) 500)) :bpm 120 :playing? true
                                        :time-ms (- now 4000 delay)}
                                   0 true))
         phase-start #(mod (.-startTime animation) 500)]
@@ -282,8 +283,8 @@
       (is (= 3 (.-sets animation)))
       (is (<= (count (:recent (:lock @ctl))) 31) "the estimate keeps one window of samples"))
     (testing "a jump far beyond receive jitter is a transport change and is followed at once"
-      (sample! 6233.3 235)
-      (is (near? 110 (phase-start)))
+      (sample! 6233.3 35 0.6)
+      (is (near? 110 (phase-start)) "300 ms of beat further on")
       (is (= 4 (.-sets animation))))
     (testing "a tempo change or a seek starts a fresh estimate"
       (swap! state assoc :now 6300)
@@ -292,6 +293,45 @@
       (breath/sample! ctl {:beat 3.25 :bpm 100 :playing? true :time-ms 2300} 1 true)
       (is (near? 6150 (.-startTime animation)))
       (is (= 6 (.-sets animation))))))
+
+(deftest a-stalled-page-does-not-step-the-pads
+  ;; A busy main thread (or a stalled stream) hands the clock one sample late.
+  ;; Its beat is correct for its own server time, so its downbeat looks late by
+  ;; the stall. Measured in headless Chrome 155: a 160 ms busy loop stepped
+  ;; every pad about 160 ms late and back with the next sample, 5 of 6 times.
+  (let [animation (counting-animation "pad-breath")
+        state (atom {:now 5000 :grid :grid :animations [animation] :writes [] :timers {} :walks 0})
+        ctl (breath/controller (fake-host state))
+        sample! (fn [now delay]
+                  (swap! state assoc :now now)
+                  (breath/sample! ctl {:beat (+ 8.25 (/ (- now 5000 delay) 500)) :bpm 120 :playing? true
+                                       :time-ms (- now 4000 delay)}
+                                  0 true))
+        phase-start #(mod (.-startTime animation) 500)]
+    (breath/attach! ctl)
+    (doseq [now (range 5000 5300 33.3)] (sample! now 5))
+    (is (near? 380 (phase-start)))
+    (is (= 1 (.-sets animation)))
+    (testing "a sample delivered 160 ms late changes nothing, nor does the prompt one after it"
+      (sample! 5460 160)
+      (is (near? 380 (phase-start)) "held through the late sample")
+      (sample! 5493 5)
+      (is (near? 380 (phase-start)))
+      (is (= 1 (.-sets animation))))
+    (testing "a stall longer than half a beat, which would wrap to an earlier phase, changes nothing"
+      (sample! 5900 320)
+      (sample! 5933 5)
+      (is (near? 380 (phase-start)))
+      (is (= 1 (.-sets animation))))
+    (testing "when every sample for a second arrives later, the delivery delay itself rose and is followed"
+      (doseq [now (range 6000 7100 33.3)] (sample! now 165))
+      (is (near? 40 (phase-start)) "160 ms later than before")
+      (is (= 2 (.-sets animation))))
+    (testing "samples without a server time still follow a large offset at once"
+      (swap! state assoc :now 7200)
+      (breath/sample! ctl {:beat (+ 8.25 (/ (- 7200 5000 5) 500)) :bpm 120 :playing? true} 0 true)
+      (is (near? 380 (phase-start)))
+      (is (= 3 (.-sets animation))))))
 
 (def ^:private cues
   [{:id :ember :name "Ember"} {:id :haze :name "Haze"} {:id :strobe :name "Strobe"}

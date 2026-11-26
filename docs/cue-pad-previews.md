@@ -53,7 +53,11 @@ sample, so the clock keeps the least-delayed sample of the last second and
 moves the start time only when that estimate is more than 20 ms away. Samples
 that were delayed longer, and start times a whole beat apart, change nothing.
 A new tempo, a new transport generation (a seek or restart) or a jump of more
-than 100 ms is followed with the next sample. The clock reads the animations
+than 100 ms is followed with the next sample. A sample whose server
+`:time-ms` shows it arrived more than 100 ms later than the promptest one in
+that second, because the page's main thread or the stream stalled, changes
+nothing; if every sample stays that late for a second, the clock follows the
+new delay. The clock reads the animations
 when a sample arrives or a pad animation starts. It writes `data-breath` and
 `--beat-duration` (rounded to 0.1 ms) on `#cue-grid` only when they change.
 Pads show the steady indicator when nothing on the page animates, the
