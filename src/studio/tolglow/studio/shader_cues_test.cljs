@@ -15,3 +15,9 @@
 (deftest projector-and-preview-urls-carry-the-keyword-feed
   (is (= "/studio/video-output.html?source=%3Ashader%2Fshader-plasma" (shader-cues/output-url :shader/shader-plasma)))
   (is (= "/api/video/frame?source=%3Ashader%2Fx&width=320&v=7" (shader-cues/frame-url :shader/x 320 7))))
+
+(deftest the-preview-token-advances-at-most-eight-times-a-second
+  (is (= {:token 3 :at 1000} (shader-cues/next-shown {:token nil :at 0} 3 1000)))
+  (is (= {:token 3 :at 1000} (shader-cues/next-shown {:token 3 :at 1000} 4 1100)) "too soon")
+  (is (= {:token 4 :at 1200} (shader-cues/next-shown {:token 3 :at 1000} 4 1200)))
+  (is (= {:token 3 :at 1000} (shader-cues/next-shown {:token 3 :at 1000} nil 5000)) "a stopped feed keeps its picture"))

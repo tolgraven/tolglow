@@ -261,6 +261,35 @@
         (is (zero? (:failures row))))
       (finally (producer/stop! p)))))
 
+(deftest a-wedged-renderer-is-abandoned-and-replaced
+  (let [opens (atom 0)
+        p (producer/create
+           {:render-timeout-ms 100 :watchdog-ms 400
+            :renderer (fn []
+                        (swap! opens inc)
+                        (do
+                          (reify producer/ShaderRenderer
+                            (compile-shader [_ _] (doto (java.util.concurrent.CompletableFuture.) (.complete {:compiled? true})))
+                            (render-frame [_ _ {:keys [width height]}]
+                              ;; The first renderer's first draw never returns.
+                              (if (= 1 @opens)
+                                (java.util.concurrent.CompletableFuture.)
+                                (doto (java.util.concurrent.CompletableFuture.)
+                                  (.complete {:pixels (byte-array (* 4 width height)) :width width :height height}))))
+                            (release-shader [_ _] (doto (java.util.concurrent.CompletableFuture.) (.complete true)))
+                            (describe-renderer [_] {:backend :test})
+                            (close-renderer [_] nil))))})
+        seen (atom #{})]
+    (try
+      (producer/sync! p {"a" (request {})})
+      (is (eventually #(do (swap! seen conj (get-in (producer/status p) [:instances 0 :error :code]))
+                           (get-in (producer/frames p) [:frames :shader/index-strip]))
+                      4000))
+      (is (= 2 @opens) "The wedged renderer is replaced once")
+      (is (contains? @seen :shader/late))
+      (is (= 1 (get-in (producer/status p) [:instances 0 :failures])) "The abandoned frame counts as one failure")
+      (finally (producer/stop! p)))))
+
 (deftest a-closed-renderer-is-replaced-off-the-cadence-thread
   (let [opens (atom 0) closes (atom [])
         fail? (atom true)
@@ -287,8 +316,9 @@
 
 (deftest the-newest-launches-render-and-the-feed-follows-what-renders
   (let [r (test-renderer programs)
-        p (producer/create {:renderer r})]
+        p (producer/create {:renderer r :max-pixel-rate (* 4096 2160 30)})]
     (try
+      (is (= (* 2 1920 1080 30) (producer/pixel-budget (producer/create {}))) "Two 1080p30 feeds by default")
       (producer/sync! p (into {} (for [i (range 10)]
                                    [(str "i" i) (request {:order i :uniforms {"u_time" 0.0 "u_beats" 0.0 "u_level" (/ i 10.0)}})])))
       (is (= (set (map #(str "i" %) (range 2 10)))
@@ -321,12 +351,15 @@
 (def strip-mapping {:id :strip-200 :source :shader/index-strip
                     :strips [{:id :s :layout :strip-200 :points [[0.0 0.5] [1.0 0.5]] :height 1.0 :filter :nearest}]})
 
-(defn- start-show [renderer]
-  (show/create-runtime {:model (-> (demo/model)
-                                   (assoc :rig (layout/materialize {:fixtures [] :pixel-layouts [strip-layout]}))
-                                   (assoc-in [:settings :video :mappings] {:strip-200 strip-mapping}))
-                        :workspace-options nil
-                        :shader-options {:renderer renderer}}))
+(defn- start-show
+  ([renderer] (start-show renderer {}))
+  ([renderer options]
+   (show/create-runtime (merge {:model (-> (demo/model)
+                                           (assoc :rig (layout/materialize {:fixtures [] :pixel-layouts [strip-layout]}))
+                                           (assoc-in [:settings :video :mappings] {:strip-200 strip-mapping}))
+                                :workspace-options nil}
+                               options
+                               {:shader-options (merge {:renderer renderer} (:shader-options options))}))))
 
 (defn- pixel-dmx
   "RGB bytes of strip pixel n, which may straddle universes 1 and 2."
@@ -461,9 +494,56 @@
         (is (= 255 (green (next! "after=-1&master=ignore")))))
       (finally (show/stop! runtime)))))
 
-(deftest projector-waiters-are-capped-and-woken-by-commits
+(deftest the-projector-follows-a-master-fade-as-the-fixtures-do
   (let [r (test-renderer programs)
         runtime (start-show r)
+        handler (studio/handler runtime)
+        next! (fn [query] (handler {:request-method :get :uri "/api/video/next" :headers {"host" "localhost"}
+                                    :query-string (str "source=:shader/index-strip&wait=50&" query)}))]
+    (try
+      (publish! runtime (assoc-in strip-effect [:shader :uniforms :u_level :value] 1.0) 0)
+      (launch! runtime :index-strip 25)
+      (let [t (tick-until runtime 50 #(get-in @(:state runtime) [:video-latch :frames :shader/index-strip]))]
+        (command! runtime {:op :schedule/post :source {:adapter :repl :session-id "qa"}
+                           :events [{:id "fade" :op :param/ramp :target :master :to 0.0 :over {:ms 1000}}]} (+ t 25))
+        (show/tick! runtime (+ t 525))
+        (let [gain (parse-double (get-in (next! "after=-1") [:headers "X-Frame-Gain"]))]
+          (is (= 1.0 (:master (:model @(:state runtime)))) "The committed master holds mid-fade")
+          (is (< 0.4 gain 0.6) (str "The projector is half way down the fade, as the fixtures are: " gain)))
+        (show/tick! runtime (+ t 1100))
+        (is (= "0.0" (get-in (next! "after=-1") [:headers "X-Frame-Gain"]))))
+      (finally (show/stop! runtime)))))
+
+(deftest a-shader-cue-over-the-pixel-budget-is-refused-when-published
+  (let [r (test-renderer programs)
+        runtime (start-show r)
+        publish (fn [size fps t]
+                  (let [reply (show/submit! runtime :definition
+                                            {:kind :effects :definition (-> strip-effect (dissoc :outputs)
+                                                                            (assoc :id (keyword (str "big-" t)))
+                                                                            (assoc-in [:shader :size] size)
+                                                                            (assoc-in [:shader :fps] fps))})]
+                    (show/tick! runtime t)
+                    @reply))]
+    (try
+      (is (= :accepted (:status (publish [1920 1080] 30 0))))
+      (let [refused (publish [4096 2160] 60 25)]
+        (is (= :rejected (:status refused)))
+        (is (= :shader/over-budget (get-in refused [:details :code])) (pr-str refused)))
+      (finally (show/stop! runtime)))
+    (testing "a show may raise the budget explicitly"
+      (let [runtime (start-show r {:shader-options {:max-pixel-rate (* 4096 2160 30)}})]
+        (try
+          (let [reply (show/submit! runtime :definition {:kind :effects :definition (-> strip-effect (dissoc :outputs)
+                                                                                       (assoc-in [:shader :size] [4096 2160]))})]
+            (show/tick! runtime 0)
+            (is (= :accepted (:status @reply))))
+          (finally (show/stop! runtime)))))))
+
+(deftest projector-waiters-are-capped-and-woken-by-commits
+  (let [r (test-renderer programs)
+        cap 3
+        runtime (start-show r {:max-video-waiters cap})
         handler (studio/handler runtime)
         wait! #(future (handler {:request-method :get :uri "/api/video/next" :headers {"host" "localhost"}
                                  :query-string (str "source=:shader/index-strip&wait=2000&after=" %)}))]
@@ -475,8 +555,10 @@
             ;; Hold the frame still so every waiter really waits.
             _ (command! runtime {:op :transport/set :transport {:playing? false}} (+ t 25))
             sequence (get-in @(:state runtime) [:video-latch :frames :shader/index-strip :sequence])
-            waiters (mapv (fn [_] (wait! sequence)) (range show/max-video-waiters))]
-        (is (eventually #(= show/max-video-waiters (.get ^java.util.concurrent.atomic.AtomicInteger (:video-waiters runtime)))))
+            waiters (mapv (fn [_] (wait! sequence)) (range cap))]
+        (is (= 8 show/default-video-waiters))
+        (is (eventually #(= cap (.get ^java.util.concurrent.atomic.AtomicInteger (:video-waiters runtime))))
+            "The show option sets the cap")
         (is (= 503 (:status @(wait! sequence))) "One page too many is refused at once")
         (command! runtime {:op :transport/set :transport {:playing? true}} (+ t 50))
         (command! runtime {:op :param/set :instance-id id :param :level :value 0.9} (+ t 75))

@@ -437,6 +437,11 @@
     {:enabled? true :buffer (phrase-capture/new-buffer options) :layout {}
      :cost {:samples 0 :total-ns 0 :max-ns 0 :last-ns 0} :captures 0 :last nil}))
 
+(def default-video-waiters
+  "Projector page requests (waiting or being served a frame) a show allows at
+  once unless :max-video-waiters says otherwise; more get 503."
+  8)
+
 (defn- configure-runtime
   [compute-owner {:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
    (let [model (-> (or model (demo/model))
@@ -584,6 +589,7 @@
       ;; Notified after every committed frame; projector pages wait on it.
       :video-frame-signal (Object.)
       :video-waiters (java.util.concurrent.atomic.AtomicInteger. 0)
+      :video-waiter-cap (:max-video-waiters options default-video-waiters)
       :video-preview-plans (video-sampler/plan-cache 16)}]
        (reset! runtime-ref runtime)
        runtime)))
@@ -1177,6 +1183,15 @@
           errors (registry/validate-definition kind definition)]
       (when (seq errors) (throw (ex-info "Invalid definition" {:errors errors})))
       (when (= :effects kind) (compiler/compile-effect (prefabs/capture (prefabs/catalog model) definition)))
+      ;; A shader cue that alone exceeds the show's pixel budget could never render (#673).
+      (when (and (= :effects kind) runtime (video-shader/shader? definition))
+        (let [[w h] (get-in definition [:shader :size])
+              rate (* w h (get-in definition [:shader :fps] video-shader/default-fps))
+              budget (shader-producer/pixel-budget (:shader-video runtime))]
+          (when (> rate budget)
+            (let [message (str "This shader renders " rate " pixels per second; the show's budget is " budget)]
+              (throw (ex-info message {:code :shader/over-budget :rate rate :budget budget
+                                       :errors [{:path [:shader :size] :message message}]}))))))
       (update (command model {:op :registry/publish :kind kind :definition definition} time-ms)
               :ack merge {:kind kind :id (:id definition) :version (:version definition)}))
     :material-edit
@@ -2280,6 +2295,8 @@
                   updated (advance-light-scenes runtime (lighting/publish with-fog frame) patch frame time-ms bypass?)]
               (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
      :output frame :variable-observation variables :video-latch video-latch
+     ;; The light gain the fixtures rendered with; projector outputs follow it (#673).
+     :projector-gain (if (:blackout? render-options) 0.0 (double (:master render-options)))
      ::waveforms/response-frame response-frame
      ::show-events/intent-emissions (:intent-emissions result)
      :preview-hdr (when (:hdr? frame-input) (or hdr-opts {}))
@@ -3733,16 +3750,15 @@
         (sensors/stop-osc! manager))
       (throw (ex-info "Unknown sensor operation" {:operation operation})))))
 
-(def max-video-waiters
-  "Projector page requests (waiting or being served a frame) at once; more
-  are refused."
-  8)
-
 (defn projector-gain
-  "Light gain a projector output follows: 0 in blackout (including a
-  blackout pause look), else the grand master."
-  [model]
-  (if (pause-look/blackout? model) 0.0 (double (:master model 1.0))))
+  "Light gain a projector output follows: what the fixtures rendered with in
+  the last committed frame (0 in blackout, else the effective master, which
+  includes master ramps and lighting-capacity limits). Before the first frame,
+  the committed blackout and master."
+  [state]
+  (or (:projector-gain state)
+      (let [model (:model state)]
+        (if (pause-look/blackout? model) 0.0 (double (:master model 1.0))))))
 
 (defn- known-video-source? [model id]
   (or (contains? (get-in model [:settings :video :sources]) id)
@@ -3753,15 +3769,16 @@
   "Wait up to :wait-ms for a latched frame of :source other than sequence
   :after (or for a different projector gain than :gain-after). Returns
   {:status :frame :frame :gain :pixels}, :none after the wait, :unknown for a
-  source the show does not have, or :busy past `max-video-waiters`. Waits on
+  source the show does not have, or :busy past the show's :max-video-waiters
+  (default `default-video-waiters`). Waits on
   the frame signal, never polls. :follow-master? false gives the raw feed."
   [runtime {:keys [source after gain-after wait-ms follow-master?] :or {after -1 wait-ms 1000 follow-master? true}}]
   (let [^java.util.concurrent.atomic.AtomicInteger waiters (:video-waiters runtime)
         signal (:video-frame-signal runtime)
         current (fn []
-                  (let [{:keys [model video-latch]} @(:state runtime)]
+                  (let [{:keys [model video-latch] :as state} @(:state runtime)]
                     [model (get-in video-latch [:frames source])
-                     (if follow-master? (projector-gain model) 1.0)]))
+                     (if follow-master? (projector-gain state) 1.0)]))
         fresh? (fn [f gain] (and f (or (not= (long (:sequence f 0)) (long after))
                                        (and gain-after (not= (double gain) (double gain-after))))))
         deadline (+ (System/nanoTime) (* 1000000 (long (max 0 (min 2000 wait-ms)))))
@@ -3770,7 +3787,8 @@
       (not (or f (known-video-source? model source))) {:status :unknown}
       ;; Serving a frame counts as well as waiting for one: the cap bounds
       ;; both Jetty threads and frame bandwidth.
-      (> (.incrementAndGet waiters) max-video-waiters) (do (.decrementAndGet waiters) {:status :busy})
+      (> (.incrementAndGet waiters) (long (:video-waiter-cap runtime default-video-waiters)))
+      (do (.decrementAndGet waiters) {:status :busy})
       :else
       (try
         (if (fresh? f gain)

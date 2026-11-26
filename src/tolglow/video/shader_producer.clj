@@ -29,7 +29,7 @@
   driver log. A frame belongs to its instance: when the instance ends, its
   cadence stops, its frame is dropped from the feed and the program is
   released once no other instance renders it. The newest launches render:
-  at most `max-instances` instances within `max-pixel-rate`; older ones stop
+  at most `max-instances` instances within the pixel budget; older ones stop
   rendering and are listed as refused, and a feed resolves only to an
   instance that renders.
 
@@ -44,7 +44,7 @@
   "Shader instances rendered at once."
   8)
 
-(def compile-timeout-ms 10000)
+(def compile-timeout-ms 15000)
 
 (def history-size
   "Per-instance timing samples kept for status and measurement."
@@ -102,10 +102,20 @@
   shared GPU worker and other cues keep their rate."
   3)
 
-(def max-pixel-rate
-  "Pixels per second, summed over admitted instances (width × height × fps).
-  4096 × 2160 at 30 fps is about 1 GB/s of frame arrays."
-  (* 4096 2160 30))
+(def default-pixel-rate
+  "Pixels per second a show renders by default, summed over admitted
+  instances (width × height × fps): two 1920 × 1080 feeds at 30 fps, about
+  500 MB/s of frame arrays. One 1080p30 feed measured clean against the
+  40 Hz lighting interval; one 4096 × 2160 feed at 30 fps did not (a 34 ms
+  tail, 3 % of intervals more than 5 ms off). A show raises it explicitly
+  with :shader-options {:max-pixel-rate n}."
+  (* 2 1920 1080 30))
+
+(def default-watchdog-ms
+  "A render or compile still running after this long has wedged the
+  renderer: it is abandoned and a new one opens. Afterglow's own fence
+  timeout (1 s) handles an ordinary hung draw."
+  15000)
 
 (defn create
   "A producer. :renderer is a ShaderRenderer or a no-argument factory
@@ -113,10 +123,13 @@
   renderer it opened. :now-ms is the wall clock for frame timestamps;
   :threads sizes the cadence pool (one per admitted instance plus one, so a
   waiting instance never holds up another's slots); :render-timeout-ms is
-  how long a slot waits for its frame before calling it late (default 5000)."
+  how long a slot waits for its frame before calling it late (default 5000);
+  :max-pixel-rate is the pixel budget (default `default-pixel-rate`);
+  :watchdog-ms abandons a wedged renderer (default `default-watchdog-ms`)."
   ([] (create {}))
-  ([{:keys [renderer now-ms threads render-timeout-ms]
-     :or {now-ms #(System/currentTimeMillis) threads (inc max-instances) render-timeout-ms 5000}}]
+  ([{:keys [renderer now-ms threads render-timeout-ms max-pixel-rate watchdog-ms]
+     :or {now-ms #(System/currentTimeMillis) threads (inc max-instances) render-timeout-ms 5000
+          max-pixel-rate default-pixel-rate watchdog-ms default-watchdog-ms}}]
    {:renderer-factory (if (satisfies? ShaderRenderer renderer) (constantly renderer) (or renderer native-renderer))
     :owns-renderer? (not (satisfies? ShaderRenderer renderer))
     :renderer (atom nil)
@@ -124,6 +137,8 @@
     :renderer-lock (Object.)
     :now-ms now-ms
     :render-timeout-ms render-timeout-ms
+    :max-pixel-rate max-pixel-rate
+    :watchdog-ms watchdog-ms
     :opened (atom 0)
     :requests (atom {})
     :last-offered (atom {})
@@ -216,6 +231,9 @@
           wanted
           (catch clojure.lang.ExceptionInfo e
             (let [data (ex-data e)]
+              (when (= :shader/late (:code data))
+                ;; A compile is milliseconds; one stuck this long has wedged the worker.
+                (drop-renderer! producer r (ex-info "The shader renderer stopped responding" {:code :shader/renderer-wedged})))
               (if (#{:compile :link} (:stage data))
                 (do (swap! entry assoc :failed wanted
                            :error {:code :shader/compile-failed :stage (:stage data) :log (:log data)
@@ -260,9 +278,16 @@
   "A render that outlived an earlier slot's wait. Publish it if it has
   finished. True while it is still running, so this slot is dropped."
   [producer id entry]
-  (when-let [{:keys [^Future future] :as job} (:in-flight @entry)]
+  (when-let [{:keys [^Future future renderer started] :as job} (:in-flight @entry)]
     (if-not (.isDone future)
-      true
+      (if (> (- (System/nanoTime) (long started)) (* 1000000 (long (:watchdog-ms producer))))
+        ;; Wedged without Afterglow noticing: abandon the job and the renderer.
+        (let [error (ex-info "The shader renderer stopped responding" {:code :shader/renderer-wedged})]
+          (swap! entry #(-> % (dissoc :in-flight) (update :failures (fnil inc 0))
+                            (assoc :error {:code :shader/renderer-wedged :message (ex-message error)})))
+          (drop-renderer! producer renderer error)
+          false)
+        true)
       (do (swap! entry dissoc :in-flight)
           (try (publish! producer id entry job (await-future future 0))
                (catch Exception e
@@ -291,7 +316,7 @@
                         input [program uniforms target]]
                     (if (and (= input (:rendered-input @entry)) (get @(:published producer) id))
                       (swap! entry update :unchanged (fnil inc 0))
-                      (let [job {:future (render-frame r program (assoc target :uniforms uniforms))
+                      (let [job {:future (render-frame r program (assoc target :uniforms uniforms)) :renderer r
                                  :request request :input input :uniforms uniforms :started (System/nanoTime)}]
                         (swap! entry assoc :in-flight job)
                         (let [result (await-future (:future job) (:render-timeout-ms producer))]
@@ -368,7 +393,7 @@
                      (if (or (nil? id) (= max-instances (count admitted)))
                        admitted
                        (let [cost (* (:width r 1) (:height r 1) (:fps r 1))]
-                         (if (> (+ rate cost) max-pixel-rate)
+                         (if (> (+ rate cost) (:max-pixel-rate producer))
                            (recur more admitted rate)
                            (recur more (conj admitted id) (+ rate cost))))))
           [previous _] (reset-vals! (:requests producer) (select-keys requests admitted))]
@@ -377,6 +402,10 @@
         (let [running (set (keys @(:entries producer)))]
           (doseq [id running :when (not (contains? admitted id))] (retire! producer id))
           (doseq [id admitted :when (not (contains? running id))] (admit! producer id (get requests id))))))))
+
+(defn pixel-budget
+  "Pixels per second this producer renders, summed over its instances."
+  [producer] (:max-pixel-rate producer))
 
 (defn frames
   "Latest completed frames for the lighting latch:
@@ -399,6 +428,7 @@
     {:renderer (some-> @(:renderer producer) describe-renderer (select-keys [:backend :renderer :version :programs :targets :renders :compile-failures :queued]))
      :error (some-> @(:renderer-error producer) (dissoc :at-ns))
      :opened @(:opened producer)
+     :pixel-budget (:max-pixel-rate producer)
      ;; Older launches beyond the instance or pixel-rate limit do not render.
      :refused (vec (sort (map str (keys (apply dissoc (or @(:last-offered producer) {}) (keys requests))))))
      :instances

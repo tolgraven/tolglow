@@ -100,17 +100,31 @@
                            :on-success [::ui [:added] (:id definition)]}]
             (events/notice "Shader example and cue added.")]})))
 
-(defn- live-image [feed width sequence class]
-  ;; Refresh at most eight times a second while the feed advances.
-  (let [shown (r/atom {:token nil :at 0})]
-    (fn [feed width sequence class]
-      (let [now (.now js/Date)]
-        (when (and sequence (not= sequence (:token @shown)) (> (- now (:at @shown)) 125))
-          (reset! shown {:token sequence :at now}))
+(defn next-shown
+  "The frame token to show: the newest sequence, at most every 125 ms."
+  [{:keys [token at] :as shown} sequence now]
+  (if (and sequence (not= sequence token) (> (- now at) 125))
+    {:token sequence :at now}
+    shown))
+
+(defn- live-image [_feed _width _sequence _class]
+  ;; Refresh at most eight times a second while the feed advances. The
+  ;; token moves after mount and update, never during render.
+  (let [shown (r/atom {:token nil :at 0})
+        advance! (fn [this]
+                   (let [[_ _ _ sequence] (r/argv this)
+                         next (next-shown @shown sequence (.now js/Date))]
+                     (when-not (= next @shown) (reset! shown next))))]
+    (r/create-class
+     {:display-name "shader-live-image"
+      :component-did-mount advance!
+      :component-did-update advance!
+      :reagent-render
+      (fn [feed width _sequence class]
         (if (:token @shown)
           [:img {:class class :alt (str "Live frame of " (wire-id feed)) :draggable false
                  :src (frame-url feed width (:token @shown))}]
-          [:div {:class (str class " shader-empty")} "Not running"])))))
+          [:div {:class (str class " shader-empty")} "Not running"]))})))
 
 (defn- stats-line [rows]
   (when (seq rows)
