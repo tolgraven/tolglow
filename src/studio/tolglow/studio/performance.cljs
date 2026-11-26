@@ -537,7 +537,7 @@
            (for [control choices]
              ^{:key (control-id control)} [:option {:value (control-id control)} (control-title control)])]
           [:strong title])
-        [:span (if (visualization/spatial-kind schema) "3D" "4 beats")]]
+        [:span (case (visualization/monitor-kind schema) :spatial "3D" :color "Colour" "4 beats")]]
        ^{:key (control-id selected)}
        (if-let [axes (:components selected)] [sources/axes-visual visualization/monitor instance axes schema]
            [sources/result-visual visualization/monitor instance (:parameter selected) schema])])))

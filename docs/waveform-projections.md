@@ -32,6 +32,14 @@ containing show epoch, instance/definition/version, waveform revision and input
 digests. A preview describes the selected registered signal; it is not a claim
 to graph every downstream spatial fixture expression.
 
+When the captured effect output has one identifiable musical phase, a live
+preview also reports `:signal-timing`: the period in beats, the meter that
+period was measured in and the sampled window in beats since the cycle began.
+`:grid` holds the beat, bar and phrase lines for that window from
+`tolglow.visualization.musical-grid`. The compact timeline's `:ticks` come from
+the same projection on the transport, so their units follow the period. A draft
+selection or an output without one musical phase has neither key.
+
 The optional display cache retains at most 64 projections keyed by exact
 immutable definitions, effective parameter values, registry and sample options.
 The public digest is never used as the cache's correctness key. Changing only
@@ -93,7 +101,10 @@ lighting evaluator is busy. Transports without a projector remain event-driven.
 Projection never runs on the effect/render or MIDI caller thread.
 
 `project-display` adds actual base/effective values, generated waveform samples,
-and top-level `:audio-waveform`. Audio columns are reduced to at most 128 for the
+and top-level `:audio-waveform`. It also adds the transport `:musical-timing`
+(meter, and bar and phrase origins when the transport has them), a previewed
+selector's `:signal-timing` and a driven encoder's `:source-period-beats`, the
+inputs of the display's musical grid. Audio columns are reduced to at most 128 for the
 existing bounded IPC message, retaining extrema and sample-weighted RMS.
 `:display-mode` follows `[:settings :controllers :push-display :mode]`, with
 `:parameters` as default and `:audio` explicit. Both views consume the same data.

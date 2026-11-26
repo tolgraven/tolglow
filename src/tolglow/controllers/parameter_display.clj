@@ -54,9 +54,11 @@
               target (when block @fixture)
               sample (when target (runtime/observe instance [(:path block) (:id target)]))
               state (if (and block (nil? (:result sample))) :pending state)
-              diagnostic (or error (some :error sources))]
+              diagnostic (or error (some :error sources))
+              period (when (= :active state) (some #(when (driving? %) (:period-beats %)) sources))]
           (cond-> {:source-state state
                    :source-types (mapv :type sources)
                    :effective-value (if block (:result sample) effective-value)}
+            period (assoc :source-period-beats period)
             diagnostic (assoc :source-error diagnostic)
             target (assoc :sample-fixture (select-keys target [:id :name]))))))))

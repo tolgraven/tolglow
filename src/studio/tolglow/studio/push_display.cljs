@@ -38,7 +38,7 @@
   (let [view (if (map? view) view {})]
     (-> (select-keys view [:title :page :origin :status :master :blackout? :bpm :selected
                           :cue :effect :swatch :category-colors :page-overview :display-mode :scene :audio-waveform :instance-id
-                          :parameter-bank :active-effect-navigation :touched-parameter :fine?])
+                          :parameter-bank :active-effect-navigation :touched-parameter :fine? :musical-timing])
         (assoc :touched-parameters (vec (take 8 (:touched-parameters view)))
                :personality (personality (:personality view))
                :saved-show-catalog (saved-show-catalog (:saved-show-catalog view))
@@ -57,6 +57,12 @@
                          (select-keys (:preset view) [:saved? :changed? :record? :action]))
                :touched-control (when (map? (:touched-control view))
                                   (select-keys (:touched-control view) [:target :editable?])))
+        (cond-> (seq (:waveform-glyphs view))
+          ;; Registered waveform glyphs for shape choices, bounded like the rest.
+          (assoc :waveform-glyphs (into [] (comp (take 32) (filter map?)
+                                                 (map #(-> (select-keys % [:id :name :glyph])
+                                                           (update :glyph (fn [g] (vec (take 129 g)))))))
+                                        (:waveform-glyphs view))))
         (assoc :parameters (vec (take 8 (:parameters view)))
                :active-effects (vec (take 8 (:active-effects view)))
                :cells (vec (take 8 (:cells view))) :labels (vec (take 8 (:labels view)))))))
@@ -191,11 +197,14 @@
                         (if-let [id (compound-key parameter)] [:compound id] [:encoder index]))
                       slots)))
 
-(defn- axis-reading [{:keys [schema component effective-value value]}]
-  (let [values (visualization/components schema (if (some? effective-value) effective-value value))]
-    (when-let [shown (get values component)]
+(defn- axis-reading [{:keys [schema component component-label effective-value value]}]
+  (let [values (visualization/components schema (if (some? effective-value) effective-value value))
+        color? (= :color (widgets/parameter-kind schema))]
+    (when-let [shown (if color?
+                       (widgets/component-amount values component-label component)
+                       (get values component))]
       [:output.push-axis-reading
-       (widgets/number-label (get (:component-schemas schema) component schema) shown)])))
+       (widgets/number-label (get (:component-schemas schema) component (if color? {:bounds [0 1]} schema)) shown)])))
 
 (defn- parameters [view compact?]
   (let [slots (encoder-slots view)

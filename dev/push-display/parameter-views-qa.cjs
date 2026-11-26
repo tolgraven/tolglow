@@ -25,13 +25,14 @@ async function capturePush(origin, directory) {
       const mode = i < 16 ? 'auto' : 'history';
       const result = await worker.capture({...view, 'parameter-view': mode, 'history-beats': i < 36 ? 4 : 1});
       if (i === 0) {
-        assert.equal(await page.locator('.parameter-space').count(), 3);
+        assert.equal(await page.locator('.parameter-space').count(), 2);
+        assert.equal(await page.locator('.parameter-color').count(), 1);
         assert.equal(await page.getByLabel('orientation in three dimensions').count(), 1);
         assert.equal(await page.locator('.push-component').first().innerText(), 'X');
       }
       if (i === 16 || i === 35 || i === 45) {
         assert.equal(await page.locator('.parameter-history').count(), 0);
-        assert.equal(await page.locator('.parameter-space').count(), 3);
+        assert.equal(await page.locator('.parameter-space').count(), 2);
         assert.equal(await page.locator('.push-source-state[data-state="held"]').count(), i === 35 ? 3 : 0);
       }
       if (i === 33 || i === 42) {

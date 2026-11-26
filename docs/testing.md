@@ -175,6 +175,16 @@ rig drag/keyboard edits and saved truss properties reaching WebGL uniforms.
 Desktop, iPad-size and phone-size viewports were exercised. Viewport emulation
 is not a physical iPad Safari test. A new Connections view is a subsequent gate.
 
+Two manual Neovim gates need a production build (`npm run studio:build`) and a
+capture-only host. `STUDIO_URL=<origin> node test/studio/bruvbox_browser.cjs`
+checks the theme, the pinned cue buffer, versioned findings, reload/close/reopen,
+remount and bounded state. `node dev/studio/code-cue-recovery-qa.mjs <origin>
+<capture-dir>` edits a running cue invalidly in Neovim, through the pinned engine
+with the host as validator and through the Definitions editor, and checks that the
+running instance keeps its last good version until a valid edit replaces it. Both
+take `CHROMIUM_PATH`. Headless Chromium is not the packaged app's WKWebView,
+Safari or a terminal Neovim.
+
 The [GPU experiment](gpu-experiment.md) passed eight oracle cases/992 compared
 components and nine lifecycle groups in Chromium 156 with **software SwiftShader**.
 Reports state operation-specific tolerances and excluded JVM/browser/output
