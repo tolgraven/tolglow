@@ -806,13 +806,17 @@
                      (update-in [:model :auto :state] dissoc :base-seed :owned-launches :section)))
         current (assoc (demo/model) :epoch 9 :revision 200 :time-ms 9000)
         saved-config {:interval {:bars 2} :count 1 :scope :all :note "from an agent" :mood :calm
+                      ;; Looks like instance references; restore must not rekey it.
+                      :linked {:instance-ids ["0:1" "zz"] :instance-id "0:1" :owner-id "auto-before"}
                       :sections [{:id :verse :length {:bars 4} :config {:count 1 :newer-setting [1 2]}}]}
         extra (files/thaw current (legacy saved-config))
         broken (files/thaw current (legacy {:interval {:bars 2} :count 1 :scope :all :intent :bright}))]
     (is (true? (get-in extra [:auto :enabled?])))
     (is (= {:interval {:bars 2} :count 1 :scope :all :sections [{:id :verse :length {:bars 4} :config {:count 1}}]}
            (get-in extra [:auto :config])))
-    (is (= {:config {:note "from an agent" :mood :calm} :sections {:verse {:newer-setting [1 2]}}}
+    (is (= {:config {:note "from an agent" :mood :calm
+                     :linked {:instance-ids ["0:1" "zz"] :instance-id "0:1" :owner-id "auto-before"}}
+            :sections {:verse {:newer-setting [1 2]}}}
            (get-in extra [:auto :unrecognized])))
     (is (some #(= :restored-without-settings (:reason %)) (get-in extra [:auto :reasons])))
     (testing "the next save writes the set-aside settings back, verbatim"

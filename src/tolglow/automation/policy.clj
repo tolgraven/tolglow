@@ -148,9 +148,14 @@
   #{:incapable-target :invalid-targets :invalid-params :invalid-definition
     :stale-calibration :unknown-cue :unknown-effect})
 
-(defn- remember-refusal [state model cue-id code]
+(defn- remember-refusal
+  "Remember a definition-dependent refusal. Invalid parameters are remembered
+  only when the launch carried none of its own: a section's launch :params can
+  be wrong for one section and fine in the next."
+  [state model cue-id code launch-params]
   (let [cue (get-in model [:registry :cues cue-id])]
-    (if (and cue (remembered-refusals code))
+    (if (and cue (remembered-refusals code)
+             (not (and (= :invalid-params code) (seq launch-params))))
       (assoc-in state [:refusals cue-id] {:code code :key (refusal-key model cue)})
       state)))
 
@@ -158,8 +163,9 @@
   "The command shell reports a launch the show rejected at dispatch. Remember
   a definition-dependent refusal like one met while planning, so later
   decisions skip that cue until its definition or the rig changes."
-  [state model cue-id ack]
-  (remember-refusal state model cue-id (:code ack)))
+  ([state model cue-id ack] (record-refusal state model cue-id ack nil))
+  ([state model cue-id ack launch-params]
+   (remember-refusal state model cue-id (:code ack) launch-params)))
 
 (defn- candidates [model config state]
   (let [scope (:scope config :all)
@@ -665,7 +671,10 @@
             {:state (cond-> (assoc state :seed seed :epoch (:epoch model) :interval-timer timer
                                    :tick (inc (:tick state)))
                       (seq refused)
-                      (as-> s (reduce (fn [s {:keys [cue-id code]}] (remember-refusal s model cue-id code)) s refused))
+                      (as-> s (reduce (fn [s {:keys [cue-id code]}]
+                                        (remember-refusal s model cue-id code
+                                                          (some #(when (= cue-id (:id %)) (::launch-params %)) pool)))
+                                      s refused))
                       ctx (assoc :owned-instance-ids (into [] (remove (set ended)) owned))
                       (= :ms unit) (assoc :next-at-ms next-at)
                       (= :beats unit) (assoc :next-at-beat next-at))

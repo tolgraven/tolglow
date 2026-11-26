@@ -291,7 +291,10 @@
         state (policy/initial-state 0 0 :auto)]
     (is (empty? (:refusals (policy/record-refusal state show :red {:code :start-wrap-mismatch}))))
     (is (empty? (:refusals (policy/record-refusal state show :red {:code :invalid-duration}))))
-    (is (= :incapable-target (get-in (policy/record-refusal state show :red {:code :incapable-target}) [:refusals :red :code])))))
+    (is (= :incapable-target (get-in (policy/record-refusal state show :red {:code :incapable-target}) [:refusals :red :code])))
+    (testing "invalid parameters are remembered only when the launch brought none"
+      (is (= :invalid-params (get-in (policy/record-refusal state show :red {:code :invalid-params}) [:refusals :red :code])))
+      (is (empty? (:refusals (policy/record-refusal state show :red {:code :invalid-params} {:level 2.0})))))))
 
 (deftest keep-plan-keeps-randomize-domains-across-stop-and-start
   (let [repl {:sections [{:id :a :length {:bars 1}}] :randomize {:params :marked :palette [{:color [1 0 0]}] :ranges {:level [0 1]}}}

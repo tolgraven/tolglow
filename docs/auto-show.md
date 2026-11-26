@@ -145,7 +145,8 @@ shutter), whether while predicting light or when the launch is dispatched, is
 dropped and reported as `:launch-refused`. A refusal that depends only on the
 definition and the rig (`:incapable-target`, `:invalid-targets`,
 `:invalid-params`, `:invalid-definition`, `:stale-calibration`, unknown cue or
-effect) is remembered in `[:auto :state :refusals]` and skipped until its cue
+effect; invalid parameters only when the launch brought none of its own) is
+remembered in `[:auto :state :refusals]` and skipped until its cue
 or effect version or the patched rig changes, so it is not tried again on every
 decision. A refusal that depends on the moment, such as an aim path's
 `:start-wrap-mismatch` while a head sits on another pan wrap, or one caused by a
@@ -171,7 +172,9 @@ launch records, remembered refusals) are saved with the show and rekeyed on
 restore. A show saved by another build may carry settings this planner does not know.
 On load they are set aside verbatim under `[:auto :unrecognized]` and listed in
 the reasons as `:restored-without-settings`; the next save writes them back
-into the config unchanged, until a new configure request replaces the config.
+into the config unchanged (restore never rekeys instance IDs inside them).
+**Stop auto** and other requests with `:keep-plan?` keep them; any other
+configure request replaces the config and drops them.
 If what remains still cannot run, the show loads with auto mode off and a
 `:restored-disabled` reason, keeping its ownership so **Stop auto** still ends
 the looks it launched, instead of refusing the whole file. Configure requests

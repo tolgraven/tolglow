@@ -686,7 +686,9 @@
                                       (cond-> (:target-response run) (assoc-in [:target-response :clock :epoch] epoch)))))
                 (contains? saved :composition-runs) (assoc :composition-runs runs)
                 (contains? saved :composition-tokens) (assoc :composition-tokens tokens)
-                (get-in saved [:auto :state]) (update :auto #(-> (remap-references % ids owners) (assoc-in [:state :epoch] epoch)))
+                ;; Only auto's own state names instances and owners; settings kept
+                ;; verbatim from another build (:unrecognized) are never rewritten.
+                (get-in saved [:auto :state]) (update-in [:auto :state] #(-> (remap-references % ids owners) (assoc :epoch epoch)))
                 (:responses saved) (update :responses #(remap-references % ids owners))
                 (:modulation saved) (update :modulation modulation/restore-state
                                              {:show-id (:show-id model) :epoch epoch :instance-ids ids})

@@ -1377,7 +1377,12 @@
               ;; can reuse a matching cache without changing the output patch.
               plans (when (and runtime (= fixtures (:fixtures @(:patch runtime)))) (auto-plans runtime fixtures))]
           (policy/advance (assoc model :fixtures fixtures) config state time-ms plans)))
-      {:model (-> model (assoc :auto {:enabled? enabled? :config config :state state}) (update :revision inc))
+      {:model (-> model
+                  (assoc :auto (cond-> {:enabled? enabled? :config config :state state}
+                                 ;; Settings another build wrote travel with a kept plan.
+                                 (and (:keep-plan? payload) (get-in model [:auto :unrecognized]))
+                                 (assoc :unrecognized (get-in model [:auto :unrecognized]))))
+                  (update :revision inc))
        :ack {:status :accepted}})
     :import
     (do
@@ -1460,7 +1465,7 @@
                       [model (policy/record-launch s (:instance-id ack) (get-in model [:instances (:instance-id ack)])) rejected]
                       ;; A launch the show refuses at dispatch is remembered too (#217).
                       (and launch? (= :rejected (:status ack)))
-                      [model (policy/record-refusal s (assoc model :fixtures fixtures) (:cue-id c) ack)
+                      [model (policy/record-refusal s (assoc model :fixtures fixtures) (:cue-id c) ack (get-in c [:launch :params]))
                        (conj rejected {:cue-id (:cue-id c) :code (:code ack) :message (:message ack)})]
                       :else [model s rejected])))
                 [model state []] commands)

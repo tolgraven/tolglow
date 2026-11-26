@@ -382,3 +382,47 @@
         (is (= :accepted (:status (submit!! rt 2625 :auto {:enabled? false}))))
         (is (empty? (auto-looks)) "Stop ends them"))
       (finally (show/stop! rt)))))
+
+(deftest a-sections-bad-launch-params-do-not-suppress-the-cue-elsewhere
+  ;; :bad launches :wash-color with a level outside its bounds; the show refuses
+  ;; that launch. The refusal belongs to the section's params, so :good still
+  ;; launches the cue.
+  (let [rt (runtime (model))
+        sections (atom [])]
+    (try
+      (show/tick! rt 0)
+      (is (= :accepted (:status (submit!! rt 0 :auto {:enabled? true :seed 4 :scope {:cue-ids [:wash-color]} :interval {:beats 1}
+                                                     :sections [{:id :bad :length {:bars 1} :max-run 1 :transition :cut
+                                                                 :config {:launch {:mode :timed :duration {:beats 1} :params {:level 2.0}}}}
+                                                                {:id :good :length {:bars 1} :max-run 1 :transition :cut
+                                                                 :config {:launch {:mode :timed :duration {:beats 1}}}}]}))))
+      (let [launched-in (atom #{}) refused-in (atom #{})]
+        (doseq [t (range 0 24000 125)]
+          (let [tick (get-in (auto-of rt) [:state :tick])]
+            (show/tick! rt t)
+            (let [auto (auto-of rt) section (get-in auto [:state :section :id])]
+              (swap! sections conj section)
+              (when (not= tick (get-in auto [:state :tick]))
+                (when (some #(= :launch-refused (:reason %)) (:reasons auto)) (swap! refused-in conj section)))
+              (when (some #(and (= :wash-color (:cue-id %)) (= :auto (get-in % [:source :adapter])))
+                          (vals (get-in @(:state rt) [:model :instances])))
+                (swap! launched-in conj section)))))
+        (is (= #{:bad :good} (set @sections)))
+        (is (= #{:bad} @refused-in) "the bad section's launches are refused")
+        (is (contains? @launched-in :good) "the good section still launches the cue")
+        (is (empty? (get-in (auto-of rt) [:state :refusals])) "nothing is remembered against the cue"))
+      (finally (show/stop! rt)))))
+
+(deftest settings-from-another-build-survive-a-studio-stop
+  (let [rt (runtime (model))]
+    (try
+      (show/tick! rt 0)
+      (submit!! rt 0 :auto (auto-config 217))
+      (doseq [t (range 125 1000 125)] (show/tick! rt t))
+      (let [document (assoc-in (show/export-show rt) [:model :auto :config :newer-setting] {:instance-ids ["0:1" "zz"]})]
+        (is (= :accepted (:status (submit!! rt 1000 :import {:source (pr-str document)}))))
+        (is (= {:config {:newer-setting {:instance-ids ["0:1" "zz"]}}} (:unrecognized (auto-of rt))))
+        ;; Studio's Stop keeps the plan, and with it the set-aside settings.
+        (is (= :accepted (:status (submit!! rt 1125 :auto {:enabled? false :keep-plan? true}))))
+        (is (= {:instance-ids ["0:1" "zz"]} (get-in (show/export-show rt) [:model :auto :config :newer-setting]))))
+      (finally (show/stop! rt)))))
