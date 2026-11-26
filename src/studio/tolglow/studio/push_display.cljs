@@ -35,6 +35,15 @@
   (when (and (string? icon) (str/starts-with? icon "data:image/svg+xml;base64,") (<= (count icon) 16384))
     {:name (when (string? name) (subs name 0 (min 80 (count name)))) :icon icon}))
 
+(defn- knob-entry
+  "A linked knob (#666) as the show projected it for a Push display, bounded."
+  [knob]
+  (when (map? knob)
+    (cond-> (select-keys knob [:knob-id :name :value :text :missing? :links])
+      (sequential? (:columns knob))
+      (assoc :columns (mapv #(select-keys % [:label :text :ratio :status :diverged?])
+                            (take 8 (filter map? (:columns knob))))))))
+
 (defn normalize-view [view]
   (let [view (if (map? view) view {})]
     (-> (select-keys view [:title :page :origin :status :master :blackout? :bpm :selected
@@ -57,7 +66,11 @@
                :preset (when (map? (:preset view))
                          (select-keys (:preset view) [:saved? :changed? :record? :action]))
                :touched-control (when (map? (:touched-control view))
-                                  (select-keys (:touched-control view) [:target :editable?])))
+                                  (select-keys (:touched-control view) [:target :editable? :knob-id]))
+               :knob (knob-entry (:knob view))
+               :knob-page (when-let [page (:knob-page view)]
+                            (when (sequential? (:knobs page))
+                              {:knobs (into [] (comp (take 8) (keep knob-entry)) (:knobs page))})))
         (cond-> (seq (:waveform-glyphs view))
           ;; Registered waveform glyphs for shape choices, bounded like the rest.
           (assoc :waveform-glyphs (into [] (comp (take 32) (filter map?)
@@ -125,6 +138,51 @@
        :value (if master? (when (widgets/finite? (:master view)) (* 100 (:master view))) (:bpm view))
        :schema {:type :number :bounds (if master? [0 100] [20 200]) :unit (if master? "%" "BPM")}
        :locked? (false? editable?)})))
+
+(defn knob-model
+  "The touched knob, or the knob page, for the encoder area. Push sends the
+  knob's resolved link values from the same projection Studio's Knobs panel reads."
+  [view]
+  (let [{:keys [target]} (:touched-control view)]
+    (cond
+      (and (contains? #{:knob "knob"} target) (:knob view))
+      {:kind :knob :knob (:knob view)}
+      (seq (get-in view [:knob-page :knobs]))
+      {:kind :page :knobs (get-in view [:knob-page :knobs])})))
+
+(defn- knob-value-label [{:keys [value text]}]
+  (or text (when (widgets/finite? value) (widgets/number-label value)) "—"))
+
+(defn- knob-display [{:keys [kind knob knobs]}]
+  (if (= :knob kind)
+    (let [{:keys [name missing? columns]} knob]
+      [:section.push-knob {:aria-label (str "Knob " (or name (widgets/label (:knob-id knob)))
+                                            ", " (knob-value-label knob))}
+       [:div.push-knob-heading
+        [:span.push-knob-kind "Knob"]
+        [:strong (or name (widgets/label (:knob-id knob)))]
+        [:span.push-knob-value (if missing? "Removed" (knob-value-label knob))]]
+       [:div.push-target-columns
+        (for [i (range 8) :let [{:keys [label text ratio status diverged?] :as column} (get columns i)]]
+          ^{:key i}
+          [:article {:class (cond (nil? column) "empty"
+                                  (not (contains? #{:ok "ok"} status)) "dangling"
+                                  :else "available")
+                     :title (when diverged? "Edited since the knob last moved")}
+           (when column
+             [:<> [:small label]
+              [:strong (or text (widgets/label status))]
+              (when diverged? [:span.push-knob-diverged "Edited"])])])]])
+    [:section.push-knob {:aria-label "Knob page"}
+     [:div.push-knob-heading [:span.push-knob-kind "Knobs"] [:strong "Track encoders"]]
+     [:div.push-target-columns
+      (for [i (range 8) :let [{:keys [knob-id name missing? links] :as entry} (get knobs i)]]
+        ^{:key i}
+        [:article {:class (cond (nil? entry) "empty" missing? "dangling" :else "available")}
+         (when entry
+           [:<> [:small (if missing? "Missing knob" (str links " links"))]
+            [:strong (or name (widgets/label knob-id))]
+            (when-not missing? [:span.push-knob-value (knob-value-label entry)])])])]]))
 
 (defn- preset-feedback [view]
   (when-let [{:keys [state label hint action]} (preset-model view)]
@@ -315,6 +373,7 @@
        (#{:beat-ratios "beat-ratios"} (get-in view [:pad-overlay :layout])) [ratio-overlay (:pad-overlay view)]
        (:pad-overlay view) [variation-overlay (:pad-overlay view)]
        (get-in view [:target-picker :open?]) [target-choices (:target-picker view)]
+       (knob-model view) [knob-display (knob-model view)]
        (contains? #{:simulator :rig "simulator" "rig"} (:display-mode view)) [scene/view view]
        (contains? #{:pages "pages"} (:display-mode view)) [pages/view view]
        (contains? #{:block-trace "block-trace"} (:display-mode view)) [trace/plot (:trace-samples view) true (:trace-options view)]

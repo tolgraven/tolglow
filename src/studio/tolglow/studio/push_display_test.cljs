@@ -265,3 +265,38 @@
     (is (= letters (mapv second (re-seq #"<span class=\"color-channel-name\">([^<]+)</span>" html)))
         where)
     (is (= (contains? #{"rgba" "hsla"} layout) (str/includes? html "α")) where)))
+
+(deftest a-touched-knob-shows-its-links-in-the-encoder-area
+  ;; Transit/JSON delivery turns keywords into strings; both spellings render.
+  (let [view {:touched-control {:target "knob" :knob-id "look" :editable? true}
+              :knob {:knob-id "look" :name "Look" :value 0.5 :text "0.500"
+                     :columns (concat [{:label "tint · saturation" :text "0.600" :status "ok"}
+                                       {:label "pulse · level LFO period" :text "1 beats" :ratio [1 1] :status "ok"
+                                        :diverged? true}
+                                       {:label "gone · level" :status "dangling"}]
+                                      (repeat 10 {:label "extra" :text "x" :status "ok"}))
+                     :ignored "not display data"}
+              :parameters [{:name "Level" :value 0.5}]}
+        normal (display/normalize-view view)
+        html (renderToStaticMarkup (r/as-element [display/display normal]))]
+    (is (= {:target "knob" :editable? true :knob-id "look"} (:touched-control normal)))
+    (is (= 8 (count (get-in normal [:knob :columns]))))
+    (is (nil? (get-in normal [:knob :ignored])))
+    (is (= :knob (:kind (display/knob-model normal))))
+    (is (str/includes? html "Knob Look, 0.500"))
+    (is (str/includes? html "1 beats"))
+    (is (str/includes? html "Edited since the knob last moved"))
+    (is (str/includes? html "class=\"dangling\""))
+    (is (not (str/includes? html "Eight encoder parameters")) "the knob replaces the parameter row while touched")))
+
+(deftest the-knob-page-lists-its-knobs-and-marks-a-missing-one
+  (let [normal (display/normalize-view
+                 {:knob-page {:knob-ids ["look" "gone"]
+                              :knobs [{:knob-id "look" :name "Look" :value 0.25 :text "0.250" :links 2}
+                                      {:knob-id "gone" :missing? true}]}})
+        html (renderToStaticMarkup (r/as-element [display/display normal]))]
+    (is (= :page (:kind (display/knob-model normal))))
+    (is (str/includes? html "Knob page"))
+    (is (str/includes? html "2 links"))
+    (is (str/includes? html "Missing knob"))
+    (is (nil? (display/knob-model (display/normalize-view {:touched-control {:target "master"}}))))))

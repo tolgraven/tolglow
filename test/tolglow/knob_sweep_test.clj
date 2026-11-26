@@ -335,9 +335,9 @@
       (finally (show/stop! rt)))))
 
 (deftest an-encoder-surface-turns-the-knob-and-shows-the-studio-values
-  ;; The Push adapters in Afterglow cannot yet bind an encoder to a knob (see
-  ;; docs/linked-knobs.md#push). This drives the Tolglow side: the command a
-  ;; bound encoder sends, with a Push source, and the display it reads.
+  ;; The command a bound encoder sends, with a Push source, and the display it
+  ;; reads. tolglow.controllers.push-knobs-test drives it through captured Push
+  ;; 2/3 MIDI and the Afterglow adapters.
   (let [{:keys [rt packets]} (harness)]
     (try
       (let [{:keys [tint]} (setup! rt)

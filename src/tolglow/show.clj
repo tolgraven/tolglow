@@ -31,6 +31,7 @@
             [tolglow.effects.block-trace :as block-trace]
             [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.controllers.page-overview :as page-overview]
+            [tolglow.controllers.push-knobs :as push-knobs]
             [tolglow.controllers.push-variations :as push-variations]
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
@@ -2896,6 +2897,7 @@
             (fn [view]
               (let [snapshot (assoc @(:state runtime) :runtime-id (:id runtime))
                     model (:model snapshot)
+                    view (push-knobs/project-display model view)
                     mode (if (:pad-overlay view) :parameters
                              (or (:display-mode view) (get-in model [:settings :controllers :push-display :mode]) :parameters))
                     view (cond-> (assoc view :display-mode mode)
@@ -2920,7 +2922,8 @@
     (leasing-response-samples runtime
       (display/native-display
         {:project! (fn [view]
-                     (project-parameters @(:state runtime) view nil))}))))
+                     (let [snapshot @(:state runtime)]
+                       (project-parameters snapshot (push-knobs/project-display (:model snapshot) view) nil)))}))))
 
 (def ^:private device-command-wait-ms 5000)
 
@@ -2953,7 +2956,10 @@
   :variation/cycle button in :button-bindings. The display must support
   presentation receipts. This option also enables exact beat-ratio edits.
   X-Touch accepts :effect-group-view :manual or :overlay. Group faders occupy
-  the first strips, followed by any configured cue channels."
+  the first strips, followed by any configured cue channels.
+  Linked knobs: on Push 3 bind a captured encoder with :encoder-bindings
+  {id {:target :knob :knob-id k}}; on Push 2 set :knob-page {:button cc
+  :knob-ids [k ...]} to toggle the track encoders onto up to eight knobs."
   [runtime kind {:keys [session-id ::restore-lease ::reconnect-lease] :as options}]
   (let [id session-id epoch (get-in @(:state runtime) [:model :epoch])]
     (when-not (and (string? id) (seq id)) (throw (ex-info "Device requires session-id" {})))
@@ -2968,6 +2974,10 @@
       (let [effect-group-view (when (= :x-touch kind) (:effect-group-view options))
             _ (when (and (some? effect-group-view) (not (#{:manual :overlay} effect-group-view)))
                 (throw (ex-info "X-Touch effect-group view must be :manual or :overlay" {:view effect-group-view})))
+            _ (when (and (= :push-2 kind) (true? (:cue-variations? options))
+                         (#{50 58} (get-in options [:knob-page :button])))
+                (throw (ex-info "The knob page button is taken by cue variations (Note and Scale)"
+                                {:button (get-in options [:knob-page :button])})))
             push-source (when (#{:push-2 :push-3} kind)
                           {:adapter kind :session-id id})
             operator-id (when push-source (str (name kind) "/" id "/" (UUID/randomUUID)))

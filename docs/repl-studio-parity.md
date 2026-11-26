@@ -576,13 +576,16 @@ send `:knob/link`, `:knob/unlink` and `:knob/remove`. After the REPL turns the
 knob, the open slider and values follow from the projection. A refused link
 shows its reason in the panel. [Studio walkthrough](linked-knobs.md#using-it-from-studio)
 
+A Push encoder bound to the knob (Push 3 `:encoder-bindings` `{:target :knob}`,
+or the Push 2 `:knob-page`) sends the same `:knob/nudge`, and its display shows
+the knob's value and resolved link texts from the same projection
+([Push](linked-knobs.md#push)).
+
 **Tracked gaps.** The Studio picker links numeric destinations only. Colour,
-enum and boolean links are created from the REPL. Push needs an Afterglow
-adapter change before an encoder can be bound to a knob; the Tolglow command and
-display data are ready ([Push](linked-knobs.md#push),
-[issue #666](https://github.com/tolgraven/tolglow/issues/666)). Close this gap
-when Studio can set non-numeric endpoints and a Push encoder turns the same knob
-and shows the same resolved values.
+enum and boolean links are created from the REPL. Push binding is proven on
+virtual Push 2/3 replays, not on hardware, and the native Push 2 display does
+not draw knobs yet ([issue #666](https://github.com/tolgraven/tolglow/issues/666)).
+Close this gap when Studio can set non-numeric endpoints.
 
 ## Reviewing a show feature
 

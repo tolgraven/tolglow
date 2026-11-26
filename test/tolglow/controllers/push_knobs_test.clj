@@ -1,0 +1,183 @@
+(ns tolglow.controllers.push-knobs-test
+  "Linked knobs on virtual Push 2 and Push 3 surfaces (#666): captured MIDI
+  through show/connect-device! and the Afterglow adapters, compared with the
+  :knobs projection Studio reads."
+  (:require [afterglow.control.codecs.push-2 :as codec]
+            [afterglow.control.devices.session :as session]
+            [afterglow.control.model :as control]
+            [clojure.test :refer [deftest is testing]]
+            [tolglow.controllers.push-knobs :as push-knobs]
+            [tolglow.show :as show]))
+
+(def ^:private effects
+  {:tint {:id :tint :version 1 :category :color
+          :params {:saturation {:type :number :default 0.0 :bounds [0.0 1.0]}}
+          :outputs {:dimmer {:op :param :key :saturation}}}
+   :pulse {:id :pulse :version 1 :category :light
+           :params {:level {:type :number :default 0.0 :bounds [0.0 1.0]}}
+           :outputs {:dimmer {:op :param :key :level}}}})
+
+(defn- live-model []
+  (control/new-show
+   {:show-id :push-knobs :transport {:playing? true :beat 0.0 :bpm 120.0}
+    :registry {:effects effects
+               :cues (into {} (for [id (keys effects)] [id {:id id :effect-id id :version 1}]))}
+    :rig {:fixtures [{:id :head :universe 1 :address 1 :channels {:dimmer 1}}]}}))
+
+(def ^:private links
+  [{:id "sat" :destination {:kind :param :cue-id :tint :param :saturation} :range [0.2 1.0]}
+   {:id "rate" :destination {:kind :lfo :cue-id :pulse :param :level :field :period}
+    :range [2 1/2] :quantize {:ratios :preferred}}])
+
+(defn- submit! [rt time payload]
+  (let [reply (show/submit! rt :command (merge {:source {:adapter :studio :session-id "t"}} payload))]
+    (show/tick! rt time)
+    (deref reply 2000 ::missing)))
+
+(defn- setup! [rt]
+  (let [launch #(:instance-id (submit! rt %2 {:op :cue/launch :cue-id % :launch {:mode :persistent}}))
+        tint (launch :tint 0)
+        pulse (launch :pulse 10)
+        bound (let [reply (show/submit! rt :modulation-bind
+                                        {:instance-id pulse :param :level
+                                         :binding {:type :lfo :waveform :pulse :period {:beats 1}
+                                                   :phase-reference :transport :inputs {:duty 0.5}
+                                                   :from 0.0 :to 0.5}})]
+                (show/tick! rt 20)
+                (deref reply 2000 ::missing))
+        created (submit! rt 30 {:op :knob/create :knob-id :look :name "Look" :links links})]
+    (assert (= :accepted (:status bound)) (pr-str bound))
+    (assert (= :accepted (:status created)) (pr-str created))
+    {:tint tint :pulse pulse}))
+
+(defn- while-ticking
+  "Device input dispatches to the owner and waits for its receipt, so the
+  owner must keep ticking while the captured callback runs."
+  [rt time f]
+  (let [operation (future (f))
+        deadline (+ (System/nanoTime) 6000000000)]
+    (try
+      (loop []
+        (cond (realized? operation) @operation
+              (> (System/nanoTime) deadline) (throw (ex-info "Owner command did not settle" {}))
+              :else (do (show/tick! rt time) (Thread/sleep 2) (recur))))
+      (finally (future-cancel operation)))))
+
+(defn- studio-knob
+  "The knob as Studio sees it in the snapshot projection."
+  [rt]
+  (some #(when (= :look (:id %)) %) (get-in (show/snapshot rt) [:knobs :knobs])))
+
+(defn- saturation [rt id]
+  (get-in @(:state rt) [:model :instances id :params :saturation]))
+
+(defn- same-values?
+  "The device display shows the knob value and every link's resolved text and
+  exact ratio as Studio's projection does."
+  [display knob]
+  (and (= (:value knob) (:value display))
+       (= (mapv #(get-in % [:resolved :text]) (:links knob)) (mapv :text (:columns display)))
+       (= (mapv #(get-in % [:resolved :ratio]) (:links knob)) (mapv :ratio (:columns display)))))
+
+(deftest a-push-3-encoder-bound-to-a-knob-turns-it-and-shows-the-studio-values
+  (let [rt (show/create-runtime {:model (live-model) :workspace-options nil})
+        receive (atom nil)
+        views (atom [])
+        options {:session-id "push3-knob" :user-mode? true :expression-mode :poly-aftertouch :schedule! nil
+                 :layout {:pads {[0 0] {:channel 3 :note 12}}
+                          :encoder-touches {:look {:channel 2 :note 10}}
+                          :encoders {:look {:channel 2 :controller 21}}}
+                 :encoder-bindings {:look {:target :knob :knob-id :look}}
+                 :display {:device :push-3 :input :view :open! (constantly :capture-display)
+                           :render! (fn [_ view] (swap! views conj view)) :close! (fn [_])}
+                 :midi {:open! (fn [callback] (reset! receive callback) :capture)
+                        :send! (fn [_ _] (throw (ex-info "Unexpected Push 3 MIDI output" {})))
+                        :close! (fn [_])}}]
+    (try
+      (let [{:keys [tint]} (setup! rt)
+            device (show/connect-device! rt :push-3 options)
+            input! (fn [time bytes] (while-ticking rt time #(@receive bytes)) (show/tick! rt time))
+            projected #(push-knobs/project-display (:model @(:state rt)) (peek @views))]
+        (testing "touching the encoder shows the knob with Studio's resolved values"
+          (input! 100 [0x92 10 127])
+          (is (= {:target :knob :knob-id :look :editable? true} (:touched-control (peek @views))))
+          (is (same-values? (:knob (projected)) (studio-knob rt)))
+          (is (= ["0.200" "2 beats"] (mapv :text (:columns (:knob (projected)))))))
+        (testing "fifty detents move half the range and write every link"
+          (input! 110 [0xb2 21 50])
+          (is (< (Math/abs (- 0.5 (:value (studio-knob rt)))) 1e-9))
+          (is (< (Math/abs (- 0.6 (saturation rt tint))) 1e-9))
+          (is (same-values? (:knob (projected)) (studio-knob rt)))
+          (is (= [1 1] (:ratio (second (:columns (:knob (projected))))))))
+        (testing "a turn back is a relative nudge from the committed value"
+          (input! 120 [0xb2 21 (- 128 10)])
+          (is (< (Math/abs (- 0.4 (:value (studio-knob rt)))) 1e-9))
+          (is (same-values? (:knob (projected)) (studio-knob rt))))
+        (testing "the lift clears the knob display"
+          (input! 130 [0x82 10 0])
+          (is (nil? (:touched-control (peek @views))))
+          (is (nil? (:knob (projected)))))
+        (is (empty? (:errors (session/snapshot device)))))
+      (finally (show/stop! rt)))))
+
+(deftest a-push-2-knob-page-turns-knobs-and-shows-the-studio-values
+  (let [rt (show/create-runtime {:model (live-model) :workspace-options nil})
+        input (atom nil)
+        views (atom [])
+        capture {:open! (fn [receive!] (reset! input receive!) :capture)
+                 :send! (fn [_ _]) :close! (fn [_])}
+        display {:open! (constantly :capture-display)
+                 :render! (fn [_ view] (swap! views conj view)) :close! (fn [_])}]
+    (try
+      (let [{:keys [tint]} (setup! rt)
+            device (show/connect-device! rt :push-2 {:session-id "push2-knob" :midi capture :display display
+                                                     :led-batch-size 16 :schedule! nil
+                                                     :knob-page {:button 52 :knob-ids [:look :gone]}})
+            input! (fn [time bytes] (while-ticking rt time #(@input bytes)) (show/tick! rt time))
+            projected #(push-knobs/project-display (:model @(:state rt)) (peek @views))]
+        (doseq [index (range 128)]
+          (@input (assoc (codec/palette-write 0 index [0 0 0 0]) 6 4)))
+        (testing "the page button shows the knobs, marking one that does not exist"
+          (input! 100 [0xb0 52 127])
+          (input! 101 [0xb0 52 0])
+          (is (= [{:knob-id :look :name "Look" :value 0.0 :text "0.000" :links 2}
+                  {:knob-id :gone :missing? true}]
+                 (get-in (projected) [:knob-page :knobs]))))
+        (testing "a track encoder touch shows that knob as Studio does"
+          (input! 110 [0x90 0 127])
+          (is (= {:target :knob :knob-id :look :editable? true} (:touched-control (peek @views))))
+          (is (same-values? (:knob (projected)) (studio-knob rt))))
+        (testing "turns nudge the knob, a tenth with Shift, and write its links"
+          (input! 120 [0xb0 71 25])
+          (input! 130 [0xb0 49 127])
+          (input! 131 [0xb0 71 5])
+          (input! 132 [0xb0 49 0])
+          (is (< (Math/abs (- 0.255 (:value (studio-knob rt)))) 1e-9))
+          (is (< (Math/abs (- (+ 0.2 (* 0.8 0.255)) (saturation rt tint))) 1e-9))
+          (is (same-values? (:knob (projected)) (studio-knob rt))))
+        (testing "the empty slot and the missing knob change nothing"
+          (input! 140 [0xb0 73 3])
+          (is (< (Math/abs (- 0.255 (:value (studio-knob rt)))) 1e-9)))
+        (testing "lifting and toggling the page off returns the encoders to parameters"
+          (input! 150 [0x80 0 0])
+          (input! 151 [0xb0 52 127])
+          (is (nil? (:knob-page (peek @views))))
+          (is (< (Math/abs (- 0.255 (:value (studio-knob rt)))) 1e-9)))
+        (is (empty? (:errors (session/snapshot device)))))
+      (finally (show/stop! rt)))))
+
+(deftest the-knob-page-button-cannot-take-a-cue-variation-button
+  (let [rt (show/create-runtime {:model (live-model) :workspace-options nil})]
+    (try
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"knob page button"
+                            (show/connect-device! rt :push-2 {:session-id "p" :cue-variations? true
+                                                              :knob-page {:button 50 :knob-ids [:look]}})))
+      (finally (show/stop! rt)))))
+
+(deftest a-touched-knob-that-was-removed-is-marked-not-dropped
+  (let [view {:touched-control {:target :knob :knob-id :gone} :knob-page {:knob-ids [:gone]}}
+        projected (push-knobs/project-display (live-model) view)]
+    (is (= {:knob-id :gone :missing? true} (:knob projected)))
+    (is (= [{:knob-id :gone :missing? true}] (get-in projected [:knob-page :knobs])))
+    (is (= {:title "Tolglow"} (push-knobs/project-display (live-model) {:title "Tolglow"}))
+        "a view without knobs is unchanged")))
