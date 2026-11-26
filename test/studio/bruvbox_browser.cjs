@@ -262,6 +262,25 @@ const crypto = require('node:crypto');
     assert.deepEqual(lifecycle.stopped, [{ value: false }, false]);
     assert.deepEqual(lifecycle.failures, [closedNotice]);
 
+    // Quitting Neovim from inside the editor ends the worker; a late reply is refused, not thrown.
+    const quit = await page.evaluate(async source => {
+      const { NeovimEngine } = await globalThis.tolglowLoadEngine('neovim');
+      const host = document.createElement('div');
+      host.style.cssText = 'position:fixed;inset:20px;width:800px;height:420px;z-index:1000';
+      document.body.append(host);
+      const failures = [];
+      const editor = new NeovimEngine(host, { pinBuffer: true, fileName: '/home/user/cue.clj', onError: error => failures.push(error) });
+      const outcome = promise => promise.then(value => ({ value }), error => ({ error: error.message }));
+      try {
+        await editor.start(source);
+        const draft = await editor.draft();
+        await editor.send(':qa!<CR>');
+        for (let wait = 0; wait < 250 && !failures.length; wait++) await new Promise(resolve => setTimeout(resolve, 20));
+        return { late: await outcome(editor.setDraftDiagnostics(draft, [{ lnum: 0, col: 0, message: 'Draft diagnostic', severity: 1 }])), failures };
+      } finally { editor.stop(); host.remove(); }
+    }, '(def saved 1)');
+    assert.deepEqual(quit, { late: { value: false }, failures: ['Neovim exited (0).'] });
+
     // A finding is visible while typing: its message on its line and its own underline colour.
     const display = await page.evaluate(async source => {
       const { NeovimEngine } = await globalThis.tolglowLoadEngine('neovim');
@@ -351,6 +370,6 @@ const crypto = require('node:crypto');
     assert.equal(remount.sizes[1].findings, 1);
     assert.ok(remount.sizes[1].marks <= 4, `extmarks ${remount.sizes[1].marks}`);
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ status: 'passed', checks: ['pinned theme source hashes', 'native Bruvbox name and highlight RGB values', 'native 16-color terminal palette', 'actual buffer and cursor preserved', 'shared CSS palette', 'pinned cue across native scratch windows', 'UTF-8 draft digest and changedtick', 'stale and racing diagnostics rejected', 'owned diagnostics cleared on edit', 'one observer through reload, unload and reopen', 'late replies to a closed or stopped editor refused', 'finding message and underline shown while typing', 'remount refused by session', 'bounded marks, findings and observers', 'clean browser/editor teardown'], native: result.native, css: result.css }, null, 2));
+    console.log(JSON.stringify({ status: 'passed', checks: ['pinned theme source hashes', 'native Bruvbox name and highlight RGB values', 'native 16-color terminal palette', 'actual buffer and cursor preserved', 'shared CSS palette', 'pinned cue across native scratch windows', 'UTF-8 draft digest and changedtick', 'stale and racing diagnostics rejected', 'owned diagnostics cleared on edit', 'one observer through reload, unload and reopen', 'late replies to a closed, stopped or exited editor refused', 'finding message and underline shown while typing', 'remount refused by session', 'bounded marks, findings and observers', 'clean browser/editor teardown'], native: result.native, css: result.css }, null, 2));
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

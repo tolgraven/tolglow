@@ -2,6 +2,9 @@
 const namedKeys = { Backspace: 'BS', Enter: 'CR', Escape: 'Esc', Tab: 'Tab', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right', Delete: 'Del', Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown' };
 const color = value => `#${Math.max(0, value).toString(16).padStart(6, '0')}`;
 const closedMessage = 'The cue buffer is closed.';
+// transport.js rejects every request with this once its worker is gone, for example
+// after :qa! in the editor, before the caller has stopped the engine.
+const sessionClosedMessage = 'Neovim session is closed';
 // Neovim detaches buffer observers whenever it frees the buffer's text, including
 // :edit!, :bdelete and :bunload. A buffer that is loaded again by the time the detach
 // is handled was reloaded: observe it again and report its text as a change. Otherwise
@@ -148,7 +151,8 @@ export class NeovimEngine {
   }
   // Findings use Neovim's zero-based line and UTF-8 byte columns. Passing []
   // clears this draft's findings without disturbing other diagnostic namespaces.
-  // A reply for an earlier draft, a closed buffer or a stopped editor resolves false.
+  // A reply for an earlier draft, a closed buffer, a stopped editor or an exited Neovim
+  // resolves false.
   async setDraftDiagnostics(identity, findings) {
     const nvim = this.nvim, pinned = this.pinnedBuffer;
     if (!this.ready || !pinned || identity?.sessionId !== pinned.sessionId || identity.bufferId !== pinned.bufferId) return false;
@@ -157,7 +161,7 @@ export class NeovimEngine {
       if (identity.changedtick !== draft.changedtick || identity.sourceSha256 !== draft.sourceSha256) return false;
       return await nvim.request('nvim_exec_lua', [applyDraftDiagnostics, [pinned.bufferId, draft.changedtick, findings]]);
     } catch (error) {
-      if (nvim !== this.nvim || error.message === closedMessage) return false;
+      if (nvim !== this.nvim || error.message === closedMessage || error.message === sessionClosedMessage) return false;
       throw error;
     }
   }

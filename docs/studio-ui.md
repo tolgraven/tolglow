@@ -121,8 +121,8 @@ and diagnosing that buffer when the user opens another file in the window. Each
 `onChange` carries a draft `{sessionId, bufferId, changedtick, sourceSha256,
 source}`. `setDraftDiagnostics(draft, findings)` applies findings (zero-based line,
 UTF-8 byte column) only while session, buffer, changedtick and digest still match,
-and resolves `false` for an earlier draft, a closed buffer or a stopped editor. Any
-edit clears the findings. They show their message at the end of the line, also in
+and resolves `false` for an earlier draft, a closed buffer, a stopped editor or a
+Neovim that has exited (`:qa!`). Any edit clears the findings. They show their message at the end of the line, also in
 insert mode. `:edit!` and reopening after `:bdelete` keep the observer and report
 the buffer's new text as a change; while the buffer is unloaded the engine reports
 one close through `onError`. The caller still fences replies against its own show
