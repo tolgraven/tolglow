@@ -262,8 +262,9 @@ instance keeps its last good revision and state. It records a bounded
 `:reload-fault` with `:stage :migrate`, `:effect-version`, `:from-version` and the
 authored cause path, such as `[:state-migration :from 2 0 :path]`. Other cues keep
 rendering the same bytes. Publish a newer revision or submit `:instance/retry`
-to try again. Cue-owned modulation can briefly follow a rejected candidate;
-see [#653](https://github.com/tolgraven/tolglow/issues/653). The engine contract is in Afterglow's
+to try again. Modulation owned by or aimed at the cue is sampled for both
+outcomes, so a rejected revision leaves its controllers and overlays untouched;
+see [modulation](modulation.md#a-frame-with-a-pending-hot-reload). The engine contract is in Afterglow's
 [effect failure isolation](../../afterglow/doc/architecture/effect-fault-isolation.md#state-migration-on-reload).
 
 The focused tests render real scalar and typed contributions at quarter-cycle
