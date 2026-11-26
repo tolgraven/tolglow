@@ -35,18 +35,16 @@
 (defn- packed [bytes i]
   (+ (* 256 (bit-and 255 (nth bytes i))) (bit-and 255 (nth bytes (inc i)))))
 
-(defn- comparable-frames?
-  ([cpu gpu] (comparable-frames? cpu gpu [5]))
-  ([cpu gpu axes]
+(defn- comparable-frames? [cpu gpu]
   (and (= (set (keys cpu)) (set (keys gpu)))
        (every?
         (fn [[id {a 1}]]
-          (let [b (get-in gpu [id 1]) motor-starts (set (for [fixture (range 8) axis axes] (+ axis (* 12 fixture))))]
+          (let [b (get-in gpu [id 1]) motor-starts (set (for [fixture (range 8)] (+ 5 (* 12 fixture))))]
             (and (= (count a) (count b) 512)
                  (every? #(<= (abs (- (packed a %) (packed b %))) 1) motor-starts)
                  (every? #(= (get a %) (get b %))
                          (remove (into motor-starts (map inc motor-starts)) (range 512))))))
-        cpu))))
+        cpu)))
 
 (deftest configured-show-owns-and-releases-native-session
   (let [runtime (app/start! {:init {:components [:show] :modules [] :post []}
@@ -158,39 +156,71 @@
           (is (= after-restart @frames))))
       (finally (deliver release true) (show/stop! runtime)))))
 
+(def ^:private native-heads
+  {:requested :native-gpu :backend :native-gpu :gpu-heads 2 :cpu-heads 0})
+
+(defn- eight-bit-axes
+  "The demo rig with single-byte pan and tilt channels."
+  [model]
+  (update-in model [:rig :fixtures] (partial mapv #(update % :channels assoc :pan 6 :tilt 8))))
+
+(defn- blend-movement!
+  "Blend two direction cues on two heads through a CPU show and a show with
+  native movement. Return both capture logs, the native show's final status and
+  the rounding guard margin its renderer row selected."
+  [expressions model]
+  (let [expected (atom {}) actual (atom {})
+        cpu (show/create-runtime {:model model :sink (capture expected)})
+        show (show/create-runtime {:model model :sink (capture actual) :compute-backend expressions
+                                   :movement-backend :native-gpu :gpu-budget-ms 5000})
+        defs [{:id :left :version 1 :targets [:head-1 :head-4]
+               :outputs {:direction [0.25 0.5 1.0] :red 0.75}}
+              {:id :right :version 1 :targets [:head-1 :head-4]
+               :outputs {:direction [1.0 0.5 0.25]}}]
+        commands (mapcat (fn [{:keys [id] :as definition}]
+                           [{:op :registry/publish :kind :effects :definition definition}
+                            {:op :cue/put :cue {:id id :effect-id id}}
+                            {:op :cue/launch :cue-id id}]) defs)]
+    (try
+      (doseq [runtime [cpu show]]
+        (let [replies (run-commands! runtime 0.0 commands)
+              top-id (:instance-id (last replies))]
+          (is (every? #(= :accepted (:status %)) replies))
+          ;; A cold software GL context may outlive the first frame deadline.
+          ;; Wait for that actual draw before comparing the three warm frames.
+          (when-let [worker (get-in runtime [:compute :movement :worker])]
+            (.get (.submit ^java.util.concurrent.ExecutorService worker ^Runnable (fn []))
+                  45 java.util.concurrent.TimeUnit/SECONDS))
+          (doseq [[tick alpha] [[25.0 0.0] [50.0 0.5] [75.0 1.0]]]
+            (is (= :accepted (:status (first (run-commands! runtime tick
+                                              [{:op :instance/opacity-set :instance-id top-id :value alpha}]))))))))
+      {:expected @expected :actual @actual :status (:status (show/snapshot show))
+       :margin (get-in (movement/renderer (get-in show [:compute :movement])) [:rounding :margin])}
+      (finally (show/stop! show) (show/stop! cpu)))))
+
 (deftest movement-is-independent-of-expression-backend-and-resolves-effect-opacity
   (doseq [expressions [:cpu :native-gpu]]
-    (let [expected (atom {}) actual (atom {})
-          cpu (show/create-runtime {:sink (capture expected)})
-          show (show/create-runtime {:sink (capture actual) :compute-backend expressions
-                                     :movement-backend :native-gpu :gpu-budget-ms 5000})
-          defs [{:id :left :version 1 :targets [:head-1 :head-4]
-                 :outputs {:direction [0.25 0.5 1.0] :red 0.75}}
-                {:id :right :version 1 :targets [:head-1 :head-4]
-                 :outputs {:direction [1.0 0.5 0.25]}}]
-          commands (mapcat (fn [{:keys [id] :as definition}]
-                             [{:op :registry/publish :kind :effects :definition definition}
-                              {:op :cue/put :cue {:id id :effect-id id}}
-                              {:op :cue/launch :cue-id id}]) defs)]
-      (try
-        (doseq [runtime [cpu show]]
-          (let [replies (run-commands! runtime 0.0 commands)
-                top-id (:instance-id (last replies))]
-            (is (every? #(= :accepted (:status %)) replies))
-            ;; A cold software GL context may outlive the first frame deadline.
-            ;; Wait for that actual draw before comparing the three warm frames.
-            (when-let [worker (get-in runtime [:compute :movement :worker])]
-              (.get (.submit ^java.util.concurrent.ExecutorService worker ^Runnable (fn []))
-                    45 java.util.concurrent.TimeUnit/SECONDS))
-            (doseq [[tick alpha] [[25.0 0.0] [50.0 0.5] [75.0 1.0]]]
-              (is (= :accepted (:status (first (run-commands! runtime tick
-                                                [{:op :instance/opacity-set :instance-id top-id :value alpha}]))))))))
-        (is (= {:requested :native-gpu :backend :native-gpu :gpu-heads 2 :cpu-heads 0}
-               (get-in (show/snapshot show) [:status :movement])))
-        (is (= expressions (get-in (show/snapshot show) [:status :compute :active])))
-        (is (= 3 (count (set (map #(packed (get (val %) 1) 5) (rest (sort @actual)))))))
-        (is (comparable-frames? @expected @actual [5 7]))
-        (finally (show/stop! show) (show/stop! cpu))))))
+    (let [{:keys [expected actual status margin]} (blend-movement! expressions nil)]
+      (is (number? margin) "The native rig reports its renderer's rounding guard")
+      ;; The guard keeps an axis native only when its code is the same at both
+      ;; ends of level +/- margin. A margin of half a 16-bit code or more spans
+      ;; a code boundary at every level, so both 16-bit heads use the reference.
+      (is (= (if (and margin (< (* 2.0 65535 margin) 1.0))
+               native-heads
+               {:requested :native-gpu :backend :cpu :gpu-heads 0 :cpu-heads 2 :reason :ambiguous})
+             (:movement status)))
+      (is (= expressions (get-in status [:compute :active])))
+      (is (= 3 (count (set (map #(packed (get (val %) 1) 5) (rest (sort actual)))))))
+      (is (= expected actual) "Every published byte matches the CPU show"))))
+
+(deftest eight-bit-movement-stays-native-on-every-renderer-row
+  ;; Every row's margin is a small fraction of a single-byte code, so a
+  ;; renderer that sends each 16-bit axis to the reference still draws these.
+  (let [{:keys [expected actual status margin]} (blend-movement! :cpu (eight-bit-axes (demo/model)))]
+    (is (number? margin) "The native rig reports its renderer's rounding guard")
+    (is (= native-heads (:movement status)))
+    (is (= 3 (count (set (map #(get-in (val %) [1 5]) (rest (sort actual)))))))
+    (is (= expected actual) "Every published byte matches the CPU show")))
 
 (deftest configured-movement-owner-is-closed-on-show-stop
   (let [show (app/start! {:init {:components [:show] :modules [] :post []}

@@ -19,6 +19,26 @@
     (is (nil? (get-in result [:db :push-display :ignored])))
     (is (= {:attack {:beats 0.5}} (get-in result [:db :push-display :effect :envelope])))))
 
+(deftest waveform-glyphs-are-bounded-display-data
+  (let [entry {:id "saw" :name "Saw" :glyph (vec (range 200)) :params {:duty 0.5}}
+        glyphs (:waveform-glyphs (display/normalize-view {:waveform-glyphs (concat [7] (repeat 40 entry))}))]
+    (is (= 31 (count glyphs)) "at most 32 entries are read and non-maps are dropped")
+    (is (= #{:id :name :glyph} (set (keys (first glyphs)))))
+    (is (= 129 (count (:glyph (first glyphs)))))
+    (is (not (contains? (display/normalize-view {}) :waveform-glyphs)))))
+
+(deftest the-active-track-feel-is-a-bounded-picture
+  (let [icon "data:image/svg+xml;base64,PHN2Zy8+"
+        shown (display/normalize-view {:personality {:id :squircle :name "Corner obsession" :icon icon :palette [[1 0 0]]}})]
+    (is (= {:name "Corner obsession" :icon icon} (:personality shown)))
+    (is (= 80 (count (get-in (display/normalize-view {:personality {:name (apply str (repeat 200 "x")) :icon icon}})
+                             [:personality :name]))))
+    (is (nil? (:personality (display/normalize-view {}))))
+    (is (nil? (:personality (display/normalize-view {:personality {:name "Remote" :icon "https://example.invalid/a.svg"}})))
+        "the passive display loads nothing but the supplied picture")
+    (is (nil? (:personality (display/normalize-view
+                             {:personality {:name "Large" :icon (apply str "data:image/svg+xml;base64," (repeat 20000 "A"))}}))))))
+
 (deftest typed-values-share-labels-with-web-controls
   (is (= "Triangle" (widgets/value-label {:choices [{:value 1 :label "Triangle"}]} 1)))
   (is (= "On" (widgets/value-label {:type :boolean} true)))

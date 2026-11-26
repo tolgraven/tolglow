@@ -7,6 +7,7 @@
             [tolglow.studio.chat :as chat]
             [tolglow.studio.checkpoints :as checkpoints]
             [tolglow.studio.cue-pad-preview :as pad-preview]
+            [tolglow.studio.pad-breath :as pad-breath]
             [tolglow.studio.composition-layers :as layers]
             [tolglow.studio.variable-blocks :as variable-blocks]
             [tolglow.studio.debug :as debug]
@@ -18,6 +19,7 @@
             [tolglow.studio.connections :as connections]
             [tolglow.studio.events :as events]
             [tolglow.studio.keyframe-editor :as keyframes]
+            [tolglow.studio.knobs :as knobs]
             [tolglow.studio.reactive-editor :as reactive-editor]
             [tolglow.studio.expressive-mapping :as expressive]
             [tolglow.studio.effect-group-mixer :as effect-group-mixer]
@@ -42,6 +44,7 @@
             [tolglow.studio.performance :as performance]
             [tolglow.studio.lighting-scenes :as lighting-scenes]
             [tolglow.studio.lighting-policy :as lighting-policy]
+            [tolglow.studio.personality :as personality]
             [tolglow.studio.autopilot :as autopilot]
             [tolglow.studio.workspace :as workspace]))
 
@@ -178,6 +181,7 @@
         preview (or (get colors typed-cue-id) (get colors cue-id))
         active (filter #(= typed-cue-id (:cue-id %)) (:instances show))
         queued? (and cue (some #(= typed-cue-id (:cue-id %)) (:pending-cue-launches show)))
+        state (pad-breath/pad-state active queued?)
         cell {:cue-id cue-id :typed-cue-id typed-cue-id :cue-name cue-name
               :x x :y y :page-id page-id :typed-page-id (:id page)
               :owner (select-keys show [:runtime-id :epoch])}
@@ -188,14 +192,14 @@
                  (send! [:studio/gesture-down (merge cell {:pointer-id (.-pointerId event)
                                                           :client-x (.-clientX event) :client-y (.-clientY event)})])))]
     [:button.cue-cell
-     {:class (str (when-not cue "empty ") (when (seq active) "active ")
-                  (when (some #(= :releasing (:phase %)) active) "releasing ")
-                  (when queued? "queued ")
+     {:class (str (when-not cue "empty ") (pad-breath/pad-classes state)
                   (when (and (:edit? ui) (not recent?)) "editing"))
       :style (when cue (if preview {"--cue-color" (widgets/color-css preview)} (color-style cue)))
       :data-preview (when preview "live") :data-x x :data-y y :data-cue-id (or cue-id "")
       :disabled (not (get-in db [:connection :connected?]))
       :aria-label (str (or cue-name "Empty cell") ", column " (inc x) ", row " (inc y)
+                       (cond (:held state) ", held" (:running state) ", running"
+                             (:releasing state) ", releasing")
                        (when queued? ", queued"))
       :aria-pressed (boolean (seq active)) :on-pointer-down down
       :on-pointer-move #(send! [:studio/gesture-move {:pointer-id (.-pointerId %) :client-x (.-clientX %) :client-y (.-clientY %)}])
@@ -228,6 +232,17 @@
         [:span.cue-name cue-name]
         [:span.cue-category (if queued? "Queued" (or (some-> (:category cue) events/wire-id) "CUE"))]]
        (when-not recent? "+"))]))
+
+(defn- pad-breath-wanted?
+  "Whether any pad on this page breathes, blinks or flashes, so the shared
+  clock only runs while something on screen needs it."
+  [db page]
+  (let [show (get-in db [:server-projection :view])
+        cue-ids (set (keep :cue-id (:cells page)))]
+    (boolean (or (some #(and (contains? cue-ids (:cue-id %))
+                             (contains? #{"running" "releasing"} (some-> (:phase %) events/wire-id)))
+                       (:instances show))
+                 (some #(contains? cue-ids (:cue-id %)) (:pending-cue-launches show))))))
 
 (defn queued-cues [db]
   (let [{:keys [cues pending-cue-launches]} (:show db)]
@@ -323,7 +338,9 @@
      [:div.cue-grid-scroll
       [pad-preview/grid (:id page) rows (and (not selected-recent) (= :perform (:view ui))
                                              (get-in db [:connection :connected?]))
-       cue-cell db page]]
+       cue-cell db page]
+      [pad-breath/clock-driver (get-in db [:show :transport]) (get-in db [:show :transport-generation])
+       (and (= :perform (:view ui)) (pad-breath-wanted? db page))]]
      [queued-cues db]
      [scheduled-events db]
      [:div.grid-footer [:span#gesture-hint (cond (and (:edit? ui) (not selected-recent)) "Choose a cell to edit its actions."
@@ -341,7 +358,8 @@
 (defn- parameter-control [instance parameter schema & [handlers options]]
   (let [value (get-in instance [:params parameter] (:default schema))
         choices (:choices schema)
-        type (cond (waveform/waveform-schema? schema) "waveform" (seq choices) "choice" :else (:type schema "number"))
+        shapes (when-not (waveform/waveform-schema? schema) (waveform/shape-choices schema))
+        type (cond (waveform/waveform-schema? schema) "waveform" shapes "shape" (seq choices) "choice" :else (:type schema "number"))
         change! (or (:change handlers) #(input! [:studio/param-set (:id instance) parameter %]))
         component! (or (:component handlers) #(input! [:studio/param-component (:id instance) parameter %1 %2]))
         source (when-not handlers (sources/reading instance parameter))
@@ -354,6 +372,7 @@
      (case type
        "waveform" [waveform/picker (:id instance) parameter schema value change!
                    {:params (:params instance) :live? (nil? handlers)}]
+       "shape" [widgets/shape-picker title shapes value change!]
        "choice" (let [selected (or (first (keep-indexed #(when (= value (:value %2)) %1) choices)) 0)]
                   [:select {:aria-label title :value selected :on-change #(change! (:value (get choices (js/parseInt (input-value %) 10))))}
                    (for [[index choice] (map-indexed vector choices)]
@@ -413,6 +432,25 @@
                :aria-label (str "Preview " label)
                :on-change #(when-let [v (number-value %)] (input! [:studio/preview-setting key v]))}]])])
 
+(defn- scene-draft-banner [db]
+  (when-let [{:keys [id revision operations status pending? connected?] :as control} (events/scene-draft-control db)]
+    (let [busy? (or pending? (not connected?))
+          scheduled? (= :scheduled status)]
+      [:div.scene-draft-banner {:role "status" :aria-label "Room draft audition" :data-draft-id id}
+       [:div [:strong "Draft audition"]
+        [:span.small.muted (str " · " id " · revision " revision " · " operations " staged"
+                                (events/scene-draft-note control))]
+        [:p.small.muted (if (#{:stale :error} status)
+                          "The Room shows the live show. Live output is unchanged."
+                          "The Room shows this draft. Live output is unchanged until you apply it.")]]
+       [:div.button-row
+        [:button.button.primary {:type "button" :disabled (or busy? scheduled? (#{:stale :error} status))
+                                 :on-click #(send! [:studio/scene-draft-apply nil])} "Apply"]
+        [:button.button {:type "button" :disabled (or busy? scheduled? (#{:stale :error} status))
+                         :on-click #(send! [:studio/scene-draft-apply {:bars 1}])} "Apply on next bar"]
+        [:button.text-button {:type "button" :disabled busy?
+                              :on-click #(send! [:studio/scene-draft-discard])} "Discard"]]])))
+
 (defn- preview-panel [db]
   [:section#preview-panel.preview-panel.panel {:aria-label "Live fixture preview"
                                               :class (when (get-in db [:ui :preview-expanded?]) "expanded")}
@@ -426,7 +464,8 @@
                             :on-click #(send! [:studio/preview-expand])} (if (get-in db [:ui :preview-expanded?]) "Compact" "Expand")]
      [:button.icon-button {:type "button" :aria-label "Fullscreen preview" :title "Fullscreen preview"
                             :on-click #(input! [:studio/preview-fullscreen])} "⛶"]]]
-   [spatial-preview/scene (or (:server-presentation db) (:show db)) (get-in db [:server-projection :view :settings :spatial]) :perform]
+   [scene-draft-banner db]
+   [spatial-preview/scene (events/room-show db) (get-in db [:server-projection :view :settings :spatial]) :perform]
    [camera-controls/controls]
    (when (get-in db [:ui :preview-controls?])
      [:div.preview-settings
@@ -575,8 +614,8 @@
                               :on-click #(set-ui! [:performance-section] id)} title])]]
      [:div.performance-layout {:class (when (get-in db [:ui :preview-expanded?]) "preview-expanded")}
       [:div.performance-launch [cue-grid db]]
-      [:div.performance-live [section-pattern-panel db] [performance/board db parameter-control]
-       [effect-group-mixer/panel]
+      [:div.performance-live [section-pattern-panel db] [personality/panel] [performance/board db parameter-control]
+       [effect-group-mixer/panel] [knobs/panel db]
        [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
       [:div.performance-room [preview-panel db]]
       [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]]]))

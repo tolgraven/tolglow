@@ -28,12 +28,19 @@
                           (assoc :usage (select-keys (:usage preview) [:cue-count :page-count :running-count]))
                           (seq (:load-options preview)) (assoc :load-options (vec (take 2 (:load-options preview))))))))))
 
+(defn personality
+  "The active track feel's name and picture, when the show supplied an SVG data URI."
+  [{:keys [name icon]}]
+  (when (and (string? icon) (str/starts-with? icon "data:image/svg+xml;base64,") (<= (count icon) 16384))
+    {:name (when (string? name) (subs name 0 (min 80 (count name)))) :icon icon}))
+
 (defn normalize-view [view]
   (let [view (if (map? view) view {})]
     (-> (select-keys view [:title :page :origin :status :master :blackout? :bpm :selected
                           :cue :effect :swatch :category-colors :page-overview :display-mode :scene :audio-waveform :instance-id
-                          :parameter-bank :active-effect-navigation :touched-parameter :fine?])
+                          :parameter-bank :active-effect-navigation :touched-parameter :fine? :musical-timing])
         (assoc :touched-parameters (vec (take 8 (:touched-parameters view)))
+               :personality (personality (:personality view))
                :saved-show-catalog (saved-show-catalog (:saved-show-catalog view))
                :pad-overlay (when-let [overlay (:pad-overlay view)]
                               (if (#{:beat-ratios "beat-ratios"} (:layout overlay))
@@ -50,6 +57,12 @@
                          (select-keys (:preset view) [:saved? :changed? :record? :action]))
                :touched-control (when (map? (:touched-control view))
                                   (select-keys (:touched-control view) [:target :editable?])))
+        (cond-> (seq (:waveform-glyphs view))
+          ;; Registered waveform glyphs for shape choices, bounded like the rest.
+          (assoc :waveform-glyphs (into [] (comp (take 32) (filter map?)
+                                                 (map #(-> (select-keys % [:id :name :glyph])
+                                                           (update :glyph (fn [g] (vec (take 129 g)))))))
+                                        (:waveform-glyphs view))))
         (assoc :parameters (vec (take 8 (:parameters view)))
                :active-effects (vec (take 8 (:active-effects view)))
                :cells (vec (take 8 (:cells view))) :labels (vec (take 8 (:labels view)))))))
@@ -184,11 +197,14 @@
                         (if-let [id (compound-key parameter)] [:compound id] [:encoder index]))
                       slots)))
 
-(defn- axis-reading [{:keys [schema component effective-value value]}]
-  (let [values (visualization/components schema (if (some? effective-value) effective-value value))]
-    (when-let [shown (get values component)]
+(defn- axis-reading [{:keys [schema component component-label effective-value value]}]
+  (let [values (visualization/components schema (if (some? effective-value) effective-value value))
+        color? (= :color (widgets/parameter-kind schema))]
+    (when-let [shown (if color?
+                       (widgets/component-amount values component-label component)
+                       (get values component))]
       [:output.push-axis-reading
-       (widgets/number-label (get (:component-schemas schema) component schema) shown)])))
+       (widgets/number-label (get (:component-schemas schema) component (if color? {:bounds [0 1]} schema)) shown)])))
 
 (defn- parameters [view compact?]
   (let [slots (encoder-slots view)
@@ -278,6 +294,8 @@
                         :class (str (when audio? "audio-mode ") (when global "global-control-active"))}
      [:header.push-heading
       [:span.push-brand (or (:title view) "Tolglow")]
+      (when-let [{:keys [name icon]} (:personality view)]
+        [:span.push-personality {:title name} [:img {:src icon :alt (or name "Track feel")}]])
       [:span.push-page (widgets/label (:page view))]
       [:strong.push-selection (or (:name cue) (:name effect) (some-> (:selected view) widgets/label) "Choose a cue")]
       (if-let [armed (get-in view [:target-picker :armed])]

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96" role="img" aria-label="Spiralling in general">
+<title>Spiralling in general</title>
+<defs><linearGradient id="p7c5ac7-0" gradientUnits="userSpaceOnUse" x1="21" y1="22.4" x2="62.6" y2="46.4"><stop offset="0%" stop-color="#33e6cc"/><stop offset="50%" stop-color="#4d66ff"/><stop offset="100%" stop-color="#cc33e6"/></linearGradient></defs>
+<rect x="2" y="2" width="92" height="92" rx="20" fill="#101418"/>
+<path d="M43.5 34.3L43.9 33.5L44 32.2L43 31.1L41.7 30.4L40 30L37.9 30.7L36.4 32.2L35 34.3L35.2 37.3L36.3 39.9L38.5 42.3L42 43.7L45.6 43.4L49.2 41.6L51.7 38.6L53.5 34.5L53 30L50.9 25.3L46.8 22L42 20.5L36.3 21L31 23.5L27.2 28.4L25.4 34.4L26.1 40.9L29.4 47L34.7 51.2L41.7 53.3L49.4 52.5L56.1 48.8L60.9 42.3L63.2 34.4" fill="none" stroke="url(#p7c5ac7-0)" stroke-width="5.3" stroke-linecap="round" stroke-linejoin="round" transform="rotate(1.1 41.8 34.4)"/>
+<circle cx="69.6" cy="67.6" r="15" fill="#40f2bf"/>
+<circle cx="30.9" cy="74.7" r="10.4" fill="none" stroke="#9959ff" stroke-width="5.2"/>
+</svg>

@@ -9,9 +9,12 @@
             [tolglow.composition.response :as response]
             [tolglow.controllers.parameter-display :as parameter-display]
             [tolglow.effects :as fx]
+            [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.oscillator :as oscillator]
             [tolglow.registry :as registry]
-            [tolglow.signals :as signals])
+            [tolglow.signals :as signals]
+            [tolglow.visualization.musical-grid :as musical-grid]
+            [tolglow.visualization.waveform-shapes :as waveform-shapes])
   (:import [java.util Objects]))
 
 (defn- fail! [message data] (throw (ex-info message (assoc data :type ::invalid-projection))))
@@ -153,21 +156,20 @@
       {:phase ((ir/compile-expression expression) environment)
        :period (time/duration->beats {(musical-coordinate coordinate) (:value duration)} (:meter environment))})))
 
-(defn- musical-ticks [transport beat span]
-  (let [{:keys [beats-per-bar bars-per-phrase]} (time/normalize-meter (:meter transport))
-        bar-origin (:bar-origin-beat transport 0.0)
-        phrase-origin (:phrase-origin-beat transport bar-origin)
-        boundaries (fn [origin spacing kind]
-                     (let [start (- origin beat)
-                           first-offset (- (mod (+ start span) spacing) span)]
-                       (for [index (range 65)
-                             :let [offset (+ first-offset (* index spacing))]
-                             :while (<= offset span)]
-                         [(double (/ offset span)) kind])))]
-    (mapv (fn [[position kind]] {:position position :kind kind})
-          (sort-by first (into {} (concat (boundaries 0 1 :beat)
-                                          (boundaries bar-origin beats-per-bar :bar)
-                                          (boundaries phrase-origin (* beats-per-bar bars-per-phrase) :phrase)))))))
+(defn- transport-timing
+  "The meter and the bar and phrase origins a display needs for a musical grid."
+  [transport]
+  (merge {:meter (time/normalize-meter (:meter transport))}
+         (select-keys transport [:bar-origin-beat :phrase-origin-beat])))
+
+(defn- musical-ticks
+  "Grid lines one span either side of the beat. The period chooses the units."
+  [transport beat span period]
+  (let [spec (musical-grid/grid (assoc (transport-timing transport)
+                                       :start-beat (- beat span) :span-beats (* 2 span)
+                                       :period-beats period :aligned? true))]
+    (mapv (fn [{:keys [position unit]}] {:position (- (* 2.0 position) 1.0) :kind unit})
+          (:lines spec))))
 
 (defn- jump-phases [waveforms {:keys [selector choices]} environment]
   (let [index (long (min (dec (count choices)) (max 0 (Math/floor (+ selector 0.5)))))
@@ -216,8 +218,31 @@
               (when (<= 2 (count samples) 2048)
                 {:beat beat :now-value (sample phase) :transport-generation (or transport-generation 0)
                  :transport (select-keys transport [:source :source-epoch :source-selection-epoch :playing? :meter])
-                 :ticks (musical-ticks transport beat span)
+                 :ticks (musical-ticks transport beat span period)
                  :samples (mapv (fn [[position value]] {:phase position :value value}) samples)}))))))))
+
+(defn- signal-period
+  "Beats in one cycle of a selector whose effect output has one musical phase,
+  with the meter that period was measured in."
+  [waveforms model instance parameter selection environment]
+  (try
+    (when-let [phase-expression (selector-phase waveforms instance parameter (:choices selection) {})]
+      (let [transport (:transport model)
+            period (:period (phase-timing phase-expression environment transport
+                                          (get-in instance [:system :paused?])))]
+        (when (and (time/finite-number? period) (pos? period))
+          {:period-beats (double period)
+           :meter (time/normalize-meter (if (= :transport (:phase-reference phase-expression))
+                                          (:meter transport)
+                                          (:meter environment)))})))
+    (catch clojure.lang.ExceptionInfo _ nil)))
+
+(defn- cycle-grid
+  "The sampled cycle window in beats since its cycle began, and the musical
+  grid behind it."
+  [{:keys [period-beats] :as timing} {:keys [start-phase cycles]}]
+  (let [window (assoc timing :start-beat (* start-phase period-beats) :span-beats (* cycles period-beats))]
+    {:signal-timing window :grid (musical-grid/grid window)}))
 
 (defn- sample-signal [waveforms selection params options environment]
   (let [n (:samples options 129) cycles (:cycles options 1.0) start (:start-phase options 0.0)]
@@ -262,6 +287,7 @@
                                              (or selection id)))
         environment (signal-environment model instance)
         result (sample-signal waveforms selection params options environment)
+        period (when instance (signal-period waveforms model instance parameter selection environment))
         timing (when (and instance (true? (:live-timing? options)))
                  (try (timeline waveforms snapshot instance parameter selection params environment)
                       (catch clojure.lang.ExceptionInfo _ nil)))]
@@ -269,6 +295,7 @@
                              :definition-id (:effect-id instance) :definition-version (:effect-version instance)
                              :waveform-revision (:revision waveforms) :params-digest (str (hash params))
                              :selection-digest (str (hash selection)) :context-digest (str (hash environment)) :options options})
+      period (merge (cycle-grid period result))
       timing (assoc :timeline timing))))
 
 (defn create-cache [] (atom {:entries {} :order []}))
@@ -285,7 +312,9 @@
              (select-keys instance [:id :effect-id :effect-version :definition])
              (when instance (effective-params snapshot instance))
              (when (or clock-bound? live-timing?) (signal-environment model instance))
-             (when live-timing? [(:transport model) (:transport-generation snapshot)]) (dissoc request :input-key)]]
+             (when live-timing? [(:transport model) (:transport-generation snapshot)])
+             (when instance [(:timing-meter instance) (get-in model [:transport :meter])])
+             (dissoc request :input-key)]]
     (or (get-in @cache [:entries key])
         (let [result (preview snapshot request)]
           (swap! cache (fn [{:keys [entries order] :as state}]
@@ -307,6 +336,18 @@
                        :rms (rms :rms)
                        :bands (into {} (map (fn [band] [band (rms #(get-in % [:bands band] 0.0))])) [:low :mid :high])}))]
       (assoc waveform :bins (mapv combine (partition-all width bins))))))
+
+(defn- attach-waveform-glyphs
+  "Ship the catalog glyphs a view needs, once per view, only when a parameter
+  chooses between registered waveforms. Both surfaces match choices to it
+  through `waveform-shapes/choices`."
+  [view catalog]
+  (let [used (into #{} (comp (keep :schema) (mapcat #(waveform-shapes/choices % catalog)) (map :waveform))
+                   (:parameters view))]
+    (cond-> view
+      (seq used) (assoc :waveform-glyphs (into [] (comp (filter #(used (keyword (:id %))))
+                                                       (map #(select-keys % [:id :name :glyph])))
+                                               catalog)))))
 
 (defn project-display
   "Enrich a queued device view on its capture worker. A stale selection cannot
@@ -332,12 +373,13 @@
                     (merge (:params instance) (get overrides (:id instance))))
         reading (when (and visible? (seq (:parameters view)))
                   (parameter-display/readings cache snapshot instance view (fn [_] @inputs)))]
-    (cond-> (update (assoc view :visualization-clock clock :runtime-id (or (:runtime-id view) (:runtime-id snapshot) (:show-id model))) :parameters
+    (cond-> (update (assoc view :visualization-clock clock :musical-timing (transport-timing (:transport model))
+                           :runtime-id (or (:runtime-id view) (:runtime-id snapshot) (:show-id model))) :parameters
                     (fn [parameters]
                       (mapv (fn [parameter]
                               (let [id (:param parameter (:id parameter))
                                     parameter (cond-> parameter
-                                                stale? (dissoc :value :base-value :effective-value :source-state :source-types :source-error :sample-fixture)
+                                                stale? (dissoc :value :base-value :effective-value :source-state :source-types :source-error :sample-fixture :source-period-beats)
                                                 current?
                                                 (assoc :value (get-in instance [:params id])
                                                        :base-value (get-in instance [:params id])
@@ -348,12 +390,14 @@
                                     (try (let [result (cached-preview cache snapshot
                                                                     {:instance-id (:id instance) :parameter id
                                                                      :options {:samples 65}})]
-                                           (merge parameter (select-keys result [:preview-samples :preview-status :identity])))
+                                           (merge parameter (select-keys result [:preview-samples :preview-status :identity
+                                                                                 :signal-timing])))
                                          (catch Exception error
                                            (assoc parameter :preview-samples [] :preview-status :unavailable
                                                   :preview-message (.getMessage error))))
                                     (assoc parameter :preview-samples [] :preview-status :stale)) parameter))) parameters)))
-      audio-waveform (assoc :audio-waveform (display-audio audio-waveform)))))
+      audio-waveform (assoc :audio-waveform (display-audio audio-waveform))
+      true (attach-waveform-glyphs (parameter-sources/waveform-options model)))))
 
 (defn new-capture
   "Explicit streaming summary state. Defaults retain 256 columns of 20ms each.

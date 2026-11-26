@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96" role="img" aria-label="Apple-hardware-level corner obsession">
+<title>Apple-hardware-level corner obsession</title>
+<defs><linearGradient id="p01028f-0" gradientUnits="userSpaceOnUse" x1="47.4" y1="9.1" x2="47.4" y2="55.4"><stop offset="0%" stop-color="#edf0f5"/><stop offset="100%" stop-color="#8c94a1"/></linearGradient><linearGradient id="p01028f-1" gradientUnits="userSpaceOnUse" x1="56.6" y1="60.9" x2="77.9" y2="82.2"><stop offset="0%" stop-color="#fac7ab"/><stop offset="100%" stop-color="#db8c80"/></linearGradient></defs>
+<rect x="2" y="2" width="92" height="92" rx="20" fill="#101418"/>
+<path d="M70.5 32.3L70.3 20.2L69.8 16.5L68.9 14L67.5 12.1L65.7 10.8L63.1 9.9L59.4 9.3L47.4 9.1L35.4 9.3L31.7 9.9L29.1 10.8L27.3 12.1L25.9 14L25 16.5L24.5 20.2L24.3 32.2L24.5 44.3L25 48L25.9 50.5L27.3 52.4L29.1 53.7L31.7 54.6L35.4 55.2L47.4 55.4L59.4 55.2L63.1 54.6L65.7 53.7L67.5 52.4L68.9 50.5L69.8 48L70.3 44.3Z" fill="url(#p01028f-0)"/>
+<rect x="52.3" y="64.1" width="30" height="15" rx="7.5" fill="url(#p01028f-1)"/>
+<circle cx="29.2" cy="72.3" r="14.8" fill="#2980fa"/>
+</svg>

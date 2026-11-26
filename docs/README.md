@@ -38,12 +38,14 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Starting a show](application-startup.md) | Config module order, headless and Studio entry points, REPL and shutdown |
 | [Fog machine and venue controls](studio-atmosphere.md) | Configure rated fog output, DMX response, nozzle direction, ventilation and decay |
 | [Spatial cue actions](spatial-show.md) | Select live fixture targets, observe volume contacts and run owned cues |
+| [Track-feel personalities](personalities.md) | Choose or blend a palette, concurrency, shape vocabulary and motion character, read its icon and projection, and let a volume cue follow it |
 | [Headless show modules](headless-modules.md) | Use the show APIs from code and controllers |
 | [Feature parity inventory](feature-parity-inventory.md) | Source-linked operator and authoring behaviors from Afterglow, Tolglow effects and tolglow-web, with acceptance cases |
 | [Studio control layouts](studio-control-layouts.md) | Mix running instances with compact controls, live scopes and declarative parameter layouts |
 | [Studio Debug](studio-debug.md) | Live event and DMX inspection, subscriber editing and musical action sequences |
 | [Event subscribers and musical actions](event-subscribers.md) | Filter registered cues, launch effects on audio or transport events, sequence musical delays and save custom callbacks |
 | [Beat-clock scheduling and ramps](scheduler.md) | Post events ahead on the beat clock, ramp parameters to a target over musical time, cancel, and read the shared schedule projection |
+| [Linked knobs](linked-knobs.md) | Map one normalized knob to several typed destinations with per-link range, curve, direction and exact beat-ratio steps; override, conflict and dangling-target rules |
 | [Event and DMX inspection](studio-event-stream.md) | Committed typed events, actual handler delivery and raw channel data for a selected universe |
 | [Studio state stream](state-stream.md) | Typed show snapshots, acknowledged deltas, backpressure and reconnect |
 | [Codebase survey](codebase-survey.md) | Historical entry points, behavior and coupling |

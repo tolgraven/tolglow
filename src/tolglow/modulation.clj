@@ -251,14 +251,42 @@
   (when-let [hold (get-in holds [id param])]
     (or (nil? (:until-beat hold)) (< beat (:until-beat hold)))))
 
-(defn owner-definition
-  "Select the definition for the next frame. Paused instances defer hot reload."
+(defn last-good-view
+  "Return `model` as modulation reads it when the engine rejects every pending
+  hot reload: each instance keeps its captured definition. The owner samples
+  this view beside the model, from the same prior state, to give the engine
+  the inputs of a frame that turns a candidate down. It is never committed."
+  [model]
+  (assoc model ::last-good? true))
+
+(defn reload-candidate
+  "Return the newer registry definition the engine attempts for this instance
+  on the next frame, or nil. Paused and pinned instances defer hot reload. A
+  candidate whose schemas reject a retained parameter is none: the engine
+  refuses it at preparation and keeps the captured definition."
   [model instance]
   (let [current (get-in model [:registry :effects (:effect-id instance)])]
-    (if (and (not (get-in instance [:system :paused?]))
-             (not= :pinned (:reload-policy instance :pinned)) current
-             (not= (:version current) (get-in instance [:reload-fault :effect-version]))
-             (> (:version current) (:effect-version instance))) current (:definition instance))))
+    (when (and (not (::last-good? model))
+               (not (get-in instance [:system :paused?]))
+               (not= :pinned (:reload-policy instance :pinned)) current
+               (not= (:version current) (get-in instance [:reload-fault :effect-version]))
+               (> (:version current) (:effect-version instance))
+               (try (params/resolve-values (:params current {})
+                                           (select-keys (:params instance {}) (keys (:params current {}))))
+                    true
+                    (catch Exception _ false)))
+      current)))
+
+(defn reload-pending?
+  "True when the next frame attempts a hot reload of some running instance."
+  [model]
+  (boolean (some #(reload-candidate model %) (vals (:instances model)))))
+
+(defn owner-definition
+  "Select the definition for the next frame: the pending reload candidate, or
+  the captured definition."
+  [model instance]
+  (or (reload-candidate model instance) (:definition instance)))
 
 (defn- owner-active? [instance definition clock]
   (and (= :running (:phase instance))
@@ -519,6 +547,36 @@
             errors (params/validate-values schemas values)]
         (when (seq errors) (fail! ::invalid-overrides "Overlay does not fit the captured effect" {:errors errors}))
         (update-in context [:instance :params] merge values)) context)))
+
+(defn candidate-overrides
+  "Restrict overrides that do not follow a hot reload, such as ramp overlays,
+  to the values a pending candidate's schemas accept. Instances without a
+  candidate keep theirs, and the last-good revision reads the unrestricted map."
+  [model overrides]
+  (reduce-kv (fn [result id values]
+               (if-let [candidate (some->> (get-in model [:instances id]) (reload-candidate model))]
+                 (let [schemas (:params candidate {})
+                       kept (into {} (filter (fn [[param value]]
+                                               (and (contains? schemas param)
+                                                    (params/valid-value? (get schemas param) value))))
+                                  values)]
+                   (if (seq kept) (assoc result id kept) (dissoc result id)))
+                 result))
+             (or overrides {}) (or overrides {})))
+
+(def last-good-frame
+  "Frame inputs that mark a step as evaluated on the engine's reload fallback."
+  {::last-good? true})
+
+(defn reload-middleware
+  "Return a context transform for a frame that may reject a hot reload. The
+  engine merges `last-good-frame` into the frame of every step it evaluates on
+  its reload fallback; those steps read `last-good`, all others `overrides`."
+  [overrides last-good]
+  (let [candidate (middleware overrides)
+        fallback (middleware last-good)]
+    (fn [context]
+      (if (get-in context [:frame ::last-good?]) (fallback context) (candidate context)))))
 
 (defn rebase-clock
   "Explicit musical clock discontinuity, e.g. external Live loop/seek/source epoch.
