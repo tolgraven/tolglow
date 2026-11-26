@@ -117,46 +117,57 @@
   ;; Under a character budget, a mutable identity map from each lazy sequence
   ;; walked so far to how many of its elements the allowance has paid for
   ;; (whole chunks for a chunked sequence), so a walk over elements already
-  ;; realized costs nothing. Owned by one call; holds no more sequences than
-  ;; the allowance has paid elements for.
+  ;; realized costs nothing, and whether its end was seen. Owned by one call;
+  ;; holds only sequences that are elements of ones already paid for.
   nil)
 
 (defn- new-charges [] #?(:clj (java.util.IdentityHashMap.) :cljs (js/Map.)))
 
-(defn- paid
-  "Elements of lazy sequence `coll` the allowance has already paid for."
+(defn- charged
+  "[elements paid for, whether the end was seen] for lazy sequence `coll`."
   [coll]
-  (or #?(:clj (.get ^java.util.IdentityHashMap *charged* coll) :cljs (.get ^js *charged* coll)) 0))
+  (or #?(:clj (.get ^java.util.IdentityHashMap *charged* coll) :cljs (.get ^js *charged* coll)) [0 false]))
+
+(defn- charged! [coll paid end?]
+  #?(:clj (.put ^java.util.IdentityHashMap *charged* coll [paid end?])
+     :cljs (.set ^js *charged* coll [paid end?])))
 
 (defn- realized-count
-  "Elements realized to take the first `n` of `items`: a chunked sequence (such
-  as a map over a range) realizes whole chunks."
+  "Elements realized to take the first `n` of `items`: a chunked part (such as
+  a map over a range) realizes whole chunks, also behind plain cells such as a
+  cons or concat head. Walks only cells the take already realized."
   [items n]
   (loop [s items counted 0]
-    (if (and s (< counted n) (chunked-seq? s))
-      (let [counted (+ counted (count (chunk-first s)))]
-        (recur (when (< counted n) (seq (chunk-rest s))) counted))
-      (max counted n))))
+    (cond
+      (or (nil? s) (>= counted n)) (max counted n)
+      (chunked-seq? s) (let [counted (+ counted (count (chunk-first s)))]
+                         (recur (when (< counted n) (seq (chunk-rest s))) counted))
+      :else (let [counted (inc counted)]
+              (recur (when (< counted n) (next s)) counted)))))
 
 (defn- realize!
   "The first `want` elements of lazy sequence `coll` (its seq is `items`),
   charging only those this call has not realized before. Never takes more
   than the allowance can pay for (a chunked sequence may realize the rest of
   its last chunk): when the rest of the allowance cannot tell whether more
-  elements follow, or a chunk overdraws it, the budget is reached."
+  elements follow, or a chunk overdraws it, the budget is reached. A sequence
+  whose end was seen is walked again for free."
   [coll items want]
-  (let [before (paid coll)
-        room (+ before @*lazy-allowance*)
-        head (doall (take (min want room) items))
-        n (count head)
-        realized (realized-count items n)]
-    (when (> realized before)
-      #?(:clj (.put ^java.util.IdentityHashMap *charged* coll realized) :cljs (.set ^js *charged* coll realized))
-      (when (neg? (vswap! *lazy-allowance* - (- realized before)))
-        (budget-reached!)))
-    (when (and (< n want) (>= n room))
-      (budget-reached!))
-    head))
+  (let [[before end?] (charged coll)]
+    (if end?
+      (doall (take want items))
+      (let [room (+ before @*lazy-allowance*)
+            head (doall (take (min want room) items))
+            n (count head)
+            end? (< n (min want room))
+            realized (realized-count items n)]
+        (when (or end? (> realized before))
+          (charged! coll (max before realized) end?)
+          (when (neg? (vswap! *lazy-allowance* - (max 0 (- realized before))))
+            (budget-reached!)))
+        (when (and (< n want) (>= n room))
+          (budget-reached!))
+        head))))
 
 (def ^:private ^:dynamic *deepest*
   ;; Under a character budget, a volatile of the deepest layout level reached,
@@ -218,9 +229,10 @@
           used (+ (count open) (count close))]
       (when (<= used budget)
         ;; Every item takes a character and a space, so no more than about half
-        ;; the budget in items fits on the line; a lazy sequence is not realized
-        ;; past that here.
-        (loop [remaining (items kind x depth (+ 2 (quot budget 2)))
+        ;; the budget in items fits on the line; under a character budget a lazy
+        ;; sequence is not realized past that here. An infinite width has no cap.
+        (loop [remaining (items kind x depth (when (and *lazy-length* (< budget (* 2 *lazy-length*)))
+                                               (+ 2 (quot (long budget) 2))))
                parts [open]
                used used
                first? true]

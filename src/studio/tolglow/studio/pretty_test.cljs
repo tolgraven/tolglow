@@ -109,3 +109,8 @@
     (is truncated?)
     (is (<= (count text) 1024))
     (is (<= @realized (+ (* 64 1025) 32)))))
+
+(deftest an-infinite-width-keeps-everything-on-one-line-as-on-the-host
+  (let [value [1 [2 3] (map inc (range 3))]]
+    (is (= "[1 [2 3] (1 2 3)]" (pretty/edn value {:width ##Inf})))
+    (is (= {:text "[1 [2 3] (1 2 3)]" :truncated? false} (pretty/edn-within value {:width ##Inf :max-chars 100})))))
