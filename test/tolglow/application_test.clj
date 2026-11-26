@@ -57,7 +57,10 @@
   ;; The JVM resolves reflective calls at run time, so only the compiler's
   ;; warnings show what the compiled host would fail on during startup
   ;; (folder claim and recovery) and shutdown.
-  (doseq [ns '[tolglow.modules tolglow.studio.query-stream tolglow.show.recovery tolglow.desktop.launch]]
+  (doseq [ns '[tolglow.modules tolglow.studio.query-stream tolglow.studio.web
+               tolglow.show.recovery tolglow.desktop.launch]]
+    ;; Load dependencies first so only this namespace's own warnings count.
+    (require ns)
     (let [warnings (java.io.StringWriter.)]
       (binding [*warn-on-reflection* true *err* warnings]
         (require ns :reload))
