@@ -12,14 +12,58 @@
 
 (defn- clamp [x low high] (max low (min high x)))
 
+(def pad-layouts
+  "How an 8x8 cue page cell [x y] (x left to right, y top to bottom) becomes a
+  Drum Rack pad note.
+
+  :push-64-pads  Push's 64 Pads drum layout with the Drum Rack's pad overview
+                 scrolled to note 36 (RackDevice.View.drum_pads_scroll_position
+                 9, Live's default). The grid is four 4x4 blocks: the left half
+                 holds notes 36-67 (bottom block 36-51, top block 52-67), the
+                 right half 68-99 (bottom 68-83, top 84-99), each block rising
+                 left to right and bottom to top like Live's own pad overview.
+                 Source: Live 12's control-surface framework,
+                 DrumGroupComponent._button_coordinates_to_pad_index, with
+                 first note 36 and an 8x8 matrix. Derived from that source, not
+                 yet observed on Push 3 hardware.
+  :rows          The earlier layout: notes rise left to right in rows of eight,
+                 bottom row 36-43, top row 92-99. Saved Live settings that
+                 already hold note mappings keep it."
+  #{:push-64-pads :rows})
+
+(def push-64-pads-scroll-row
+  "RackDevice.View.drum_pads_scroll_position (rows of four pads) that puts
+  note 36 at the bottom-left pad of Push's 64 Pads layout."
+  9)
+
+(defn pad-note
+  "The Drum Rack note of page cell [x y] in a layout, base note 36."
+  ([layout cell] (pad-note layout cell 36))
+  ([layout [x y] base-note]
+   (when-not (and (integer? x) (integer? y) (<= 0 x 7) (<= 0 y 7))
+     (fail! "A pad cell is [x y] with both in 0..7" {:cell [x y]}))
+   (let [row (- 7 y)]
+     (case layout
+       :push-64-pads (+ base-note (mod x 4) (* 4 (mod row 4)) (if (>= row 4) 16 0) (if (>= x 4) 32 0))
+       :rows (+ base-note x (* 8 row))
+       (fail! "Unknown pad layout" {:layout layout})))))
+
+(defn pad-cell
+  "The page cell [x y] that plays note in a layout, or nil off the 64 pads."
+  ([layout note] (pad-cell layout note 36))
+  ([layout note base-note]
+   (first (for [y (range 8) x (range 8) :when (= note (pad-note layout [x y] base-note))] [x y]))))
+
 (defn pad-page
-  "Create an 8x8 Drum Rack view. Cues are row-major top-to-bottom; MIDI notes
-  rise left-to-right, bottom-to-top from base-note (default 36). Logical RGB is
-  preserved and :live-color is packed 0xRRGGBB, for a Live-side API bridge."
+  "Create an 8x8 Drum Rack view. Cues are row-major top-to-bottom, so cue i
+  sits at cell [(mod i 8) (quot i 8)]. Its MIDI note follows :layout (see
+  pad-layouts; default :rows, which rises left-to-right, bottom-to-top from
+  base-note 36). Logical RGB is preserved and :live-color is packed 0xRRGGBB,
+  for a Live-side API bridge."
   ([cues] (pad-page cues {}))
-  ([cues {:keys [base-note channel] :or {base-note 36 channel 1}}]
+  ([cues {:keys [base-note channel layout] :or {base-note 36 channel 1 layout :rows}}]
    (when-not (and (integer? base-note) (<= 0 base-note 64) (<= 1 channel 16)
-                  (<= (count cues) 64))
+                  (<= (count cues) 64) (contains? pad-layouts layout))
      (fail! "A Drum Rack page requires at most 64 pads in MIDI range" {}))
    (mapv (fn [index]
            (let [cue (nth (vec cues) index nil)
@@ -32,7 +76,7 @@
                      (fail! "Pad color must be normalized RGB" {:cue-id (:id cue)}))
                  bytes (mapv #(long (Math/round (* 255.0 %))) color)]
              {:x (mod index 8) :y (quot index 8)
-              :note (+ base-note (* 8 (- 7 (quot index 8))) (mod index 8))
+              :note (pad-note layout [(mod index 8) (quot index 8)] base-note)
               :channel channel :cue-id (:id cue) :label (:name cue "")
               :color color :live-color (reduce (fn [result b] (+ (* result 256) b)) 0 bytes)}))
          (range 64))))
@@ -68,10 +112,13 @@
 (defn map-page
   "Allocate stable note and CC assignments for a page. Existing assignments,
   including disabled entries and manual overrides, reserve their addresses.
-  Parameter velocity lanes occupy pitches outside the 64-pad Drum Rack range."
+  Parameter velocity lanes occupy pitches outside the 64-pad Drum Rack range.
+  A cell's preferred note follows (:pad-layout live), default :rows (see
+  pad-layouts)."
   [live registry page]
   (let [cells (sort-by (fn [[[x y]]] [y x]) (:cells page))
-        pitch (fn [[x y]] (+ 36 x (* 8 (- 7 y))))
+        layout (get live :pad-layout :rows)
+        pitch (fn [xy] (if (every? #(and (integer? %) (<= 0 % 7)) xy) (pad-note layout xy) -1))
         reserved-lanes (set (keep :lane-note (vals (:parameters live))))
         cue-map (reduce (fn [m [xy cue-id]]
                           (let [preferred (pitch xy)
