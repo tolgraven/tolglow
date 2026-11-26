@@ -265,3 +265,25 @@
     (is (= letters (mapv second (re-seq #"<span class=\"color-channel-name\">([^<]+)</span>" html)))
         where)
     (is (= (contains? #{"rgba" "hsla"} layout) (str/includes? html "α")) where)))
+
+(deftest knob-looks-show-empty-saved-selected-and-moved-top-row-pads
+  (let [cell (fn [slot state & [extra]]
+               (merge {:position [slot 7] :slot slot :state state :label (str "Look " (inc slot))} extra))
+        knobs [{:name "Look" :knob-id :look :text "0.200"} {:name "Rate" :knob-id :rate :text "0.100" :missing? true}]
+        view {:pad-overlay {:layout :knob-presets :title "Knob looks" :ignored true
+                            :cells [(cell 0 :selected {:matches? true :knobs knobs :values {:look 0.2}})
+                                    (cell 1 :stored {:matches? false :knobs (repeat 9 (first knobs))})
+                                    (cell 2 :empty)
+                                    (cell 3 "selected" {:matches? false :knobs knobs})]}}
+        shown (display/normalize-view view)
+        html (renderToStaticMarkup (r/as-element [display/display shown]))]
+    (is (= #{:layout :title :cells} (set (keys (:pad-overlay shown)))))
+    (is (nil? (get-in shown [:pad-overlay :cells 0 :values])) "stored positions stay out of display data")
+    (is (= 4 (count (get-in shown [:pad-overlay :cells 1 :knobs]))))
+    (is (str/includes? html "Knob looks"))
+    (is (str/includes? html "Look 0.200"))
+    (is (str/includes? html "Rate 0.100 ✕"))
+    (is (= 1 (count (re-seq #"class=\"selected\"" html))))
+    (is (= 1 (count (re-seq #"class=\"moved\"" html))))
+    (is (= 1 (count (re-seq #"class=\"available\"" html))))
+    (is (= 5 (count (re-seq #"class=\"empty\"" html))) "the empty slot and four uncaptured pads")))

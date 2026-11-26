@@ -2,6 +2,7 @@
   (:refer-clojure :exclude [run!])
   (:require [clojure.test :refer [deftest is]]
             [clojure.edn :as edn]
+            [clojure.string :as str]
             [tolglow.repl :as repl])
   (:import [java.util.concurrent CountDownLatch TimeUnit]))
 
@@ -177,3 +178,37 @@
       (is (= :cancelled (:status (result (deref submitting 3000 ::timeout)))))
       (is (= 0 @counter))
       (finally (.countDown release) (future-cancel submitting) (repl/close! session)))))
+
+(deftest data-results-are-pretty-printed-within-the-result-bounds
+  (let [session (repl/open! {:session-id "pretty" :max-result-chars 400})]
+    (try
+      (let [wide (:result (run! session "(into (sorted-map) (map (fn [i] [(keyword (str \"key-\" i)) {:value i :label (str \"Label \" i)}])) (range 6))"))]
+        (is (< 1 (count (str/split-lines wide))))
+        (is (str/starts-with? wide "{:key-0 {:value 0 :label \"Label 0\"}\n :key-1 "))
+        (is (= (edn/read-string wide) (into (sorted-map) (map (fn [i] [(keyword (str "key-" i)) {:value i :label (str "Label " i)}])) (range 6)))))
+      (let [lines (str/split-lines (:result (run! session "{:a (range)}")))]
+        (is (= "{:a" (first lines)))
+        (is (str/starts-with? (second lines) "   (0 1 2 3 4 5 6 7 8 9 10 "))
+        (is (every? #(<= (count %) 100) lines)))
+      (is (str/ends-with? (:result (run! session "{:a (range)}")) "61 62 63 ...)}"))
+      (is (= 400 (count (:result (run! session "(vec (range 100000 100064))"))))
+          "the result character bound still applies after pretty-printing")
+      (is (= "{1 :a 2 :b}" (:result (run! session "(sorted-map 2 :b 1 :a)")))
+          "a sorted map keyed by numbers prints instead of failing the evaluation")
+      (is (= "{1 2}" (get-in (run! session "(throw (ex-info \"boom\" (sorted-map 1 2)))") [:error :data])))
+      (is (= "\"text\"" (:result (run! session "\"text\""))))
+      (is (= "11" (:result (run! session "11"))))
+      (finally (repl/close! session)))))
+
+(deftest a-huge-data-result-stops-printing-at-the-result-bound
+  ;; 64^4 leaves: printing all of it built a 50 M-character string in several seconds.
+  (let [session (repl/open! {:session-id "huge"})]
+    (try
+      (let [started (System/nanoTime)
+            done (run! session "(let [row (vec (range 64)) plane (vec (repeat 64 row)) cube (vec (repeat 64 plane))] (vec (repeat 64 cube)))")
+            elapsed-ms (/ (- (System/nanoTime) started) 1e6)]
+        (is (= :completed (:status done)))
+        (is (= 8192 (count (:result done))))
+        (is (str/starts-with? (:result done) "[[[[0 1 2 3 "))
+        (is (< elapsed-ms 1000) (str "took " elapsed-ms " ms")))
+      (finally (repl/close! session)))))

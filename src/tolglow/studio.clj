@@ -108,7 +108,7 @@
       (projection/project! (:browser-projections (bindings!)) view (get query "base"))
       partial?
       (assoc (select-keys view [:runtime-id :show-id :epoch :revision :time-ms :frame-number :transport
-                                :instances :groups :effect-group-channels :effect-selection
+                                :instances :groups :effect-group-channels :control-surfaces :effect-selection
                                 :output :status :auto :compositions :modulation :patch]) :partial? true)
       :else view))))
 

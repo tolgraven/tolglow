@@ -87,6 +87,40 @@ subscription with Studio's Ring `/api/state` projection
 ([test](../test/tolglow/effects/state_migration_test.clj)); the rendered
 inspector has not had a browser review for this policy.
 
+## Read a definition as Studio shows it
+
+The **Definitions** editor and its Neovim buffer show a registry entry as
+pretty-printed EDN. The host and Studio share one printer,
+[`tolglow.studio.pretty`](../src/shared/tolglow/studio/pretty.cljc), so the REPL
+prints the same text from the same data:
+
+```clojure
+(require '[tolglow.studio.pretty :as pretty])
+(println (pretty/edn (get-in (:model (show/export-show runtime)) [:registry :effects :ember])))
+```
+
+A collection stays on one line when it fits 100 columns. Otherwise every map
+entry gets its own line; a value that does not fit after its key starts the next
+line, indented two columns past the key, so deep expressions drift right slowly
+(only very deep ones, such as the showcase `:confetti` expression, still pass the
+width). A vector of scalars fills its lines, except a keyword-argument vector
+(`[:key value …]` with at least one value that is not a keyword), which puts each
+pair on its own line; a vector of keywords only, such as a target list, fills its
+lines. `:id`, `:version` and `:name` come
+first; small maps keep their authored order and larger maps sort their keys. The text reads back to the same data and has no trailing newline,
+so the Neovim echo of a loaded definition matches it exactly. The layout is a
+view only: publication reads any EDN layout, and the registry stores data.
+ClojureScript prints whole floats such as `1.0` as `1`, so text that Studio
+generates (**Generate EDN**) can differ from the host's text in those numbers.
+Studio's read-only data views (debug event data, sensor UDP status, fault
+locations, RDM readback and job results) use the same printer, and tool-call
+JSON in the Assistant is indented by two spaces. The Develop REPL console
+pretty-prints a data result or error data with the same printer, inside the
+REPL's existing bounds (64 items per collection, 10 levels, 8192 characters per
+result). Printing stops at the character bound, and a map or set longer than
+64 items shows the first 64 that `pr` would show, sorted, so a huge result costs
+no more than the text shown. Strings and other values print as `pr` prints them.
+
 ## View recent cues
 
 In **Perform**, the **Recent cues** tab puts the latest successful launch in
@@ -584,6 +618,75 @@ display data are ready ([Push](linked-knobs.md#push),
 when Studio can set non-numeric endpoints and a Push encoder turns the same knob
 and shows the same resolved values.
 
+## Save and recall knob looks
+
+Studio, Push and the REPL read `:knob-presets` in the show snapshot and send
+`:knob-preset/capture`, `:knob-preset/recall` and `:knob-preset/clear` with a
+`:slot` from 0 to 7. [Knob looks](linked-knobs.md#knob-looks)
+
+```clojure
+(show/submit! runtime :command {:op :knob-preset/capture :slot 0})
+(:links @(show/submit! runtime :command {:op :knob-preset/recall :slot 0}))
+(map :state (:slots (:knob-presets (show/snapshot runtime))))
+;; => (:selected :empty :empty :empty :empty :empty :empty :empty)
+```
+
+In Studio, **Perform → Live → Knobs → Knob looks** lists the same eight slots.
+**Save**, **Recall**, **Overwrite** and **Clear** send those commands with the
+shown slot as `:expected`. A REPL save or recall changes the strip on the next
+snapshot, and a Studio recall moves the knobs the REPL reads. Saving into a
+saved slot without `:overwrite? true` returns `:code :knob-preset-occupied` and
+Studio shows the reason. On Push, the top pad row of the knob-look overlay
+sends the same commands.
+
+**Tracked gaps.** Slots have numbers, not names. Physical Push 2 and Push 3
+evidence is pending in [issue #547](https://github.com/tolgraven/tolglow/issues/547).
+
+## Link control surfaces and move their session box
+
+Both surfaces read one projection, `:control-surfaces` in the show snapshot, and
+send the same owner commands: `:control-surface/link`, `:control-surface/unlink`
+and `:control-surface/bank`. Devices send `:control-surface/attach` and
+`:control-surface/detach` when they connect and disconnect, and their bank
+buttons send `:control-surface/bank` too. `:logical` lists every link and every
+unlinked surface with its `:window`, `:span`, content `:size`, last window
+(`:limit`) and, per member, the cells it shows. The follow setting lives at
+`[:settings :controllers :surfaces :follow-selection?]`.
+[X-Touch surfaces and links](xtouch.md#surfaces-links-and-the-session-box)
+
+From the REPL, attach two units, extend the main unit with the extender to its
+right, page the window and read it back:
+
+```clojure
+(show/connect-device! runtime :x-touch {:session-id "xt-main" :input-index 0 :output-index 6
+                                         :effect-group-view :manual})
+(show/connect-device! runtime :x-touch {:session-id "xt-ext" :input-index 5 :output-index 11
+                                         :extender? true})
+@(show/link-surfaces! runtime "desk" ["xt-main" "xt-ext"])          ; or {:mode :mirror}, {:mode :follow :offset {:x 1}}
+@(show/bank-surface! runtime "desk" :next)                           ; :first :last :previous ...
+@(show/bank-surface! runtime "desk" {:reveal [:group [:manual :mix]]})
+(map (juxt :id :mode :window) (:logical (:control-surfaces (show/snapshot runtime))))
+;; => (["desk" :extend {:x 16, :y 0}])
+@(show/submit! runtime :settings {:scope :controllers :values {:surfaces {:follow-selection? true}}})
+```
+
+In Studio, **Perform → Group mixer → Surfaces** shows a session box per link or
+unlinked surface: its name and mode, "Strips 17–20 of 20", and ⏮ ‹ › ⏭ bank
+buttons. **Link** joins two unlinked surfaces (extended to the right or left,
+mirrored, or followed one page to the right) and **Unlink** dissolves a link. Group rows on a surface are outlined
+and badged with the surface and strip (`xt-main 3`); **In the mix** outlines and
+badges the cards whose cue strip is on a surface. With **Follow selection** on,
+focusing a group's volume, opening a group, or opening a card moves each surface
+that holds that strip to the page that shows it. A bank button on the hardware,
+a REPL move and a Studio move all update the open session boxes and both units.
+A refused move (an unknown surface, a cell that is not on it) shows its reason;
+a follow move for a cell a surface does not hold is ignored quietly.
+
+**Tracked gaps.** Studio has no form for up/down links, follow offsets other
+than one page, or a member's non-default viewport; the REPL accepts all three. A Studio page component is not yet a surface of its
+own (#706 slice 5). Close these gaps when Studio can place a member anywhere and
+a Studio grid can mirror or follow a Push page.
+
 ## Reviewing a show feature
 
 - **Find it from either side.** Name the view, control label and public REPL entry point. Include the shared command, input units, identifiers and scope so an operator who knows one surface can recognize the other.
@@ -628,5 +731,7 @@ Calibrated paired aim arrival uses one host operation from both surfaces. In Stu
 ```
 
 The remaining gaps are tracked in issue #481. Studio has no editor for `:calibration :motor-rate-deg-per-sec`, so rates are set through the rig data or the REPL. Studio also cannot display the physical `:minimum-travel-ms` or the fingerprint behind a stale-calibration refusal. Close these gaps when an operator can enter rates in the fixture inspector and see why a launch was refused without the REPL.
+
+Retrospective Capture into Live has a REPL path only. `capture/observe-model` folds each committed model into a capture buffer, `capture/capture` returns the last bars as a phrase, and `live-connection/setup!` and `live-connection/capture!` write it to a Live Set over the companion transport. Studio has no Capture action, the Push mode has no Capture button, and the show runtime does not own a capture buffer yet. Close the gap when one Capture press in Studio or on Push captures the same phrase the REPL would, and the REPL can inspect the resulting clip identities. The Live-side operations also need a licensed Live run. [Capture into Live](live-routing.md#capture-the-last-phrase-into-live) · [Issue #671](https://github.com/tolgraven/tolglow/issues/671) · [Issue #680](https://github.com/tolgraven/tolglow/issues/680)
 
 Video strip mapping uses one message from both surfaces. In Studio, **Rig & space → Video strips** sends `:video-mapping` edits through `POST /api/video-mapping`. The REPL sends the same edits with `show/video-action! runtime :edit`, using the geometry helpers in `tolglow.video.mapping`. Both read source status and sampled strip colours from the snapshot's `:video` key. A REPL edit redraws the open editor through the state stream. Studio has no control for a video cue's `:placement` parameters beyond the ordinary parameter controls on its card. [Video on LED strips](video-strips.md) · [Issue #672](https://github.com/tolgraven/tolglow/issues/672)

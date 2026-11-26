@@ -22,6 +22,7 @@
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
             [tolglow.effects.group-channels :as group-channels]
+            [tolglow.surface.link :as surface]
             [tolglow.modulation :as modulation]
             [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.lighting-capacity :as capacity]
@@ -51,6 +52,7 @@
             [tolglow.output.pause-look :as pause-look]
             [tolglow.routing :as routing]
             [tolglow.knobs :as knobs]
+            [tolglow.knob-presets :as knob-presets]
             [tolglow.integrations.audio-return :as audio-return]
             [tolglow.integrations.section-patterns :as section-patterns]
             [tolglow.integrations.ableton :as ableton])
@@ -369,11 +371,20 @@
   (when (contains? (:extensions model) variations/state-key)
     (check! (variations/valid-saved-state? (get-in model [:extensions variations/state-key]))
             [:extensions variations/state-key] "Invalid cue variation banks"))
+  ;; Knob looks (#547).
+  (when (contains? (:extensions model) knob-presets/state-key)
+    (check! (knob-presets/valid-saved-state? (get-in model [:extensions knob-presets/state-key]))
+            [:extensions knob-presets/state-key] "Invalid knob looks"))
   (check! (map? (:settings model {})) [:settings] "Settings must be an explicit portable map")
   (try (group-channels/validate-state! model)
        (catch clojure.lang.ExceptionInfo error
          (fail! (:path (ex-data error) [:settings :effect-group-channels]) (ex-message error))))
   (when-let [s (get-in model [:settings :fog-control])] (fog-control/settings s))
+  ;; Control surfaces and links (#705, #706): a malformed link would break every snapshot.
+  (try (surface/validate-state! model)
+       (when-let [s (get-in model [:settings :controllers])] (surface/validate-settings! s))
+       (catch clojure.lang.ExceptionInfo error
+         (fail! [:extensions :tolglow.surface.link/state] (ex-message error))))
   (lighting-scenes/validate-state! model)
   (try (personalities/validate-state! model)
        (catch clojure.lang.ExceptionInfo error
@@ -588,7 +599,9 @@
   (validate-document! document)
   (check! (and (natural? (:epoch current-model)) (natural? (:revision current-model)))
           [:current-model] "Current model needs valid epoch/revision")
-  (let [saved (-> (:model document) cue-timing/without-queue saved-audio/restore validate-model audio-return/disarm)
+  ;; Device sessions never survive a restore, so every surface loads detached.
+  (let [saved (-> (:model document) cue-timing/without-queue saved-audio/restore validate-model audio-return/disarm
+                  surface/detach-all)
         epoch (inc (max (:epoch current-model) (:epoch saved)))
         ordered (sort-by (juxt :order :id) (vals (:instances saved)))
         ids (into {} (map-indexed (fn [i instance] [(:id instance) (str epoch ":" (inc i))]) ordered))
