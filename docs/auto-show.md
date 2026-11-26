@@ -34,7 +34,10 @@ page deleted later never blocks a save: the planner leaves it out and reports
 `:scope-missing`.
 
 Intervals and durations are beats, bars or phrases read from the transport.
-Milliseconds are accepted as an explicit physical option. A stopped transport
+Milliseconds are accepted as an explicit physical option. A decision fires on
+the first frame at or after its beat, and the next interval starts where the
+previous one fell due, so beat one-shots stay within one frame of the beat at
+any tempo instead of sliding later each beat. A stopped transport
 makes no decision and holds every timer, so play resumes where the plan was,
 without a burst of catch-up launches.
 
@@ -194,7 +197,8 @@ discards ownership and the section, and the next decision starts a new one.
 - Not covered: saved compositions (macros and sequences) as auto candidates
   wait on [#216](https://github.com/tolgraven/tolglow/issues/216); new
   definitions invented while playing ("evolving definitions") belong to
-  generated material and the rehearsal in [#670](https://github.com/tolgraven/tolglow/issues/670);
+  generated material and [#670](https://github.com/tolgraven/tolglow/issues/670),
+  whose first slice is the recorded [rehearsal](rehearsal.md) of this planner;
   Studio has no editor for section plans or palettes yet, so author them at the
   REPL or in the show file. Whether a plan feels musical is for the operator
   in the Room and then on fixtures.
