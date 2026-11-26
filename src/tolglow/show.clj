@@ -32,7 +32,7 @@
             [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.controllers.page-overview :as page-overview]
             [tolglow.controllers.push-variations :as push-variations]
-            [tolglow.controllers.surface :as surface]
+            [tolglow.surface.link :as surface]
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
             [tolglow.effects.material-design :as material-design]
@@ -243,7 +243,7 @@
             :auto (select-keys (:auto model) [:enabled? :config :reasons])
             :responses (vec (:responses model))
             :effect-group-channels (group-channels/projection model)
-            :control-surfaces (surface/projection model) ; X-Touch session box (#705)
+            :control-surfaces (surface/projection model) ; surfaces, links and session boxes (#705)
             :effect-events (get-in model [:variables :runtime] {:event-sequence 0 :events []})
             :patch (routing/snapshot model)
             :modulation {:controllers (mapv #(select-keys % [:id :config :ticks :next-beat :owner-instance-id])
@@ -403,6 +403,7 @@
          _ (when-let [s (get-in model [:settings :spatial])] (spatial/settings s))
          _ (when-let [opts (get-in model [:settings :lighting-capacity])] (capacity/settings opts))
          _ (when-let [opts (get-in model [:settings :controllers])] (surface/validate-settings! opts))
+         _ (surface/validate-state! model)
          _ (rig/validate-rig (:rig model))
          _ (venue-fog/validate-saved! model)
          _ (when-let [opts (get-in model [:settings :fog-control])] (fog-control/settings opts))
@@ -543,7 +544,7 @@
     (cond-> (-> model
                 subscribers/restart
                 spatial/clear-session
-                surface/clear
+                surface/detach-all
                 (assoc :composition-runs {} :composition-tokens {} :modulation (modulation/new-state))
                 (autopilot/clear-session time-ms command)
                 (cond-> (get-in model [:extensions :tolglow.autopilot/hdr-clock])
@@ -1784,11 +1785,6 @@
             :when source]
       (acknowledge-sync! runtime manager {:op :cue/launch :source source} data epoch))))
 
-(defn- close-device!
-  "Close a single device session or a linked X-Touch surface (all its units)."
-  [device]
-  (if (::surface-id device) (x-touch/close-group! device) (devices/close! device)))
-
 (defn- finish-resource-work! [runtime retired candidates devices restored-generation restarted-generation]
   (when (and restarted-generation @(:running runtime))
     (try (connections/rebind-restart! (:connections runtime) restarted-generation
@@ -1800,7 +1796,7 @@
   ;; the model owner lock, and attempt every resource even after a failure.
   (doseq [cleanup (concat (map #(fn [] (connections/retire! %)) retired)
                           (map #(fn [] (connections/abort-prepared! %)) candidates)
-                          (map #(fn [] (close-device! %)) devices))]
+                          (map #(fn [] (devices/close! %)) devices))]
     (try (cleanup)
          (catch Exception error
            (swap! (:state runtime) assoc-in [:status :cleanup-error] (error-data error)))))
@@ -2720,7 +2716,7 @@
                               #(connections/close! (:connections runtime))
                               (fn [] (locking (:devices runtime)
                                        (doseq [device (vals @(:devices runtime))]
-                                         (try (close-device! device) (catch Exception _)))
+                                         (try (devices/close! device) (catch Exception _)))
                                        (reset! (:devices runtime) {})))
 
                               #(.close ^java.io.Closeable (:executor runtime))
@@ -2889,18 +2885,11 @@
 
 (def ^:private device-command-wait-ms 5000)
 
-(defn- surface-command! [runtime epoch surface-id command]
-  ;; Enqueued without waiting: the owner may be ticked by the caller (tests)
-  ;; and the device already reads a missing window as strip 0.
-  (submit! runtime (merge {:source {:adapter :x-touch :session-id surface-id}
-                           :surface-id surface-id :expected-epoch epoch} command)))
-
-(defn- valid-surface-units? [units devices-by-id]
-  (and (vector? units) (<= 1 (count units) 16)
-       (= 1 (count (remove :extender? units)))
-       (every? #(and (map? %) (string? (:session-id %)) (seq (:session-id %))
-                     (not (contains? devices-by-id (:session-id %)))) units)
-       (= (count units) (count (set (map :session-id units))))))
+(defn- surface-command!
+  "Enqueue a host surface command without waiting: the owner may be ticked by
+  the caller, and a device reads a missing surface as strip 0."
+  [runtime epoch surface-id command]
+  (submit! runtime (merge {:source {:adapter :surface :session-id surface-id} :expected-epoch epoch} command)))
 
 (defn connect-device!
   "Explicit REPL connection; no devices open at application startup. kind is
@@ -2918,12 +2907,10 @@
   :variation/cycle button in :button-bindings. The display must support
   presentation receipts. This option also enables exact beat-ratio edits.
   X-Touch accepts :effect-group-view :manual or :overlay. Group faders occupy
-  the first strips, followed by any configured cue channels. Give X-Touch an
-  ordered :units vector (one main unit and its extenders, each with its own
-  :session-id, :extender? and ports or :transport) to open one linked surface
-  under the outer :session-id. Its window (the session box) is committed show
-  state: the bank buttons, Studio and :control-surface/bank all move it, and
-  the snapshot's :control-surfaces shows which strips each unit covers."
+  the first strips, followed by any configured cue channels. Each X-Touch or
+  extender registers a control surface under its session ID; its window is
+  show data, moved by its bank buttons, Studio and :control-surface/bank. Join
+  separately connected surfaces with link-surfaces!."
   [runtime kind {:keys [session-id ::restore-lease ::reconnect-lease] :as options}]
   (let [id session-id epoch (get-in @(:state runtime) [:model :epoch])]
     (when-not (and (string? id) (seq id)) (throw (ex-info "Device requires session-id" {})))
@@ -2935,12 +2922,7 @@
           (when-not (identical? reconnect-lease (get @(:device-reconnects runtime) id))
             (throw (ex-info "Device reconnect was retired" {:session-id id})))
           (swap! (:device-reconnects runtime) dissoc id)))
-      (when (and (= :x-touch kind) (contains? options :units)
-                 (not (valid-surface-units? (:units options) @(:devices runtime))))
-        (throw (ex-info "A linked X-Touch needs one main unit and unique, unused unit session IDs"
-                        {:units (:units options)})))
       (let [effect-group-view (when (= :x-touch kind) (:effect-group-view options))
-            linked-surface? (and (= :x-touch kind) (contains? options :units))
             _ (when (and (some? effect-group-view) (not (#{:manual :overlay} effect-group-view)))
                 (throw (ex-info "X-Touch effect-group view must be :manual or :overlay" {:view effect-group-view})))
             push-source (when (#{:push-2 :push-3} kind)
@@ -2951,15 +2933,20 @@
                          :midi devices/open-midi! :osc devices/open-osc! :sensor devices/open-sensor!
                          (throw (ex-info "Unknown device kind" {:kind kind})))
             push-3-variation-pads? (and (= kind :push-3) (true? (:cue-variation-pads? options)))
+            x-touch? (= :x-touch kind)
+            ;; Validates the cue channel bindings before any port opens.
+            _ (when x-touch? (x-touch/profile (select-keys options [:channels])))
+            surface-content (when x-touch?
+                              {:type :mixer-strips :effect-group-view effect-group-view
+                               :cue-strips (vec (:channels options []))})
             options (cond-> (dissoc options ::restore-lease ::reconnect-lease)
-                      effect-group-view
-                      (assoc :group-channels (partial surface/group-strips effect-group-view)
-                             :group-level-command (fn [id value]
-                                                    {:op :effect-groups/level-set :channel-id id :value value}))
-                      linked-surface?
-                      (assoc :channels (vec (:channels options []))
-                             :model-bank #(surface/offset % id)
-                             :bank-command (fn [move] {:op :control-surface/bank :surface-id id :move move}))
+                      x-touch?
+                      (assoc :channels []
+                             :group-channels #(surface/strip-channels % id surface-content)
+                             :group-level-command (fn [group value]
+                                                    {:op :effect-groups/level-set :channel-id group :value value})
+                             :model-bank #(surface/strip-offset % id)
+                             :bank-command (fn [move] {:op :control-surface/bank :target id :viewport :strips :move move}))
                       push-source (assoc :operator-gestures? true :target-search targets/search
                                          :launch-receipt cue-timing/receipt)
                       (or push-3-variation-pads? (and push-source (true? (:cue-variations? options))))
@@ -2971,7 +2958,6 @@
                       (assoc :display (push-native-display runtime))
                       (and (= kind :push-2) (not (contains? options :feedback-source)))
                       (assoc :feedback-source (cue-pads/push-feedback (:cue-pad-previews runtime) #(deref (:state runtime)))))
-            open! (if linked-surface? x-touch/connect-group! open!)
             device (open! (merge options {:model! #(let [model (:model @(:state runtime))]
                                                       (when-not (= epoch (:epoch model))
                                                         (throw (ex-info "Device belongs to a previous show epoch" {})))
@@ -2995,7 +2981,7 @@
                                                                 (cond-> {:status :pending :command-id (:command-id command)}
                                                                   gesture? (assoc :completion reply)))))}))
             device (cond-> device
-                     linked-surface? (assoc ::surface-id id)
+                     x-touch? (assoc ::surface-id id)
                      push-3-variation-pads? (assoc ::ratio-pad-operator operator-id)
                      restore-lease (assoc ::restore-lease restore-lease))]
         (if (locking (:lock runtime)
@@ -3005,17 +2991,14 @@
                 (swap! (:devices runtime) assoc id device)
                 (swap! (:device-reconnects runtime) dissoc id)
                 true))
-          (do (when linked-surface?
+          (do (when x-touch?
                 (surface-command! runtime epoch id
-                                  {:op :control-surface/attach :kind :x-touch :effect-group-view effect-group-view
-                                   :cue-strips (mapv #(select-keys % [:cue-id :label]) (:channels options []))
-                                   :units (vec (map-indexed (fn [index unit]
-                                                              {:session-id (:session-id unit)
-                                                               :extender? (boolean (:extender? unit))
-                                                               :offset (* 8 index)})
-                                                            (:units options)))}))
+                                  {:op :control-surface/attach :surface-id id
+                                   :descriptor (if (:extender? options) :behringer/x-touch-ext :behringer/x-touch)
+                                   :role (if (:extender? options) :extender :main)
+                                   :viewports {:strips surface-content}}))
               device)
-          (do (close-device! device)
+          (do (devices/close! device)
               (throw (ex-info "Show stopped or changed while connecting device" {}))))))))
 
 (defn disconnect-device! [runtime id]
@@ -3023,33 +3006,40 @@
     (when-let [device (locking (:lock runtime)
                         (swap! (:device-reconnects runtime) dissoc id)
                         (get (first (swap-vals! (:devices runtime) dissoc id)) id))]
-      (close-device! device)
+      (devices/close! device)
       (when (and (::surface-id device) @(:running runtime))
-        (surface-command! runtime (get-in @(:state runtime) [:model :epoch]) id {:op :control-surface/detach})))))
+        (surface-command! runtime (get-in @(:state runtime) [:model :epoch]) id
+                          {:op :control-surface/detach :surface-id id})))))
 
-(defn- linked-surface! [runtime surface-id]
-  (or (some-> (get @(:devices runtime) surface-id) (as-> device (when (::surface-id device) device)))
-      (throw (ex-info "No linked X-Touch surface with that session ID" {:session-id surface-id}))))
+(defn link-surfaces!
+  "Join attached surfaces into one logical surface with one window over one
+  viewport (default: the first surface's first viewport, :strips on an
+  X-Touch). {:mode :extend :direction :right} (the default) places each next
+  surface one bank or page further right; :left, :down and :up work the same
+  way. :mirror shows the same window on every member; add :offset {:x 1 :y 0}
+  to keep the others one page to the right. Returns the receipt promise.
 
-(defn disconnect-surface-unit!
-  "Close one unit of a linked X-Touch surface, for example an extender being
-  unplugged. The other units keep their strips; the session box shrinks to the
-  connected units. Returns the group status."
-  [runtime surface-id unit-id]
-  (locking (:devices runtime)
-    (let [status (x-touch/close-unit! (linked-surface! runtime surface-id) unit-id)]
-      (surface-command! runtime (get-in @(:state runtime) [:model :epoch]) surface-id
-                        {:op :control-surface/units :connected {unit-id false}})
-      status)))
+    @(link-surfaces! runtime \"desk\" [\"xt-main\" \"xt-ext\"])
+    @(link-surfaces! runtime \"twins\" [\"xt-main\" \"xt-ext\"] {:mode :mirror})"
+  ([runtime link-id surface-ids] (link-surfaces! runtime link-id surface-ids {}))
+  ([runtime link-id surface-ids options]
+   (submit! runtime (cond-> {:op :control-surface/link :link-id link-id
+                             :members (surface/link-members surface-ids options)
+                             :source {:adapter :repl :session-id "repl"}}
+                      (:viewport options) (assoc :viewport (:viewport options))))))
 
-(defn reconnect-surface-unit!
-  "Reopen a unit closed with disconnect-surface-unit! at its original offset."
-  [runtime surface-id unit-id]
-  (locking (:devices runtime)
-    (let [status (x-touch/reopen-unit! (linked-surface! runtime surface-id) unit-id)]
-      (surface-command! runtime (get-in @(:state runtime) [:model :epoch]) surface-id
-                        {:op :control-surface/units :connected {unit-id true}})
-      status)))
+(defn unlink-surfaces!
+  "Dissolve a link; each member keeps the window it was showing."
+  [runtime link-id]
+  (submit! runtime {:op :control-surface/unlink :link-id link-id :source {:adapter :repl :session-id "repl"}}))
+
+(defn bank-surface!
+  "Move a surface's or link's window: a move keyword (:previous :next
+  :channel-previous :channel-next :first :last :up :down) or a map with :to
+  {:x :y} or :reveal cell-key. Returns the receipt promise."
+  [runtime target move]
+  (submit! runtime (merge {:op :control-surface/bank :target target :source {:adapter :repl :session-id "repl"}}
+                          (if (keyword? move) {:move move} move))))
 
 (defn expressive-preview
   "Preview the selected cue's expressive mapping using the connected device's
@@ -3076,7 +3066,7 @@
   (let [[model output windows] (locking (:lock runtime)
                                  (let [{:keys [model output keyframes]} @(:state runtime)
                                        atmosphere (venue-fog/for-save runtime output)
-                                       model (merge (surface/clear (fog-scan/disarm model))
+                                       model (merge (surface/detach-all (fog-scan/disarm model))
                                                     (connections/export-state (:connections runtime) model))]
                                    [(cond-> (fog-deadline/save-ids model output)
                                       atmosphere (assoc-in venue-fog/saved-path atmosphere))
