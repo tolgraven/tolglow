@@ -7,7 +7,8 @@
             [reagent.core :as r]
             ["react-dom/server" :refer [renderToStaticMarkup]]
             [tolglow.studio.panel-tiles :as tiles]
-            [tolglow.studio.panel-window :as window]))
+            [tolglow.studio.panel-window :as window]
+            [tolglow.studio.parameter-source :as sources]))
 
 (defn- transition [db event]
   (reset! rf-db/app-db db)
@@ -53,7 +54,9 @@
     (is (nil? (:schema (tiles/resolve-binding show {:cue "moon" :param "gone"}))))))
 
 (defn- control [instance key schema & [_ options]]
-  [:div.stub-control {:data-param (name key) :data-compact (boolean (:compact? options))} (str (:id instance))])
+  [:div.stub-control {:data-param (name key) :data-compact (boolean (:compact? options))
+                      :data-mount (:source-mount options)}
+   (str (:id instance))])
 
 (defn- tile [entry tier & [s]]
   (renderToStaticMarkup (r/as-element [tiles/param-tile {:show (or s show)} control entry tier])))
@@ -80,6 +83,26 @@
     (is (re-find #"tile-picker" (tile {:id :param-1} :single)) "a 1×1 tile without a parameter offers the menu")
     (is (re-find #"Moon · speed shows here while the cue runs" (tile {:id :param-1 :binding {:cue "moon" :param "speed"}} :full)))
     (is (re-find #"no gone on moon" (tile {:id :param-1 :binding {:cue "moon" :param "gone"}} :full)))))
+
+(deftest a-tile-has-its-own-source-trigger-and-editor
+  (let [entry {:id :param-1 :binding {:cue "ember" :param "level"}}
+        trigger #(renderToStaticMarkup (r/as-element [sources/trigger "0:1" :level "Level" nil nil %]))]
+    (reset! rf-db/app-db {})
+    (testing "the Live card and a tile showing the same parameter have different trigger IDs"
+      (is (re-find #"id=\"source-0:1-level\"" (trigger nil)))
+      (is (re-find #"id=\"source-tile-param-1-0:1-level\"" (trigger (tiles/source-mount :param-1)))))
+    (testing "the tile passes its own scope to the shared control at both sizes"
+      (is (re-find #"data-mount=\"tile-param-1\"" (tile entry :compact)))
+      (is (re-find #"data-mount=\"tile-param-1\"" (tile entry :full))))
+    (testing "the tile's trigger opens the editor in the tile, not the Live card's"
+      (is (not (re-find #"live-source-editor" (tile entry :full))))
+      (reset! rf-db/app-db {:ui {:parameter-source {"tile-param-1-0:1" :level}}})
+      (let [open (tile entry :full)]
+        (is (re-find #"<section id=\"source-editor-tile-param-1-0:1-level\"[^>]*class=\"live-source-editor\"" open))
+        (is (re-find #"id=\"source-editor-heading-tile-param-1-0:1-level\"" open)))
+      (reset! rf-db/app-db {:ui {:parameter-source {"0:1" :level}}})
+      (is (not (re-find #"live-source-editor" (tile entry :full))) "the Live card's editor stays in the card")
+      (reset! rf-db/app-db {}))))
 
 (deftest the-visualization-panel-lists-running-parameters
   (let [entries (tiles/viz-entries show)]

@@ -33,6 +33,13 @@
 
 (defn- editor-open? [selected params] (boolean (some #{selected} params)))
 
+(defn scope
+  "The key of one mounted control's source editor: the instance ID, or the ID
+  within `mount` when the same parameter is also shown elsewhere (a layout tile),
+  so each mount has its own DOM IDs and opens its own editor."
+  [id mount]
+  (if mount (str mount "-" id) id))
+
 (defn- trigger-id [id param] (str "source-" id "-" (events/wire-id param)))
 
 (defn- editor-id [id param] (str "source-editor-" id "-" (events/wire-id param)))
@@ -251,8 +258,9 @@
 (defn- close! [id params]
   (rf/dispatch [::close id params]))
 
-(defn trigger [id param title source & [components]]
-  (let [selected @(rf/subscribe [::selection id]) inputs (:sources source)
+(defn trigger [instance-id param title source & [components mount]]
+  (let [id (scope instance-id mount)
+        selected @(rf/subscribe [::selection id]) inputs (:sources source)
         params (editor-parameters param components)
         owner (first params)
         expanded? (editor-open? selected params)
@@ -465,10 +473,11 @@
     :response (str "Response envelope" (when id (str " · " (widgets/label id))))
     (widgets/label type)))
 
-(defn editor [instance param schema components]
+(defn editor [instance param schema components & [mount]]
   (let [id (:id instance) title (or (:name schema) (widgets/label param))
         params (editor-parameters param components)
         owner (first params)
+        scoped (scope id mount)
         raw @(rf/subscribe [::raw-instance id])
         priority @(rf/subscribe [::priority-destination])
         priority? (priority-param? priority param)
@@ -477,16 +486,16 @@
         base (if priority?
                (:base-value (or (reading raw param) (reading instance param)) 0)
                (get-in raw [:params param] (get-in instance [:params param] (:default schema))))]
-    [:section.live-source-editor {:id (editor-id id owner) :aria-labelledby (heading-id id owner)
-                                 :on-key-down #(when (= "Escape" (.-key %)) (.stopPropagation %) (close! id params))}
-     [:header [:h4 {:id (heading-id id owner) :tab-index -1} (str title " source")]
-      [:button.text-button {:type "button" :aria-label "Close source editor" :on-click #(close! id params)} "Close"]]
+    [:section.live-source-editor {:id (editor-id scoped owner) :aria-labelledby (heading-id scoped owner)
+                                 :on-key-down #(when (= "Escape" (.-key %)) (.stopPropagation %) (close! scoped params))}
+     [:header [:h4 {:id (heading-id scoped owner) :tab-index -1} (str title " source")]
+      [:button.text-button {:type "button" :aria-label "Close source editor" :on-click #(close! scoped params)} "Close"]]
      (when (source-of source :blocks) [fixture-selector id])
      (when (seq components)
        [:label.source-field "Axis" [:select {:aria-label "Source axis" :value (events/wire-id param)
                                           :on-change #(let [value (.. % -target -value)
                                                             axis (some (fn [k] (when (= value (events/wire-id k)) k)) params)]
-                                                        (rf/dispatch [::select-axis id params axis]))}
+                                                        (rf/dispatch [::select-axis scoped params axis]))}
                                   (for [[k axis] components] ^{:key k} [:option {:value (events/wire-id k)} (or (:name axis) (widgets/label k))])]])
      (when-let [error (:error source)] [:p.performance-error {:role "alert"} error])
      (when (seq (:sources source))
@@ -496,3 +505,10 @@
                      (cond (:held? input) " · using base" (:pending? input) " · awaiting sample") (when-let [error (:error input)] [:span.performance-error {:role "alert"} error])])])
      ^{:key [id param (:binding (source-of source :lfo))]} [lfo-editor id param typed base source catalog raw]
      (when-not priority? [motion/parameter-widget id param schema base])]))
+
+(defn mounted-editor
+  "The source editor of one parameter shown in `mount`, while its trigger there
+  has it open."
+  [instance param schema mount]
+  (when (editor-open? @(rf/subscribe [::selection (scope (:id instance) mount)]) [param])
+    [editor instance param schema nil mount]))
