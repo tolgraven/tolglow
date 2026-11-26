@@ -486,8 +486,11 @@ for (const viewport of viewports) {
       assert.equal(await tileTrigger.getAttribute('aria-controls'),
                    await tileWindow.locator('.parameter-tile .live-source-editor').getAttribute('id'),
                    'the trigger controls the editor beside it');
+      // Keyboard focus moves to the editor in the tile's own window, and back.
+      await tileWindow.waitForFunction(() => /^source-editor-heading-tile-param-1-/.test(document.activeElement?.id || ''), null, {timeout: 5000});
       await tileWindow.locator('.parameter-tile .live-source-editor button', {hasText: 'Close'}).click();
       await tileWindow.waitForSelector('.parameter-tile .live-source-editor', {state: 'detached', timeout: 5000});
+      await tileWindow.waitForFunction(id => document.activeElement?.id === id, tileTriggerId, {timeout: 5000});
       record.tileSource = {tileTriggerId};
       await tap(page.locator('#layout-cancel'));
       await page.waitForSelector('#view-perform .editing-layout', {state: 'detached'});

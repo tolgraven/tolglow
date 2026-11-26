@@ -298,7 +298,14 @@
       (is (= [layout/host-refused-notice true] (layout/store-toast true :refused notice)))
       (is (= [layout/host-refused-notice true] (layout/store-toast true :silent nil)))
       (is (= [layout/failed-notice true] (layout/store-toast false :refused notice)))
-      (is (= [layout/failed-notice true] (layout/store-toast false :silent notice))))))
+      (is (= [layout/failed-notice true] (layout/store-toast false :silent notice)))))
+  (testing "an answer to a newer save settles older pending ones, so their timeouts stay silent"
+    (let [[pending done] (layout/settle-reply {1 :one 2 :two 3 :three} 2)]
+      (is (= {3 :three} pending))
+      (is (= :two done)))
+    (let [[pending done] (layout/settle-reply {3 :three} 2)]
+      (is (= {3 :three} pending) "a late answer to an older save leaves the newer one waiting")
+      (is (nil? done)))))
 
 (deftest pointer-gestures-preview-then-commit-or-cancel
   (let [rects [{:id :cues :left 0 :top 0 :width 400 :height 600}

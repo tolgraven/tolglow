@@ -373,14 +373,21 @@
   "How long to wait for the app to say whether it kept a copy."
   3000)
 
+(defn settle-reply
+  "Pending saves after the app answered `request`: that one and every older one
+  go, because each copy replaces the one before, so an older save's late
+  timeout cannot warn after a newer save was answered. Returns [pending done]
+  where done is the answered request's callback, if it was still pending."
+  [pending request]
+  [(into {} (remove (fn [[n _]] (<= n request))) pending) (get pending request)])
+
 (defn- host-reply! [^js event]
   (let [^js detail (.-detail event)]
-    (when (and detail (= "layouts" (.-type detail)))
+    (when (and detail (= "layouts" (.-type detail)) (number? (.-request detail)))
       (let [request (.-request detail)
-            done (get-in @host-requests [:pending request])]
-        (when done
-          (swap! host-requests update :pending dissoc request)
-          (done (if (true? (.-kept detail)) :kept :refused)))))))
+            [pending done] (settle-reply (:pending @host-requests) request)]
+        (swap! host-requests assoc :pending pending)
+        (when done (done (if (true? (.-kept detail)) :kept :refused)))))))
 
 (defonce ^:private host-listener
   (delay (.addEventListener js/window "tolglow-studio-window" host-reply!)))

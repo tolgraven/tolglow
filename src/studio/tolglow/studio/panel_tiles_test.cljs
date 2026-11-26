@@ -102,7 +102,15 @@
         (is (re-find #"id=\"source-editor-heading-tile-param-1-0:1-level\"" open)))
       (reset! rf-db/app-db {:ui {:parameter-source {"0:1" :level}}})
       (is (not (re-find #"live-source-editor" (tile entry :full))) "the Live card's editor stays in the card")
-      (reset! rf-db/app-db {}))))
+      (reset! rf-db/app-db {}))
+    (testing "focus moves within the document of the control that was used, as in a tile's own window"
+      (let [doc #js {:title "tile window"}
+            scope (sources/scope "0:1" (tiles/source-mount :param-1))
+            opened (transition {} [::sources/toggle scope [:level] :level doc])
+            closed (transition (:db opened) [::sources/close scope [:level] doc])]
+        (is (= [scope [:level] true doc] (::sources/focus opened)))
+        (is (= [scope [:level] false doc] (::sources/focus closed)))
+        (is (= {} (get-in (:db closed) [:ui :parameter-source])))))))
 
 (deftest the-visualization-panel-lists-running-parameters
   (let [entries (tiles/viz-entries show)]
