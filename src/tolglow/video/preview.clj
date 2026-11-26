@@ -55,7 +55,8 @@
   (when-let [f (get-in latch [:frames source-id])]
     (let [w (:width f) h (:height f)
           step (max 1 (long (Math/ceil (/ (double w) max-width))))
-          ow (quot w step) oh (quot h step)
+          ;; A thin frame (a 1-row strip render target) still yields an image.
+          ow (max 1 (quot w step)) oh (max 1 (quot h step))
           image (BufferedImage. ow oh BufferedImage/TYPE_INT_RGB)
           ^bytes px (:pixels f)]
       (dotimes [y oh]

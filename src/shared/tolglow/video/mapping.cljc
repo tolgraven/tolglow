@@ -91,7 +91,12 @@
             (when (and (#{:image :feed} kind) (not (and (string? file) (not (str/blank? file)))))
               [(error (conj path :file) "Name the file to read")])
             (when (and (= :syphon kind) (not (and (string? app) (string? name))))
-              [(error path "A Syphon source names its application and server")]))))))
+              [(error path "A Syphon source names its application and server")])
+            ;; The helper sizes its feed file from these, so they stay bounded.
+            (for [k [:max-width :max-height]
+                  :let [v (get source k)]
+                  :when (and (contains? source k) (not (and (integer? v) (<= 16 v 4096))))]
+              (error (conj path k) "The Syphon feed limit is 16–4096 pixels")))))))
 
 (defn settings-errors
   "Path/message errors for [:settings :video]. Empty when valid."

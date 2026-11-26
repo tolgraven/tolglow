@@ -32,7 +32,7 @@
      :or {bridge (System/getenv "TOLGLOW_VIDEO_BRIDGE")
           now-ms #(System/currentTimeMillis)}}]
    {:bridge bridge :feed-dir feed-dir :now-ms now-ms
-    :lock (Object.) :sources (atom {})
+    :lock (Object.) :list-lock (Object.) :sources (atom {})
     :requested (atom ::none)
     :worker (delay (java.util.concurrent.Executors/newSingleThreadExecutor
                     (reify java.util.concurrent.ThreadFactory
@@ -95,7 +95,10 @@
     (try (.close (.getOutputStream process)) (catch Exception _ nil))
     (when-not (.waitFor process 2 TimeUnit/SECONDS)
       (.destroy process)
-      (.waitFor process 2 TimeUnit/SECONDS)))
+      ;; A helper that ignores SIGTERM must not outlive its source.
+      (when-not (.waitFor process 2 TimeUnit/SECONDS)
+        (.destroyForcibly process)
+        (.waitFor process 2 TimeUnit/SECONDS))))
   (when file (.delete file)))
 
 (defn reconcile!
@@ -122,11 +125,15 @@
   a helper process."
   [hub configs]
   (let [configs (or configs {})
-        [previous _] (reset-vals! (:requested hub) configs)]
-    (when-not (= previous configs)
-      (.execute ^java.util.concurrent.ExecutorService @(:worker hub)
-                ^Runnable (fn [] (when (= configs @(:requested hub))
-                                   (try (reconcile! hub configs) (catch Exception _ nil))))))))
+        ;; A stopped hub stays stopped: a frame that commits while the show
+        ;; stops must not open helpers that nothing will close.
+        [previous _] (swap-vals! (:requested hub) #(if (= ::stopped %) % configs))]
+    (when-not (or (= ::stopped previous) (= previous configs))
+      (try
+        (.execute ^java.util.concurrent.ExecutorService @(:worker hub)
+                  ^Runnable (fn [] (when (= configs @(:requested hub))
+                                     (try (reconcile! hub configs) (catch Exception _ nil)))))
+        (catch java.util.concurrent.RejectedExecutionException _ nil)))))
 
 (defn stop!
   "Close every source and helper process."
@@ -166,7 +173,9 @@
     (vec (for [[id {:keys [source config]}] (sort-by (comp str key) @(:sources hub))]
            (let [d (source/describe source)
                  f (get-in latch [:frames id])
-                 age (when-let [t (:captured-at-ms f)] (max 0 (- now t)))]
+                 ;; Only a live feed ages; a still or test grid never sends another frame.
+                 live? (contains? #{:feed :syphon} (:kind d))
+                 age (when-let [t (when live? (:captured-at-ms f))] (max 0 (- now t)))]
              (merge {:id id :config config}
                     (select-keys d [:kind :label :connected? :error :running? :last-event])
                     (when f {:width (:width f) :height (:height f) :sequence (:sequence f)})
@@ -177,16 +186,18 @@
 
 (defn list-syphon
   "Ask the helper for the current Syphon servers. Returns {:servers [...]} or
-  {:error ...}; never throws for a missing helper."
+  {:error ...}; never throws for a missing helper. One listing helper runs at
+  a time, however many clients ask at once."
   [hub]
   (let [bridge (:bridge hub)]
     (if-not (and bridge (.canExecute (io/file bridge)))
       {:servers [] :error "The Syphon video bridge is not installed (set TOLGLOW_VIDEO_BRIDGE)"}
-      (let [process (let [command [bridge "list"]] (.start (ProcessBuilder. ^java.util.List command)))]
-        (.close (.getOutputStream process))
-        (if (.waitFor process 5 TimeUnit/SECONDS)
-          (let [lines (str/split-lines (slurp (.getInputStream process)))
-                report (some #(let [e (try (json/read-str % :key-fn keyword) (catch Exception _ nil))]
-                                (when (= "servers" (:event e)) e)) lines)]
-            {:servers (vec (:servers report))})
-          (do (.destroy process) {:servers [] :error "The video bridge did not answer"}))))))
+      (locking (:list-lock hub)
+        (let [process (let [command [bridge "list"]] (.start (ProcessBuilder. ^java.util.List command)))]
+          (.close (.getOutputStream process))
+          (if (.waitFor process 5 TimeUnit/SECONDS)
+            (let [lines (str/split-lines (slurp (.getInputStream process)))
+                  report (some #(let [e (try (json/read-str % :key-fn keyword) (catch Exception _ nil))]
+                                  (when (= "servers" (:event e)) e)) lines)]
+              {:servers (vec (:servers report))})
+            (do (.destroyForcibly process) {:servers [] :error "The video bridge did not answer"})))))))

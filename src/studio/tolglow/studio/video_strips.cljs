@@ -188,13 +188,14 @@
     (str/join " " [(corner (- a) (- c)) (corner a (- c)) (corner a c) (corner (- a) c)])))
 
 (defn- strip-overlay [strip colors width height selected? drag!]
+  ;; The projection lists colours by footprint along the points, whichever
+  ;; end the first pixel is wired to, so they fill the polygons in order.
   (let [n (count colors)
         prints (mapping/footprints (:points strip) n (:height strip 0) width height)
-        ordered (if (:reverse? strip) (vec (rseq (vec colors))) colors)
         [[x0 y0]] (mapv (fn [[u v]] [(* u width) (* v height)]) (:points strip))]
     [:g.video-strip {:class (when selected? "selected")}
      (map-indexed (fn [i print]
-                    ^{:key i} [:polygon {:points (footprint-polygon print) :fill (get ordered i "#333")}])
+                    ^{:key i} [:polygon {:points (footprint-polygon print) :fill (get colors i "#333")}])
                   prints)
      [:polyline.video-strip-line {:points (str/join " " (map (fn [[u v]] (str (* u width) "," (* v height))) (:points strip)))
                                   :on-pointer-down #(drag! % [:move])}]
@@ -236,7 +237,8 @@
                       (.setPointerCapture (.-currentTarget event) (.-pointerId event))
                       (ui! [:strip] strip-id)
                       (reset! drag {:strip-id strip-id :op op :from (svg-point (.closest (.-target event) "svg") event width height)
-                                    :original (some #(when (= strip-id (:id %)) %) (:strips mapping))})))
+                                    ;; Build on the unsettled draft, as button edits do.
+                                    :original (some #(when (= strip-id (:id %)) %) strips)})))
             move (fn [event]
                    (when-let [{:keys [op from original]} @drag]
                      (let [[u v] (svg-point (.closest (.-target event) "svg") event width height)

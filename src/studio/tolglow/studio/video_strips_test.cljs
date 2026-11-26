@@ -57,3 +57,11 @@
     (is (nil? (:studio/http second-edit)))
     (is (= 0.3 (get-in third-edit [:db :video-strips-ui :queued :strip :height])))
     (is (= 0.3 (get-in third-edit [:db :video-strips-ui :draft :height])))))
+
+(deftest reversed-strips-fill-footprints-in-projected-order
+  ;; The projection lists colours by footprint along the points; reversal only
+  ;; changes which target reads each footprint, so the overlay must not flip them.
+  (let [strip {:id :a :layout :a :points [[0.1 0.5] [0.9 0.5]] :height 0.04 :reverse? true}
+        overlay (#'video/strip-overlay strip ["#0000ff" "#ff0000"] 640 360 false (fn [_] nil))
+        fills (keep #(when (and (vector? %) (= :polygon (first %))) (:fill (second %))) (tree-seq coll? seq overlay))]
+    (is (= ["#0000ff" "#ff0000"] fills))))

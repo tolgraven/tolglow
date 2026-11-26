@@ -216,7 +216,11 @@
                      (do (swap! state assoc :frame f :word word :connected? (:connected? f) :label (:label f) :error nil)
                          f)
                      frame))))
-             (catch Exception e (swap! state assoc :error (or (ex-message e) (str (class e)))) nil)))
+             (catch Exception e (swap! state assoc :error (or (ex-message e) (str (class e)))) nil)
+             ;; Another process shrank the file under the mapping; the JVM
+             ;; reports that fault as InternalError. Keep the last frame.
+             (catch InternalError e (swap! state assoc :buffer nil :size nil :error (or (ex-message e) "Feed file shrank"))
+               (:frame @state))))
       (describe [_] (let [{:keys [connected? label error]} @state]
                       {:kind :feed :label (or label (str (.getName (io/file file))))
                        :connected? (boolean connected?) :error error}))

@@ -11,7 +11,7 @@ Run Resolume or another Syphon sender on the same Mac, pick its feed, and lay pi
 | `:test-pattern` | `:width`, `:height`, `:pattern` (`:grid` or `:gradient`) | The labelled 8 × 4 colour grid for checking endpoint order, crop and isolation. |
 | `:image` | `:file` | A PNG or JPEG still. |
 | `:feed` | `:file` | A TGVF file written by the native video bridge or a test. |
-| `:syphon` | `:app`, `:name`, optional `:max-width`/`:max-height` (default 1024) | A Syphon server, selected by application and server name. |
+| `:syphon` | `:app`, `:name`, optional `:max-width`/`:max-height` (16–4096, default 1024) | A Syphon server, selected by application and server name. |
 
 A Syphon selection follows the sender by name. When Resolume quits and returns, the strips pick it up again without reselecting. Status shows the source as **stale** after a second without a new frame or when the sender has gone. The strips keep the last frame meanwhile, so a sender restart does not black out the rig. A sender that changes resolution keeps its mapping, because strip coordinates are fractions of the frame.
 
@@ -97,13 +97,14 @@ The hub starts one helper per selected Syphon source. It finds the helper throug
 
 ### What the operator runs
 
-Syphon.framework is not vendored. Build the helper against an official Syphon release ([Syphon-Framework](https://github.com/Syphon/Syphon-Framework), BSD 2-clause):
+Syphon.framework is not vendored, and it must never be copied out of another application's bundle. `native/VideoBridge/build` fetches the official [Syphon-Framework](https://github.com/Syphon/Syphon-Framework) source (BSD 2-clause) at a pinned commit, refuses any other revision and builds the framework with `xcodebuild` under `target/syphon-framework/`. The only published binary release (SDK 5, 2019) predates the Metal client and server the helper uses, so the build starts from source. It needs Xcode and network access on the first run:
 
 ```sh
-# SYPHON_FRAMEWORK_DIR is the directory that contains Syphon.framework
-SYPHON_FRAMEWORK_DIR=~/Library/Frameworks native/VideoBridge/build   # writes target/video-bridge/TolglowVideoBridge
+native/VideoBridge/build   # writes target/video-bridge/TolglowVideoBridge
 TOLGLOW_VIDEO_BRIDGE=$PWD/target/video-bridge/TolglowVideoBridge lein run -m tolglow.qa-video-syphon
 ```
+
+`SYPHON_FRAMEWORK_DIR=<directory containing Syphon.framework>` skips the fetch for an operator-provided build of the same official framework.
 
 The packaged Studio app does not bundle the helper yet. Until it does, set `TOLGLOW_VIDEO_BRIDGE` before starting the show. The app's `LocalShow.swift` passes its environment to the show process.
 

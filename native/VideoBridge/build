@@ -1,12 +1,49 @@
 #!/usr/bin/env bash
-# Build TolglowVideoBridge against a Syphon.framework (BSD-2, github.com/Syphon).
-#   SYPHON_FRAMEWORK_DIR=<directory containing Syphon.framework> native/VideoBridge/build [output]
-# The framework is not vendored. A packaged Studio embeds the official release
-# under Contents/Frameworks and sets TOLGLOW_VIDEO_BRIDGE to the built helper.
+# Build TolglowVideoBridge against Syphon.framework (BSD-2, github.com/Syphon).
+#   native/VideoBridge/build [output]
+#
+# Syphon is never vendored and never copied out of another application's
+# bundle. By default this fetches the official Syphon-Framework source at a
+# pinned commit (git verifies the content against the commit hash, and the
+# script refuses any other revision) and builds the framework with xcodebuild
+# into target/. The only published binary release (SDK 5, 2019) predates
+# SyphonMetalClient/SyphonMetalServer, which the helper needs, so the build
+# uses source.
+#
+# SYPHON_FRAMEWORK_DIR=<directory containing Syphon.framework> skips the
+# fetch, for an operator-provided build of the same official framework.
+# A packaged Studio embeds the framework under Contents/Frameworks and sets
+# TOLGLOW_VIDEO_BRIDGE to the built helper.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-: "${SYPHON_FRAMEWORK_DIR:?Set SYPHON_FRAMEWORK_DIR to the directory that contains Syphon.framework}"
 out="${1:-$root/target/video-bridge/TolglowVideoBridge}"
+
+# Syphon-Framework main, 2026-09-21 ("Small fix so setting a SyphonServer.name
+# correctly copies the new name", fixes Syphon #106). Update deliberately.
+syphon_repo="https://github.com/Syphon/Syphon-Framework.git"
+syphon_commit="f4761677a45b8034a3c2069ec0f3d2553da81fba"
+
+if [[ -z "${SYPHON_FRAMEWORK_DIR:-}" ]]; then
+  work="$root/target/syphon-framework/$syphon_commit"
+  products="$work/build/Build/Products/Release"
+  if [[ ! -d "$products/Syphon.framework" ]]; then
+    rm -rf "$work"
+    mkdir -p "$work"
+    git -C "$work" init -q src
+    git -C "$work/src" fetch -q --depth 1 "$syphon_repo" "$syphon_commit"
+    git -C "$work/src" checkout -q --detach FETCH_HEAD
+    actual="$(git -C "$work/src" rev-parse HEAD)"
+    if [[ "$actual" != "$syphon_commit" ]]; then
+      echo "Syphon-Framework fetch resolved to $actual, expected $syphon_commit" >&2
+      exit 1
+    fi
+    xcodebuild -quiet -project "$work/src/Syphon.xcodeproj" -scheme Syphon -configuration Release \
+      -derivedDataPath "$work/build" ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+      CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO MACOSX_DEPLOYMENT_TARGET=14.0 >&2
+  fi
+  SYPHON_FRAMEWORK_DIR="$products"
+fi
+
 mkdir -p "$(dirname "$out")"
 xcrun swiftc -O -target arm64-apple-macos14.0 \
   -F "$SYPHON_FRAMEWORK_DIR" -framework Syphon -framework Metal -framework MetalPerformanceShaders -framework AppKit \

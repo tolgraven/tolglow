@@ -6,6 +6,7 @@
             [tolglow.compiler.video :as video-output]
             [tolglow.video.hub :as hub]
             [tolglow.video.mapping :as mapping]
+            [tolglow.video.preview :as preview]
             [tolglow.video.sampler :as sampler]
             [tolglow.video.source :as source])
   (:import [java.awt.image BufferedImage]
@@ -33,6 +34,10 @@
 
 (deftest settings-validate-and-edit-through-one-operation-shape
   (is (= [] (mapping/settings-errors {})))
+  (is (= [] (mapping/settings-errors {:sources {:s {:kind :syphon :app "A" :name "B" :max-width 1920 :max-height 1080}}})))
+  (is (= [[:sources :s :max-width] [:sources :s :max-height]]
+         (map :path (mapping/settings-errors {:sources {:s {:kind :syphon :app "A" :name "B" :max-width 100000 :max-height "1"}}})))
+      "the helper sizes its feed file from these limits")
   (is (seq (mapping/settings-errors {:mappings {:a {:id :b :source :grid :strips []}}})))
   (is (seq (mapping/settings-errors {:mappings {:a {:id :a :source :grid
                                                    :strips [{:id :s :layout :t :points [[0 0]]}]}}})))
@@ -168,6 +173,26 @@
           (hub/reconcile! video {:still {:kind :image :file (str file)} :grid {:kind :test-pattern :width 64 :height 32}})
           (is (identical? grid-source (hub/source-of video :grid)))))
       (finally (hub/stop! video) (.delete file)))))
+
+(deftest a-stopped-hub-opens-nothing-and-stills-never-go-stale
+  (let [video (hub/create {:now-ms #(+ 60000 (System/currentTimeMillis))})]
+    (hub/reconcile! video {:grid {:kind :test-pattern :width 8 :height 4}})
+    (hub/stop! video)
+    (testing "a frame that commits while the show stops cannot reopen sources"
+      (is (nil? (hub/request-reconcile! video {:grid {:kind :test-pattern :width 8 :height 4}})))
+      (Thread/sleep 50)
+      (is (= {} @(:sources video)))))
+  (let [file (File/createTempFile "tolglow-video" ".png")
+        video (hub/create {:now-ms #(+ 60000 (System/currentTimeMillis))})]
+    (try
+      (ImageIO/write (BufferedImage. 4 2 BufferedImage/TYPE_INT_RGB) "png" file)
+      (hub/reconcile! video {:still {:kind :image :file (str file)}})
+      (let [[still] (hub/status video (hub/latch video {:transport {:playing? true}} nil))]
+        (is (false? (:stale? still)) "a still image a minute old is not a stale feed")
+        (is (nil? (:age-ms still))))
+      (finally (hub/stop! video) (.delete file))))
+  (testing "a one-row frame still makes a preview JPEG"
+    (is (pos? (alength (preview/frame-jpeg {:frames {:s (source/test-pattern-frame {:width 1920 :height 1})}} :s 640))))))
 
 (deftest latch-holds-while-stopped-and-for-paused-instances
   (let [video (hub/create)
