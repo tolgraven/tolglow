@@ -385,20 +385,34 @@ bars. The runtime owns one record (`create-runtime` option `:live-runs`,
 **Recording ownership.** A take is made only for a performance.
 - Commands with origin `:live-playback` or `:tolglow-feedback` make no takes,
   and neither does anything addressed to an instance they launched.
-- The companion marks MIDI it forwards:
-  - `live-input` when its own track plays no Session clip
-    (`playing_slot_index` below 0) and either the transport is stopped or the
-    track holds no Arrangement clips;
-  - `live-playback` otherwise, including when the state is unknown.
+- The companion marks MIDI it forwards `live-input` only when all of these
+  hold:
+  - its own track neither plays nor has launched a Session clip
+    (`playing_slot_index` and `fired_slot_index` below 0);
+  - the track holds no Arrangement clips;
+  - the track takes no MIDI from another track (its input routing does not
+    name another track);
+  - nothing changed on those slots within the last 250 ms.
+  Everything else is `live-playback`, including when the state is unknown.
+- The notification stores each observed value at once, as a plain
+  assignment. Only reads that need LiveAPI are deferred. A launch is
+  therefore seen at `fired_slot_index`, before the clip starts. Notes that
+  still reach the companion before Live's first notification would be
+  classified as input; that ordering needs the host run.
 - The Ableton bridge gives `live-input` commands origin `:live-input`. The run
   record and Capture keep them as performances, and they are never recorded
   back into Live, which already has its input.
 - Everything else from Live, such as a looping launcher pattern (#228) or a
   Capture clip, stays `:live-playback`, so a looping clip does not add a take
   every pass.
-- Arrangement playback on a track that holds Arrangement clips is treated as
-  playback while the transport runs. A performer playing over such a track is
-  therefore not recorded; that limit is on the checklist.
+- Known limits:
+  - A performer playing on a companion track that holds Arrangement clips, or
+    one that takes MIDI from another track, is not recorded.
+  - Routing is detected by name: a MIDI port named exactly like another track
+    counts as routing from that track. An undetected route from a clip would
+    be recorded as performance, and a later Capture into Live would write back
+    what Live played. Keep the companion on its own track with a MIDI port or
+    keyboard input.
 
 **Live layout.** `live-runs/sync!` inspects the Set, applies a plan and
 inspects again.
@@ -458,18 +472,25 @@ run's envelope in Live waits for #625.
 - The Live sync manager hands them to the runtime's `show/live-run-clip!`.
   The REPL can call the same function.
 - `show/live-run-clip!` stamps each event with the show transport beat on
-  arrival. This is the one place Live song time meets the show clock; the
-  companion's `song-beat` is kept for diagnostics.
+  arrival and only queues it (at most 256). This is the one place Live song
+  time meets the show clock; the companion's `song-beat` is kept for
+  diagnostics.
+- The owner thread decodes the queue at its next cycle and submits the
+  commands. The callback never waits for the owner, and the owner never waits
+  for a callback; a two-thread test guards this.
 
 `live-runs/player` decodes the events:
 - A clip start launches the take's cue once with its recorded launch. A held
   launch replays as persistent, because the clip owns its release. The launch
   carries origin `:live-playback`, `:live/take-id` and the recorded
   `:live/effect-version`.
-- The owner binds the receipt, restores a per-instance group placement,
-  replays the recorded moves and releases after the held length. Each of these
-  lands one owner cycle after the beat it is due.
-- A timed or one-shot launch ends itself.
+- The owner binds each receipt from the submitted command's reply. A refused
+  launch is dropped, never left pending. The owner then restores a
+  per-instance group placement, replays the recorded moves at their held-time
+  offsets (a move after a seek keeps its offset into the run), and releases
+  after the take's actual held length, also for a timed run stopped early.
+  Each of these lands one owner cycle after it is due.
+- A playing entry whose instance already ended is dropped.
 - A stop ends the instance, even before its launch is acknowledged.
 - A repeat of the same watch session and serial launches nothing. A reloaded
   companion's new session is not taken for a repeat.

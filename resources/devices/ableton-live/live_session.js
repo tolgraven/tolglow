@@ -76,10 +76,16 @@
     this.watchSerial = 0;
     this.watchSession = options.watchSession || (String(new Date().getTime()) + "-" + Math.floor(Math.random() * 1e9));
     // What the companion's own track is playing, for origin marking:
-    // {host, slot, closers}; songPlaying and hostArrangement follow the Set.
+    // {host, slot, fired, changedAt, closers}. hostArrangement and hostRouted
+    // are refreshed with the host track.
     this.hostWatch = null;
-    this.songPlaying = null;
     this.hostArrangement = null;
+    this.hostRouted = null;
+    this.now = options.now || function () { return new Date().getTime(); };
+    // MIDI within this many milliseconds of a launch, start or stop on the
+    // companion's track counts as playback (its notification can trail the
+    // first notes).
+    this.transitionMs = options.transitionMs === undefined ? 250 : options.transitionMs;
     // The companion's own track id, cached: MIDI events and lane moves must not
     // build a LiveAPI object each. Refreshed by every Set operation, so moving
     // the device to another track is picked up at the next setup or write.
@@ -108,38 +114,62 @@
       this.host = host && Number(host.id) ? Number(host.id) : null;
       if (this.host) {
         try { this.hostArrangement = ids(host.get("arrangement_clips")).length > 0; } catch (e) { this.hostArrangement = null; }
+        this.hostRouted = this.routedFromTrack(this.host);
       }
       this.watchHost();
     }
     return this.host;
   };
-  // Follow the companion track's Session playback and the transport, so MIDI
-  // it forwards can be told apart: clip playback or a performer's live input.
+  // Whether the companion's track takes its MIDI from another track ("MIDI
+  // From: <track>"): that track's clips then reach the companion as input.
+  // Input routing is readable in the LOM; a port name equal to another
+  // track's name is taken as routing from that track. Unknown counts as true.
+  Session.prototype.routedFromTrack = function (hostId) {
+    var self = this;
+    try {
+      var port = this.routing(this.object({id: hostId})).port;
+      if (port === null) return false;
+      return this.trackIds().some(function (id) { return id !== hostId && String(self.read(self.object({id: id}), "name")) === port; });
+    } catch (e) { return true; }
+  };
+  // Follow the companion track's Session playback: playing_slot_index and
+  // fired_slot_index (a launched clip waiting for its quantized start). The
+  // notification stores the value at once (a plain assignment, not a Set
+  // change), so MIDI forwarded after it is already classified correctly.
   Session.prototype.watchHost = function () {
     var self = this, host = this.host;
     if (!this.observe || (this.hostWatch && this.hostWatch.host === host)) return;
     if (this.hostWatch) this.hostWatch.closers.forEach(function (close) { close(); });
     this.hostWatch = null;
     if (!host) return;
-    var watch = {host: host, slot: null, closers: []};
+    var watch = {host: host, slot: null, fired: null, changedAt: null, closers: []};
+    var noted = function (key) {
+      return function (v) {
+        var n = Number(scalar(v));
+        if (n !== watch[key]) watch.changedAt = self.now();
+        watch[key] = n;
+      };
+    };
     try {
-      watch.slot = Number(this.read(this.object({id: host}), "playing_slot_index"));
-      watch.closers.push(this.observe(host, "playing_slot_index", function (v) { watch.slot = Number(scalar(v)); }));
-      var song = this.api("live_set");
-      if (song && Number(song.id)) {
-        this.songPlaying = !!this.read(song, "is_playing");
-        watch.closers.push(this.observe(Number(song.id), "is_playing", function (v) { self.songPlaying = !!Number(scalar(v)); }));
-      }
+      var track = this.object({id: host});
+      watch.slot = Number(this.read(track, "playing_slot_index"));
+      watch.fired = Number(this.read(track, "fired_slot_index"));
+      watch.closers.push(this.observe(host, "playing_slot_index", null, noted("slot")));
+      watch.closers.push(this.observe(host, "fired_slot_index", null, noted("fired")));
     } catch (e) { watch.slot = null; }
     this.hostWatch = watch;
   };
-  // Live input only when that is known: the track plays no Session clip and
-  // no Arrangement clip can be playing. Unknown counts as playback.
+  // Live input only when that is known: the track plays and has launched no
+  // Session clip, holds no Arrangement clip, takes no MIDI from another track,
+  // and nothing changed on it within transitionMs. Anything else, unknown
+  // included, is playback.
   Session.prototype.origin = function () {
     var w = this.hostWatch;
     if (!w || w.slot === null || !finite(w.slot) || w.slot >= 0) return "live-playback";
-    if (this.songPlaying === false || this.hostArrangement === false) return "live-input";
-    return "live-playback";
+    if (finite(w.fired) && w.fired >= 0) return "live-playback";
+    if (this.hostArrangement !== false || this.hostRouted !== false) return "live-playback";
+    if (w.changedAt !== null && this.now() - w.changedAt < this.transitionMs) return "live-playback";
+    return "live-input";
   };
   Session.prototype.closeWatches = function () {
     var self = this;
@@ -589,7 +619,7 @@
     this.hostTrackId();
     tracks.forEach(function (track) {
       var id = Number(track.id), entry = {slot: Number(self.read(track, "playing_slot_index"))};
-      entry.close = self.observe(id, "playing_slot_index", function (value) { self.playingChanged(id, value); });
+      entry.close = self.observe(id, "playing_slot_index", function (value) { self.playingChanged(id, value); }, null);
       self.watches[id] = entry;
     });
     return {watching: tracks.length};

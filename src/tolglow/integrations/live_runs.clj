@@ -237,7 +237,10 @@
   replaces the earlier one, and moves beyond :max-moves are counted, not kept.
   Beats only grow within a take, so same-beat moves sit at the tail."
   [record take-id move]
-  (let [moves (get-in record [:takes take-id :moves])
+  (let [{:keys [held-acc segment-start]} (get-in record [:takes take-id])
+        ;; Held time into the run, so a move after a seek keeps its real offset.
+        move (assoc move :at (+ (or held-acc 0) (max 0 (- (:beat move) (or segment-start (:beat move))))))
+        moves (get-in record [:takes take-id :moves])
         same (loop [i (dec (count moves))]
                (when (and (>= i 0) (= (:beat move) (:beat (nth moves i))))
                  (if (= (:param move) (:param (nth moves i))) i (recur (dec i)))))]
@@ -769,12 +772,12 @@
                    :commands [(command player envelope-fn :instance/end {:instance-id instance-id})]}
       :else {:player (-> player (update :playing dissoc track-id) (update :stopping conj command-id)) :commands []})))
 
-(def ^:private self-ending-modes #{:timed :one-shot})
-
 (defn replay-launch
   "The launch a take's playback sends: its recorded mode, targets, duration
   and launch values. A :held launch replays as :persistent, because the clip,
-  not a held pad, owns its release. What is not reproduced: the effect
+  not a held pad, owns its release. Every replay ends after the take's actual
+  held length, so a timed run that was stopped early replays as short as it
+  ran. What is not reproduced: the effect
   revision (playback runs the cue's current definition; the take keeps
   :effect-version) and live modulation or other writers at the time."
   [take]
@@ -805,13 +808,11 @@
                                 (update :source assoc :live/take-id take-id :live/clip-id clip-id
                                         :live/effect-version (:effect-version take)))
                     held (or (clip-beats take) 0)
-                    due (vec (concat (for [{move-beat :beat :keys [param value]} (:moves take)
-                                           :let [rel (- move-beat (:start-beat take))]
+                    due (vec (concat (for [{move-beat :beat :keys [param value at]} (:moves take)
+                                           :let [rel (or at (- move-beat (:start-beat take)))]
                                            :when (< rel held)]
                                        [(max 0 rel) {:op :param/set :param param :value value}])
-                                     ;; A timed or one-shot launch ends on its own.
-                                     (when-not (contains? self-ending-modes (:mode launch))
-                                       [[held {:op :instance/end}]])))]
+                                     [[held {:op :instance/end}]]))]
                 {:player (assoc-in ended [:playing track-id]
                                    {:take-id take-id :clip-id clip-id :command-id (:command-id command)
                                     :start-beat beat :due due :assigned-group (:assigned-group take)})
@@ -844,16 +845,23 @@
 
 (defn advance
   "Emit the parameter moves and the release a playing take reaches by beat
-  (the transport of the event beats). Returns {:player :commands}."
-  [player beat envelope-fn]
-  (reduce (fn [{:keys [player commands]} [track-id {:keys [instance-id start-beat due]}]]
-            (if (or (nil? instance-id) (nil? start-beat))
-              {:player player :commands commands}
-              (let [[now later] (split-with (fn [[rel]] (<= (+ start-beat rel) beat)) due)
-                    out (mapv (fn [[_ c]] (command player envelope-fn (:op c) (assoc (dissoc c :op) :instance-id instance-id))) now)]
-                {:player (if (empty? later)
-                           (update player :playing dissoc track-id)
-                           (assoc-in player [:playing track-id :due] (vec later)))
-                 :commands (into commands out)})))
-          {:player player :commands []}
-          (sort-by key (:playing player))))
+  (the transport of the event beats). With live-ids (the show's instance IDs),
+  a playing entry whose instance already ended is dropped. Returns
+  {:player :commands}."
+  ([player beat envelope-fn] (advance player beat envelope-fn nil))
+  ([player beat envelope-fn live-ids]
+     (reduce (fn [{:keys [player commands]} [track-id {:keys [instance-id start-beat due]}]]
+               (cond
+                 (and instance-id live-ids (not (contains? live-ids instance-id)))
+                 {:player (update player :playing dissoc track-id) :commands commands}
+                 (or (nil? instance-id) (nil? start-beat))
+                 {:player player :commands commands}
+                 :else
+                 (let [[now later] (split-with (fn [[rel]] (<= (+ start-beat rel) beat)) due)
+                       out (mapv (fn [[_ c]] (command player envelope-fn (:op c) (assoc (dissoc c :op) :instance-id instance-id))) now)]
+                   {:player (if (empty? later)
+                              (update player :playing dissoc track-id)
+                              (assoc-in player [:playing track-id :due] (vec later)))
+                    :commands (into commands out)})))
+             {:player player :commands []}
+             (sort-by key (:playing player)))))

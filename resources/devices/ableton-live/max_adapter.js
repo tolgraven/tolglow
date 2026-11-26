@@ -67,14 +67,16 @@ function init() {
       api: liveObject,
       dictionaryCall: function (object, method, data) { return object.call(method, data); },
       readDictionary: readDictionary,
-      // Run-track playback (#683). A notification only schedules the read:
-      // LiveAPI reads happen in a deferred task, never inside the callback.
-      observe: function (id, property, changed) {
+      // Run-track and host-track playback (#683). `immediate` only stores the
+      // value and runs inside the notification; `changed` may read LiveAPI, so
+      // it runs in a deferred task, never inside the callback.
+      observe: function (id, property, changed, immediate) {
         var open = true, handle = new LiveAPI(function (args) {
           if (!args || args[0] !== property) return;
           var value = args[1];
+          if (immediate) immediate(value);
           // Every change is delivered in order; the Session drops repeats.
-          new Task(function () { if (open) changed(value); }).schedule(0);
+          if (changed) new Task(function () { if (open) changed(value); }).schedule(0);
         }, "live_set");
         handle.id = id;
         handle.property = property;

@@ -109,7 +109,7 @@
             (is (= [(:a1 ids) (:b ids) (:a2 ids)] (mapv :instance-id [t1 tb t2])))
             (is (= ["r1.1" "r1.2" "r1.3"] (mapv :take-id [t1 tb t2])))
             (is (= {:level 0.5} (:params t1)) "launch values")
-            (is (= [{:beat 3 :param :level :value 0.75}] (:moves t1)) "parameter performance")
+            (is (= [{:beat 3 :param :level :value 0.75 :at 2}] (:moves t1)) "parameter performance, with its offset into the run")
             (is (= [1 2] (mapv :run [t1 t2])) "successive runs of one cue are numbered")
             (is (= {:adapter :studio :session-id "browser"} (:source tb)) "B was launched from outside Live")
             (is (every? #(= :ended (:phase %)) (runs/takes r)) "takes outlive their instances")
@@ -119,7 +119,7 @@
             (is (= [0 1] (mapv :lane [a3 a4])))
             (is (= [(:a3 ids) (:a4 ids)] (mapv :instance-id [a3 a4])))
             (is (empty? (:moves a3)))
-            (is (= [{:beat 14 :param :level :value 0.2}] (:moves a4)))
+            (is (= [{:beat 14 :param :level :value 0.2 :at 1}] (:moves a4)))
             (is (= 2 (get-in r [:channels :a :lanes])))))
         (testing "channels follow the manual effect-group tree"
           (is (= [:stage :warm] (get-in r [:channels :a :group-path])))
@@ -418,7 +418,8 @@
                                                (fn [] {:command-id "c1"}))]
       (is (= [:cue/launch] (mapv :op commands)))
       (is (= 7 (get-in commands [0 :source :live/effect-version])))
-      (is (empty? (get-in player [:playing "track:1" :due])) "a timed launch ends itself; no release is scheduled"))))
+      (is (= [[2 {:op :instance/end}]] (get-in player [:playing "track:1" :due]))
+          "the replay ends after the take's actual length, even for a timed launch"))))
 
 (deftest a-reloaded-companion-counting-from-one-again-is-not-a-repeat
   (let [r (fold-models (runs/new-record) [{:beat 0 :commands [launch-a] :instances {"0:1" :running}}
@@ -494,10 +495,12 @@
             ;; Exactly what the companion emits: Live song time, no show beat.
             event {:type "clip-started" :track-id track-id :clip-id clip-id :watch-session "w1" :serial 1 :song-beat 512}]
         (tick! 20)
-        (is (= [:cue/launch] (mapv :op (:commands (show/live-run-clip! rt event)))))
-        (is (empty? (:commands (show/live-run-clip! rt event))) "a repeated report launches nothing")
-        (tick! 20)
-        (is (= [{:level 0.5}] (mapv :params (instances))) "the take's launch values")
+        (is (= {:status :queued} (show/live-run-clip! rt event)) "the callback only queues")
+        (is (= {:status :queued} (show/live-run-clip! rt event)))
+        (is (empty? (instances)) "nothing happens until the owner runs")
+        ;; The owner decodes and submits in one cycle; the launch applies in the next.
+        (tick! 20) (tick! 20)
+        (is (= [{:level 0.5}] (mapv :params (instances))) "one launch with the take's values; the repeat launched nothing")
         ;; A move the owner reaches in one cycle is applied in the next.
         (tick! 22.25) (tick! 22.5)
         (is (= [0.75] (mapv #(get-in % [:params :level]) (instances))) "the owner replays the move two beats in")
@@ -515,3 +518,79 @@
         p (runs/projection r nil {:limit 3})]
     (is (= [10 3 true] ((juxt :takes :shown :truncated?) p)))
     (is (= ["p.8" "p.9" "p.10"] (mapv :take-id (mapcat :takes (mapcat :lanes (:channels p))))))))
+
+(defn- live-runs-pending [state]
+  (runs/pending-launches (:player state)))
+
+(defn- synced-runtime
+  "A runtime that performed, synced to the simulated Set; returns it with the
+  run-clip event for take rt.1."
+  []
+  (let [rt (runtime {:live-runs {:record-id "rt"}})
+        h {:tick! (fn [beat] (show/tick! rt (long (* 500 beat))))
+           :submit! (fn [beat payload]
+                      (let [reply (show/submit! rt :command payload)]
+                        (show/tick! rt (long (* 500 beat)))
+                        (deref reply 1000 ::missing)))}]
+    (perform! h)
+    (let [mirror (show/sync-live-runs! rt (live/open (fake/transport (fake/create {:companion? false})) {}) {:groups? false})]
+      {:rt rt :track-id (get-in mirror [:tracks [:lane :a 0]])
+       :event {:type "clip-started" :track-id (get-in mirror [:tracks [:lane :a 0]])
+               :clip-id (get-in mirror [:clips "rt.1" :clip-id]) :watch-session "w1"}})))
+
+(deftest run-clip-events-from-another-thread-never-deadlock-the-owner
+  (let [{:keys [rt event track-id]} (synced-runtime)
+        running (atom true)
+        owner (future (loop [beat 20.0] (when @running (show/tick! rt (long (* 500 beat))) (recur (+ beat 0.05)))))
+        callback (future (doseq [i (range 200)]
+                           (show/live-run-clip! rt (assoc event :serial (* 2 i) :type (if (even? i) "clip-started" "clip-stopped")))
+                           (Thread/sleep 1)))]
+    (try
+      (is (not= ::timeout (deref callback 10000 ::timeout)) "the callback thread finished")
+      (reset! running false)
+      (is (not= ::timeout (deref owner 10000 ::timeout)) "the owner thread kept cycling")
+      (is (nil? (.findDeadlockedThreads (java.lang.management.ManagementFactory/getThreadMXBean))))
+      (finally (reset! running false) (show/stop! rt)))))
+
+(deftest a-rejected-run-clip-launch-is-not-left-pending
+  (let [{:keys [rt event]} (synced-runtime)]
+    (try
+      (show/tick! rt 10000)
+      ;; The cue is gone, so the launch is refused.
+      (deref (show/submit! rt :command {:op :cue/delete :cue-id :a :source studio}) 0 nil)
+      (show/tick! rt 10010)
+      (show/live-run-clip! rt (assoc event :serial 1))
+      (doseq [t [10020 10030 10040 10050]] (show/tick! rt t))
+      (let [state @(:live-runs rt)]
+        (is (empty? (live-runs-pending state)) "the refusal was read from the reply")
+        (is (empty? (:replies state))))
+      (finally (show/stop! rt)))))
+
+(deftest a-stopped-clip-ends-its-replay-even-when-nothing-else-is-due
+  (let [r (fold-models (runs/new-record) [{:beat 0 :commands [[{:op :cue/launch :cue-id :a :launch {:mode :timed :duration {:beats 8}}} {:instance-id "0:1"}]]
+                                           :instances {"0:1" :running}}
+                                          {:beat 2 :instances {}}])
+        [t] (runs/takes r)
+        env (let [n (atom 0)] (fn [] {:command-id (str "c" (swap! n inc))}))
+        p (runs/player {:clips {(:take-id t) {:clip-id "clip:1"}}})
+        started (runs/play p r {:type :clip-started :track-id "t" :clip-id "clip:1" :serial 1 :beat 100} env)
+        bound (runs/acknowledge (:player started) {:command-id "c1" :status :accepted :instance-id "9:1"} env)
+        later (runs/advance (:player bound) 101 env #{"9:1"})
+        stopped (runs/play (:player later) r {:type :clip-stopped :track-id "t" :serial 2 :beat 101} env)]
+    (is (= 2 (runs/held-beats t)) "the timed run ended after 2 of its 8 beats")
+    (is (= [[2 {:op :instance/end}]] (get-in later [:player :playing "t" :due])) "its replay ends after 2 beats")
+    (is (= [[:instance/end "9:1"]] (mapv (juxt :op :instance-id) (:commands stopped))) "an early clip stop ends it")
+    (is (empty? (:playing (:player (runs/advance (:player bound) 101 env #{})))) "an instance that already ended is dropped")))
+
+(deftest a-move-after-a-seek-replays-at-its-real-offset
+  (let [r (fold-models (runs/new-record) [{:beat 8 :commands [launch-a] :instances {"0:1" :running}}
+                                         {:beat 10 :instances {"0:1" :running}}
+                                         {:beat 1 :instances {"0:1" :running}}
+                                         {:beat 2 :commands [[{:op :param/set :instance-id "0:1" :param :level :value 0.3} {}]]
+                                          :instances {"0:1" :running}}
+                                         {:beat 3 :commands [[{:op :instance/end :instance-id "0:1"} {}]]}])
+        [t] (runs/takes r)
+        {:keys [player]} (runs/play (runs/player {:clips {(:take-id t) {:clip-id "clip:1"}}}) r
+                                    {:type :clip-started :track-id "t" :clip-id "clip:1" :serial 1 :beat 0} (fn [] {:command-id "c1"}))]
+    (is (= 3 (:at (first (:moves t)))) "two beats before the seek and one after")
+    (is (= [[3 :param/set] [4 :instance/end]] (mapv (fn [[at c]] [at (:op c)]) (get-in player [:playing "t" :due]))))))

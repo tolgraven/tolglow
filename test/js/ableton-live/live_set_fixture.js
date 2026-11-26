@@ -13,7 +13,11 @@ const CHANNELS = [{ display_name: "All Channels", identifier: 100 }].concat(
 // places a track inside one. create_midi_track(index) joins the group of the
 // track before it (or that track, if it is a Group Track): an assumption about
 // Live to verify on a real Set (joinsGroup: false models the opposite).
-function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGroup = true } = {}) {
+// notify: "sync" delivers observer notifications inside the call that changes
+// the property; "deferred" delivers each one later (a timer, as LiveAPI does),
+// with the observer's deferred task later still, as max_adapter.js schedules
+// it. now: the Session's millisecond clock.
+function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGroup = true, notify = "sync", now } = {}) {
   const entities = {}, writes = [], calls = [], observers = [], emitted = []; let next = 10;
   const add = (o) => { o.id = o.id || ++next; entities[o.id] = o; return o; };
   function makeClip(length) {
@@ -21,7 +25,7 @@ function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGro
   }
   function makeTrack(t) {
     const track = add({ kind: "track", props: { name: t.name, has_midi_input: t.audio || t.group ? 0 : 1, can_be_armed: t.group ? 0 : 1, arm: t.arm ? 1 : 0,
-      is_foldable: t.group ? 1 : 0, group_track: ["id", 0], playing_slot_index: -1,
+      is_foldable: t.group ? 1 : 0, group_track: ["id", 0], playing_slot_index: -1, fired_slot_index: -1,
       current_monitoring_state: t.monitor ?? 1, input_routing_type: t.port ?? PORTS[0], input_routing_channel: t.channel ?? CHANNELS[0],
       devices: t.instrument ? ["id", 7001, "id", 7002] : ["id", 7001], arrangement_clips: [] },
     slots: [], received: !!t.received });
@@ -126,25 +130,43 @@ function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGro
     entities[object.id].props[key] = list.find(o => o.identifier === value.identifier);
     writes.push({ id: object.id, key, value });
   };
-  const observe = (id, property, changed) => {
-    const entry = { id, property, changed, open: true };
+  // Like max_adapter.js: `immediate` runs inside the notification, `changed`
+  // in a task scheduled from it.
+  const observe = (id, property, changed, immediate) => {
+    const entry = { id, property, changed, immediate, open: true };
     observers.push(entry);
     return () => { entry.open = false; };
+  };
+  const notifyAll = (id, property, value) => {
+    const deliver = () => {
+      for (const o of observers) if (o.open && o.id === id && o.property === property) {
+        if (o.immediate) o.immediate([value]);
+        if (o.changed) { if (notify === "deferred") setTimeout(() => { if (o.open) o.changed([value]); }, 0); else o.changed([value]); }
+      }
+    };
+    if (notify === "deferred") setTimeout(deliver, 0); else deliver();
   };
   // Start (slot >= 0) or stop (-1) Session playback on a track, as Live would
   // report it through playing_slot_index.
   const play = (index, slot, songTime = 0) => {
     const track = song.tracks[index];
-    track.props.playing_slot_index = slot; song.props.current_song_time = songTime;
-    for (const o of observers) if (o.open && o.id === track.id && o.property === "playing_slot_index") o.changed([slot]);
+    track.props.playing_slot_index = slot; track.props.fired_slot_index = -1; song.props.current_song_time = songTime;
+    notifyAll(track.id, "fired_slot_index", -1);
+    notifyAll(track.id, "playing_slot_index", slot);
+  };
+  // Launch a clip that waits for its quantized start (fired_slot_index).
+  const fire = (index, slot) => {
+    const track = song.tracks[index];
+    track.props.fired_slot_index = slot;
+    notifyAll(track.id, "fired_slot_index", slot);
   };
   const session = new Session({ api, setDictionary, dictionaryCall: (o, m, d) => o.call(m, d), readDictionary: v => (typeof v === "string" ? JSON.parse(v) : v),
-    observe, emit: (event) => emitted.push(event) });
+    observe, emit: (event) => emitted.push(event), now });
   const adapter = new Adapter({ api, session, dictionaryCall: (o, m, d) => o.call(m, d), readDictionary: JSON.parse });
   let n = 0;
   const request = (op, payload = {}) => adapter.handle({ id: "r" + (++n), op, payload });
   return { song, device, view, appView, entities, writes, calls, request, adapter, session, api, setDictionary, moveCompanion,
-    observers, emitted, play, inGroup };
+    observers, emitted, play, fire, inGroup };
 }
 
 module.exports = { liveSet, PORTS, CHANNELS };

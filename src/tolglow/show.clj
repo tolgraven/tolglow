@@ -418,7 +418,7 @@
       {:enabled? true :record (live-runs/new-record (assoc options :record-id record-id)) :mirror nil
        ;; Run-clip playback decoder, made by the first sync; its lock orders
        ;; playback events with the owner's acknowledgements and moves.
-       :player nil :player-lock (Object.)
+       :player nil :player-lock (Object.) :inbox [] :replies {}
        :cost {:samples 0 :total-ns 0 :max-ns 0 :last-ns 0}})))
 
 (defn- configure-runtime
@@ -1927,26 +1927,44 @@
 (defn- run-clip-envelope [runtime model]
   {:command-id (str (UUID/randomUUID)) :show-id (:show-id model) :epoch (:epoch model) :time-ms (now-ms runtime)})
 
+(def ^:private run-clip-inbox-limit 256)
+
 (defn- advance-run-player!
-  "Bind run-clip launch receipts from the committed history, then send the
-  moves and releases playing takes have reached. Runs on the owner after
-  output; commands enter the owner queue, never applied here."
+  "Owner-thread playback of run clips: decode the queued run-clip events, bind
+  launch receipts from their reply promises (accepted or rejected), and send
+  the moves and releases playing takes have reached. The player lock is held
+  only while the pure player runs; commands are submitted after it is
+  released, so a callback or a sync can never wait on the owner while the
+  owner waits on them."
   [runtime state model]
   (when (:player @state)
-    (locking (:player-lock @state)
-      (let [envelope #(run-clip-envelope runtime model)
-            history (get-in model [:control :history])
-            acked (reduce (fn [{:keys [player commands]} id]
-                            (if-let [ack (get-in history [id :ack])]
-                              (let [r (live-runs/acknowledge player ack envelope)]
-                                {:player (:player r) :commands (into commands (:commands r))})
-                              {:player player :commands commands}))
-                          {:player (:player @state) :commands []}
-                          (live-runs/pending-launches (:player @state)))
-            advanced (live-runs/advance (:player acked) (get-in model [:transport :beat] 0) envelope)
-            commands (into (:commands acked) (:commands advanced))]
-        (swap! state assoc :player (:player advanced))
-        (doseq [c commands] (submit! runtime (assoc c :expected-epoch (:epoch model))))))))
+    (let [envelope #(run-clip-envelope runtime model)
+          commands (locking (:player-lock @state)
+                     (let [[old _] (swap-vals! state assoc :inbox [])
+                           replies (:replies old {})
+                           played (reduce (fn [{:keys [player commands]} event]
+                                            (let [r (live-runs/play player (:record old) event envelope)]
+                                              {:player (:player r) :commands (into commands (:commands r))}))
+                                          {:player (:player @state) :commands []}
+                                          (:inbox old))
+                           acked (reduce (fn [{:keys [player commands]} id]
+                                           (let [reply (get replies id)]
+                                             (if (and reply (realized? reply))
+                                               (let [r (live-runs/acknowledge player @reply envelope)]
+                                                 {:player (:player r) :commands (into commands (:commands r))})
+                                               {:player player :commands commands})))
+                                         {:player (:player played) :commands (:commands played)}
+                                         (live-runs/pending-launches (:player played)))
+                           advanced (live-runs/advance (:player acked) (get-in model [:transport :beat] 0) envelope
+                                                       (set (keys (:instances model))))
+                           pending (live-runs/pending-launches (:player advanced))]
+                       (swap! state #(-> % (assoc :player (:player advanced))
+                                         (update :replies (fn [rs] (select-keys rs pending)))))
+                       (into (:commands acked) (:commands advanced))))]
+      (doseq [c commands]
+        (let [reply (submit! runtime (assoc c :expected-epoch (:epoch model)))]
+          (when (= :cue/launch (:op c))
+            (swap! state assoc-in [:replies (:command-id c)] reply)))))))
 
 (defn- observe-live-runs!
   "Fold the committed model into the run record. Pure fold; a failure is
@@ -1966,28 +1984,30 @@
             (swap! (:state runtime) assoc-in [:status :live-runs-error] (error-data error))))))))
 
 (defn live-run-clip!
-  "Feed one run-clip playback event from the companion's run-track watch
-  (live-runs/player) into the show. The event's :beat is stamped here with the
+  "Queue one run-clip playback event from the companion's run-track watch
+  (live-runs/player) for the owner. The event's :beat is stamped here with the
   show transport beat at arrival, the one place Live song time meets the show
-  clock; Live's :song-beat is kept only for diagnostics. Needs a previous
-  sync-live-runs!, which binds clips to takes. The Live bridge calls this for
-  `run-clip` callbacks; the REPL can call it too. Returns the commands sent."
+  clock; Live's :song-beat is kept only for diagnostics. Decoding and every
+  command happen on the owner thread at its next cycle, so this never waits
+  for rendering. Needs a previous sync-live-runs!, which binds clips to takes.
+  The Live bridge calls this for `run-clip` callbacks; the REPL can call it
+  too. At most 256 events wait; more are counted and dropped."
   [runtime event]
   (let [state (:live-runs runtime)]
     (if-not (and state (:enabled? @state) (:player @state))
       {:status :ignored :reason (if (and state (:enabled? @state)) :not-synced :disabled)}
-      (locking (:player-lock @state)
-        (let [model (:model @(:state runtime))
-              {:keys [beat bpm playing? time-ms]} (:transport model)
-              elapsed (if (and playing? time-ms) (/ (* (- (now-ms runtime) time-ms) (or bpm 120.0)) 60000.0) 0)
-              event (-> event
-                        (update :type #(if (string? %) (keyword %) %))
-                        (assoc :beat (live-runs/snap (+ (or beat 0) (max 0 elapsed)))))
-              {:keys [player commands]} (live-runs/play (:player @state) (:record @state) event
-                                                        #(run-clip-envelope runtime model))]
-          (swap! state assoc :player player)
-          (doseq [c commands] (submit! runtime (assoc c :expected-epoch (:epoch model))))
-          {:status :decoded :commands (mapv #(select-keys % [:op :cue-id :instance-id :command-id]) commands)})))))
+      (let [model (:model @(:state runtime))
+            {:keys [beat bpm playing? time-ms]} (:transport model)
+            elapsed (if (and playing? time-ms) (/ (* (- (now-ms runtime) time-ms) (or bpm 120.0)) 60000.0) 0)
+            event (-> event
+                      (update :type #(if (string? %) (keyword %) %))
+                      (assoc :beat (live-runs/snap (+ (or beat 0) (max 0 elapsed)))))
+            [old _] (swap-vals! state (fn [s] (if (< (count (:inbox s [])) run-clip-inbox-limit)
+                                                (update s :inbox (fnil conj []) event)
+                                                (update s :inbox-dropped (fnil inc 0)))))]
+        (if (< (count (:inbox old [])) run-clip-inbox-limit)
+          {:status :queued}
+          {:status :dropped :reason :inbox-full})))))
 
 (defn- observe-sync-commands! [runtime before after receipts events fired-outcomes]
   (let [manager (connections/sync (:connections runtime))

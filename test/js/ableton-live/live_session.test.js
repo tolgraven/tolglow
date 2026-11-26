@@ -340,25 +340,59 @@ test("write-clip adds a scene when the run track is full and places the clip in 
   assert.deepEqual(inspected["arrangement-clips"], [{ name: "A run 2 [r.2]", "start-beat": 16, "end-beat": 19 }]);
 });
 
-test("forwarded MIDI is live input only while the companion's track plays no clip and nothing can play from the Arrangement", () => {
-  const live = liveSet({ tracks: [{ name: "Tolglow Cues" }] });
+test("forwarded MIDI is live input only while the companion's track plays, launches and routes in nothing", () => {
+  let clock = 1000;
+  const live = liveSet({ tracks: [{ name: "Tolglow Cues" }], now: () => clock });
   live.request("handoff", { mode: "lighting" });
   const note = () => live.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 }).origin;
   live.request("inspect-set");
-  assert.equal(note(), "live-input", "stopped transport, no clip playing: a performer");
+  assert.equal(note(), "live-input", "no clip playing or launched, no Arrangement clips: a performer");
+  live.fire(0, 0);
+  assert.equal(note(), "live-playback", "a launched clip waiting for its quantized start");
   live.play(0, 0);
   assert.equal(note(), "live-playback", "a Session clip plays on the companion's track");
-  live.play(0, -1);
-  assert.equal(note(), "live-input");
-  const quiet = liveSet({ tracks: [{ name: "Tolglow Cues" }] });
-  quiet.request("handoff", { mode: "lighting" });
-  quiet.song.props.is_playing = 1;
-  quiet.song.tracks[0].props.arrangement_clips = ["id", 9999];
-  quiet.session.hostTrackId(true);
-  assert.equal(quiet.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 }).origin, "live-playback",
-    "the transport plays and the track has Arrangement clips: treated as playback");
+  clock += 1000; live.play(0, -1);
+  assert.equal(note(), "live-playback", "notes just after a stop may still be the clip's");
+  clock += 300;
+  assert.equal(note(), "live-input", "after the transition window: a performer again");
   live.session.closeWatches();
   assert.ok(live.observers.every(o => !o.open), "closing the device ends every watch");
+
+  const arranged = liveSet({ tracks: [{ name: "Tolglow Cues" }], now: () => clock });
+  arranged.request("handoff", { mode: "lighting" });
+  arranged.song.tracks[0].props.arrangement_clips = ["id", 9999];
+  arranged.session.hostTrackId(true);
+  assert.equal(arranged.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 }).origin, "live-playback",
+    "a track with Arrangement clips counts as playback even while stopped, so Play's first downbeat is never a performance");
+
+  const routed = liveSet({ tracks: [{ name: "Tolglow Cues" }, { name: "Keystep" }], now: () => clock });
+  routed.request("handoff", { mode: "lighting" });
+  routed.song.tracks[0].props.input_routing_type = PORTS[2];   // display name "Keystep", like another track
+  routed.session.hostTrackId(true);
+  assert.equal(routed.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 }).origin, "live-playback",
+    "MIDI From another track carries that track's clips");
+});
+
+test("with notifications delivered later, as LiveAPI does, the value is kept inside the notification", async () => {
+  let clock = 1000;
+  const live = liveSet({ tracks: [{ name: "Tolglow Cues" }, { name: "Tolglow run a" }], notify: "deferred", now: () => clock });
+  live.request("handoff", { mode: "lighting" });
+  live.request("inspect-set");
+  const note = () => live.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 }).origin;
+  clock += 1000;
+  assert.equal(note(), "live-input");
+  live.fire(0, 0);
+  live.play(0, 0);
+  await new Promise(resolve => setImmediate(resolve));   // notifications delivered; their deferred tasks not yet run
+  assert.equal(note(), "live-playback", "classified from the notification itself, before any deferred task");
+  // Run-track watch: the clip identity is read in the deferred task.
+  const clip = { "length-beats": 2, notes: [{ pitch: 60, start: 0, duration: 2, velocity: 127 }] };
+  const written = live.request("write-clip", { "track-id": "track:" + live.song.tracks[1].id, name: "A run 1 [r.1]", clip });
+  live.request("watch-run-tracks", { "track-ids": ["track:" + live.song.tracks[1].id] });
+  live.play(1, 0, 8);
+  assert.equal(live.emitted.length, 0, "nothing is emitted inside the call");
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.deepEqual(live.emitted.map(e => [e.type, e["clip-id"]]), [["clip-started", written.result["clip-id"]]]);
 });
 
 test("watch-run-tracks reports each clip start and stop once, with the clip identity", () => {
