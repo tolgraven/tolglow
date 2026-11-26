@@ -35,8 +35,8 @@
                 cue-ids)
         (assoc-in [:registry :cues :c0 :color] [1 0 0]))))
 
-(defn- harness []
-  (let [runtime (show/create-runtime {:model (model) :workspace-options nil})
+(defn- harness [& [initial-model]]
+  (let [runtime (show/create-runtime {:model (or initial-model (model)) :workspace-options nil})
         time (atom 0)
         receivers (atom {})
         sent (atom {})
@@ -267,6 +267,259 @@
             (input! :main [0x90 47 127] [0x80 47 0] [0x90 46 127] [0x80 46 0])
             (input! :main [0x90 17 127])
             (is (= [false true] (get (selected) i0))))))
+      (finally (show/stop! runtime)))))
+
+(deftest control-inverts-the-configured-solo-and-mute-mode-and-shift-adds
+  (let [{:keys [runtime input!] :as h} (harness)]
+    (try
+      (desk! h)
+      (doseq [cue [:c0 :c1 :c2 :c3]] (launch! h cue))
+      (let [[i0 i1 i2 i3] (map #(:id (latest h %)) [:c0 :c1 :c2 :c3])
+            selected (fn [field] (into #{} (keep #(when (field %) (:id %)))
+                                       (:instances (:effect-selection (show/snapshot runtime)))))
+            control! (fn [note] (input! :main [0x90 72 127] [0x90 note 127] [0x80 note 0] [0x80 72 0]))
+            shift! (fn [note] (input! :main [0x90 70 127] [0x90 note 127] [0x80 note 0] [0x80 70 0]))
+            press! (fn [note] (input! :main [0x90 note 127] [0x80 note 0]))]
+        (testing "with the default exclusive Solo, CONTROL adds"
+          (press! 9)
+          (is (= #{i0} (selected :soloed?)))
+          (control! 12)
+          (is (= #{i0 i3} (selected :soloed?))))
+        (testing "with additive Solo, a plain press adds, CONTROL replaces and SHIFT still adds"
+          (accepted! h {:op :effect-selection/configure :modes {:solo :additive}})
+          (press! 8)
+          (is (= #{i0 i1 i2 i3} (selected :soloed?)) "The group strip joins")
+          (control! 9)
+          (is (= #{i0} (selected :soloed?)) "CONTROL+SOLO leaves only this strip")
+          (control! 8)
+          (is (= #{i1 i2} (selected :soloed?)) "Another strip replaces it")
+          (control! 8)
+          (is (= #{} (selected :soloed?)) "CONTROL on the whole selection clears it")
+          (shift! 9)
+          (shift! 12)
+          (is (= #{i0 i3} (selected :soloed?))))
+        (testing "Mute follows its own configured mode"
+          (press! 17)
+          (control! 20)
+          (is (= #{i0 i3} (selected :muted?)) "Exclusive Mute: CONTROL adds")
+          (press! 20)
+          (is (= #{i3} (selected :muted?)) "A plain exclusive press replaces")))
+      (finally (show/stop! runtime)))))
+
+(deftest transport-solo-finds-a-strip-selected-on-the-extender
+  (let [{:keys [runtime input! owner!] :as h} (harness)]
+    (try
+      (let [{:keys [refresh!]} (desk! h)
+            soloed #(vec (keep (fn [i] (when (:soloed? i) (:id i))) (:instances (:effect-selection (show/snapshot runtime)))))]
+        (launch! h :c7)
+        (launch! h :c0)
+        (refresh!)
+        (testing "the extender's first strip is the ninth row, cue c7"
+          (input! :ext [0x90 24 127] [0x80 24 0])
+          (is (= [:cue :c7] (:selected (layout h)))))
+        (testing "with nothing soloed or stored, the main unit's transport SOLO solos it"
+          (input! :main [0x90 90 127] [0x80 90 0])
+          (is (= [(:id (latest h :c7))] (soloed))))
+        (testing "and also when the selected strip is on no unit's current page"
+          (input! :main [0x90 90 127] [0x80 90 0])
+          (input! :main [0x90 70 127] [0x90 90 127] [0x80 90 0] [0x80 70 0])
+          (is (= [] (soloed)) "Stored and cleared, then SHIFT forgot the stored set")
+          (owner! #(deref (show/unlink-surfaces! runtime "desk") 1000 ::missing))
+          (is (= [0 [:cue :c7]] ((juxt :first (comp :selected :layout)) (surface/strip-placement (model-of h) "xt-main")))
+              "Alone, the main unit shows rows 1-8; c7 is the ninth")
+          (input! :main [0x90 90 127] [0x80 90 0])
+          (is (= [(:id (latest h :c7))] (soloed)))))
+      (finally (show/stop! runtime)))))
+
+(defn- selection-frames
+  "Run f while recording, after every owner tick, the committed Solo and Mute
+  sets and the instances the renderer includes."
+  [runtime f]
+  (let [frames (atom []) tick! show/tick!]
+    (with-redefs [show/tick! (fn [& args]
+                               (let [result (apply tick! args)
+                                     {:keys [instances included-instance-ids solo-active?]}
+                                     (:effect-selection (show/snapshot runtime))]
+                                 (swap! frames conj {:solo (into #{} (keep #(when (:soloed? %) (:id %))) instances)
+                                                     :mute (into #{} (keep #(when (:muted? %) (:id %))) instances)
+                                                     :solo-active? solo-active?
+                                                     :included (set included-instance-ids)})
+                                 result))]
+      (f))
+    ;; Consecutive ticks that commit the same selection count as one frame.
+    (vec (dedupe @frames))))
+
+(deftest control-keeps-solo-and-mute-active-in-every-committed-frame
+  (let [{:keys [runtime input!] :as h} (harness)]
+    (try
+      (desk! h)
+      (doseq [cue [:c0 :c1 :c2 :c3 :c4 :c5]] (launch! h cue))
+      (accepted! h {:op :effect-selection/configure :modes {:solo :additive :mute :additive}})
+      (let [[i0 i1 i2 i3 i4 i5] (map #(:id (latest h %)) [:c0 :c1 :c2 :c3 :c4 :c5])
+            control! (fn [note] (selection-frames runtime #(input! :main [0x90 72 127] [0x90 note 127] [0x80 note 0] [0x80 72 0])))
+            press! (fn [note] (input! :main [0x90 note 127] [0x80 note 0]))
+            toggle! (fn [control ids] (accepted! h {:op :effect-selection/toggle :control control
+                                                    :selector {:instance-ids ids} :additive? true}))]
+        (testing "c0 and c3 soloed, c4 and c5 running: CONTROL+SOLO on c4 adds it, then drops the others"
+          (press! 9)
+          (press! 12)
+          (let [frames (control! 13)]
+            (is (= [#{i0 i3 i4} #{i4}] (mapv :solo frames)))
+            (is (every? :solo-active? frames) "Solo stays active in every committed frame")
+            (is (not-any? #(contains? (:included %) i5) frames) "c5, which nobody soloed, never plays")))
+        (testing "a strip whose instances partly overlap the selection: the group (c1, c2) with c0 and c1 soloed"
+          (toggle! :solo [i4])
+          (toggle! :solo [i0 i1])
+          (is (= [#{i0 i1 i2} #{i1 i2}] (mapv :solo (control! 8)))))
+        (testing "a strip wholly selected among others needs only the drop"
+          (toggle! :solo [i0 i3])
+          (is (= [#{i1 i2}] (mapv :solo (control! 8))) "One owner cycle")
+          (toggle! :solo [i1 i2]))
+        (testing "Mute: the other muted strips stay muted until the strip is muted"
+          (press! 17)
+          (press! 20)
+          (let [frames (control! 21)]
+            (is (= [#{i0 i3 i4} #{i4}] (mapv :mute frames)))
+            (is (every? #(not-any? (:included %) [i0 i3]) (butlast frames)) "c0 and c3 never unmute early"))))
+      (finally (show/stop! runtime)))))
+
+(deftest control-drops-nothing-when-its-add-fails
+  (let [{:keys [runtime input!] :as h} (harness)]
+    (try
+      (desk! h)
+      (doseq [cue [:c0 :c1 :c2 :c3 :c4]] (launch! h cue))
+      (accepted! h {:op :effect-selection/configure :modes {:solo :additive}})
+      (let [[i0 i1 _ i3 i4] (map #(:id (latest h %)) [:c0 :c1 :c2 :c3 :c4])
+            soloed #(into #{} (keep (fn [i] (when (:soloed? i) (:id i)))) (:instances (:effect-selection (show/snapshot runtime))))
+            ;; The end is queued before the press, so the unit still sees the instance
+            ;; but the owner applies the end before the unit's add.
+            ending! (fn [id note]
+                      (show/submit! runtime :command {:op :instance/end :instance-id id :force? true
+                                                      :source {:adapter :repl :session-id "xt-test"}})
+                      (input! :main [0x90 72 127] [0x90 note 127] [0x80 note 0] [0x80 72 0]))]
+        (input! :main [0x90 9 127] [0x80 9 0] [0x90 12 127] [0x80 12 0])
+        (is (= #{i0 i3} (soloed)))
+        (testing "a cue strip whose instance ends first: the add matches nothing, so nothing is dropped"
+          (ending! i4 13)
+          (is (nil? (get-in (model-of h) [:instances i4])))
+          (is (= #{i0 i3} (soloed))))
+        (testing "a group strip whose member ends first: the add is refused, so nothing is dropped"
+          (ending! i1 8)
+          (is (nil? (get-in (model-of h) [:instances i1])))
+          (is (= #{i0 i3} (soloed)))))
+      (finally (show/stop! runtime)))))
+
+(deftest an-add-whose-receipt-never-resolves-leaves-no-pending-drop
+  (let [{:keys [runtime] :as h} (harness)]
+    (try
+      (desk! h)
+      (doseq [cue [:c0 :c3 :c4]] (launch! h cue))
+      (accepted! h {:op :effect-selection/configure :modes {:solo :additive}})
+      (let [hang? (atom true)
+            dispatched (atom [])
+            receiver (atom nil)
+            ;; A second session on the attached main surface; its owner receipts
+            ;; never resolve while hang? is set, as after a device-command timeout.
+            unit (x-touch/connect! {:session-id "xt-hang" :surface-id "xt-main" :schedule! nil
+                                    :rows #(surface/strip-channels % "xt-main" {:type :mixer-strips :effect-group-view :manual
+                                                                               :cue-strips (:channels main-options)})
+                                    :placement #(surface/strip-placement % "xt-main")
+                                    :model! #(model-of h)
+                                    :now-ms! (constantly 0)
+                                    :dispatch! (fn [command]
+                                                 (swap! dispatched conj (select-keys command [:op :selector]))
+                                                 (if @hang?
+                                                   {:status :pending :command-id (:command-id command)}
+                                                   (submit! h (dissoc command :source :command-id))))
+                                    :transport {:open! (fn [r] (reset! receiver r) :t) :send! (fn [_ _]) :close! (fn [_])}})
+            input! (fn [& messages] (doseq [bytes messages] (@receiver bytes)))
+            marker #(get-in (device-session/snapshot unit) [:local :exclusive-add])
+            soloed #(into #{} (keep (fn [i] (when (:soloed? i) (:id i)))) (:instances (:effect-selection (show/snapshot runtime))))]
+        (try
+          (input! [0x90 72 127] [0x90 13 127])
+          (is (= [{:op :effect-selection/toggle :selector {:cue-ids [:c4]}}] @dispatched) "Only the add was sent")
+          (is (some #(str/includes? % "synchronous") (:errors (device-session/snapshot unit))) "The pending receipt failed the dispatch")
+          (device-session/refresh! unit)
+          (is (nil? (marker)) "A refresh clears the pending add")
+          (input! [0x80 13 0] [0x80 72 0])
+          (is (nil? (marker)))
+          (reset! hang? false)
+          (testing "a later matching toggle drops nothing"
+            (input! [0x90 70 127] [0x90 9 127] [0x80 9 0] [0x90 12 127] [0x80 12 0] [0x90 13 127] [0x80 13 0] [0x80 70 0])
+            (is (= #{(:id (latest h :c0)) (:id (latest h :c3)) (:id (latest h :c4))} (soloed)))
+            (is (= [{:cue-ids [:c0]} {:cue-ids [:c3]} {:cue-ids [:c4]}] (mapv :selector (rest @dispatched)))
+                "Three additive toggles and no drop"))
+          (finally (device-session/close! unit))))
+      (finally (show/stop! runtime)))))
+
+(def ^:private drift
+  {:id :drift :version 1
+   :params {:count {:type :integer :default 2}
+            :level {:type :number :default 0.5 :bounds [0 1]}
+            :pos {:type :vector :size 2 :default [0.5 0.0] :recommended [-1 1]}
+            :rate {:type :number :default 5.0}
+            :speed {:type :number :default 2.0 :recommended [0 4]}
+            :steps {:type :integer :default 3 :bounds [0 4]}}
+   :outputs {:dimmer {:op :param :key :level}}})
+
+(defn- drift-harness []
+  (harness (-> (model)
+               (assoc-in [:registry :effects :drift] drift)
+               (assoc-in [:registry :cues :d0] {:id :d0 :version 1 :effect-id :drift :priority 0 :name "D0"}))))
+
+(deftest unranged-numbers-get-no-guessed-range
+  (let [{:keys [runtime] :as h} (drift-harness)]
+    (try
+      (launch! h :d0)
+      (let [ctx (mixer/context (model-of h))
+            row {:cue-id :d0}
+            item (fn [label] (some #(when (= label (:label %)) (:target %)) (mixer/items ctx {:encoder-mode :plug-in} row)))]
+        (testing "PLUG-IN leaves out a number with neither bounds nor a recommended range; an integer stays for relative steps"
+          (is (= ["count" "level" "speed" "steps"] (mapv :label (mixer/items ctx {:encoder-mode :plug-in} row))))
+          (is (= :count (:param (:encoder (mixer/strip ctx {:encoder-mode :pan} row)))) "The PAN fallback"))
+        (testing "an unranged integer turns by one, with no ring position and no fader"
+          (is (= [5 0 -1] (mapv #(:value (mixer/turn (item "count") % false)) [3 -2 -3])))
+          (is (nil? (mixer/ring (item "count"))))
+          (is (= "2" (mixer/value-text (item "count"))))
+          (is (nil? (:fader (mixer/strip ctx {:encoder-mode :pan} (assoc row :fader :count)))))
+          (is (nil? (:fader (mixer/strip ctx {:encoder-mode :pan, :flip? true} row))) "FLIP does not make it a fader"))
+        (testing "an explicit binding to an unranged number binds nothing and is flagged"
+          (let [s (mixer/strip ctx {:encoder-mode :pan} (assoc row :encoder :rate :fader :rate))]
+            (is (= [nil nil :rate] ((juxt :encoder :fader :unranged) s))))
+          (is (= ["D0" "!range"]
+                 ((juxt :label :value)
+                  (first (x-touch/project {:surface-id "xt" :rows (constantly [(assoc row :encoder :rate)])
+                                           :placement (constantly {:first 0 :index 0 :span 8 :layout surface/layout-defaults})}
+                                          {} (model-of h)))))))
+        (testing "a vector component with only a recommended range maps onto it"
+          (let [pos (:encoder (mixer/strip ctx {:encoder-mode :pan} (assoc row :encoder {:param :pos :component 0})))]
+            (is (= 0.75 (mixer/normalized pos)))
+            (is (= {:op :param/set :param :pos :value [0.52 0.0]}
+                   (select-keys (update (mixer/turn pos 1 false) :value #(mapv (fn [x] (/ (Math/round (* 1e9 x)) 1e9)) %))
+                                [:op :param :value])))))
+        (let [speed (item "speed")]
+          (testing "a recommended range scales the step; turns move from the value and only hard bounds limit them"
+            (is (= {:mode :wrap :position 6 :center? true} (mixer/ring speed)))
+            (is (< (Math/abs (- 2.04 (:value (mixer/turn speed 1 false)))) 1e-9))
+            (is (< (Math/abs (- 6.004 (:value (mixer/turn (assoc speed :value 6.0) 1 true)))) 1e-9)
+                "A value above the recommended range is not pulled into it")
+            (is (= 1.0 (:value (mixer/turn (:fader (mixer/strip ctx {:encoder-mode :pan} row)) 80 false))))))
+        (testing "integers step by one within their bounds"
+          (is (= [4 4 1] (mapv #(:value (mixer/turn (item "steps") % false)) [1 5 -2])))))
+      (finally (show/stop! runtime)))))
+
+(deftest connecting-refuses-a-channel-bound-to-an-unranged-number
+  (let [{:keys [runtime transport]} (drift-harness)]
+    (try
+      (let [error (try (show/connect-device! runtime :x-touch {:session-id "xt" :schedule! nil :transport (transport :main)
+                                                               :channels [{:cue-id :d0 :fader :rate}]})
+                       nil
+                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+        (is (= {:x-touch/error :unranged-binding :channels [{:cue-id :d0 :fader :rate}]} error))
+        (is (empty? @(:devices runtime)) "No session opened"))
+      (is (some? (show/connect-device! runtime :x-touch {:session-id "xt" :schedule! nil :transport (transport :main)
+                                                         :channels [{:cue-id :d0 :fader :speed :encoder :count}]}))
+          "A recommended range and an unranged integer encoder are accepted")
       (finally (show/stop! runtime)))))
 
 (deftest meters-scribble-colours-and-stop-are-byte-exact
