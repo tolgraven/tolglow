@@ -1,6 +1,7 @@
 (ns tolglow.show.lighting
   "Settings and frame ordering for Tolglow's optical and performance controls."
   (:require [tolglow.autopilot.config :as autopilot]
+            [tolglow.autopilot.signal :as signal]
             [tolglow.lighting-activity :as activity]
             [tolglow.lighting-budget :as budget]
             [tolglow.output-response :as response]))
@@ -57,6 +58,17 @@
 (defn contributions [standby authored extra]
   (if standby (into (into [standby] authored) extra) (into authored extra)))
 
+(defn- show-time
+  "The model at show time: host :time-ms less the transport's held time."
+  [model]
+  (if (number? (:time-ms model))
+    (assoc model :time-ms (:time-ms (signal/show-clock model {:time-ms (:time-ms model)})))
+    model))
+
+(defn- ambient-pause? [model]
+  (and (false? (get-in model [:transport :playing?]))
+       (= :ambient (get-in model [:settings :output :pause-look :mode]))))
+
 (defn finish-frame
   "Apply responses to the resolved look, enforce the shared budget and score
   the actual result. Only committed frames carry temporal state forward."
@@ -75,8 +87,12 @@
                                                (or same-rig?
                                                    (= (dissoc rig :edge-tracking)
                                                       (dissoc before-rig :edge-tracking))))]
+                   ;; A transport stop is not a bypass: the response follows show
+                   ;; time, so it stands still while stopped and resumes from
+                   ;; where it was (#702). Blackout, master zero, calibration
+                   ;; and the ambient pause look still bypass it.
                    (response/advance (when same-response-rig? (get-in before [:lighting-history :response]))
-                     model patch frame (or calibration? hard-off? (false? (get-in model [:transport :playing?])))
+                     (show-time model) patch frame (or calibration? hard-off? (ambient-pause? model))
                      ceiling (when same-response-rig? (:output before)) blocks)))
         shaped-frame (or (:frame shaped) frame)
         delivered (if budget-context (budget/apply-frame budget-context shaped-frame) shaped-frame)

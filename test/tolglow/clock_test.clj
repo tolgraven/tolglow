@@ -238,5 +238,36 @@
            (mapv :state (:responses held))))
     (is (= [[1400 5400] [1.0 9.0]] (mapv (juxt :start :end) (get-in held [:event-subscribers :ramps]))))
     (is (= [4400 5400] [(get-in held [:auto :state :interval-timer :started-at]) (get-in held [:auto :state :next-at-ms])]))
-    (is (= [(:time-ms model) (:transport model)] [(:time-ms held) (:transport held)]) "host time is not show progress")
+    (is (= [(:time-ms model) (:transport model)] [(:time-ms held) (dissoc (:transport held) :held-ms)])
+        "host time is not show progress")
+    (is (= 400 (get-in held [:transport :held-ms])) "the show counts its held time")
+    (is (= 1000 (get-in (clock/hold held 600) [:transport :held-ms])))
     (is (thrown? clojure.lang.ExceptionInfo (clock/hold model -1)))))
+
+(deftest hold-keeps-routing-envelopes-and-leaves-live-input-on-the-wall-clock
+  (let [spec {:version 1 :id :p :revision 1
+              :sources {:sensor {:kind :control :range [0 1] :timeout {:beats 64}}}
+              :destinations {:wash {:cue-id :wash :param :level :range [0 1] :combine :max}}
+              :routes [{:id :ms :source :sensor :destination :wash :envelope {:attack {:ms 1000} :release {:ms 1000}}}
+                       {:id :beat :source :sensor :destination :wash :envelope {:attack {:beats 2} :release {:beats 2}}}
+                       {:id :plain :source :sensor :destination :wash}]}
+        state (-> (patch/new-state spec {:time-ms 0.0 :beat 0.0} 0)
+                  (assoc-in [:routes :ms] {:gate? false :held-value 1.0 :smoothed 0.5 :clock {:time-ms 900.0 :beat 1.8}
+                                           :envelope {:initial-level 0.0 :started-at-ms 100.0 :started-at-beat 0.2
+                                                      :released-at-ms 600.0 :release-level 0.5}})
+                  (assoc-in [:routes :beat] {:gate? true :held-value 1.0 :smoothed 0.5 :clock {:time-ms 900.0 :beat 1.8}
+                                             :envelope {:initial-level 0.0 :started-at-ms 100.0 :started-at-beat 0.2}})
+                  (assoc-in [:routes :plain] {:gate? true :held-value 1.0 :smoothed 1.0 :clock {:time-ms 900.0 :beat 1.8}
+                                              :envelope nil}))
+        held (patch/hold-clock state 400.0)]
+    (is (= {:initial-level 0.0 :started-at-ms 500.0 :started-at-beat 0.2 :released-at-ms 1000.0 :release-level 0.5}
+           (get-in held [:routes :ms :envelope])))
+    (is (= {:initial-level 0.0 :started-at-ms 500.0 :started-at-beat 0.2} (get-in held [:routes :beat :envelope]))
+        "beat envelopes keep their beat anchors; their millisecond anchors are unused")
+    (is (= (get-in state [:routes :plain]) (get-in held [:routes :plain])))
+    (is (= (mapv #(get-in state [:routes % :clock]) [:ms :beat]) (mapv #(get-in held [:routes % :clock]) [:ms :beat]))
+        "the routing clock and smoothing stay on the wall clock")
+    (is (= (dissoc state :routes) (dissoc held :routes)))
+    (is (= held (get-in (clock/hold {:transport {:beat 1.8 :time-ms 900.0 :playing? false}
+                                     :routing {:enabled? true :spec spec :state state}} 400.0)
+                        [:routing :state])))))

@@ -403,7 +403,9 @@
             [:transport] "Transport needs finite beat, supported BPM and play state")
     (time/normalize-meter (:meter transport))
     (when (contains? transport :time-ms)
-      (check! (nonnegative? (:time-ms transport)) [:transport :time-ms] "Transport time must be nonnegative")))
+      (check! (nonnegative? (:time-ms transport)) [:transport :time-ms] "Transport time must be nonnegative"))
+    (when (contains? transport :held-ms)
+      (check! (nonnegative? (:held-ms transport)) [:transport :held-ms] "Held transport time must be nonnegative")))
   (doseq [key [:frame-number] :when (contains? model key)]
     (check! (natural? (get model key)) [key] "Frame count must be nonnegative"))
   (when (contains? model :last-frame-time-ms)
