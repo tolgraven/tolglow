@@ -331,3 +331,34 @@
         (is (= 0.05 (:saturation (params rt tint))) "the replay does not overwrite a later edit")
         (is (= :rejected (:status (submit! rt 160 (assoc payload :value 0.7)))) "a reused ID with new data is refused"))
       (finally (show/stop! rt)))))
+
+(deftest an-encoder-surface-turns-the-knob-and-shows-the-studio-values
+  ;; The Push adapters in Afterglow cannot yet bind an encoder to a knob (see
+  ;; docs/linked-knobs.md#push). This drives the Tolglow side: the command a
+  ;; bound encoder sends, with a Push source, and the display it reads.
+  (let [{:keys [rt packets]} (harness)]
+    (try
+      (let [{:keys [tint]} (setup! rt)
+            push {:adapter :push-3 :session-id "push"}
+            turn! (fn [t delta fine?] (submit! rt t (assoc (knobs/encoder-command :look delta fine?) :source push)))
+            model #(:model @(:state rt))
+            studio-texts #(mapv (comp :text :resolved) (:links (knobs/knob-view (model) :look)))]
+        (submit! rt 50 {:op :param/ramp :event-id "fade" :instance-id tint :param :saturation :to 0.0 :over {:beats 8}
+                        :source {:adapter :agent :session-id "a"}})
+        (let [acks (mapv #(turn! (+ 100 (* 10 %)) 1 false) (range 50))
+              display (knobs/encoder-display (model) :look)]
+          (is (every? #(= :accepted (:status %)) acks))
+          (is (< (Math/abs (- 0.5 (:value display))) 1e-9) "fifty coarse detents move half the range")
+          (is (= "0.500" (:text display)))
+          (is (= (studio-texts) (mapv :text (:columns display))) "the encoder display reads the Studio projection")
+          (is (= [1 1] (:ratio (nth (:columns display) 2))))
+          (is (= {:event-id "fade" :status :cancelled :reason :human-override}
+                 (select-keys (last (get-in (show/snapshot rt) [:schedule :recent])) [:event-id :status :reason]))
+              "a Push turn is a human write and takes over the ramped destination")
+          (is (<= (Math/abs (- (channel (peek @packets) 2) (* 255 (- 1.0 0.6)))) 1.0)))
+        (turn! 700 -5 true)
+        (is (< (Math/abs (- 0.495 (:value (knobs/encoder-display (model) :look)))) 1e-9) "Shift turns are ten times finer")
+        (turn! 720 200 false)
+        (is (= 1.0 (:value (knobs/encoder-display (model) :look))) "turning past the end clamps")
+        (is (= ["1.000" "0.750" "1/2 beats" "1.000" "0.125"] (mapv :text (:columns (knobs/encoder-display (model) :look))))))
+      (finally (show/stop! rt)))))

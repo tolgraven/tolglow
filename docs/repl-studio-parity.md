@@ -397,10 +397,12 @@ knob, the open slider and values follow from the projection. A refused link
 shows its reason in the panel. [Studio walkthrough](linked-knobs.md#using-it-from-studio)
 
 **Tracked gaps.** The Studio picker links numeric destinations only. Colour,
-enum and boolean links are created from the REPL. Push encoder binding is in
-progress on [issue #666](https://github.com/tolgraven/tolglow/issues/666).
-Close this gap when Studio can set non-numeric endpoints and a Push encoder
-turns the same knob and shows the same resolved values.
+enum and boolean links are created from the REPL. Push needs an Afterglow
+adapter change before an encoder can be bound to a knob; the Tolglow command and
+display data are ready ([Push](linked-knobs.md#push),
+[issue #666](https://github.com/tolgraven/tolglow/issues/666)). Close this gap
+when Studio can set non-numeric endpoints and a Push encoder turns the same knob
+and shows the same resolved values.
 
 ## Reviewing a show feature
 

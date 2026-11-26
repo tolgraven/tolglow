@@ -237,6 +237,38 @@ checks the open page follows.
 CHROMIUM_PATH=... lein with-profile +dev run -m tolglow.qa.knobs-browser target/knobs-browser 4300
 ```
 
+## Push
+
+A Push encoder turns a knob by sending `knobs/encoder-command`: `:knob/nudge`
+with 1/100 of the range per detent, or 1/1000 with Shift, the same steps as the
+master encoder. Push is an operator surface, so a turn takes over a ramped
+destination with `:reason :human-override`. `knobs/encoder-display` gives the
+display the knob value and up to eight link columns with the same resolved text
+and exact ratios Studio shows. `tolglow.knob-sweep-test` drives both with a Push
+3 source.
+
+**Not yet bindable on the device.** The Push adapters live in the Afterglow fork
+and only edit the selected launch's parameters (Push 2) or captured
+`:encoder-bindings` of `{:param k}` or `{:target :master}` (Push 3). Binding an
+encoder to a knob needs this adapter change in `tolgraven/afterglow`:
+
+- `push_3.clj`: accept `{:target :knob :knob-id id :step s}` in
+  `:encoder-bindings` validation (`user-profile`). In `encoder`, emit
+  `{:op :knob/nudge :knob-id id :delta (* delta (or step 1/100) (if fine? 1/10 1))}`
+  for that target, as the `:master` branch does. In `touch-encoder`, start no
+  parameter gesture for it and record `:touched-control {:target :knob :knob-id
+  id}` for the display view.
+- `push_2.clj`: an optional host `:encoder-page` option, `{:active? (fn [state])
+  :turn (fn [model encoder-index delta fine?] -> commands-or-nil)}`, consulted in
+  `encoder` before the selected-parameter path, so the host can place up to
+  eight knobs on the encoders while a page button is held or toggled.
+- Both display views: pass `:touched-control` through so the host projector can
+  call `knobs/encoder-display` and draw the knob's columns.
+
+The Tolglow side then passes the bindings in `show/connect-device!` options. The
+virtual Push 2/3 replay harness would prove the turn and the display; that and
+physical Push hardware are not verified here.
+
 ## Verification
 
 `tolglow.knob-sweep-test` drives the real owner tick and captures ArtDmx. One

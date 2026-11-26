@@ -628,3 +628,31 @@
                                                          :message (str "Launch " old " did not survive the restore")}))
                                 link))
                             links))))))
+
+;; ---------------------------------------------------------------------------
+;; Encoder surfaces (Push and other relative controllers)
+
+(def encoder-step
+  "Knob change per encoder detent, matching the Push master encoder: 1/100 of
+  the range, or 1/1000 with Shift."
+  {:coarse 1/100 :fine 1/1000})
+
+(defn encoder-command
+  "The shared command for a relative encoder turn of delta detents on a knob.
+  An adapter supplies its own source; device addresses stay in the adapter."
+  [knob-id delta fine?]
+  {:op :knob/nudge :knob-id knob-id
+   :delta (* delta (if fine? (:fine encoder-step) (:coarse encoder-step)))})
+
+(defn encoder-display
+  "Display columns for an encoder surface from the same projection Studio
+  shows: the knob value and up to eight links with their resolved text."
+  [model knob-id]
+  (when-let [{:keys [id name value links]} (knob-view model knob-id)]
+    {:knob-id id :name name :value value :text (format "%.3f" (double value))
+     :columns (mapv (fn [link]
+                      (cond-> {:label (:label link) :status (:status link)}
+                        (:resolved link) (assoc :text (get-in link [:resolved :text]))
+                        (get-in link [:resolved :ratio]) (assoc :ratio (get-in link [:resolved :ratio]))
+                        (:diverged? link) (assoc :diverged? true)))
+                    (take 8 links))}))
