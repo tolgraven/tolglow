@@ -28,7 +28,13 @@ cat > override/tolglow/fixed_image.clj <<'CLOJURE'
   (apply app/-main args))
 CLOJURE
 cp "$root/src/tolglow/fixed_host.clj" override/tolglow/fixed_host.clj
-java -Dclojure.compile.path=override -cp override:studio.jar clojure.main -e "(doseq [ns '[thi.ng.math.core ring.adapter.jetty slf4j-timbre.adapter slf4j-timbre.factory slf4j-timbre.service-provider tolglow.native-resources tolglow.fixed-image tolglow.fixed-host tolglow.native.desktop]] (compile ns))"
+# A fixed image never redefines its vars, so recompile the show host and its
+# libraries with direct linking: calls become static, which trims the image's
+# code and the builder's live heap. Extracting the sources without their old
+# timestamps makes Clojure compile them instead of loading the uberjar's classes.
+rm -rf linked-sources
+unzip -qq -DD -o studio.jar '*.clj' '*.cljc' -x 'clojure/*' 'cljs/*' 'META-INF/*' 'studio/*' 'data_readers.clj*' -d linked-sources
+java -Dclojure.compiler.direct-linking=true -Dclojure.compile.path=override -cp override:linked-sources:studio.jar clojure.main -e "(doseq [ns '[thi.ng.math.core ring.adapter.jetty slf4j-timbre.adapter slf4j-timbre.factory slf4j-timbre.service-provider tolglow.native-resources tolglow.fixed-image tolglow.fixed-host tolglow.native.desktop]] (compile ns))"
 jar uf studio.jar -C override .
 java -cp studio.jar clojure.main "$root/native/EmbeddedHost/register-callbacks.clj"
 jar uf studio.jar -C callbacks META-INF
