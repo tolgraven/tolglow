@@ -119,6 +119,13 @@
               (layout/default-entry :phone :room) (layout/default-entry :phone :tools)]
              seeded)))))
 
+(deftest dragging-near-an-edge-scrolls-faster-closer-to-it
+  (is (= 0 (layout/edge-speed 400 800)))
+  (is (= -18 (layout/edge-speed 0 800)))
+  (is (= -9 (layout/edge-speed 32 800)))
+  (is (= 9 (layout/edge-speed 768 800)))
+  (is (= 18 (layout/edge-speed 900 800)) "a pointer past the bottom scrolls at full speed"))
+
 (deftest a-drag-finds-the-panel-under-the-pointer
   (let [rects [{:id :cues :left 0 :top 0 :width 400 :height 600}
                {:id :live :left 416 :top 0 :width 784 :height 1200}]]
@@ -143,14 +150,16 @@
             saved (saved-of (:db effects))]
         (is (= {:active "Show"} (select-keys (:desktop saved) [:active])))
         (is (= [:room :cues :live :tools] (ids (layout/find-panels saved :desktop "Show"))))
-        (is (= saved (:panel-layout/store effects)))
+        (is (= {:saved saved :notice "Saved “Show” for this desktop screen."} (:panel-layout/store effects))
+            "the confirmation travels with the write and shows only if it succeeds")
+        (is (nil? (:dispatch effects)))
         (is (nil? (get-in effects [:db :ui :panel-layout :edit])))
         (testing "another size class still uses the built-in layout"
           (is (nil? (layout/active-layout (assoc-in (:db effects) [:ui :panel-layout :class] :phone)))))
         (testing "reset switches to the built-in layout and keeps the saved one in the menu"
           (let [reset (transition (:db effects) [:panel-layout/reset])]
-            (is (nil? (get-in (:panel-layout/store reset) [:desktop :active])))
-            (is (= ["Show"] (map :name (get-in (:panel-layout/store reset) [:desktop :layouts]))))
+            (is (nil? (get-in (:panel-layout/store reset) [:saved :desktop :active])))
+            (is (= ["Show"] (map :name (get-in (:panel-layout/store reset) [:saved :desktop :layouts]))))
             (is (nil? (layout/active-layout (:db reset))))
             (testing "and the menu switches back to it"
               (is (= [:room :cues :live :tools] (ids (layout/active-layout (run (:db reset) [:panel-layout/select "Show"]))))))))
@@ -174,7 +183,7 @@
                 (is (= ["Show" "Show 2" "Show 3"] (map :name (layout/named (saved-of fresh) :desktop))))))
             (testing "delete removes the edited layout and returns to the built-in one"
               (let [deleted (transition (run copied [:panel-layout/begin]) [:panel-layout/delete])]
-                (is (= ["Show"] (map :name (get-in (:panel-layout/store deleted) [:desktop :layouts]))))
+                (is (= ["Show"] (map :name (get-in (:panel-layout/store deleted) [:saved :desktop :layouts]))))
                 (is (nil? (layout/active-layout (:db deleted))))))))))
     (testing "selecting an unknown layout or while editing changes nothing"
       (is (nil? (transition desktop [:panel-layout/select "Nope"])))
@@ -191,7 +200,7 @@
       (let [done (run editing [:panel-layout/done])
             effects (transition done [:panel-layout/bind :param-1 {:cue "moon" :param "speed"}])]
         (is (= {:cue "moon" :param "speed"}
-               (:binding (nth (layout/find-panels (:panel-layout/store effects) :desktop "Layout 1") 4))))
+               (:binding (nth (layout/find-panels (:saved (:panel-layout/store effects)) :desktop "Layout 1") 4))))
         (testing "switching away from a layout redocks windows of panels it alone holds"
           (let [detached (assoc-in done [:ui :panel-windows] {:param-1 {:phase :popped :generation 1}
                                                               :live {:phase :popped :generation 1}})
@@ -287,4 +296,7 @@
         (is (re-find #"aria-label=\"Move Room panel, position 1 of 4. Drag, or use the arrow keys.\"" editing))
         (is (re-find #"aria-label=\"Resize Room, 8 of 12 columns by 20 rows" editing))
         (is (= 4 (count (re-seq #">Detach</button>" editing))) "every panel can be detached")
-        (is (re-find #"title=\"Open Room in its own window\"" editing))))))
+        (is (re-find #"title=\"Open Room in its own window\"" editing))
+        (is (re-find #"title=\"Move Room later\" data-step=\"later\" class=\"layout-step\">Later<span class=\"sr-only\"> Room</span>" editing)
+            "a step button's accessible name starts with its visible word")
+        (is (not (re-find #"aria-pressed" editing)))))))

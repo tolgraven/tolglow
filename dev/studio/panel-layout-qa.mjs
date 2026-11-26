@@ -158,8 +158,10 @@ for (const viewport of viewports) {
     await shot('1-built-in');
 
     // Enter edit mode: every panel is shielded and handled.
+    assert.equal(await page.locator('#layout-announce').textContent(), '', 'the live region starts empty');
     await tap(page.locator('#edit-layout'));
     await page.waitForSelector('#view-perform .editing-layout');
+    assert.match(await page.locator('#layout-announce').textContent(), /Editing/, 'entering edit mode is announced');
     assert.equal(await page.locator('#view-perform .layout-chrome').count(), 4);
     assert.equal(await page.locator('#view-perform .layout-content[inert]').count(), 4);
     const seeded = await census('edit-seeded');
@@ -227,18 +229,18 @@ for (const viewport of viewports) {
     await page.keyboard.press('Enter');
     await page.waitForTimeout(100);
     assert.deepEqual((await census('step-later')).order, ['cues', 'room', 'live', 'tools']);
-    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Move Tools later');
+    assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Later Tools', 'focus stays on Later; its name starts with the visible word');
     await page.locator('#view-perform [data-panel="tools"] [data-step="earlier"]').focus();
     await page.keyboard.press('Enter');
     await page.waitForTimeout(100);
     assert.deepEqual((await census('step-earlier')).order, ['cues', 'room', 'tools', 'live']);
-    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Move Tools earlier');
+    assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Earlier Tools');
     const toolsBefore = await spans('tools');
     await page.locator('#view-perform [data-panel="tools"] .layout-resize').focus();
     await page.keyboard.press('Shift+ArrowDown');
     await page.waitForTimeout(100);
     assert.equal(n((await spans('tools')).row), n(toolsBefore.row) + 4, 'Shift+ArrowDown adds four rows');
-    assert.match(await page.locator('#view-perform .layout-toolbar .sr-only').textContent(), /Tools · position 3 of 4/);
+    assert.match(await page.locator('#layout-announce').textContent(), /Tools · position 3 of 4/);
 
     // Done saves for this size class only.
     await tap(page.locator('#layout-done'));
@@ -457,6 +459,50 @@ for (const viewport of viewports) {
       assert.equal(redockedPanels.workers, 1);
       assert.equal(redockedPanels.liveInstance, instance, 'detaching never relaunched the cue');
       record.panelWindows = {liveInstance: instance, sockets: redockedPanels.sockets};
+    }
+
+    // Dragging to the bottom edge scrolls the page, and a panel that was below
+    // the fold becomes the drop target; Escape then cancels the drag.
+    {
+      await tap(page.locator('#edit-layout'));
+      await page.waitForSelector('#view-perform .editing-layout');
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.waitForTimeout(200);
+      const order = (await census('before-autoscroll')).order;
+      const handle = page.locator(`#view-perform [data-panel="${order[0]}"] .layout-handle`);
+      const start = await center(handle);
+      const bottom = {x: viewport.width / 2, y: viewport.height - 6};
+      const hidden = await page.evaluate(vh => [...document.querySelectorAll('#view-perform .layout-region')]
+        .filter(e => e.getBoundingClientRect().top > vh).map(e => e.dataset.panel), viewport.height);
+      assert.ok(hidden.length > 0, 'some panel starts below the fold');
+      if (viewport.touch) {
+        const point = p => [{x: p.x, y: p.y, id: 2, radiusX: 4, radiusY: 4, force: 1}];
+        await cdp.send('Input.dispatchTouchEvent', {type: 'touchStart', touchPoints: point(start)});
+        for (let i = 1; i <= 8; i++) {
+          await cdp.send('Input.dispatchTouchEvent', {type: 'touchMove', touchPoints: point({x: start.x + (bottom.x - start.x) * i / 8, y: start.y + (bottom.y - start.y) * i / 8})});
+          await page.waitForTimeout(16);
+        }
+      } else {
+        await page.mouse.move(start.x, start.y);
+        await page.mouse.down();
+        await page.mouse.move(bottom.x, bottom.y, {steps: 8});
+      }
+      await page.waitForTimeout(1500);
+      const scrolled = await page.evaluate(() => window.scrollY);
+      const target = await page.evaluate(() => document.querySelector('#view-perform [data-drop-target]')?.dataset.panel ?? null);
+      assert.ok(scrolled > 100, `holding at the edge scrolled the page (${scrolled} px)`);
+      assert.ok(hidden.includes(target), `a panel from below the fold is the drop target (${target})`);
+      await page.keyboard.press('Escape');
+      if (viewport.touch) await cdp.send('Input.dispatchTouchEvent', {type: 'touchEnd', touchPoints: []});
+      else await page.mouse.up();
+      await page.waitForTimeout(200);
+      assert.deepEqual((await census('after-autoscroll')).order, order, 'Escape cancelled the scrolled drag');
+      const still = await page.evaluate(() => window.scrollY);
+      await page.waitForTimeout(300);
+      assert.equal(await page.evaluate(() => window.scrollY), still, 'scrolling stopped with the drag');
+      record.autoscroll = {scrolled, target};
+      await tap(page.locator('#layout-cancel'));
+      await page.waitForSelector('#view-perform .editing-layout', {state: 'detached'});
     }
 
     // Delete the Tiles layout: two steps, then the built-in layout.

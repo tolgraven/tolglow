@@ -9,7 +9,7 @@
 #view-perform .layout-toolbar>.button,#view-perform .layout-toolbar>.text-button{min-height:44px}
 #view-perform .layout-hint{font-size:11px;color:var(--muted);max-width:420px}
 
-#view-perform .performance-layout.custom-layout{display:grid;grid-template-columns:repeat(var(--layout-columns),minmax(0,1fr));grid-template-areas:none;grid-template-rows:none;grid-auto-rows:var(--layout-row);grid-auto-flow:row dense;column-gap:var(--layout-gap);row-gap:0;align-items:stretch}
+#view-perform .performance-layout.custom-layout{display:grid;grid-template-columns:repeat(var(--layout-columns),minmax(0,1fr));grid-template-areas:none;grid-template-rows:none;grid-auto-rows:var(--layout-row);grid-auto-flow:row;column-gap:var(--layout-gap);row-gap:0;align-items:stretch}
 #view-perform .custom-layout>.layout-region{display:block;position:relative;min-width:0;min-height:0;padding-bottom:var(--layout-gap)}
 #view-perform .custom-layout>.layout-region>.layout-content{display:block;height:100%;min-height:0}
 /* Tiles scroll on their own and hand the page back at their ends, so a wheel or
@@ -22,6 +22,8 @@
 #view-perform .custom-layout .performance-room>.room-window-placeholder{height:100%;overflow:auto}
 #view-perform[data-layout=custom] .perform-section-tabs{display:none}
 
+/* Panels flow in DOM order (no dense packing), so the visual order is the
+   keyboard and screen reader order. */
 /* Edit mode: show the grid, shield panel content and offer handles. */
 #view-perform .editing-layout{background-image:repeating-linear-gradient(90deg,#9fbf8a10 0 calc((100% - (var(--layout-columns) - 1) * var(--layout-gap)) / var(--layout-columns)),transparent 0 calc((100% - (var(--layout-columns) - 1) * var(--layout-gap)) / var(--layout-columns) + var(--layout-gap)));border-radius:var(--radius)}
 #view-perform .editing-layout>.layout-region>.layout-content{opacity:.55;filter:saturate(.6)}
@@ -92,3 +94,9 @@ body.panel-window #view-perform>.parameter-tile{min-height:calc(100vh - 20px)}
 #view-perform .panel-window-placeholder .panel-top{flex-wrap:wrap;height:auto;min-height:52px}
 #view-perform .panel-window-placeholder .text-button{min-height:44px}
 #view-perform .panel-window-note{padding:10px 16px}
+
+/* A small tile's frame scrolls its controls and keeps the resize corner reachable. */
+#view-perform .layout-chrome-bar{max-height:calc(100% - 44px);overflow:auto}
+#view-perform .layout-step{padding:0 7px}
+/* A dragged panel never widens the page (a phone would zoom out to fit it). */
+#view-perform .performance-layout.editing-layout{overflow-x:clip}

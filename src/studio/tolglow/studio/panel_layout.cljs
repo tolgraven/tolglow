@@ -349,11 +349,21 @@
            {:class (media-class)
             :saved (if-let [text (stored-text)] (decode text) {})})))
 
+(defn- write! [saved]
+  (try (if-let [s (storage)]
+         (do (if (seq saved) (.setItem s storage-key (encode saved)) (.removeItem s storage-key)) true)
+         false)
+       (catch :default _ false)))
+
+(def failed-notice
+  "This browser did not keep the layout (storage is blocked or full). It stays in use until Studio reloads.")
+
+;; The confirmation toast is shown only once the write succeeded.
 (rf/reg-fx :panel-layout/store
-  (fn [saved]
-    (try (when-let [s (storage)]
-           (if (seq saved) (.setItem s storage-key (encode saved)) (.removeItem s storage-key)))
-         (catch :default _ nil))))
+  (fn [{:keys [saved notice]}]
+    (if (write! saved)
+      (when notice (rf/dispatch [:studio/toast notice]))
+      (rf/dispatch [:studio/toast failed-notice true]))))
 
 (defn- layout-element [] (.querySelector js/document "#view-perform .performance-layout"))
 
@@ -372,9 +382,14 @@
 
 (defn- measure-regions []
   (when-let [container (layout-element)]
+    ;; Page coordinates, so the rectangles stay valid while the page scrolls
+    ;; during a drag (the layout itself does not change until the drop).
     {:container-width (:width (rect container))
      :rects (vec (for [element (array-seq (.querySelectorAll container ":scope > .layout-region"))]
-                   (assoc (rect element) :id (keyword (.getAttribute element "data-panel")))))}))
+                   (-> (rect element)
+                       (update :left + (.-scrollX js/window))
+                       (update :top + (.-scrollY js/window))
+                       (assoc :id (keyword (.getAttribute element "data-panel"))))))}))
 
 (rf/reg-fx :panel-layout/measure
   (fn [_]
@@ -415,10 +430,10 @@
 (defn- store-fx
   "Persist saved layouts, and redock windows of panels the new layout lacks.
   Leaving edit mode puts focus back on Edit layout."
-  [db & [left-editing?]]
+  [db & [left-editing? notice]]
   (let [present (set (map :id (active-layout db)))
         orphans (remove #(or (some #{%} panel-ids) (present %)) (panel-window/detached-ids db))]
-    (cond-> {:db db :panel-layout/store (:saved (state db))}
+    (cond-> {:db db :panel-layout/store (cond-> {:saved (:saved (state db))} notice (assoc :notice notice))}
       left-editing? (assoc :panel-layout/focus-control edit-button)
       (seq orphans) (assoc :dispatch-n (mapv (fn [id] [:panel-window/redock id]) orphans)))))
 
@@ -456,7 +471,7 @@
         name (unique-name saved class wanted (when-not as-new? original))
         db (update-in db [:ui :panel-layout] assoc :edit nil
                       :saved (save-named saved class (when-not as-new? original) name layout))]
-    (assoc (store-fx db true) :dispatch [:studio/toast (str "Saved “" name "” for this " (label class) " screen.")])))
+    (store-fx db true (str "Saved “" name "” for this " (label class) " screen."))))
 
 (rf/reg-event-fx :panel-layout/done
   (fn [{:keys [db]} _] (when (:edit (state db)) (finish db false))))
@@ -472,17 +487,15 @@
     (when-let [{:keys [class original]} (:edit (state db))]
       (let [db (cond-> (assoc-in db [:ui :panel-layout :edit] nil)
                  original (update-in [:ui :panel-layout :saved] drop-named class original))]
-        (cond-> (store-fx db true)
-          original (assoc :dispatch [:studio/toast (str "Deleted “" original "”. This screen uses the built-in layout.")]))))))
+        (store-fx db true (when original (str "Deleted “" original "”. This screen uses the built-in layout.")))))))
 
 (rf/reg-event-fx :panel-layout/reset
   (fn [{:keys [db]} _]
     (let [class (or (:class (:edit (state db))) (current-class db))
           db (-> db (assoc-in [:ui :panel-layout :edit] nil)
                  (assoc-in [:ui :panel-layout :saved class :active] nil))]
-      (assoc (store-fx db true) :dispatch
-             [:studio/toast (str "Built-in layout restored for this " (label class) " screen."
-                                 (when (seq (named (:saved (state db)) class)) " Saved layouts stay in the menu."))]))))
+      (store-fx db true (str "Built-in layout restored for this " (label class) " screen."
+                             (when (seq (named (:saved (state db)) class)) " Saved layouts stay in the menu."))))))
 
 (rf/reg-event-fx :panel-layout/select
   (fn [{:keys [db]} [_ name]]
@@ -583,25 +596,79 @@
 (defn- primary-pointer? [^js event]
   (or (= 0 (.-button event)) (#{"touch" "pen"} (.-pointerType event))))
 
+;; Gestures work in page coordinates (client position plus scroll).
+(defn- page-x [client-x] (+ client-x (.-scrollX js/window)))
+
+(defn- page-y [client-y] (+ client-y (.-scrollY js/window)))
+
+(def ^:private edge-px 64)
+
+(def ^:private max-scroll-px 18)
+
+(defn edge-speed
+  "Pixels per frame to scroll while a drag is within edge-px of the top or
+  bottom of a viewport `height` tall: negative upwards, faster nearer the edge."
+  [client-y height]
+  (cond (< client-y edge-px) (- (js/Math.ceil (* max-scroll-px (/ (- edge-px (max 0 client-y)) edge-px))))
+        (> client-y (- height edge-px)) (js/Math.ceil (* max-scroll-px (/ (- (min height client-y) (- height edge-px)) edge-px)))
+        :else 0))
+
+;; Auto-scroll owner for the gesture in progress: the last pointer position and
+;; the handle that captured it. The loop ends with the gesture, when the
+;; handle leaves the document, or when the pointer leaves the edges.
+(defonce ^:private autoscroll (atom nil))
+
+(defn- stop-autoscroll! [] (reset! autoscroll nil))
+
+(defn- visible-speed
+  "Edge speed against what is visible: the visual viewport when the browser
+  has one (pinch zoom, on-screen keyboards), else the window."
+  [client-y]
+  (if-let [^js vv (.-visualViewport js/window)]
+    (edge-speed (- client-y (.-offsetTop vv)) (.-height vv))
+    (edge-speed client-y (.-innerHeight js/window))))
+
+(defn- autoscroll-frame [_]
+  (when-let [{:keys [pointer-id client-x client-y ^js element]} @autoscroll]
+    (let [speed (visible-speed client-y)]
+      (if (or (zero? speed) (not (.-isConnected element)))
+        (swap! autoscroll assoc :running? false)
+        (let [before (.-scrollY js/window)]
+          (.scrollBy js/window 0 speed)
+          (when (not= before (.-scrollY js/window))
+            (rf/dispatch [:panel-layout/gesture-move pointer-id (page-x client-x) (page-y client-y)]))
+          (js/requestAnimationFrame autoscroll-frame))))))
+
+(defn- track-pointer! [^js event]
+  (let [pointer-id (.-pointerId event) client-x (.-clientX event) client-y (.-clientY event)]
+    (when (= pointer-id (:pointer-id @autoscroll))
+      (swap! autoscroll assoc :client-x client-x :client-y client-y)
+      (when (and (not (:running? @autoscroll)) (not (zero? (visible-speed client-y))))
+        (swap! autoscroll assoc :running? true)
+        (js/requestAnimationFrame autoscroll-frame)))
+    (rf/dispatch [:panel-layout/gesture-move pointer-id (page-x client-x) (page-y client-y)])))
+
 (defn- pointer-start [kind id]
   (fn [^js event]
     (when (primary-pointer? event)
       (.preventDefault event)
       (.setPointerCapture (.-currentTarget event) (.-pointerId event))
+      (reset! autoscroll {:pointer-id (.-pointerId event) :element (.-currentTarget event)
+                          :client-x (.-clientX event) :client-y (.-clientY event)})
       (let [{:keys [container-width rects]} (measure-regions)
             own (some #(when (= id (:id %)) %) rects)]
         (rf/dispatch [:panel-layout/gesture-start
                       {:kind kind :id id :pointer-id (.-pointerId event)
-                       :x (.-clientX event) :y (.-clientY event)
+                       :x (page-x (.-clientX event)) :y (page-y (.-clientY event))
                        :rects rects :container-width container-width
                        :width (:width own) :height (:height own)}])))))
 
 (defn- pointer-handlers [kind id]
   {:on-pointer-down (pointer-start kind id)
-   :on-pointer-move #(rf/dispatch [:panel-layout/gesture-move (.-pointerId %) (.-clientX %) (.-clientY %)])
-   :on-pointer-up #(rf/dispatch [:panel-layout/gesture-end (.-pointerId %)])
-   :on-pointer-cancel #(rf/dispatch [:panel-layout/gesture-cancel (.-pointerId %)])
-   :on-lost-pointer-capture #(rf/dispatch [:panel-layout/gesture-end (.-pointerId %)])})
+   :on-pointer-move track-pointer!
+   :on-pointer-up #(do (stop-autoscroll!) (rf/dispatch [:panel-layout/gesture-end (.-pointerId %)]))
+   :on-pointer-cancel #(do (stop-autoscroll!) (rf/dispatch [:panel-layout/gesture-cancel (.-pointerId %)]))
+   :on-lost-pointer-capture #(do (stop-autoscroll!) (rf/dispatch [:panel-layout/gesture-end (.-pointerId %)]))})
 
 (def ^:private move-keys {"ArrowLeft" -1 "ArrowUp" -1 "ArrowRight" 1 "ArrowDown" 1 "Home" -99 "End" 99})
 
@@ -620,11 +687,12 @@
       (let [n (if (.-shiftKey event) 4 1)]
         (rf/dispatch [:panel-layout/resize id (* n dw) (* n dh) ".layout-resize"])))))
 
-(defn- step-button [step label text event]
-  ;; Moving a panel moves its DOM node; keep focus on the pressed button.
-  [:button.layout-step {:type "button" :aria-label label :title label :data-step step
+(defn- step-button [step label text panel event]
+  ;; Moving a panel moves its DOM node; keep focus on the pressed button. The
+  ;; visible word starts the accessible name (WCAG 2.5.3); the panel follows.
+  [:button.layout-step {:type "button" :title label :data-step step
                         :on-click #(rf/dispatch (conj event (str "[data-step=\"" step "\"]")))}
-   text])
+   text [:span.sr-only (str " " panel)]])
 
 (def ^:private window-sizes {:cues [760 560] :live [720 760] :tools [560 640] :viz [720 640]})
 
@@ -658,12 +726,12 @@
        [:span.layout-grip {:aria-hidden true}] name]
       [:span.layout-size {:aria-hidden true} (str w " × " h)]
       [:div.layout-steps
-       [step-button "earlier" (str "Move " name " earlier") "←" [:panel-layout/move id -1]]
-       [step-button "later" (str "Move " name " later") "→" [:panel-layout/move id 1]]
-       [step-button "narrower" (str "Make " name " narrower") "−W" [:panel-layout/resize id -1 0]]
-       [step-button "wider" (str "Make " name " wider") "+W" [:panel-layout/resize id 1 0]]
-       [step-button "shorter" (str "Make " name " shorter") "−H" [:panel-layout/resize id 0 -2]]
-       [step-button "taller" (str "Make " name " taller") "+H" [:panel-layout/resize id 0 2]]
+       [step-button "earlier" (str "Move " name " earlier") "Earlier" name [:panel-layout/move id -1]]
+       [step-button "later" (str "Move " name " later") "Later" name [:panel-layout/move id 1]]
+       [step-button "narrower" (str "Make " name " narrower") "Narrower" name [:panel-layout/resize id -1 0]]
+       [step-button "wider" (str "Make " name " wider") "Wider" name [:panel-layout/resize id 1 0]]
+       [step-button "shorter" (str "Make " name " shorter") "Shorter" name [:panel-layout/resize id 0 -2]]
+       [step-button "taller" (str "Make " name " taller") "Taller" name [:panel-layout/resize id 0 2]]
        [detach-control db id]
        (when (extra? id)
          [:button.layout-remove {:type "button" :title (str "Remove " name " from this layout")
@@ -680,6 +748,7 @@
                          (when (and (= "Escape" (.-key event)) (not (.-defaultPrevented event))
                                     (not (.querySelector js/document "dialog[open]")))
                            (.preventDefault event)
+                           (stop-autoscroll!)
                            (rf/dispatch [:panel-layout/escape])))
                _ (.addEventListener js/document "keydown" handler)]
     nil
@@ -708,8 +777,12 @@
 (defn toolbar
   "Switch and edit layouts; while editing, name, add panels, save or discard."
   [db]
-  (if (editing? db)
-    (let [{:keys [announce name original layout]} (:edit (state db))
+  ;; The live region stays mounted and starts empty, so the first message
+  ;; after entering edit mode is announced.
+  [:<>
+   [:p#layout-announce.sr-only {:aria-live "polite"} (when (editing? db) (:announce (:edit (state db))))]
+   (if (editing? db)
+    (let [{:keys [name original layout]} (:edit (state db))
           class (current-class db)]
       [:div.layout-toolbar {:role "group" :aria-label "Layout editing"}
        [escape-listener]
@@ -729,14 +802,13 @@
        [:button.button {:id "layout-cancel" :type "button" :on-click #(rf/dispatch [:panel-layout/cancel])} "Cancel"]
        (when original [delete-button original])
        [:button.text-button {:id "layout-reset" :type "button" :on-click #(rf/dispatch [:panel-layout/reset])}
-        "Reset to default"]
-       [:p.sr-only {:aria-live "polite"} announce]])
+        "Reset to default"]])
     [:div.layout-toolbar.layout-idle
      [switcher db]
-     [:button.text-button.layout-edit {:id "edit-layout" :type "button" :aria-pressed false
+     [:button.text-button.layout-edit {:id "edit-layout" :type "button"
                                        :title "Rearrange and resize the Perform panels for this screen"
                                        :on-click #(rf/dispatch [:panel-layout/begin])}
-      "Edit layout"]]))
+      "Edit layout"]])])
 
 (defn- region-style [{:keys [w h]} gesture id]
   (let [[w h] (if (and (= id (:id gesture)) (:size gesture)) (:size gesture) [w h])]
