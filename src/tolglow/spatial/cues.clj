@@ -209,13 +209,21 @@
     (personalities/input-choice (personalities/active model) declaration
                                 (or (:cue-id instance) (:effect-id instance)))))
 
+(defn- live-extent
+  "The longest side of the shape the cue's live values describe: a sphere's
+  diameter from its radius, otherwise the box's longest side."
+  [values]
+  (if (= :sphere (:shape values))
+    (* 2.0 (:radius values))
+    (reduce max (:size values))))
+
 (defn- live-volume [model modulation previous settings key instance]
   (let [{:keys [members] :as spec} (get-in instance [:definition :spatial-volume])]
     (try
       (let [values (controls model instance modulation)
             choice (personality-form model instance spec)
             values (cond-> values
-                     choice (merge (forms/sculpt-values (:input choice) (reduce max (:size values)))))
+                     choice (merge (forms/sculpt-values (:input choice) (live-extent values))))
             resolved (volume (:volume spec) values)
             room (select-keys settings [:bounds :gravity])]
         (when-not (and (= room (select-keys previous [:bounds :gravity]))

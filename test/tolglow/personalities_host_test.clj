@@ -267,6 +267,33 @@
       (is (nil? (chosen-form rt)))
       (finally (show/stop! reopened) (show/stop! rt)))))
 
+(deftest a-personality-changes-the-shape-and-keeps-the-live-size
+  (doseq [batch? [true false]]
+    (testing (str "batch " batch?)
+      (let [rt (runtime batch?)
+            sphere (assoc feel-volume :id :ball
+                          :volume {:shape :sphere :position [0.0 1.0 0.0] :radius 1.0 :selection #{:position}
+                                   :falloff {:inner-m 0.0 :outer-m 0.0 :curve :linear}})
+            lit #(count (filter pos? (output rt)))]
+        (try
+          (accept! rt 0 :spatial-cue sphere)
+          (is (= 13 (lit)))
+          (let [id (key (first (get-in @(:state rt) [:model :instances])))]
+            (accept! rt 10 :command {:op :param/set :instance-id id :param :radius :value 0.3})
+            (tick! rt 20)
+            (is (= 1 (lit)) "the operator shrank the sphere to the centre lamp")
+            (accept! rt 30 :personality {:op :select :id :spirals})
+            (tick! rt 40)
+            (is (= :circle (chosen-form rt)))
+            (is (= 1 (lit)) "the drawn sphere keeps the operator's radius")
+            (accept! rt 50 :personality {:op :select :id :squares :seed 0})
+            (tick! rt 60)
+            (let [signal (some #(when (:personality-form %) %) (vals (get-in (show/snapshot rt) [:spatial :signals])))
+                  side (reduce max (get-in signal [:volume :size]))]
+              (is (= :rounded-box (get-in signal [:volume :shape])))
+              (is (< (Math/abs (- 0.6 side)) 1.0e-9) "a box drawn from the sphere spans its live diameter")))
+          (finally (show/stop! rt)))))))
+
 (deftest only-a-static-morphable-volume-can-declare-the-input
   (let [rt (runtime true)]
     (try

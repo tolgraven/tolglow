@@ -85,7 +85,7 @@ A static sphere or rounded-box volume cue can declare the personality as an inpu
     :personality {:seed 7}})
 ```
 
-While a personality is active, the cue draws one sculpt form from its weights and morphs to it. It keeps the longest side of its `:size`; position, falloff, strength and scale stay with the operator. The draw depends on the cue's seed, the active seed and the cue ID, so the same show renders the same bytes after a save and load. The chosen form appears as `:personality-form` on the cue's entry under `(:spatial (show/snapshot runtime))`.
+While a personality is active, the cue draws one sculpt form from its weights and morphs to it. It keeps its live size: a sphere's diameter or a box's longest side, including the operator's changes. Position, falloff, strength and scale stay with the operator. The draw depends on the cue's seed, the active seed and the cue ID, so the same show renders the same bytes after a save and load. The chosen form appears as `:personality-form` on the cue's entry under `(:spatial (show/snapshot runtime))`.
 
 With no active personality, or one that weights no sculpt form, the cue renders its authored shape exactly as before. A cue without the declaration is never reshaped. A bouncing ball or a cylinder cannot declare this input. [Captured-output test](../test/tolglow/personalities_host_test.clj)
 
