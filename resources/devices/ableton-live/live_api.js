@@ -23,8 +23,8 @@
     if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
     return "{" + Object.keys(value).sort().map(function (key) { return JSON.stringify(key) + ":" + canonical(value[key]); }).join(",") + "}";
   }
-  var SESSION_OPERATIONS = ["inspect-set", "ensure-track", "configure-track", "write-clip", "extend-clip", "capture-midi",
-    "read-clip", "show-clip", "fire-clip", "stop-clips"];
+  var SESSION_OPERATIONS = ["inspect-set", "ensure-track", "ensure-group", "configure-track", "write-clip", "extend-clip", "capture-midi",
+    "read-clip", "show-clip", "fire-clip", "stop-clips", "watch-run-tracks"];
   function sessionOperation(op) { return SESSION_OPERATIONS.indexOf(op) >= 0; }
   function recordingKey(intent) {
     return canonical([intent["destination-id"], intent["show-id"] || null, intent.epoch, intent["command-id"]]);

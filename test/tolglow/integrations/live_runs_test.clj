@@ -147,10 +147,10 @@
       (is (empty? (:problems result)))
       (is (= [["Bass" :midi nil]
               ["Tolglow group stage" :group nil]
+              ["Tolglow run b" :midi stage]
               ["Tolglow group warm" :group stage]
               ["Tolglow run a" :midi warm]
-              ["Tolglow run a · 2" :midi warm]
-              ["Tolglow run b" :midi stage]]
+              ["Tolglow run a · 2" :midi warm]]
              (mapv track-row (:tracks snapshot)))))
     (testing "one clip per take with the held length; successive runs reuse A's track"
       (is (= [["Amber sweep run 1 [r1.1]" 3 0] ["Amber sweep run 2 [r1.3]" 4 1] ["Amber sweep run 3 [r1.4]" 3 2]]

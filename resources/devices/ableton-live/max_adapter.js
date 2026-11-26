@@ -66,7 +66,21 @@ function init() {
     session: new TolglowSession.Session({
       api: liveObject,
       dictionaryCall: function (object, method, data) { return object.call(method, data); },
-      readDictionary: readDictionary
+      readDictionary: readDictionary,
+      // Run-track playback (#683). A notification only schedules the read:
+      // LiveAPI reads happen in a deferred task, never inside the callback.
+      observe: function (id, property, changed) {
+        var open = true, handle = new LiveAPI(function (args) {
+          if (!args || args[0] !== property) return;
+          var value = args[1];
+          // Every change is delivered in order; the Session drops repeats.
+          new Task(function () { if (open) changed(value); }).schedule(0);
+        }, "live_set");
+        handle.id = id;
+        handle.property = property;
+        return function () { open = false; handle.property = ""; handle.id = 0; };
+      },
+      emit: function (event) { outlet(0, "event", JSON.stringify({kind: "run-clip", event: event})); }
     }),
     // Live's note methods take a dictionary. Keep the host-specific serialization
     // isolated; do not retry a mutating method with a different encoding.

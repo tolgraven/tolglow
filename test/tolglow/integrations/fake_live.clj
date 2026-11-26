@@ -25,8 +25,9 @@
   Track or moves a track into one. Like the companion, `:ensure-group` here
   only finds a Group Track a performer or template placed (`add-group-track!`)
   and refuses with :group-creation-unavailable otherwise. `:ensure-track` with
-  a :group-track-id inserts the new track after the group's last member; that
-  the inserted track joins the group is an assumption to verify in Live, and
+  a :group-track-id inserts the new track after the group's last direct member
+  that is not a group (or right after the Group Track); that the inserted
+  track joins the group is an assumption to verify in Live, and
   `:insert-joins-group? false` models the opposite outcome.
   `:scenes n` bounds the clip slots per track (default unbounded);
   `:create-scene? true` on write-clip adds a scene when every slot is full."
@@ -78,19 +79,14 @@
 
 (defn- first-empty-slot [track] (first (remove (set (keys (:slots track))) (range))))
 
-(defn- member?
-  "Whether track is inside the group (directly or through nested groups)."
-  [state track group-id]
-  (loop [g (:group-track-id track)]
-    (cond (nil? g) false
-          (= g group-id) true
-          :else (recur (:group-track-id (first (filter #(= g (:track-id %)) (:tracks state))))))))
-
 (defn- insert-index
-  "After the group's last member, or right after the Group Track."
+  "Like the companion: after the group's last direct member that is not a
+  group itself, or right after the Group Track."
   [state group-id]
-  (inc (or (last (keep-indexed (fn [i t] (when (or (= group-id (:track-id t)) (member? state t group-id)) i)) (:tracks state)))
-           (dec (count (:tracks state))))))
+  (inc (last (keep-indexed (fn [i t] (when (or (= group-id (:track-id t))
+                                               (and (= group-id (:group-track-id t)) (not= :group (:kind t))))
+                                       i))
+                           (:tracks state)))))
 
 (defn- overlaps? [arrangement start length]
   (some (fn [{s :start l :length}] (and (< start (+ s l)) (< s (+ start length)))) arrangement))
