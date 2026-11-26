@@ -39,6 +39,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Fog machine and venue controls](studio-atmosphere.md) | Configure rated fog output, DMX response, nozzle direction, ventilation and decay |
 | [Spatial cue actions](spatial-show.md) | Select live fixture targets, observe volume contacts and run owned cues |
 | [Video on LED strips](video-strips.md) | Receive Syphon video, map strips over it in 2D and run it as an ordinary cue |
+| [Shader cues](shader-cues.md) | Run a GLSL shader as a cue with live uniforms, its own video rate, a 200 × 1 strip target and a borderless projector page; measured cost |
 | [Track-feel personalities](personalities.md) | Choose or blend a palette, concurrency, shape vocabulary and motion character, read its icon and projection, and let a volume cue follow it |
 | [Headless show modules](headless-modules.md) | Use the show APIs from code and controllers |
 | [Feature parity inventory](feature-parity-inventory.md) | Source-linked operator and authoring behaviors from Afterglow, Tolglow effects and tolglow-web, with acceptance cases |
