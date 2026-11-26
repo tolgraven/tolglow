@@ -1,0 +1,27 @@
+/* Linked knobs panel (#666): src/studio/tolglow/studio/knobs.cljs */
+.knobs-panel{margin-top:20px}
+.knobs-body{display:grid;gap:14px;padding:14px 16px 16px}
+.knob-card{border:1px solid var(--line);border-radius:10px;background:var(--raised);padding:12px 14px;display:grid;gap:8px}
+.knob-head{display:flex;align-items:center;gap:10px}
+.knob-head strong{font-size:13px;font-weight:500;margin-right:auto}
+.knob-value{font-variant-numeric:tabular-nums;font-size:12px;color:var(--accent)}
+.knob-slider{width:100%;min-height:44px}
+.knob-links{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.knob-link{border-top:1px solid var(--line);padding-top:8px;display:grid;gap:4px}
+.knob-link-head{display:flex;justify-content:space-between;gap:10px;font-size:11px}
+.knob-link-label{color:#bbc6b5;min-width:0;overflow-wrap:anywhere}
+.knob-link-value{font-variant-numeric:tabular-nums;color:var(--text);white-space:nowrap}
+.knob-link[data-status=dangling] .knob-link-value,.knob-link[data-status=inactive] .knob-link-value{color:var(--muted)}
+.knob-link-status{margin:0;color:var(--muted)}
+.knob-link[data-status=dangling] .knob-link-status{color:var(--danger)}
+.knob-link-controls{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.knob-link-controls select,.knob-range-input{font-size:11px;padding:6px 7px;min-height:36px}
+.knob-range-input{width:64px}
+.knob-add-link summary{cursor:pointer;font-size:11px;color:var(--muted);padding:4px 0}
+.knob-add-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin:8px 0}
+.knob-add-grid label{display:grid;gap:4px;font-size:10px;color:var(--muted)}
+.knob-add-grid input,.knob-add-grid select{width:100%;font-size:11px;padding:6px 7px}
+.knob-create{display:flex;gap:8px}
+.knob-create input{flex:1}
+.knob-error{color:var(--danger);font-size:11px;margin:0}
+@media(pointer:coarse){.knob-link-controls select,.knob-range-input,.knob-add-grid input,.knob-add-grid select,.knob-create input{min-height:44px;font-size:16px}.knobs-panel .text-button,.knobs-panel .button{min-height:44px;min-width:44px}.knob-add-link summary{min-height:44px;display:flex;align-items:center}}
