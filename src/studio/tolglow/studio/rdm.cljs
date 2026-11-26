@@ -1,6 +1,7 @@
 (ns tolglow.studio.rdm
   "RDM fixture management through guarded re-frame actions and owned host jobs."
   (:require [clojure.string :as str] [re-frame.core :as rf]
+            [tolglow.studio.show-window :as show-window]
             [tolglow.studio.events]
             [tolglow.studio.pretty :as pretty]))
 
@@ -164,9 +165,14 @@
         (when direct? [field s :physical-port "Port within binding" "number"])
         [field s :timeout-ms "Request timeout (ms)" "number"]
         [field s :job-timeout-ms "Job timeout (ms)" "number"]]]]
-     [:button.button {:disabled (or (:busy? s) (nil? (:snapshot s)))
-                      :on-click #(if enabled? (action! :disconnect {}) (action! :connect {:config (config s)}))}
-      (if enabled? "Disable RDM" "Enable RDM")]]))
+     (let [reason (when-not enabled? @(rf/subscribe [:show-window/preview-only]))]
+       [:<>
+        [show-window/device-note reason]
+        [:button#rdm-enable.button (show-window/device-control
+                                    {:disabled (or (:busy? s) (nil? (:snapshot s)))
+                                     :on-click #(if enabled? (action! :disconnect {}) (action! :connect {:config (config s)}))}
+                                    reason)
+         (if enabled? "Disable RDM" "Enable RDM")]])]))
 
 (defn panel []
   (let [s @(rf/subscribe [:rdm/state]) snapshot (:snapshot s) observation (observation s)
