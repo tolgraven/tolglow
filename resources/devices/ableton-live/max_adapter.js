@@ -6,6 +6,7 @@ inlets = 1;
 outlets = 2; // 0: messages to node.script, 1: MIDI-thru gate/status
 include("live_api.js");
 include("parameter_observers.js");
+include("live_session.js");
 
 var adapter = null, localId = 0;
 function liveObject(path) {
@@ -32,6 +33,11 @@ function observeParameter(path, changed) {
     return clear;
   } catch (error) { clear(); throw error; }
 }
+function readDictionary(value) {
+  if (Array.isArray(value) && value[0] === "dictionary") return JSON.parse(new Dict(value[1]).stringify());
+  if (Array.isArray(value) && value.length === 1) value = value[0];
+  return typeof value === "string" ? JSON.parse(value) : value;
+}
 function init() {
   if (adapter) return;
   adapter = new TolglowLive.Adapter({
@@ -54,14 +60,18 @@ function init() {
         outlet(0, "event", JSON.stringify({kind: "parameter-error", sample: sample}));
       }
     }),
+    // Setup, Capture and clip writes share the same LiveAPI and dictionary
+    // boundaries. Dictionary-valued properties (input routing) are set with
+    // the dictionary object itself; confirm the encoding in licensed Live.
+    session: new TolglowSession.Session({
+      api: liveObject,
+      dictionaryCall: function (object, method, data) { return object.call(method, data); },
+      readDictionary: readDictionary
+    }),
     // Live's note methods take a dictionary. Keep the host-specific serialization
     // isolated; do not retry a mutating method with a different encoding.
     dictionaryCall: function (object, method, data) { return object.call(method, data); },
-    readDictionary: function (value) {
-      if (Array.isArray(value) && value[0] === "dictionary") return JSON.parse(new Dict(value[1]).stringify());
-      if (Array.isArray(value) && value.length === 1) value = value[0];
-      return typeof value === "string" ? JSON.parse(value) : value;
-    }
+    readDictionary: readDictionary
   });
   outlet(1, "thru", 1);
 }
@@ -84,6 +94,9 @@ function pair(track, clipSlot, rackDevice) {
 }
 function poll() {
   init();
+  // Refresh the cached host track (one LiveAPI object per poll, not per MIDI
+  // event), so a companion moved to another track tags playback correctly.
+  if (adapter.session) adapter.session.hostTrackId(true);
   var result = adapter.handle({id: "local-inspect-" + (++localId), op: "inspect", payload: {}});
   if (result.status === "executed") outlet(0, "event", JSON.stringify({kind: "status", status: result.result}));
   else outlet(1, "diagnostic", result.error.message);
@@ -97,6 +110,13 @@ function forward(event) {
   init();
   try { var result = adapter.midi(event); if (result) outlet(0, "event", JSON.stringify({kind: "midi", event: result})); }
   catch (error) { outlet(1, "diagnostic", error.message); }
+}
+// A companion lane parameter ("Tolglow lane k") moved, by automation or by hand.
+function lane(k, value) {
+  init();
+  try {
+    adapter.lane(k, value).forEach(function (event) { outlet(0, "event", JSON.stringify({kind: "midi", event: event})); });
+  } catch (error) { outlet(1, "diagnostic", error.message); }
 }
 function note(pitch, velocity, channel) { forward({type: velocity > 0 ? "note-on" : "note-off", note: pitch, velocity: velocity, channel: channel}); }
 function cc(value, controller, channel) { forward({type: "cc", controller: controller, value: value, channel: channel}); }

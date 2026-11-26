@@ -92,7 +92,11 @@ pleasant or accurate physical color. Any future live experiment needs its own
 bounded display scheduler, explicit user activation and output-load measurement;
 it must not stall show/control processing as the reference's burst path does.
 
-## Implemented controls and ownership
+## Afterglow profile (no longer on Tolglow's connect path)
+
+Since #706 slice 2, `show/connect-device! :x-touch` runs the Tolglow mixer
+layout below instead. This section describes the Afterglow profile, which
+other Afterglow hosts can still use.
 
 A profile maps an ordered channel vector to eight strips. A channel contains
 `:cue-id`, optional `:label`/normalized display `:color`, and `:fader`/`:encoder`
@@ -147,6 +151,72 @@ commands instead of changing its own bank.
 The indices above are placeholders for explicitly selected local ports, not
 discovery results. A host must retain its show epoch in callbacks, as the studio
 does for other controllers, and reject stale input across full-show restores.
+
+## Mixer layout (Tolglow, #706 slice 2)
+
+`tolglow.surface.mixer` is a device-independent mixer layout and
+`tolglow.surface.x-touch` maps it onto MCU addresses and bytes, over the
+Afterglow session shell, MCU codec and hold bindings. It takes its behaviour
+from the operator's fork of the X-Touch Live remote script
+(`Behringer-X-Touch-for-ableton`, readme at `99f0ac6`) where a lighting
+equivalent exists, reimplemented from the documented behaviour; no script
+code is used. Strips, the window and a committed **layout state** (encoder
+mode, page, selected strip, flip) come from the surface link, so an
+extender, a mirrored unit or a follower shows the same mode and selection as
+the main unit with nothing device-specific.
+
+| Control | Lighting meaning | Script equivalent |
+| --- | --- | --- |
+| Fader | Group strip: committed group level. Cue strip: its `:fader` binding (default `:level`) on the cue's latest instance. Needs a finger: a touch captures the target until release, across bank and mode changes; untouched messages (motor echoes) are ignored; a touched fader gets no motor message and is reasserted on release. Empty strips park at 0. | Faders need a finger touch |
+| Master fader | Lighting master (touch needed) | Master volume |
+| PAN | Encoders on one per-strip parameter: the channel's `:encoder` binding, else the first other typed parameter of the effect | Pan |
+| SEND | Encoders on each cue strip's instance opacity | Sends (one send across strips) |
+| PLUG-IN | Encoders on the selected strip's parameters across all linked encoders (16 with an extender; colour parameters as R/G/B); a selected group lists its members' opacity. EQ/INST page by the logical span. Strips light cyan. | Plug-in device control, rack chains |
+| USER | Encoders on linked knobs (#666) in creation order; extender encoder *n* is knob 8 + *n* | Macro Mapper |
+| Encoder push | Restore the default (unity for opacity and levels) | — |
+| Rings | Bipolar → boost/cut, levels → wrap, width/spread → spread, enums, booleans and angles → dot; the centre LED marks the default value | Ring modes |
+| SELECT | Select the strip (drives PLUG-IN). Again on a cue strip: toggle its launch. Again on a group: clear the selection. | Select, press again |
+| SOLO / MUTE | `:effect-selection/toggle` (#532) on the strip's instances; SHIFT or CONTROL adds instead of replacing | Solo/Mute, Shift adds |
+| MUTE LED blinking | The strip is suppressed by another strip's solo | "Indicate tracks muted via solo" |
+| REC | Hold the cue while pressed; exact instance release | (arm) |
+| Transport SOLO | Lit with any solo. Press: store and clear every solo; press again (blinking): restore what still runs; with nothing stored, solo the selected strip. SHIFT clears the stored set. | Global Solo |
+| FLIP | Swap fader and encoder on cue strips in PAN | Flip |
+| BANK / CHANNEL | Move the committed window; SHIFT: first/last page | Same |
+| PLAY / STOP | Local transport. Ignored while an external clock owns play and stop (see below). LEDs follow the transport either way. | Same |
+
+**Scribble strips.** Row 1 names the strip (or the encoder item in PLUG-IN
+and USER), row 2 shows the value the encoder controls, else the fader's.
+Colours follow the script's rules with hue matching as the default
+(`:color-match :hue`, `:rgb` or `:off`, white cut-off 0.19): the cue's
+`:swatch` or `:color`, the effect's swatch or colour parameter, else its
+first category colour; greys are white, only exact black is black, empty
+strips are black, groups keep cyan (root), blue (child) and magenta
+(overlay), and item strips in PLUG-IN and USER are cyan.
+
+**Meters.** Each strip's MCU meter shows its effective output level: the
+instance's opacity times its group levels (times the fader parameter on a
+cue strip), zero while solo or mute suppresses it, the maximum over a
+group's members. This is the mixer gain reaching the renderer, not a
+photometric measurement of the light. A nonzero meter is resent every
+`:meter-refresh-ms` (200) because the unit lets meters fall. No clip
+indication yet.
+
+**PLAY/STOP and Link.** When Ableton Link follows play and stop (start/stop
+sync on, the default) or another external clock is selected, the show's
+transport follows that source and a local `:transport/set :playing?` would be
+overwritten by the next clock sample, so the buttons would fight Live. The
+X-Touch then sends nothing for PLAY and STOP; its LEDs show the external
+state. With manual transport, or Link in tempo-only mode, PLAY and STOP
+commit `:transport/set` as before.
+
+**Disconnect** releases held cues and blanks the LCD, colours, rings, meters
+and every LED the layout lit; the faders stay where they are.
+
+Not in this slice: running instances as a strip source, folding nested
+groups (SELECT twice, GROUP), DISPLAY NAME/VALUE, function keys, CLICK in
+time, the time display, night mode, quantised transport SOLO, clip on the
+meters, and fader zero calibration. The hardware checklist is on the slice 2
+pull request.
 
 ## Surfaces, links and the session box
 
