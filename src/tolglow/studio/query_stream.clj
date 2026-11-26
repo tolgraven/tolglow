@@ -113,7 +113,7 @@
   (when (compare-and-set! owner nil (Thread/currentThread))
     (complete-retirement! store query lease retirement (detach-lease! query lease))))
 
-(defn- cleanup-executor [name]
+(defn- cleanup-executor ^ThreadPoolExecutor [^String name]
   (doto ^ThreadPoolExecutor (Executors/newFixedThreadPool
                              4 (reify ThreadFactory
                                  (newThread [_ task] (doto (Thread. task name) (.setDaemon true)))))
