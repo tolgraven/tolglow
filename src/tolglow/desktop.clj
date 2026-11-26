@@ -24,7 +24,9 @@
   user namespaces such as `show` are global to a Clojure runtime, so the Mac
   app starts a process per window. Options: :devices? false starts it
   preview-only for :owner (see `launch/device-free`); :recovery-base gives the
-  folder its own recovery directory there (see `launch/claim-folder-recovery!`)."
+  folder its own recovery directory there (see `launch/claim-folder-recovery!`)
+  and offers, without applying it, the checkpoint the shared directory kept
+  from before per-folder recovery (see `launch/claim-options`)."
   ([folder ready input] (run-show! folder ready input {}))
   ([^File folder ^Path ready input {:keys [recovery-base] :as options}]
    ;; The user's namespace root is scoped to this show process. A URL keeps paths
@@ -35,7 +37,7 @@
              claim (when (and recovery-base (launch/scopes-recovery? cfg))
                      (launch/claim-folder-recovery! folder recovery-base))]
          (try
-           (let [cfg (launch/desktop-config cfg (assoc options :recovery-directory (:directory claim)))
+           (let [cfg (launch/desktop-config cfg (merge options (launch/claim-options claim)))
                  ;; The window owns a private ephemeral listener even if this folder
                  ;; normally starts Studio through TLS or a LAN reverse proxy.
                  local-web {:enabled true :host "127.0.0.1" :port 0}

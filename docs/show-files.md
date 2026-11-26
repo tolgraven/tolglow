@@ -287,3 +287,15 @@ The show owner's import operation handles every restore. A default start discove
 Configure the interval or storage directory under `:show`, for example `{:recovery {:interval-ms 10000 :directory "/path/to/recovery"}}`. The default is `~/Library/Application Support/Tolglow/Recovery` on macOS and `${XDG_STATE_HOME:-~/.local/state}/tolglow/recovery` elsewhere. Give independent installations that use the same show IDs different directories. `:recovery false` disables background writes. Named bookmarks remain accessible.
 
 To resume a checkpoint at configured startup, enable `:show-state` and set `:restore` to `:recovery`, `:named`, or `:prior`. An existing `:load-file` is loaded first, so it can establish the show ID. If that show has no checkpoint of the requested kind, startup proceeds with the configured state. A corrupt checkpoint produces a restore error. [Recovery issue](https://github.com/tolgraven/tolglow/issues/551)
+
+### The checkpoint from before per-folder recovery
+
+A show folder opened in the Mac app autosaves to its own directory, named by the folder's `.tolglow-folder-id` ([windows](studio-ui.md#windows-and-tabs)). Desktop shows from before that change autosaved to the shared directory above, so its checkpoint for the show's ID is offered to every Mac show folder as `:legacy` until one folder takes it or it is dismissed. Startup restore never loads it. `(:folder (show/recovery-status runtime))` describes the folder's identity file, with `:new? true` on its first open and `:copy-of` when it was detected as a copy.
+
+```clojure
+(:checkpoints (show/recovery-status runtime))   ; {:legacy {:modified-at-ms …} …} while it is offered
+@(show/load-latest-show! runtime :legacy)       ; restore it into this folder; no folder offers it again
+(show/dismiss-legacy-recovery! runtime)         ; or drop the offer; true when one was offered
+```
+
+The restore is the same show import as any checkpoint, so a refused restore (a corrupt file, a different show ID) leaves it offered. Restoring or dismissing writes `legacy-resolution.edn` beside the shared files, with the folder ID and path, the time and the SHA-256 of the file. The shared files stay where they are: `lein run` and other hosts still use that directory.

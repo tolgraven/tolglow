@@ -192,6 +192,22 @@
                    (sort-by (juxt :y :x))
                    vec)))))
 
+(defn- show-folder-options [value]
+  (cond
+    (nil? value) nil
+    (and (map? value) (string? (:id value)) (seq (:id value)))
+    (select-keys value [:id :file :path :new? :copy-of])
+    :else (throw (ex-info "Show folder must be a map with an :id" {}))))
+
+(defn- show-folder-view
+  "The Mac show folder this show runs from (#742): its identity file, whether
+  this launch wrote it (first open, or a detected copy) and the shared
+  checkpoint from before per-folder recovery while it is still offered."
+  [runtime show-id]
+  (when-let [folder (:show-folder runtime)]
+    (let [legacy (some-> (:recovery runtime) deref (recovery/legacy-offer show-id))]
+      (cond-> folder legacy (assoc :legacy-checkpoint legacy)))))
+
 (declare ^:private audition-projection)
 
 (defn project-snapshot [runtime {:keys [model output status modulation-view parameter-samples] :as snapshot}]
@@ -210,6 +226,7 @@
     (merge (select-keys model [:show-id :epoch :revision :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
             :preview-only (get-in runtime [:preview-only :message])
+            :show-folder (show-folder-view runtime (:show-id model))
             :section-patterns-enabled? (some? (:section-patterns runtime))
             :frame-number (get model :frame-number 0)
             :transport-generation (:transport-generation snapshot 0)
@@ -538,6 +555,10 @@
       :publisher publisher :presentation-clock (volatile! 0) :wire-retirement (atom nil)
       :independent-output? (boolean (:independent-output? options))
       :preview-only (preview-only-options (:preview-only options))
+      :show-folder (show-folder-options (:show-folder options))
+      ;; `start!` fills this in. It is part of the map here so that the REPL
+      ;; sessions' `runtime`, captured from this map, reaches the checkpoints.
+      :recovery (atom nil)
       :executor worker-pool
       :spatial-sampling field-sampler
       :leases (atom {})
@@ -3409,10 +3430,11 @@
           checkpoints (into {} (keep (fn [kind]
                                        (when-let [file (recovery/latest-file owner show-id kind)]
                                          [kind {:modified-at-ms (.lastModified file)}])))
-                            [:recovery :named :prior])]
+                            [:recovery :named :prior :legacy])]
       (cond-> (assoc (merge status identity) :runtime-id (:id runtime)
                      :checkpoints checkpoints :available (set (keys checkpoints)))
-        (not= show-id (get-in status [:last-saved :show-id])) (dissoc :last-saved)))))
+        (not= show-id (get-in status [:last-saved :show-id])) (dissoc :last-saved)
+        (:show-folder runtime) (assoc :folder (:show-folder runtime))))))
 
 (defn save-show!
   "Save a complete snapshot using a forced temporary file and atomic replacement."
@@ -3438,10 +3460,33 @@
       (throw (ex-info "Checkpoint operation belongs to a previous show session" {:code :stale-checkpoint-session})))
     identity))
 
+(defn- legacy-details [runtime]
+  (let [{:keys [id path]} (:show-folder runtime)]
+    (cond-> {} id (assoc :folder-id id) path (assoc :folder path))))
+
+(defn- resolve-legacy-on-accept
+  "A reply that carries `reply`'s acknowledgement once the shared checkpoint
+  is recorded as applied to this folder. A refused restore leaves it offered."
+  [runtime owner show-id reply]
+  (let [result (promise)]
+    (future
+      (let [ack @reply]
+        (deliver result
+                 (if (= :accepted (:status ack))
+                   (try (recovery/resolve-legacy! owner show-id :applied (legacy-details runtime))
+                        ack
+                        (catch Exception error
+                          (assoc ack :legacy-resolution-error (ex-message error))))
+                   ack))))
+    result))
+
 (defn load-latest-show!
   "Load the active show's latest :recovery, :named, or prior-session checkpoint.
-  A remote caller can supply the exact runtime/show/epoch it received in status
-  and a receipt ID for the committed result stream."
+  In a Mac show folder, :legacy loads the shared checkpoint from before
+  per-folder recovery and, once the restore is accepted, stops offering it to
+  every folder (its files stay). A remote caller can supply the exact
+  runtime/show/epoch it received in status and a receipt ID for the committed
+  result stream."
   ([runtime kind] (load-latest-show! runtime kind nil))
   ([runtime kind expected] (load-latest-show! runtime kind expected nil))
   ([runtime kind expected receipt-id]
@@ -3452,10 +3497,22 @@
                     (recovery/read-prior owner show-id read-checkpoint-source)
                     (some-> (recovery/latest-file owner show-id kind) read-checkpoint-source)))]
      (when-not source (throw (ex-info "Show checkpoint is unavailable" {:kind kind :show-id show-id})))
-     (enqueue! runtime :import {:runtime-id (:id runtime) :expected-epoch epoch
-                                :expected-source-show-id show-id :source source}
-               nil
-               (when receipt-id {:id receipt-id :identity {:runtime-id (:id runtime) :show-id show-id :epoch epoch}})))))
+     (cond->> (enqueue! runtime :import {:runtime-id (:id runtime) :expected-epoch epoch
+                                         :expected-source-show-id show-id :source source}
+                        nil
+                        (when receipt-id {:id receipt-id :identity {:runtime-id (:id runtime) :show-id show-id :epoch epoch}}))
+       (= :legacy kind) (resolve-legacy-on-accept runtime owner show-id)))))
+
+(defn dismiss-legacy-recovery!
+  "Stop offering the shared checkpoint from before per-folder recovery to this
+  and every other Mac show folder, without applying it. Its files stay in the
+  shared recovery directory. Returns true when a checkpoint was offered."
+  ([runtime] (dismiss-legacy-recovery! runtime nil))
+  ([runtime expected]
+   (let [{:keys [show-id]} (capture-checkpoint-identity runtime expected)]
+     (boolean
+       (when-let [owner (some-> (:recovery runtime) deref)]
+         (recovery/resolve-legacy! owner show-id :dismissed (legacy-details runtime)))))))
 
 (defn discard-prior-recovery!
   "Dismiss the active show's prior-session checkpoint. Working and named saves
@@ -3801,9 +3858,8 @@
    (when-not (and (number? frame-rate) (<= 1 frame-rate 120)) (throw (ex-info "Frame rate must be 1..120" {})))
    (let [recovery-options (recovery/options (:recovery options))
          sink (open-sink! options)
-         runtime (try (assoc (create-runtime (merge {:adaptive-keyframes {:enabled? true}} options
-                                                     {:sink sink :independent-output? true}))
-                             :recovery (atom nil))
+         runtime (try (create-runtime (merge {:adaptive-keyframes {:enabled? true}} options
+                                             {:sink sink :independent-output? true}))
                       (catch Throwable error
                         (when sink
                           (try ((:close! sink)) (catch Throwable cleanup (.addSuppressed error cleanup))))
@@ -3814,5 +3870,7 @@
                (recovery/start! recovery-options (not defer-recovery?)
                                 #(when @(:running runtime) (capture-checkpoint runtime))
                                 (partial publish-checkpoint! runtime)))
+       ;; Find the shared checkpoint a Mac show folder offers before Studio asks.
+       (recovery/latest-file @(:recovery runtime) (get-in @(:state runtime) [:model :show-id]) :legacy)
        runtime
        (catch Throwable error (stop! runtime) (throw error))))))

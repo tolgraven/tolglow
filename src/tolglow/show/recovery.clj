@@ -27,13 +27,14 @@
 (defn options [value]
   (when-not (or (nil? value) (boolean? value) (map? value))
     (throw (ex-info "Invalid show recovery options" {})))
-  (let [{:keys [enabled? interval-ms directory] :as options}
+  (let [{:keys [enabled? interval-ms directory legacy-directory] :as options}
         (merge {:enabled? true :interval-ms 10000}
                (cond (false? value) {:enabled? false} (map? value) value))]
-    (when-not (and (every? #{:enabled? :interval-ms :directory} (keys options))
+    (when-not (and (every? #{:enabled? :interval-ms :directory :legacy-directory} (keys options))
                    (boolean? enabled?) (pos-int? interval-ms))
       (throw (ex-info "Invalid show recovery options" {})))
-    (assoc options :directory (.getAbsoluteFile (io/file (or directory (default-directory)))))))
+    (cond-> (assoc options :directory (.getAbsoluteFile (io/file (or directory (default-directory)))))
+      legacy-directory (assoc :legacy-directory (.getAbsoluteFile (io/file legacy-directory))))))
 
 (defn show-directory
   "The directory under a recovery directory that holds one show's files."
@@ -200,6 +201,8 @@
         (.force channel true)))
     publish!))
 
+(declare legacy-offer latest-file)
+
 (defn- autosave! [{:keys [directory status open? active? settled-shows] :as owner} capture! publish!]
   (try
     (when-let [{:keys [show-id source] :as captured} (when (and @open? @active?) (capture!))]
@@ -216,13 +219,15 @@
                    (preserve-prior! working (checkpoint-file directory show-id prior-name) save!)
                    (save! nil))]
         (when path
-          (swap! status assoc :last-saved (assoc (dissoc captured :source) :path path) :last-error nil))))
+          (swap! status assoc :last-saved (assoc (dissoc captured :source) :path path) :last-error nil))
+        ;; Another window may have taken or dismissed the shared checkpoint.
+        (when (legacy-offer owner show-id) (latest-file owner show-id :legacy))))
     (catch Exception error
       (when @open? (swap! status assoc :last-error (ex-message error))))))
 
 (defn start! [{:keys [enabled? interval-ms] :as config} active? capture! publish!]
   (let [owner (assoc config :open? (atom true) :active? (atom active?)
-                            :settled-shows (atom #{}) :status (atom {}))]
+                            :settled-shows (atom #{}) :status (atom {}) :legacy (atom nil))]
     (if enabled?
       (let [worker (volatile! nil)
             factory (reify ThreadFactory
@@ -285,10 +290,78 @@
             (io/file path)))
         (catch Exception _ nil)))))
 
+;; A Mac show folder autosaves to its own directory (#669). Before that, every
+;; desktop show autosaved to one shared directory, so the session from before
+;; the update stays there. A folder's owner lists it as the :legacy checkpoint
+;; until an operator applies it to one folder or dismisses it (#742). Nothing
+;; restores it automatically, and its files are never moved or deleted: the
+;; shared directory is still the recovery of `lein run` and other hosts. The
+;; resolution marker beside them stops every folder from offering it again.
+
+(def legacy-resolution-name
+  "The file beside the shared checkpoint that records where it went."
+  "legacy-resolution.edn")
+
+(defn- legacy-show-directory [{:keys [directory legacy-directory]} show-id]
+  (when (and legacy-directory
+             (not= (.getCanonicalFile (io/file directory)) (.getCanonicalFile (io/file legacy-directory))))
+    (show-directory legacy-directory show-id)))
+
+(defn legacy-resolution
+  "Where the shared checkpoint for `show-id` went, as recorded when an operator
+  applied or dismissed it, or nil while it is still offered."
+  [owner show-id]
+  (when-let [directory (legacy-show-directory owner show-id)]
+    (let [marker (io/file directory legacy-resolution-name)]
+      (when (.isFile marker)
+        (try (let [value (edn/read-string (slurp marker :encoding "UTF-8"))]
+               (if (map? value) value {:resolution :unknown}))
+             (catch Exception _ {:resolution :unknown}))))))
+
+(defn- legacy-file [owner show-id]
+  (when-let [directory (legacy-show-directory owner show-id)]
+    (let [working (io/file directory "recovery.transit")
+          prior (io/file directory prior-name)]
+      (when-not (.exists (io/file directory legacy-resolution-name))
+        (cond
+          (.isFile working) working
+          (and (.isFile prior) (nil? (discarded-hash prior))) prior)))))
+
+(defn- remember-legacy! [owner show-id file]
+  (when-let [cache (:legacy owner)]
+    (reset! cache {:show-id show-id
+                   :checkpoint (when file {:modified-at-ms (.lastModified ^java.io.File file)})})))
+
+(defn legacy-offer
+  "The shared checkpoint this folder last found for `show-id`, as
+  {:modified-at-ms …}, without touching the disk; nil when none is offered.
+  `latest-file` with :legacy refreshes it."
+  [owner show-id]
+  (let [{cached-id :show-id :keys [checkpoint]} (some-> (:legacy owner) deref)]
+    (when (= show-id cached-id) checkpoint)))
+
+(defn resolve-legacy!
+  "Stop offering the shared checkpoint for `show-id` because an operator
+  applied it to this folder (:applied) or dismissed it (:dismissed). Its files
+  stay where they are. Returns the recorded resolution, or nil when nothing
+  was offered."
+  [owner show-id resolution details]
+  (when-not (#{:applied :dismissed} resolution)
+    (throw (ex-info "Unknown legacy checkpoint resolution" {:resolution resolution})))
+  (when-let [file (legacy-file owner show-id)]
+    (let [record (merge details {:resolution resolution :show-id show-id :file (.getName ^java.io.File file)
+                                 :sha256 (checkpoint-hash file) :at-ms (System/currentTimeMillis)})]
+      (write-source! (io/file (.getParentFile ^java.io.File file) legacy-resolution-name) (pr-str record))
+      (remember-legacy! owner show-id nil)
+      record)))
+
 (defn latest-file [{:keys [directory] :as owner} show-id kind]
   (let [file (case kind
                :recovery (checkpoint-file directory show-id "recovery.transit")
                :named (named-file directory show-id)
                :prior (prior-file owner show-id)
+               :legacy (let [legacy (legacy-file owner show-id)]
+                         (remember-legacy! owner show-id legacy)
+                         legacy)
                (throw (ex-info "Unknown show checkpoint kind" {:kind kind})))]
     (when (and file (.isFile file)) file)))

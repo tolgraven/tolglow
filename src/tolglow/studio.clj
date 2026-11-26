@@ -129,12 +129,13 @@
                      (assoc :show-id current-id))]
       (case action
         :status (select-keys (show/recovery-status runtime)
-                            [:runtime-id :show-id :epoch :checkpoints :enabled?])
+                            [:runtime-id :show-id :epoch :checkpoints :enabled? :folder])
         :restore
         (let [kind (case (:kind payload)
                      (:recovery "recovery") :recovery
                      (:named "named") :named
                      (:prior "prior") :prior
+                     (:legacy "legacy") :legacy
                      (throw (ex-info "Unknown show checkpoint kind" {})))
               receipt-id (str (random-uuid))]
           (deref (show/load-latest-show! runtime kind identity receipt-id) checkpoint-wait-ms
@@ -142,7 +143,11 @@
         :discard-prior
         (if (show/discard-prior-recovery! runtime identity)
           {:status :accepted}
-          {:status :rejected :message "Previous session checkpoint is unavailable"})))
+          {:status :rejected :message "Previous session checkpoint is unavailable"})
+        :dismiss-legacy
+        (if (show/dismiss-legacy-recovery! runtime identity)
+          {:status :accepted}
+          {:status :rejected :message "The checkpoint from before the update is no longer offered"})))
     (catch java.io.IOException error
       (throw (ex-info "Could not access the show checkpoint" {:code :checkpoint-io} error)))))
 

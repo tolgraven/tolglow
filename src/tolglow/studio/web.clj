@@ -431,7 +431,7 @@
    (post-actions "/api/application-agents/" app-agent! ok
                  {"configure" :configure "start" :start "cancel" :cancel} "Application agents unavailable")
    (post-actions "/api/show/checkpoints/" checkpoint! acknowledgement
-                 {"restore" :restore "discard-prior" :discard-prior} "Show checkpoints unavailable")
+                 {"restore" :restore "discard-prior" :discard-prior "dismiss-legacy" :dismiss-legacy} "Show checkpoints unavailable")
    (post-actions "/api/sensors/" sensor! acknowledgement
                  {"pair" :pair "configure" :configure "sample" :sample "arm" :arm "calibrate" :calibrate
                   "osc/start" :osc-start "osc/stop" :osc-stop

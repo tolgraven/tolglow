@@ -165,28 +165,143 @@
       (is (false? (launch/scopes-recovery? {:show {:recovery {:directory "/elsewhere"}}})))
       (is (= {} (launch/desktop-config {} {}))))))
 
-(deftest the-shared-previous-session-is-offered-to-one-folder-once
+(deftest a-claim-reports-a-new-or-copied-folder-and-copies-nothing
   (let [base (temp-dir)
         legacy (recovery/show-directory base :main)
-        a (temp-dir)
-        b (temp-dir)]
+        a (temp-dir)]
     (.mkdirs legacy)
     (spit (io/file legacy "recovery.transit") "previous session")
-    (let [claim-a (launch/claim-folder-recovery! a base)
-          claim-b (launch/claim-folder-recovery! b base)]
+    (let [first-claim (launch/claim-folder-recovery! a base)]
       (try
-        (is (= "previous session" (slurp (io/file (recovery/show-directory (:directory claim-a) :main) "recovery.transit")))
-            "the first folder opened after the upgrade offers it")
-        (is (not (.exists (recovery/show-directory (:directory claim-b) :main))) "a later folder does not")
-        (is (= "previous session" (slurp (io/file legacy "recovery.transit"))) "the shared file stays for other hosts")
-        (is (false? (launch/offer-legacy-recovery! base (:directory claim-a) :main)) "and it is offered once")
-        (finally ((:release! claim-a)) ((:release! claim-b)))))
-    (testing "a folder with its own checkpoint is never given the shared one"
-      (let [base (temp-dir) legacy (recovery/show-directory base :main) dir (io/file base "folders" "x")]
-        (.mkdirs legacy) (spit (io/file legacy "recovery.transit") "old")
-        (.mkdirs (recovery/show-directory dir :main)) (spit (io/file (recovery/show-directory dir :main) "recovery.transit") "own")
-        (is (false? (launch/offer-legacy-recovery! base dir :main)))
-        (is (= "own" (slurp (io/file (recovery/show-directory dir :main) "recovery.transit"))))))))
+        (is (true? (:new? first-claim)) "the first open writes the identity file")
+        (is (nil? (:copy-of first-claim)))
+        (is (= (str (.getCanonicalFile a)) (:folder first-claim)))
+        (is (not (.exists (recovery/show-directory (:directory first-claim) :main)))
+            "the shared checkpoint is not copied into the folder's recovery")
+        (is (= {:recovery-directory (:directory first-claim)
+                :legacy-directory base
+                :show-folder {:id (:id first-claim) :file ".tolglow-folder-id"
+                              :path (str (.getCanonicalFile a)) :new? true}}
+               (launch/claim-options first-claim)))
+        (testing "a copy opened beside its running original names it"
+          (let [copy (temp-dir)]
+            (io/copy (io/file a launch/folder-id-name) (io/file copy launch/folder-id-name))
+            (let [claim (launch/claim-folder-recovery! copy base)]
+              (try (is (true? (:new? claim)))
+                   (is (= (str (.getCanonicalFile a)) (:copy-of claim)))
+                   (finally ((:release! claim)))))))
+        (finally ((:release! first-claim)))))
+    (let [again (launch/claim-folder-recovery! a base)]
+      (try (is (false? (:new? again)) "a later open of the same folder is not new")
+           (is (= {:id (:id again) :file ".tolglow-folder-id" :path (str (.getCanonicalFile a)) :new? false}
+                  (:show-folder (launch/claim-options again))))
+           (finally ((:release! again)))))
+    (testing "a copy opened while its original is closed names it too"
+      (let [copy (temp-dir)]
+        (io/copy (io/file a launch/folder-id-name) (io/file copy launch/folder-id-name))
+        (let [claim (launch/claim-folder-recovery! copy base)]
+          (try (is (true? (:new? claim)))
+               (is (= (str (.getCanonicalFile a)) (:copy-of claim)))
+               (finally ((:release! claim)))))))
+    (is (= "previous session" (slurp (io/file legacy "recovery.transit"))))
+    (is (nil? (launch/claim-options nil)))
+    (testing "desktop-config carries the shared directory and the folder identity to the show"
+      (let [cfg (launch/desktop-config {} {:recovery-directory "/r" :legacy-directory "/shared"
+                                           :show-folder {:id "x" :file ".tolglow-folder-id"}})]
+        (is (= {:directory "/r" :legacy-directory "/shared"} (get-in cfg [:show :recovery])))
+        (is (= {:id "x" :file ".tolglow-folder-id"} (get-in cfg [:show :show-folder])))))))
+
+(defn- legacy-source
+  "A real show's checkpoint source with blackout on, as an older desktop show
+  autosaved it to the shared directory."
+  []
+  (let [runtime (show/start! {:recovery false})]
+    (try
+      (is (= :accepted (:status @(show/submit! runtime {:op :blackout/set :value true}))))
+      (show/export-show-source runtime)
+      (finally (show/stop! runtime)))))
+
+(defn- write-legacy! [base source]
+  (recovery/write-source! (io/file (recovery/show-directory base :main) "recovery.transit") source))
+
+(defn- folder-show [base folder-id & [interval-ms]]
+  (show/start! {:recovery {:directory (str (io/file base "folders" folder-id)) :legacy-directory (str base)
+                           :interval-ms (or interval-ms 600000)}
+                :show-folder {:id folder-id :file launch/folder-id-name :path (str "/shows/" folder-id) :new? true}}))
+
+(deftest the-checkpoint-from-before-the-update-is-offered-until-one-folder-takes-it
+  (let [base (temp-dir)
+        source (legacy-source)
+        _ (write-legacy! base source)
+        legacy-file (io/file (recovery/show-directory base :main) "recovery.transit")
+        a (folder-show base "folder-a")
+        b (folder-show base "folder-b" 100)]
+    (try
+      (testing "every folder lists it beside its own checkpoints and applies nothing"
+        (doseq [runtime [a b]]
+          (let [status (show/recovery-status runtime)]
+            (is (= #{:legacy} (:available status)))
+            (is (= (.lastModified legacy-file) (get-in status [:checkpoints :legacy :modified-at-ms])))
+            (is (= "folder-a" (get-in (show/recovery-status a) [:folder :id])))
+            (is (false? (:blackout? (show/snapshot runtime))) "the folder starts with its own state")
+            (is (= {:modified-at-ms (.lastModified legacy-file)}
+                   (get-in (show/snapshot runtime) [:show-folder :legacy-checkpoint]))))))
+      (testing "applying it in one folder restores it there and stops every folder offering it"
+        (let [ack @(show/load-latest-show! a :legacy)]
+          (is (= :accepted (:status ack)))
+          (is (nil? (:legacy-resolution-error ack))))
+        (is (true? (:blackout? (show/snapshot a))))
+        (is (false? (:blackout? (show/snapshot b))) "the other folder is untouched")
+        (is (= source (slurp legacy-file)) "the shared file stays for lein run and other hosts")
+        (let [resolution (recovery/legacy-resolution @(:recovery a) :main)]
+          (is (= {:resolution :applied :folder-id "folder-a" :folder "/shows/folder-a" :show-id :main
+                  :file "recovery.transit"}
+                 (select-keys resolution [:resolution :folder-id :folder :show-id :file])))
+          (is (re-matches #"[0-9a-f]{64}" (:sha256 resolution))))
+        (is (not (contains? (:available (show/recovery-status a)) :legacy)))
+        (is (nil? (get-in (show/snapshot a) [:show-folder :legacy-checkpoint])))
+        (is (loop [deadline (+ (System/currentTimeMillis) 5000)]
+              (cond (nil? (get-in (show/snapshot b) [:show-folder :legacy-checkpoint])) true
+                    (> (System/currentTimeMillis) deadline) false
+                    :else (do (Thread/sleep 25) (recur deadline))))
+            "another open folder stops offering it by its next autosave")
+        (is (not (contains? (:available (show/recovery-status b)) :legacy)) "a later read in another folder sees it taken")
+        (is (thrown-with-msg? Exception #"unavailable" (show/load-latest-show! b :legacy)))
+        (is (false? (show/dismiss-legacy-recovery! b))))
+      (finally (show/stop! a) (show/stop! b)))))
+
+(deftest a-dismissed-or-refused-checkpoint-from-before-the-update-keeps-its-files
+  (testing "dismissing it stops the offer and keeps the files"
+    (let [base (temp-dir)
+          source (legacy-source)
+          _ (write-legacy! base source)
+          runtime (folder-show base "folder-d")]
+      (try
+        (is (true? (show/dismiss-legacy-recovery! runtime)))
+        (is (= :dismissed (:resolution (recovery/legacy-resolution @(:recovery runtime) :main))))
+        (is (= source (slurp (io/file (recovery/show-directory base :main) "recovery.transit"))))
+        (is (not (contains? (:available (show/recovery-status runtime)) :legacy)))
+        (is (false? (show/dismiss-legacy-recovery! runtime)) "there is nothing left to dismiss")
+        (is (false? (:blackout? (show/snapshot runtime))))
+        (finally (show/stop! runtime)))))
+  (testing "a restore the show refuses leaves it offered"
+    (let [base (temp-dir)
+          _ (write-legacy! base "{:not \"a show\"}")
+          runtime (folder-show base "folder-e")]
+      (try
+        (is (= :rejected (:status @(show/load-latest-show! runtime :legacy))))
+        (is (contains? (:available (show/recovery-status runtime)) :legacy))
+        (is (nil? (recovery/legacy-resolution @(:recovery runtime) :main)))
+        (finally (show/stop! runtime)))))
+  (testing "a show that does not run from a Mac folder never offers it"
+    (let [base (temp-dir)
+          _ (write-legacy! base (legacy-source))
+          runtime (show/start! {:recovery {:directory (str base) :legacy-directory (str base) :interval-ms 600000}})]
+      (try
+        (is (not (contains? (:available (show/recovery-status runtime)) :legacy))
+            "the shared directory's own show reads it as its working checkpoint instead")
+        (is (nil? (:show-folder (show/snapshot runtime))))
+        (finally (show/stop! runtime))))))
 
 (defn- temp-folder [config]
   (let [folder (.toFile (Files/createTempDirectory "tolglow-desktop-test" (make-array FileAttribute 0)))]
@@ -196,11 +311,12 @@
 (def ^:private show-config
   {:init {:components [:show] :modules [:web-server]} :show {:recovery false}})
 
-(defn- start-show! [^File folder]
+(defn- start-show! [^File folder & [options]]
   (let [ready (io/file folder "port")
         input (PipedInputStream.)
         writer (PipedOutputStream. input)
-        running (future (desktop/run-show! (.getCanonicalFile folder) (.toPath ready) input {:devices? false}))]
+        running (future (desktop/run-show! (.getCanonicalFile folder) (.toPath ready) input
+                                           (merge {:devices? false} options)))]
     {:folder folder :ready ready :writer writer :running running}))
 
 (defn- await-port [{:keys [ready running]}]
@@ -227,6 +343,21 @@
                   (.GET builder))
         response (.send ^HttpClient client (.build request) (HttpResponse$BodyHandlers/ofString))]
     {:status (.statusCode response) :body (json/read-str (.body response) :key-fn keyword)}))
+
+(defn- repl-eval
+  "Evaluate `source` in the show's own REPL session, where `runtime` is its
+  handle, as Studio's Develop console does; the printed result."
+  [port source]
+  (let [request (-> (HttpRequest/newBuilder (URI. (str "http://127.0.0.1:" port "/api/repl/eval")))
+                    (.timeout (Duration/ofSeconds 20))
+                    (.header "Content-Type" "application/json")
+                    (.POST (HttpRequest$BodyPublishers/ofString
+                            (json/write-str {:source source :request-id (str (random-uuid)) :session-id "main"})))
+                    (.build))
+        body (.body (.send ^HttpClient client request (HttpResponse$BodyHandlers/ofString)))
+        events (keep #(when (.startsWith ^String % "data: ") (json/read-str (subs % 6) :key-fn keyword))
+                     (clojure.string/split-lines body))]
+    (:result (last events))))
 
 (deftest two-desktop-shows-refuse-each-others-commands
   (let [a (start-show! (temp-folder show-config))
@@ -264,3 +395,51 @@
       (finally
         (stop-show! a)
         (stop-show! b)))))
+
+(deftest a-folder-that-restores-at-startup-only-offers-the-checkpoint-from-before-the-update
+  (let [base (temp-dir)
+        source (legacy-source)
+        _ (write-legacy! base source)
+        folder (temp-folder {:init {:components [:show] :modules [:web-server :show-state]}
+                             :show {:recovery {:interval-ms 600000}}
+                             :show-state {:restore :recovery}})
+        running (start-show! folder {:recovery-base base})]
+    (try
+      (let [port (await-port running)
+            state #(:body (http port :get "/api/state"))
+            {:keys [runtime-id show-id epoch]} (state)
+            catalog (:body (http port :get "/api/show/checkpoints"))
+            folder-id (slurp (io/file folder launch/folder-id-name))]
+        (is (false? (:blackout? (state))) "the startup restore skipped it")
+        (is (= ["legacy"] (map name (keys (:checkpoints catalog)))))
+        (is (= {:id (clojure.string/trim folder-id) :file ".tolglow-folder-id"
+                :path (str (.getCanonicalFile folder)) :new? true}
+               (:folder catalog)))
+        (is (= (:folder catalog) (dissoc (:show-folder (state)) :legacy-checkpoint))
+            "Studio's state stream carries the same folder identity")
+        (is (number? (get-in (state) [:show-folder :legacy-checkpoint :modified-at-ms])))
+        (is (= "true" (repl-eval port "(contains? (:available (tolglow.show/recovery-status runtime)) :legacy)"))
+            "Studio's REPL session reads the same checkpoints through its runtime")
+        (testing "Studio's restore applies it to this folder only on request"
+          (let [{:keys [status body]} (http port :post "/api/show/checkpoints/restore"
+                                            {:runtime-id runtime-id :show-id show-id :epoch epoch :kind "legacy"})]
+            (is (= 200 status))
+            (is (= "accepted" (:status body))))
+          (is (true? (:blackout? (state))))
+          (is (empty? (:checkpoints (:body (http port :get "/api/show/checkpoints")))))
+          (is (= "false" (repl-eval port "(contains? (:available (tolglow.show/recovery-status runtime)) :legacy)")))
+          (is (nil? (get-in (state) [:show-folder :legacy-checkpoint])))
+          (is (= source (slurp (io/file (recovery/show-directory base :main) "recovery.transit")))))
+        (testing "a second folder is no longer offered it, and Studio's dismissal says so"
+          (let [other (start-show! (temp-folder (assoc show-config :show {:recovery {:interval-ms 600000}}))
+                                   {:recovery-base base})]
+            (try
+              (let [port (await-port other)
+                    {:keys [runtime-id show-id epoch]} (:body (http port :get "/api/state"))
+                    {:keys [status body]} (http port :post "/api/show/checkpoints/dismiss-legacy"
+                                                {:runtime-id runtime-id :show-id show-id :epoch epoch})]
+                (is (empty? (:checkpoints (:body (http port :get "/api/show/checkpoints")))))
+                (is (= "rejected" (:status body)) (str status))
+                (is (re-find #"no longer offered" (:message body))))
+              (finally (stop-show! other))))))
+      (finally (stop-show! running)))))

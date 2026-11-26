@@ -55,7 +55,7 @@
                   (launch/claim-folder-recovery! folder (recovery/default-directory)))
           _ (reset! recovery-claim claim)
           config (if (:window? options)
-                   (launch/desktop-config config (assoc options :recovery-directory (:directory claim)))
+                   (launch/desktop-config config (merge options (launch/claim-options claim)))
                    config)
           release! #(do (some-> @recovery-claim :release! (apply [])) (reset! recovery-claim nil))
           show (try (application/start! (launch-config home folder config evaluator-factory) registry)
