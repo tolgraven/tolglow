@@ -251,7 +251,7 @@
 
 (defn details
   "Rows for the selected event or ramp: [term text], empty rows left out."
-  [{:keys [kind state op position start-position end-position due-beat at-beat stopped-beat source
+  [{:keys [kind state op position start-position end-position due-beat at-beat stopped-beat source remaining-ms
            destination select to value from over curve unit reason message by param variable macro-id] :as item}]
   (let [ramp? (= :ramp kind)
         row (fn [term text] (when (and text (not= "" text)) [term text]))]
@@ -264,6 +264,7 @@
              (row (if (= "pending" (id-text state)) "Due" "At") (position-text position)))
            (when (and (not ramp?) (number? due-beat) (number? at-beat) (not= due-beat at-beat))
              (row "Was due" (str "beat " (number-text due-beat))))
+           (when (number? remaining-ms) (row "Ends in" (str (number-text (/ remaining-ms 1000)) " s")))
            (when (number? stopped-beat) (row "Stopped" (str "beat " (number-text stopped-beat))))
            (row "Target" (or (destination-text destination) (select-text select)
                              (when param (id-text param)) (when variable (str "variable " (id-text variable)))

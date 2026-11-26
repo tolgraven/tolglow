@@ -81,6 +81,12 @@ Stopping capture preserves the last measured history, while the audio status
 reports that capture has stopped. Starting a new capture clears it before
 opening the source. Device acquisition remains an explicit existing operation.
 
+The capture worker also summarizes each block into a second, coarser history
+for the [musical timeline](timeline.md): 512 columns of 60 ms, about 30
+seconds, with the same column and beat-marker shape. Read it with
+`(tolglow.audio.capture/history-waveform manager)`. It is kept beside the public
+status, so `GET /api/audio` and the Connections stream do not carry it.
+
 ## Push capture worker
 
 Push views now carry show epoch, frame number, instance ID and captured definition

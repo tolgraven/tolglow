@@ -227,7 +227,8 @@
           (is (= 2.0 beat))
           (is (= :ms (:unit ramp)))
           (is (close? 1.0 (:start-beat ramp)) "500 ms ago is one beat ago at 120 BPM")
-          (is (close? 5.0 (:end-beat ramp)) "1500 ms remain: three beats"))
+          (is (close? 5.0 (:end-beat ramp)) "1500 ms remain: three beats")
+          (is (= 1500.0 (:remaining-ms ramp)) "the owner's millisecond clock decides when it ends"))
         (at! rt 1000 {:op :transport/set :transport {:bpm 60.0} :source {:adapter :repl :session-id "r"}})
         (let [ramp (by-id (:ramps (show/timeline rt)) "ms")]
           (is (close? 1.5 (:start-beat ramp)) "the same 500 ms is half a beat at 60 BPM")

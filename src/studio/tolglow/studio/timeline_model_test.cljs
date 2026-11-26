@@ -182,8 +182,10 @@
               (model/details (assoc pending :state :fired :position {:bar 0 :beat 3.25} :at-beat 3.25 :due-beat 3.0))))
     (is (some #{["Message" "No current target matches"]}
               (model/details (assoc pending :state :rejected :message "No current target matches"))))
-    (is (some #{["Span" "bar 0 · beat 1 → bar 1 · beat 1 (milliseconds, at this tempo)"]}
-              (model/details (assoc ramp :unit :ms :start-position {:bar 0 :beat 1.0} :end-position {:bar 1 :beat 1.0}))))
+    (let [timed (model/details (assoc ramp :unit :ms :remaining-ms 1500 :start-position {:bar 0 :beat 1.0}
+                                      :end-position {:bar 1 :beat 1.0}))]
+      (is (some #{["Span" "bar 0 · beat 1 → bar 1 · beat 1 (milliseconds, at this tempo)"]} timed))
+      (is (some #{["Ends in" "1.5 s"]} timed) "a millisecond ramp ends on the owner's clock, not on a beat"))
     (testing "accessible names say what, which state and where"
       (is (= "Drop, cue, scheduled, bar 64 · beat 2" (model/item-label pending)))
       (is (= "Swell, ramp, running, bar 64 · beat 0" (model/item-label ramp))))

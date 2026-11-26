@@ -253,7 +253,9 @@ Push, the REPL and agents read this one projection. Keep the shape stable: the
 `:status` is one of `:fired`, `:rejected` (with `:message`), `:missed`,
 `:cancelled` or `:completed` (ramps). `:category` is one of `:cue`,
 `:instance`, `:param`, `:ramp`, `:master`, `:variable`, `:macro`, `:scene` or
-`:callback`. Values are not rounded.
+`:callback`. Values are not rounded. A ramp outcome (`:completed` or
+`:cancelled`) also keeps the ramp's `:from`, `:curve`, `:unit`, `:over`,
+`:start` and `:end`, so the [timeline](timeline.md) can still draw it as a bar.
 
 The projection changes only when the schedule changes. It does not publish a
 ramp's live value. A consumer derives progress from `:start`, `:end` and the

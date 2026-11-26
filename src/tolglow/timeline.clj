@@ -156,7 +156,10 @@
                          :state state :category :ramp :op :param/ramp :title (title (assoc entry :op :param/ramp))
                          :start-beat start-beat :end-beat end-beat :curve curve :shape (curve-shape curve)
                          :cancellable? (= :running state)))
-        (= :cancelled state) (assoc :stopped-beat (:at-beat entry))))))
+        (= :cancelled state) (assoc :stopped-beat (:at-beat entry))
+        ;; A millisecond ramp ends on the owner's clock, not on a beat.
+        (and (= :running state) (= :ms (:unit entry)))
+        (assoc :remaining-ms (round-to (max 0.0 (- (:end entry) now-ms)) 0))))))
 
 (defn- pending-ramp
   "A scheduled :param/ramp that has not fired. It starts at its due beat and
