@@ -136,10 +136,13 @@
     (testing (str "batch? " batch?)
       (let [{:keys [acks dmx] :as run}
             (capture batch? [[:command {:op :cue/launch :cue-id :wash :launch {:selector {:group-id :stage}}}]
-                             [:command {:op :cue/launch :cue-id :wash :launch {:targets [:rgb]}}]])]
-        (is (= [:accepted :accepted] (map :status acks)) (pr-str acks))
+                             [:command {:op :cue/launch :cue-id :wash :launch {:targets [:rgb]}}]
+                             [:command {:op :cue/launch :cue-id :wash :launch {:selector :all}}]])]
+        (is (= [:accepted :accepted :accepted] (map :status acks)) (pr-str acks))
         (is (= [:par :hazer] (get-in (first acks) [:target-resolution :skipped 0 :heads]))
             "A group scope is filtered, not refused")
         (is (not (contains? (second acks) :target-resolution)))
+        (is (= [:par :hazer] (get-in (nth acks 2) [:target-resolution :skipped 0 :heads]))
+            "The :all scope is filtered, not refused")
         (is (= [] (:faults run)))
         (is (= [255 0 0] (subvec dmx 0 3)))))))

@@ -86,7 +86,8 @@
 
 (defn- explicit-launch? [command]
   (let [{:keys [selector] :as launch} (:launch command)]
-    (and (contains? launch :targets) (or (nil? selector) (contains? selector :fixture-ids)))))
+    ;; The :all selector is a keyword, not a map, and is a scope like a group.
+    (and (contains? launch :targets) (or (nil? selector) (and (map? selector) (contains? selector :fixture-ids))))))
 
 (defn- label [id] (if (keyword? id) (name id) (str id)))
 
