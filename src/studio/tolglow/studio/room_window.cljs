@@ -158,6 +158,7 @@
         :placed (rf/dispatch [:room-window/placed generation (.-label detail)])
         (:single :manual) (rf/dispatch [:room-window/place-failed generation status])
         :screens (rf/dispatch [:room-window/screens generation (.-count detail)])
+        :closed (do (release!) (rf/dispatch [:room-window/closed generation]))
         nil))))
 
 (defn- open! [generation]

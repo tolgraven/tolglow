@@ -143,6 +143,17 @@ try {
   await roomToolbar().screenshot({path: join(directory, '01-room-toolbar.png')});
   await page.locator('#preview-panel').screenshot({path: join(directory, '02-docked-room.png')});
 
+  // A PiP capture prepared in Studio ends when the Room leaves: its video and
+  // canvas belong to the docked panel.
+  let dockedCapture = null;
+  const prepare = page.getByRole('button', {name: 'Prepare live preview for Picture in Picture'});
+  if (await prepare.count()) {
+    await prepare.click();
+    await page.getByRole('button', {name: 'Open Picture in Picture'}).waitFor({timeout: 10000});
+    dockedCapture = await page.evaluateHandle(() => document.querySelector('#preview-panel video').srcObject);
+    results.dockedPip = {before: await dockedCapture.evaluate(s => s.getTracks().map(t => t.readyState))};
+  }
+
   // Pop out.
   const popup = page.waitForEvent('popup');
   await page.getByRole('button', {name: 'Open the Room in its own window'}).click();
@@ -157,6 +168,11 @@ try {
   assert.equal(popped.webglContexts, 1, 'one WebGL context while popped out');
   assert.equal(popped.records.studioCanvas, false, 'Studio holds no Room canvas while popped out');
   assert.equal(popped.room.thread, 'worker');
+  if (dockedCapture) {
+    results.dockedPip.afterPopOut = await dockedCapture.evaluate(s => s.getTracks().map(t => t.readyState));
+    assert.deepEqual(results.dockedPip.afterPopOut, ['ended'], 'the docked PiP capture stops when the Room pops out');
+    await dockedCapture.dispose();
+  }
   await page.locator('#room-window-placeholder').screenshot({path: join(directory, '03-studio-placeholder.png')});
   await room.screenshot({path: join(directory, '04-room-window.png')});
 
@@ -262,6 +278,9 @@ try {
     await room3.getByRole('button', {name: 'Open Picture in Picture'}).waitFor({timeout: 10000});
     results.pipPrepared = await room3.evaluate(() => document.querySelector('video')?.srcObject?.getTracks().map(t => t.readyState));
     const tracks = await room3.evaluateHandle(() => document.querySelector('video').srcObject);
+    await room3.getByRole('button', {name: 'Open Picture in Picture'}).click();
+    results.pipOpened = await room3.waitForFunction(() => document.pictureInPictureElement?.tagName ?? false, null, {timeout: 3000})
+      .then(h => h.jsonValue(), error => 'not opened: ' + error.message.split('\n')[0]);
     const closed3 = room3.waitForEvent('close');
     await room3.getByRole('button', {name: 'Return the Room to Studio'}).click();
     await closed3;
@@ -300,7 +319,7 @@ try {
   await writeFile(join(directory, 'result.json'), JSON.stringify(results, null, 2));
   console.log(JSON.stringify({pass: results.pass, failure: results.failure, cue: results.cue, single: results.single,
     denied: results.denied, placed: results.placed, unplugged: results.unplugged, reconnected: results.reconnected,
-    oneAction: results.oneAction, pip: results.pipPrepared, blocked: results.blocked, errors}, null, 2));
+    oneAction: results.oneAction, pip: results.pipPrepared, pipOpened: results.pipOpened, dockedPip: results.dockedPip, blocked: results.blocked, errors}, null, 2));
   await context.close();
   await rm(profile, {recursive: true, force: true});
 }
