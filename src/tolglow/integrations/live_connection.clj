@@ -13,15 +13,27 @@
     :inspect-set     {} -> {:tracks [track] :tempo bpm :signature {:beats-per-bar n}
                             :can-capture-midi? bool :live-version text}
                      track = {:track-id :index :name :kind :arm? :monitor :input
+                              :group-track-id (nil when ungrouped)
                               :clips [{:clip-id :slot-index :name :length-beats}]}
-    :ensure-track    {:name :kind :midi} -> {:track-id :created? bool}
-                     Finds a MIDI track by exact name or creates one at the end.
+                     :kind is :midi, :audio or :group (a Group Track, whose arm,
+                     monitor and input are not read).
+    :ensure-track    {:name :kind :midi :group-track-id g} -> {:track-id :created? bool
+                                                               :group-track-id read-back}
+                     Finds a MIDI track by exact name or creates one at the end,
+                     or after the last member of Group Track g (#683).
+    :ensure-group    {:name :group-track-id parent} -> {:track-id :created? bool}
+                     Finds a Group Track by exact name. The documented LOM has no
+                     call that creates one, so a missing group is refused with
+                     :group-creation-unavailable until a host path is verified.
     :configure-track {:track-id :expected-name :arm? :monitor :in|:auto|:off
                       :input {:port :channel}} -> {:track track}
     :write-clip      {:track-id :expected-name :slot-index n|nil :name :clip clip
                       :lanes [{:controller coarse :points [[beat v14] ..]}]}
                      -> {:clip-id :slot-index}; nil slot means the first empty one.
                      The clip's notes travel in :clip; controllers as :lanes.
+                     :create-scene? true adds a scene when every slot is full;
+                     :arrangement-beat b also places the clip in the Arrangement
+                     at song beat b (refused before any write if that overlaps).
     :extend-clip     {:track-id :expected-name :clip-id :notes [..] :lanes [..]}
                      adds to a clip written by :write-clip when one body is too small.
     :capture-midi    {:destination :auto} -> {:clips [{:clip-id :track-id :slot-index}]}
@@ -29,6 +41,10 @@
     :show-clip       {:clip-id} -> {:clip-id :view \"Detail/Clip\"}
     :fire-clip       {:clip-id} -> {:clip-id}
     :stop-clips      {:track-ids [..]} -> {}
+    :watch-run-tracks {:track-ids [..]} -> {:watching n}
+                     Report Session clip starts and stops on these tracks as
+                     {:type :clip-started|:clip-stopped :track-id :clip-id :serial}
+                     events (live-runs/player decodes them).
 
   Clip descriptions are those of `phrase-clip`. Live IDs are session
   identities: every write names the track it expects, and the Live side
@@ -39,8 +55,8 @@
             [tolglow.integrations.phrase-clip :as clip]))
 
 (def operations
-  #{:inspect-set :ensure-track :configure-track :write-clip :extend-clip :capture-midi
-    :read-clip :show-clip :fire-clip :stop-clips})
+  #{:inspect-set :ensure-track :ensure-group :configure-track :write-clip :extend-clip :capture-midi
+    :read-clip :show-clip :fire-clip :stop-clips :watch-run-tracks})
 
 (def request-budget-chars
   "JSON characters of notes and lanes per request. The companion's loopback
