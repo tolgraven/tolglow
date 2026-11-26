@@ -38,6 +38,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Starting a show](application-startup.md) | Config module order, headless and Studio entry points, REPL and shutdown |
 | [Fog machine and venue controls](studio-atmosphere.md) | Configure rated fog output, DMX response, nozzle direction, ventilation and decay |
 | [Spatial cue actions](spatial-show.md) | Select live fixture targets, observe volume contacts and run owned cues |
+| [Track-feel personalities](personalities.md) | Choose or blend a palette, concurrency, shape vocabulary and motion character, read its icon and projection, and let a volume cue follow it |
 | [Headless show modules](headless-modules.md) | Use the show APIs from code and controllers |
 | [Feature parity inventory](feature-parity-inventory.md) | Source-linked operator and authoring behaviors from Afterglow, Tolglow effects and tolglow-web, with acceptance cases |
 | [Studio control layouts](studio-control-layouts.md) | Mix running instances with compact controls, live scopes and declarative parameter layouts |
