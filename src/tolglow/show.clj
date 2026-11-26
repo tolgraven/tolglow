@@ -269,7 +269,8 @@
                                            #(mapv (fn [[[x y] cue]] {:x x :y y :cue-id cue})
                                                   (sort-by key %)))) (sort-by (comp str :id) (vals (:pages model))))
             :recent-page (recent-page-snapshot model)
-            :auto (select-keys (:auto model) [:enabled? :config :reasons])
+            :auto (cond-> (select-keys (:auto model) [:enabled? :config :reasons])
+                    (get-in model [:auto :state :section]) (assoc :section (get-in model [:auto :state :section :id])))
             :responses (vec (:responses model))
             :effect-group-channels (group-channels/projection model)
             :control-surfaces (surface/with-refusals (surface/projection model) ; surfaces, links, session boxes (#705)
@@ -1383,15 +1384,29 @@
                   (reduce (fn [m c] (:model (command m c time-ms))) model
                           (:commands (policy/stop-plan model old-state time-ms))) model)
           enabled? (true? (:enabled? payload))
-          config (dissoc payload :enabled? :seed :expected-epoch)
+          requested (policy/normalize-config (dissoc payload :enabled? :seed :expected-epoch :keep-plan?))
+          ;; Studio's start and stop keep a plan authored at the REPL (#217).
+          config (if (:keep-plan? payload)
+                   (policy/keep-plan (get-in model [:auto :config]) requested enabled?)
+                   requested)
           state (when enabled? (policy/initial-state (:seed payload 0) time-ms (str (UUID/randomUUID))))]
+      (when enabled?
+        ;; Section scopes are checked here too, not first when a section begins.
+        (when-let [{:keys [path message]} (first (policy/validate-references model config))]
+          (throw (ex-info (str "Invalid auto config: " message (when (seq path) (str " at " (pr-str path))))
+                          {:config config}))))
       (when enabled?
         (let [fixtures (get-in model [:rig :fixtures])
               ;; An earlier queued rig edit may still be provisional. Validation
               ;; can reuse a matching cache without changing the output patch.
               plans (when (and runtime (= fixtures (:fixtures @(:patch runtime)))) (auto-plans runtime fixtures))]
           (policy/advance (assoc model :fixtures fixtures) config state time-ms plans)))
-      {:model (-> model (assoc :auto {:enabled? enabled? :config config :state state}) (update :revision inc))
+      {:model (-> model
+                  (assoc :auto (cond-> {:enabled? enabled? :config config :state state}
+                                 ;; Settings another build wrote travel with a kept plan.
+                                 (and (:keep-plan? payload) (get-in model [:auto :unrecognized]))
+                                 (assoc :unrecognized (get-in model [:auto :unrecognized]))))
+                  (update :revision inc))
        :ack {:status :accepted}})
     :import
     (do
@@ -1463,18 +1478,58 @@
       {:patch patch :meter (delay (capacity-plan! runtime patch))
        :previous-budget (get-in @(:state runtime) [:lighting-history :budget])})))
 
+(defn- advance-auto-plan [model time-ms {:keys [state commands reasons]}]
+  (let [fixtures (get-in model [:rig :fixtures])
+        [model state rejected]
+        (reduce (fn [[m s rejected] c]
+                  (let [{:keys [model ack]} (command m c time-ms)
+                        launch? (= :cue/launch (:op c))]
+                    (cond
+                      (and launch? (= :accepted (:status ack)) (:instance-id ack))
+                      [model (policy/record-launch s (:instance-id ack) (get-in model [:instances (:instance-id ack)])) rejected]
+                      ;; A launch the show refuses at dispatch is remembered too (#217).
+                      (and launch? (= :rejected (:status ack)))
+                      [model (policy/record-refusal s (assoc model :fixtures fixtures) (:cue-id c) ack (get-in c [:launch :params]))
+                       (conj rejected {:cue-id (:cue-id c) :code (:code ack) :message (:message ack)})]
+                      :else [model s rejected])))
+                [model state []] commands)
+        reasons (cond-> reasons (seq rejected) (conj {:reason :launch-refused :refused rejected}))]
+    ;; Keep the last decision's reasons visible between decisions.
+    (cond-> (assoc-in model [:auto :state] state)
+      (seq reasons) (assoc-in [:auto :reasons] reasons))))
+
+(defn- stop-failed-auto
+  "Switch auto mode off after a planner failure and end the looks it still
+  owns, as Stop auto would, so nothing it launched keeps running while the
+  panel reads off. Looks a performer took over stay."
+  [model time-ms failure]
+  (let [state (get-in model [:auto :state])
+        commands (try (:commands (policy/stop-plan model state time-ms)) (catch Exception _ []))
+        model (reduce (fn [m c] (:model (command m c time-ms))) model commands)]
+    (-> model
+        (assoc-in [:auto :enabled?] false)
+        (assoc-in [:auto :state] nil)
+        (assoc-in [:auto :reasons] [(assoc failure :released (count commands))]))))
+
 (defn- advance-auto [model time-ms runtime]
   (if (get-in model [:auto :enabled?])
     (let [fixtures (get-in model [:rig :fixtures])
-          {:keys [state commands reasons]} (policy/advance (assoc model :fixtures fixtures)
-                                              (get-in model [:auto :config]) (get-in model [:auto :state])
-                                              time-ms (auto-plans runtime fixtures))
-          [model state] (reduce (fn [[m s] c]
-                                  (let [{:keys [model ack]} (command m c time-ms)]
-                                    [model (if (and (= :cue/launch (:op c)) (= :accepted (:status ack)) (:instance-id ack))
-                                             (policy/record-launch s (:instance-id ack)) s)]))
-                                [model state] commands)]
-      (-> model (assoc-in [:auto :state] state) (assoc-in [:auto :reasons] reasons))) model))
+          planned (try (policy/advance (assoc model :fixtures fixtures)
+                                       (get-in model [:auto :config]) (get-in model [:auto :state])
+                                       time-ms (auto-plans runtime fixtures))
+                       ;; A planner failure stops auto mode with its reason; the
+                       ;; show keeps rendering (#217).
+                       (catch Throwable e
+                         (when (instance? VirtualMachineError e) (throw e))
+                         ;; Shutdown interrupts the owner: keep the interrupt, never switch auto off for it.
+                         (when (instance? InterruptedException e)
+                           (.interrupt (Thread/currentThread))
+                           (throw e))
+                         {:failed {:reason :planner-failed :message (or (.getMessage e) (.getName (class e)))}}))]
+      (if-let [failure (:failed planned)]
+        (stop-failed-auto model time-ms failure)
+        (advance-auto-plan model time-ms planned)))
+    model))
 
 (defn- output-retirement [runtime {:keys [compiled retirement] :as context}]
   (let [{wire-context :context wire-plan :plan :keys [possible] :as wire} @(:wire-retirement runtime)]
