@@ -4,6 +4,7 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.debug-socket]
+            [tolglow.studio.pretty :as pretty]
             [tolglow.studio.subscriber-editor :as editor]))
 
 (def retention 320)
@@ -184,7 +185,7 @@
                           ["Beat" (get-in selected [:time :beat])] ["Frame" (get-in selected [:time :frame-number])]
                           ["Epoch" (get-in selected [:time :epoch])]]]
                ^{:key k} [:div [:dt k] [:dd (str (or v "—"))]])]
-        [:pre (pr-str (:data selected))]])
+        [:pre (pretty/edn (:data selected))]])
      (if (seq visible)
        [:div.debug-event-list
         [:div.debug-table-head

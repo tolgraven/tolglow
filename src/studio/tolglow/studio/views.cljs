@@ -22,6 +22,7 @@
             [tolglow.studio.events :as events]
             [tolglow.studio.keyframe-editor :as keyframes]
             [tolglow.studio.knobs :as knobs]
+            [tolglow.studio.knob-presets :as knob-presets]
             [tolglow.studio.reactive-editor :as reactive-editor]
             [tolglow.studio.expressive-mapping :as expressive]
             [tolglow.studio.effect-group-mixer :as effect-group-mixer]
@@ -624,7 +625,7 @@
       {:class (when (and (not custom?) (get-in db [:ui :preview-expanded?])) "preview-expanded")}
       {:cues [:div.performance-launch [cue-grid db]]
        :live [:div.performance-live [section-pattern-panel db] [personality/panel] [performance/board db parameter-control]
-              [effect-group-mixer/panel] [knobs/panel db]
+              [effect-group-mixer/panel] [knobs/panel db] [knob-presets/panel db] ; knob looks (#547)
               [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
        :room [:div.performance-room [room-window/room db preview-panel]]
        :tools [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]}]]))
@@ -908,7 +909,7 @@
            (when (and (= :library (get-in db [:ui :view])) (= :form (get-in db [:ui :definition :mode])))
              [block-builder/field {:id (some-> builder :id not-empty keyword) :params {:level {}}
                                    :outputs {:color nil :dimmer nil}}
-              (or (:blocks builder) {}) #(set-ui! [:builder :blocks] %)])])
+              (or (:blocks builder) {}) (fn [f] (input! [:studio/ui-update [:builder :blocks] #(f (or % {}))]))])])
         [:label.checkbox-label [:input#builder-cue {:type "checkbox" :checked (boolean (:cue? builder)) :on-change #(set-ui! [:builder :cue?] (checked? %))}]
          "Create matching cue"]])
      [button "builder-preview" "Generate EDN ↗" [:studio/builder-generate]]]))
@@ -932,7 +933,8 @@
      [:div.registry-toolbar
       [:label.search-label [:input#definition-search {:type "search" :placeholder "Search registry" :aria-label "Search definitions"
                                                      :value search :on-change #(set-ui! [:definition-search] (input-value %))}]]
-      [:button#new-definition.text-button {:aria-label "New definition" :on-click #(send! [:studio/definition-new])} "New"]]
+      ;; Replace the source before the next input event, which would otherwise be overwritten.
+      [:button#new-definition.text-button {:aria-label "New definition" :on-click #(input! [:studio/definition-new])} "New"]]
      [:div#definition-list.definition-list
       (if (seq results)
         (for [[kind item] results]
@@ -988,7 +990,7 @@
                                                             (.preventDefault event) (send! [:studio/definition-publish])))}]])
          [:p#source-help.muted.small "EDN is data. Publishing validates the definition and compiles its effect expressions; arbitrary Clojure is not evaluated."]]
         (when (and (= :library (:view ui)) (= :source (:mode definition)) (= "effects" (:kind definition)))
-          [block-builder/source-field (:source definition) #(send! [:studio/apply-block-source (:source definition) %])])
+          [block-builder/source-field (:source definition) #(input! [:studio/apply-block-source (:source definition) %])])
         [visual-builder db]]]]]))
 
 (defn- dialog [attrs & children]

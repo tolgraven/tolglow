@@ -77,7 +77,7 @@ try {
   const pinnedInstance = await launchCue(pinnedId, 'Cue ☃ pinned recovery');
   const pinnedStart = await show(pinnedId);
   assert.deepEqual(pinnedStart, {version: 1, instances: [[pinnedInstance, 1]], color: [0, 1, 0]});
-  // Edit the authored multi-line text; the registry keeps its own one-line printing.
+  // Edit the authored text; the registry prints its own pretty layout of the same data.
   await page.evaluate(async ({text}) => {
     const {NeovimEngine} = await globalThis.tolglowLoadEngine('neovim');
     const host = document.createElement('div');
@@ -204,7 +204,9 @@ try {
 
   await page.locator('#editor-engine').selectOption('neovim');
   await page.locator('#neovim-status').filter({hasText: 'running in WebAssembly'}).waitFor();
+  // The host loads the definition as pretty-printed EDN over several lines (#717).
   const loaded = (await request(`/api/definition?kind=effects&id=${studioId}`)).body.source;
+  assert.ok(loaded.split('\n').length > 3 && loaded.startsWith(`{:id :${studioId}\n :version 1\n`), loaded);
   await page.waitForFunction(() => globalThis.definitionDeliveries.length > 0, null, {timeout: 10000});
   assert.equal(await page.evaluate(() => globalThis.definitionDeliveries[0]), loaded, 'Neovim echoes the loaded text');
   statuses.neovimSelected = await settled();
@@ -232,7 +234,7 @@ try {
     return {status, deliveredBeforeReply: (await deliveryCount()) > before};
   };
 
-  const brokenPublish = await editAndPublish(() => page.keyboard.type('$x'), loaded.slice(0, -1));
+  const brokenPublish = await editAndPublish(() => page.keyboard.type('G$x'), loaded.slice(0, -1));
   assert.equal(brokenPublish.status, 400);
   statuses.rejected = await feedback(current => current.error, 'the rejection');
   assert.equal(statuses.rejected.status, 'Publication failed');
@@ -246,7 +248,7 @@ try {
 
   const fixedSource = loaded.replace(green, blue);
   const fixedPublish = await editAndPublish(async () => {
-    await page.keyboard.type(`:undo | s/${green.slice(1, -1)}/${blue.slice(1, -1)}/`);
+    await page.keyboard.type(`:undo | %s/${green.slice(1, -1)}/${blue.slice(1, -1)}/`);
     await page.keyboard.press('Enter');
   }, fixedSource);
   assert.equal(fixedPublish.status, 200);

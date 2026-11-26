@@ -5,7 +5,8 @@
             [clojure.string :as str]
             [re-frame.core :as rf]
             [reagent.core :as r]
-            [tolglow.studio.events :as events]))
+            [tolglow.studio.events :as events]
+            [tolglow.studio.pretty :as pretty]))
 
 (def radians (/ js/Math.PI 180))
 
@@ -44,7 +45,7 @@
 (def defaults {:visible? false :generation 0 :device-id nil :label "Browser motion" :paired? false
                :capture :stopped :session-id nil :pending #{} :polling? false :status nil :error nil
                :values {} :received 0 :sent 0 :age-ms nil :permission nil
-               :mapping {:instance-id "" :param "" :cue-id ""} :source (pr-str preview-config)
+               :mapping {:instance-id "" :param "" :cue-id ""} :source (pretty/edn preview-config)
                :osc-host "127.0.0.1" :osc-port "9001"})
 
 (defn state [db] (merge defaults (:sensors db)))
@@ -290,7 +291,7 @@
   (fn [{:keys [db]} [_ advanced?]]
     (try
       (let [s (state db) config (if advanced? (reader/read-string (:source s)) (mapping-config db))]
-        {:db (update db :sensors #(assoc % :error nil :source (pr-str config) :pending #{:configure}))
+        {:db (update db :sensors #(assoc % :error nil :source (pretty/edn config) :pending #{:configure}))
          :studio/http (request db "/api/sensors/configure" {:device-id (:device-id s) :source (pr-str config)} :sensors/ack)})
       (catch :default error {:db (assoc-in db [:sensors :error] (events/error-message error))}))))
 (rf/reg-event-fx :sensors/action
@@ -396,7 +397,7 @@
       [:div.button-row
        [:button.button {:disabled pending? :on-click #(rf/dispatch [:sensors/action :osc/start])} "Start OSC receiver"]
        [:button.button {:disabled pending? :on-click #(rf/dispatch [:sensors/action :osc/stop])} "Stop OSC receiver"]]
-      [:pre (pr-str (get-in s [:status :udp]))]]]))
+      [:pre (pretty/edn (get-in s [:status :udp]))]]]))
 
 (def panel
   (r/create-class {:display-name "Phone motion"
