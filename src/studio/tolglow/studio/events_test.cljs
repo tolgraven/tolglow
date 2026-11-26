@@ -737,7 +737,7 @@
     (is (not (contains? (start planned) :activity-target)) "a signal target stays with the plan, not the slider")
     (is (not (contains? (start (assoc-in planned [:ui :auto-form :keep-plan?] false)) :keep-plan?)))
     (is (true? (get-in (transition planned [:studio/auto-stop]) [:studio/http :body :keep-plan?])) "stopping keeps the plan for the next start")
-    (is (= {:enabled? false} (get-in (transition base [:studio/auto-stop]) [:studio/http :body])))
+    (is (= {:enabled? false :expected-epoch 7} (get-in (transition base [:studio/auto-stop]) [:studio/http :body])))
     (is (= "Section quiet · Moving in darkness · handed 1 to a performer" (events/auto-summary planned)))
     (is (= "" (events/auto-summary base)))))
 
