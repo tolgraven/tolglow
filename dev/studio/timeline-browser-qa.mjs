@@ -4,16 +4,19 @@
 //   CHROMIUM_PATH=... node dev/studio/timeline-browser-qa.mjs http://127.0.0.1:4191 target/timeline-qa/out target/timeline-qa/control
 //
 // Uses the production Studio build, headless Chrome and the real GPU. It
-// asserts the layout and behaviour, writes stills, a recording and report.json.
+// asserts the layout and behaviour, writes stills, a recording (timeline.mp4,
+// through the system ffmpeg; FFMPEG_PATH overrides it) and report.json.
 // Headless desktop Chrome is not evidence for a foreground display or iPad Safari.
 import assert from 'node:assert/strict';
-import {existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync} from 'node:fs';
+import {spawnSync} from 'node:child_process';
+import {existsSync, mkdirSync, rmSync, writeFileSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 import {chromium} from 'playwright-core';
 
 const [origin = 'http://127.0.0.1:4191', output = 'target/timeline-qa/out', control = 'target/timeline-qa/control'] = process.argv.slice(2);
 const only = process.env.TIMELINE_QA_ONLY;
 const executablePath = process.env.CHROMIUM_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const ffmpeg = process.env.FFMPEG_PATH || '/opt/homebrew/bin/ffmpeg';
 mkdirSync(output, {recursive: true});
 mkdirSync(control, {recursive: true});
 const report = {origin, startedAt: new Date().toISOString(), checks: {}, measurements: {}};
@@ -31,14 +34,13 @@ async function state() {
   return response.json();
 }
 
-async function launch(name, {width, height, touch = false, scale = 1, video = false}) {
+async function launch(name, {width, height, touch = false, scale = 1}) {
   const profile = resolve(output, '..', 'chrome-profile-' + name + '-' + Date.now());
   const context = await chromium.launchPersistentContext(profile, {
     executablePath, headless: true,
     args: ['--headless=new', '--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', '--hide-scrollbars',
            '--autoplay-policy=no-user-gesture-required'],
     viewport: {width, height}, deviceScaleFactor: scale, hasTouch: touch, isMobile: false,
-    recordVideo: video ? {dir: join(output, 'video-' + name), size: {width, height}} : undefined,
   });
   const page = context.pages()[0] || await context.newPage();
   const problems = [];
@@ -171,6 +173,7 @@ async function setTempo(page, bpm) {
   await page.locator('#bpm').press('Enter');
   await page.waitForFunction(bpm => new RegExp(bpm.toFixed(1).replace('.', '\\.') + ' BPM')
     .test(document.querySelector('#timeline-panel .timeline-readout')?.textContent || ''), bpm, {timeout: 10000});
+  await page.locator('#bpm').blur();
   for (let attempt = 0; attempt < 40 && (await state()).transport.bpm !== bpm; attempt++) await sleep(100);
   assert.equal((await state()).transport.bpm, bpm, 'the owner transport is at ' + bpm + ' BPM');
 }
@@ -230,7 +233,7 @@ function layoutChecks(name, shot) {
 }
 
 async function desktop() {
-  const {context, page, problems} = await launch('desktop', {width: 1440, height: 900, scale: 2, video: false});
+  const {context, page, problems} = await launch('desktop', {width: 1440, height: 900, scale: 2});
   try {
     await ready(page);
     await setTempo(page, 120);
@@ -457,10 +460,10 @@ async function frameBudget() {
     };
     await sleep(2000);
     const open = await measure(8000);
-    await page.locator('#timeline-panel').getByRole('button', {name: 'Hide'}).click();
+    await page.locator('#timeline-panel').getByRole('button', {name: 'Hide', exact: true}).click();
     await sleep(1000);
     const hidden = await measure(8000);
-    await page.locator('#timeline-panel').getByRole('button', {name: 'Show'}).click();
+    await page.locator('#timeline-panel').getByRole('button', {name: 'Show', exact: true}).click();
     report.measurements.frameBudget = {viewport: '1440x900 @1x', roomOpen: true, timelineOpen: open, timelineHidden: hidden,
       addedMedianMs: open.callbackMs.median - hidden.callbackMs.median, addedP95Ms: open.callbackMs.p95 - hidden.callbackMs.p95};
     assert.deepEqual(problems, [], 'no page errors');
@@ -469,11 +472,27 @@ async function frameBudget() {
 }
 
 async function recording() {
-  const {context, page} = await launch('recording', {width: 1280, height: 720, video: true});
+  // Frames come from Chrome's own screencast (DevTools protocol) and are
+  // encoded with the system ffmpeg, so no Playwright video download is needed.
+  const {context, page} = await launch('recording', {width: 1280, height: 720});
+  const frames = join(output, 'recording-frames');
+  rmSync(frames, {recursive: true, force: true});
+  mkdirSync(frames, {recursive: true});
+  const timings = [];
+  let cdp = null;
   try {
     await ready(page);
     await page.evaluate(() => document.querySelector('#timeline-panel').scrollIntoView({block: 'start'}));
-    await sleep(4000);
+    await sleep(1000);
+    cdp = await context.newCDPSession(page);
+    cdp.on('Page.screencastFrame', ({data, metadata, sessionId}) => {
+      const file = 'frame-' + String(timings.length).padStart(5, '0') + '.jpg';
+      writeFileSync(join(frames, file), Buffer.from(data, 'base64'));
+      timings.push([file, metadata.timestamp]);
+      cdp.send('Page.screencastFrameAck', {sessionId}).catch(() => {});
+    });
+    await cdp.send('Page.startScreencast', {format: 'jpeg', quality: 90, maxWidth: 1280, maxHeight: 720, everyNthFrame: 1});
+    await sleep(3000);
     const first = await snapshot(page);
     const target = first.events.filter(e => e.state === 'pending' && /-(spot|slow|period|accent|wash)$/.test(e.id) && e.chip.cx - first.now.x > 80)
       .sort((a, b) => a.chip.cx - b.chip.cx)[0];
@@ -489,13 +508,22 @@ async function recording() {
     await setTempo(page, 120);
     await sleep(3000);
   } finally {
+    if (cdp) await cdp.send('Page.stopScreencast').catch(() => {});
     await setTempo(page, 120).catch(() => {});
     await context.close();
-    const directory = join(output, 'video-recording');
-    const file = readdirSync(directory).find(name => name.endsWith('.webm'));
-    if (file) renameSync(join(directory, file), join(output, 'timeline.webm'));
   }
-  pass('recording written', 'timeline.webm');
+  // Each frame is shown until the next one arrived, as the screencast timed it.
+  assert.ok(timings.length > 30, 'the screencast delivered frames: ' + timings.length);
+  const list = timings.map(([file, at], index) =>
+    `file '${file}'\nduration ${Math.max(0.001, ((timings[index + 1]?.[1] ?? at + 1 / 30) - at)).toFixed(4)}`);
+  writeFileSync(join(frames, 'frames.txt'), list.join('\n') + `\nfile '${timings.at(-1)[0]}'\n`);
+  const seconds = timings.at(-1)[1] - timings[0][1];
+  const encoded = spawnSync(ffmpeg, ['-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', join(frames, 'frames.txt'),
+    '-vf', 'fps=30,scale=1280:-2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', join(output, 'timeline.mp4')],
+    {encoding: 'utf8'});
+  assert.equal(encoded.status, 0, 'ffmpeg encoded the recording: ' + encoded.stderr);
+  report.measurements.recording = {frames: timings.length, seconds, framesPerSecond: timings.length / seconds};
+  pass('recording written', {file: 'timeline.mp4', ...report.measurements.recording});
 }
 
 const steps = {desktop, ipad: () => tablet('ipad-landscape-1024', 1024, 768), portrait: () => tablet('ipad-portrait-820', 820, 1180),

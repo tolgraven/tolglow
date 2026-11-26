@@ -134,8 +134,11 @@ Open **Perform**. The **Timeline** panel sits above the cue grid and the Room.
 - **Zoom** with **+** and **−** in the panel header, from ±1 to ±32 bars. The
   default is ±8.
 - **Events** are icons coloured by action category. Overlapping events take
-  separate lines. Fired events are dimmed, a rejected event is red and a
-  cancelled or missed one is dashed.
+  separate lines, up to six. When those are full (a dense stretch, a narrow
+  screen), an event drops its caption and may cover a neighbour's caption,
+  which is shortened; touch targets and ramp bars do not overlap. Only what
+  still does not fit shares the last line. Fired events are dimmed, a rejected
+  event is red and a cancelled or missed one is dashed.
 - **Ramps** are bars from start to end with the easing curve inside. The part
   left of now is filled: that is the ramp's progress.
 - Select an event or ramp to see what it does, where it sits, who posted it and
@@ -156,6 +159,9 @@ npm run studio:build
 lein run -m tolglow.qa.timeline 4191 target/timeline-qa/control
 node dev/studio/timeline-browser-qa.mjs http://127.0.0.1:4191 target/timeline-qa/out target/timeline-qa/control
 ```
+
+The recording step uses Chrome's screencast and the system ffmpeg
+(`/opt/homebrew/bin/ffmpeg`, or `FFMPEG_PATH`) to write `timeline.mp4`.
 
 `tolglow.qa.timeline` is a preview-only show. It runs the real owner,
 scheduler, capture worker and section analyzer on generated PCM that follows

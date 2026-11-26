@@ -140,22 +140,57 @@
         span (- (x scale origin end) left)]
     (assoc ramp :kind :ramp :left left :right (+ left (max target span)) :span (max 0 span))))
 
+(defn- compact
+  "An event without its caption: still a full touch target, a third the width."
+  [{:keys [kind caption] :as item}]
+  (when (and (= :event kind) (pos? caption))
+    (-> item (update :right - caption) (assoc :caption 0 :compact? true))))
+
+(defn- core
+  "The part of an item nothing may cover: an event's touch target, a ramp's bar."
+  [{:keys [kind left] :as item}]
+  (if (= :event kind) (assoc item :right (+ left target)) item))
+
+(def ^:private min-caption 24)
+
+(defn- clip-before
+  "Shorten a caption so it ends at x; below a readable width it is dropped."
+  [item x]
+  (let [caption (- x (:left item) target)]
+    (if (< caption min-caption)
+      (assoc item :right (+ (:left item) target) :caption 0 :compact? true)
+      (assoc item :right x :caption caption))))
+
 (defn stack
   "Give overlapping items their own lines. An item that already had a line
   keeps it while that line is free, so an event does not jump when it fires or
   when its neighbours leave the window; new items then take the lowest line
-  free of everything already placed. Returns {:items :lines :assignment}."
+  free of everything already placed. When every line is taken, an event drops
+  its caption, and it or a ramp may sit over a neighbour's caption, which is
+  shortened or dropped; touch targets and ramp bars never overlap. Only what still does not fit shares
+  the last line. Returns {:items :lines :assignment}."
   ([items] (stack items {} 2))
   ([items previous gap]
    (let [ordered (sort-by (juxt :left :key) items)
          kept (fn [item] (or (get previous (stack-id item)) (get previous (:event-id item))))
-         free? (fn [placed line {:keys [left right]}]
-                 (not-any? #(and (= line (:line %)) (< left (+ (:right %) gap)) (< (:left %) (+ right gap))) placed))
-         lowest (fn [placed item] (or (first (filter #(free? placed % item) (range max-lines))) (dec max-lines)))
+         overlaps? (fn [a b] (and (< (:left a) (+ (:right b) gap)) (< (:left b) (+ (:right a) gap))))
+         free? (fn [placed line item] (not-any? #(and (= line (:line %)) (overlaps? item %)) placed))
+         room? (fn [placed line item] (not-any? #(and (= line (:line %)) (overlaps? item (core %))) placed))
+         fit (fn [ok? placed item preferred]
+               (if (and preferred (ok? placed preferred item))
+                 preferred
+                 (first (filter #(ok? placed % item) (range max-lines)))))
          place (fn [placed item preferred]
-                 (conj placed (assoc item :line (if (and preferred (free? placed preferred item))
-                                                  preferred
-                                                  (lowest placed item)))))
+                 (let [small (or (compact item) item)]
+                   (if-let [line (fit free? placed item preferred)]
+                     (conj placed (assoc item :line line))
+                     (if-let [line (fit room? placed small preferred)]
+                       (conj (mapv #(if (and (= line (:line %)) (< (:left %) (:left small)) (overlaps? small %))
+                                      (clip-before % (- (:left small) gap))
+                                      %)
+                                   placed)
+                             (assoc small :line line))
+                       (conj placed (assoc small :line (dec max-lines)))))))
          retained (reduce (fn [placed item]
                             (if-let [line (kept item)] (place placed item (min line (dec max-lines))) placed))
                           [] ordered)

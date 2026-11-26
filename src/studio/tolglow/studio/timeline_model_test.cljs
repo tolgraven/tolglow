@@ -127,6 +127,28 @@
   (testing "a new item takes the lowest line free of retained neighbours on both sides"
     (let [{:keys [items]} (model/stack [(box "old" 200 300) (box "new" 150 250)] {"old" 0} 2)]
       (is (= {"old" 0 "new" 1} (into {} (map (juxt :event-id :line)) items)))))
+  (testing "when every line is taken, an event drops its caption and shortens a neighbour's rather than overlap"
+    (let [event (fn [id left] (box id left (+ left 44 100) :kind :event :caption 100))
+          full (map #(event (str "e" %) (* 10 %)) (range model/max-lines))
+          {:keys [items lines]} (model/stack (conj (vec full) (event "late" 110)))
+          by-id (into {} (map (juxt :event-id identity)) items)
+          late (by-id "late")
+          neighbour (some #(when (and (not= late %) (= (:line late) (:line %))) %) items)]
+      (is (= model/max-lines lines))
+      (is (= {:caption 0 :compact? true :right 154} (select-keys late [:caption :compact? :right])))
+      (is (= {:event-id "e0" :right 108 :caption 64} (select-keys neighbour [:event-id :right :caption]))
+          "the first line's caption now ends before the late event")
+      (is (not-any? (fn [[a b]] (and (= (:line a) (:line b)) (< (:left a) (:right b)) (< (:left b) (:right a))))
+                    (for [a items b items :when (not= a b)] [a b]))
+          "nothing overlaps")
+      (is (every? #(= 100 (:caption %)) (remove #(#{"late" "e0"} (:event-id %)) items)) "other captions are untouched")))
+  (testing "a ramp that finds no free line sits over a caption too"
+    (let [event (fn [id left] (box id left (+ left 44 100) :kind :event :caption 100))
+          {:keys [items]} (model/stack (conj (mapv #(event (str "e" %) (* 10 %)) (range model/max-lines))
+                                             (box "ramp" 120 164 :kind :ramp)))
+          ramp (some #(when (= "ramp" (:event-id %)) %) items)]
+      (is (= [0 120 164] ((juxt :line :left :right) ramp)))
+      (is (= 74 (:caption (some #(when (= "e0" (:event-id %)) %) items))))))
   (testing "a pile-up is capped at the last line rather than growing without bound"
     (let [{:keys [lines items]} (model/stack (map #(box (str "e" %) 0 100) (range 12)))]
       (is (= model/max-lines lines))
