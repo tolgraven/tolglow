@@ -1767,3 +1767,17 @@
                                    :last-outcome (assoc (missed :clock-changed) :draft-revision 1)}))))
       (is (nil? (:missed (control {:draft draft :status :auditioning
                                    :last-outcome {:status :applied :draft-id "scene" :draft-revision 2}})))))))
+
+(deftest an-edit-after-new-is-what-publishes
+  ;; Studio dispatches New synchronously, so an edit typed straight after it lands on the
+  ;; new source rather than being replaced by it.
+  (let [source "{:id :ember :version 2}"
+        request (transition base [:studio/definition-load "effects" "ember"])
+        loaded (:db (transition (:db request) (conj (get-in request [:studio/http :on-success]) {:source source})))
+        fresh (:db (transition loaded [:studio/definition-new]))
+        edited (:db (transition fresh [:studio/definition-source "{:id"]))
+        sent (transition edited [:studio/definition-publish false])
+        publish (transition (:db sent) (:dispatch sent))]
+    (is (nil? (get-in fresh [:ui :definition :baseline])))
+    (is (= "{:id" (get-in publish [:studio/http :body :source])))
+    (is (nil? (get-in publish [:studio/http :body :expected-version])))))

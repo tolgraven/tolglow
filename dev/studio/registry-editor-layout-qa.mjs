@@ -62,6 +62,8 @@ async function editAndPublish() {
     assert.ok(response.ok);assert.match((await response.json()).source,/:registry-layout-check/);
     await page.getByRole('button',{name:'EDN source',exact:true}).click();
     await page.locator('#new-definition').click();
+    // Read the new source once it has rendered, not the previous definition's text.
+    await page.locator('#definition-status').filter({hasText:/^New definition$/}).waitFor();
     assert.equal(await page.locator('#auto-publish').isChecked(),false);
     const source=(await page.locator('#definition-source').inputValue()).replace(':after-hours',':source-layout-check');
     await page.locator('#definition-source').fill('{:id');
