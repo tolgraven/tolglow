@@ -905,6 +905,30 @@ Count must be an integer from 1 to 64 at [:count]`, Studio shows that message,
 and the committed config is unchanged. Checked in headless Chrome by
 `tolglow.qa.auto-show-browser`.
 
+**On a musical line (#767).** The same request with `:at` waits on the beat
+scheduler and applies on its line before auto decides there. The common data
+is the `:auto/configure` event in `show/schedule` and the snapshot's
+`[:auto :pending]` (event ID, label, due beat, enabled?, source) and
+`[:auto :section-end-beat]`:
+
+```clojure
+@(show/submit! runtime :auto (assoc (red-show/auto-config 218) :at :next-phrase))
+(get-in (show/snapshot runtime) [:auto :pending])
+@(show/submit! runtime :command {:op :schedule/cancel :event-ids ["<event-id>"]})
+```
+
+In Studio, **Start or stop** (Now, Next bar, Next phrase, Next section line)
+makes **Start auto** and **Stop auto** send the same `:at`; the pending change
+appears under the buttons and on the timeline with an **auto** icon, and its
+**Cancel** sends `:schedule/cancel`. A REPL post appears in the panel's list; a
+Studio post appears in the REPL's `[:auto :pending]`; a cancel from either side
+empties both; an immediate stop from either side withdraws it. A refused `:at`
+(a passed position, no section playing) returns `:status :rejected` with its
+message to both. Agents send `configure_auto` with `at` and read it back with
+`inspect_schedule`. Checked by `tolglow.automation.configure-at-test` (REPL and
+agent paths through the real owner), Studio's event tests and
+`tolglow.qa.auto-show-browser` in headless Chrome.
+
 **Tracked gaps.** Studio cannot author or edit a section plan, palette, ranges,
 category filters or a lit limit; it keeps the ones the REPL saved. The REPL
 reads which instances were handed over only from the reasons of the decision
@@ -915,7 +939,7 @@ same projection ([issue #217](https://github.com/tolgraven/tolglow/issues/217)).
 ## Rehearse a passage with the agent
 
 A rehearsal uses no command of its own: the recorded agent sends
-`configure_auto` and `schedule_events` through `show/dispatch-tool!`, stems
+`configure_auto` (with `at` the section line) and `schedule_events` through `show/dispatch-tool!`, stems
 enter through `show/audio-callbacks` and are routed with `tolglow.stems`, and
 Push gestures are ordinary commands with a Push 3 source. Whatever reads those
 reads the rehearsal. [Rehearsal](rehearsal.md)

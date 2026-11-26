@@ -129,24 +129,48 @@
    {:id :return :kind :return :bars 16}
    {:id :quiet :kind :quiet :bars 8}])
 
+(def default-agent-lead-beats
+  "How far ahead the recorded agent hears of a section line by default: one
+  bar, as a Live locator or AbleSet song section gives it the song's map."
+  beats-per-bar)
+
+(defn agent-timing
+  "The agent's timing options a passage keeps. :agent-lead-beats (default one
+  bar) is how far ahead of each section line the agent hears of it;
+  :agent-lag-beats instead makes it hear each line that many beats after it
+  (negative: before). :agent-schedules? false makes it apply each change on
+  arrival instead of on the line (#767)."
+  [options]
+  (merge {:agent-lead-beats (:agent-lead-beats options default-agent-lead-beats)}
+         (select-keys options [:agent-lag-beats :agent-schedules?])))
+
+(defn agent-heard-offset
+  "Beats from a section line to the frame on which the agent is asked about
+  it: negative ahead of the line."
+  [passage]
+  (if (some? (:agent-lag-beats passage))
+    (:agent-lag-beats passage)
+    (- (:agent-lead-beats passage default-agent-lead-beats))))
+
 (defn club
   "An unattended club passage at 124 BPM: groove, breakdown, return and an
   intentional quiet passage, with one transport stop in the return. Nobody
   plays; stems drive nothing here, the agent alone chooses. Options: :bpm,
-  :sections, :stop {:beat b :hold-ms ms}, and :agent-lag-beats to make the
-  agent answer each section line that many beats late (negative: early)."
+  :sections, :stop {:beat b :hold-ms ms} and the agent's timing (agent-timing)."
   ([seed] (club seed {}))
-  ([seed {:keys [bpm sections stop agent-lag-beats] :or {bpm 124.0 sections club-sections agent-lag-beats 0}}]
+  ([seed {:keys [bpm sections stop] :or {bpm 124.0 sections club-sections} :as options}]
    (let [sections (with-starts sections)
          return (some #(when (= :return (:kind %)) %) sections)
          stop (or stop (when return {:beat (double (* beats-per-bar (+ (:start-bar return) 4 1/2))) :hold-ms 4000.0}))]
-     {:id :club :mode :club :seed seed :bpm (double bpm) :take nil :agent-lag-beats agent-lag-beats
-      :sections sections
-      :stops (if stop [stop] [])
-      :onsets (drum-onsets seed sections)
-      :levels []
-      :routes {}
-      :gestures []})))
+     (merge
+      {:id :club :mode :club :seed seed :bpm (double bpm) :take nil
+       :sections sections
+       :stops (if stop [stop] [])
+       :onsets (drum-onsets seed sections)
+       :levels []
+       :routes {}
+       :gestures []}
+      (agent-timing options)))))
 
 (def concert-sections
   [{:id :verse-1 :kind :verse :bars 8 :anchor :verse-wash}
@@ -188,18 +212,21 @@
   seed changes the drummer's fills, the bass rests and the auto fills, and
   each take has its own fixed table of Push gestures (take-gestures). Kick
   onsets launch :kick-hit, snare onsets :snare-hit, and the bass level
-  drives the verse anchor's level."
+  drives the verse anchor's level. Options: :bpm, :sections and the agent's
+  timing (agent-timing)."
   ([seed take] (concert seed take {}))
-  ([seed take {:keys [bpm sections] :or {bpm 120.0 sections concert-sections}}]
+  ([seed take {:keys [bpm sections] :or {bpm 120.0 sections concert-sections} :as options}]
    (when-not (contains? take-gestures take)
      (throw (ex-info "A concert take is :a or :b" {:take take})))
    (let [take-seed (random/derive-seed seed :take take)
          sections (with-starts sections)]
-     {:id :concert :mode :concert :seed seed :take take :take-seed take-seed :bpm (double bpm)
-      :sections sections
-      :stops []
-      :onsets (drum-onsets take-seed sections)
-      :levels (bass-levels take-seed sections)
-      :routes {:onsets {:kick :kick-hit :snare :snare-hit}
-               :levels [{:stem :bass :cue-id :verse-wash :param :level}]}
-      :gestures (get take-gestures take)})))
+     (merge
+      {:id :concert :mode :concert :seed seed :take take :take-seed take-seed :bpm (double bpm)
+       :sections sections
+       :stops []
+       :onsets (drum-onsets take-seed sections)
+       :levels (bass-levels take-seed sections)
+       :routes {:onsets {:kick :kick-hit :snare :snare-hit}
+                :levels [{:stem :bass :cue-id :verse-wash :param :level}]}
+       :gestures (get take-gestures take)}
+      (agent-timing options)))))

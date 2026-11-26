@@ -563,9 +563,19 @@
          (str "Keep the section plan"
               (when-let [sections (seq (:sections plan))]
                 (str " (" (str/join ", " (map (comp events/wire-id :id) sections)) ")")))])
+      (let [section? (some? (get-in db [:show :auto :section-end-beat]))]
+        [:label "Start or stop" [:select#auto-applies {:value (:applies form "now") :on-change #(set-ui! [:auto-form :applies] (input-value %))}
+                                 (for [[value label] events/auto-lines]
+                                   ^{:key value} [:option {:value value :disabled (and (= "next-section" value) (not section?))} label])]])
       [:div.button-row [button "auto-start" "Start auto" [:studio/auto-start] "button primary"] [button "auto-stop" "Stop auto" [:studio/auto-stop]]]
       (let [summary (events/auto-summary db)]
         (when-not (str/blank? summary) [:p#auto-reason.small {:role "status"} summary]))
+      (when-let [pending (seq (get-in db [:show :auto :pending]))]
+        [:ul#auto-pending.small {:aria-label "Auto changes waiting on their line"}
+         (for [[i {:keys [event-id]} text] (map vector (range) pending (events/auto-pending-text db))]
+           ^{:key event-id} [:li {:data-event-id event-id} text " "
+                             [button (str "auto-pending-cancel-" i) "Cancel"
+                              [:studio/command "schedule/cancel" {:event-ids [event-id]}] "text-button"]])])
       [:p.small.muted "Persistent cues remain active until released. You can keep playing the grid while auto mode runs. A look you change is handed to you and auto mode leaves it running."]]]))
 
 (defn- response-duration-label [envelope stage]

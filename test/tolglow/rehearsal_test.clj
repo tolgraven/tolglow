@@ -22,21 +22,24 @@
       "another seed is another performance"))
 
 (deftest an-unattended-club-passage-is-reviewed-for-phrasing-repetition-contrast-and-stops
-  (let [{:keys [responses boundaries launch-timing phrases contrast stops flags report error repetition]} @club-review
+  (let [{:keys [responses boundaries launch-timing phrases contrast stops flags report error repetition take]} @club-review
         by-kind (into {} (map (juxt :kind identity)) contrast)]
     (is (nil? error))
-    (testing "the agent answers every section line within one frame through the tool path"
+    (testing "the agent puts every change on its section line through the tool path (#767)"
       (is (= [:groove :breakdown :return :quiet] (mapv :section responses)))
       (is (every? #(= {"configure_auto" :accepted} (:receipts %)) responses) (pr-str (map :receipts responses)))
-      (is (every? #(<= 0 (:late-beats %) 0.26) responses))
-      ;; configure_auto applies when it arrives: on the frame that crosses a
-      ;; line the previous mood decides once more, just before the change.
-      ;; One decision: up to two cues and their emission companions.
-      (is (every? #(<= (:carry-over-launches %) 4) responses))
-      (is (= (count (filter (comp pos? :carry-over-launches) responses))
-             (count (filter #(re-find #"previous mood launched" %) flags)))))
+      (is (every? :scheduled? responses))
+      (is (every? #(<= (- (:section-beat %) 4.3) (:accepted-beat %) (:section-beat %)) responses) "heard a bar ahead")
+      (is (every? #(<= 0 (:late-beats %) 0.26) responses) "applied on the first frame at or past the line")
+      (is (every? #(zero? (:carry-over-launches %)) responses) (pr-str (map (juxt :section :carry-over-launches) responses)))
+      (is (every? #(zero? (:early-launches %)) responses))
+      (is (every? #(= (:applied-beat %) (:first-launch-beat %)) responses) "the new mood decides on the line's own frame")
+      (is (not-any? #(re-find #"previous mood launched|new mood launched" %) flags)))
     (testing "plan boundaries sit on the bar grid and launches start within one frame of their beat"
       (is (seq (remove :with-agent-change? boundaries)))
+      (is (= [[:drive 0.0] [:drive (:applied-beat (nth responses 2))]]
+             (mapv (juxt :auto-section :beat) (filter :with-agent-change? boundaries)))
+          "the groove's and the return's first sections begin with the agent's change, not at a plan boundary")
       (is (every? :on-bar? (remove :with-agent-change? boundaries)) (pr-str boundaries))
       (is (pos? (:launches launch-timing)))
       (is (zero? (:beyond-one-frame launch-timing)) (pr-str launch-timing))
@@ -50,11 +53,10 @@
       (is (< (get-in by-kind [:quiet :mean-brightness]) (get-in by-kind [:breakdown :mean-brightness])
              (get-in by-kind [:groove :mean-brightness])))
       (is (< 0.9 (get-in by-kind [:quiet :dark-fraction])))
-      ;; The return's plan can enter its strobe bar on the quiet line itself;
-      ;; that look is a carry-over, ended when the agent's change lands.
-      (is (< (get-in by-kind [:quiet :strobe-fraction]) 0.02))
-      (is (or (zero? (get-in by-kind [:quiet :strobe-fraction]))
-              (pos? (:carry-over-launches (last responses)))))
+      (let [quiet (last responses)]
+        (is (not-any? :strobe? (filter #(and (= :quiet (:music %)) (>= (:beat %) (:applied-beat quiet))) (:frames take)))
+            "no strobe once the quiet change applied"))
+      (is (zero? (get-in by-kind [:quiet :strobe-fraction])) "the change applied on the line, so not a frame of strobe in the quiet")
       (is (zero? (get-in by-kind [:breakdown :strobe-fraction]))))
     (testing "the stop in the return holds the plan and resumes without catching up"
       (is (= 1 (count stops)))
@@ -74,14 +76,25 @@
     (is (some #(re-find #"landed 2\.\d+ beats after the section line; the previous mood launched" %) (:flags late)))
     (is (some :stale? (:responses stale)))
     (is (some #(re-find #"suggestion for breakdown landed in return" %) (:flags stale))))
-  (testing "an agent answering a frame early launches the new mood before the line instead"
-    (let [early (rehearsal/club 670 {:passage {:agent-lag-beats -0.3}})
+  (testing "an agent answering on arrival a frame early launches the new mood before the line"
+    (let [early (rehearsal/club 670 {:passage {:agent-lag-beats -0.3 :agent-schedules? false}})
           lines (rest (:responses early))]
+      (is (not-any? :scheduled? lines))
       (is (every? #(neg? (:late-beats %)) lines))
       (is (every? #(zero? (:carry-over-launches %)) lines))
       (is (every? #(pos? (:early-launches %)) lines))
       (is (not-any? :stale? lines))
-      (is (some #(re-find #"beats before the line; the new mood launched" %) (:flags early))))))
+      (is (some #(re-find #"beats before the line; the new mood launched" %) (:flags early)))))
+  (testing "an agent answering on arrival at the line leaves the previous mood one decision on it"
+    (let [{:keys [responses flags take]} (rehearsal/club 670 {:passage {:agent-lag-beats 0 :agent-schedules? false}})]
+      (is (every? #(<= 0 (:late-beats %) 0.26) responses))
+      (is (some #(pos? (:carry-over-launches %)) responses))
+      (is (every? #(<= (:carry-over-launches %) 4) responses) "one decision: up to two cues and their emission companions")
+      (is (= (count (filter (comp pos? :carry-over-launches) responses))
+             (count (filter #(re-find #"previous mood launched" %) flags))))
+      (let [quiet (last responses)]
+        (is (not-any? :strobe? (filter #(and (= :quiet (:music %)) (> (:beat %) (:applied-beat quiet))) (:frames take)))
+            "a carry-over strobe ends when the change applies")))))
 
 (def concert-review (delay (rehearsal/concert 670)))
 
@@ -90,10 +103,12 @@
         [a b] takes
         sections (into {} (map (juxt :section identity)) (:sections comparison))]
     (is (every? (comp nil? :error) takes))
-    (testing "the only flags are the previous mood's launches on section lines"
-      (is (seq flags))
-      (is (every? #(re-find #"line the previous mood launched" %) flags) (pr-str flags))
-      (is (every? #(<= (:carry-over-launches %) 2) (mapcat :agent takes))))
+    (testing "every change lands on its line: no flags, no carry-over, no early launches (#767)"
+      (is (empty? flags) (pr-str flags))
+      (is (every? :scheduled? (mapcat :agent takes)))
+      (is (every? #(zero? (:carry-over-launches %)) (mapcat :agent takes)))
+      (is (every? #(zero? (:early-launches %)) (mapcat :agent takes)))
+      (is (every? #(<= 0 (:late-beats %) 0.26) (mapcat :agent takes))))
     (testing "the agent posts every anchor once and both takes start them on their bar"
       (is (every? #(= {"schedule_events" :accepted "configure_auto" :accepted} (:receipts %))
                   (map (comp first :agent) takes)))

@@ -823,6 +823,19 @@
     (is (true? (get-in (transition planned [:studio/auto-stop]) [:studio/http :body :keep-plan?])) "stopping keeps the plan for the next start")
     (is (= {:enabled? false :expected-epoch 7} (get-in (transition base [:studio/auto-stop]) [:studio/http :body])))
     (is (= "Section quiet · Moving in darkness · handed 1 to a performer" (events/auto-summary planned)))
+    (testing "Start and Stop can wait for the next bar, phrase or section line (#767)"
+      (let [on-bar (assoc-in base [:ui :auto-form :applies] "next-bar")
+            on-section (assoc-in planned [:ui :auto-form :applies] "next-section")]
+        (is (not (contains? (start base) :at)) "now by default")
+        (is (= {:at "next-bar" :source {:adapter "web" :session-id (:session base)}}
+               (select-keys (start on-bar) [:at :source])))
+        (is (= "next-bar" (get-in (transition on-bar [:studio/auto-stop]) [:studio/http :body :at])))
+        (is (not (contains? (start on-section) :at)) "no section line without a playing auto section")
+        (is (= "next-section" (:at (start (assoc-in on-section [:show :auto :section-end-beat] 24.0)))))
+        (is (= ["Auto configure at bar 6" "Stop auto at bar 8 beat 2.00"]
+               (events/auto-pending-text (assoc-in base [:show :auto :pending]
+                                                   [{:event-id "a" :label "Auto configure" :due-beat 24.0}
+                                                    {:event-id "b" :label "Stop auto" :due-beat 34.0}]))))))
     (is (= "" (events/auto-summary base)))
     (testing "Vary follows a saved randomizing config until the form chooses"
       (let [varied (assoc-in planned [:show :auto :config :randomize] {:params :marked :palette [{:color [1 0 0]}]})

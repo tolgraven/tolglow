@@ -102,8 +102,15 @@
                                              :above {:type "number" :minimum 0 :maximum 1}
                                              :target {:type "number" :minimum 0 :maximum 1}}
                  :required ["op" "group-id"] :additionalProperties false}}
-   {:name "configure_auto" :description "Configure automatic show selection policy using validated cue ids, timing and constraints."
-    :parameters {:type "object" :properties {:configuration {:type "object"}}
+   {:name "configure_auto"
+    :description (str "Configure automatic show selection policy using validated cue ids, timing and constraints. "
+                      "Without at it applies now. With at it waits on the beat clock and applies on that line, before auto decides there, "
+                      "so a mood change lands on the downbeat: at {bar|beat|phrase} (zero-based transport position; a position already passed is rejected), "
+                      "or \"next-bar\", \"next-phrase\" or \"next-section\" (the end of the auto section now playing). "
+                      "A pending change is listed by inspect_schedule and withdrawn with cancel_scheduled.")
+    :parameters {:type "object"
+                 :properties {:configuration {:type "object"}
+                              :at {:description "Zero-based position object {bar, beat, phrase} or one of next-bar, next-phrase, next-section."}}
                  :required ["configuration"] :additionalProperties false}}
    {:name "schedule_events"
     :description (str "Post up to 64 show events ahead of time on the beat clock in one atomic batch; one invalid event rejects all. "

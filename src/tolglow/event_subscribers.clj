@@ -21,13 +21,14 @@
             [tolglow.lighting-levels :as lighting-levels]))
 
 (def actions [:lighting/scene :cue/launch :effect/launch :instance/end :instance/kill :instance/opacity
-              :param/set :param/ramp :master/set :blackout/set :variable/set :macro/run :macro/stop :callback])
+              :param/set :param/ramp :master/set :blackout/set :variable/set :macro/run :macro/stop :callback
+              :auto/configure])
 
 (def categories
   "Display category for each action type, shared by Studio, Push, REPL and agents."
   {:lighting/scene :scene :cue/launch :cue :effect/launch :cue :instance/end :instance :instance/kill :instance
    :instance/opacity :instance :param/set :param :param/ramp :ramp :master/set :master :blackout/set :master
-   :variable/set :variable :macro/run :macro :macro/stop :macro :callback :callback})
+   :variable/set :variable :macro/run :macro :macro/stop :macro :callback :callback :auto/configure :auto})
 
 (def operations
   "Owner domain commands: schedule edits, validated show-variable writes and
@@ -35,6 +36,11 @@
   #{:schedule/post :schedule/cancel :schedule/move :variable/set :macro/run :macro/stop})
 
 (def ^:private timing-keys #{:delay :at :in :grid})
+
+(def host-operations
+  "Actions the show owner applies with a handler it passes to advance: an auto
+  configure needs the planner, which this namespace cannot depend on."
+  #{:auto/configure})
 
 (def ^:private instance-ops #{:instance/end :instance/kill :instance/opacity})
 
@@ -140,6 +146,7 @@
                                          (:master/set :blackout/set) #{:op :value}
                                          :variable/set #{:op :variable :value}
                                          (:macro/run :macro/stop) #{:op :macro-id}
+                                         :auto/configure #{:op :request}
                                          #{:op :select}))))
          "Unknown event action or option" {:op op})
   (check (<= (count (filter #(contains? action %) timing-keys)) 1)
@@ -181,6 +188,9 @@
     (check (boolean? value) "Blackout must be true or false" {}))
   (when (#{:macro/run :macro/stop} op)
     (check (identifier? (:macro-id action)) "A macro action needs a macro ID" {}))
+  (when (= :auto/configure op)
+    (check (and (map? (:request action)) (registry/data? (:request action)) (not-any? timing-keys (keys (:request action))))
+           "An auto configure carries its request as portable data, with its timing outside it" {}))
   (when (#{:param/set :param/ramp :variable/set} op)
     (let [target (destination-target action)
           level (if (= op :param/ramp) (:to action) value)]
@@ -626,11 +636,17 @@
 
 (defn- submit-command
   "Admit one command through the shared reducer: schedule/variable/macro
-  operations as domain commands, everything else through spatial/apply-command."
-  [model cmd]
-  (if (operations (:op cmd))
-    (control/apply-domain-command model cmd apply-operation)
-    (spatial/apply-command model cmd)))
+  operations as domain commands, a host operation through the handler the
+  owner supplied in host, everything else through spatial/apply-command."
+  ([model cmd] (submit-command model cmd nil))
+  ([model cmd host]
+   (cond
+     (operations (:op cmd)) (control/apply-domain-command model cmd apply-operation)
+     (host-operations (:op cmd))
+     (if-let [handler (get host (:op cmd))]
+       (control/apply-domain-command model cmd handler)
+       {:model model :ack {:status :rejected :message "Only the show owner can apply this action"}})
+     :else (spatial/apply-command model cmd))))
 
 (defn- commit-ramp
   "Write a ramp's value to its destination through the shared reducer: the
@@ -800,9 +816,10 @@
 (defn- apply-step
   "Admit one step command. A destination names the ramp an accepted write
   replaces; a rejected write leaves that ramp running."
-  ([model run base cmd-id cmd] (apply-step model run base cmd-id cmd nil))
-  ([model run base cmd-id cmd destination]
-   (let [result (submit-command model (merge base cmd {:command-id cmd-id}))]
+  ([model run base cmd-id cmd] (apply-step model run base cmd-id cmd nil nil))
+  ([model run base cmd-id cmd destination] (apply-step model run base cmd-id cmd destination nil))
+  ([model run base cmd-id cmd destination host]
+   (let [result (submit-command model (merge base cmd {:command-id cmd-id}) host)]
      (if (= :accepted (get-in result [:ack :status]))
        (cond-> (:model result) destination (supersede destination (run-event-id run)))
        (report model run (get-in result [:ack :message] "Action rejected"))))))
@@ -838,12 +855,14 @@
     [model (when (< stop (count targets)) (assoc run :targets targets :offset stop))
      (- budget (max 1 (- stop offset)))]))
 
-(defn- perform-global [model run action now]
+(defn- perform-global [model run action now host]
   (let [base (command-base model run now)
         cmd-id (command-id model run 0)
         target (destination-target action)
         value (:value action)]
     (case (:op action)
+      ;; The owner's handler commits it before the planner decides on this frame.
+      :auto/configure (apply-step model run base cmd-id {:op :auto/configure :request (:request action)} nil host)
       :blackout/set (apply-step model run base cmd-id {:op :blackout/set :value value})
       ;; Macros run as owner commands with the poster's source in the receipt.
       (:macro/run :macro/stop) (apply-step model run base cmd-id {:op (:op action) :macro-id (:macro-id action)})
@@ -855,7 +874,7 @@
         :variable (apply-step model run base cmd-id {:op :variable/set :variable (:variable action) :value value}
                               {:target :variable :variable (:variable action)})))))
 
-(defn- perform [model run action now budget]
+(defn- perform [model run action now budget host]
   (cond
     (= :lighting/scene (:op action))
     [(try
@@ -880,7 +899,7 @@
     (or (contains? action :select) (#{:cue/launch :effect/launch} (:op action)) (instance-ops (:op action)))
     (select-and-perform model run action now budget)
 
-    :else [(perform-global model run action now) nil (dec budget)]))
+    :else [(perform-global model run action now host) nil (dec budget)]))
 
 (defn- following [run meter]
   (let [i (inc (:index run))]
@@ -922,7 +941,7 @@
                                  (when-not (identical? error before) {:message (:message error)}))))
     model))
 
-(defn- advance-runs [model now results]
+(defn- advance-runs [model now results host]
   (if-not (seq (get-in model [:event-subscribers :runs])) model
     (let [meter (get-in model [:transport :meter]) beat (get-in model [:transport :beat])
           ;; Due order, then admission order. The queue is rewritten in due order each
@@ -944,7 +963,7 @@
                     (try
                       (if callback?
                         (let [[model updated] (callback-result model run result)] [model (following updated meter) (dec budget) false])
-                        (let [[model remainder budget] (perform model run action now budget)]
+                        (let [[model remainder budget] (perform model run action now budget host)]
                           [model (or remainder (following run meter)) budget (some? remainder)]))
                       (catch Throwable error
                         [(report model run (.getMessage error) (error-details error)) nil (dec budget) false]))
@@ -956,9 +975,11 @@
   "Apply up to 128 commands per cycle, then settle ramp lifecycles. A large
   :all selection keeps its exact candidate list and cursor across ticks. Other
   runs can progress during a callback. Due runs fire in due-beat order, then in
-  admission order."
-  [model now results]
-  (-> (advance-runs model now results) (advance-ramps now)))
+  admission order. host maps a host operation (host-operations) to the
+  owner's [model command] handler; without one such a step is rejected."
+  ([model now results] (advance model now results nil))
+  ([model now results host]
+   (-> (advance-runs model now results host) (advance-ramps now))))
 
 ;; Scheduling commands -----------------------------------------------------
 
@@ -1154,6 +1175,16 @@
                 (hold-ramps stopped (:time-ms request (:time-ms model 0))))
      :event-ids (vec (distinct (concat (map run-event-id gone) (map :event-id stopped))))}))
 
+(defn withdraw
+  "Cancel every pending scheduled event whose action is one of ops, recording
+  reason, whoever posted it. Returns {:model .. :event-ids [..]}."
+  [model ops reason]
+  (let [hit? #(and (:scheduled %) (contains? ops (:op (get (:steps %) (:index %)))))
+        {gone true kept false} (group-by (comp boolean hit?) (get-in model [:event-subscribers :runs] []))]
+    {:model (reduce #(remember %1 (run-entry %1 %2 :cancelled {:reason reason}))
+                    (cond-> model (seq gone) (assoc-in [:event-subscribers :runs] (vec kept))) gone)
+     :event-ids (mapv run-event-id gone)}))
+
 (defn move
   "Reschedule one pending event to new timing: {:event-id .. :at|:in|:grid ..}.
   Only its poster or a human operator surface may move it."
@@ -1298,6 +1329,7 @@
 (defn- action-summary [action]
   (cond-> (select-keys action [:param :variable :to :over :curve :value :select :macro-id :at :in :grid :delay])
     (destination-target action) (assoc :target (destination-target action))
+    (= :auto/configure (:op action)) (assoc :enabled? (true? (get-in action [:request :enabled?])))
     (:select action) (update :select select-keys [:ids :categories :page-id :pick])))
 
 (defn- upcoming-entry [run]
@@ -1312,6 +1344,13 @@
              (:label scheduled) (assoc :label (:label scheduled))
              (:posted-beat scheduled) (assoc :posted-beat (:posted-beat scheduled))
              (:subscriber run) (assoc :subscriber-id (:subscriber run))))))
+
+(defn upcoming
+  "Pending scheduled events whose action is op, in due order, as the schedule
+  view lists them."
+  [model op]
+  (into [] (comp (filter #(and (:scheduled %) (= op (:op (get (:steps %) (:index %)))))) (map upcoming-entry))
+        (sort-by (juxt :due-beat :id) (:runs (state model)))))
 
 (defn- ramp-view [ramp]
   (-> (select-keys ramp [:event-id :label :source :category :destination :from :to :curve :unit :over])

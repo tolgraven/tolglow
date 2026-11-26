@@ -131,7 +131,11 @@ provider output cannot execute partial tools.
 `dispatch! [name arguments metadata]` uses the same semantic registry/control
 operations as humans and returns portable result data. Metadata includes run,
 round, tool-call and idempotent command IDs. The dispatcher still validates
-definitions, parameter bounds, show epochs and auto policy. No eval/shell tool is
+definitions, parameter bounds, show epochs and auto policy. `configure_auto`
+takes an optional `at` (a zero-based `{bar, beat, phrase}` position or
+`next-bar`, `next-phrase`, `next-section`): the change is posted on the beat
+scheduler as this run's event and applies on that line
+([auto show](../../../docs/auto-show.md#on-a-musical-line)). No eval/shell tool is
 provided. Event consumers receive `:text/delta`, `:tool/start`, `:tool/result` and
 `:agent/done`/`:agent/error`; a disconnected consumer cancels generation.
 

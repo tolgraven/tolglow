@@ -19,8 +19,8 @@
 
 (def moods
   "Auto settings per music section kind. Section plans inside a mood keep to
-  bar lengths so their boundaries land on the bar grid after the agent
-  reconfigures on a section line."
+  bar lengths so their boundaries land on the bar grid after the agent's
+  change applies on a section line."
   {:groove {:scope {:cue-ids club-scope}
             :interval {:beats 1} :count 2 :launch {:mode :one-shot :duration {:beats 1}}
             :randomize {:palette red-show/red-palette} :categories {:exclude [:strobe]}
@@ -76,23 +76,38 @@
                  :over {:bars 4} :curve "ease-in" :at {:bar start-bar :beat 1}}))))
     (:sections passage))))
 
+(defn schedules?
+  "Whether the agent puts its change on the section line with configure_auto's
+  :at when it hears of the line before it has passed (#767). A passage can set
+  :agent-schedules? false to measure an agent that applies on arrival."
+  [passage]
+  (:agent-schedules? passage true))
+
 (defn suggestion
-  "The agent's recorded response when section i of passage begins: one round
-  of tool calls with stable IDs. A concert's first round also posts every
-  section anchor ahead of time."
-  [passage i]
-  (let [section (nth (:sections passage) i)
-        run-id (str "rehearsal:" (name (:id passage)) (when (:take passage) (str ":" (name (:take passage))))
-                    ":" (name (:id section)))]
-    {:run-id run-id
-     :section-id (:id section)
-     :beat (double (* passage/beats-per-bar (:start-bar section)))
-     :prompt (str "Section " (name (:id section)) " (" (name (:kind section)) ", " (:bars section)
-                  " bars) begins at bar " (:start-bar section) ".")
-     :text (str "Playing " (name (:kind section)) ".")
-     :calls (cond-> []
-              (and (= :concert (:mode passage)) (zero? i))
-              (conj {:id "anchors" :name "schedule_events" :arguments {:events (anchor-events passage)}})
-              true
-              (conj {:id "auto" :name "configure_auto"
-                     :arguments {:configuration (auto-configuration passage section i)}}))}))
+  "The agent's recorded response to section i of passage, heard at transport
+  beat (the beat of the frame it was asked on): one round of tool calls with
+  stable IDs. When the line is still ahead the change carries :at the
+  section's first bar, so it applies on the downbeat, before the planner
+  decides there; a line already passed is answered at once. A concert's
+  first round also posts every section anchor ahead of time."
+  ([passage i] (suggestion passage i (* passage/beats-per-bar (:start-bar (nth (:sections passage) i)))))
+  ([passage i beat]
+   (let [section (nth (:sections passage) i)
+         line (double (* passage/beats-per-bar (:start-bar section)))
+         at? (and (schedules? passage) (<= beat line))
+         run-id (str "rehearsal:" (name (:id passage)) (when (:take passage) (str ":" (name (:take passage))))
+                     ":" (name (:id section)))]
+     {:run-id run-id
+      :section-id (:id section)
+      :beat line
+      :scheduled? at?
+      :prompt (str "Section " (name (:id section)) " (" (name (:kind section)) ", " (:bars section)
+                   " bars) begins at bar " (:start-bar section) ".")
+      :text (str "Playing " (name (:kind section)) (when at? (str " from bar " (:start-bar section))) ".")
+      :calls (cond-> []
+               (and (= :concert (:mode passage)) (zero? i))
+               (conj {:id "anchors" :name "schedule_events" :arguments {:events (anchor-events passage)}})
+               true
+               (conj {:id "auto" :name "configure_auto"
+                      :arguments (cond-> {:configuration (auto-configuration passage section i)}
+                                   at? (assoc :at {:bar (:start-bar section)}))}))})))

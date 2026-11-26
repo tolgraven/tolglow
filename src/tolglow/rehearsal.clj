@@ -98,6 +98,7 @@
           results (into {} (keep (fn [e] (when (= :tool/result (:type e)) [(:name e) (:result e)]))) @events)]
       {:run-id (:run-id suggestion) :section (:section-id suggestion)
        :section-beat (:beat suggestion)
+       :scheduled? (:scheduled? suggestion)
        :suggested-beat suggested-beat
        :accepted-beat (get-in @(:state rt) [:model :transport :beat])
        :status (:status outcome)
@@ -202,12 +203,13 @@
   [rt callbacks passage {:keys [prev-beat first? next-section onset-counts taken stopped pending-stops] :as progress}
    t beat wait!]
   (let [sections (:sections passage)
-        ;; The agent hears about a section on the first frame at or past its line.
-        ;; :agent-lag-beats on a passage simulates a slow or late agent.
+        ;; The agent hears of a section line on the first frame at or past
+        ;; the line plus its offset: a bar ahead by default, as a song map
+        ;; gives it; :agent-lag-beats simulates a slow or late agent.
         suggestion (when (and (< next-section (count sections))
                               (>= beat (+ (* passage/beats-per-bar (:start-bar (nth sections next-section)))
-                                          (:agent-lag-beats passage 0))))
-                     (run-agent! rt (script/suggestion passage next-section) wait!))
+                                          (passage/agent-heard-offset passage))))
+                     (run-agent! rt (script/suggestion passage next-section beat) wait!))
         model (:model @(:state rt))
         onsets (window (:onsets passage) prev-beat beat first?)
         levels (window (:levels passage) prev-beat beat first?)
@@ -273,6 +275,22 @@
     transport (update :transport conj (-> (dissoc transport :reply)
                                           (assoc :status (:status (deref (:reply transport) 5000 {:status :missing})))))))
 
+(defn- applied
+  "Where each agent change took effect. A change sent with :at applies when
+  the scheduler fires it, on the first frame at or past its line, before the
+  planner decides on that frame: :applied-beat is that frame's beat, from the
+  scheduler's recent outcomes (nil, with :applied-status, if it was refused
+  or missed). Any other change applied when the owner accepted it."
+  [agent-log recent]
+  (mapv (fn [{:keys [scheduled? receipts accepted-beat] :as entry}]
+          (if-not scheduled?
+            (assoc entry :applied-beat accepted-beat)
+            (let [id (first (get-in receipts ["configure_auto" :event-ids]))
+                  outcome (last (filter #(= id (:event-id %)) recent))]
+              (assoc entry :applied-beat (when (= :fired (:status outcome)) (:at-beat outcome))
+                     :applied-status (:status outcome :pending)))))
+        agent-log))
+
 (defn- capture-sink [captured]
   {:send! (fn [universes _] (reset! captured (update-vals universes aclone)))})
 
@@ -296,10 +314,12 @@
          (loop [t 0.0 progress (initial-progress passage) frames [] n 0]
            (let [beat (get-in @(:state rt) [:model :transport :beat])]
              (if (or (>= beat end-beat) (>= n max-frames))
-               (merge (select-keys progress [:agent :gestures :transport])
-                      {:passage passage :frame-ms frame-ms :frames frames
-                       :schedule (select-keys (show/schedule rt) [:recent])
-                       :status (select-keys (:status @(:state rt)) [:error])})
+               (let [schedule (select-keys (show/schedule rt) [:recent])]
+                 (merge (select-keys progress [:gestures :transport])
+                        {:passage passage :frame-ms frame-ms :frames frames
+                         :agent (applied (:agent progress) (:recent schedule))
+                         :schedule schedule
+                         :status (select-keys (:status @(:state rt)) [:error])}))
                (let [[progress pending] (deliver! rt callbacks passage progress t beat
                                                   (fn [result] (tick-until! rt t #(realized? result))))
                      next-t (+ t frame-ms)
@@ -340,7 +360,9 @@
        (loop [progress progress]
          (let [beat (get-in @(:state runtime) [:model :transport :beat])]
            (if (or (>= beat end-beat) (> (now) timeout-ms))
-             (assoc (select-keys progress [:agent :gestures :transport]) :ended-at-beat beat :timed-out? (< beat end-beat))
+             (assoc (select-keys progress [:gestures :transport])
+                    :agent (applied (:agent progress) (:recent (show/schedule runtime)))
+                    :ended-at-beat beat :timed-out? (< beat end-beat))
              (let [[progress pending] (deliver! runtime callbacks passage progress (now) beat wait!)
                    progress (settle progress pending (get-in @(:state runtime) [:model :transport :beat]))]
                (Thread/sleep (long poll-ms))
