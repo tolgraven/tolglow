@@ -15,6 +15,7 @@
             [tolglow.effects.keyframes :as effect-keyframes]
             [tolglow.effects.cadence :as cadence]
             [tolglow.visualization.cue-pads :as cue-pads]
+            [tolglow.visualization.parameter-frames :as parameter-frames]
             [afterglow.runtime.events :as staging]
             [tolglow.events :as show-events]
             [tolglow.event-subscribers :as subscribers]
@@ -623,6 +624,9 @@
       :live-runs (atom (new-live-runs (get options :live-runs {})))
       ;; The cue launcher's last Live setup and pad-clip write (#228).
       :live-launcher (atom {})
+      ;; Shared parameter-visualization frames (#625), started by the first view.
+      :parameter-frames (delay (parameter-frames/create (merge {:snapshot! #(deref (:state @runtime-ref))}
+                                                               (:parameter-frames options))))
       :connections owned :devices (atom {}) :device-reconnects (atom {}) :surface-refusals (atom {}) :development development
       :rdm (rdm/create (merge (:rdm-options options)
                              {:state rdm-state :model! #(get @(:state @runtime-ref) :model)
@@ -3343,6 +3347,7 @@
       (doseq [cleanup (concat (map :close! (vals (first (swap-vals! (:observers runtime) (constantly {})))))
                              (map #(fn [] (connections/abort-prepared! %)) @candidates)
                              [#(some-> (:recovery runtime) deref recovery/close!)
+                              #(when (realized? (:parameter-frames runtime)) (parameter-frames/stop! @(:parameter-frames runtime)))
                               #(event-callbacks/close! (:event-callbacks runtime))
                               #(rdm/close! (:rdm runtime))
                               #(output-scheduler/close! (:publisher runtime))
@@ -4170,6 +4175,29 @@
        (swap! state (fn [s] (assoc s :mirror mirror :device-specs specs
                                    :player (if-let [p (:player s)] (live-runs/with-mirror p mirror) (live-runs/player mirror))))))
      (cond-> result watch (assoc :watch watch)))))
+
+(defn parameter-frames-action!
+  "Shared parameter-visualization frames (#625) for Studio, the Push display,
+  a Live parameter device and the REPL. Views of the same instance,
+  parameter, beat window and style at sizes within 10% share one render.
+    :subscribe   {:instance-id :param :window-beats :style :width :height
+                  :dpr :consumer :queue} -> {:lease :key :render :shared?}
+    :frame       {:lease} -> the oldest waiting frame (removed), else nil
+    :latest      {:lease} -> the key's newest frame, without reading a mailbox
+    :unsubscribe {:lease} -> nil; the last view of a key stops its rendering
+    :status      {} -> renders, presentations, drops, cost and views per key
+  Rendering runs on its own worker thread from committed snapshots, never on
+  the show owner. A lease not read for five seconds expires."
+  [runtime operation payload]
+  (let [service @(:parameter-frames runtime)]
+    (case operation
+      :subscribe (parameter-frames/subscribe! service (dissoc payload :consumer :queue)
+                                              {:id (or (:consumer payload) "view") :queue (or (:queue payload) 1)})
+      :frame (parameter-frames/take-frame! service (:lease payload))
+      :latest (parameter-frames/latest-frame service (:lease payload))
+      :unsubscribe (parameter-frames/unsubscribe! service (:lease payload))
+      :status (parameter-frames/status service)
+      (throw (ex-info "Unknown parameter frame operation" {:operation operation})))))
 
 (defn live-parameter-devices
   "Each run channel's parameter-device spec (#625): slot names, ranges,

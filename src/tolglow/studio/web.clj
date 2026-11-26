@@ -15,6 +15,7 @@
             [reitit.ring :as ring]
             [tolglow.studio.page-routes :as pages]
             [tolglow.studio.pretty :as pretty]
+            [tolglow.visualization.parameter-frames :as parameter-frames]
             [ring.middleware.content-type :refer [wrap-content-type]]
             [ring.middleware.head :refer [wrap-head]]
             [ring.middleware.params :refer [assoc-query-params]]
@@ -331,7 +332,7 @@
 (defn- get-routes
   [{:keys [snapshot! materials! definition! export! heartbeat! provider-get! chat-history! patch! checkpoint!
            app-agent! fixture! rdm! audio! video! sync! section-reference! waveform! workspace! terminal! sensor! repl! calibration! photometry! fog-calibration! event-subscribers! show-identity!
-           capture! live-runs! live-launcher!]}]
+           capture! live-runs! live-launcher! parameter-frames!]}]
   (merge
    {;; The runtime, show and epoch a window binds to before it loads Studio (#669).
     "/api/identity" (available show-identity! "Show identity unavailable" (fn [_] (ok (show-identity!))))
@@ -373,6 +374,21 @@
     "/api/live-runs" (read-action live-runs! :status "Run record unavailable" #(query-fields % {:limit nil}))
     ;; Parameter devices on run tracks (#625): the same projection as show/live-parameter-devices.
     "/api/live-parameter-devices" (read-action live-runs! :parameter-devices "Run record unavailable")
+    ;; Shared parameter-visualization frames (#625): status, and the next frame
+    ;; of a lease as PNG (204 when none is waiting; the lease is renewed).
+    "/api/parameter-frames" (read-action parameter-frames! :status "Parameter frames unavailable")
+    "/api/parameter-frames/frame"
+    (available parameter-frames! "Parameter frames unavailable"
+               (fn [{:keys [query-params]}]
+                 (let [lease (get query-params "lease")
+                       frame (or (parameter-frames! :frame {:lease lease})
+                                 (when (= "true" (get query-params "latest")) (parameter-frames! :latest {:lease lease})))]
+                   (if frame
+                     {:status 200 :body (java.io.ByteArrayInputStream. (parameter-frames/png-bytes frame))
+                      :headers {"Content-Type" "image/png" "Cache-Control" "no-store"
+                                "X-Frame-Key" (:key frame) "X-Frame-Sequence" (str (:sequence frame))
+                                "X-Frame-Size" (str (:width frame) "x" (:height frame))}}
+                     {:status 204 :headers {"Cache-Control" "no-store"} :body ""}))))
     ;; The cue launcher's 64 pads (#228): the same projection as show/live-launcher.
     "/api/live-launcher" (read-action live-launcher! :status "Cue launcher unavailable" #(query-fields % {:page-id nil}))
     "/api/capture/last.mid" (available capture! "Phrase capture unavailable"
@@ -460,7 +476,7 @@
 (defn- post-routes [{:keys [material-preview! variable-sources! spatial-search! submit! submit-history! heartbeat! provider-put! chat! chat-select!
                              app-agent! checkpoint! cue-variation-preview!
                              sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync! section-reference!
-                             capture! video! live-launcher! live-runs!]
+                             capture! video! live-launcher! live-runs! parameter-frames!]
                      :or {material-preview! materials/preview}}]
   (merge
    (into {} (for [[path op] operations]
@@ -502,6 +518,8 @@
    ;; Mirror the run record into Live over the running bridge, configuring each
    ;; run track's parameter devices (#625), as show/sync-live-runs! does.
    (post-actions "/api/live-runs/" live-runs! ok {"sync" :sync} "Run record unavailable")
+   (post-actions "/api/parameter-frames/" parameter-frames! ok {"subscribe" :subscribe "unsubscribe" :unsubscribe}
+                 "Parameter frames unavailable")
    {"/api/cue-variations/preview"
     (available cue-variation-preview! "Cue variations unavailable" #(ok (cue-variation-preview! (:json-params %))))
     "/api/materials/preview" #(ok (material-preview! (:json-params %)))

@@ -219,6 +219,7 @@
             :sync! #(show/sync-action! runtime %1 %2)
             :capture! #(show/capture-action! runtime %1 %2)
             :live-runs! #(show/live-runs-action! runtime %1 %2)
+            :parameter-frames! #(show/parameter-frames-action! runtime %1 %2)
             :live-launcher! #(show/live-launcher-action! runtime %1 %2)
             :section-reference! (fn [op payload]
                                   (case op
