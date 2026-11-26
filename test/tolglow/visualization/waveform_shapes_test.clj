@@ -101,14 +101,29 @@
            2048)
         "the whole builtin catalog stays a small part of a 64 KiB Push packet")))
 
+(defn- names-a-waveform?
+  "True when any choice of a plain enum or choice list names a registered
+  waveform, so a legacy oscillator list with an unregistered `random` counts
+  even though it still draws as text."
+  [schema]
+  (let [index (shapes/catalog-index @catalog)
+        values (concat (map #(if (map? %) (or (:id %) (:value %)) %) (:choices schema))
+                       (:values schema) (:options schema))]
+    (and (not= :waveform-selector (keyword (:semantic/type schema)))
+         (boolean (some #(shapes/waveform-id index %) values)))))
+
 (deftest no-builtin-effect-chooses-a-waveform-through-a-plain-enum
   ;; The audit for #655: a plain shape enum would be a candidate for an
   ;; attached signal source. The shipped registry has none; a new one needs a
   ;; decision, so it fails here until it is migrated or listed as follow-up.
+  (testing "the audit sees partly registered legacy oscillator lists"
+    (is (names-a-waveform? {:type :enum :values ["sawtooth" "triangle" "random"]}))
+    (is (names-a-waveform? {:type :enum :values [:sine :square]}))
+    (is (not (names-a-waveform? {:type :enum :values [:sphere :rounded-box]})))
+    (is (not (names-a-waveform? (signals/selector-schema (signals/new-registry) [:sine :saw])))))
   (let [definitions (registry-walk/builtin-definitions)
         plain (for [definition definitions [param schema] (:params definition)
-                    :when (and (shapes/choices schema @catalog)
-                               (not= :waveform-selector (keyword (:semantic/type schema))))]
+                    :when (names-a-waveform? schema)]
                 [(:id definition) param])]
     (is (<= 19 (count definitions)))
     (is (empty? plain) (pr-str plain))))
