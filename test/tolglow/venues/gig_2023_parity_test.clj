@@ -1,13 +1,18 @@
 (ns tolglow.venues.gig-2023-parity-test
   "The 2023 gig rig restates legacy data that only existed as uncommitted
   edits to `tolglow/config.clj` (issue #720). These checks expand the legacy
-  fixture maps with the original builder and replay the legacy group patcher
-  (`tolglow.util/patch-cfg!`), then compare channel maps and the DMX channel
-  of every patched attribute with the portable venue."
-  (:require [clojure.test :refer [deftest is testing]]
+  fixture maps with the original builder and run the legacy group patcher
+  (`tolglow.util/patch-cfg!`) in a headless Afterglow show, then compare
+  channel maps and the DMX channel of every patched attribute with the
+  portable venue."
+  (:require [afterglow.show :as show]
+            [afterglow.show-context :refer [with-show]]
+            [afterglow.transform :refer [degrees]]
+            [clojure.test :refer [deftest is testing]]
             [tolglow.config :as config]
             [tolglow.fixtures :as fixtures]
             [tolglow.fixtures.patch :as patch]
+            [tolglow.util :as util]
             [tolglow.venues.gig-2023 :as gig]))
 
 (def ^:private legacy-data
@@ -27,13 +32,6 @@
   (merge (select-keys config/fixture-types [:rgbw-12-12-moving :rgbw-7-12-moving])
          (update-vals legacy-data fixtures/create)
          {:rgbw-60-moving-beam (fixtures/rgbw-60-moving-beam)}))
-
-(def ^:private legacy-patches
-  "The gig patch: group, legacy :offset and fixture list (positions omitted)."
-  [[:moving 0 [:rgbw-12-12-moving :rgbw-60-moving-beam]]
-   [:moving-mini 100 (repeat 4 :rgbw-7-12-moving)]
-   [:wash 301 (repeat 8 :cameo-thunder-wash-rgbw)]
-   [:wash-2 357 (repeat 2 :cameo-thunder-wash)]])
 
 (def ^:private portable-for
   {:rgbw-60-mh :rgbw-60-moving-beam-15ch
@@ -76,21 +74,43 @@
       (is (= (dissoc thirteen :movement-speed :auto :control :shutter) (dissoc fifteen :shutter)))
       (is (= 7 (get-in fifteen [:shutter :offset]) (get-in thirteen [:shutter :offset]))))))
 
-(defn- jump
-  "The legacy patcher advanced by the highest channel offset of a fixture."
-  [fixture]
-  (apply max (mapcat (juxt :offset #(or (:fine-offset %) 0)) (:channels fixture))))
+(defn- legacy-config
+  "The gig's legacy `:fixtures :patches`, with fixture types as the legacy
+  config resolved them (keywords from `tolglow.config/fixture-types`, the beam
+  from the `tolglow.fixtures` builder). Positions are the legacy ones."
+  [moving-offset]
+  {:moving {:universe 1 :offset moving-offset :type :moving
+            :list [[:rgbw-12-12-moving 1.5 1.2 -0.5 :y-rotation (degrees 180)]
+                   [fixtures/rgbw-60-moving-beam 0.2 0.2 0.0]]}
+   :moving-mini {:universe 1 :offset 100 :type :moving
+                 :list [[:rgbw-7-12-moving -3.0 3.0 0.0] [:rgbw-7-12-moving 0.0 3.0 0.0]
+                        [:rgbw-7-12-moving 3.0 3.0 0.0]
+                        [:rgbw-7-12-moving 0.2 0.0 -2.0 :y-rotation (degrees 180)]]}
+   :wash {:universe 1 :offset 301 :type :wash
+          :list (mapv (fn [x] [:cameo-thunder-wash-rgbw x 4.0 0.0]) [-6.0 -4.0 -2.0 2.0 4.0 6.0 8.0 10.0])}
+   :wash-2 {:universe 1 :offset 357 :type :wash
+            :list [[:cameo-thunder-wash 0.0 4.0 0.0] [:cameo-thunder-wash -0.5 4.0 0.5]]}})
 
-(defn- legacy-addresses
-  "Fixture ID -> address as `patch-cfg!` computed it, or nil where Afterglow's
-  `patch-fixture!` precondition (1 <= start-address <= 512) rejected it."
-  []
-  (into {}
-        (for [[group offset ids] legacy-patches
-              [i [id address]] (map-indexed vector
-                                            (map vector ids (reductions + offset (map (comp jump legacy-types) ids))))]
-          [(keyword (str (name group) "-" (inc i)))
-           {:type id :address (when (<= 1 address 512) address) :computed address}])))
+(defn- afterglow-channels
+  "Attribute -> absolute coarse/fine DMX channels of a fixture Afterglow patched."
+  [fixture]
+  (into {} (for [{:keys [type color index fine-index]} (concat (:channels fixture) (mapcat :channels (:heads fixture)))
+                 :let [attribute (if (= :color type) color type)]
+                 :when (not (dummy? attribute))]
+             [attribute (cond-> [(inc index)] fine-index (conj (inc fine-index)))])))
+
+(defn- legacy-patch
+  "Run the legacy group patcher `tolglow.util/patch-cfg!` on the gig patch in a
+  headless Afterglow show (no universe is opened or sent) and return fixture
+  key -> {:universe :channels} as Afterglow patched it."
+  [moving-offset]
+  (with-redefs [config/cfg (fn [& path] (when (= path [:fixtures :patches]) (legacy-config moving-offset)))
+                config/fixture-types legacy-types]
+    (with-show (show/show :universes [1])
+      (with-out-str (util/patch-cfg!))
+      (into {} (for [fixture (show/all-fixtures)]
+                 [(:key fixture) {:universe (into #{} (map :universe) (:channels fixture))
+                                  :channels (afterglow-channels fixture)}])))))
 
 (defn- dmx-channels
   "Attribute -> absolute coarse/fine DMX channels for a fixture at address."
@@ -99,25 +119,20 @@
                  :let [{:keys [offset fine-offset]} (channel value)]]
              [attribute (cond-> [(+ address offset -1)] fine-offset (conj (+ address fine-offset -1)))])))
 
-(defn- legacy-channels [type-id address]
-  (dmx-channels (:channels (patched legacy-types type-id)) address))
+(defn- venue-patch []
+  (into {} (for [{:keys [id universe channels address]} (gig/fixtures)]
+             [id {:universe #{universe} :channels (dmx-channels channels address)}])))
 
 (deftest legacy-patch-addresses-map-to-the-same-dmx-channels
-  (let [legacy (legacy-addresses)
-        current (into {} (map (juxt :id identity)) (gig/fixtures))]
-    (is (= (set (keys legacy)) (set (keys current))))
-    (testing "every group but :moving lands on the same DMX channels"
-      (doseq [[id {:keys [type address]}] legacy
-              :when (not= :moving (first (:groups (current id))))]
-        (is (= 1 (:universe (current id))))
-        (is (= (legacy-channels type address)
-               (dmx-channels (:channels (current id)) (:address (current id))))
-            (str id))))
-    (testing ":offset 0 on :moving: Afterglow rejected the HY12x12 and put the beam at 16"
-      (is (= {:type :rgbw-12-12-moving :address nil :computed 0} (legacy :moving-1)))
-      (is (= {:type :rgbw-60-moving-beam :address 16 :computed 16} (legacy :moving-2))))
-    (testing "the corrected :offset 1 patches the HY12x12 at 1-16 and shifts the beam by one"
-      (is (= (legacy-channels :rgbw-12-12-moving 1)
-             (dmx-channels (:channels (current :moving-1)) (:address (current :moving-1)))))
-      (is (= (update-vals (legacy-channels :rgbw-60-moving-beam 16) #(mapv inc %))
-             (dmx-channels (:channels (current :moving-2)) (:address (current :moving-2))))))))
+  (let [legacy (legacy-patch 0)
+        current (venue-patch)]
+    (testing "every fixture outside :moving lands on the same universe and DMX channels"
+      (doseq [id (keys current) :when (not (#{:moving-1 :moving-2} id))]
+        (is (= (legacy id) (current id)) (str id))))
+    (testing ":offset 0 on :moving: Afterglow rejected the HY12x12 and the beam went to 16"
+      (is (= (disj (set (keys current)) :moving-1) (set (keys legacy))))
+      (is (= [16 17] (get-in legacy [:moving-2 :channels :pan])))
+      (is (= (update-vals (get-in legacy [:moving-2 :channels]) #(mapv inc %))
+             (get-in current [:moving-2 :channels]))))
+    (testing "with the venue's :offset 1 the legacy patcher produces the venue's whole DMX map"
+      (is (= (legacy-patch 1) current)))))

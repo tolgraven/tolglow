@@ -47,6 +47,9 @@ existing room.
 Both Thunder Wash manuals give the same strobe channel: 0-5 open, 6-10
 closed, 11-250 strobe slow to fast and 251-255 open. The RGB manual rates it
 0-30 Hz and the RGBW manual 1-30 Hz. Flash duration is 0 (or 1) to 510 ms.
+Unless an effect sets it, the flash duration channel stays at 0, the shortest
+flash, whenever the fixture's own strobe runs. The gig had the same default;
+how visible that is on the hardware has not been checked.
 Beam angles and power are the manuals' figures: 75° and 110 W for the RGB
 model, 104° and 160 W for the RGBW model. OFL lists 75° and 130 W for the RGB
 model and 75° for the RGBW model.
@@ -98,11 +101,14 @@ The legacy patch also did not say how the 3 m mini heads were hung.
 
 `tolglow.venues.gig-2023-parity-test` (parity lane) expands the legacy maps
 quoted in the issue with the original `tolglow.fixtures/create`, compares
-footprints, calibration and channel offsets with the portable types, and
-replays the legacy group patcher. Every attribute of every fixture outside the
-`:moving` group lands on the same DMX channel as in the legacy show. The test
-pins the `:moving` correction: the legacy patcher rejected the HY12x12 at 0 and
-placed the beam at 16, and the venue places the beam one channel later.
+footprints, calibration and channel offsets with the portable types, and runs
+the legacy group patcher `tolglow.util/patch-cfg!` on the legacy patch table
+in a headless Afterglow show (nothing is opened or sent). Every attribute of
+every fixture outside the `:moving` group lands on the same universe and DMX
+channel as in the legacy show. The test pins the `:moving` correction: the
+legacy patcher rejected the HY12x12 at 0 and placed the beam at 16, and the
+venue places the beam one channel later. Run with the corrected `:offset 1`,
+the legacy patcher produces the venue's whole DMX map.
 
 `tolglow.venues.gig-2023-test` (pure lane) pins the address table, keeps every
 fixture inside the room, checks the Thunder Wash strobe bands through
