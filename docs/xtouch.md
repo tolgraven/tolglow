@@ -180,9 +180,13 @@ Link modes, all saved with the show as
   span (16 for main plus extender).
 - **mirror** shows the leader's window on every member and pages by the
   leader's width.
-- **follow** keeps each later member `:offset` pages after the leader (for
-  example a Studio page one page to the right of a Push) and pages by the
-  leader's width, so following never makes the leader skip pages.
+- **follow** starts each later member `:offset` *leader* pages after the
+  leader's window (start + offset × leader width) and shows the member's own
+  width of cells from there, so a narrower follower is truncated and a wider
+  one runs on past the leader's next page. The leader's window is never
+  scaled. Example: a Studio page one page to the right of a Push. The window
+  pages by the leader's width, so following never makes the leader skip
+  pages.
 
 Members link when their descriptors declare the same content axis for the
 named viewports (`:channels` for X-Touch `:strips` and Push `:encoders`), not
@@ -191,13 +195,24 @@ Otherwise windows stay on multiples of the leader's width, so with 20 strips
 the second page shows strips 17–20 on whichever unit sits at the window's left
 edge.
 
+Paging can drift off the span's grid when the span is not a multiple of the
+leader's width. Bank buttons step by the whole span, while the last window
+sits on a multiple of the leader's width. For an 8 + 4 extend over 40 strips,
+`:next` three times goes 0 → 12 → 24 → 32 (the last page), and `:previous`
+twice from there goes 20 → 8. Equal-width units (two X-Touch units) never
+drift.
+
 While a member is unavailable (disconnected or handed to Live) the extend
 layout is repacked over the attached members only: the window, paging,
 `:last` and reveal cover just the units that are there, so a lone main unit or
 a lone extender pages through every strip from 1. The full layout returns when
 the unit reattaches under the same session ID. A connected surface belongs to
-its device: only its own connection can attach over it or remove it, and
-detaching or removing an unknown surface is refused. Links and windows are
+its device: only its own connection can detach it, attach over it or remove
+it, and Studio or REPL users unlink instead. `/api/command` never lets a
+browser speak as a device's connection. Detaching or removing an unknown
+surface is refused. A refused attach or detach from a device connection is
+logged and shown as `:last-refusal` on that surface (and under `:refusals`) in
+the snapshot's `:control-surfaces` until its next accepted connection command. Links and windows are
 saved with the show; surfaces load detached. Touch ownership, held cues and
 motor feedback stay per unit: a fader held across a bank change keeps writing
 the strip it touched. See

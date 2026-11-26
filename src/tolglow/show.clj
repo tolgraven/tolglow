@@ -246,7 +246,8 @@
             :auto (select-keys (:auto model) [:enabled? :config :reasons])
             :responses (vec (:responses model))
             :effect-group-channels (group-channels/projection model)
-            :control-surfaces (surface/projection model) ; surfaces, links and session boxes (#705)
+            :control-surfaces (surface/with-refusals (surface/projection model) ; surfaces, links, session boxes (#705)
+                                                     (some-> (:surface-refusals runtime) deref))
             :effect-events (get-in model [:variables :runtime] {:event-sequence 0 :events []})
             :patch (routing/snapshot model)
             :modulation {:controllers (mapv #(select-keys % [:id :config :ticks :next-beat :owner-instance-id])
@@ -499,7 +500,7 @@
                             :input (atom {:epoch (:epoch model) :position initial-position
                                           :used-sessions #{(get-in initial-position [:provenance :session-id])}})})
       :sync-input (atom {:epoch (:epoch model) :events []})
-      :connections owned :devices (atom {}) :device-reconnects (atom {}) :development development
+      :connections owned :devices (atom {}) :device-reconnects (atom {}) :surface-refusals (atom {}) :development development
       :rdm (rdm/create (merge (:rdm-options options)
                              {:state rdm-state :model! #(get @(:state @runtime-ref) :model)
                               :identity! #(let [runtime @runtime-ref]
@@ -2937,19 +2938,20 @@
 (defn- surface-command!
   "Enqueue a host surface command without waiting: the owner may be ticked by
   the caller, and a device reads a missing surface as strip 0. A watcher off
-  the owner thread logs a refusal and records it as :surface-command-error."
+  the owner thread logs a refusal and keeps it for the snapshot's
+  :control-surfaces until that surface's next accepted host command."
   [runtime epoch surface-id command]
   (let [receipt (submit! runtime (merge {:source {:adapter :surface :session-id surface-id} :expected-epoch epoch}
                                         command))]
     (.start (doto (Thread. (fn []
                              (let [{:keys [status] :as ack} (deref receipt 30000 {:status :timeout})]
-                               (when (and (not= :accepted status) @(:running runtime))
-                                 (timbre/warn "Control surface command refused" surface-id (:op command)
-                                              (select-keys ack [:status :code :message]))
-                                 (locking (:lock runtime)
-                                   (swap! (:state runtime) assoc-in [:status :surface-command-error]
-                                          (merge {:surface-id surface-id :op (:op command)}
-                                                 (select-keys ack [:status :code :message])))))))
+                               (cond
+                                 (= :accepted status) (swap! (:surface-refusals runtime) dissoc surface-id)
+                                 @(:running runtime)
+                                 (do (timbre/warn "Control surface command refused" surface-id (:op command)
+                                                  (select-keys ack [:status :code :message]))
+                                     (swap! (:surface-refusals runtime) assoc surface-id
+                                            (merge {:op (:op command)} (select-keys ack [:status :code :message])))))))
                            "tolglow-surface-command")
               (.setDaemon true)))
     receipt))

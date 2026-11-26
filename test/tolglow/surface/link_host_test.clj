@@ -238,6 +238,8 @@
       (testing "a connected surface belongs to its device"
         (let [revision (:revision (show/snapshot runtime))]
           (doseq [command [{:op :control-surface/remove :surface-id "xt-ext"}
+                           {:op :control-surface/detach :surface-id "xt-ext"}
+                           {:op :control-surface/detach :surface-id "xt-ext" :source {:adapter :surface :session-id "xt-ext"}}
                            {:op :control-surface/attach :surface-id "xt-ext" :descriptor :behringer/x-touch :role :main
                             :viewports {:strips {:type :none}}}
                            {:op :control-surface/detach :surface-id "nope"}
@@ -339,9 +341,15 @@
       (finally (show/stop! runtime)))))
 
 ;; A 4-strip unit for width tests, registered like any other descriptor.
-(defmethod descriptor/descriptor :test/four-strip [_]
-  (assoc descriptor/x-touch-ext :id :test/four-strip :viewports {:strips [4 1]}
-         :groups (update-vals (:groups descriptor/x-touch-ext) #(assoc % :geometry [4 (second (:geometry %))]))))
+(defn- strip-descriptor [id width]
+  (assoc descriptor/x-touch-ext :id id :viewports {:strips [width 1]}
+         :groups (update-vals (:groups descriptor/x-touch-ext) #(assoc % :geometry [width (second (:geometry %))]))))
+
+(defmethod descriptor/descriptor :test/four-strip [_] (strip-descriptor :test/four-strip 4))
+
+(defmethod descriptor/descriptor :test/sixteen-strip [_] (strip-descriptor :test/sixteen-strip 16))
+
+(def ^:private forty {:type :mixer-strips :cue-strips (mapv #(hash-map :cue-id (keyword (str "s" %))) (range 40))})
 
 (defn- pure-attach [m id descriptor & [content]]
   (:model (surface/apply-operation m {:op :control-surface/attach :surface-id id :descriptor descriptor :role :unit
@@ -375,7 +383,12 @@
 (deftest a-detached-member-repacks-so-the-others-reach-every-strip
   (let [linked (-> (model) (pure-attach "m" :behringer/x-touch) (pure-attach "e" :behringer/x-touch-ext)
                    (pure-link {:members [{:surface-id "m"} {:surface-id "e"}]}))
-        main-out (:model (surface/apply-operation linked {:op :control-surface/detach :surface-id "m"}))]
+        main-out (:model (surface/apply-operation linked {:op :control-surface/detach :surface-id "m"
+                                                          :source {:adapter :surface :session-id "m"}}))]
+    (is (= :surface-owned (:control/error (try (surface/apply-operation linked {:op :control-surface/detach :surface-id "m"
+                                                                                :source {:adapter :web :session-id "s"}})
+                                               (catch clojure.lang.ExceptionInfo e (ex-data e)))))
+        "Only the device's own connection detaches a connected surface")
     (is (= [0 nil] (windows main-out "e" "m")) "The extender moves to strip 1 while the main unit is away")
     (is (= [8 [16]] [(:x (:window (surface/window (bank main-out :next) "desk" nil))) (windows (bank main-out :last) "e")])
         "One unit pages by 8 and reaches strips 17-20")
@@ -400,3 +413,68 @@
                  (surface/apply-operation base {:op :control-surface/link :link-id "desk"
                                                 :members [{:surface-id "xt"} {:surface-id "push" :viewport :grid}]}))
         "A cue grid does not link with a channel strip")))
+
+(deftest follow-offsets-count-in-leader-pages-for-any-follower-width
+  (doseq [[descriptor width] [[:test/four-strip 4] [:test/sixteen-strip 16]]]
+    (let [linked (-> (model) (pure-attach "lead" :behringer/x-touch forty) (pure-attach "f" descriptor forty)
+                     (pure-link {:mode :follow :members [{:surface-id "lead"} {:surface-id "f" :offset {:x 1 :y 0}}]}))
+          shown (fn [m] (let [{:keys [members]} (surface/window m "desk" nil)
+                              f (some #(when (= "f" (:surface-id %)) %) members)]
+                          [(:x (:window (first members))) (:x (:window f)) (mapv :x (:cells f))]))]
+      (is (= [0 8 (vec (range 8 (+ 8 width)))] (shown linked)) (str width "-wide follower starts one leader page on"))
+      (is (= [1 9] (subvec (shown (bank linked :channel-next)) 0 2)) "Channel steps move both by one strip")
+      (is (= [8 16] (subvec (shown (bank linked :next)) 0 2)) "Bank steps by the leader's width")
+      (is (= [32 40 []] (shown (bank linked :last))) "At the last page the follower's tail is past the strips"))))
+
+(deftest reveal-in-follow-mode-pages-an-attached-follower-when-the-leader-is-away
+  (let [linked (-> (model) (pure-attach "lead" :behringer/x-touch forty) (pure-attach "f" :behringer/x-touch-ext forty)
+                   (pure-link {:mode :follow :members [{:surface-id "lead"} {:surface-id "f" :offset {:x 1 :y 0}}]}))
+        away (:model (surface/apply-operation linked {:op :control-surface/detach :surface-id "lead"
+                                                      :source {:adapter :surface :session-id "lead"}}))
+        revealed (:model (surface/apply-operation away {:op :control-surface/bank :target "desk" :reveal [:cue :s21]}))]
+    (is (= [16] (windows revealed "f")) "The follower now shows strips 17-24, which hold s21")
+    (is (= 8 (:x (:window (surface/window revealed "desk" nil)))))))
+
+(deftest load-checks-axes-and-unknown-content-is-an-invalid-link
+  (let [base (-> (model) (pure-attach "push" :ableton/push-2 {:type :none}) (pure-attach "xt" :behringer/x-touch))
+        linked (pure-link base {:members [{:surface-id "xt"} {:surface-id "push" :viewport :encoders}]})]
+    (is (= linked (surface/validate-state! linked)))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (surface/validate-state! (assoc-in linked [:extensions ::surface/state :links "desk" :members 1 :viewport] :grid)))
+        "A hand-edited strips + grid link is refused on load"))
+  (let [m (-> (model) (pure-attach "a" :behringer/x-touch) (pure-attach "b" :behringer/x-touch-ext)
+              (assoc-in [:extensions ::surface/state :surfaces "a" :viewports :strips :content] {:type ::no-axis}))]
+    ;; A content type registered for cells but not for an axis.
+    (defmethod surface/content-cells ::no-axis [_ _] [])
+    (try
+      (is (= :invalid-link (:control/error (try (surface/apply-operation m {:op :control-surface/link :link-id "desk"
+                                                                            :members [{:surface-id "a"} {:surface-id "b"}]})
+                                                (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+      (finally (remove-method surface/content-cells ::no-axis)))))
+
+(defn- eventually [f]
+  (loop [n 0] (let [v (f)] (if (or v (> n 200)) v (do (Thread/sleep 10) (recur (inc n)))))))
+
+(deftest a-refused-host-attach-stays-in-the-snapshot-until-the-next-accepted-one
+  (let [{:keys [runtime tick! owner!] :as h} (harness)]
+    (try
+      (connect! h "xt-main" :main main-options)
+      (connect! h "xt-ext" :ext {:extender? true})
+      (tick!)
+      (owner! #(deref (show/link-surfaces! runtime "dup" ["xt-main" "xt-ext"]) 2000 ::missing))
+      (connect! h "dup" :spare {})
+      (tick!)
+      (let [refusal (eventually #(get-in (show/snapshot runtime) [:control-surfaces :refusals "dup"]))]
+        (is (= {:op :control-surface/attach :status :rejected :code :invalid-surface} (dissoc refusal :message)))
+        (tick!)
+        (is (= refusal (get-in (show/snapshot runtime) [:control-surfaces :refusals "dup"])) "It survives owner ticks"))
+      (owner! #(deref (show/unlink-surfaces! runtime "dup") 2000 ::missing))
+      (show/disconnect-device! runtime "dup")
+      (tick!)
+      (connect! h "dup" :spare {})
+      (tick!)
+      (is (eventually #(nil? (get-in (show/snapshot runtime) [:control-surfaces :refusals "dup"])))
+          "The next accepted attach clears it")
+      (is (= ["dup" "xt-ext" "xt-main"] (mapv :id (:surfaces (surfaces runtime)))))
+      (finally (show/stop! runtime)))))
+
