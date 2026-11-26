@@ -95,7 +95,11 @@
   [{:keys [transport handle session-id counter log]} op payload]
   (when-not (contains? operations op) (fail! "Unknown Live connection operation" {:op op}))
   (let [id (str session-id "/" (swap! counter inc))
-        receipt (update ((:request! transport) handle id op payload) :status keywordize)]
+        receipt (try (update ((:request! transport) handle id op payload) :status keywordize)
+                     ;; The request may have reached Live before the transport failed.
+                     (catch Exception e
+                       {:id id :status :indeterminate
+                        :error {:code :transport-failure :message (.getMessage e)}}))]
     (when-not (and (map? receipt) (= id (:id receipt)) (#{:executed :rejected :indeterminate} (:status receipt)))
       (fail! "Live connection returned an invalid receipt" {:op op :id id}))
     (swap! log conj {:id id :op op :status (:status receipt)})
