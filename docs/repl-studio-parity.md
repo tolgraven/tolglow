@@ -389,10 +389,18 @@ A refusal reads the same from both sides: linking a missing parameter returns
 previous links. A destination that disappears later stays in the projection as
 `:status :dangling` with a `:reason`.
 
-**Tracked gaps.** Studio and Push panels are in progress on
-[issue #666](https://github.com/tolgraven/tolglow/issues/666). Close this gap
-when an operator can create, link and turn a knob in Studio, see the same
-resolved values from the REPL, and turn it from a Push encoder.
+In Studio, **Perform → Live → Knobs** shows the same knob: the slider, and per
+link the label, resolved text and status. Moving the slider sends `:knob/set`;
+**Add destination**, the range fields, **Direction**, **Curve** and **Remove**
+send `:knob/link`, `:knob/unlink` and `:knob/remove`. After the REPL turns the
+knob, the open slider and values follow from the projection. A refused link
+shows its reason in the panel. [Studio walkthrough](linked-knobs.md#using-it-from-studio)
+
+**Tracked gaps.** The Studio picker links numeric destinations only. Colour,
+enum and boolean links are created from the REPL. Push encoder binding is in
+progress on [issue #666](https://github.com/tolgraven/tolglow/issues/666).
+Close this gap when Studio can set non-numeric endpoints and a Push encoder
+turns the same knob and shows the same resolved values.
 
 ## Reviewing a show feature
 

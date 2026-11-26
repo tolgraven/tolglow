@@ -392,8 +392,14 @@
   (or (get-in model [:knobs :knobs knob-id])
       (fail! "Unknown knob" {:knob-id knob-id})))
 
+(defn- link-id
+  "Link IDs are stored as text, so a keyword sent by a form surface edits the
+  same link as the text ID the REPL used."
+  [id]
+  (if (keyword? id) (subs (str id) 1) id))
+
 (defn- normalized-link [link]
-  (cond-> (merge {:direction :up :curve :linear :input [0 1]} (dissoc link :dangling))
+  (cond-> (merge {:direction :up :curve :linear :input [0 1]} (update (dissoc link :dangling) :id link-id))
     (nil? (:quantize link)) (dissoc :quantize)
     (nil? (:unit link)) (dissoc :unit)))
 
@@ -487,7 +493,7 @@
 
       :knob/unlink
       (let [knob (knob! model knob-id)
-            link-id (:link-id command)]
+            link-id (link-id (:link-id command))]
         (check (some #(= link-id (:id %)) (:links knob)) "Unknown link" {:link-id link-id})
         {:model (assoc-in model [:knobs :knobs knob-id :links] (vec (remove #(= link-id (:id %)) (:links knob))))
          :events [{:type :knob/unlinked :knob-id knob-id :link-id link-id}]})

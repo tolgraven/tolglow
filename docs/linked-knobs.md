@@ -156,6 +156,9 @@ Knobs reuse the existing override contract. They add no parallel one.
 - **Two knobs on one destination.** Both are allowed. Each link lists the other
   knobs in `:shared-with`. The last committed knob write wins, in owner command
   order. There is no averaging or priority between knobs.
+- **Editing a link** (range, direction, curve, window) changes how the knob
+  resolves but writes nothing. The link shows `:diverged?` until the knob next
+  moves, so reshaping a range while authoring never jumps a destination.
 - **Removing a knob** deletes only its links. Destinations keep their
   definitions and current values, including any waveform period, duty or gain
   the knob last set.
@@ -206,6 +209,33 @@ unrelated launch. Other reasons are derived again from the restored show.
 
 The waveform must be bound first, for example with `:modulation-bind` as in
 [modulation.md](modulation.md#waveforms-on-a-running-instance).
+
+## Using it from Studio
+
+**Perform → Live → Knobs** lists every knob with a slider, and under it each
+link's destination, resolved value with units (for example **1/2 beats**), its
+range, direction and curve. Type a name and select **Create knob**. Open **Add
+destination**, choose a running cue's numeric parameter, a bound waveform's
+low, gain (high), period or input, or a show variable, then set **From**,
+**To**, **Direction**, **Curve**, **Steps** (continuous, whole numbers,
+preferred or free beat ratios) and the **Knob start**/**Knob end** window, and
+select **Link**. Fractions such as `1/2` are accepted. Studio sends the same
+`:knob/*` commands and redraws from the committed `:knobs` projection, so a
+REPL `:knob/set` moves the open slider and values. A link that differs from the
+knob, is shared with another knob, inactive or dangling says so under its
+name. The picker offers numeric destinations only; colour, enum and boolean
+links made from the REPL are shown and can be re-shaped, but their endpoints
+are edited from the REPL.
+
+`dev/tolglow/qa/knobs_browser.clj` drives this in headless Chrome against the
+preview-only demo show on port 4300: it builds a four-link knob in the panel,
+turns it, edits a direction, checks the projection and destination values
+through `/api/state`, checks a refusal, then sets the knob from the JVM and
+checks the open page follows.
+
+```
+CHROMIUM_PATH=... lein with-profile +dev run -m tolglow.qa.knobs-browser target/knobs-browser 4300
+```
 
 ## Verification
 
