@@ -435,8 +435,15 @@ async function phone() {
 // every animation-frame callback (the Room, Reagent renders and the timeline
 // loop) with the panel open and hidden.
 async function frameBudget() {
-  const {context, page, problems} = await launch('budget', {width: 1440, height: 900});
+  // The Room renders only while its canvas is in the viewport. At 1440 x 900
+  // the open timeline pushes it below the fold, so the viewport is tall enough
+  // for both, and each measurement first checks that the Room is rendering.
+  const {context, page, problems} = await launch('budget', {width: 1440, height: 1440});
   try {
+    await page.addInitScript(() => {
+      window.__roomActive = null;
+      document.addEventListener('tolglow-preview-activity', event => { window.__roomActive = event.detail; }, true);
+    });
     await page.addInitScript(() => {
       const native = window.requestAnimationFrame.bind(window);
       const stats = window.__frameCost = {frames: [], current: 0, scheduled: false};
@@ -447,8 +454,10 @@ async function frameBudget() {
       });
     });
     await ready(page);
+    await page.bringToFront();
     assert.ok(await page.locator('#preview-panel canvas').count() >= 1, 'the Room is mounted beside the timeline');
     const measure = async ms => {
+      await page.waitForFunction(() => window.__roomActive === true, null, {timeout: 10000});
       await page.evaluate(() => { window.__frameCost.frames.length = 0; });
       const frames = motion(await page.evaluate(ms => new Promise(done => {
         const out = []; const read = t => { out.push([t, -out.length]); if (t - out[0][0] < ms) requestAnimationFrame(read); else done(out); };
@@ -456,7 +465,9 @@ async function frameBudget() {
       }), ms));
       const costs = (await page.evaluate(() => window.__frameCost.frames.slice())).sort((a, b) => a - b);
       const at = q => costs[Math.min(costs.length - 1, Math.floor(costs.length * q))];
-      return {frames: costs.length, callbackMs: {median: at(0.5), p95: at(0.95), max: costs.at(-1)}, frameIntervalMs: frames.frameMs};
+      const roomRendering = await page.evaluate(() => window.__roomActive === true);
+      assert.ok(roomRendering, 'the Room kept rendering through the measurement');
+      return {frames: costs.length, roomRendering, callbackMs: {median: at(0.5), p95: at(0.95), max: costs.at(-1)}, frameIntervalMs: frames.frameMs};
     };
     await sleep(2000);
     const open = await measure(8000);
@@ -464,7 +475,7 @@ async function frameBudget() {
     await sleep(1000);
     const hidden = await measure(8000);
     await page.locator('#timeline-panel').getByRole('button', {name: 'Show', exact: true}).click();
-    report.measurements.frameBudget = {viewport: '1440x900 @1x', roomOpen: true, timelineOpen: open, timelineHidden: hidden,
+    report.measurements.frameBudget = {viewport: '1440x1440 @1x', roomRendering: true, timelineOpen: open, timelineHidden: hidden,
       addedMedianMs: open.callbackMs.median - hidden.callbackMs.median, addedP95Ms: open.callbackMs.p95 - hidden.callbackMs.p95};
     assert.deepEqual(problems, [], 'no page errors');
     pass('frame cost measured with the Room open', report.measurements.frameBudget);
