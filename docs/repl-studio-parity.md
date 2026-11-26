@@ -283,7 +283,8 @@ and the committed selection stays on both sides. Studio's **Reshuffle shapes**
 chooses a random seed, while the REPL names one. Studio blends the heaviest
 current part with one other personality; the REPL can mix up to four.
 
-Reviewed at `0ecbe763` with the optimized build in headless Chrome 155 through
+Reviewed at `0ecbe763` and rechecked at `23485c2c` (same Studio sources, master
+merged) with the optimized build in headless Chrome 155 through
 the application's own REPL session: a Studio selection was read from the REPL,
 a REPL selection updated the open panel, and the refusal matched on both
 sides. [Operator guide](personalities.md) ·
