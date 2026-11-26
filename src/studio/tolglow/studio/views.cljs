@@ -15,6 +15,7 @@
             [tolglow.studio.preview-playback :as playback]
             [tolglow.studio.airplay :as airplay]
             [tolglow.studio.room-window :as room-window]
+            [tolglow.studio.panel-layout :as panel-layout]
             [tolglow.studio.block-builder :as block-builder]
             [tolglow.studio.material-designer :as materials]
             [tolglow.studio.connections :as connections]
@@ -463,7 +464,7 @@
      [:button.text-button.preview-fullscreen-tools
       {:type "button" :aria-pressed (boolean (get-in db [:ui :fullscreen-preview-controls?]))
        :on-click #(set-ui! [:fullscreen-preview-controls?] (not (get-in db [:ui :fullscreen-preview-controls?])))} "Controls"]
-     (when-not (room-window/popped? db)
+     (when-not (or (room-window/popped? db) (panel-layout/active-layout db))
        [:button.text-button.preview-expand-control {:type "button" :aria-pressed (boolean (get-in db [:ui :preview-expanded?]))
                               :on-click #(send! [:studio/preview-expand])} (if (get-in db [:ui :preview-expanded?]) "Compact" "Expand")])
      [:button.icon-button {:type "button" :aria-label "Fullscreen preview" :title "Fullscreen preview"
@@ -607,23 +608,26 @@
 
 (defn- perform-view [db]
   (let [section (get-in db [:ui :performance-section] "cues")
-        count-active (count (get-in db [:show :instances]))]
+        count-active (count (get-in db [:show :instances]))
+        custom? (some? (panel-layout/active-layout db))]
     [:section#view-perform.view {:hidden (not= :perform (get-in db [:ui :view]))
-                                :data-section section}
+                                :data-section section :data-layout (if custom? "custom" "built-in")}
      [:div.perform-heading [:h1 "Perform"]
       [:span.small.muted (str count-active " running")]
       [:div.perform-section-tabs {:role "group" :aria-label "Performance sections"}
        (for [[id title] [["cues" "Cues"] ["live" (str "Live · " count-active)] ["room" "Room"]]]
          ^{:key id} [:button {:type "button" :aria-pressed (= id section)
-                              :on-click #(set-ui! [:performance-section] id)} title])]]
+                              :on-click #(set-ui! [:performance-section] id)} title])]
+      [panel-layout/toolbar db]]
      [timeline/panel]
-     [:div.performance-layout {:class (when (get-in db [:ui :preview-expanded?]) "preview-expanded")}
-      [:div.performance-launch [cue-grid db]]
-      [:div.performance-live [section-pattern-panel db] [personality/panel] [performance/board db parameter-control]
-       [effect-group-mixer/panel] [knobs/panel db]
-       [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
-      [:div.performance-room [room-window/room db preview-panel]]
-      [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]]]))
+     [panel-layout/arrangement db
+      {:class (when (and (not custom?) (get-in db [:ui :preview-expanded?])) "preview-expanded")}
+      {:cues [:div.performance-launch [cue-grid db]]
+       :live [:div.performance-live [section-pattern-panel db] [personality/panel] [performance/board db parameter-control]
+              [effect-group-mixer/panel] [knobs/panel db]
+              [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
+       :room [:div.performance-room [room-window/room db preview-panel]]
+       :tools [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]}]]))
 
 (defn- slot-parameter-editor [db index slot]
   (let [cue (find-id (get-in db [:show :cues]) (:cue-id slot))
