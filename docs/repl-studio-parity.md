@@ -986,6 +986,44 @@ Gaps:
 
 [Run tracks in Live](live-routing.md#mirror-what-ran-as-run-tracks-clips-and-group-tracks) · [Issue #683](https://github.com/tolgraven/tolglow/issues/683)
 
+## Play a cue page from the launcher pads
+
+The cue launcher (#228) has one projection, `show/live-launcher-action!` with
+`:status`. In Studio, open **Connections → Cue launcher** and choose **Show
+pads**: it draws the selected page as Push's 64 Pads grid, each pad with its
+note, cue and colour, and summarises the layout, the Live setup and the last
+pad clip. **Connections → Ableton Live → Pad layout** sets the bridge's
+`:pad-layout`, saved with **Save configuration** like the rest of the bridge.
+From the REPL:
+
+```clojure
+(show/live-launcher runtime :pads)                          ; the projection Studio shows
+(show/setup-live-launcher! runtime conn {:page-id :pads})   ; conn: live-connection/open on the launcher companion
+(show/write-live-launcher-clip! runtime conn {:page-id :pads})
+```
+
+Both read `GET /api/live-launcher?page-id=…` and the REPL function from the
+same runtime. An unknown page is refused on both: Studio receives 404, the
+REPL an exception naming the page. After a REPL setup or clip write, **Show
+pads** reports the read-back problems and the clip's status
+([test](../test/tolglow/integrations/live_launcher_test.clj)).
+
+Pad hits themselves use the shared commands: a pad launches its cue with
+`:cue/launch` from the Live bridge, as a Studio pad or the REPL would.
+
+Gaps:
+- Studio cannot run the launcher setup or write a pad clip, because the
+  runtime does not own a companion connection (as for Live runs). The REPL
+  connection's handshake takes the companion's callback ownership from the
+  Live bridge, so reconnect the bridge in Studio after a REPL setup.
+- The panel refreshes on request, not from the state stream.
+- Push has no launcher setup control; playing the pads on Push goes through
+  Live, which is the point of the layout.
+- The panel was checked through server-rendered markup and event tests, not
+  in a browser on an iPad.
+
+[Live routing](live-routing.md#play-a-cue-page-from-one-drum-rack-track) · [Issue #228](https://github.com/tolgraven/tolglow/issues/228)
+
 Video strip mapping uses one message from both surfaces. In Studio, **Rig & space → Video strips** sends `:video-mapping` edits through `POST /api/video-mapping`. The REPL sends the same edits with `show/video-action! runtime :edit`, using the geometry helpers in `tolglow.video.mapping`. Both read source status and sampled strip colours from the snapshot's `:video` key. A REPL edit redraws the open editor through the state stream. Studio has no control for a video cue's `:placement` parameters beyond the ordinary parameter controls on its card. [Video on LED strips](video-strips.md) · [Issue #672](https://github.com/tolgraven/tolglow/issues/672)
 
 Shader cues use the definition command and the video actions from both surfaces. In Studio, **Rig & space → Shader cues** launches and stops through the ordinary cue commands. It auditions GLSL through `POST /api/video/shader/audition` and saves the next version through `POST /api/video/shader/save`. The REPL calls `show/video-action! runtime :audition` and `:save-glsl` with the same `{:effect-id :glsl}` payload, and `:shaders` for the producer status Studio shows. Both see compile logs and the last-working fallback in that status. The projector page has no REPL counterpart beyond `:frame`, which returns the latched frame it draws. Studio has no editor for a shader's uniforms, size, rate or viewport. Those are edited as definition data in the library or the REPL. [Shader cues](shader-cues.md) · [Issue #673](https://github.com/tolgraven/tolglow/issues/673)

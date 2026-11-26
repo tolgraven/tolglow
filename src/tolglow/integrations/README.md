@@ -36,6 +36,13 @@ protocol. `midi->commands [bridge event envelope]` emits shared cue/parameter
 commands. Events use `:note-on`, `:note-off`, or `:cc`, 1-based channels and
 7-bit values. Note-on velocity zero is release.
 
+`pad-note [layout [x y]]` gives a page cell's Drum Rack note: `:push-64-pads`
+follows Push's 64 Pads drum grid, `:rows` the earlier rows of eight.
+`map-page` uses the bridge's `:pad-layout`. `tolglow.integrations.live-launcher`
+projects a page's 64 pads, sets the launcher track up over a companion
+connection and turns run-record takes into a clip of pad hits (#228,
+[Live routing](../../../docs/live-routing.md#play-a-cue-page-from-one-drum-rack-track)).
+
 Apply emitted launch commands through the control reducer, then call
 `acknowledge-launch [bridge note ack envelope]` to retain the exact activated
 instance. If note-off or mode handoff preceded that ack, it emits an end for

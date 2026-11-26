@@ -92,8 +92,12 @@ The [pickup and loop qualification](../../../docs/live-routing.md#record-a-picku
    bridge, choose **Bridge · confirmed clip writes** and pair the track with a
    Session clip slot or an Arrangement clip. Use zero-based indices. Save and
    start. The saved show includes the generated note numbers, CCs and pairing.
-2. The 8×8 grid maps to Drum Rack pitches 36–99, with the upper-left pad at 92.
-   Insufficient space and incompatible fields appear under **Unassigned cue
+2. The 8×8 grid maps to Drum Rack pitches 36–99 in Push's 64 Pads layout:
+   bottom-left pad 36, top-left 64, bottom-right 71, top-right 99, so a cell
+   is the same pad on Push (see
+   [Play a cue page from one Drum Rack track](../../../docs/live-routing.md#play-a-cue-page-from-one-drum-rack-track)).
+   Settings saved before that layout keep rows of eight (upper-left pad 92);
+   **Pad layout** chooses. Insufficient space and incompatible fields appear under **Unassigned cue
    and parameter mappings** after saving. Existing assignments reserve their
    pitches. Disable automatic mapping to maintain your own layout, or clear
    **Enabled** on an individual row to reserve it without responding. Moving an
@@ -248,6 +252,13 @@ performer). Everything else carries `origin: "live-playback"` (#683). Common rec
 re-records either origin. `tolglow-feedback` input is discarded. `kind:
 "run-clip"` callbacks report run-track clip starts and stops. This bridge never emits its clip-recording intents as MIDI wire
 feedback as well.
+
+The cue launcher (#228) adds `ensure-launcher`, `write-pads` and
+`inspect-launcher`: the companion's own track gets a Drum Rack after the
+companion (`Track.insert_device`, Live 12.3+) and one named, coloured chain per
+page pad (`RackDevice.insert_chain`, `DrumChain.in_note`, `Chain.name`/`color`).
+They are specified in
+[Play a cue page from one Drum Rack track](../../../docs/live-routing.md#play-a-cue-page-from-one-drum-rack-track).
 
 Automatic setup, Capture and clip write operations (`inspect-set`,
 `ensure-track`, `configure-track`, `write-clip`, `extend-clip`, `capture-midi`, `read-clip`,
