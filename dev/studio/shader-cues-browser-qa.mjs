@@ -192,11 +192,11 @@ try {
   // A projector follows blackout by default; ?master=ignore keeps the raw feed.
   const command = body => fetch(origin + '/api/command', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...body, 'command-id': crypto.randomUUID(), source: { adapter: 'web', 'session-id': 'qa' } }) });
-  const raw = await browser.newPage({ viewport: { width: 640, height: 360 } });
-  await raw.goto(`${origin}/studio/video-output.html?source=${encodeURIComponent(':shader/shader-plasma')}&master=ignore`);
+  const rawPage = await browser.newPage({ viewport: { width: 640, height: 360 } });
+  await rawPage.goto(`${origin}/studio/video-output.html?source=${encodeURIComponent(':shader/shader-plasma')}&master=ignore`);
   await projector.goto(`${origin}/studio/video-output.html?source=${encodeURIComponent(':shader/shader-plasma')}`);
   await projector.waitForFunction(() => window.tolglowVideoOutput?.frames > 2);
-  await raw.waitForFunction(() => window.tolglowVideoOutput?.frames > 2);
+  await rawPage.waitForFunction(() => window.tolglowVideoOutput?.frames > 2);
   const lit = async p => p.evaluate(() => {
     const c = document.querySelector('canvas'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
     let max = 0; for (let i = 0; i < d.length; i += 4) max = Math.max(max, d[i], d[i + 1], d[i + 2]); return max;
@@ -204,12 +204,13 @@ try {
   await command({ op: 'blackout/set', value: true });
   await projector.waitForFunction(() => window.tolglowVideoOutput.gain === '0.0');
   await sleep(200);
-  report.blackout = { followingMax: await lit(projector), rawMax: await lit(raw) };
+  report.blackout = { followingMax: await lit(projector), rawMax: await lit(rawPage) };
   assert.equal(report.blackout.followingMax, 0);
   assert.ok(report.blackout.rawMax > 100, JSON.stringify(report.blackout));
   await projector.screenshot({ path: `${out}/projector-blackout.png` });
   await command({ op: 'blackout/set', value: false });
   await projector.waitForFunction(() => window.tolglowVideoOutput.gain === '1.0');
+  await sleep(200);
   report.blackout.restoredMax = await lit(projector);
   assert.ok(report.blackout.restoredMax > 100);
   report.projectorProblems = projectorProblems;
