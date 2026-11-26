@@ -6,6 +6,8 @@
 
   lein run -m tolglow.qa.timeline <port> <control-dir>
 
+  Choose a port other than 4190: Node's fetch refuses it as an unsafe port.
+
   Files in the control directory steer the scenario while it runs:
   `match-off` stops the simulated recording match, `feel` fills the track-feel
   slot with synthetic data, and `stop` shuts the show down."

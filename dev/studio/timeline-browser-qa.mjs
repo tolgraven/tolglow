@@ -1,7 +1,7 @@
 // Browser check for the musical timeline (#646) against tolglow.qa.timeline.
 //
-//   lein run -m tolglow.qa.timeline 4190 target/timeline-qa/control
-//   CHROMIUM_PATH=... node dev/studio/timeline-browser-qa.mjs http://127.0.0.1:4190 target/timeline-qa/out target/timeline-qa/control
+//   lein run -m tolglow.qa.timeline 4191 target/timeline-qa/control
+//   CHROMIUM_PATH=... node dev/studio/timeline-browser-qa.mjs http://127.0.0.1:4191 target/timeline-qa/out target/timeline-qa/control
 //
 // Uses the production Studio build, headless Chrome and the real GPU. It
 // asserts the layout and behaviour, writes stills, a recording and report.json.
@@ -11,7 +11,7 @@ import {existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync} f
 import {join, resolve} from 'node:path';
 import {chromium} from 'playwright-core';
 
-const [origin = 'http://127.0.0.1:4190', output = 'target/timeline-qa/out', control = 'target/timeline-qa/control'] = process.argv.slice(2);
+const [origin = 'http://127.0.0.1:4191', output = 'target/timeline-qa/out', control = 'target/timeline-qa/control'] = process.argv.slice(2);
 const only = process.env.TIMELINE_QA_ONLY;
 const executablePath = process.env.CHROMIUM_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 mkdirSync(output, {recursive: true});
@@ -105,15 +105,57 @@ function motion(frames) {
   const steps = frames.slice(1).map(([time, x], index) => ({dt: time - frames[index][0], dx: x - frames[index][1]}));
   const moved = steps.filter(step => step.dx !== 0);
   const sorted = moved.map(step => -step.dx).sort((a, b) => a - b);
+  // Speed per step, so a late display frame is not mistaken for a jump.
+  const speeds = steps.filter(step => step.dt > 0).map(step => -step.dx / step.dt * 1000).sort((a, b) => a - b);
   const seconds = (frames.at(-1)[0] - frames[0][0]) / 1000;
   const intervals = steps.map(step => step.dt).sort((a, b) => a - b);
   return {frames: frames.length, seconds, movedFraction: moved.length / steps.length,
     forward: steps.every(step => step.dx <= 0.01), pixelsPerSecond: -(frames.at(-1)[1] - frames[0][1]) / seconds,
     medianStep: sorted[Math.floor(sorted.length / 2)], maxStep: sorted.at(-1),
+    speed: {median: speeds[Math.floor(speeds.length / 2)], p95: speeds[Math.floor(speeds.length * 0.95)], max: speeds.at(-1)},
     frameMs: {median: intervals[Math.floor(intervals.length / 2)], p95: intervals[Math.floor(intervals.length * 0.95)]}};
 }
 
+// Timeline items move every frame, so Playwright never sees them as "stable".
+// Send a real pointer press at the item's current position instead, after
+// checking that the point really hits it.
+async function press(page, selector, touch) {
+  const point = await page.evaluate(selector => {
+    const el = document.querySelector(selector);
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    const x = r.x + Math.min(22, r.width / 2), y = r.y + r.height / 2;
+    const hit = document.elementFromPoint(x, y);
+    return {x, y, hit: !!hit && (hit === el || el.contains(hit))};
+  }, selector);
+  assert.ok(point, 'found ' + selector);
+  assert.ok(point.hit, 'nothing covers ' + selector);
+  if (touch) await page.touchscreen.tap(point.x, point.y); else await page.mouse.click(point.x, point.y);
+}
+
+// Studio posts commands as Transit JSON: ["^ ", "~:op", "schedule/cancel", ...].
+function plain(value) {
+  if (typeof value === 'string') return value.startsWith('~:') ? value.slice(2) : value;
+  if (!Array.isArray(value)) return value;
+  if (value[0] !== '^ ') return value.map(plain);
+  const out = {};
+  for (let i = 1; i < value.length; i += 2) out[plain(value[i])] = plain(value[i + 1]);
+  return out;
+}
+
 const nearest = (xs, x) => xs.reduce((best, value) => Math.abs(value - x) < Math.abs(best - x) ? value : best, Infinity);
+
+// The scenario has short stretches with no ramp running. Take the snapshot
+// while one is under the centre line with room on both sides.
+async function snapshotWithRunningRamp(page) {
+  for (let attempt = 0; attempt < 120; attempt++) {
+    const shot = await snapshot(page);
+    const under = r => r.state === 'running' && shot.now.x - r.span.x > 8 && r.span.x + r.span.w - shot.now.x > 30;
+    if (shot.ramps.some(under) && shot.sections.some(s => s.state === 'predicted')) return shot;
+    await sleep(250);
+  }
+  throw new Error('no running ramp reached the centre line');
+}
 
 async function ready(page) {
   await page.goto(origin + '/perform', {waitUntil: 'domcontentloaded'});
@@ -130,10 +172,9 @@ async function cancelFromTimeline(page, touch) {
     .sort((a, b) => a.chip.cx - b.chip.cx)[0];
   assert.ok(candidate, 'a scheduled, cancellable event is upcoming');
   const commands = [];
-  const listen = request => { if (request.url().endsWith('/api/command') && request.method() === 'POST') commands.push(request.postDataJSON()); };
+  const listen = request => { if (request.url().endsWith('/api/command') && request.method() === 'POST') commands.push(plain(JSON.parse(request.postData()))); };
   page.on('request', listen);
-  const button = page.locator(`#timeline-panel .timeline-event[data-event-id="${candidate.id}"]`);
-  await (touch ? button.tap() : button.click());
+  await press(page, `#timeline-panel .timeline-event[data-event-id="${candidate.id}"]`, touch);
   const detail = page.locator('#timeline-panel .timeline-detail');
   await detail.waitFor();
   assert.equal(await detail.getAttribute('data-event-id'), candidate.id);
@@ -145,6 +186,7 @@ async function cancelFromTimeline(page, touch) {
   await page.locator(`#timeline-panel .timeline-event[data-event-id="${candidate.id}"][data-state=cancelled]`).waitFor({timeout: 5000});
   page.off('request', listen);
   const command = commands.find(c => c.op === 'schedule/cancel');
+  assert.ok(command, 'the timeline posted schedule/cancel: ' + JSON.stringify(commands));
   assert.deepEqual(command['event-ids'], [candidate.id], 'the timeline sent schedule/cancel for that event ID');
   const {schedule} = await state();
   assert.ok(!schedule.upcoming.some(e => e['event-id'] === candidate.id), 'gone from the owner queue');
@@ -186,21 +228,24 @@ async function desktop() {
       return {userAgent: navigator.userAgent, renderer: info && gl.getParameter(info.UNMASKED_RENDERER_WEBGL)};
     });
     await sleep(1500);
-    const shot = await snapshot(page);
+    const shot = await snapshotWithRunningRamp(page);
     report.measurements.desktop = layoutChecks('desktop', shot);
     pass('past and future split at the centre line', {nowX: shot.now.x, lanesCentreX: shot.viewport.cx});
 
     const categories = [...new Set(shot.events.map(e => e.category))];
-    const colours = new Set(shot.events.map(e => e.category + ' ' + e.colour));
+    // A rejected event is drawn in the danger colour whatever its category.
+    const accepted = shot.events.filter(e => e.state !== 'rejected');
+    const colours = new Set(accepted.map(e => e.category + ' ' + e.colour));
     assert.ok(categories.length >= 3, 'at least three action categories on screen: ' + categories);
-    assert.equal(colours.size, categories.length, 'one colour per category');
+    assert.equal(colours.size, new Set(accepted.map(e => e.category)).size, 'one colour per category');
+    assert.equal(new Set(accepted.map(e => e.colour)).size, colours.size, 'categories do not share a colour');
     assert.ok(new Set(shot.events.map(e => Math.round(e.y))).size >= 2, 'overlapping events are stacked on separate lines');
     assert.ok(shot.events.some(e => e.state === 'fired') && shot.events.some(e => e.state === 'pending'));
     pass('events are icons coloured by category in stacked lines',
       {categories, states: [...new Set(shot.events.map(e => e.state))], lines: new Set(shot.events.map(e => Math.round(e.y))).size});
 
-    const running = shot.ramps.find(r => r.state === 'running');
-    assert.ok(running.span.x < shot.now.x && running.span.x + running.span.w > shot.now.x, 'now is inside the running ramp bar');
+    const running = shot.ramps.find(r => r.state === 'running' && r.span.x < shot.now.x && r.span.x + r.span.w > shot.now.x);
+    assert.ok(running, 'now is inside the running ramp bar');
     assert.equal(running.points.split(' ').length, 17, 'the easing curve has the 17 projected samples');
     const fill = shot.fills.find(f => Math.abs(f.x - running.span.x) < 2);
     assert.ok(fill, 'the running ramp has its filled copy in the past half');
@@ -214,10 +259,19 @@ async function desktop() {
     const phraseTicks = shot.ticks.filter(t => t.kind === 'phrase').map(t => t.x);
     assert.ok(causal.length >= 1 && causal.every(s => s.x <= shot.now.x), 'confirmed sections are in the past');
     assert.ok(predicted.length >= 1 && predicted.every(s => s.x + s.w >= shot.now.x), 'predicted sections are ahead');
-    const sectionError = Math.max(...causal.map(s => Math.abs(nearest(phraseTicks, s.x) - s.x)));
+    // The synthetic music changes its bass pattern every 16 beats, which is one
+    // phrase. A section that began left of the lane has no visible boundary.
+    const boundaries = (sections, lane) => sections.filter(s => s.x >= lane.x + 1).map(s => s.x);
+    const visible = boundaries(causal, shot.viewport);
+    assert.ok(visible.length >= 1, 'a confirmed boundary is on screen');
+    const sectionError = Math.max(...visible.map(x => Math.abs(nearest(phraseTicks, x) - x)));
     assert.ok(sectionError <= 2, 'confirmed section boundaries sit on phrase lines, error ' + sectionError);
+    const predictedError = Math.max(...boundaries(predicted, shot.viewport).filter(x => x > shot.now.x)
+      .map(x => Math.abs(nearest(phraseTicks, x) - x)));
+    assert.ok(predictedError <= 2, 'predicted boundaries sit on phrase lines, error ' + predictedError);
     pass('sections: confirmed in the past, predicted ahead, boundaries on the grid',
-      {causal: causal.map(s => s.text), predicted: predicted.map(s => s.text), match: shot.match, boundaryErrorPx: sectionError});
+      {causal: causal.map(s => s.text), predicted: predicted.map(s => s.text), match: shot.match,
+       confirmedBoundaryErrorPx: sectionError, predictedBoundaryErrorPx: predictedError});
 
     const bars = shot.ticks.filter(t => t.kind !== 'beat');
     assert.ok(shot.ticks.some(t => t.kind === 'beat') && bars.length >= 16 && phraseTicks.length >= 3, 'beats, bars and phrases are ruled');
@@ -228,10 +282,13 @@ async function desktop() {
     const before = motion(await scroll(page, 3000));
     assert.ok(before.forward, 'the timeline only moves forward while playing');
     assert.ok(before.movedFraction > 0.9, 'the playhead moves on display frames, not only on committed samples: ' + before.movedFraction);
-    assert.ok(before.maxStep < before.medianStep * 3.5, 'no jumps: max step ' + before.maxStep + ' vs median ' + before.medianStep);
+    assert.ok(before.speed.p95 < before.speed.median * 2.5 && before.speed.max < before.speed.median * 6,
+      'no jumps: speed in px/s ' + JSON.stringify(before.speed));
     const pixelsPerBeat = shot.viewport.w / 64;
     const tempoBefore = (await state()).transport.bpm;
-    assert.ok(Math.abs(before.pixelsPerSecond / pixelsPerBeat * 60 - tempoBefore) < tempoBefore * 0.03, 'scroll speed is the transport tempo');
+    const measuredTempo = before.pixelsPerSecond / pixelsPerBeat * 60;
+    assert.ok(Math.abs(measuredTempo - tempoBefore) < tempoBefore * 0.03,
+      `scroll speed is the transport tempo: measured ${measuredTempo} BPM at ${pixelsPerBeat} px a beat, transport ${tempoBefore}`);
     pass('the playhead is interpolated at display rate', before);
 
     const cancelled = await cancelFromTimeline(page, false);
@@ -248,12 +305,14 @@ async function desktop() {
     await sleep(1200);
     const after = motion(await scroll(page, 3000));
     const gridAfter = await snapshot(page);
-    assert.ok(Math.abs(spacing(gridAfter) - spacing(gridBefore)) < 0.01, 'bars keep their width: the axis is beats');
+    // Positions are written to a hundredth of a pixel.
+    assert.ok(Math.abs(spacing(gridAfter) - spacing(gridBefore)) < 0.05,
+      `bars keep their width, the axis is beats: ${spacing(gridBefore)} then ${spacing(gridAfter)}`);
     assert.ok(Math.abs(after.pixelsPerSecond / before.pixelsPerSecond - 96 / tempoBefore) < 0.03, 'the scroll slows with the tempo');
     assert.ok(after.movedFraction > 0.9 && after.forward);
     const causalAfter = gridAfter.sections.filter(s => s.source === 'causal');
     const phraseAfter = gridAfter.ticks.filter(t => t.kind === 'phrase').map(t => t.x);
-    const errorAfter = Math.max(...causalAfter.map(s => Math.abs(nearest(phraseAfter, s.x) - s.x)));
+    const errorAfter = Math.max(...boundaries(causalAfter, gridAfter.viewport).map(x => Math.abs(nearest(phraseAfter, x) - x)));
     assert.ok(errorAfter <= 2, 'sections still sit on phrase lines after the tempo change: ' + errorAfter);
     const pendingAfter = gridAfter.events.filter(e => e.state === 'pending' && /-(wash|period|spot|slow)$/.test(e.id));
     const barXs = gridAfter.ticks.filter(t => t.kind !== 'beat').map(t => t.x);
@@ -284,7 +343,7 @@ async function desktop() {
     await page.screenshot({path: join(output, 'desktop-4-bars.png')});
     await page.getByRole('button', {name: 'Zoom out: show more bars'}).click();
     await page.getByRole('button', {name: 'Hide audio lane'}).click();
-    assert.equal(await page.locator('#timeline-panel canvas').count(), 0, 'a collapsed lane is not rendered');
+    await page.locator('#timeline-panel canvas').waitFor({state: 'detached', timeout: 3000});
     await page.getByRole('button', {name: 'Show audio lane'}).click();
     await page.locator('#timeline-panel canvas').waitFor();
     pass('zoom and collapsible lanes', {windows: ['±8 bars', '±16 bars', '±4 bars'], barSpacingPx: [spacing(gridAfter), spacing(wide)]});
@@ -397,7 +456,7 @@ async function recording() {
     const target = first.events.filter(e => e.state === 'pending' && /-(spot|slow|period|accent|wash)$/.test(e.id) && e.chip.cx - first.now.x > 80)
       .sort((a, b) => a.chip.cx - b.chip.cx)[0];
     if (target) {
-      await page.locator(`#timeline-panel .timeline-event[data-event-id="${target.id}"]`).click();
+      await press(page, `#timeline-panel .timeline-event[data-event-id="${target.id}"]`, false);
       await sleep(1500);
       await page.locator('#timeline-panel .timeline-detail').getByRole('button', {name: /^Cancel event /}).click();
       await sleep(2500);

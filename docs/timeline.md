@@ -147,8 +147,8 @@ committed sample. A pause, seek, loop or new show epoch snaps.
 
 ```sh
 npm run studio:build
-lein run -m tolglow.qa.timeline 4190 target/timeline-qa/control
-node dev/studio/timeline-browser-qa.mjs http://127.0.0.1:4190 target/timeline-qa/out target/timeline-qa/control
+lein run -m tolglow.qa.timeline 4191 target/timeline-qa/control
+node dev/studio/timeline-browser-qa.mjs http://127.0.0.1:4191 target/timeline-qa/out target/timeline-qa/control
 ```
 
 `tolglow.qa.timeline` is a preview-only show. It runs the real owner,
