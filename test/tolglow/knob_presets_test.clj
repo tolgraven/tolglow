@@ -146,7 +146,9 @@
             (is (not (close? (+ 0.25 (* 0.5 0.2)) (:pan (params rt aim)))) "the pan is eased, not linear")))
         (is (= [:selected :stored] (map #(:state (slot-view rt %)) [0 1])))
         (is (true? (:matches? (slot-view rt 0))))
-        (is (= :accepted (:status (submit! rt 150 {:op :knob-preset/recall :slot 1}))))
+        (is (= :accepted (:status (submit! rt 150 {:op :knob-preset/recall :slot 1
+                                                   :expected {"look" 0.8 "rate" 0.9}})))
+            "a browser may send knob IDs back as text")
         (check-look! 0.8 0.9 "recall slot 1")
         (is (= [0.0 0.0 1.0] (:hue (params rt tint))))
         (testing "turning a knob keeps the selection but marks it moved"
@@ -158,6 +160,8 @@
             (is (= :stale-knob-preset (:code (submit! rt 180 {:op :knob-preset/recall :slot 0 :expected {:look 0.3}}))))
             (is (= :stale-knob-preset (:code (submit! rt 185 {:op :knob-preset/capture :slot 0 :overwrite? true
                                                               :expected nil}))))
+            (is (= :stale-knob-preset (:code (submit! rt 186 {:op :knob-preset/recall :slot 0
+                                                              :expected {:look 0.2 :rate 0.1 :extra 0.5}}))))
             (is (= :empty-knob-preset (:code (submit! rt 190 {:op :knob-preset/recall :slot 5}))))
             (is (= :invalid-knob-preset (:code (submit! rt 200 {:op :knob-preset/recall :slot 8}))))
             (is (= bank (presets/bank (model rt))))

@@ -55,11 +55,26 @@
   (when-not (slot? slot) (fail! :invalid-knob-preset "A knob look slot is 0–7" {:slot slot}))
   slot)
 
+(defn- wire-key [id] (if (keyword? id) (subs (str id) 1) (str id)))
+
+(defn- same-contents?
+  "Whether shown slot contents match the stored ones. A browser may return knob
+  IDs as keywords or text and whole positions as integers."
+  [expected stored]
+  (if (or (nil? expected) (nil? stored))
+    (and (nil? expected) (nil? stored))
+    (and (map? expected) (= (count expected) (count stored))
+         (let [shown (update-keys expected wire-key)]
+           (every? (fn [[id value]]
+                     (let [v (get shown (wire-key id))]
+                       (and (number? v) (== v value))))
+                   stored)))))
+
 (defn- check-expected!
   "A surface that presented a slot sends what it showed as :expected (nil for
   an empty pad); a slot changed elsewhere since is refused, not overwritten."
   [command stored]
-  (when (and (contains? command :expected) (not= (:expected command) stored))
+  (when (and (contains? command :expected) (not (same-contents? (:expected command) stored)))
     (fail! :stale-knob-preset "That knob look changed since it was shown. Look again and retry"
            {:slot (:slot command)})))
 
