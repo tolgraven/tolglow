@@ -194,17 +194,22 @@
             bar (long (Math/floor (/ beat (:beats-per-bar meter 4))))]
         (cond
           (nil? base) (do (post-block! runtime (inc bar)) (recur (inc bar)))
-          (>= bar (+ base 6)) (do (post-block! runtime (+ base 8)) (recur (+ base 8)))
+          (>= bar (- base 1)) (do (post-block! runtime (+ base 8)) (recur (+ base 8)))
           :else (recur base))))))
 
 (def ^:private feel
-  {:id :qa/squares :label "Squares (synthetic)"
-   :palette ["#f45232" "#dda647" "#69bac7"]
-   :icon-svg (str "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'>"
-                  "<rect width='48' height='48' rx='9' fill='#171b18'/>"
-                  "<rect x='7' y='9' width='18' height='18' fill='#f45232'/>"
-                  "<rect x='20' y='19' width='20' height='13' fill='#dda647'/>"
-                  "<rect x='12' y='30' width='11' height='11' fill='#69bac7'/></svg>")})
+  "Shaped like the active entry of the personality projection (#647): SVG text
+  under :icon and a palette of [r g b] colours, a gradient and a split."
+  {:id :qa/squares :name "Squares (synthetic)" :version 1 :seed 0 :current? true
+   :palette [[0.957 0.322 0.196]
+             {:gradient [{:position 0.0 :color [0.867 0.651 0.278]} {:position 1.0 :color [1.0 1.0 1.0]}] :angle-deg 0}
+             {:split [[0.412 0.729 0.780] [0.1 0.1 0.1]] :angle-deg 90}]
+   :forms [{:form :square :weight 0.6} {:form :rectangle :weight 0.4}]
+   :icon (str "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'>"
+              "<rect width='48' height='48' rx='9' fill='#171b18'/>"
+              "<rect x='7' y='9' width='18' height='18' fill='#f45232'/>"
+              "<rect x='20' y='19' width='20' height='13' fill='#dda647'/>"
+              "<rect x='12' y='30' width='11' height='11' fill='#69bac7'/></svg>")})
 
 (defn- follow-controls! [runtime running? ^File directory]
   (loop [shown? false]

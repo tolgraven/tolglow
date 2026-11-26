@@ -114,10 +114,16 @@ statistics and targets when it runs, otherwise the measured scene. Audio
 features older than two seconds are `:available? false` with no value.
 
 **Feel.** A slot for the active track-feel personality from
-[#647](https://github.com/tolgraven/tolglow/issues/647). The projection passes
-`:id`, `:label` or `:name`, `:icon-svg` or `:icon-url`, and `:palette` through
-from the show variable `:music/personality`. That key is provisional until the
-personality projection exists.
+[#647](https://github.com/tolgraven/tolglow/issues/647). The slot reads the
+active entry of the personality projection as data: `:id`, `:name` (or a
+`:label`), the icon as SVG text under `:icon` (or `:icon-svg`, or a data URI
+under `:icon` / `:icon-url`), and the palette. Palette entries become CSS
+colours here, not in the browser: `[r g b]` in 0..1 becomes `#rrggbb`, a
+gradient or split shows its first colour, a string passes through. Other keys
+(forms, motion, concurrency) are dropped, and nothing drawable gives `nil`.
+Until the personality projection is merged, `show/timeline` reads the map from
+the show variable `:music/personality`; that source key is provisional, and the
+merge should point it at the projection's `:active` entry instead.
 
 ## The Studio panel
 

@@ -401,6 +401,41 @@
        (assoc :used-watts (round-to (:used-watts budget) 1) :limit-watts (round-to (:limit-watts budget) 1)))
      (axis :activity "Activity" :score)]))
 
+;; Track feel ------------------------------------------------------------------------
+
+(defn- css-colour
+  "A palette colour as CSS text: strings pass through, [r g b] in 0..1 becomes
+  #rrggbb, a gradient or split entry shows its first colour."
+  [entry]
+  (cond
+    (string? entry) entry
+    (and (vector? entry) (= 3 (count entry)) (every? number? entry))
+    (apply format "#%02x%02x%02x" (map #(-> (double %) (max 0.0) (min 1.0) (* 255.0) Math/round int) entry))
+    (seq (:gradient entry)) (css-colour (:color (first (:gradient entry))))
+    (seq (:split entry)) (css-colour (first (:split entry)))
+    :else nil))
+
+(defn- feel-view
+  "The active track-feel personality as the Studio slot draws it. Accepts the
+  personality projection's active entry (#647: :id :name :icon SVG text,
+  palette of colours, gradients or splits) or a hand-made map with :label,
+  :icon-svg or :icon-url and CSS colour strings. Other keys are dropped; nil
+  when nothing drawable is left."
+  [feel]
+  (when (map? feel)
+    (let [{:keys [id label name icon icon-svg icon-url palette]} feel
+          svg (or icon-svg (when (and (string? icon) (re-find #"^\s*<svg" icon)) icon))
+          url (or icon-url (when (and (string? icon) (re-find #"^data:image/" icon)) icon))
+          colours (into [] (comp (map css-colour) (remove nil?) (take 8)) palette)]
+      (not-empty
+       (cond-> {}
+         (some? id) (assoc :id id)
+         (string? label) (assoc :label label)
+         (string? name) (assoc :name name)
+         (string? svg) (assoc :icon-svg svg)
+         (string? url) (assoc :icon-url url)
+         (seq colours) (assoc :palette colours))))))
+
 ;; Projection ------------------------------------------------------------------------
 
 (defn view
@@ -433,4 +468,4 @@
                  :match (match-status reference)}
       :audio (audio-lane model beat window waveform reference-waveform)
       :meters (meters model output)
-      :feel (when (map? feel) (select-keys feel [:id :label :name :icon-svg :icon-url :palette]))})))
+      :feel (feel-view feel)})))

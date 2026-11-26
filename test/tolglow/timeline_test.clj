@@ -479,6 +479,21 @@
   (let [feel {:id :squircle :label "Squircle" :icon-svg "<svg/>" :palette ["#f0a" "#0af"] :geometry {:private true}}]
     (is (nil? (:feel (timeline/view {:model (live-model)}))))
     (is (= (dissoc feel :geometry) (:feel (timeline/view {:model (live-model) :feel feel}))))
+    (testing "the personality projection's active entry (#647 shape) is read as data"
+      (is (= {:id :squircle :name "Squircle" :icon-svg "<svg viewBox='0 0 96 96'/>"
+              :palette ["#ff0080" "#00ff00" "#0000ff"]}
+             (:feel (timeline/view {:model (live-model)
+                                    :feel {:id :squircle :name "Squircle" :version 1 :seed 0 :current? true
+                                           :icon "<svg viewBox='0 0 96 96'/>"
+                                           :palette [[1.0 0.0 0.5]
+                                                     {:gradient [{:position 0.0 :color [0 1 0]} {:position 1.0 :color [1 1 1]}] :angle-deg 0}
+                                                     {:split [[0 0 1] [1 0 0]] :angle-deg 0}
+                                                     {:unknown true}]
+                                           :forms [{:form :squircle :weight 1.0}]
+                                           :motion {:speed 0.5}}}))))
+      (is (= {:icon-url "data:image/svg+xml;base64,AAAA"}
+             (:feel (timeline/view {:model (live-model) :feel {:icon "data:image/svg+xml;base64,AAAA"}}))))
+      (is (nil? (:feel (timeline/view {:model (live-model) :feel {:icon "not an icon" :palette [:red]}})))))
     (let [rt (runtime)]
       (try
         (is (= :accepted (:status (at! rt 0 {:op :variable/set :variable :music/personality :value feel

@@ -164,6 +164,17 @@ async function ready(page) {
   await page.locator('#timeline-panel .timeline-ramp[data-state=running]').first().waitFor({timeout: 90000});
 }
 
+// A failed run can leave the host at another tempo. Every run starts from 120
+// BPM so the tempo step really changes the tempo.
+async function setTempo(page, bpm) {
+  await page.locator('#bpm').fill(String(bpm));
+  await page.locator('#bpm').press('Enter');
+  await page.waitForFunction(bpm => new RegExp(bpm.toFixed(1).replace('.', '\\.') + ' BPM')
+    .test(document.querySelector('#timeline-panel .timeline-readout')?.textContent || ''), bpm, {timeout: 10000});
+  for (let attempt = 0; attempt < 40 && (await state()).transport.bpm !== bpm; attempt++) await sleep(100);
+  assert.equal((await state()).transport.bpm, bpm, 'the owner transport is at ' + bpm + ' BPM');
+}
+
 async function cancelFromTimeline(page, touch) {
   // A scheduled event at least two beats ahead, so it cannot fire mid-test.
   const before = await snapshot(page);
@@ -222,6 +233,7 @@ async function desktop() {
   const {context, page, problems} = await launch('desktop', {width: 1440, height: 900, scale: 2, video: false});
   try {
     await ready(page);
+    await setTempo(page, 120);
     report.measurements.gpu = await page.evaluate(() => {
       const gl = document.createElement('canvas').getContext('webgl2');
       const info = gl && gl.getExtension('WEBGL_debug_renderer_info');
@@ -286,10 +298,11 @@ async function desktop() {
       'no jumps: speed in px/s ' + JSON.stringify(before.speed));
     const pixelsPerBeat = shot.viewport.w / 64;
     const tempoBefore = (await state()).transport.bpm;
+    assert.equal(tempoBefore, 120, 'the run starts at 120 BPM');
     const measuredTempo = before.pixelsPerSecond / pixelsPerBeat * 60;
     assert.ok(Math.abs(measuredTempo - tempoBefore) < tempoBefore * 0.03,
       `scroll speed is the transport tempo: measured ${measuredTempo} BPM at ${pixelsPerBeat} px a beat, transport ${tempoBefore}`);
-    pass('the playhead is interpolated at display rate', before);
+    pass('the playhead is interpolated at display rate', {...before, measuredTempo, transportTempo: tempoBefore, pixelsPerBeat});
 
     const cancelled = await cancelFromTimeline(page, false);
     pass('cancel from the timeline sends schedule/cancel and the projection updates', cancelled);
@@ -299,9 +312,7 @@ async function desktop() {
     // Tempo change through Studio's own tempo field.
     const gridBefore = await snapshot(page);
     const spacing = shot => { const xs = shot.ticks.filter(t => t.kind !== 'beat').map(t => t.x); return xs[1] - xs[0]; };
-    await page.locator('#bpm').fill('96');
-    await page.locator('#bpm').press('Enter');
-    await page.waitForFunction(() => /96\.0 BPM/.test(document.querySelector('#timeline-panel .timeline-readout')?.textContent || ''));
+    await setTempo(page, 96);
     await sleep(1200);
     const after = motion(await scroll(page, 3000));
     const gridAfter = await snapshot(page);
@@ -319,8 +330,10 @@ async function desktop() {
     const eventError = Math.max(...pendingAfter.map(e => Math.abs(nearest(barXs, e.chip.cx) - e.chip.cx)));
     assert.ok(pendingAfter.length && eventError <= 1.5, 'events posted at bars sit on bar lines: ' + eventError);
     layoutChecks('desktop after tempo change', gridAfter);
+    const measuredAfter = after.pixelsPerSecond / pixelsPerBeat * 60;
+    assert.ok(Math.abs(measuredAfter - 96) < 96 * 0.03, 'scroll speed follows the new tempo: ' + measuredAfter);
     pass('grid, sections and events stay aligned to the transport across a tempo change',
-      {bpm: [tempoBefore, 96], barSpacingPx: [spacing(gridBefore), spacing(gridAfter)],
+      {bpm: [tempoBefore, (await state()).transport.bpm], measuredTempo: [measuredTempo, measuredAfter], barSpacingPx: [spacing(gridBefore), spacing(gridAfter)],
        pixelsPerSecond: [before.pixelsPerSecond, after.pixelsPerSecond], sectionErrorPx: errorAfter, eventErrorPx: eventError});
     await sleep(2500);
     await page.screenshot({path: join(output, 'desktop-after-tempo-change.png')});
@@ -360,10 +373,18 @@ async function desktop() {
     assert.equal((await snapshot(page)).feel, 'Track feel: none');
     flag('feel', true);
     await page.waitForFunction(() => /Squares/.test(document.querySelector('#timeline-panel .timeline-feel')?.getAttribute('aria-label') || ''), null, {timeout: 6000});
+    const feelSlot = await page.evaluate(() => {
+      const slot = document.querySelector('#timeline-panel .timeline-feel');
+      const img = slot.querySelector('img');
+      return {label: slot.getAttribute('aria-label'), icon: !!img && img.complete && img.naturalWidth > 0,
+        swatches: [...slot.querySelectorAll('.timeline-feel-palette i')].map(i => getComputedStyle(i).backgroundColor)};
+    });
+    assert.ok(feelSlot.icon, 'the personality icon SVG is drawn');
+    assert.equal(feelSlot.swatches.length, 3, 'colour, gradient and split palette entries each give a swatch');
     await page.screenshot({path: join(output, 'desktop-feel-slot.png')});
     flag('feel', false);
     await page.waitForFunction(() => document.querySelector('#timeline-panel .timeline-feel')?.getAttribute('aria-label') === 'Track feel: none', null, {timeout: 6000});
-    pass('the feel slot is empty until data fills it');
+    pass('the feel slot is empty until data fills it, then draws the personality projection shape', feelSlot);
 
     // Meters move with the music.
     const levels = [];
@@ -371,10 +392,11 @@ async function desktop() {
     assert.ok(new Set(levels.map(l => l[0])).size > 3 && new Set(levels.map(l => l[2])).size > 3, 'RMS and energy meters update');
     pass('meters update', {samples: levels.length, meters: (await snapshot(page)).meters});
 
-    await page.locator('#bpm').fill(String(tempoBefore));
-    await page.locator('#bpm').press('Enter');
     assert.deepEqual(problems, [], 'no page errors');
-  } finally { await context.close(); }
+  } finally {
+    await setTempo(page, 120).catch(error => console.error('could not restore 120 BPM', error));
+    await context.close();
+  }
 }
 
 async function tablet(name, width, height) {
@@ -462,13 +484,12 @@ async function recording() {
       await sleep(2500);
       await page.locator('#timeline-panel .timeline-detail').getByRole('button', {name: 'Close'}).click();
     }
-    await page.locator('#bpm').fill('96');
-    await page.locator('#bpm').press('Enter');
+    await setTempo(page, 96);
     await sleep(6000);
-    await page.locator('#bpm').fill('120');
-    await page.locator('#bpm').press('Enter');
+    await setTempo(page, 120);
     await sleep(3000);
   } finally {
+    await setTempo(page, 120).catch(() => {});
     await context.close();
     const directory = join(output, 'video-recording');
     const file = readdirSync(directory).find(name => name.endsWith('.webm'));
