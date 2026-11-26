@@ -137,8 +137,14 @@
                     (swap! clock + 50)
                     (show/tick! runtime 3850)
                     (is (= :reference (get-in @(:state runtime) [:section-pattern-state :pending :mode])))
-                    (let [old-position (:position @(get-in runtime [:section-reference :input]))
-                          _ (is (true? ((:publish! callbacks) old-position)))
+                    (let [input (get-in runtime [:section-reference :input])
+                          ;; The player worker republishes its aged alignment every
+                          ;; sample period, so a position read outside the input lock
+                          ;; can fall behind the stored clock before it is offered back.
+                          old-position (locking input
+                                         (let [position (:position @input)]
+                                           (is (true? ((:publish! callbacks) position)))
+                                           position))
                           response (reconnect (body))
                           second (get-in response [:body :session-id])]
                       (is (= 200 (:status response)))

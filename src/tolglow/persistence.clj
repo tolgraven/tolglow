@@ -52,6 +52,7 @@
             [tolglow.routing :as routing]
             [tolglow.knobs :as knobs]
             [tolglow.audio-lfo :as audio-lfo]
+            [tolglow.knob-presets :as knob-presets]
             [tolglow.integrations.audio-return :as audio-return]
             [tolglow.integrations.section-patterns :as section-patterns]
             [tolglow.integrations.ableton :as ableton])
@@ -370,6 +371,10 @@
   (when (contains? (:extensions model) variations/state-key)
     (check! (variations/valid-saved-state? (get-in model [:extensions variations/state-key]))
             [:extensions variations/state-key] "Invalid cue variation banks"))
+  ;; Knob looks (#547).
+  (when (contains? (:extensions model) knob-presets/state-key)
+    (check! (knob-presets/valid-saved-state? (get-in model [:extensions knob-presets/state-key]))
+            [:extensions knob-presets/state-key] "Invalid knob looks"))
   (check! (map? (:settings model {})) [:settings] "Settings must be an explicit portable map")
   (try (group-channels/validate-state! model)
        (catch clojure.lang.ExceptionInfo error
