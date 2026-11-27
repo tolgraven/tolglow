@@ -55,7 +55,11 @@ async function showDevices(page) {
   const panel = page.locator('section[aria-label="Live runs"]');
   await panel.waitFor({timeout: 20000});
   await panel.locator('#parameter-devices-refresh').click();
-  await panel.locator('ul.parameter-device-channels').waitFor({timeout: 20000});
+  // A first click right after a cold GPU Chrome start was once lost under
+  // other lanes' load; press again once before failing.
+  try { await panel.locator('ul.parameter-device-channels').waitFor({timeout: 20000}); }
+  catch { await panel.locator('#parameter-devices-refresh').click();
+          await panel.locator('ul.parameter-device-channels').waitFor({timeout: 20000}); }
   await panel.locator('.parameter-devices').scrollIntoViewIfNeeded();
   return panel;
 }
