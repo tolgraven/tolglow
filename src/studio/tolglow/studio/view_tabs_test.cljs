@@ -3,7 +3,7 @@
             [reagent.core :as r]
             ["react-dom/server" :refer [renderToStaticMarkup]]
             [tolglow.studio.events :as events]
-            [tolglow.studio.events-test :refer [base transition full-frame]]
+            [tolglow.studio.events-test :as events-test :refer [base transition full-frame]]
             [tolglow.studio.show-window :as show-window]
             [tolglow.studio.view-tabs :as tabs]))
 
@@ -102,7 +102,7 @@
     (testing "its own runtime installs as usual"
       (let [own (full-frame bound (assoc (:show base) :runtime-id "show-a" :show-id :main))]
         (is (= "show-a" (get-in own [:db :show :runtime-id])))
-        (is (some? (:studio/stream-reply own)))))
+        (is (some? (events-test/stream-reply own)))))
     (testing "an unbound browser tab follows its server"
       (is (false? (show-window/refuses? base "anything")))
       (is (= "show-b" (get-in (full-frame (dissoc base :show) (assoc (:show base) :runtime-id "show-b" :show-id :main))

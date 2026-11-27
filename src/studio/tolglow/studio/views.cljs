@@ -500,7 +500,7 @@
      [:button.icon-button {:type "button" :aria-label "Fullscreen preview" :title "Fullscreen preview"
                             :on-click #(input! [:studio/preview-fullscreen])} "⛶"]]]
    [scene-draft-banner db]
-   [spatial-preview/scene (events/room-show db) (get-in db [:server-projection :view :settings :spatial]) :perform]
+   [spatial-preview/scene (interop/room-input (events/room-show db)) (get-in db [:server-projection :view :settings :spatial]) :perform]
    [camera-controls/controls]
    (when (get-in db [:ui :preview-controls?])
      [:div.preview-settings

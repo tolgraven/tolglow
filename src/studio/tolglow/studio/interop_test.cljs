@@ -65,3 +65,26 @@
     (is (= 10 @rate))
     (present! "next show" 2)
     (is (nil? @rate))))
+
+(deftest a-show-frame-leaves-the-room-input-unchanged
+  (let [show {:runtime-id "r" :show-id "main" :epoch 1 :revision 4 :master 0.8 :blackout? false
+              :rig {:fixtures [{:id "head-1"}]} :instances [{:id "1:1"}] :frame-number 10 :time-ms 250
+              :transport {:beat 3.5} :schedule {:entries []}
+              :status {:frame-ms 1.2 :output-scheduler {:queued 2} :last-intents [{:type "instance/finished"}]}
+              :output {:atmosphere {:sources []} :universes {1 [255]}}}
+        next-frame (-> show (assoc :frame-number 11 :time-ms 275) (assoc-in [:transport :beat] 3.6)
+                       (assoc-in [:status :frame-ms] 1.4) (assoc-in [:status :output-scheduler :queued] 3))
+        input (interop/room-input show)]
+    (is (= input (interop/room-input next-frame)))
+    (is (= {:sources []} (:atmosphere input)))
+    (is (= [{:type "instance/finished"}] (:last-intents input)))
+    (is (not-any? input [:frame-number :time-ms :status :output :transport]))
+    (is (nil? (interop/room-input nil)))))
+
+(deftest a-lane-frame-waits-for-the-room-input-of-its-revision
+  (let [input {:runtime-id "r" :show-id "main" :epoch 1 :revision 4}
+        lane {:identity {:runtime-id "r" :show-id :main :epoch 1} :revision 4 :value {}}]
+    (is (interop/consistent? input lane) "typed and presented identities name the same show")
+    (is (interop/consistent? input nil))
+    (is (not (interop/consistent? input (assoc lane :revision 5))))
+    (is (not (interop/consistent? input (assoc-in lane [:identity :epoch] 2))))))
