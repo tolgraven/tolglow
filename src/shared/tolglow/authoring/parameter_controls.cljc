@@ -153,14 +153,16 @@
 (defn slot-size
   "The standard slot a control description (from `control`) occupies:
   :compact for a knob, fader, toggle, choice, colour swatch, plain field or
-  rings; :wide for a waveform or shape picker, a gradient, a range and a
-  vector of component readouts; :large for an XY pad and an XY pad with a Z
-  fader. Every card of one widget type gets the same slot. A card never
+  rings; :wide for a shape picker, a gradient, a range and a vector of
+  component readouts; :large for an XY pad, an XY pad with a Z fader and a
+  waveform selector with its live curve. Every card of one widget type gets the same slot. A card never
   changes slot while it is used: opened rings and plots are drawn over or
   beside the grid, so nothing repacks under the operator's hand."
   [{:keys [type widget]}]
   (cond
     (#{:xy :xyz} widget) :large
+    ;; A registered waveform selector draws its live curve above the choices.
+    (= :waveform type) :large
     (= :axes widget) :wide
     ;; A vector drawn without a compound widget (a colour vector) shows its
     ;; component readouts.

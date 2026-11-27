@@ -137,6 +137,8 @@ export function checkBanks(banks, where, {padCap} = {}) {
       for (const pad of card.pads) {
         assert.ok(near(pad.w, pad.h), `${id}: the pad is square (${pad.w}x${pad.h})`);
         if (padCap) assert.ok(pad.w <= padCap + 1, `${id}: the pad stays within ${padCap}px`);
+        if (padCap && card.slot === 'large') assert.ok(pad.w >= Math.min(padCap, card.box.w - 70, card.box.h - 140) - 1,
+          `${id}: the pad uses the slot up to its cap (${pad.w}px)`);
       }
       for (let r = 0; r < card.span[1]; r++) for (let c = 0; c < card.span[0]; c++) {
         const cell = `${card.row + r}:${card.col + c}`;

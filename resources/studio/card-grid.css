@@ -93,7 +93,7 @@
   container-type: size; display: grid; grid-template-columns: auto; grid-template-rows: auto auto;
   justify-content: center; align-content: center; gap: 4px; width: auto; max-width: none;
 }
-#view-perform [data-slot-grid=detail] .param-row>.compound-control { --pad-cap: 220px; }
+#view-perform [data-slot-grid=detail] .param-row>.compound-control:not([data-widget=rings]) { --pad-cap: 220px; }
 #view-perform [data-slot-grid] .param-row>.compound-control[data-widget=xyz] { --pad-fader: 48px; grid-template-columns: auto 44px; }
 #view-perform [data-slot-grid] .compound-control>.parameter-xy {
   grid-column: 1; grid-row: 1; width: min(100cqw - var(--pad-fader), 100cqh - 44px, var(--pad-cap));

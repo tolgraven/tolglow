@@ -330,7 +330,10 @@ try {
     const live=page.getByRole('button',{name:/^Live ·/});
     if(await live.isVisible()) await (touch ? live.tap() : live.click());
     await positionBoard(page);
-    assert.equal(await page.locator('.strip-monitor,.parameter-visualizer').count(),0,'Static inputs have no scopes');
+    // The desktop run leaves the Wave selector running with a fixture-driven sample.
+    const waveSelector=page.locator('article',{has:page.getByRole('heading',{name:'Wave selector',exact:true})});
+    assert.equal(await page.locator('.strip-monitor,.parameter-visualizer').count()
+                 -await waveSelector.locator('.strip-monitor,.parameter-visualizer').count(),0,'Static inputs have no scopes');
     await page.screenshot({path:join(directory,name+'.png')});
     measurements[name]=await measureCards(page);
     assert.equal(measurements[name].horizontalOverflow,0,'Document overflow at '+name);
@@ -338,7 +341,8 @@ try {
     await checkStripContainment(page, name);
     await checkCardGrid(page, name, directory, measurements[name]);
     await positionBoard(page);
-    if(process.env.STUDIO_CARD_LAYOUT_ONLY==='1') {
+    // The wide run checks layout only; the source and shell flows ran at desktop.
+    if(process.env.STUDIO_CARD_LAYOUT_ONLY==='1' || name==='wide') {
       await page.close();
       continue;
     }

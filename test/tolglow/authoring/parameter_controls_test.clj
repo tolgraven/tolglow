@@ -85,14 +85,14 @@
     (testing "pickers, gradients, ranges and component readouts are wide"
       (is (= #{:wide}
              (set (map slot [{:type :enum :values [:sine :saw]}
-                             {:type :number :semantic/type :waveform-selector :choices [{:value 0 :id :sine}]}
                              {:type :gradient} {:type :range :bounds [0 1]}
                              {:type :vector :size 3}
                              {:type :vector :size 2 :bounds [0 1] :ui/widget :axes}
                              {:type :vector :size 3 :semantic/type :rgb :bounds [0 1]}])))))
-    (testing "pads are large"
+    (testing "pads and waveform selectors are large"
       (is (= #{:large} (set (map slot [{:type :vector :size 2 :bounds [-1 1]}
-                                       {:type :vector :size 3 :bounds [0 1]}])))))
+                                       {:type :vector :size 3 :bounds [0 1]}
+                                       {:type :number :semantic/type :waveform-selector :choices [{:value 0 :id :sine}]}])))))
     (testing "spans are whole slots of one unit"
       (is (= {:compact [1 1] :wide [2 1] :large [2 2]} controls/slot-sizes))
       (is (= [1 1] (controls/slot-span :unknown))))))
