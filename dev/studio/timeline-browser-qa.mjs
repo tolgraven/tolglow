@@ -214,7 +214,8 @@ async function cancelFromTimeline(page, touch) {
   assert.equal(outcome.reason, 'operator-cancel');
   const after = await snapshot(page);
   const marker = after.events.find(e => e.id === candidate.id);
-  assert.ok(marker.chip.cx <= after.now.x + 2, 'the cancelled marker is in the past half');
+  assert.ok(marker.chip.cx <= after.now.x + 2,
+    `the cancelled marker is in the past half: ${(marker.chip.cx - after.now.x).toFixed(2)} px right of now, at ${outcome['at-beat']}`);
   assert.match(await detail.textContent(), /Cancelled/);
   assert.equal(await detail.getByRole('button', {name: /^Cancel event /}).count(), 0, 'nothing left to cancel');
   return {eventId: candidate.id, command: {op: command.op, 'event-ids': command['event-ids'], source: command.source},
