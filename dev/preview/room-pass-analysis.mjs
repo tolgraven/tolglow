@@ -71,9 +71,45 @@ export function beginPassSample(options) {
   if (!defer) window.startRoomPassSample();
 }
 
+const median = xs => {
+  const sorted = [...xs].sort((a, b) => a - b), middle = sorted.length / 2;
+  return sorted.length % 2 ? sorted[Math.floor(middle)] : (sorted[middle - 1] + sorted[middle]) / 2;
+};
+
+// Node side. A held sample is valid only if every accepted frame rendered the
+// captured mean density and fog time and no frame reported a broken hold.
+export function heldMediumInvalid(medium, capture, accepted) {
+  if (!medium || !capture) return true;
+  return medium.heldFrames !== accepted || medium.brokenHoldFrames !== 0 ||
+    [medium.minimum, medium.maximum].some(d => d !== capture.meanDensity) ||
+    [medium.minimumTime, medium.maximumTime].some(t => t !== capture.time);
+}
+
+// Node side. Contention comes and goes within a sample, so a sample median can
+// land anywhere between a quiet and a contended level. Split the accepted
+// frames into equal time blocks (2 s for ten blocks of a 20 s sample) and
+// require the block medians to spread by at most `tolerance` of their median.
+export function stationarityOf(values, offsetsMs, durationMs, {blocks = 10, tolerance}) {
+  const result = reason => ({blocks, tolerance, blockMediansMs, spread, stationary: !reason, reason: reason || null});
+  let blockMediansMs = [], spread = null;
+  if (!Array.isArray(values) || values.some(v => !Number.isFinite(v))) return result('frame times missing');
+  const timed = Array.isArray(offsetsMs) && offsetsMs.length === values.length && Number.isFinite(durationMs) && durationMs > 0;
+  const groups = Array.from({length: blocks}, () => []);
+  values.forEach((value, i) => {
+    const block = timed ? Math.floor(offsetsMs[i] / (durationMs / blocks)) : Math.floor(i * blocks / values.length);
+    groups[Math.max(0, Math.min(blocks - 1, block))].push(value);
+  });
+  if (groups.some(group => group.length < 5)) return result('fewer than five frames in a block');
+  blockMediansMs = groups.map(median);
+  spread = (Math.max(...blockMediansMs) - Math.min(...blockMediansMs)) / median(blockMediansMs);
+  return result(spread > tolerance ? 'block medians spread '+(100 * spread).toFixed(1)+'% (limit '+(100 * tolerance)+'%)' : null);
+}
+
 // Node side. Groups each scenario's pass samples, compares the first and last
 // `full` samples, and reports every middle sample against their mean. A
-// sequence whose brackets disagree beyond the tolerance attributes nothing.
+// sequence whose brackets disagree beyond the tolerance attributes nothing,
+// and a middle is resolved only when it is stationary and lies further from
+// the bracket mean than the brackets lie from each other.
 export function compareBrackets(scenarios, tolerance) {
   const groups = new Map();
   for (const sample of scenarios) if (sample.pass) {
@@ -91,6 +127,7 @@ export function compareBrackets(scenarios, tolerance) {
     readyForFrameP50Ms: s.passTimingsMs?.readyForFrameMs?.p50 ?? null});
   const relative = (value, reference) => !Number.isFinite(value) || !Number.isFinite(reference) ? null
     : reference === 0 ? (value === 0 ? 0 : null) : (value - reference) / reference;
+  const stationary = s => s.stationarity ? s.stationarity.stationary : null;
   const comparisons = [];
   for (const [scenario, samples] of groups) {
     if (samples.length < 3 || samples[0].pass !== 'full' || samples.at(-1).pass !== 'full') continue;
@@ -102,13 +139,19 @@ export function compareBrackets(scenarios, tolerance) {
       return r == null || Math.abs(r) > limit;
     }).map(([key]) => key+' '+(brackets[key]?.relative == null ? 'unavailable'
       : (100 * brackets[key].relative).toFixed(2)+'% (limit '+(100 * tolerance[key])+'%)'));
+    const bracketsAgree = !disagreements.length && [samples[0], samples.at(-1)].every(s => stationary(s) !== false);
+    const bracketMean = key => first[key] == null || last[key] == null ? null : (first[key] + last[key]) / 2;
     const middles = samples.slice(1, -1).map(sample => {
       const m = metrics(sample);
-      return {name: sample.name, pass: sample.pass, values: m, relativeToBracketMean: Object.fromEntries(Object.keys(m).map(key =>
-        [key, relative(m[key], first[key] == null || last[key] == null ? null : (first[key] + last[key]) / 2)]))};
+      const relativeToBracketMean = Object.fromEntries(Object.keys(m).map(key => [key, relative(m[key], bracketMean(key))]));
+      const difference = relativeToBracketMean.workerFrameP50Ms, spread = brackets.workerFrameP50Ms.relative;
+      const resolved = bracketsAgree && stationary(sample) !== false && difference != null && spread != null &&
+        Math.abs(difference) > Math.abs(spread);
+      return {name: sample.name, pass: sample.pass, values: m, stationary: stationary(sample), relativeToBracketMean,
+        resolved, reading: resolved ? 'resolved' : 'not resolved'};
     });
     comparisons.push({scenario, first: samples[0].name, last: samples.at(-1).name, tolerance, brackets,
-      disagreements, bracketsAgree: !disagreements.length, middles});
+      bracketStationary: [stationary(samples[0]), stationary(samples.at(-1))], disagreements, bracketsAgree, middles});
   }
   return comparisons;
 }

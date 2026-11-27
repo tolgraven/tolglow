@@ -14,11 +14,17 @@ export async function measureRoom(durationMs) {
     return {backing: [canvas.width, canvas.height], css: [rect.width, rect.height], dpr: devicePixelRatio};
   };
   const startSize = size();
+  // A resize reverted before the end must still count: check every second
+  // and count window resize events, not only the start and end sizes.
+  let sizeChanges = 0, windowResizes = 0;
+  const checkSize = () => {if (JSON.stringify(size()) !== JSON.stringify(startSize)) sizeChanges++;};
+  const onResize = () => {windowResizes++;};
   const worker = initial.thread === 'worker' ? engine.worker : null;
   const renderer = engine.fallback || engine;
   const frames = [], display = [], qualities = new Set(), sizes = new Set(), scales = new Set(), samples = [];
   let raf, qualityTimer, passDiagnostic, ended;
   const inspect = () => {
+    checkSize();
     const t = engine.getTelemetry();
     qualities.add(t.quality);
     sizes.add(JSON.stringify(t.pixels)); scales.add(t.renderScale);
@@ -54,6 +60,7 @@ export async function measureRoom(durationMs) {
   const focusChange = () => { if (document.hidden || !document.hasFocus()) invalid.push('backgrounded'); };
   document.addEventListener('visibilitychange', focusChange);
   window.addEventListener('blur', focusChange);
+  window.addEventListener('resize', onResize);
   try {
     // Prepared diagnostic collection shares this synchronous browser boundary.
     // Node-side API reads and OS qualification before/after cannot add frames.
@@ -65,6 +72,7 @@ export async function measureRoom(durationMs) {
     if (worker) worker.removeEventListener('message', onBitmap);
     else renderer.draw = original;
     window.removeEventListener('blur', focusChange);
+    window.removeEventListener('resize', onResize);
     document.removeEventListener('visibilitychange', focusChange);
     cancelAnimationFrame(raf); clearInterval(qualityTimer);
     passDiagnostic = window.finishRoomPassSample?.();
@@ -81,7 +89,8 @@ export async function measureRoom(durationMs) {
       overOneAndHalfTargetInterval: targetMs ? gaps.filter(ms => ms > 1.5 * targetMs).length : null};
   };
   const end = engine.getTelemetry(), rect = canvas.getBoundingClientRect(), endSize = size();
-  if (JSON.stringify(startSize) !== JSON.stringify(endSize)) invalid.push('canvas size or display scale changed during the sample');
+  if (JSON.stringify(startSize) !== JSON.stringify(endSize) || sizeChanges || windowResizes)
+    invalid.push('canvas size or display scale changed during the sample');
   const fields = ['renderer', 'deviceRenderer', 'softwareRenderer', 'targetRefreshHz', 'quality',
     'frameCPUms', 'gpuTimeMs', 'gpuCompletionWaitMs', 'workerFrameMs', 'sceneSamples', 'edgeFilter',
     'renderScale', 'displayRange', 'fixtureCount', 'visibleFixtures', 'activeLights', 'shadowCount',
@@ -103,6 +112,7 @@ export async function measureRoom(durationMs) {
     presented, windowRaf, cadence, policySamples: samples, scales: [...scales], frameOffsetsMs: frames.map(t => t - boundary),
     qualities: [...qualities], sceneSizes: [...sizes].map(s => JSON.parse(s)), backing: [canvas.width, canvas.height],
     css: [rect.width, rect.height], dpr: devicePixelRatio, displayPixels: end.displayPixels, startSize,
+    sizeChecks: {changedChecks: sizeChanges, windowResizes},
     // Geometry of the screen holding the window; browsers expose no display name here.
     screen: {width: screen.width, height: screen.height, availLeft: screen.availLeft ?? null, availTop: screen.availTop ?? null,
       colorDepth: screen.colorDepth, isExtended: screen.isExtended ?? null},

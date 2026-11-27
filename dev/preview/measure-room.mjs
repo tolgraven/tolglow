@@ -1,68 +1,26 @@
 // Run from the built Tolglow checkout. This command owns its show and tab.
 import {spawn, execFileSync} from 'node:child_process';
 import {createHash, randomUUID} from 'node:crypto';
-import {createWriteStream} from 'node:fs';
-import {mkdir, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
+import {createWriteStream, rmSync} from 'node:fs';
+import {mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import {chromium} from 'playwright-core';
 import {measureRoom} from './room-cadence.mjs';
-import {beginPassSample, compareBrackets} from './room-pass-analysis.mjs';
+import {beginPassSample, compareBrackets, heldMediumInvalid, stationarityOf} from './room-pass-analysis.mjs';
+import {parseRoomOptions} from './room-options.mjs';
 import {readDesktopSession, watchDesktopSession} from './desktop-session.mjs';
 
 const [cdp = 'http://127.0.0.1:9223', output = 'target/room-device'] = process.argv.slice(2);
-// An empty variable means the default, the same as an unset one.
-const env = name => process.env[name]?.trim() || undefined;
-const flag = name => {
-  const value = env(name)?.toLowerCase();
-  if (value == null || ['0', 'false', 'no'].includes(value)) return false;
-  if (['1', 'true', 'yes'].includes(value)) return true;
-  throw new Error(name+' must be 1, true, 0 or false.');
-};
-const quality = env('ROOM_QUALITY') || 'auto';
-if (!['auto', 'mobile', 'desktop'].includes(quality)) throw new Error('ROOM_QUALITY must be auto, mobile or desktop.');
-const workLight = Number(env('ROOM_WORK_LIGHT') ?? .22);
-const lightingMode = env('ROOM_LIGHTING_MODE') || 'hold';
-const minimumWarmupMs = Number(env('ROOM_WARMUP_MS') ?? 8000);
-if (!Number.isFinite(workLight) || workLight < 0 || workLight > 1) throw new Error('ROOM_WORK_LIGHT must be between zero and one.');
-if (!['hold', 'interpolate'].includes(lightingMode)) throw new Error('ROOM_LIGHTING_MODE must be hold or interpolate.');
-if (!Number.isInteger(minimumWarmupMs) || minimumWarmupMs < 8000 || minimumWarmupMs > 120000)
-  throw new Error('ROOM_WARMUP_MS must be between 8000 and 120000.');
-const passes = env('ROOM_PASSES')?.split(',').map(s => s.trim());
-const allowedPasses = ['full', 'full-no-timers', 'no-composite-fallback', 'simple-fixed-loop', 'cached-shadows', 'skip-fog-raymarch', 'present-cached-frame'];
-const frozenAuto = quality === 'auto' && Boolean(passes);
-// Auto accepts exactly these sequences. Each is bracketed by full renders;
-// full,full,full is the null control that calibrates the brackets' noise.
-const controlledSequences = {'full,full,full': 'null', 'full,simple-fixed-loop,full': 'loop',
-  'full,full-no-timers,full': 'timer', 'full,no-composite-fallback,full': 'composite',
-  'full,present-cached-frame,skip-fog-raymarch,cached-shadows,full': 'attribution'};
-const comparison = frozenAuto ? controlledSequences[passes.join(',')] : null;
+const options = parseRoomOptions(process.env);
+const {quality, workLight, lightingMode, minimumWarmupMs, passes, frozenAuto, comparison, scene,
+  plumeScene, fogField, keepPage, pageTitle, bracketTolerance, stationarity} = options;
 const nullComparison = comparison === 'null', loopComparison = comparison === 'loop';
 const timerComparison = comparison === 'timer', compositeComparison = comparison === 'composite';
 const attributionComparison = comparison === 'attribution';
 const controlledComparison = Boolean(comparison);
 const requestTimerExtension = !compositeComparison && !attributionComparison;
-if (passes && passes.some(p => !allowedPasses.includes(p))) throw new Error('Unknown ROOM_PASSES entry.');
-if (frozenAuto && !comparison)
-  throw new Error('ROOM_PASSES at Auto requires exactly one of: '+Object.keys(controlledSequences).join(' | ')+'.');
-if (passes && !frozenAuto && passes.some(p => ['simple-fixed-loop', 'full-no-timers', 'no-composite-fallback'].includes(p)))
-  throw new Error('The loop, timer and composite probes require Auto and their controlled sequence.');
-const scene = env('ROOM_SCENE') || 'both';
-if (!['both','dense','fixed'].includes(scene)) throw new Error('ROOM_SCENE must be both, dense or fixed.');
-if (controlledComparison && (scene !== 'dense' || minimumWarmupMs < 20000))
-  throw new Error('Controlled comparisons require the dense moving scene and ≥20 s warmup.');
-const plumeScene = flag('ROOM_PLUME_SCENE');
-if (plumeScene && (scene === 'fixed' || passes)) throw new Error('ROOM_PLUME_SCENE requires the full moving renderer.');
-// The manual preview's fog field decays toward empty air. Pass diagnostics
-// hold it at one captured state so every sample renders the same medium;
-// `decay` reproduces the unheld behaviour, which the bracket check rejects.
-const fogField = env('ROOM_FOG_FIELD') || (passes ? 'hold' : 'decay');
-if (!['hold', 'decay'].includes(fogField)) throw new Error('ROOM_FOG_FIELD must be hold or decay.');
-if (fogField === 'hold' && !passes) throw new Error('ROOM_FOG_FIELD=hold requires the ROOM_PASSES diagnostic worker.');
-// Stated tolerances for the first and last `full` samples of a sequence. A
-// sequence whose brackets differ by more is not attributed to its middle.
-const bracketTolerance = {meanDensity: .01, roomHz: .05, workerFrameP50Ms: .1};
 const plume = {position: [-1, .25, .4], direction: [1, .5, -.25], duration: 1.5, strength: 4};
 const endpoint = new URL(cdp);
 if (endpoint.protocol !== 'http:' || !['127.0.0.1', '[::1]', 'localhost'].includes(endpoint.hostname)) {
@@ -77,14 +35,27 @@ if (desktopPreflight.status !== 'unlocked') {
     qualified: false, cadenceQualified: false, desktopSession: {preflight: desktopPreflight}}, null, 2));
   console.error(error); process.exit(2);
 }
-const temp = await mkdtemp(join(tmpdir(), 'tolglow-room-device-'));
-const removeTemp = () => rm(temp, {recursive: true, force: true}).catch(() => {});
+// The temporary directory is removed on every exit path, including failures
+// before the browser starts and an interrupt before the host is running.
+let temp = null, ownedShutdown = null;
+process.once('exit', () => {if (temp) rmSync(temp, {recursive: true, force: true});});
+process.once('SIGINT', async () => {await ownedShutdown?.(); process.exit(130);});
+process.once('SIGTERM', async () => {await ownedShutdown?.(); process.exit(143);});
+temp = await mkdtemp(join(tmpdir(), 'tolglow-room-device-'));
+const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const gitHead = dir => execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], {encoding: 'utf8'}).trim();
 const fork = resolve(process.env.AFTERGLOW_ROOT || '../afterglow');
 const ui = await readFile(join(source, 'resources/studio/js/main.js'));
 const shader = await readFile(join(source, 'resources/studio/preview-worker.js'));
-const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-const metadata = {tolglow: gitHead(source), afterglow: gitHead(fork), mainJsSha256: hash(ui),
+// The Node-side harness decides validity, so name exactly what ran, and
+// whether it differs from the recorded commit.
+const harnessFiles = ['measure-room.mjs', 'room-options.mjs', 'room-cadence.mjs', 'room-pass-analysis.mjs',
+  'room-pass-worker.mjs', 'desktop-session.mjs'];
+const harness = {sha256: Object.fromEntries(await Promise.all(harnessFiles.map(async name =>
+  [name, hash(await readFile(new URL('./' + name, import.meta.url)))]))),
+  uncommittedChanges: execFileSync('git', ['-C', source, 'status', '--porcelain', '--', 'dev/preview', 'js/preview'],
+    {encoding: 'utf8'}).trim().split('\n').filter(Boolean)};
+const metadata = {tolglow: gitHead(source), afterglow: gitHead(fork), harness, mainJsSha256: hash(ui),
   workerJsSha256: hash(shader), platform: process.platform, architecture: process.arch,
   output: 'preview only', quality, workLight, lightingMode, fogField, invalid: [],
   desktopSession: {preflight: desktopPreflight, checks: [], samples: [],
@@ -92,8 +63,8 @@ const metadata = {tolglow: gitHead(source), afterglow: gitHead(fork), mainJsSha2
     polling: 'one asynchronous ioreg read at a time, 750 ms timeout, next read 1000 ms after completion; at most 32 receipts and 25 s parent sample timeout; readMs records cost'},
   warmup: {minimumSeconds: minimumWarmupMs / 1000, minimumDrawnFrames: 4}, scenarios: []};
 if (passes) metadata.diagnostic = {passes, comparison, productionCadenceAcceptance: false, frozenAuto,
-  bracketTolerance, fogField: fogField === 'hold'
-    ? 'held: captured once after warmup (and dispersal in controlled comparisons); restored after every simulation step, before its upload'
+  bracketTolerance, stationarity, fogField: fogField === 'hold'
+    ? 'held: captured once after warmup and source dispersal (and haze dispersal in controlled comparisons); restored after every simulation step, before its upload'
     : 'decaying: the manual field evolves and decays across the sequence',
   timerExtensionRequested: requestTimerExtension,
   readinessTiming: 'readyForFrameMs describes the previous frame through its acknowledgement; rafDeliveryMs and workerFrameMs describe the current frame',
@@ -129,7 +100,7 @@ if (passes) {
 try {await checkDesktop('before-server');} catch (error) {
   metadata.error = error.message; metadata.qualified = metadata.cadenceQualified = false;
   await writeFile(join(outputDir, 'room-error.json'), JSON.stringify(metadata, null, 2));
-  console.error(error.message); await removeTemp(); process.exit(2);
+  console.error(error.message); process.exit(2);
 }
 const server = spawn(process.env.LEIN || 'lein', [...leinPrefix, 'run', '-m', 'tolglow.application',
   '--config', config, '--output', 'preview', '--port', '0', '--host', '127.0.0.1'],
@@ -137,7 +108,6 @@ const server = spawn(process.env.LEIN || 'lein', [...leinPrefix, 'run', '-m', 't
 const log = createWriteStream(join(outputDir, 'host.log'));
 server.stderr.pipe(log, {end: false}); server.stdout.pipe(log, {end: false});
 let page, closing, probeWorker, frozenPolicy, comparisonView, completed = false;
-const keepPage = flag('ROOM_KEEP_PAGE');
 function stopServer() {
   if (server.pid && server.exitCode == null) {
     try {process.kill(-server.pid, 'SIGTERM');} catch (error) {if (error.code !== 'ESRCH') throw error;}
@@ -166,8 +136,7 @@ async function shutdown() {
   })();
   return closing;
 }
-process.once('SIGINT', async () => {await shutdown(); await removeTemp(); process.exit(130);});
-process.once('SIGTERM', async () => {await shutdown(); await removeTemp(); process.exit(143);});
+ownedShutdown = shutdown;
 try {
   const origin = await new Promise((ok, fail) => {
     let lines = '';
@@ -183,7 +152,7 @@ try {
   });
   await checkDesktop('before-browser');
   const browser = await chromium.connectOverCDP(endpoint.href);
-  const reuseTitle = env('ROOM_PAGE_TITLE');
+  const reuseTitle = pageTitle;
   if (reuseTitle) {
     const matches = [];
     for (const candidate of browser.contexts()[0].pages()) if (await candidate.title() === reuseTitle) matches.push(candidate);
@@ -286,9 +255,14 @@ try {
         return fog.maximumDensity < .24 && fog.activeSources === 0 && !fog.atmosphere && telemetry.passProbe?.detailActive === false;
       }, null, {timeout: 120000});
     }
-    if (fogField === 'hold' && !metadata.diagnostic.fogHold) {
-      metadata.diagnostic.fogHold = await probeWorker.evaluate(() => self.holdRoomFog());
-      console.log('Fog field held', JSON.stringify(metadata.diagnostic.fogHold));
+    if (fogField === 'hold' && !metadata.diagnostic.fogHoldCapture) {
+      // A held active source would keep injecting after production stops it.
+      await page.waitForFunction(() => {
+        const fog = document.querySelector('#preview').tolglowPreview.getTelemetry().fog;
+        return fog.activeSources === 0 && !fog.atmosphere;
+      }, null, {timeout: 120000});
+      metadata.diagnostic.fogHoldCapture = await probeWorker.evaluate(() => self.holdRoomFog());
+      console.log('Fog field held', JSON.stringify(metadata.diagnostic.fogHoldCapture));
     }
     if (controlledComparison) {
       if (loopComparison && !metadata.diagnostic.pixelComparison) {
@@ -376,13 +350,12 @@ try {
       delete measured.passDiagnostic;
       measured.passTimingsMs = timings;
       measured.passEvidence = {accepted, raymarched, traversal, medium};
-      if (fogField === 'hold') {
-        const held = metadata.diagnostic.fogHold;
-        if (medium.heldFrames !== accepted || medium.brokenHoldFrames ||
-            [medium.minimum, medium.maximum].some(d => d !== held.meanDensity) ||
-            [medium.minimumTime, medium.maximumTime].some(t => t !== held.time))
-          measured.invalid.push('fog field was not held at its captured state in every frame');
-      }
+      if (fogField === 'hold' && heldMediumInvalid(medium, metadata.diagnostic.fogHoldCapture, accepted))
+        measured.invalid.push('fog field was not held at its captured state in every frame');
+      measured.stationarity = stationarityOf(queryFrames.map(q => q.workerFrameMs), measured.frameOffsetsMs,
+        measured.durationMs, stationarity);
+      if (!measured.stationarity.stationary)
+        measured.invalid.push('worker frame time was not stationary within the sample: '+measured.stationarity.reason);
       measured.queryFrames = queryFrames;
       if (accepted !== measured.presented.frames) measured.invalid.push('diagnostic and cadence frame boundaries differ');
       if (pass !== 'present-cached-frame' && timings.fogSubmitMs?.samples !== accepted)
@@ -396,6 +369,8 @@ try {
       if (!measured.passTimingsMs.domSubmitMs?.samples) measured.invalid.push('no diagnostic presentations');
       measured.diagnosticBoundaries = {before: diagnosticBefore,
         after: await probeWorker.evaluate(() => self.getRoomPassState())};
+      // Restore count and time so far, read at the end of each sample.
+      if (measured.diagnosticBoundaries.after.fogHold) metadata.diagnostic.fogHoldEnd = measured.diagnosticBoundaries.after.fogHold;
       if (frozenAuto) {
         const same = p => JSON.stringify(p) === JSON.stringify(frozenPolicy);
         if (!Object.values(measured.diagnosticBoundaries).every(s => same(s.policy) && same(s.frozenPolicy)) ||
@@ -446,8 +421,8 @@ try {
     metadata.diagnostic.comparisons = compareBrackets(metadata.scenarios, bracketTolerance);
     for (const c of metadata.diagnostic.comparisons) {
       console.log('Bracket comparison', JSON.stringify(c));
-      if (!c.bracketsAgree) metadata.invalid.push('first and last full samples of '+c.scenario+
-        ' disagree beyond the stated tolerance: '+c.disagreements.join(', '));
+      if (!c.bracketsAgree) metadata.invalid.push('first and last full samples of '+c.scenario+' do not agree: '+
+        [...c.disagreements, ...(c.bracketStationary.includes(false) ? ['a bracket is not stationary'] : [])].join(', '));
     }
   }
   metadata.qualified = !metadata.invalid.length && metadata.scenarios.every(s => !s.invalid.length && !s.end.softwareRenderer);
@@ -474,7 +449,6 @@ try {
   console.error(error, metadata.startupTelemetry || '', metadata.browserStartup || ''); process.exitCode = 1;
 } finally {
   await shutdown();
-  await removeTemp();
   if (metadata.cleanupTimedOut) await writeFile(join(outputDir, 'room-cleanup.json'), JSON.stringify({
     checkedAt: new Date().toISOString(), ownedBrowserCleanupTimedOut: true, ownedHostStopRequested: true}, null, 2));
   // Closing this process disconnects CDP. Never issue Browser.close or close
