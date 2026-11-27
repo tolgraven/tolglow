@@ -124,12 +124,19 @@ compile cannot leave later light changes waiting seconds. Neither policy is
 proof of real-device frame rate; worker isolation is the control-responsiveness
 boundary.
 
-Desktop allocates up to 3.2 million scene pixels at DPR 2, four 1024px shadow maps and
-64 fixture meshes. Mobile permits 1.5 million at DPR 2, two 512px maps and 32 meshes.
+Desktop allocates up to 6 million scene pixels at DPR 2 (a 14-inch MacBook Pro's
+native fullscreen), four 1024px shadow maps and 64 fixture meshes. Mobile permits 1.5 million at DPR 2, two 512px maps and 32 meshes.
 High permits 3840×2160 at up to DPR 4, four 2048px maps and 128 meshes. Every tier
 presents at the panel's physical resolution up to UHD and the device's texture limit.
 `getTelemetry()` reports `pixels` (scene), `fog.targetSize`, `displayPixels`,
-`sceneSamples` and `displayRange`. All tiers share up to 16 persistent spotlights. The host projects up to 128
+`sceneSamples` and `displayRange`. A persistent pool of full-light slots (4 low, 8
+mobile and desktop, 16 high; `setLightBudget(n)` overrides) holds real
+SpotLights; `light-lod.js` ranks lit fixtures by emission × screen coverage ×
+facing the viewer, with a hold time and a margin a challenger must beat, and
+`getTelemetry().lightLod` reports the split. Every other lit fixture is a faked
+beam cone (`beams.js`) drawn into the fog's reduced raster, and its floor and wall
+footprint is accumulated into a 512² irradiance atlas (`footprints.js`) that the
+room materials sample. Faked lights cast no shadows. The host projects up to 128
 emitting targets across universes, ranked by moving-head channels, peak
 emitted RGB, then stable ID hash. Up to 16 fixed emitters retain coverage when moving
 heads saturate the projection. The scene likewise includes an emitting fixed
