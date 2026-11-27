@@ -8,6 +8,7 @@
             [tolglow.compiler :as compiler]
             [tolglow.compiler.blocks :as blocks]
             [tolglow.compiler.capability :as capability]
+            [tolglow.compiler.gradient :as gradient]
             [tolglow.lighting-match :as matching]
             [tolglow.registry :as registry]))
 
@@ -179,7 +180,7 @@
    (let [definition (or (when (and enabled? (matching/active? definition))
                           (matching/static-definition definition fixtures (registry/output-entries (:outputs definition))))
                         definition)
-         {:keys [schemas defaults outputs selected block-plan envelope-fn envelope-attributes] :as plan} (compiler/compile-plan definition)
+         {:keys [schemas defaults gradients outputs selected block-plan envelope-fn envelope-attributes] :as plan} (compiler/compile-plan definition)
          selected-outputs (into [] (keep (partial select-targets fixtures selected)) outputs)
          numeric (numeric-contract selected-outputs)
          reasons (cond-> (:reasons numeric)
@@ -196,6 +197,7 @@
        (let [groups (output-groups selected-outputs prepare-group bind-pure)
              fixture-index (when block-plan (blocks/fixture-index fixtures))
              scalar-step (compiler/compile-effect definition bind-pure nil fixtures)
+             expand-gradients (gradient/expander gradients)
              envelope-attributes (set envelope-attributes)]
          (with-meta
            (fn [{:keys [frame instance state] :as context}]
@@ -205,7 +207,7 @@
              (let [now (:time-ms frame), start (:started-at-ms instance 0)
                    _ (when-not (and (registry/finite-number? now) (registry/finite-number? start))
                        (fail! [:frame :time-ms] "Effect frame/start time must be finite milliseconds"))
-                   params (registry/resolve-params schemas (merge defaults (:params instance)))
+                   params (expand-gradients (registry/resolve-params schemas (merge defaults (:params instance))))
                    params (if block-plan (blocks/with-variables block-plan params frame) params)
                    releasing? (= :releasing (:phase instance))
                    clock (time/frame-clock frame)

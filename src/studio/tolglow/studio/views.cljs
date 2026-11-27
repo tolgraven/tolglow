@@ -382,8 +382,17 @@
         bounds (:bounds schema) title (controls/title parameter schema)
         fader? (and (:strip? options) (#{:fader "fader"} (:ui/widget schema)))]
     [:div.param-row {:data-param (name parameter) :class (when (:strip? options) "strip-control")}
-     [:label [:span title] [:output (if (vector? value) (str/join ", " (map #(numeric/number-label schema %) value)) (widgets/value-label schema value))]]
+     [:label [:span title] [:output (cond (= "gradient" type) (str (count value) (if (= 1 (count value)) " stop" " stops"))
+                                          (vector? value) (str/join ", " (map #(numeric/number-label schema %) value))
+                                          :else (widgets/value-label schema value))]]
      (case type
+       ;; Stops are edited from the REPL, definitions or the scheduler (#529);
+       ;; the row shows the ramp and says when outputs sample fewer stops (#689).
+       "gradient" [:div.param-gradient
+                   [widgets/color-view value {:schema schema}]
+                   (when-let [{:keys [from to]} (get-in instance [:gradient-reductions parameter])]
+                     [:span.gradient-reduced {:role "status"}
+                      (str "Outputs sample " to " evenly spaced stops of " from)])]
        "waveform" [waveform/picker (:id instance) parameter schema value change!
                    {:params (:params instance) :live? (nil? handlers)}]
        "shape" [widgets/shape-picker title shapes value change!]

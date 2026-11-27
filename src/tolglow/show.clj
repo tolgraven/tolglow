@@ -44,6 +44,7 @@
             [tolglow.agents.venue :as venue-tools]
             [clojure.java.io :as io]
             [tolglow.compiler :as compiler]
+            [tolglow.compiler.gradient :as gradient]
             [tolglow.compiler.batch :as batch]
             [tolglow.registry :as registry]
             [tolglow.integrations.ableton :as ableton]
@@ -271,6 +272,9 @@
                                   (assoc :definition (get definitions [(:definition %) (:targets %)])
                                          :parameter-sources (parameter-sources/project % (get sources (:id %)) resolve-inputs responses?)
                                          :categories (registry/definition-categories (:definition %)))
+                                  ;; Gradients sampled with fewer stops than their value holds (#689).
+                                  (as-> instance (let [reduced (gradient/reduced-gradients (:definition %) (:params %))]
+                                                   (cond-> instance (seq reduced) (assoc :gradient-reductions reduced))))
                                   (dissoc ::effect-selection/selected)
                                   (update :system (fn [s] (merge {:opacity 1.0 :paused? false}
                                                                (select-keys s [:opacity :gain :paused? :attack :release])))))

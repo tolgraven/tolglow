@@ -36,5 +36,7 @@
 .color-readout>b{font-weight:600;color:#879982}
 .parameter-color[data-space=rgb] .color-readout{display:none}
 .parameter-color.gradient .color-swatch{height:34px}
+.param-gradient{display:grid;gap:4px;min-width:0}
+.param-gradient .gradient-reduced{font-size:11px;color:#e8c37a}
 .parameter-visualizer .parameter-color{margin:4px 0;max-width:260px}
 .strip-monitor .parameter-color{margin:2px 0}

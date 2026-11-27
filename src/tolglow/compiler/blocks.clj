@@ -5,6 +5,7 @@
             [afterglow.runtime :as runtime]
             [afterglow.runtime.keyframes :as keyframes]
             [afterglow.time :as time]
+            [tolglow.compiler.gradient :as gradient]
             [tolglow.composition.tween :as tween]
             [tolglow.oscillator :as oscillator]))
 
@@ -109,6 +110,14 @@
       (= :tween (:op node)) (tween-input compiler node)
       (= :oscillator-phase (:op node)) (phase-input compiler current node)
       (or (number? node) (vector? node)) {:op :const :value node}
+      ;; A gradient samples its own parameter at an already lowered position.
+      (gradient/gradient-node? node)
+      (let [node (cond-> node
+                   (and (vector? (:args node)) (<= (count (:args node)) 64))
+                   (update :args #(mapv (partial lower compiler current trail (inc depth)) %)))]
+        (try (gradient/lower (:schemas compiler) node [])
+             (catch clojure.lang.ExceptionInfo error
+               (fail! (into current (:path (first (:errors (ex-data error))))) (ex-message error)))))
       (and (map? node) (contains? node :args))
       (do (when-not (and (vector? (:args node)) (<= (count (:args node)) 64))
             (fail! current "Expected up to 64 expression arguments"))
@@ -158,7 +167,7 @@
         tweens (volatile! {})
         oscillators (volatile! {})
         compiler {:bindings blocks :entries entries :uniforms uniforms :prepared prepared :tweens tweens
-                  :oscillators oscillators
+                  :oscillators oscillators :schemas params
                   :catalog (merge blocks/library imported-prefabs prefabs)
                   :type-param #(prepare-expression %1 params %2)}]
     (when (some (comp #{"tolglow.block-input" "tolglow.block-tween" "tolglow.block-phase"} namespace) (keys params))
