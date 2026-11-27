@@ -12,6 +12,7 @@
             [tolglow.compiler.gradient :as gradient]
             [tolglow.composition.response :as response]
             [tolglow.effects :as fx]
+            [tolglow.event-subscribers :as subscribers]
             [tolglow.registry :as registry]
             [tolglow.show :as show]
             [tolglow.compiler-test :refer [command]]))
@@ -56,6 +57,12 @@
         frame (render/resolve-contributions rig (:contributions (runtime/append-contributions result []))
                                             {:include-values? false :compact-values? true})]
     (into {} (map (fn [[id values]] [id (vec values)])) (:universes frame))))
+
+(defn- frame-values
+  "Resolved colours and universe bytes of one step result."
+  [fixtures result]
+  (let [frame (render/resolve-contributions fixtures (:contributions (runtime/append-contributions result [])) {})]
+    [(update-vals (:values frame) :color) (update-vals (:universes frame) vec)]))
 
 (def along-x {:op :gradient :key :palette :args [{:op :position :axis :x}]})
 
@@ -122,13 +129,25 @@
 
 (deftest the-lowered-sample-emits-glsl-with-stop-uniforms
   (let [expression (:expression (first (:outputs (compiler/compile-plan (effect along-x)))))
-        shader (ir/emit-glsl-batch {:color expression})]
+        shader (ir/emit-glsl-batch {:color expression})
+        uniforms (:uniforms shader)
+        source (:source shader)]
     (is (= :vec3 (ir/expression-type expression)))
     (is (= [{:attribute :color :type :vec3 :components 3 :varying "out_0" :offset 0}] (:outputs shader)))
-    (is (contains? (:uniforms shader) (gradient/input-key :palette 0 :color)))
-    (is (contains? (:uniforms shader) (gradient/input-key :palette 7 :scale)))
-    (is (not (contains? (:uniforms shader) (gradient/input-key :palette 8 :scale)))
-        "the default capacity is eight stops")))
+    (testing "stop colours are vec3 uniforms and starts and scales are floats"
+      (is (= :vec3 (:type (get uniforms (gradient/input-key 0 0 :color)))))
+      (is (= :vec3 (:type (get uniforms (gradient/input-key 0 7 :color)))))
+      (is (= :number (:type (get uniforms (gradient/input-key 0 7 :start)))))
+      (is (= :number (:type (get uniforms (gradient/input-key 0 7 :scale)))))
+      (is (nil? (get uniforms (gradient/input-key 0 8 :scale))) "the default capacity is eight stops")
+      (doseq [[_ {:keys [name type]}] uniforms]
+        (is (re-find (re-pattern (str "uniform " (if (= :vec3 type) "vec3" "float") " " name ";")) source))))
+    (testing "seven segment mixes nest in stop order inside one final clamp"
+      (let [assignment (re-find #"out_0 = (.*);" source)
+            name-of #(:name (get uniforms (gradient/input-key 0 %1 %2)))]
+        (is (= 7 (count (re-seq #"mix\(" (second assignment)))))
+        (is (.startsWith ^String (second assignment) "clamp(mix(mix("))
+        (is (< (.indexOf ^String source ^String (name-of 1 :color)) (.indexOf ^String source ^String (name-of 7 :color))))))))
 
 (deftest live-values-change-without-recompiling
   (let [definition (effect along-x)
@@ -138,7 +157,7 @@
       (let [values (sample [{:position 0.0 :color [0.0 0.0 0.0]} {:position 1.0 :color [1.0 1.0 1.0]}])]
         (is (close? [0.25 0.25 0.25] (:p1 values)))
         (is (close? [0.75 0.75 0.75] (:p3 values)))))
-    (testing "a value over the capacity drops the stops that change its ramp least"
+    (testing "a value over the capacity is resampled evenly across its stops"
       (let [definition (effect along-x {:palette {:type :gradient :default rgb-stops :max-stops 3}})
             step (compiler/compile-effect definition)
             ;; 0.25 and 0.75 lie on the straight lines between their neighbours.
@@ -146,17 +165,124 @@
                   {:position 0.5 :color [0.0 1.0 0.0]} {:position 0.75 :color [0.0 0.5 0.5]}
                   {:position 1.0 :color [0.0 0.0 1.0]}]
             values (into {} (map (juxt :target-id :value)) (:assignments (step (context definition {:palette five}))))]
-        (is (= rgb-stops (gradient/simplify five 3)))
+        (is (= rgb-stops (gradient/fit-stops five 3)))
         (is (close? [0.5 0.5 0.0] (:p1 values)))
         (is (close? [0.0 0.5 0.5] (:p3 values)))))))
 
-(deftest simplify-keeps-the-end-stops-and-the-sharpest-turns
-  (let [stops [{:position 0.0 :color [0.0 0.0 0.0]} {:position 0.1 :color [0.1 0.1 0.1]}
-               {:position 0.5 :color [1.0 0.0 0.0]} {:position 1.0 :color [0.0 0.0 1.0]}]]
-    (is (= stops (gradient/simplify stops 4)))
-    (is (= [0.0 0.5 1.0] (mapv :position (gradient/simplify stops 3))))
-    (is (= [0.0 1.0] (mapv :position (gradient/simplify stops 2))))
-    (is (= [0.0] (mapv :position (gradient/simplify stops 1))))))
+(deftest fit-stops-keeps-small-values-and-resamples-large-ones-evenly
+  (let [stops [{:position 0.2 :color [0.0 0.0 0.0]} {:position 0.3 :color [1.0 1.0 1.0]}
+               {:position 0.5 :color [1.0 0.0 0.0]} {:position 0.8 :color [0.0 0.0 1.0]}]]
+    (is (= stops (gradient/fit-stops stops 4)) "a value that fits stays exact")
+    (is (= stops (gradient/fit-stops stops 16)))
+    (let [three (gradient/fit-stops stops 3)]
+      (is (= 3 (count three)))
+      (is (close? [0.2 0.5 0.8] (mapv :position three)))
+      (is (= [0.0 0.0 0.0] (:color (first three))))
+      (is (close? [1.0 0.0 0.0] (:color (second three))))
+      (is (= [0.0 0.0 1.0] (:color (last three)))))
+    (is (= [0.2 0.8] (mapv :position (gradient/fit-stops stops 2))))
+    (is (= [(first stops)] (gradient/fit-stops stops 1)))))
+
+(defn- ramp-colours
+  "Colours at 101 positions for each of `steps + 1` frames of a :param/ramp
+  between two gradients, sampled at `capacity`."
+  [from to capacity steps]
+  (let [schema {:type :gradient :default (subvec from 0 2) :max-stops capacity}
+        definition (effect {:op :gradient :key :palette :args [{:op :param :key :shift}]} {:palette schema})
+        step (compiler/compile-effect definition)
+        fixture-rig [(first rig)]]
+    (vec (for [k (range (inc steps))]
+           (let [value (subscribers/ramp-value schema from to (/ k (double steps)))]
+             (vec (for [x (range 101)]
+                    (:value (first (:assignments (step (-> (context definition {:palette value :shift (/ x 100.0)})
+                                                           (assoc-in [:frame :fixtures] fixture-rig)))))))))))))
+
+(defn- max-step-jump [frames]
+  (reduce max (for [[a b] (partition 2 1 frames), [ca cb] (map vector a b), [x y] (map vector ca cb)]
+                (Math/abs (- (double x) (double y))))))
+
+(deftest a-ramp-over-capacity-moves-smoothly
+  ;; Swapping an alternating component while another climbs leaves every
+  ;; interior stop nearly redundant. A choice of stops by significance then
+  ;; flipped between frames; even resampling cannot.
+  (let [ten (fn [phase] (vec (for [i (range 10)]
+                               {:position (/ i 9.0)
+                                :color [(if (even? (+ i phase)) 0.6 0.4) 0.5 (/ i 9.0)]})))
+        from (ten 0) to (ten 1)
+        reduced (ramp-colours from to 8 200)
+        exact (ramp-colours from to 10 200)]
+    (is (< (max-step-jump reduced) 0.02) (str "largest reduced jump " (max-step-jump reduced)))
+    (is (<= (max-step-jump reduced) (+ 1.0e-9 (max-step-jump exact)))
+        "resampling never moves faster than the exact gradient does")))
+
+(deftest only-sampled-gradients-are-expanded-and-unchanged-values-are-cached
+  (let [many (vec (for [i (range 256)] {:position (/ i 255.0) :color [(/ i 255.0) 0.0 0.0]}))
+        calls (atom 0)
+        fit gradient/fit-stops]
+    (with-redefs [gradient/fit-stops (fn [stops capacity] (swap! calls inc) (fit stops capacity))]
+      (testing "a gradient no output samples is never expanded"
+        (let [definition (assoc (effect 0.5 {:palette {:type :gradient :default many :max-stops 16}})
+                                :outputs [{:attribute :dimmer :value 0.5}])
+              step (compiler/compile-effect definition)]
+          (is (= [] (:gradients (compiler/compile-plan definition))))
+          (dotimes [_ 5] (step (context definition)))
+          (dotimes [_ 5] ((batch/compile-effect definition rig) (context definition)))
+          (is (= 0 @calls))))
+      (testing "a sampled value is expanded once until it changes"
+        (let [definition (effect along-x)
+              step (compiler/compile-effect definition)
+              typed (batch/compile-effect definition rig)
+              other [{:position 0.0 :color [0.0 0.0 0.0]} {:position 1.0 :color [1.0 1.0 1.0]}]]
+          (reset! calls 0)
+          (dotimes [_ 5] (step (context definition)))
+          (is (= 1 @calls))
+          (dotimes [_ 5] (step (context definition {:palette (into [] rgb-stops)})))
+          (is (= 1 @calls) "an equal value of another identity is a cache hit")
+          (step (context definition {:palette other}))
+          (is (= 2 @calls))
+          (dotimes [_ 5] (typed (context definition {:palette other})))
+          (is (= 3 @calls) "each compiled step owns its cache"))))))
+
+(deftest distinct-parameter-ids-keep-distinct-inputs
+  (let [red [{:position 0.0 :color [1.0 0.0 0.0]}]
+        blue [{:position 0.0 :color [0.0 0.0 1.0]}]
+        definition {:id :pair :version 1
+                    :params {:a/b {:type :gradient :default red} :a__b {:type :gradient :default blue}}
+                    :outputs [{:attribute :color :targets [:p0] :value {:op :gradient :key :a/b :args [0.5]}}
+                              {:attribute :color :targets [:p1] :value {:op :gradient :key :a__b :args [0.5]}}]}
+        values (colours definition)]
+    (is (not= (gradient/input-key 0 0 :color) (gradient/input-key 1 0 :color)))
+    (is (= [1.0 0.0 0.0] (:p0 values)))
+    (is (= [0.0 0.0 1.0] (:p1 values)))))
+
+(deftest integer-coordinates-keep-the-typed-batch-path
+  (let [whole (mapv #(assoc %1 :position [%2 0 0]) rig [-1 0 1 2 3])]
+    (doseq [value [along-x (fx/gradient :palette (fx/position :x) {:extend :repeat})
+                   (fx/gradient :palette (fx/position :x) {:extend :mirror})]]
+      (let [definition (effect value)
+            step (batch/compile-effect definition whole)
+            context (assoc-in (context definition) [:frame :fixtures] whole)
+            scalar ((compiler/compile-effect definition) context)]
+        (is (= :batch (:backend (meta step))) (pr-str value))
+        (is (= [] (:fallback-reasons (meta step))))
+        (is (= (frame-values whole scalar) (frame-values whole (step context))))))))
+
+(deftest a-vanishing-gap-is-a-hard-step-not-a-fault
+  (let [params {:palette {:type :gradient :default [{:position 0.0 :color [1.0 0.0 0.0]}
+                                                    {:position 4.9e-324 :color [0.0 0.0 1.0]}]}}
+        values (colours (effect along-x params))]
+    (is (= [1.0 0.0 0.0] (:p0 values)))
+    (is (close? [0.0 0.0 1.0] (:p1 values)))
+    (is (close? [0.0 0.0 1.0] (:p4 values)))))
+
+(deftest negative-and-whole-positions-under-repeat-and-mirror
+  (let [sample (fn [extend x] (:p0 (colours (effect (fx/gradient :palette x {:extend extend})))))]
+    (doseq [[extend x expected] [[:repeat -1.0 [1.0 0.0 0.0]] [:repeat -0.25 [0.0 0.5 0.5]]
+                                 [:repeat 2.0 [1.0 0.0 0.0]] [:repeat 2.5 [0.0 1.0 0.0]]
+                                 [:mirror -1.0 [0.0 0.0 1.0]] [:mirror -0.25 [0.5 0.5 0.0]]
+                                 [:mirror 2.0 [1.0 0.0 0.0]] [:mirror 3.0 [0.0 0.0 1.0]]
+                                 [:mirror 0.0 [1.0 0.0 0.0]]]]
+      (is (close? expected (sample extend x)) (pr-str extend x)))))
 
 (defn- authoring-error [definition]
   (first (compiler/definition-errors :effects definition)))
@@ -288,5 +414,19 @@
         (is (empty? (keep :fault (:instances (show/snapshot rt)))))
         ;; p0 holds red, p1 is halfway to green, p2 green, p3 halfway to blue, p4 holds blue.
         (is (= [255 0 0 128 128 0 0 255 0 0 128 128 0 0 255] (subvec first-bytes 0 15)))
-        (is (= [0 0 0 64 64 64 128 128 128 191 191 191 255 255 255] (subvec grey-bytes 0 15))))
+        (is (= [0 0 0 64 64 64 128 128 128 191 191 191 255 255 255] (subvec grey-bytes 0 15)))
+        (is (nil? (:gradient-reductions (first (:instances (show/snapshot rt))))) "a fitting value reports nothing")
+        (testing "a value over the capacity is reported in the instance projection"
+          (let [ten (vec (for [i (range 10)] {:position (/ i 9.0) :color [(/ i 9.0) 0.0 0.0]}))]
+            (submit 100 {:op :param/set :instance-id id :param :palette :value ten})
+            (tick 125)
+            (is (= {:palette {:from 10 :to 8}} (:gradient-reductions (first (:instances (show/snapshot rt))))))
+            (is (empty? (keep :fault (:instances (show/snapshot rt))))))))
       (finally (show/stop! rt)))))
+
+(deftest reduced-gradients-names-only-sampled-values-over-capacity
+  (let [ten (vec (for [i (range 10)] {:position (/ i 9.0) :color [0.0 0.0 0.0]}))
+        definition (effect along-x {:spare {:type :gradient :default rgb-stops}})]
+    (is (= {} (gradient/reduced-gradients definition {})))
+    (is (= {:palette {:from 10 :to 8}} (gradient/reduced-gradients definition {:palette ten :spare ten})))
+    (is (= {} (gradient/reduced-gradients (assoc-in definition [:params :palette :max-stops] 10) {:palette ten})))))

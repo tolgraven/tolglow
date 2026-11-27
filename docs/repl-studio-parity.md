@@ -142,14 +142,24 @@ definition data. The REPL builds it with `fx/gradient`, and Studio's
 ```
 
 A running instance's gradient changes through `:param/set` or a `:param/ramp`
-with a vector of stops. The running card draws the committed stops as one
-ramp, and the rig output shows the sampled colours on the next frame.
+with a vector of stops. The running card's parameter row draws the committed
+stops as one ramp, and the rig output shows the sampled colours on the next
+frame. A value with more stops than the schema's `:max-stops` is resampled for
+output. Both surfaces read the reduction from the same instance projection: the
+REPL reads it as below, and the card's row says "Outputs sample 8 evenly spaced
+stops of 10".
+
+```clojure
+(:gradient-reductions (first (:instances (show/snapshot runtime))))
+;; => {:palette {:from 10 :to 8}}
+```
 
 Gap: Studio and Push have no stop editor. Studio displays a gradient value but
 cannot change its stops, so stops are edited in the REPL, in definition EDN or
 through the scheduler. The Push multi-pad stop editor is tracked in
-[issue #529](https://github.com/tolgraven/tolglow/issues/529). The rendered
-card has not had a browser review with a sampled gradient.
+[issue #529](https://github.com/tolgraven/tolglow/issues/529). The block
+builder offers no gradient-sample input mode
+([issue #775](https://github.com/tolgraven/tolglow/issues/775)).
 
 ## View recent cues
 

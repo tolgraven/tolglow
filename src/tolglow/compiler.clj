@@ -166,7 +166,8 @@
                           (every? (into registry/emitter-attributes [:dimmer :color :strobe :fog])
                                   envelope-attributes))))
       (fail! [:envelope :attributes] "Envelope targets must be intensity/color attributes"))
-    {:schemas schemas :defaults defaults :gradients (gradient/gradients schemas)
+    {:schemas schemas :defaults defaults :gradients (let [sampled (gradient/sampled-keys definition)]
+                  (filterv #(contains? sampled (:key %)) (gradient/gradients schemas)))
      :outputs outputs :block-plan block-plan :selected selected
      :envelope-fn envelope-fn :envelope-attributes envelope-attributes :shader shader-plan})))
 
@@ -229,6 +230,7 @@
          shader-plan :shader}
         (compile-plan definition bind-pure)
         fixture-index (when block-plan (blocks/fixture-index rig))
+        expand-gradients (gradient/expander gradients)
         select-fixtures (fixture-selector rig selected)
         step (fn [{:keys [frame instance state] :as context}]
       (let [now (:time-ms frame)
@@ -236,8 +238,8 @@
             _ (when-not (and (registry/finite-number? now) (registry/finite-number? start))
                 (fail! [:frame :time-ms] "Effect frame/start time must be finite milliseconds"))
             params (registry/resolve-params schemas (merge defaults (:params instance)))
-            ;; Expand each gradient's stops once per frame, never per fixture.
-            params (gradient/with-stops gradients params)
+            ;; Expand each sampled gradient's stops per changed value, never per fixture.
+            params (expand-gradients params)
             params (if block-plan (blocks/with-variables block-plan params frame) params)
             releasing? (= :releasing (:phase instance))
             clock (time/frame-clock frame)

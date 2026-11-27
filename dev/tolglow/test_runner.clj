@@ -12,6 +12,7 @@
     tolglow.legacy-frame-oracle-test tolglow.worker-publication-oracle-test
     tolglow.effects.material-design-test tolglow.effects.variable-edit-test tolglow.effects.group-channels-test
     tolglow.effects.group-channels-host-test tolglow.compiler.batch-test tolglow.compiler.capability-test
+    tolglow.compiler.gradient-test
     tolglow.predictive-keyframes-test
     tolglow.perf.effect-samples-test
     tolglow.spatial.actions-test tolglow.spatial.sampling-test tolglow.spatial-cues-test tolglow.spatial-host-test tolglow.authoring.output-patch-test

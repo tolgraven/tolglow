@@ -175,20 +175,48 @@ Reactive outputs cannot sample a gradient, because they read only their declared
 signal inputs.
 
 The compiler lowers each sample to ordinary numeric IR: one clamped mix for each
-segment between stops. Each frame expands the gradient's resolved stops once
-into private inputs, and the fixtures only do arithmetic. The scalar, batch and
-GLSL backends therefore all run it, and the batch compiler keeps its typed path
-with no fallback reason. Live edits (`:param/set`, ramps) and definition
-revisions take effect on the next frame without recompiling the effect.
+segment between stops. A compiled effect expands only the gradients that one of
+its outputs, blocks or shader uniforms samples. It does so once each time the
+value changes (identical or equal values reuse the previous expansion), never
+per fixture, and the fixtures only do arithmetic. A gradient parameter that
+nothing samples costs no more than before this change. The scalar, batch and
+GLSL backends all run the lowered sample. The batch compiler keeps its typed
+path with no fallback reason, including on a rig with integer coordinates.
+Live edits (`:param/set`, ramps) and definition revisions take effect on the
+next frame without recompiling the effect.
 
 The schema's `:max-stops` sets how many segments the IR contains, from 1 to 16.
-The default is 8. Each fixture pays for every segment, so a smaller capacity
-is cheaper. On 2,048 pixels on this M4 Pro, a sample cost about 1.0 ms per frame
-in the batch compiler and 31 ms in the scalar fallback at the default capacity.
-At capacity 3 it cost 0.4 ms and 11 ms, and at 16 it cost 1.8 ms and 62 ms.
-A default with more stops than the capacity is refused when an output samples
-it. A live value with more stops stays valid. Sampling then drops the interior
-stops that change its ramp least, keeping the end stops, until it fits.
+The default is 8. A default with more stops than the capacity is refused when an
+output samples it.
+
+A live value with more stops stays valid. It is resampled at `:max-stops`
+evenly spaced positions from its first stop to its last. This takes linear time
+and moves continuously while the value moves, for example during a ramp. The
+running instance reports the reduction as `:gradient-reductions`, for example
+`{:palette {:from 10 :to 8}}`, in `show/snapshot` and Studio's state. Studio's
+parameter row then says "Outputs sample 8 evenly spaced stops of 10". If two
+stops are closer than float32 GLSL can represent, the gap is a hard step rather
+than a fault.
+
+Each fixture pays for every segment, and the position expression is repeated
+once per segment, because the IR has no shared subexpressions. A smaller
+capacity and a simple position are therefore cheaper. Measured on 2,048 pixels
+on this M4 Pro under load from other agents, per frame, with warm JIT and
+excluding output packing, network and UI:
+
+| Position | `:max-stops` | Batch | Scalar fallback |
+| --- | ---: | ---: | ---: |
+| `(position :x)` | 3 | 0.6 ms | 12 ms |
+| `(position :x)` | 8 (default) | 1.5 ms | 33 ms |
+| `(position :x)` | 16 | 3.1 ms | 66 ms |
+| `fract(sin 3x + cos 5x)` | 3 | 1.0 ms | 18 ms |
+| `fract(sin 3x + cos 5x)` | 8 (default) | 3.0 ms | 52 ms |
+| `fract(sin 3x + cos 5x)` | 16 | 8.0 ms | 108 ms |
+
+The same `fract(sin 3x + cos 5x)` written once as a colour, without a
+gradient, costs 0.34 ms on the batch path. When a position is expensive, use a
+small capacity. The show renders through the batch compiler. The scalar path
+runs only on fallback and for single-head cue-pad previews.
 
 ## Musical oscillators
 
