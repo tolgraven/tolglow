@@ -33,7 +33,8 @@
             [afterglow.control.devices.session :as session]
             [afterglow.control.devices.transports :as transports]
             [tolglow.surface.cue-grid :as cue-grid]
-            [tolglow.surface.descriptor :as descriptor]))
+            [tolglow.surface.descriptor :as descriptor]
+            [tolglow.surface.link :as link]))
 
 (def viewport :grid)
 
@@ -154,12 +155,13 @@
 
 (defn- adopt-selection
   "A committed selection change (a pad, Studio, the REPL or a linked member)
-  points the encoders at that launch and drops a pending publish."
+  points the encoders at that launch and drops a pending publish, including
+  a request already in the outbox."
   [state model v]
   (let [[kind id :as selected] (:selected v)]
     (if (= selected (get-in state [::grid :adopted]))
       state
-      (cond-> (update state ::grid assoc :adopted selected :publishing nil)
+      (cond-> (update state ::grid assoc :adopted selected :publishing nil :outbox nil)
         (and (= :instance kind) (running? model id)) (point-at model id)))))
 
 (defn- follow-committed
@@ -176,30 +178,42 @@
       (point-at state model id)
       state)))
 
+(def ^:private retry-refreshes
+  "Refreshes to wait for a published selection to commit before sending it
+  again (about 200 ms at the 10 ms cadence)."
+  20)
+
+(def ^:private max-retries 3)
+
 (defn- track-selection
   "After the profile's feedback, against the committed model it saw: a
   running target the profile picked itself (a launch pad and its ack, a cue
   gesture, the display's fallback to the latest launch) becomes a pending
   publish of the shared selection. It is put in the outbox once the surface
   is attached, so a target picked before attach commits is published too.
-  Feedback never dispatches: the host sends the outbox outside the session
-  lock (publish!)."
+  If it has not committed after retry-refreshes refreshes (a refusal), it
+  is sent again, at most max-retries times. Feedback never dispatches: the
+  host sends the outbox outside the session lock (publish!)."
   [state model v envelope]
   (let [grid (::grid state) current (:selected-instance state) committed (:selected v)
         state (if (= current (:edited grid))
                 state
-                (update state ::grid assoc :edited current :emitted? false
+                (update state ::grid assoc :edited current :emitted? false :waited 0 :retries 0 :outbox nil
                         :publishing (when (and (some? current) (running? model current)
                                                (not= [:instance current] committed))
                                       [:instance current])))
-        {:keys [publishing emitted?]} (::grid state)]
+        {:keys [publishing emitted? waited retries]} (::grid state)
+        emit (fn [state] (update state ::grid assoc :emitted? true :waited 0
+                                 :outbox {:id (:command-id envelope) :selected publishing :over committed}))]
     (cond
       (nil? publishing) state
-      (= publishing committed) (update state ::grid assoc :publishing nil)
-      (not (running? model (second publishing))) (update state ::grid assoc :publishing nil)
-      (and (:attached? v) (not emitted?))
-      (update state ::grid assoc :emitted? true :outbox {:id (:command-id envelope) :selected publishing})
-      :else state)))
+      (= publishing committed) (update state ::grid assoc :publishing nil :outbox nil)
+      (not (running? model (second publishing))) (update state ::grid assoc :publishing nil :outbox nil)
+      (not (:attached? v)) state
+      (not emitted?) (emit state)
+      (and (>= (inc (or waited 0)) retry-refreshes) (< (or retries 0) max-retries))
+      (-> state emit (update-in [::grid :retries] (fnil inc 0)))
+      :else (update-in state [::grid :waited] (fnil inc 0)))))
 
 (defn- grid-input [{:keys [surface-id buttons] :as options} underlying state event model envelope]
   (let [{:keys [type control-id pressed?] :as decoded} event
@@ -341,17 +355,27 @@
   (session/refresh! device)
   (publish-pending! device))
 
+(defn- committed-selection [model! surface-id]
+  (try (get-in (link/window (model!) surface-id viewport) [:layout :selected])
+       (catch Exception _ ::unavailable)))
+
 (defn- publisher
   "A function that sends a session's newest outbox request once, even when
-  the scheduler and the MIDI input thread both call it."
-  [session-ref {:keys [publish! dispatch!] :as options}]
+  the scheduler and the MIDI input thread both call it. A request is sent
+  only while it is still the pending target and the committed selection is
+  still the one it was queued over: a newer Studio, REPL or pad choice that
+  landed in between wins, and the next refresh adopts it."
+  [session-ref {:keys [publish! dispatch! model!] :as options}]
   (let [sent-id (atom nil)
         surface-id (:surface-id options (:session-id options))]
     (fn []
       (when (realized? session-ref)
-        (let [{:keys [id selected]} (get-in (session/snapshot @session-ref) [:local ::grid :outbox])
+        (let [{:keys [publishing] {:keys [id selected over]} :outbox}
+              (get-in (session/snapshot @session-ref) [:local ::grid])
               seen @sent-id]
-          (when (and id (not= id seen) (compare-and-set! sent-id seen id))
+          (when (and id (not= id seen) (= publishing selected)
+                     (= over (committed-selection model! surface-id))
+                     (compare-and-set! sent-id seen id))
             ((or publish! dispatch!)
              {:op :control-surface/layout :target surface-id :viewport viewport :set {:selected selected}})))))))
 

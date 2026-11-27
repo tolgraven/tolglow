@@ -523,3 +523,64 @@
         (is (= [:instance c] (selected h "push-a")) "and lands when it ticks")
         (is (empty? (:errors (device-session/snapshot device)))))
       (finally (show/stop! runtime)))))
+
+(deftest a-queued-publish-never-overrides-a-newer-committed-choice
+  ;; The final review probe for #788, with :schedule! nil: the afterglow
+  ;; refresh queues the display's fallback, the REPL commits another launch,
+  ;; and later input or a late publish must not send the stale request.
+  (let [{:keys [runtime owner! input!] :as h} (harness 3)]
+    (try
+      (let [[a _ c] (launch-all! h 3)
+            device (connect! h "push-a" {:display (display)})
+            edited #(get-in (device-session/snapshot device) [:local :selected-instance])
+            repl-select! #(owner! (fn [] (deref (show/surface-layout! runtime "push-a" {:selected [:instance %]}) 1000 ::missing)))]
+        (testing "the refresh adopts the REPL choice first: the next input publishes nothing stale"
+          (owner! #(device-session/refresh! device))
+          (is (= {:selected [:instance c] :over nil} (select-keys (:outbox (push-3/grid-state device)) [:selected :over])))
+          (repl-select! a)
+          (owner! #(device-session/refresh! device))
+          (is (nil? (:outbox (push-3/grid-state device))) "Adopting a commit drops the queued request")
+          (apply input! "push-a" (button :select))
+          (is (= [:instance a] (selected h "push-a")))
+          (is (= a (edited))))
+        (testing "the scheduler gap: a commit lands between a refresh and its publish"
+          (accepted! h {:op :instance/end :instance-id a})
+          (owner! #(device-session/refresh! device))
+          (let [queued (get-in (push-3/grid-state device) [:outbox :selected])]
+            (is (some? queued) "The display fell back and queued a publish")
+            (repl-select! c)
+            (owner! #(push-3/publish-pending! device))
+            (is (= [:instance c] (selected h "push-a")) "The stale request was not sent")
+            (refresh! h device)
+            (is (= c (edited)) "and the next refresh adopts the commit"))))
+      (finally (show/stop! runtime)))))
+
+(deftest a-refused-publish-is-retried-a-bounded-number-of-times
+  (let [{:keys [runtime] :as h} (harness 3)
+        surface-command! @#'show/surface-command!
+        publishes (atom 0)
+        refuse (atom 1)] ; layout publishes still to refuse
+    (try
+      (with-redefs [show/surface-command! (fn [rt epoch id command]
+                                            (if (= :control-surface/layout (:op command))
+                                              (do (swap! publishes inc)
+                                                  (if (pos? @refuse)
+                                                    (do (swap! refuse dec)
+                                                        (surface-command! rt epoch id (assoc command :target "nowhere")))
+                                                    (surface-command! rt epoch id command)))
+                                              (surface-command! rt epoch id command)))]
+        (let [[_ _ c] (launch-all! h 3)
+              device (connect! h "push-a" {:display (display)})]
+          (testing "the first publish is refused; one retry later it commits"
+            (refresh! h device)
+            (is (= 1 @publishes))
+            (is (nil? (selected h "push-a")))
+            (dotimes [_ 25] (refresh! h device))
+            (is (= 2 @publishes))
+            (is (= [:instance c] (selected h "push-a"))))
+          (testing "while every publish is refused, it stops after three retries"
+            (reset! refuse 1000)
+            (accepted! h {:op :instance/end :instance-id c})
+            (dotimes [_ 200] (refresh! h device))
+            (is (= (+ 2 1 3) @publishes)))))
+      (finally (show/stop! runtime)))))
