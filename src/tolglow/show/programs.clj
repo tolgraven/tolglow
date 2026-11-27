@@ -62,13 +62,15 @@
 (defn compile!
   "The owner's compiler: return the compiled step for `program`. A full cache
   becomes the retired generation, and a program found there or among the
-  worker's results moves into the cache without compiling again. Warm programs
-  stay in their own tier. A failure the worker met is thrown here, once per
+  worker's results or the warm tier is cached without compiling again. A
+  failure the worker met is thrown here, once per
   use, as an inline compile would throw it, and is never compiled again."
   [{:keys [compiler cache warm retired ready] :as context} program]
-  (let [step (if-let [[_ step] (or (find @cache program) (find @warm program))]
+  (let [step (if-let [[_ step] (find @cache program)]
                step
-               (let [step (if-let [[_ step] (or (find @retired program) (find @ready program))]
+               ;; A warm program a frame uses is cached too, so it stays
+               ;; compiled for its running instances after leaving the tier.
+               (let [step (if-let [[_ step] (or (find @warm program) (find @retired program) (find @ready program))]
                             step
                             (compiler program))]
                  (swap! ready dissoc program)

@@ -716,3 +716,24 @@
         (work! s)
         (is (= [[:worker :sel-5]] @resolutions) "Editing one cue re-resolves only that cue")
         (finally (stop! s))))))
+
+(deftest a-running-program-served-from-the-warm-tier-survives-a-rebuild
+  ;; Probe 0 launches on its warmed program. Publishing a revision rebuilds
+  ;; the warm tier without version 1; the running instance's program must not
+  ;; leave with it, or the frames after would compile it again, here as the
+  ;; fallback of a revision rejected at evaluation.
+  (let [s (show 1)]
+    (try
+      (tick! s 0)
+      (work! s)
+      (reset! (:compiled s) [])
+      (request! s 25 :command {:op :cue/launch :cue-id :probe-0})
+      (is (= [] (filterv #(= :frame (first %)) @(:compiled s))) "It launched on the warm program")
+      (publish! s [(-> (probe 0 2)
+                       (assoc-in [:params :divisor] {:type :number :default 0.0 :bounds [0.0 1.0]})
+                       (assoc-in [:outputs :dimmer] {:op :divide :args [(param :level) (param :divisor)]}))] 50)
+      (work! s)
+      (dotimes [k 3] (tick! s (+ 75 (* 25 k))))
+      (is (= :evaluate (get-in (instances s) [:probe-0 :reload-fault :stage])))
+      (is (= [] (filterv #(= :frame (first %)) @(:compiled s))) "Nothing compiled in a frame")
+      (finally (stop! s)))))
