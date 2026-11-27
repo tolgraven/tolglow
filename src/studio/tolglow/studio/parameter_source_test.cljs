@@ -1,6 +1,7 @@
 (ns tolglow.studio.parameter-source-test
   (:require [cljs.test :refer-macros [deftest is testing]]
             [tolglow.studio.parameter-source :as source]
+            [tolglow.studio.events]
             [tolglow.studio.performance :as performance]))
 
 (deftest monitors-follow-active-drivers-and-editors-retain-held-or-faulted-bindings
@@ -171,3 +172,37 @@
     (is (nil? (performance/modulated-priority high destination)))
     (is (nil? (performance/modulated-priority (assoc-in low [:parameter-sources :layer/priority :effective-value] 0) destination)))
     (is (nil? (performance/modulated-priority (assoc-in low [:parameter-sources :layer/priority :sources 0 :held?] true) destination)))))
+
+(deftest an-lfo-panel-remembers-through-a-gap-and-forgets-a-confirmed-absence
+  (let [lfo {:type :lfo :binding {:waveform :sine}}
+        step (fn [state & {:as input}] (source/remembered-lfo state input))
+        seen (step {} :current lfo :revision 10 :pending? false)]
+    (is (= lfo (:known seen)))
+    (testing "a brief gap during a round trip (resume) keeps the LFO"
+      (is (= lfo (:known (step seen :current nil :revision 10 :pending? false))) "at the revision that showed it")
+      (is (= lfo (:known (step seen :current nil :revision 15 :pending? true))) "while a request is pending"))
+    (testing "an unbind from the REPL is confirmed at the next revision without it"
+      (is (nil? (:known (step seen :current nil :revision 11 :pending? false)))))
+    (testing "this panel's own detach is not learned again while the projection still shows it"
+      (let [detaching (assoc seen :known nil :detaching (source/lfo-identity lfo))]
+        (is (nil? (:known (step detaching :current lfo :revision 11 :pending? true))))
+        (is (nil? (:detaching (step detaching :current nil :revision 12 :pending? false))))))
+    (testing "a new binding is learned"
+      (let [other {:type :lfo :binding {:waveform :saw}}]
+        (is (= other (:known (step seen :current other :revision 11 :pending? false))))))))
+
+(deftest a-re-attach-with-identical-settings-is-a-new-lfo
+  (let [old {:type :lfo :binding {:waveform :sine} :identity [100 :wave 1 1]}
+        again {:type :lfo :binding {:waveform :sine} :identity [140 :wave 1 1]}
+        detaching {:known nil :seen 10 :detaching (source/lfo-identity old)}]
+    (is (nil? (:known (source/remembered-lfo detaching {:current old :revision 11 :pending? true})))
+        "the detached LFO is not learned again")
+    (is (= again (:known (source/remembered-lfo detaching {:current again :revision 12 :pending? false})))
+        "the projection jumping straight to an identical re-attach is learned")
+    (is (= [100 :wave 1 1] (source/lfo-identity old)))
+    (is (= {:waveform :sine} (source/lfo-identity {:binding {:waveform :sine}})) "older projections compare by settings")))
+
+(deftest plot-choices-leave-with-their-launch
+  (is (= {["a" "param/level"] {:window 8}}
+         (tolglow.studio.events/prune-plot-views {["a" "param/level"] {:window 8} ["gone" "param/level"] {:window 16}}
+                                                 [{:id "a"} {:id "b"}]))))

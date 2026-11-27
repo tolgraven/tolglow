@@ -124,8 +124,10 @@
     (is (= {"--slot-col" "93px" "--slot-row" "145px"} (performance/fluid-style "strip" 4 390)))
     (is (= {"--slot-col" "134px" "--slot-row" "210px"} (performance/fluid-style "strip" 1 390))
         "with many controls a track grows to at most 1.6 times the smallest")
-    (is (= {"--slot-col" "215px" "--slot-row" "336px"} (performance/fluid-style "strip" 1 390 1))
-        "a single control grows further, so it fills a small card")))
+    (is (= {"--slot-col" "215px" "--slot-row" "210px"} (performance/fluid-style "strip" 1 390 1))
+        "a lone strip control widens to at most 2.56 times, near twice a strip knob")
+    (is (= {"--slot-col" "358px" "--slot-row" "234px"} (performance/fluid-style "detail" 1 400 1))
+        "a lone control in its Detail form: a wide slot of the usual height")))
 
 (deftest opened-rings-cover-the-fewest-cards-beside-their-slot
   (testing "a free 2x2 area beside the rings is used before any card"
