@@ -5,17 +5,21 @@
             [clojure.string :as str]
             [re-frame.core :as rf]
             [reagent.core :as r]
+            [tolglow.authoring.parameter-controls :as controls]
             [tolglow.studio.block-trace :as trace]
             [tolglow.studio.modulation :as motion]
             [tolglow.studio.pretty :as pretty]
             [tolglow.studio.parameter-widgets :as widget]
             [tolglow.studio.signal-picker :as signal]))
 
-(defn binding-paths [definition]
+(defn binding-paths
+  "Paths a block chain can modulate: existing bindings, the parameters a
+  numeric expression can read (not a gradient, enum or boolean) and outputs."
+  [definition]
   (let [outputs (:outputs definition)
         outputs (if (map? outputs) (keys outputs) (range (count outputs)))]
     (->> (concat (keys (:blocks definition))
-                 (map #(vector :params %) (keys (:params definition)))
+                 (keep (fn [[id schema]] (when (controls/expression-type schema) [:params id])) (:params definition))
                  (map #(vector :outputs %) outputs))
          distinct (sort-by trace/path-label) vec)))
 
@@ -86,35 +90,161 @@
      [:label "Phase (cycles)" ^{:key (pr-str phase)}
       [scalar "Phase (cycles)" phase #(change! (assoc spec :phase %))]]]))
 
-(defn- input-control [id default inputs set-input! clear! params & [transport-only?]]
-  (let [label (if (= id :amount) "Wet amount" (widget/label id))
+(def extend-modes
+  "How a gradient sample treats positions outside [0,1] (`tolglow.compiler.gradient/extends`)."
+  [:clamp :repeat :mirror])
+
+(defn input-type
+  "The numeric type of an input's value: a gradient sample is a colour."
+  [value]
+  (if (= :gradient (:op value)) :vec3 (signal/value-type value)))
+
+(defn parameter-choices
+  "IDs of the parameters an input of `type` can read with {:op :param}: the
+  schema's IR type must match, so a gradient is never offered."
+  [schemas type]
+  (->> schemas
+       (filter #(= type (controls/expression-type (val %))))
+       (map key) (sort-by str) vec))
+
+(defn gradient-choices
+  "IDs of the gradient parameters a colour input can sample."
+  [schemas]
+  (->> schemas
+       (filter #(= :gradient (controls/control-type (val %) nil)))
+       (map key) (sort-by str) vec))
+
+(defn gradient-sample
+  "A gradient sample of `key` at `position`. The default :clamp extension is
+  left out, as `fx/gradient` leaves it out."
+  [key position extend]
+  (cond-> {:op :gradient :key key :args [position]}
+    (and extend (not= :clamp extend)) (assoc :extend extend)))
+
+(defn with-extend [sample extend]
+  (if (= :clamp extend) (dissoc sample :extend) (assoc sample :extend extend)))
+
+(defn input-modes
+  "The modes an input offers, in menu order. `value` is the input's current
+  value; its mode is always listed so loaded source stays visible."
+  [{:keys [type value schemas varyings phase? position?]}]
+  (let [mode (cond (= :param (:op value)) :parameter (map? value) (:op value) :else :constant)]
+    (vec (distinct (concat [:constant :beat :bar :phrase :time]
+                           (when position? [:position])
+                           (when phase? [:oscillator-phase])
+                           (when (seq (parameter-choices schemas type)) [:parameter])
+                           (when (and (= :vec3 type) (seq (gradient-choices schemas))) [:gradient])
+                           (when (and (= :number type) (seq varyings)) [:varying])
+                           [mode])))))
+
+(defn mode-value
+  "The value an input takes when its mode changes to `mode`."
+  [mode {:keys [type default value schemas varyings transport-only?]}]
+  (case mode
+    :constant (if (map? default) (signal/fixed-value (signal/value-type default)) default)
+    :parameter {:op :param :key (first (parameter-choices schemas type))}
+    :gradient (gradient-sample (first (gradient-choices schemas)) 0.0 nil)
+    :position {:op :position :axis :x}
+    :varying {:op :varying :key (first varyings)}
+    :oscillator-phase (oscillator-timing value transport-only?)
+    {:op mode}))
+
+(def ^:private mode-titles
+  {:oscillator-phase "Musical period" :position "Fixture position" :gradient "Gradient sample"
+   :varying "Private varying"})
+
+(defn- with-current
+  "Choices plus the current value when it is not among them, so loaded source
+  stays visible (publication then names the problem)."
+  [choices current]
+  (cond-> (vec choices) (and (some? current) (not (some #{current} choices))) (conj current)))
+
+(defn parameter-title
+  "Names a parameter choice. One that loaded source chose but `fits?` refuses
+  says why: missing, or the schema type it has."
+  [schemas fits?]
+  (fn [id]
+    (let [schema (get schemas id)
+          title (controls/title id schema)]
+      (cond (nil? schema) (str title " (missing)")
+            (fits? schema) title
+            :else (str title " (" (widget/label (:type schema)) ")")))))
+
+(defn edit-op
+  "Apply `f` to `value` only while it is still an `op` expression. Edits can
+  arrive before the next render (see the stage identity note below), so a
+  field edits the current value, and one whose mode has changed meanwhile is
+  left alone."
+  [op f value]
+  (if (= op (:op value)) (f value) value))
+
+(defn edit-position
+  "Apply `f` to a gradient sample's position, 0.0 when it has none."
+  [f sample]
+  (edit-op :gradient #(update % :args (fn [[position]] [(f (if (some? position) position 0.0))])) sample))
+
+(declare input-control)
+
+(defn- gradient-fields
+  "Pick the gradient, its extension and a scalar position, which is itself an
+  input with its own modes. `edit!` takes a function of the current sample."
+  [label value schemas edit! context]
+  (let [gradients (gradient-choices schemas)
+        key (:key value)
+        position (first (:args value))]
+    [:div.block-gradient-sample
+     [options (str label " gradient") (with-current gradients key) key
+      (parameter-title schemas #(= :gradient (controls/control-type % nil)))
+      (fn [k] (edit! (partial edit-op :gradient #(assoc % :key k))))]
+     (when-let [stops (:default (get schemas key))]
+       [:div.param-gradient [widget/color-view stops]])
+     [options (str label " extend") extend-modes (:extend value :clamp) widget/label
+      (fn [extend] (edit! (partial edit-op :gradient #(with-extend % extend))))]
+     [input-control :position 0.0 (if (some? position) {:position position} {})
+      (fn [f] (edit! (partial edit-position f))) #(edit! (partial edit-position (constantly 0.0)))
+      (assoc context :label (str label " position") :position? true)]]))
+
+(defn- input-control
+  "One input's mode and value. `edit!` takes a function of the input's stored
+  value (nil while it uses the default) and `clear!` restores the default.
+  `context` holds the definition's parameter :schemas, the scalar private
+  :varyings it may read, :transport-only? and optional :label and :position?
+  (offer the fixture position and an oscillator)."
+  [id default inputs edit! clear! {:keys [schemas varyings transport-only? position?] :as context}]
+  (let [label (or (:label context) (if (= id :amount) "Wet amount" (widget/label id)))
         value (get inputs id default)
+        current! (fn [f] (edit! #(f (if (some? %) % default))))
+        set-input! #(current! (constantly %))
+        type (input-type default)
         expr? (map? value)
-        param? (= :param (:op value))
-        mode (cond param? :parameter expr? (:op value) :else :constant)
-        phase? (or (= mode :oscillator-phase) (and (= "phase" (name id)) (= :number (signal/value-type default))))
-        modes (vec (distinct (concat [:constant :beat :bar :phrase :time] (when phase? [:oscillator-phase])
-                                    (when (seq params) [:parameter]) [mode])))
-        choose (fn [next]
-                 (set-input! (case next
-                               :constant (if (map? default) (signal/fixed-value (signal/value-type default)) default)
-                               :parameter {:op :param :key (first params)}
-                               :oscillator-phase (oscillator-timing value transport-only?)
-                               {:op next})))]
+        mode (cond (= :param (:op value)) :parameter expr? (:op value) :else :constant)
+        phase? (or position? (= mode :oscillator-phase) (and (= "phase" (name id)) (= :number type)))
+        spec {:type type :default default :value value :schemas schemas :varyings varyings
+              :phase? phase? :position? position? :transport-only? transport-only?}
+        modes (input-modes spec)]
     [:div.block-input
-     [options label modes mode #(if (= % :oscillator-phase) "Musical period" (widget/label %)) choose]
-     (cond param? [options (str label " parameter") params (:key value) widget/label #(set-input! {:op :param :key %})]
-           (and phase? (or (= mode :oscillator-phase) (and (period-units mode) (not (contains? value :clock)))))
-           [oscillator-fields label value transport-only? set-input!]
-           (or (number? value) (and (vector? value) (every? number? value))) [numeric-field label value set-input!]
-           (and expr? (not (#{:variable :beat :bar :phrase :time} mode))) [:code (pr-str value)])
-     [signal/picker label value (signal/value-type default) set-input!]
-     (when (contains? inputs id) [:button.text-button {:type "button" :on-click clear!} "Reset"])]))
+     [options label modes mode #(or (mode-titles %) (widget/label %)) #(set-input! (mode-value % spec))]
+     (case mode
+       :parameter [options (str label " parameter") (with-current (parameter-choices schemas type) (:key value))
+                   (:key value) (parameter-title schemas #(= type (controls/expression-type %)))
+                   #(set-input! {:op :param :key %})]
+       :gradient nil
+       :position [options (str label " axis") [:x :y :z] (:axis value) #(str/upper-case (name %))
+                  (fn [axis] (current! (partial edit-op :position #(assoc % :axis axis))))]
+       :varying [options (str label " varying") (with-current varyings (:key value)) (:key value) widget/label
+                 (fn [k] (current! (partial edit-op :varying #(assoc % :key k))))]
+       (cond (and phase? (or (= mode :oscillator-phase) (and (period-units mode) (not (contains? value :clock)))))
+             [oscillator-fields label value transport-only? set-input!]
+             (or (number? value) (and (vector? value) (every? number? value))) [numeric-field label value set-input!]
+             (and expr? (not (#{:variable :beat :bar :phrase :time} mode))) [:code (pr-str value)]))
+     [signal/picker label value type set-input!]
+     (when (contains? inputs id) [:button.text-button {:type "button" :on-click clear!} "Reset"])
+     (when (= mode :gradient) [gradient-fields label value schemas current! (dissoc context :label :position?)])]))
 
 (defn- stage-controls
   "One stage's controls. `change!` takes a function of the stage's current value and
   `move!` a step (-1 earlier, 1 later); both find the stage wherever it is now."
-  [i stage template params change! move! remove! total transport-only?]
+  [i stage template context change! move! remove! total]
   (let [coordinates (or (:coordinates stage) :world)
         title (or (:name template) (trace/path-label [(:block stage)]))
         inputs (or (:inputs stage) {})]
@@ -131,11 +261,11 @@
       [options "Coordinates" (distinct [:world :surface-uv coordinates]) coordinates
        #(case % :world "World XYZ" :surface-uv "Surface UV" "Custom") #(change! assoc :coordinates %)]]
      [input-control :amount 1.0 (select-keys stage [:amount])
-      #(change! assoc :amount %) #(change! dissoc :amount) params]
+      #(change! update :amount %) #(change! dissoc :amount) context]
      [:details [:summary "Inputs"]
       (for [[id default] (sort-by (comp str key) (:inputs template))]
-        ^{:key id} [input-control id default inputs #(change! assoc-in [:inputs id] %)
-                    #(change! update :inputs dissoc id) params transport-only?])]]))
+        ^{:key id} [input-control id default inputs #(change! update-in [:inputs id] %)
+                    #(change! update :inputs dissoc id) context])]]))
 
 (defn update-stage
   "Apply `f` to stage `i` of the current stages; out-of-range indices change nothing."
@@ -182,15 +312,15 @@
   "Every edit reaches `save!` as a function of the current stages, not a copy of the
   rendered ones, and finds its stage by ID: edits made before the next render must
   compose, and none may land on whichever stage now sits at a rendered index."
-  [catalog stages params save! transport-only?]
+  [catalog stages context save!]
   [:div.block-stage-list
    (for [[i stage] (map-indexed vector stages)
          :let [id (stage-id i stage)]]
      ^{:key (pr-str id)}
-     [stage-controls i stage (get catalog (:block stage)) params
+     [stage-controls i stage (get catalog (:block stage)) context
       (fn [f & args] (save! #(edit-stage % id (fn [stages i] (apply update-stage stages i f args)))))
       (fn [delta] (save! #(edit-stage % id (fn [stages i] (move-stage stages i (+ i delta))))))
-      #(save! (fn [current] (edit-stage current id remove-stage))) (count stages) transport-only?])])
+      #(save! (fn [current] (edit-stage current id remove-stage))) (count stages)])])
 
 (defn private-path [kind text]
   (let [parts (str/split (str/trim text) #"\s+")
@@ -218,13 +348,16 @@
 
 (defn stage-editor
   "A controlled stage list. The caller supplies its catalog and commits edits:
-  `on-change` receives a function from the current stages to the edited ones."
-  [{:keys [stages library parameters on-change transport-only?]}]
+  `on-change` receives a function from the current stages to the edited ones.
+  `parameters` maps the definition's parameter IDs to their schemas and
+  `varyings` names the scalar private varyings an input may read."
+  [{:keys [stages library parameters varyings on-change transport-only?]}]
   (r/with-let [chosen (r/atom nil)]
     (let [ids (sort-by #(get-in library [% :name] (str %)) (keys library))
           id (or (some #{@chosen} ids) (first ids))]
       [:div.block-stage-editor
-       [stage-list library (vec stages) parameters on-change transport-only?]
+       [stage-list library (vec stages)
+        {:schemas (into {} parameters) :varyings (vec varyings) :transport-only? transport-only?} on-change]
        (if (seq ids)
          [:div.block-stage-add
           [options "New block" ids id #(get-in library [% :name] (str %)) #(reset! chosen %)]
@@ -240,6 +373,15 @@
                         (assoc entries id material)))]
     (merge (reduce-kv with-import library imported-prefabs) prefabs)))
 
+(defn scalar-varyings
+  "Names of the private varyings with a scalar base that the binding at `path`
+  may read. A binding never reads itself."
+  [bindings path]
+  (->> (keys bindings)
+       (filter #(and (= :varyings (first %)) (not= path %)
+                     (= :number (input-type (get-in bindings [% :base] 0.0)))))
+       (map second) (sort-by str) vec))
+
 (defn- editor
   "`write!` receives a function from the current binding map to the edited one."
   [definition bindings write!]
@@ -248,19 +390,23 @@
           catalog (draft-catalog shared definition)
           paths (binding-paths (assoc definition :blocks bindings))
           path (or (some #{@chosen-path} paths) (first paths))
-          params (vec (keys (:params definition)))]
+          schemas (or (:params definition) {})
+          base-default (if (= :vec3 (input-type (get-in bindings [path :base]))) [0.0 0.0 0.0] 0.0)]
       [:div.block-builder
        [private-binding bindings (fn [destination initial]
                                    (write! #(assoc % destination initial))
                                    (reset! chosen-path destination))]
        [options "Block binding" paths path trace/path-label #(reset! chosen-path %)]
        (when (= :varyings (first path))
-         [input-control :base 0.0 (get bindings path)
-          (fn [value] (write! #(assoc-in % [path :base] value))) #(write! (fn [b] (assoc-in b [path :base] 0.0))) params])
+         [input-control :base base-default (get bindings path)
+          (fn [f] (write! #(update-in % [path :base] f)))
+          #(write! (fn [b] (assoc-in b [path :base] base-default)))
+          {:schemas schemas :varyings (scalar-varyings bindings path)}])
        (when (contains? bindings path)
          [:button.text-button {:type "button" :on-click #(write! (fn [b] (dissoc b path)))} "Remove binding"])
        (when path
-         [stage-editor {:stages (get-in bindings [path :stages]) :library catalog :parameters params
+         [stage-editor {:stages (get-in bindings [path :stages]) :library catalog :parameters schemas
+                        :varyings (scalar-varyings bindings path)
                         :on-change (fn [f] (write! #(replace-stages % path (f (vec (get-in % [path :stages]))))))}])])))
 
 (defn field

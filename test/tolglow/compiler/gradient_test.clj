@@ -344,6 +344,21 @@
     (is (close? [0.0 0.5 0.5] (at-beat 3.0)))
     (is (= :batch (:backend (meta (batch/compile-effect definition rig)))))))
 
+(deftest a-block-input-samples-at-a-private-oscillator-varying
+  ;; Studio's block builder writes this shape (#775): a colour gel whose
+  ;; transmission samples the gradient at a scalar varying driven by a saw block.
+  (let [definition {:id :tide :version 1 :params {:palette {:type :gradient :default rgb-stops}}
+                    :outputs {:color [1.0 1.0 1.0]}
+                    :blocks {[:varyings :sweep] {:base 0.0 :stages [{:block :lfo/saw}]}
+                             [:outputs :color] {:stages [{:block :optics/gel
+                                                          :inputs {:transmission {:op :gradient :key :palette
+                                                                                  :args [{:op :varying :key :sweep}]}}}]}}}
+        step (compiler/compile-effect definition)
+        at-beat #(:value (first (:assignments (step (assoc-in (context definition) [:frame :transport :beat] %)))))]
+    (is (close? [1.0 0.0 0.0] (at-beat 0.0)))
+    (is (close? [0.5 0.5 0.0] (at-beat 0.25)))
+    (is (close? [0.0 0.5 0.5] (at-beat 2.75)))))
+
 (deftest responses-scale-the-position-identically-on-both-backends
   (let [definition (effect (fx/gradient :palette (fx/param :level)))
         middleware (response/compile-middleware [{:id :global :params [:level] :operation :multiply

@@ -76,6 +76,21 @@
     (seq (:choices schema)) :choice
     :else (or (tag (:type schema)) :number)))
 
+(defn expression-type
+  "The numeric IR type an expression reads from the parameter with
+  `{:op :param}`: :number, :vec2, :vec3 or :vec4, else nil. A :gradient has
+  none; `{:op :gradient :key k :args [position]}` samples it as a :vec3. The
+  compiler types parameter reads with this, and Studio's block builder offers a
+  parameter only to inputs of the same type."
+  [schema]
+  (case (tag (:type schema))
+    (:number :integer) :number
+    :color :vec3
+    :range :vec2
+    :vector (let [size (:size schema)]
+              (when (and (integer? size) (<= 2 size 4)) (keyword (str "vec" size))))
+    nil))
+
 (defn widget
   "How a bounded number is drawn: :fader when the schema asks for one, else
   :rotary. Unbounded numbers are a :field."

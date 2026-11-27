@@ -30,3 +30,12 @@
            (controls/control :mode {:type :enum :name "Mode" :values [:sine :saw]} catalog)))
     (is (= :fader (:widget (controls/control :width {:type :number :ui/widget :fader :bounds [0 1]}))))
     (is (= :field (:widget (controls/control :drift {:type :number}))))))
+
+(deftest the-expression-type-is-what-a-param-read-gives
+  (is (= :number (controls/expression-type {:type :number}) (controls/expression-type {:type :integer})))
+  (is (= :vec3 (controls/expression-type {:type :color})))
+  (is (= :vec2 (controls/expression-type {:type :range})))
+  (is (= :vec4 (controls/expression-type {:type :vector :size 4})))
+  (testing "a gradient, enum, boolean or oversized vector has no {:op :param} type"
+    (is (every? nil? (map controls/expression-type
+                          [{:type :gradient} {:type :enum} {:type :boolean} {:type :vector :size 5} {}])))))
