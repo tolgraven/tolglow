@@ -688,14 +688,14 @@
         source-id (when (= (:identity capture) (:identity source)) (:id source))
         priority-id (priority-source-id source (:identity capture))
         selected (some #(when (= priority-id (:id %)) %) instances)]
-    [:section.live-board {:aria-label "Running effects"}
+    [:section.live-board {:aria-label "Running effects" :data-skin (name @(rf/subscribe [:ui/knob-skin]))}
      [:div.live-board-heading
       [:h2 "In the mix"] [:span#active-count.count (str (count instances) " active")]
       [:div.live-board-actions
        (when (:selection selection-view) [selection/toolbar selection-view])
        (let [skin @(rf/subscribe [:ui/knob-skin])]
-         [:label.knob-skin-choice [:span "Knobs"]
-          [:select {:aria-label "Knob style" :value (name skin)
+         [:label.knob-skin-choice [:span "Widgets"]
+          [:select {:aria-label "Widget style" :value (name skin)
                     :on-change #(rf/dispatch [:studio/set-knob-skin (.. % -target -value)])}
            (for [{:keys [id label]} control-geometry/knob-skins]
              ^{:key id} [:option {:value (name id)} label])]])

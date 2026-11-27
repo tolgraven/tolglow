@@ -125,7 +125,8 @@
       (is (nil? (:amount (first rings)))))))
 
 (deftest knob-skins-are-a-closed-preference
-  (is (= [:standard :ember] (mapv :id geometry/knob-skins)))
+  (is (= [:ember :standard] (mapv :id geometry/knob-skins)) "Ember is the default, listed first")
+  (is (= :standard (geometry/knob-skin "standard")) "a saved Standard keeps the flat style")
+  (is (= :standard (geometry/knob-skin :standard)))
   (is (= :ember (geometry/knob-skin "ember")))
-  (is (= :ember (geometry/knob-skin :ember)))
-  (is (every? #{:standard} (map geometry/knob-skin [nil "chrome" 4 :unknown]))))
+  (is (every? #{:ember} (map geometry/knob-skin [nil "chrome" 4 :unknown])) "anything else is the default"))

@@ -114,3 +114,29 @@
 .control-strip .compound-control>.parameter-fader{min-height:84px}
 .control-strip .rings-trigger{grid-template-columns:64px minmax(0,1fr);gap:4px}
 @media (forced-colors:active){.xy-pointer,.fader-thumb{forced-color-adjust:none;background:CanvasText}}
+/* Ember widget style (#655): the default. Nothing is flat: faces, tracks and
+   handles carry gentle gradients and light inner shading, without filters
+   on moving parts. Rust marks a value fill (the amount from the low end or
+   zero); it never signals an edited or overridden state, which the dashed
+   amber base marker shows. Standard, above, is the flat alternative. */
+.parameter-xy:is([data-skin=ember],[data-skin=ember] *){background:radial-gradient(120% 120% at 30% 22%,rgb(58 64 70/.95),rgb(30 33 37/.92) 62%,rgb(22 24 27/.95));box-shadow:0 0 0 1px rgb(20 20 20/.5),inset 0 1px 0 rgb(255 255 255/.04),inset 0 2px 10px rgb(0 0 0/.35)}
+.parameter-xy:is([data-skin=ember],[data-skin=ember] *) .xy-cross.vertical{border:0;width:1px;margin-left:-.5px;background:linear-gradient(transparent,var(--pad-glow) 25%,var(--pad-glow) 75%,transparent)}
+.parameter-xy:is([data-skin=ember],[data-skin=ember] *) .xy-cross.horizontal{border:0;height:1px;margin-bottom:-.5px;background:linear-gradient(90deg,transparent,var(--pad-glow) 25%,var(--pad-glow) 75%,transparent)}
+.parameter-xy:is([data-skin=ember],[data-skin=ember] *) .xy-pointer{background:radial-gradient(circle at 38% 32%,#3d3d3d,#1b1b1b 55%,#0e0e0e);border-color:rgb(170 80 66/.85);box-shadow:0 0 4px 2px rgb(150 70 60/.55),0 1px 2px rgb(0 0 0/.6),inset 0 1px 1px rgb(255 255 255/.08)}
+.parameter-xy:is([data-skin=ember],[data-skin=ember] *) .xy-label{text-shadow:0 1px 0 rgb(0 0 0/.6)}
+.parameter-fader:is([data-skin=ember],[data-skin=ember] *) .fader-track{background:linear-gradient(90deg,rgb(26 29 32),rgb(46 51 56) 45%,rgb(30 33 37));box-shadow:0 0 0 1px rgb(20 20 20/.55),inset 0 2px 5px rgb(0 0 0/.4)}
+.parameter-fader:is([data-skin=ember],[data-skin=ember] *) .fader-fill{background:linear-gradient(90deg,rgb(255 255 255/.10),transparent 35%,rgb(0 0 0/.18)),linear-gradient(rgb(178 84 70/.92),rgb(140 40 36/.8))}
+.parameter-fader:is([data-skin=ember],[data-skin=ember] *) .fader-thumb{background:linear-gradient(rgb(54 54 54),rgb(24 24 24) 55%,rgb(16 16 16));box-shadow:-5px 0 11px 1px rgb(80 40 30/.45),0 1px 2px rgb(0 0 0/.6),inset 0 1px 0 rgb(255 255 255/.07)}
+.parameter-fader:is([data-skin=ember],[data-skin=ember] *) .fader-thumb>output{text-shadow:0 1px 0 rgb(0 0 0/.7)}
+.parameter-fader:is([data-skin=ember],[data-skin=ember] *) .fader-tick{background:linear-gradient(90deg,rgb(0 0 0/.15),rgb(0 0 0/.55) 50%,rgb(0 0 0/.15))}
+.parameter-fader:is([data-skin=ember],[data-skin=ember] *) .fader-tick.major{background:linear-gradient(90deg,rgb(0 0 0/.25),rgb(0 0 0/.75) 50%,rgb(0 0 0/.25));box-shadow:0 1px 0 rgb(255 255 255/.05)}
+.parameter-fader:is([data-skin=ember],[data-skin=ember] *) .fader-bound{text-shadow:0 1px 0 rgb(0 0 0/.5)}
+.parameter-rings-glyph[data-skin=ember] .rings-disc{stroke:rgb(18 18 18/.55);stroke-width:1}
+.parameter-rings-glyph[data-skin=ember] .ring-track{stroke:color-mix(in srgb,var(--ring) 20%,#121517)}
+.rings-component{--ember-from:color-mix(in srgb,var(--ring) 45%,#101214);--ember-to:color-mix(in srgb,var(--ring) 85%,#000)}
+.parameter-rings-glyph[data-skin=ember] .ring-position{stroke:rgb(10 12 12/.75);stroke-width:.8}
+.live-board[data-skin=ember] input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:linear-gradient(rgb(26 29 32),rgb(48 53 58));box-shadow:inset 0 1px 2px rgb(0 0 0/.55),0 0 0 1px rgb(20 20 20/.45)}
+.live-board[data-skin=ember] input[type=range]::-webkit-slider-thumb{width:18px;height:18px;margin-top:-6px;border-radius:4px;background:linear-gradient(rgb(58 58 58),rgb(22 22 22));box-shadow:0 0 6px 1px rgb(150 70 55/.55),inset 0 1px 0 rgb(255 255 255/.08)}
+.live-board[data-skin=ember] input[type=range]::-moz-range-track{height:6px;border-radius:3px;background:linear-gradient(rgb(26 29 32),rgb(48 53 58));box-shadow:inset 0 1px 2px rgb(0 0 0/.55)}
+.live-board[data-skin=ember] input[type=range]::-moz-range-progress{height:6px;border-radius:3px;background:linear-gradient(rgb(178 84 70/.92),rgb(140 40 36/.8))}
+.live-board[data-skin=ember] input[type=range]::-moz-range-thumb{width:18px;height:18px;border-radius:4px;background:linear-gradient(rgb(58 58 58),rgb(22 22 22));box-shadow:0 0 6px 1px rgb(150 70 55/.55)}

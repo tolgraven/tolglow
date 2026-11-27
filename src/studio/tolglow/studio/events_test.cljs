@@ -1261,8 +1261,9 @@
     (is (= :ember (get-in restored [:ui :knob-skin])))
     (is (= {:view "rig" :page-id "second" :launch-mode "held" :knob-skin "ember"} (get-in save [:studio/http :body :values])))
     (is (= :perform (get-in (events/apply-ui-preferences base {:ui {:view 42}}) [:ui :view])))
-    (testing "an unknown knob skin restores the standard knob"
-      (is (= :standard (get-in (events/apply-ui-preferences base {:ui {:knob-skin "chrome"}}) [:ui :knob-skin]))))
+    (testing "Ember is the default style; an unknown saved style restores it, a saved Standard is kept"
+      (is (= :ember (get-in (events/apply-ui-preferences base {:ui {:knob-skin "chrome"}}) [:ui :knob-skin])))
+      (is (= :standard (get-in (events/apply-ui-preferences base {:ui {:knob-skin "standard"}}) [:ui :knob-skin]))))
     (testing "choosing a knob skin persists it with the other portable preferences"
       (let [chosen (transition restored [:studio/set-knob-skin "standard"])]
         (is (= :standard (get-in chosen [:db :ui :knob-skin])))

@@ -150,7 +150,7 @@ async function studioPhase(browser) {
   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Edit Tone components');
 
   // Ember skin: a portable UI preference.
-  await page.getByLabel('Knob style', {exact: true}).selectOption('ember');
+  await page.getByLabel('Widget style', {exact: true}).selectOption('ember');
   await card.locator('.parameter-dial[data-skin=ember]').first().waitFor();
   const level = card.getByRole('slider', {name: 'Level rotary', exact: true});
   let box = await level.boundingBox();
@@ -204,10 +204,6 @@ async function studioPhase(browser) {
   report.repl = await replRoundTrip(page, card);
   report.comparison = await skinComparison(page, card, row, shot);
 
-  // Strip layout with the Ember skin.
-  await card.getByRole('button', {name: /^Collapse /}).click();
-  await card.locator('.control-strip .parameter-xy').first().waitFor();
-  await shot(card, 'strip-ember');
   assert.deepEqual(errors, []);
   await context.close();
   return report;
@@ -218,7 +214,7 @@ async function studioPhase(browser) {
 // param/set like any other key).
 async function skinComparison(page, card, row, shot) {
   const skin = async name => {
-    await page.getByLabel('Knob style', {exact: true}).selectOption(name);
+    await page.getByLabel('Widget style', {exact: true}).selectOption(name);
     await card.locator(name === 'ember' ? '.parameter-dial[data-skin=ember]' : '.parameter-dial:not([data-skin])').first().waitFor();
   };
   const rest = async () => {
@@ -227,11 +223,19 @@ async function skinComparison(page, card, row, shot) {
     await page.waitForTimeout(400);
   };
   const values = params(await state(page));
+  const rings = card.getByRole('button', {name: 'Edit Tone components', exact: true});
   for (const name of ['standard', 'ember']) {
     await skin(name); await rest();
     await shot(card, 'ab-' + name);
+    for (const param of ['level', 'offset', 'aim', 'steps', 'tone']) await shot(row(param), 'ab-' + param + '-' + name);
+    await rings.click();
+    await card.getByRole('group', {name: 'Tone components', exact: true}).waitFor();
+    await rest();
+    await shot(row('tone'), 'ab-tone-open-' + name);
+    await rings.click();
+    await card.getByRole('group', {name: 'Tone components', exact: true}).waitFor({state: 'detached'});
   }
-  assert.deepEqual(params(await state(page)), values, 'the A/B pair shows identical values');
+  assert.deepEqual(params(await state(page)), values, 'the A/B pairs show identical values');
   const level = card.getByRole('slider', {name: 'Level rotary', exact: true});
   for (const [label, keys, value] of [['0', ['Home'], 0], ['0.5', ['Home', 'PageUp', 'PageUp', 'PageUp', 'PageUp', 'PageUp'], 0.5], ['1', ['End'], 1]]) {
     await level.focus();
@@ -242,6 +246,15 @@ async function skinComparison(page, card, row, shot) {
       await shot(level, 'knob-' + name + '-' + label);
     }
   }
+  // The compact strip, Standard then Ember, with the same values.
+  await card.getByRole('button', {name: /^Collapse /}).click();
+  await card.locator('.control-strip .parameter-xy').first().waitFor();
+  const strip = params(await state(page));
+  for (const name of ['standard', 'ember']) {
+    await skin(name); await rest();
+    await shot(card, 'ab-strip-' + name);
+  }
+  assert.deepEqual(params(await state(page)), strip);
   return values;
 }
 

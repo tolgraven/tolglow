@@ -150,3 +150,13 @@
       (is (= [0 0.04] (get-in twice [:db :ui :composition :slots 0 :params :offset])))))
   (testing "an index outside the vector changes nothing"
     (is (nil? (transition (with-instance {:offset [0 0]}) [:studio/param-components "i1" :offset {3 1} [0 0]])))))
+
+(deftest ember-rings-sit-on-a-disc-and-shade-each-arc-in-its-colour
+  (let [axes (mapv #(geometry/axis % {:bounds [0 1]}) ["Low" "Mid" "High" "Air"])
+        ember (html [widgets/rings-glyph "Tone" axes [0.2 0.4 0.6 0.8] :ember])
+        standard (html [widgets/rings-glyph "Tone" axes [0.2 0.4 0.6 0.8]])]
+    (is (str/includes? ember "rings-disc"))
+    (is (= 4 (count-of #"<linearGradient" ember)) "one sweep gradient per ring")
+    (is (str/includes? ember "var(--ring)") "each sweep reads its ring colour")
+    (is (= 4 (count-of #"stroke=\"url\(#rings-" ember)))
+    (is (not (str/includes? standard "rings-disc")) "Standard stays flat")))

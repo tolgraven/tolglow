@@ -189,12 +189,15 @@
             :amount (amount axis v) :origin (origin axis) :color (nth ring-colors i)}))))
 
 (def knob-skins
-  "Knob looks an operator can choose for Studio. `:ember` is the tolglow-web
-  knob: a rust pie wedge on dark slate with a glowing bar pointer."
-  [{:id :standard :label "Standard"} {:id :ember :label "Ember"}])
+  "Widget styles an operator can choose for Studio, default first. `:ember`
+  is the tolglow-web look: rust value fills, gently shaded faces, tracks and
+  handles on every knob, ring, pad and fader. `:standard` is the flat style
+  in each parameter's accent colour."
+  [{:id :ember :label "Ember"} {:id :standard :label "Standard"}])
 
 (defn knob-skin
-  "A stored preference as a known skin, else :standard."
+  "A stored preference as a known style, else the default :ember. A saved
+  :standard keeps the flat style."
   [preference]
   (let [id (cond (keyword? preference) preference (string? preference) (keyword preference))]
-    (or (some #(when (= id (:id %)) id) knob-skins) :standard)))
+    (or (some #(when (= id (:id %)) id) knob-skins) :ember)))

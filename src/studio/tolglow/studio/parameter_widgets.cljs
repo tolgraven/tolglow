@@ -145,8 +145,9 @@
     [:<>
      [:defs
       [:linearGradient {:id (str id "-fill") :x1 "0%" :y1 "30%" :x2 "50%" :y2 "100%"}
-       [:stop {:offset "0%" :stop-color "rgb(160,75,65)" :stop-opacity 0.85}]
-       [:stop {:offset "100%" :stop-color "rgb(190,45,40)" :stop-opacity 0.7}]]
+       ;; Rust by default; a ring's sub-knob fills in its ring colour.
+       [:stop {:offset "0%" :style {:stop-color "var(--ember-from, rgb(160 75 65 / .85))"}}]
+       [:stop {:offset "100%" :style {:stop-color "var(--ember-to, rgb(190 45 40 / .7))"}}]]
       [:linearGradient {:id (str id "-surface") :x1 "0" :y1 "0" :x2 "0" :y2 "1"}
        [:stop {:offset "0%" :stop-color "rgb(50,56,61)"}]
        [:stop {:offset "100%" :stop-color "rgb(29,32,36)"}]]
@@ -408,19 +409,41 @@
 
 (defn rings-glyph
   "Nested rings, one per sub-parameter, outermost first, each a 270-degree
-  arc filled from its origin to its value."
-  [title axes values]
-  [:svg.parameter-rings-glyph {:view-box "0 0 100 94" :role "img"
-                               :aria-label (str title ": " (pad-text axes values))}
-   (for [{:keys [index radius width amount origin]} (geometry/rings axes values)]
-     ^{:key index}
-     [:g {:class (str "ring ring-" index)}
-      [:path.ring-track {:d (arc-path 0 1 radius) :stroke-width width}]
-      (when (and amount (not= amount origin))
-        [:path.ring-value {:d (arc-path origin amount radius) :stroke-width width}])
-      (when amount
-        (let [[x y] (dial-point amount radius)]
-          [:circle.ring-position {:cx x :cy y :r (/ width 2)}]))])])
+  arc filled from its origin to its value. The :ember skin sets them on a
+  dark disc and shades each arc along its sweep in its own ring colour."
+  [title axes values & [skin]]
+  (r/with-let [id (str "rings-" (random-uuid))]
+    (let [ember? (= :ember skin)
+          url #(str "url(#" id "-" % ")")]
+      [:svg.parameter-rings-glyph {:view-box "0 0 100 94" :role "img" :data-skin (when ember? "ember")
+                                   :aria-label (str title ": " (pad-text axes values))}
+       (when ember?
+         [:<>
+          [:defs
+           [:radialGradient {:id (str id "-disc") :cx "45%" :cy "38%" :r "60%"}
+            [:stop {:offset "0%" :stop-color "rgb(52,58,63)"}]
+            [:stop {:offset "100%" :stop-color "rgb(22,25,28)"}]]
+           [:radialGradient {:id (str id "-dot") :cx "35%" :cy "30%" :r "70%"}
+            [:stop {:offset "0%" :stop-color "#fbfaf0"}]
+            [:stop {:offset "100%" :stop-color "#a9ab9c"}]]]
+          [:circle.rings-disc {:cx 50 :cy 44 :r 43 :fill (url "disc")}]])
+       (for [{:keys [index radius width amount origin]} (geometry/rings axes values)]
+         ^{:key index}
+         [:g {:class (str "ring ring-" index)}
+          (when ember?
+            ;; Inside the ring group, so the stops read its --ring colour.
+            [:defs
+             [:linearGradient {:id (str id "-sweep-" index) :gradientUnits "userSpaceOnUse" :x1 8 :y1 80 :x2 92 :y2 80}
+              [:stop {:offset "0%" :style {:stop-color "color-mix(in srgb, var(--ring) 45%, #101214)"}}]
+              [:stop {:offset "60%" :style {:stop-color "var(--ring)"}}]
+              [:stop {:offset "100%" :style {:stop-color "color-mix(in srgb, var(--ring) 70%, #ffffff)"}}]]])
+          [:path.ring-track {:d (arc-path 0 1 radius) :stroke-width width}]
+          (when (and amount (not= amount origin))
+            [:path.ring-value {:d (arc-path origin amount radius) :stroke-width width
+                               :stroke (when ember? (url (str "sweep-" index)))}])
+          (when amount
+            (let [[x y] (dial-point amount radius)]
+              [:circle.ring-position {:cx x :cy y :r (/ width 2) :fill (when ember? (url "dot"))}]))])])))
 
 (defn- ring-legend [axes values]
   [:span.rings-legend
@@ -452,7 +475,7 @@
                                :aria-label (str "Edit " title " components")
                                :on-click #(swap! open? not)
                                :on-key-down #(when (and @open? (= "Escape" (.-key %))) (.preventDefault %) (close!))}
-        [rings-glyph title axes shown]
+        [rings-glyph title axes shown skin]
         [ring-legend axes shown]]
        (when @open?
          [:div.rings-components {:id panel-id :role "group" :aria-label (str title " components")
