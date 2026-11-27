@@ -4,6 +4,7 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.checkbox :as checkbox]
+            [tolglow.studio.interop :as interop]
             [tolglow.studio.pixel-editor :as pixels]
             [tolglow.rig.placement :as placement]
             [tolglow.studio.rig-placement :as rp]
@@ -576,7 +577,7 @@
        [:button.button {:on-click #(dispatch! [:rig-editor/cancel])} "Discard draft"]]]
      [:div.rig-editor-layout
       [:div.rig-editor-scene
-       [spatial-preview/scene show (get-in db [:server-projection :view :settings :spatial])]
+       [spatial-preview/scene (interop/room-input show) (get-in db [:server-projection :view :settings :spatial])]
        [camera/controls]
        [:div.rig-view-controls
         [:label "Camera view" [:select {:aria-label "Rig camera view" :value (get-in db [:ui :preview-settings :camera] "audience")
