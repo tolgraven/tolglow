@@ -1,5 +1,5 @@
 (ns tolglow.studio.fixture-host-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [clojure.test :refer [deftest is testing]]
             [clojure.edn :as edn]
             [clojure.data.json :as json]
             [tolglow.show :as show]
@@ -141,4 +141,91 @@
           (is (= "mode-required" (get-in choices [:data :diagnostics 0 :code])))
           (is (true? (get-in selected [:data :valid?])))
           (is (= "Compact RGBW" (:mode (edn/read-string (get-in selected [:data :source])))))))
+      (finally (app/stop! runtime)))))
+
+(def spot-type
+  {:id "room-spot" :version 1 :name "Room spot" :footprint 6
+   :channels {:dimmer 1 :red 2 :green 3 :blue 4 :pan 5 :tilt 6}
+   :calibration {:pan {:min-deg -270 :max-deg 270} :tilt {:min-deg -135 :max-deg 135}}})
+
+(deftest rig-editor-placements-are-instantiated-and-aim-checked-through-the-host
+  (let [runtime (app/start! (assoc (app/default-config) :web-server {:port 0} :show {:fixture-options {:provider no-network}}))]
+    (try
+      (let [handler (studio/handler runtime)
+            _ (is (= "accepted" (get-in (publish! handler spot-type) [:data :status])))
+            before (rig runtime)
+            ;; Studio's draft sends the whole rig with the placement's instance
+            ;; choices; type data is taken from the registry, not the request.
+            placement {:id "room-spot-1" :fixture-type-id "room-spot" :universe 9 :address 1 :placement? true
+                       :position [1 4.75 -2] :rotation-deg [0 0 180] :footprint 99 :channels (:channels spot-type)}
+            saved (request handler :post "/api/rig" (update before :fixtures conj placement))
+            fixture (last (:fixtures (rig runtime)))]
+        (is (= "accepted" (get-in saved [:data :status])) (pr-str saved))
+        (is (= (count (:fixtures before)) (dec (count (:fixtures (rig runtime))))))
+        (is (= [6 "room-spot" (:calibration spot-type) [0 0 180]]
+               [(:footprint fixture) (:fixture-type-id fixture) (:calibration fixture) (:rotation-deg fixture)]))
+        (testing "The aim check solves the committed head; draft overrides stay read-only"
+          (let [check (request handler :post "/api/fixtures/aim-check" {:fixture-id "room-spot-1" :point [1 0 -2]})
+                draft (request handler :post "/api/fixtures/aim-check" {:fixture-id "room-spot-1" :point [1 0 -2]
+                                                                        :rotation-deg [0 0 0]
+                                                                        :calibration {:pan {:min-deg -270 :max-deg 270}
+                                                                                      :tilt {:min-deg 0 :max-deg 135}}})]
+            (is (= 200 (:status check)))
+            (is (true? (get-in check [:data :reachable?])))
+            (is (< (Math/abs (- 90.0 (get-in check [:data :tilt-deg]))) 1.0e-6) "Straight below a hanging head")
+            (is (false? (get-in draft [:data :reachable?])) "Standing with upward-only tilt, it cannot reach below its base")
+            (is (= fixture (last (:fixtures (rig runtime)))))))
+        (testing "A fit proposes the mount from observations"
+          (let [samples (vec (for [target [[3 0 0] [-2 0 1] [2 0 -5] [1 1 2]]]
+                               (let [{:keys [pan tilt]} (:data (request handler :post "/api/fixtures/aim-check"
+                                                                        {:fixture-id "room-spot-1" :point target}))]
+                                 {:target target :pan pan :tilt tilt})))
+                fit (request handler :post "/api/fixtures/aim-fit" {:fixture-id "room-spot-1" :rotation-deg [0 0 0]
+                                                                    :samples samples :axis-verified? true})]
+            (is (true? (get-in fit [:data :accepted?])) (pr-str fit))
+            (is (= "hanging" (get-in fit [:data :mounting-kind])))))
+        (let [current (rig runtime)
+              unknown (request handler :post "/api/rig" (update current :fixtures conj {:id "x" :fixture-type-id "missing" :universe 10 :address 1
+                                                                                         :placement? true}))
+              untyped (request handler :post "/api/rig" (update current :fixtures conj {:id "nochan" :universe 40 :address 1}))
+              altered (request handler :post "/api/rig"
+                               (update current :fixtures conj (assoc placement :id "room-spot-2" :universe 11
+                                                                     :channels (assoc (:channels spot-type) :dimmer {:offset 1 :inverted-from 128}))))]
+          (is (= [422 422 422] (mapv :status [unknown untyped altered])))
+          (is (re-find #"type not found" (get-in unknown [:data :message])))
+          (is (not (re-find #"type not found" (str (get-in untyped [:data :message])))) "Untyped fixtures keep Afterglow's patch error")
+          (is (= current (rig runtime))))
+        (testing "Removing a fixture and placing its type under the same ID in one edit is still admitted"
+          (let [bare (dissoc spot-type :calibration)
+                bare (assoc bare :id "bare-spot")
+                _ (is (= "accepted" (get-in (publish! handler bare) [:data :status])))
+                _ (is (= "accepted" (get-in (patch! handler "bare-spot" "bare-spot-1" 300 {:universe 12 :calibration (:calibration spot-type)})
+                                            [:data :status])))
+                current (rig runtime)
+                without (vec (remove #(= "bare-spot-1" (name (:id %))) (:fixtures current)))
+                again {:id "bare-spot-1" :fixture-type-id "bare-spot" :universe 12 :address 300 :placement? true}
+                refused (request handler :post "/api/rig" (assoc current :fixtures (conj without again)))]
+            (is (= 422 (:status refused)))
+            (is (re-find #"pan angle range" (get-in refused [:data :message])))
+            (is (= current (rig runtime)))
+            (is (= "accepted" (get-in (request handler :post "/api/rig"
+                                               (assoc current :fixtures (conj without (assoc again :calibration (:calibration spot-type)))))
+                                      [:data :status])))))
+        (testing "A REPL rename keeps every per-instance key and the committed type version"
+          (let [extras {:groups [:wash] :measured-relative-brightness 0.4 :max-watts 300}
+                with-extras (update (rig runtime) :fixtures (partial mapv #(if (= "room-spot-1" (name (:id %))) (merge % extras) %)))
+                _ (is (= :accepted (:status (deref (show/submit! runtime :rig with-extras) 5000 nil))))
+                _ (is (= "accepted" (get-in (publish! handler (assoc spot-type :version 2 :name "Republished")) [:data :status])))
+                renamed (update (rig runtime) :fixtures
+                                (partial mapv #(if (= "room-spot-1" (name (:id %)))
+                                                 (assoc % :id "room-spot-renamed" :channels (assoc (:channels spot-type) :pan {:offset 5 :inverted-from 0}))
+                                                 %)))
+                _ (is (= :accepted (:status (deref (show/submit! runtime :rig renamed) 5000 nil))))
+                fixture (first (filter #(= "room-spot-renamed" (name (:id %))) (:fixtures (rig runtime))))]
+            (is (= extras (select-keys fixture (keys extras))))
+            (is (= [1 "Room spot"] [(:fixture-type-version fixture) (:name fixture)]))
+            (testing "Aim checks report the DMX a reversed channel sends"
+              (let [check (:data (request handler :post "/api/fixtures/aim-check" {:fixture-id "room-spot-renamed" :point [3 0 -1]}))]
+                (is (= (- 255 (Math/round (* 255.0 (:pan check)))) (get-in check [:dmx :pan])))
+                (is (= (Math/round (* 255.0 (:tilt check))) (get-in check [:dmx :tilt]))))))))
       (finally (app/stop! runtime)))))
