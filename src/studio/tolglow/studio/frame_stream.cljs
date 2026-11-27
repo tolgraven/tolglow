@@ -31,7 +31,10 @@
            :transport-time-ms [:transport :time-ms]
            :schedule-beat [:schedule :beat]
            :frame-ms [:status :frame-ms]
-           :output-scheduler [:status :output-scheduler]}})
+           :output-scheduler [:status :output-scheduler]}
+   ;; Remote query results (the timeline playhead, pad visualizations, Room
+   ;; scene signals) follow the show frame; each reader takes its own query.
+   :remote {:results [:subscriptions]}})
 
 (def ^:private owned-paths (vec (for [[_ parts] lane-paths [_ path] parts] path)))
 

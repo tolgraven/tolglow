@@ -1270,7 +1270,7 @@
       (is (= {:sources []} (get-in full [:db :server-projection :view :output :atmosphere]))))
     (testing "the whole lane frame installs before the ACK and consumers hear of it after"
       (is (= [:studio/frame-install :studio/stream-reply :studio/frame-notify] (replies full)))
-      (is (= [:studio/frame-notify [:room :clock]] (last (:fx full))))
+      (is (= [:studio/frame-notify [:room :clock :remote]] (last (:fx full))))
       (is (= {:token "full" :identity (projection/identity-of view) :revision 3 :frame-number 12 :time-ms 500
               :master 0.7 :blackout? nil :cut? nil :last-intents nil :atmosphere {:sources []}
               :view-token "full" :value {:values {:head-1 {:intensity 0.2}}}}
