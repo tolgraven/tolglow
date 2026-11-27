@@ -35,7 +35,7 @@
     tolglow.integrations.reference-position-test tolglow.integrations.track-profile-test tolglow.integrations.section-patterns-test
     tolglow.integrations.mpv-observations-test tolglow.integrations.mpv-player-test tolglow.studio.section-reference-host-test
     tolglow.integrations.gdtf-test
-    tolglow.venue-fog-test tolglow.fog-optics-test tolglow.fog-calibration-test tolglow.venue-performance-test tolglow.perf.beam-admission-test tolglow.perf.independent-effects-test tolglow.perf.weighted-live-test tolglow.stride-break-even-test
+    tolglow.venue-fog-test tolglow.fog-optics-test tolglow.fog-calibration-test tolglow.venue-performance-test tolglow.perf.beam-admission-test tolglow.perf.independent-effects-test tolglow.perf.weighted-live-test tolglow.perf.mixed-rig-test tolglow.stride-break-even-test
     tolglow.calibration-test tolglow.studio-test tolglow.effects.faults-test tolglow.effects.state-migration-test tolglow.effects.modulation-reload-test tolglow.studio.web-test tolglow.studio.pretty-test tolglow.guest-admission-test tolglow.composition-test tolglow.agents-test tolglow.agents.forms-test
     tolglow.persistence-test tolglow.show.recovery-test tolglow.expressive-test tolglow.audio.capture-test tolglow.audio.shape-test tolglow.audio.stems-test tolglow.audio-lfo-test tolglow.agents.credentials-test
     tolglow.fixtures.definitions-test tolglow.fixtures.library-test
@@ -67,7 +67,7 @@
     tolglow.timeline-test
     tolglow.preview.airplay-test
     tolglow.personalities-test tolglow.personalities.icon-test tolglow.personalities-host-test
-    tolglow.showcase-test tolglow.venues.gig-2023-test
+    tolglow.showcase-test tolglow.showcase-cues-test tolglow.venues.gig-2023-test
     tolglow.video-strips-test tolglow.studio.video-strips-host-test
     tolglow.video-surfaces-test tolglow.studio.video-surfaces-host-test tolglow.video-shader-test])
 

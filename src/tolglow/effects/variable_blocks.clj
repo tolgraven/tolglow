@@ -25,6 +25,8 @@
            plan (blocks/prepare {:blocks bindings :prefabs prefabs :imported-prefabs entries} [] no-params)]
        (when (some (fn [[spec _]] (= :launch (:phase-reference spec :launch))) (:oscillators plan))
          (throw (ex-info "Show-wide variable blocks require a transport phase reference" {})))
+       (when (seq (:accumulators plan))
+         (throw (ex-info "Show-wide variable blocks cannot hold a phase accumulator; it keeps its phase in a cue's state" {})))
        (assoc plan :evaluate (update-vals (:expressions plan) ir/compile-expression))))))
 
 (defn compile-model [model]

@@ -39,3 +39,33 @@
   (testing "a gradient, enum, boolean or oversized vector has no {:op :param} type"
     (is (every? nil? (map controls/expression-type
                           [{:type :gradient} {:type :enum} {:type :boolean} {:type :vector :size 5} {}])))))
+
+(deftest a-vector-chooses-its-compound-widget
+  (testing "two bounded components are an XY pad, three a pad with a Z fader, four nested rings"
+    (is (= :xy (controls/compound-widget {:type :vector :size 2 :bounds [-1 1]})))
+    (is (= :xyz (controls/compound-widget {:type "vector" :size 3 :bounds [0 1]})) "wire strings read as keywords")
+    (is (= :rings (controls/compound-widget {:type :vector :size 4 :bounds [0 1]}))))
+  (testing "component schemas give each axis its own bounds"
+    (is (= :xyz (controls/compound-widget {:type :vector :size 3
+                                           :component-schemas [{:bounds [-180 180]} {:bounds [-90 90]} {:bounds [0 20]}]})))
+    (is (= [{:type :number :bounds [-180 180] :unit :degrees} {:type :number :bounds [0 1] :unit :degrees}]
+           (controls/component-schemas {:type :vector :size 2 :bounds [0 1] :unit :degrees
+                                        :component-schemas [{:bounds [-180 180]}]}))))
+  (testing ":ui/widget asks for rings or axes on any size, and a pad only on the size it fits"
+    (is (= :rings (controls/compound-widget {:type :vector :size 2 :bounds [0 1] :ui/widget :rings})))
+    (is (= :axes (controls/compound-widget {:type :vector :size 3 :bounds [0 1] :ui/widget "axes"})))
+    (is (= :xyz (controls/compound-widget {:type :vector :size 3 :bounds [0 1] :ui/widget :xy})))
+    (is (= :xy (controls/compound-widget {:type :vector :size 2 :bounds [0 1] :ui/widget :xyz}))))
+  (testing "an unbounded component or an unsupported size keeps the component readouts"
+    (is (= :axes (controls/compound-widget {:type :vector :size 2})))
+    (is (= :axes (controls/compound-widget {:type :vector :size 2 :component-schemas [{:bounds [0 1]} {}]})))
+    (is (= :axes (controls/compound-widget {:type :vector :size 5 :bounds [0 1]})))
+    (is (= :axes (controls/compound-widget {:type :vector :size 1 :bounds [0 1]}))))
+  (testing "colour vectors, ranges and numbers are not compound"
+    (is (nil? (controls/compound-widget {:type :vector :size 3 :bounds [0 1] :semantic/type :rgb})))
+    (is (nil? (controls/compound-widget {:type :range :bounds [0 1]})))
+    (is (nil? (controls/compound-widget {:type :number :bounds [0 1]}))))
+  (testing "the description names it, so Studio and Push draw the same widget"
+    (is (= :xy (:widget (controls/control :offset {:type :vector :size 2 :bounds [-1 1]}))))
+    (is (= :rings (:widget (controls/control :mix {:type :vector :size 4 :bounds [0 1]}))))
+    (is (not (contains? (controls/control :tint {:type :color}) :widget)))))
