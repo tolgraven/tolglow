@@ -16,6 +16,13 @@ shared `tolglow.compiler/compile-plan`; do not duplicate authoring validation.
   exact-number and tween fallbacks and explain them through function metadata.
   Unsupported query/IR nodes must fail shared validation, never arbitrary eval.
 - New arrays are privately owned until step return and read-only thereafter.
+  Pure groups bind with `:shared-outputs? true`, so one evaluated array reaches
+  every instance of the compiled group and every later frame with the same
+  inputs (always, on a stopped transport). Never pass it to an in-place writer:
+  not Afterglow `fields/scale-field!`, not `aset`/`aset-double`, not
+  `System/arraycopy` into it. Write scaled or changed values to a new array, as
+  `finish-fields` does. `tolglow.shared-fields-host-test` checks this through
+  `show/tick!` against the scalar runtime.
   Use runtime/append-contributions to flush ordinary assignment tails before
   typed blocks. Kernel priority/order, not worker completion, determines merging.
 - Test actual model/engine/render transitions and byte output. Benchmark cached
