@@ -17,3 +17,11 @@
 .launcher-note { font-size:8px; color:var(--muted); font-variant-numeric:tabular-nums; }
 .launcher-label { font-size:9px; line-height:1.2; overflow-wrap:anywhere; }
 @media(max-width:600px){ .launcher-pads,.launcher-row { gap:3px; } .launcher-pad { padding:2px; } .launcher-label { font-size:7px; } }
+
+/* Parameter devices on run tracks and their shared frame (#625). */
+.parameter-device-channels { margin:12px 0; padding-left:0; list-style:none; }
+.parameter-device-channels > li { min-width:0; overflow-wrap:anywhere; }
+.parameter-device-slots { margin:8px 0; padding-left:22px; columns:2 180px; column-gap:18px; }
+.parameter-device-slots li { break-inside:avoid; font-variant-numeric:tabular-nums; }
+.parameter-frame { margin:10px 0 4px; max-width:320px; }
+.parameter-frame img { display:block; width:100%; height:auto; aspect-ratio:5/1; border:1px solid var(--line); border-radius:5px; background:#121417; }

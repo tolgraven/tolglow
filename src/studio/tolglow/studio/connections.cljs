@@ -1042,6 +1042,11 @@
 
 (rf/reg-sub :connections/frame-preview (fn [db _] (get-in db [:connections :frame-preview])))
 
+;; Only instance identities: the panel re-renders when a run starts or ends,
+;; not on every state update.
+(rf/reg-sub :connections/running-instances
+  (fn [db _] (mapv #(select-keys % [:id :cue-id]) (get-in db [:show :instances]))))
+
 (defn- parameter-devices-section [s instances]
   (let [{:keys [channels counts sends] :as devices} (:parameter-devices s)]
     [:div.parameter-devices
@@ -1068,7 +1073,7 @@
                              (or (:held counts) 0) " held by Tolglow · Tolglow writes sent: " (or (:executed sends) 0)
                              (when (pos? (or (:failed sends) 0)) (str " (" (:failed sends) " not sent)")))]])]))
 
-(defn- live-runs-panel [s instances]
+(defn- live-runs-panel [s]
   (let [{:keys [channels mirror] :as runs} (:live-runs s)]
     [:section.panel {:aria-label "Live runs"}
      [:div.panel-top [:span.section-label "LIVE RUNS"]]
@@ -1096,7 +1101,7 @@
          (when-not mirror
            [:p.small.muted "Sync to Live (show/sync-live-runs! at the REPL) mirrors the record into Live; this panel then shows each take's clip."])])
       [:p.small.muted "A Tolglow parameters device on a run track shows that effect's parameters as Studio does. Live automation on it steers the run; Sync writes each take's moves as its envelopes."]
-      [parameter-devices-section s instances]]]))
+      [parameter-devices-section s @(rf/subscribe [:connections/running-instances])]]]))
 
 (defn connection-view [db s]
   (let [active? (boolean (get-in s [:sync :active?])) pending? (boolean (seq (:pending s))) disabled? (or (nil? (:sync s)) active? pending?)]
@@ -1122,7 +1127,7 @@
                                           @(rf/subscribe [:show-window/preview-only])) "Connect enabled adapters"]
        [:button#sync-stop.button {:type "button" :disabled (or (not active?) pending?) :on-click #(rf/dispatch [:connections/action :stop])} "Disconnect"]]]
      [:div.connections-layout [midi-panel s disabled?] [beat-link-panel s disabled?] [link-panel s disabled?]
-      [live-panel s (get-in db [:show :cues]) disabled?] [launcher-panel s] [capture-panel s] [live-runs-panel s (get-in db [:show :instances])] [audio-panel s] [section-reference-panel s]
+      [live-panel s (get-in db [:show :cues]) disabled?] [launcher-panel s] [capture-panel s] [live-runs-panel s] [audio-panel s] [section-reference-panel s]
       [capacity/panel (contains? (:pending s) :lighting-capacity)] [fog-control/panel (contains? (:pending s) :fog-control)] [output-panel db s] [pause-panel (contains? (:pending s) :pause)]]
      [audio-lfo/panel]
      [compute-client/panel]
