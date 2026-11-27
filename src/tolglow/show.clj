@@ -2927,7 +2927,7 @@
                  last-good? (assoc-in [:model :modulation] (:state modulation-result))
                  ;; The scene view shows the field the fixtures rendered.
                  (and (not last-good?) (:candidate-view space))
-                 (assoc-in [:model :variables :spatial] (:candidate-view space)))
+                 (update :model spatial/accept-candidate space))
         finished (when (or (get-in model [:settings :output-response :enabled?])
                            (get-in model [:settings :lighting-budget :enabled?])
                            (get-in model [:settings :lighting-activity :enabled?]))

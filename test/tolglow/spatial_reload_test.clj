@@ -5,6 +5,7 @@
   accepted revision switches the volume on its takeover frame."
   (:require [afterglow.control.model :as control]
             [clojure.test :refer [deftest is testing]]
+            [tolglow.event-subscribers :as subscribers]
             [tolglow.show :as show]
             [tolglow.spatial :as spatial]
             [tolglow.spatial.cues :as cues]
@@ -57,6 +58,7 @@
 
 (defn- runtime [{:keys [failing-compile]}]
   (let [captured (atom nil)
+        admitted (atom [])
         effects {:red {:id :red :version 1 :params {} :outputs {:red 1.0}}
                  :blue {:id :blue :version 1 :params {} :outputs {:blue 1.0}}
                  :driver driver
@@ -67,9 +69,13 @@
     (cond-> (assoc (show/create-runtime {:model (assoc (control/new-show {:registry {:effects effects :cues cues}})
                                                        :rig {:fixtures (conj host/fixtures head)})
                                          :worker-timeout-ms 10000 :effect-log! (fn [_])
+                                         ;; Record every committed domain event on its way to the subscribers.
+                                         :event-admit (fn [model events]
+                                                        (swap! admitted into events)
+                                                        (subscribers/admit model events))
                                          :sink {:send! (fn [universes _]
                                                          (reset! captured (mapv #(bit-and 255 %) (take 14 (get universes 1)))))}})
-                   ::host/captured-dmx captured)
+                   ::host/captured-dmx captured ::admitted admitted)
       failing-compile
       (update :compile (fn [compile-effect]
                          (fn [{:keys [id version] :as definition}]
@@ -412,3 +418,54 @@
         (is (= (dmx-from 200 new) (dmx-from 200 frames)))
         (is (every? nil? (map :error frames))))
       (finally (show/stop! published) (show/stop! adopted) (show/stop! unpublished)))))
+
+(defn- admitted-invalid-volumes
+  "The :spatial/invalid-volume events the owner committed to its subscribers."
+  [rt]
+  (filterv #(= :spatial/invalid-volume (:type (:event % %))) @(::admitted rt)))
+
+(defn- invalid-volume-events [frames]
+  (vec (for [frame frames, event (get-in frame [:spatial :events])
+             :when (= :spatial/invalid-volume (:type event))]
+         [(:time-ms frame) (:volume-id event)])))
+
+(deftest an-invalid-volume-is-reported-once-whichever-revision-the-engine-keeps
+  ;; The revision drops the ball's radius parameter, which leaves its volume
+  ;; without a radius inside the small room.
+  (let [revise #(update % :params dissoc :radius)
+        room (fn [rt] (host/settings rt 0 {:bounds {:min [-1 0 -1] :max [1 2 1]}}))]
+    (testing "accepted"
+      (let [rt (runtime {})]
+        (try
+          (room rt)
+          (let [frames (capture! rt orb :preserve-state (partial accepted revise :preserve-state) 200)
+                key (cues/key-for (some #(when (= :orb (:cue-id %)) %) (vals (:instances (state rt)))))]
+            (is (= [[200 key]] (invalid-volume-events frames)) "One event, on the takeover frame")
+            (is (= 1 (count (admitted-invalid-volumes rt))) "Subscribers receive it once")
+            (is (string? (get-in (peek frames) [:spatial :signals key :error])))
+            (is (every? nil? (map :error frames))))
+          (finally (show/stop! rt)))))
+    (testing "rejected"
+      (let [broken (runtime {}) control (runtime {})]
+        (try
+          (room broken) (room control)
+          (let [expected (capture! control orb :preserve-state nil nil)
+                actual (capture! broken orb :preserve-state (partial rejected-at revise :preserve-state :evaluate) 200)]
+            (is (= [] (invalid-volume-events actual)))
+            (is (= [] (admitted-invalid-volumes broken)))
+            (frames-match expected actual))
+          (finally (show/stop! broken) (show/stop! control)))))
+    (testing "an ordinary edit"
+      (let [rt (runtime {})]
+        (try
+          (room rt)
+          (let [frames (capture! rt orb :preserve-state nil nil)
+                id (some #(when (= :orb (:cue-id %)) (:id %)) (vals (:instances (state rt))))
+                _ (host/settings rt 600 {:bounds {:min [0 0 0] :max [0.6 0.6 0.6]}})
+                settled (assoc (observed rt) :time-ms 600)
+                later (mapv (fn [t] (show/tick! rt t) (assoc (observed rt) :time-ms t)) [650 700])]
+            (is (= [] (invalid-volume-events frames)))
+            (is (some? id))
+            (is (= 1 (count (invalid-volume-events (into [settled] later)))))
+            (is (= 1 (count (admitted-invalid-volumes rt)))))
+          (finally (show/stop! rt)))))))

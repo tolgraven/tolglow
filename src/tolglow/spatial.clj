@@ -270,7 +270,8 @@
   are the frame inputs and masks for that outcome, or nil when they equal the
   committed `:fields`, which serve the frame that keeps the running
   revisions. `:candidate-view` is the `[:variables :spatial]` view of that
-  outcome, for the owner to publish if the engine accepts it. Member leases,
+  outcome; the owner publishes it with `accept-candidate` if the engine
+  accepts it. Member leases,
   bodies, contacts and events follow an accepted revision from the next frame."
   [model before now graph command & [sampler {:keys [candidates candidate-view]}]]
   (let [original (get-in model [:settings :spatial])
@@ -335,21 +336,35 @@
             candidate (candidate-fields model before now candidates candidate-view old-cache
                                         fields result sample)
             events (into (:events result) (volume-errors model fields now))
-            signal-view (fn [fields]
+            ;; Invalid candidate volumes are reported if the engine accepts
+            ;; their revision; their view then carries the error, so the next
+            ;; frame would not report it again.
+            candidate-events (when candidate (vec (remove (set events) (volume-errors model candidate now))))
+            signal-view (fn [fields events]
                           (cond-> (assoc (select-keys result [:members :signals :dropped-ms]) :events events)
                             fields (update :signals #(merge-with merge % (:views fields)))
                             fields (update :members merge (:members fields))))
-            view (signal-view fields)
+            view (signal-view fields events)
             model (-> model (assoc-in state-path (assoc (:state result) :start-clock start))
                       (assoc-in [:variables :spatial] view) (stage events))]
         {:model (actions/apply-frame model result (:bindings s {}) now command)
          :fields fields
          :candidate-fields candidate
-         :candidate-view (when candidate (signal-view candidate))
+         :candidate-view (when candidate (signal-view candidate (into events candidate-events)))
+         :candidate-events candidate-events
          :cache (cond-> {:fixtures fixtures :rig rig :settings s :dynamic? dynamic? :scene scene}
                   (realized? observations) (assoc :optics (:cache @observations))
                   (or kept (realized? slices)) (assoc :slices @slices))
          :observe-hdr? (boolean (some #(= :hdr (:shape %)) (vals (:volumes s))))}))))
+
+(defn accept-candidate
+  "The model of a frame whose engine pass accepted the pending reloads behind
+  `advance`'s candidate fields: publish their view and stage the invalid
+  volume events only that outcome reports."
+  [model {:keys [candidate-view candidate-events]}]
+  (if candidate-view
+    (-> model (assoc-in [:variables :spatial] candidate-view) (stage candidate-events))
+    model))
 
 (defn on-contact
   "Build a descriptor for show/register-event-subscriber! or reg-event-subscriber!.
