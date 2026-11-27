@@ -152,6 +152,29 @@ export function assignSlots(previous, full, slotCount, shadowSlots) {
 }
 
 /**
+ * Emission envelope for ranking: a peak hold that decays with time constant
+ * `hold` and keeps a light that went dark for up to `hold` seconds. A strobing
+ * key light therefore keeps its rank and slot through its off frames (its
+ * output is still zero there; only presentation detail is retained). `levels`
+ * maps id to the current level (0 or absent when dark). Returns Map id →
+ * {peak, lastLit}.
+ */
+export function holdEmission(previous, levels, now, hold = LOD_DEFAULTS.hold) {
+  const next = new Map();
+  for (const [id, state] of previous || []) {
+    const age = now - state.lastLit;
+    if (age < hold) next.set(id, {peak: state.peak, lastLit: state.lastLit});
+  }
+  for (const [id, level] of levels) {
+    if (!(level > 0)) continue;
+    const prior = previous?.get(id);
+    const decayed = prior ? prior.peak * Math.exp(-Math.max(0, now - prior.lastLit) / hold) : 0;
+    next.set(id, {peak: Math.max(level, decayed), lastLit: now});
+  }
+  return next;
+}
+
+/**
  * Hand persistent slots over without a one-frame pop. Each slot holds
  * {id, weight}: weight 1 is a fully lit SpotLight/raymarched beam, 0 means the
  * fixture is still drawn as its faked beam. A slot whose desired occupant

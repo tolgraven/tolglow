@@ -42,10 +42,17 @@ async function probe() {
       await wait(25);
     }
     const promoted = engine.slotStates.find(slot => slot.id === faked);
-    // A blackout releases every slot at once, with no fade.
+    // A blackout darkens every light at once. Slots are held for one hold
+    // period (strobes keep their rank), then released.
     engine.update(snapshot(twelve, () => 0)); engine.draw(0);
-    const blackout = {occupied: engine.slotStates.filter(slot => slot.id != null).length,
-      intensity: Math.max(...engine.spots.map(light => light.intensity))};
+    const blackout = {held: engine.slotStates.filter(slot => slot.id != null).length,
+      intensity: Math.max(...engine.spots.map(light => light.intensity)), fakedBeams: engine.beams.count};
+    // Back on within the hold: the held lights return at full weight.
+    engine.update(snapshot(twelve)); engine.draw(0);
+    blackout.returned = engine.slotStates.filter(slot => slot.id != null && slot.weight >= 1).length;
+    engine.update(snapshot(twelve, () => 0)); engine.draw(0);
+    await wait(750); engine.draw(0);
+    blackout.released = engine.slotStates.filter(slot => slot.id != null).length;
     // More lit fixtures than meshes in the Low tier: haze fakes every beam and
     // meshless fixtures still get beams and footprints.
     engine.setQuality('low');
@@ -85,7 +92,7 @@ test('light LOD skips static work, cross-fades handovers and covers meshless fix
         if (id === previousId && id != null) assert.ok(Math.abs(weight - previous) < 1, `slot ${slot} jumped`);
       });
     }
-    assert.deepEqual(result.blackout, {occupied: 0, intensity: 0});
+    assert.deepEqual(result.blackout, {held: 8, intensity: 0, fakedBeams: 0, returned: 8, released: 0});
     assert.equal(result.low.mode, 'haze'); assert.equal(result.low.meshes, 32); assert.equal(result.low.spots, 4);
     assert.equal(result.low.active, 40); assert.equal(result.low.fakedBeams, 40); assert.equal(result.low.footprints, 36);
   } finally { await browser.close(); }

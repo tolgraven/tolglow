@@ -24,7 +24,7 @@ import {PreviewActivity} from './preview-activity.js';
 import {DisplayClock, DisplayRefresh} from './display-clock.js';
 import {fixtureSlots} from './fixture-selection.js';
 import {LightingSamples} from './lighting-samples.js';
-import {rankLights, assignSlots, crossfadeSlots, viewFromMatrix, LOD_DEFAULTS} from './light-lod.js';
+import {rankLights, assignSlots, crossfadeSlots, holdEmission, viewFromMatrix, LOD_DEFAULTS} from './light-lod.js';
 import {FakedBeams, roomExit} from './beams.js';
 import {FootprintAtlas, footprintMaterial} from './footprints.js';
 
@@ -277,7 +277,16 @@ export class SceneRenderer {
       }
       if (updateRigPose(entry.root, fixture)) castersChanged = true;
     });
-    this.applyLighting(this.lighting.values(this.fixtureSamples, receivedAt), castersChanged);
+    // Beam-only fixtures (lit beyond the mesh budget) interpolate with the
+    // meshed heads, so every beam shows the same lighting frame.
+    const meshed = new Set(this.fixtures.map(entry => entry.id)), values = snapshot.output?.values || {};
+    this.beamOnly = [];
+    for (const id of Object.keys(values)) {
+      const fixture = this.beamById?.get(id);
+      if (fixture && !meshed.has(id)) this.beamOnly.push({id, fixture});
+    }
+    this.lightingFixtures = this.fixtureSamples.concat(this.beamOnly);
+    this.applyLighting(this.lighting.values(this.lightingFixtures, receivedAt), castersChanged);
   }
   // Rank emitting fixtures by prominence from the current camera and map the
   // most prominent onto the persistent SpotLight slots (#782). Slot handovers
@@ -297,14 +306,19 @@ export class SceneRenderer {
     const matrix = (this.lodMatrix ||= new THREE.Matrix4()).multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     const eye = new THREE.Vector3().setFromMatrixPosition(camera.matrixWorld).toArray();
     const view = viewFromMatrix(matrix.elements, eye, Math.tan(camera.fov * Math.PI / 360));
-    const candidates = lit.map(entry => ({id: entry.id, level: entry.beam.level, pinned: entry.id === this.selectedFixture,
-      position: entry.beam.optics.optical.toArray(), direction: entry.beam.optics.axis.toArray(),
-      angle: entry.beam.angle, length: entry.beam.length}));
+    // Rank on a peak-hold emission envelope so a strobing light keeps its rank
+    // and slot through its off frames. Its output is already zero there.
+    for (const entry of lit) entry.lastBeam = entry.beam;
+    this.emission = holdEmission(this.emission, new Map(lit.map(entry => [entry.id, entry.beam.level])), now);
+    const held = this.fixtures.filter(entry => entry.lastBeam && this.emission.has(entry.id));
+    const candidates = held.map(entry => ({id: entry.id, level: this.emission.get(entry.id).peak, pinned: entry.id === this.selectedFixture,
+      position: entry.lastBeam.optics.optical.toArray(), direction: entry.lastBeam.optics.axis.toArray(),
+      angle: entry.lastBeam.angle, length: entry.lastBeam.length}));
     const shadowSlots = this.spots.filter(light => light.castShadow).length;
     const ranked = rankLights(candidates, view, this.spots.length, this.lodState, now, {...LOD_DEFAULTS, shadowSlots});
     this.lodState = ranked.state;
     this.desiredSlots = assignSlots(this.desiredSlots, ranked.full, this.spots.length, shadowSlots);
-    const emitting = new Set(lit.map(entry => entry.id));
+    const emitting = new Set(held.map(entry => entry.id));
     this.slotStates = crossfadeSlots(this.slotStates, this.desiredSlots, emitting, elapsed, LOD_FADE, this.fakedIds);
     const occupants = this.slotStates.map(slot => slot.id);
     // Slot-aligned occupants; keep the array identity while they hold.
@@ -314,16 +328,19 @@ export class SceneRenderer {
       const entry = slot.id != null && byId.get(slot.id);
       if (entry) {entry.light = this.spots[index]; entry.fullWeight = slot.weight;}
     });
-    this.fading = this.slotStates.some(slot => slot.id != null && slot.weight < 1);
+    // Keep re-ranking while a slot fades or holds a dark light, so the hold
+    // expires even when no new frame arrives.
+    const litIds = new Set(lit.map(entry => entry.id));
+    this.fading = this.slotStates.some(slot => slot.id != null && (slot.weight < 1 || !litIds.has(slot.id)));
     this.fakedIds = new Set(lit.filter(entry => !(entry.fullWeight >= 1)).map(entry => entry.id));
     this.lod = {budget: this.spots.length, full: ranked.full.length, faked: ranked.faked.length, fading: this.fading};
   }
   // A lit fixture beyond the mesh budget still shows a faked beam and footprint.
   meshlessBeams(output, meshed) {
-    const beams = [], latest = this.lighting.latest?.output?.values || {};
-    for (const [id, fixture] of this.beamById || []) {
+    const beams = [];
+    for (const {id, fixture} of this.beamOnly || []) {
       if (meshed.has(id)) continue;
-      const resolved = output[id] || latest[id];
+      const resolved = output[id];
       if (!resolved) continue;
       const rgb = emittedColor(resolved), brightness = fixture['relative-brightness'] ?? 1;
       if (!(brightness > 0 && Math.max(...rgb) > 0)) continue;
@@ -486,10 +503,11 @@ export class SceneRenderer {
       this.spots.push(light); this.lightIds.push(null);
       this.content.add(light, light.target);
     }
-    this.lodState = null; this.desiredSlots = null; this.slotStates = null; this.fakedIds = new Set(); this.lodTime = null;
+    this.lodState = null; this.desiredSlots = null; this.slotStates = null; this.fakedIds = new Set(); this.lodTime = null; this.emission = null;
     this.lightBudgetPending = false;
     this.footprints?.setRoom(this.room);
     this.fixtureSamples = this.fixtures.concat(this.diffuserTubes.flatMap(tube => tube.rows));
+    this.lightingFixtures = this.fixtureSamples; this.beamOnly = [];
     const optedIn = fixtures.filter(f => f['pseudo-fixture']).length;
     const reflectedCap = this.quality === 'mobile' || this.quality === 'low' ? 1 : 2;
     this.reflections = new SurfaceReflections(this.content, Math.min(reflectedCap, optedIn), Math.min(512,this.options.shadowSize), this.fixtures);
@@ -596,7 +614,7 @@ export class SceneRenderer {
     this.gpuTimer?.dispose();
     if (!this.platform.worker) this.gpuTimer = new GpuTimer(this.renderer.getContext());
     this.resize(); this.refreshEnvironment(); this.fog?.upload();
-    if (this.footprints) this.footprints.dirty = true;
+    if (this.footprints) {this.footprints.dirty = this.footprints.force = true; this.footprints.tileLit.fill(true);}
     invalidateShadows(this.spots, this.reflections?.lights);
     this.lost = false; this.ready = false; this.lastFrame = 0; this.setStatus('Restoring venue shaders…');
   }
@@ -631,7 +649,7 @@ export class SceneRenderer {
     const started = performance.now(); if (this.platform.worker) this.controls.update();
     let relit = false;
     if (this.lighting.latest) {
-      const values = this.lighting.values(this.fixtureSamples, started);
+      const values = this.lighting.values(this.lightingFixtures || this.fixtureSamples, started);
       if (values !== this.displayedValues) {this.applyLighting(values); relit = true;}
     }
     // Light detail follows the view: re-rank when the camera moved.

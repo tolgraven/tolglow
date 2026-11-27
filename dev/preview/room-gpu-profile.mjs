@@ -4,6 +4,7 @@
 //   node dev/preview/room-gpu-profile.mjs [--label before] \
 //     [--sizes 960x540,1920x1080] [--fixtures 16,64] [--configs full,no-fog] \
 //     [--out target/room-gpu] [--port 19180] [--rounds 3] [--repeats 2] [--screenshots]
+//     [--room 24x7x20] [--force-raster] [--match] [--crossfade]
 //
 // It bundles dev/preview/room-gpu-profile-page.mjs, which draws the source
 // SceneRenderer on a synthetic rig without a host, show, device or output.
@@ -55,6 +56,7 @@ export const CONFIGS = {
   'lights-0': {fullLights: 0},
   'no-faked-beams': {fakedBeams: false, delta: 'faked beam cones'},
   'no-footprints': {footprints: false, delta: 'footprint atlas + material sampling'},
+  'moving-no-footprints': {moving: true, footprints: false},
   'lights-8': {fullLights: 8},
   'lights-16': {fullLights: 16},
   'moving-lights-8': {moving: true, fullLights: 8},
@@ -133,7 +135,7 @@ try {
     }
     await page.evaluate(() => window.disposeRoom());
   } else for (const [width, height] of sizes) for (const fixtures of fixtureCounts) {
-    const setup = await page.evaluate(options => window.setupRoom(options), {width, height, fixtures, force: flag('force-raster')});
+    const setup = await page.evaluate(options => window.setupRoom(options), {width, height, fixtures, force: flag('force-raster'), room: arg('room', null)?.split('x').map(Number) ?? null});
     if (!results.renderer) { results.renderer = setup.renderer; results.userAgent = setup.userAgent; }
     const inventory = await page.evaluate(() => window.inventory());
     // Interleave configurations across rounds so slow drift (thermal state,

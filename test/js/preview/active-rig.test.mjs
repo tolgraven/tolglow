@@ -81,7 +81,7 @@ test('late solo illuminates the rendered stage and fog without reallocating ligh
           edited:engine.focusFixture('124'), geometry:engine.fixtures.length};
       } finally {engine.dispose();}
     });
-    assert.equal(result.geometry,64);
+    assert.equal(result.geometry,32);
     assert.equal(result.solo.id,'127'); assert.ok(result.solo.shadow); assert.deepEqual(result.solo.intensity,[1,0,0]);
     assert.deepEqual(result.solo.fog,[[1,0,0]]); assert.ok(result.solo.selected); assert.ok(result.edited);
     assert.equal(result.final,'126'); assert.ok(result.redPixels > 20, JSON.stringify(result.redPixels));

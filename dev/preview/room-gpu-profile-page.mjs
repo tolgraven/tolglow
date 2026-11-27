@@ -17,7 +17,7 @@ function forceRaster(force) {
 
 const ROOM = {width: 12, height: 5, depth: 10};
 
-export function denseRig(count) {
+export function denseRig(count, room = ROOM) {
   const rows = Math.max(1, Math.ceil(count / 16)), perRow = Math.ceil(count / rows);
   const fixtures = [], trusses = [];
   for (let row = 0; row < rows; row++) {
@@ -29,7 +29,7 @@ export function denseRig(count) {
         channels: {pan: 1, tilt: 2}, 'zoom-range-deg': [8, 40]});
     }
   }
-  return {room: ROOM, fixtures, trusses};
+  return {room, fixtures, trusses};
 }
 
 const palette = [[1, .25, .08], [.15, .35, 1], [.9, .1, .7], [.2, 1, .45], [1, .8, .3], [.6, .2, 1]];
@@ -66,7 +66,7 @@ function snapshot(time, moving) {
     output: {values: denseOutput(rig, time, moving)}};
 }
 
-window.setupRoom = async ({width, height, fixtures, force = false}) => {
+window.setupRoom = async ({width, height, fixtures, force = false, room = null}) => {
   forceRaster(force);
   // The production worker path: an OffscreenCanvas renderer whose frames are
   // transferred as ImageBitmaps to a bitmaprenderer canvas.
@@ -77,7 +77,7 @@ window.setupRoom = async ({width, height, fixtures, force = false}) => {
   engine.setQuality('desktop');
   engine.setWorkLight(.22);
   engine.setFog(.7);
-  rig = denseRig(fixtures);
+  rig = denseRig(fixtures, room ? {width: room[0], height: room[1], depth: room[2]} : ROOM);
   engine.update(snapshot(0, false));
   engine.resize();
   engine.setCamera('audience');
@@ -176,7 +176,7 @@ window.profileRoom = async config => {
   renderer.info.autoReset = true;
   await gpuIdle(gl);
   const t = engine.getTelemetry();
-  return {config, meshes: engine.fixtures.length, fakedBeams: engine.beams?.count ?? 0, frameMs: median(batches), batches, cpuDrawMs: median(cpu), drawCalls, triangles, quality: t.quality,
+  return {config, room: engine.room, atlasRedraws: engine.footprints?.redraws ?? 0, atlasTileDraws: engine.footprints?.tileDraws ?? 0, meshes: engine.fixtures.length, fakedBeams: engine.beams?.count ?? 0, frameMs: median(batches), batches, cpuDrawMs: median(cpu), drawCalls, triangles, quality: t.quality,
     scene: t.pixels, display: t.displayPixels, samples: engine.sceneTarget.samples,
     fog: {target: t.fog.targetSize, steps: engine.fog.uniforms.raySteps?.value, mode: t.fog.mode || 'raymarch',
       lights: t.fog.lightCount, shadows: t.fog.shadowCount, meanDensity: t.fog.meanDensity},

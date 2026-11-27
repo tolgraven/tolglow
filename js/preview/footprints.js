@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {stageDimensions} from './room.js';
 
 // Painted floor and wall footprints for faked lights (#782). One small
 // irradiance atlas (floor, back, left and right walls, stage top and stage
@@ -12,9 +13,70 @@ export const FOOTPRINT_TILES = Object.freeze(['floor', 'back', 'left', 'right', 
 const TABLE_ROWS = 4; // texels per light in the table texture
 
 /** Stage box from room.js: half width, top height, back z and front z. */
-export function stageBounds([width, , depth]) {
-  const stageDepth = Math.min(2.3, depth * .27), stageZ = -depth / 2 + stageDepth / 2 + .16;
-  return [width * .68 / 2, .42, stageZ - stageDepth / 2, stageZ + stageDepth / 2];
+export function stageBounds(room) {
+  const {width, height, z, depth} = stageDimensions(room);
+  return [width / 2, height, z - depth / 2, z + depth / 2];
+}
+
+// Tile planes: origin, u and v spans (metres) and the lit-side normal.
+function tilePlanes([w, h, d], [hw, top, back, front]) {
+  return [
+    {origin: [-w / 2, 0, -d / 2], u: [w, 0, 0], v: [0, 0, d], normal: [0, 1, 0]},
+    {origin: [-w / 2, 0, -d / 2], u: [w, 0, 0], v: [0, h, 0], normal: [0, 0, 1]},
+    {origin: [-w / 2, 0, -d / 2], u: [0, 0, d], v: [0, h, 0], normal: [1, 0, 0]},
+    {origin: [w / 2, 0, -d / 2], u: [0, 0, d], v: [0, h, 0], normal: [-1, 0, 0]},
+    {origin: [-hw, top, back], u: [2 * hw, 0, 0], v: [0, 0, front - back], normal: [0, 1, 0]},
+    {origin: [-hw, 0, front], u: [2 * hw, 0, 0], v: [0, top, 0], normal: [0, 0, 1]},
+  ];
+}
+
+/**
+ * Per tile, the indices of lights whose cone can reach it. A light is kept if
+ * the bounding box of its axis and eight cone-edge rays' hits on the tile
+ * plane overlaps the tile, or if any point of a 7 × 7 grid over the tile lies
+ * inside its (slightly widened) cone within range. The first catches narrow
+ * footprints between grid points, the second grazing and unbounded ones.
+ */
+export function footprintTileLights(lights, room, stage) {
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const planes = tilePlanes(room, stage), lists = planes.map(() => []);
+  lights.forEach((light, index) => {
+    const axis = light.direction, apex = light.virtualPosition;
+    const helper = Math.abs(axis[1]) < .95 ? [0, 1, 0] : [1, 0, 0];
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const p = cross(helper, axis), pl = Math.hypot(...p), e1 = p.map(v => v / pl), e2 = cross(axis, e1);
+    const sine = Math.sqrt(Math.max(0, 1 - light.outerCos ** 2)), cosine = light.outerCos;
+    const rays = [axis];
+    for (let k = 0; k < 8; k++) {
+      const a = k * Math.PI / 4, c = Math.cos(a) * sine, s = Math.sin(a) * sine;
+      rays.push([0, 1, 2].map(i => axis[i] * cosine + e1[i] * c + e2[i] * s));
+    }
+    planes.forEach((plane, tile) => {
+      const toApex = [0, 1, 2].map(i => apex[i] - plane.origin[i]);
+      if (dot(toApex, plane.normal) <= 0) return; // the light is behind this surface
+      const uu = dot(plane.u, plane.u), vv = dot(plane.v, plane.v);
+      let lo = [Infinity, Infinity], hi = [-Infinity, -Infinity], hits = 0;
+      for (const ray of rays) {
+        const facing = dot(ray, plane.normal);
+        if (facing >= -1e-6) continue;
+        const t = -dot(toApex, plane.normal) / facing;
+        if (light.range > 0 && t > light.range) continue;
+        const hit = [0, 1, 2].map(i => toApex[i] + ray[i] * t);
+        const uvx = dot(hit, plane.u) / uu, uvy = dot(hit, plane.v) / vv;
+        lo = [Math.min(lo[0], uvx), Math.min(lo[1], uvy)]; hi = [Math.max(hi[0], uvx), Math.max(hi[1], uvy)]; hits++;
+      }
+      const pad = .05 + .1 * Math.max(hi[0] - lo[0], hi[1] - lo[1], 0);
+      if (hits && lo[0] - pad <= 1 && hi[0] + pad >= 0 && lo[1] - pad <= 1 && hi[1] + pad >= 0) { lists[tile].push(index); return; }
+      const widened = Math.cos(Math.min(Math.PI / 2, Math.acos(Math.min(1, cosine)) + .05));
+      for (let gy = 0; gy <= 6; gy++) for (let gx = 0; gx <= 6; gx++) {
+        const point = [0, 1, 2].map(i => -toApex[i] + plane.u[i] * gx / 6 + plane.v[i] * gy / 6);
+        const distance = Math.hypot(...point);
+        if (distance < 1e-6 || (light.range > 0 && distance > light.range)) continue;
+        if (dot(point, axis) / distance >= widened) { lists[tile].push(index); return; }
+      }
+    });
+  });
+  return lists;
 }
 
 /** Texels per tile: about 5 cm or finer up to a 25 m room, at most 512. */
@@ -28,15 +90,16 @@ void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}`;
 const fragmentShader = `precision highp float;
 in vec2 vUv;
 uniform sampler2D lightTable;
-uniform int lightCount;
+uniform int tile, tileCount;
+uniform int tileLights[128];
 uniform vec3 room;
 uniform vec4 stage;
 out vec4 irradiance;
-// 3 x 2 tiles: floor, back, left / right, stage top, stage front.
-void surface(vec2 uv,out vec3 position,out vec3 normal){
-  vec2 tile=floor(uv*vec2(3.,2.)),local=fract(uv*vec2(3.,2.));
+// 3 x 2 tiles: floor, back, left / right, stage top, stage front. Each draw
+// covers one tile's viewport and only the lights whose cones can reach it.
+void surface(vec2 local,out vec3 position,out vec3 normal){
   float w=room.x,h=room.y,d=room.z;
-  int index=int(tile.x+3.*tile.y);
+  int index=tile;
   if(index==0){position=vec3((local.x-.5)*w,0.,(local.y-.5)*d);normal=vec3(0.,1.,0.);}
   else if(index==1){position=vec3((local.x-.5)*w,local.y*h,-.5*d);normal=vec3(0.,0.,1.);}
   else if(index==2){position=vec3(-.5*w,local.y*h,(local.x-.5)*d);normal=vec3(1.,0.,0.);}
@@ -47,8 +110,9 @@ void surface(vec2 uv,out vec3 position,out vec3 normal){
 void main(){
   vec3 position,normal;surface(vUv,position,normal);
   vec3 sum=vec3(0.);
-  for(int i=0;i<128;i++){
-    if(i>=lightCount)break;
+  for(int n=0;n<128;n++){
+    if(n>=tileCount)break;
+    int i=tileLights[n];
     vec4 a=texelFetch(lightTable,ivec2(0,i),0); // virtual apex, apex distance
     vec4 b=texelFetch(lightTable,ivec2(1,i),0); // direction, outer cosine
     vec4 c=texelFetch(lightTable,ivec2(2,i),0); // colour × intensity, inner cosine
@@ -69,13 +133,15 @@ void main(){
 export class FootprintAtlas {
   constructor(renderer, {capacity = 128} = {}) {
     this.renderer = renderer; this.capacity = capacity; this.count = 0; this.dirty = true; this.redraws = 0;
+    this.lights = []; this.room = [12, 5, 10]; this.tileLit = new Array(6).fill(true); this.lastRender = -Infinity; this.tileDraws = 0;
     this.tile = 256;
     this.target = new THREE.WebGLRenderTarget(3 * this.tile, 2 * this.tile, {type: THREE.HalfFloatType, depthBuffer: false,
       minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false});
     this.table = new THREE.DataTexture(new Float32Array(TABLE_ROWS * capacity * 4), TABLE_ROWS, capacity,
       THREE.RGBAFormat, THREE.FloatType);
     this.table.minFilter = this.table.magFilter = THREE.NearestFilter; this.table.needsUpdate = true;
-    this.uniforms = {lightTable: {value: this.table}, lightCount: {value: 0}, room: {value: new THREE.Vector3(12, 5, 10)},
+    this.uniforms = {lightTable: {value: this.table}, tile: {value: 0}, tileCount: {value: 0},
+      tileLights: {value: new Int32Array(capacity)}, room: {value: new THREE.Vector3(12, 5, 10)},
       stage: {value: new THREE.Vector4(...stageBounds([12, 5, 10]))}};
     this.material = new THREE.ShaderMaterial({vertexShader, fragmentShader, uniforms: this.uniforms,
       glslVersion: THREE.GLSL3, depthTest: false, depthWrite: false, blending: THREE.NoBlending, toneMapped: false});
@@ -87,11 +153,12 @@ export class FootprintAtlas {
   }
 
   setRoom(room) {
+    this.room = [...room]; this.tileLit.fill(true);
     this.uniforms.room.value.fromArray(room); this.materialUniforms.tolglowRoom.value.fromArray(room);
     this.uniforms.stage.value.set(...stageBounds(room));
     const tile = footprintTileSize(room);
     if (tile !== this.tile) { this.tile = tile; this.target.setSize(3 * tile, 2 * tile); }
-    this.dirty = true;
+    this.dirty = this.force = true;
   }
 
   /** lights: [{virtualPosition, apexDistance, direction, outerCos, innerCos, color (rgb × intensity), range}] */
@@ -108,19 +175,37 @@ export class FootprintAtlas {
         if (data[row + k] !== value) { data[row + k] = value; changed = true; }
       }
     }
-    this.count = n;
+    this.count = n; this.lights = lights.slice(0, n);
     if (changed) { this.table.needsUpdate = true; this.dirty = true; }
     this.materialUniforms.tolglowFootprintStrength.value = n && !this.disabled ? 1 : 0;
   }
 
-  /** Re-accumulate only when the light table or room changed, or the context was restored. */
-  render() {
-    if (!this.dirty) return false;
-    this.dirty = false; this.redraws++;
-    const renderer = this.renderer, previous = renderer.getRenderTarget();
-    this.uniforms.lightCount.value = this.count;
-    try { renderer.setRenderTarget(this.target); renderer.render(this.scene, this.camera); }
-    finally { renderer.setRenderTarget(previous); }
+  /**
+   * Re-accumulate only when the light table or room changed, or the context
+   * was restored, and at most `maxHz` times a second while lights keep moving
+   * (a footprint lags by at most one refresh). Each tile draws only the lights
+   * whose cones can reach it; a tile that stays unlit is not redrawn.
+   */
+  render(now = globalThis.performance?.now?.() ?? 0, maxHz = 30) {
+    if (this.disabled || !this.dirty || (!this.force && now - this.lastRender < 1000 / maxHz)) return false;
+    this.dirty = this.force = false; this.redraws++; this.lastRender = now;
+    const renderer = this.renderer, previous = renderer.getRenderTarget(), u = this.uniforms;
+    const lists = footprintTileLights(this.lights, this.room, stageBounds(this.room));
+    try {
+      for (let tile = 0; tile < 6; tile++) {
+        const list = lists[tile];
+        if (!list.length && !this.tileLit[tile]) continue;
+        this.tileLit[tile] = list.length > 0;
+        u.tile.value = tile; u.tileCount.value = list.length; u.tileLights.value.set(list);
+        // Scissor as well as viewport: the automatic clear must not erase other tiles.
+        this.target.viewport.set((tile % 3) * this.tile, Math.floor(tile / 3) * this.tile, this.tile, this.tile);
+        this.target.scissor.copy(this.target.viewport); this.target.scissorTest = true;
+        renderer.setRenderTarget(this.target); renderer.render(this.scene, this.camera); this.tileDraws++;
+      }
+    } finally {
+      this.target.viewport.set(0, 0, 3 * this.tile, 2 * this.tile); this.target.scissor.copy(this.target.viewport);
+      this.target.scissorTest = false; renderer.setRenderTarget(previous);
+    }
     return true;
   }
 

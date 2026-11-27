@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import {prominence, rankLights, assignSlots, crossfadeSlots, screenCoverage, viewFromMatrix, LOD_DEFAULTS} from '../../../js/preview/light-lod.js';
+import {prominence, rankLights, assignSlots, crossfadeSlots, holdEmission, screenCoverage, viewFromMatrix, LOD_DEFAULTS} from '../../../js/preview/light-lod.js';
 import {TIERS, lightBudget, MAX_FULL_LIGHTS} from '../../../js/preview/render-quality.js';
 import {FOG_QUALITY, fogRasterScale} from '../../../js/preview/fog-field.js';
 import {roomExit} from '../../../js/preview/beams.js';
@@ -210,4 +210,47 @@ test('slot handover cross-fades instead of popping and never smooths a blackout'
   // A light moving between slots finishes fading out of the old slot first.
   slots = crossfadeSlots([{id: 'a', weight: 1}, {id: null, weight: 0}], [null, 'a'], lit, .05, .3);
   assert.equal(slots[0].id, 'a'); assert.equal(slots[1].id, null);
+});
+
+// The scene owner's per-frame LOD loop, reduced to the pure functions.
+function simulate({frames, levelAt, count = 12, budget = 8, shadows = 4, fps = 60}) {
+  const view = audienceView();
+  let envelope = null, state = null, desired = null, slots = null, faked = new Set();
+  const history = [];
+  for (let frame = 0; frame < frames; frame++) {
+    const now = frame / fps;
+    const levels = new Map(Array.from({length: count}, (_, i) => ['h' + i, levelAt(i, frame)]));
+    envelope = holdEmission(envelope, levels, now);
+    const candidates = [...envelope].map(([id, {peak}]) => head(id, -5 + Number(id.slice(1)) * (10 / count), peak));
+    const ranked = rankLights(candidates, view, budget, state, now, {...LOD_DEFAULTS, shadowSlots: shadows});
+    state = ranked.state;
+    desired = assignSlots(desired, ranked.full, budget, shadows);
+    slots = crossfadeSlots(slots, desired, new Set(envelope.keys()), 1 / fps, .3, faked);
+    const weight = new Map(slots.filter(s => s.id != null).map(s => [s.id, s.weight]));
+    faked = new Set([...levels].filter(([id, level]) => level > 0 && !(weight.get(id) >= 1)).map(([id]) => id));
+    history.push({levels, weight, slots: slots.map(s => s.id)});
+  }
+  return history;
+}
+
+test('a strobing key light stays a full light on its on-frames', () => {
+  for (const hz of [10, 20]) {
+    const period = 60 / hz;
+    // h5 is the brightest head and strobes with a 50 % duty cycle; the rest hold.
+    const history = simulate({frames: 600, levelAt: (i, frame) => i === 5 ? (frame % period < period / 2 ? 1 : 0) : .3 + .02 * i});
+    const on = history.filter(frame => frame.levels.get('h5') > 0);
+    const full = on.filter(frame => frame.weight.get('h5') >= 1).length;
+    assert.ok(full / on.length >= .95, `${hz} Hz strobe: full on ${full} of ${on.length} on-frames`);
+    // While dark it keeps its slot but the slot carries no light (output is zero upstream).
+    assert.ok(history.filter(frame => frame.levels.get('h5') === 0).every(frame => frame.slots.includes('h5')));
+  }
+});
+
+test('a light dark for longer than the hold releases its slot', () => {
+  const history = simulate({frames: 240, levelAt: (i, frame) => i === 5 ? (frame < 60 ? 1 : 0) : .3 + .02 * i});
+  assert.ok(history[59].slots.includes('h5'));
+  const released = history.findIndex((frame, index) => index > 60 && !frame.slots.includes('h5'));
+  assert.ok(released > 60 && (released - 60) / 60 <= LOD_DEFAULTS.hold + 2 / 60, `released at frame ${released}`);
+  // A spare light takes the freed slot and is lit by then.
+  assert.equal(history.at(-1).slots.filter(Boolean).length, 8);
 });
