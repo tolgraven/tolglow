@@ -97,11 +97,18 @@
 
 (def ^:private track-bpm 120.0)
 
+(def ^:private track-hours
+  "Length of the synthetic recording. The match follows the transport beat, so
+  the forecast lasts this long at 120 BPM and longer at a slower tempo. It was
+  96 sections, 12.8 minutes: past that end the timeline correctly showed no
+  predicted section, and every browser check on an older host failed (#801)."
+  4)
+
 (def ^:private profile
   "A version 1 track profile of the same synthetic music: one section every
   `section-beats`, in two alternating families."
   (let [section-ms (* section-beats (/ 60000.0 track-bpm))
-        sections 96]
+        sections (long (Math/ceil (/ (* track-hours 3600000.0) section-ms)))]
     {:version 1 :reference {:id "qa:timeline-track" :version "qa:1"}
      :duration-ms (* sections section-ms)
      :sections (mapv (fn [index]

@@ -149,14 +149,19 @@ const nearest = (xs, x) => xs.reduce((best, value) => Math.abs(value - x) < Math
 
 // The scenario has short stretches with no ramp running. Take the snapshot
 // while one is under the centre line with room on both sides.
+// The error says which half never appeared: a host whose synthetic recording
+// has ended has ramps but no forecast (#801).
 async function snapshotWithRunningRamp(page) {
+  const seen = {rampUnderNow: 0, predicted: 0, attempts: 0};
   for (let attempt = 0; attempt < 120; attempt++) {
     const shot = await snapshot(page);
     const under = r => r.state === 'running' && shot.now.x - r.span.x > 8 && r.span.x + r.span.w - shot.now.x > 30;
-    if (shot.ramps.some(under) && shot.sections.some(s => s.state === 'predicted')) return shot;
+    const ramp = shot.ramps.some(under), predicted = shot.sections.some(s => s.state === 'predicted');
+    seen.attempts++; if (ramp) seen.rampUnderNow++; if (predicted) seen.predicted++;
+    if (ramp && predicted) return shot;
     await sleep(250);
   }
-  throw new Error('no running ramp reached the centre line');
+  throw new Error('no running ramp reached the centre line while a section was predicted: ' + JSON.stringify(seen));
 }
 
 async function ready(page) {
