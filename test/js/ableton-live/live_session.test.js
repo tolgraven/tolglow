@@ -410,6 +410,7 @@ test("with notifications delivered later, as LiveAPI does, the value is kept ins
   for (const deadline = Date.now() + 2000; live.emitted.length === 0 && Date.now() < deadline;) {
     await new Promise(resolve => setTimeout(resolve, 1));
   }
+  await new Promise(resolve => setTimeout(resolve, 10));   // let a duplicate emission show up
   assert.deepEqual(live.emitted.map(e => [e.type, e["clip-id"]]), [["clip-started", written.result["clip-id"]]]);
 });
 
