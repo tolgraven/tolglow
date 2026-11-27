@@ -136,7 +136,14 @@ place of a top-level timing key.
   parameter is not rejected because of the ramp. A renderer rejection rebuilds
   the engine result from its frame model; the owner takes the ramp overlay out
   of that result too, so the rejection does not commit the ramp's frame value
-  and the ramp keeps running.
+  and the ramp keeps running. A revision that keeps a ramped parameter must
+  accept both its committed value and the ramp's frame value. If it refuses
+  either, it is rejected at preparation (`:stage :reload`) and the ramp keeps
+  running on the captured revision. The committed value stays in the model
+  until the ramp commits, so a revision that accepted only the frame value
+  would hold a value its own schema refuses. The owner therefore prepares such
+  an instance on its committed value, and the ramp reaches that frame through
+  the parameter overrides.
 - **Supersede.** A new ramp, or a scheduled set on the same destination,
   replaces the running ramp. A new ramp starts from the old ramp's value at its
   start, so there is no jump. `:recent` records
@@ -409,7 +416,9 @@ covers ramps on a frame with a pending hot reload: a running ramp composes
 with both reload outcomes byte-identically to a show that never published the
 rejected revision, a renderer-rejected reload does not commit the ramp's frame
 value, and an accepted revision that drops a ramped parameter is not faulted by
-the ramp.
+the ramp. A revision that refuses the ramped parameter's committed value or its
+frame value is rejected at preparation and matches the twin byte for byte,
+with and without a modulation controller.
 
 ## Remaining gaps
 

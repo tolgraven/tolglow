@@ -260,23 +260,53 @@
   [model]
   (assoc model ::last-good? true))
 
+(defn with-frame-params
+  "Return `model` as modulation reads it in a frame whose parameter ramps
+  overlay `params` ({instance-id {param value}}) on the committed values. The
+  view only answers which revision each instance follows; it is never committed."
+  [model params]
+  (cond-> model (seq params) (assoc ::frame-params params)))
+
+(defn- attempted-revision
+  "The newer registry definition the engine attempts for this instance on the
+  next frame, or nil. Paused and pinned instances defer hot reload."
+  [model instance]
+  (let [current (get-in model [:registry :effects (:effect-id instance)])]
+    (when (and (not (get-in instance [:system :paused?]))
+               (not= :pinned (:reload-policy instance :pinned)) current
+               (not= (:version current) (get-in instance [:reload-fault :effect-version]))
+               (> (:version current) (:effect-version instance)))
+      current)))
+
+(defn- accepts? [definition values]
+  (try (params/resolve-values (:params definition {}) (select-keys values (keys (:params definition {}))))
+       true
+       (catch Exception _ false)))
+
+(defn refuses-committed-params?
+  "True when the engine attempts a newer revision of this instance whose schemas
+  refuse a retained committed parameter. A ramp's frame value can fit where the
+  committed value does not, so the owner prepares such an instance on its
+  committed parameters and the engine turns the revision down."
+  [model instance]
+  (boolean (when-let [current (attempted-revision model instance)]
+             (not (accepts? current (:params instance {}))))))
+
 (defn reload-candidate
   "Return the newer registry definition the engine attempts for this instance
   on the next frame, or nil. Paused and pinned instances defer hot reload. A
   candidate whose schemas reject a retained parameter is none: the engine
-  refuses it at preparation and keeps the captured definition."
+  refuses it at preparation and keeps the captured definition. During a ramp
+  the retained parameter must fit with both its committed and its frame value
+  (see `with-frame-params`)."
   [model instance]
-  (let [current (get-in model [:registry :effects (:effect-id instance)])]
-    (when (and (not (::last-good? model))
-               (not (get-in instance [:system :paused?]))
-               (not= :pinned (:reload-policy instance :pinned)) current
-               (not= (:version current) (get-in instance [:reload-fault :effect-version]))
-               (> (:version current) (:effect-version instance))
-               (try (params/resolve-values (:params current {})
-                                           (select-keys (:params instance {}) (keys (:params current {}))))
-                    true
-                    (catch Exception _ false)))
-      current)))
+  (when-not (::last-good? model)
+    (when-let [current (attempted-revision model instance)]
+      (let [committed (:params instance {})
+            framed (get-in model [::frame-params (:id instance)])]
+        (when (and (accepts? current committed)
+                   (or (empty? framed) (accepts? current (merge committed framed))))
+          current)))))
 
 (defn reload-pending?
   "True when the next frame attempts a hot reload of some running instance."

@@ -521,3 +521,53 @@
         (is (= [1 nil] ((juxt :effect-version :reload-fault) (owner-of (:model @(:state staged))))))
         (is (= {:rendered (inc (count times)) :skipped 0} (:frames (show/scene-draft staged)))))
       (finally (show/stop! plain) (show/stop! staged)))))
+
+(defn- ramped-reload-run
+  "Launch the cues, ramp the owner's level from 0.5 to 1.0 between 100 and
+  1100 ms, and publish `publish` at 300 ms, beside a twin that never publishes it."
+  [show-model cues publish]
+  (let [capture (fn [rt output publications]
+                  (doseq [cue cues] (apply! rt {:op :cue/launch :cue-id cue} 0))
+                  (let [started (ramp! rt [[:modulator :level 1.0]] 100)]
+                    (reset! output [])
+                    {:started started
+                     :frames (mapv (fn [t]
+                                     (let [acks (if-let [definitions (get publications t)]
+                                                  (publish! rt definitions t)
+                                                  (do (show/tick! rt t) nil))]
+                                       (merge (observed rt) {:time-ms t :acks acks :dmx (peek @output)})))
+                                   (conj times 1200))}))
+        broken-output (atom []) control-output (atom [])
+        broken (runtime broken-output show-model) control (runtime control-output show-model)]
+    (try
+      {:control (capture control control-output {})
+       :broken (capture broken broken-output {300 [publish]})
+       :owner (instance broken :modulator)}
+      (finally (show/stop! broken) (show/stop! control)))))
+
+(deftest a-reload-during-a-ramp-is-judged-on-the-committed-and-the-frame-value
+  ;; At 300 ms the ramp's frame value is 0.6 and the committed level is 0.5.
+  ;; A candidate whose level bounds refuse either value is rejected at
+  ;; preparation: the committed value stays in the model until the ramp
+  ;; commits, so a revision that refuses it cannot run, and one that refuses
+  ;; the running value cannot render this frame.
+  (doseq [[label bounds] [["refuses the committed value" [0.55 1.0]]
+                          ["refuses the frame value" [0.0 0.55]]]
+          modulated? [true false]]
+    (testing (str label (if modulated? ", with a changed modulation config" ", without modulation"))
+      (let [base (cond-> owner (not modulated?) (dissoc :modulation))
+            publish (cond-> (-> base (assoc :version 2)
+                                (assoc-in [:params :level] {:type :number :default (first bounds) :bounds bounds}))
+                      modulated? (assoc :modulation changed-modulation))
+            cues (if modulated? [:wash :modulator] [:modulator])
+            {:keys [control broken owner]} (ramped-reload-run (model {:modulator :preserve-state} [wash base]) cues publish)]
+        (is (= [:accepted] (:started control) (:started broken)))
+        (is (= [:accepted] (some :acks (:frames broken))))
+        (is (= [1 :reload 2] [(:effect-version owner) (get-in owner [:reload-fault :stage])
+                              (get-in owner [:reload-fault :effect-version])]))
+        (doseq [[field what] [[:dmx "Captured DMX"] [:controllers "Controller state"] [:ramps "Running ramps"]
+                              [:committed "Committed versions and parameters"]
+                              [:overrides "Resolved parameter overrides"] [:error "Frame errors"]]]
+          (is (= [] (differing field (:frames control) (:frames broken))) (str what " differ at these frame times")))
+        (is (every? nil? (map :error (:frames broken))))
+        (is (= 1.0 (get-in owner [:params :level])) "The ramp completes and commits its target")))))
