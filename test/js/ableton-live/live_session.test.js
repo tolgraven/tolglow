@@ -404,7 +404,13 @@ test("with notifications delivered later, as LiveAPI does, the value is kept ins
   live.request("watch-run-tracks", { "track-ids": ["track:" + live.song.tracks[1].id] });
   live.play(1, 0, 8);
   assert.equal(live.emitted.length, 0, "nothing is emitted inside the call");
-  await new Promise(resolve => setTimeout(resolve, 5));
+  // The notification timer and the deferred Task it schedules each take one
+  // timer turn. A fixed 5 ms wait raced them on a loaded runner, so wait (up
+  // to a bound) for the deferred task's emission instead.
+  for (const deadline = Date.now() + 2000; live.emitted.length === 0 && Date.now() < deadline;) {
+    await new Promise(resolve => setTimeout(resolve, 1));
+  }
+  await new Promise(resolve => setTimeout(resolve, 10));   // let a duplicate emission show up
   assert.deepEqual(live.emitted.map(e => [e.type, e["clip-id"]]), [["clip-started", written.result["clip-id"]]]);
 });
 

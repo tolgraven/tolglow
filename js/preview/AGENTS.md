@@ -23,8 +23,18 @@ owns controls; committed JVM emitted output is authoritative.
   and fixture rotation. Never invent light output when emitted-color is absent.
 - `fog*` owns the fog field/pass. `room_renderer_fog_fixture_optics` is the sole
   renderer/fog owner; coordinate before starting any graphics edits.
-- No transparent cone geometry. Fog uses a spatial density field, opaque depth,
-  light visibility, phase scattering and extinction. Zero fog leaves surfaces.
+- Full lights (the prominence-ranked `fullLights` budget) keep the volumetric
+  path: fog uses a spatial density field, opaque depth, light visibility, phase
+  scattering and extinction. Zero fog leaves surfaces.
+- Transparent cone geometry is allowed only for faked beams (`beams.js`): lights
+  outside the full-light budget, and every lit fixture in the low tier's
+  non-raymarched haze. Operator decision on #782: measured on an M4 Pro, every
+  forward SpotLight and raymarched fog light costs per covered pixel, so
+  rigs beyond 8-16 lights showed no beam at all for the rest. Faked cones keep
+  those lights visible for about 0.2 ms. They read the same density field and
+  opaque depth, scale with the same single-scattering estimate, draw nothing at
+  zero fog, and their floor/wall footprints come from `footprints.js`. Never use
+  them to replace a full light's volumetric beam.
 - Work light is an explicit preview-only setting. Display transforms are not lux
   calibration. Procedural venue decoration is not a controlled fixture.
 - Rebuild static geometry only for structural rig changes. Bound light/shadow,
