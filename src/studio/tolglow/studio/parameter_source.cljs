@@ -377,11 +377,12 @@
                  vec)
       (and priority (free? (:param priority))) (conj [(:param priority) (:schema priority)]))))
 
-(defn- lfo-editor [id param schema base source catalog instance & [{:keys [known forget!]}]]
-  ;; `known` is the LFO last seen bound here; it keeps the actions mounted
-  ;; (disabled) while the projection briefly lacks the LFO (#795).
-  (let [current (source-of source :lfo)
-        lfo (or current known)]
+(defn- lfo-editor [id param schema base source catalog instance & [{:keys [shown forget!] :as panel}]]
+  ;; From lfo-panel: `shown` is the LFO to edit, the one last seen bound here,
+  ;; so the actions stay mounted (disabled) while the projection briefly
+  ;; lacks it (#795); `current` is what the projection shows now.
+  (let [current (if panel (:current panel) (source-of source :lfo))
+        lfo (if panel shown current)]
     (r/with-let [form (r/atom (editor-draft schema base (:binding lfo) catalog))
                  move (r/atom nil) error (r/atom nil)]
       (let [{:keys [waveform period unit phase-reference phase inputs band dwell dwell-unit]} @form
@@ -480,12 +481,16 @@
   nor unmounts the actions under a press; only this panel's own Detach
   forgets the binding."
   [id param schema base source catalog instance]
-  (r/with-let [known (atom nil)]
+  ;; `detaching` is the binding this panel asked to detach: it is not learned
+  ;; again while the projection still shows it, and is let go once it is gone.
+  (r/with-let [known (atom nil) detaching (atom nil)]
     (let [current (source-of source :lfo)
-          _ (when current (reset! known current))
-          lfo (or current @known)]
+          _ (cond (nil? current) (reset! detaching nil)
+                  (not= (:binding current) @detaching) (reset! known current))
+          lfo (or (when (not= (:binding current) @detaching) current) @known)]
       (with-meta [lfo-editor id param schema base source catalog instance
-                  {:known @known :forget! #(reset! known nil)}]
+                  {:shown lfo :current (when (not= (:binding current) @detaching) current)
+                   :forget! #(do (reset! detaching (:binding @known)) (reset! known nil))}]
         {:key (pr-str (:binding lfo))}))))
 
 (defn- source-label [{:keys [type binding controller-id source-id controller lane-note source id]}]
