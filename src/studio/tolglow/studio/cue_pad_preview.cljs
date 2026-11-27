@@ -30,6 +30,15 @@
       (when el
         (if observer (.observe observer el) (swap! visible conj row))))))
 
+(defn cell-colors
+  "The part of a pad preview result for the cue at (x, y) of page, under the
+  typed or text ID it may be keyed by. A cell's props then change only when
+  its own preview changes, so one animating pad does not re-render the grid."
+  [colors page x y]
+  (when colors
+    (when-let [cue-id (:cue-id (some #(when (and (= x (:x %)) (= y (:y %))) %) (:cells page)))]
+      (select-keys colors [cue-id (if (keyword? cue-id) (subs (str cue-id) 1) (str cue-id))]))))
+
 (defn grid
   "Subscribe to the contiguous rectangle of visible rows. A tab change, window
   blur or scrolling the grid offscreen disposes its remote reaction."
@@ -65,7 +74,7 @@
        (for [y (range rows)]
          ^{:key y}
          [:div.cue-preview-row {:data-row y :ref (refs y)}
-          (for [x (range 8)] ^{:key x} [render-cell db page x y colors])])])
+          (for [x (range 8)] ^{:key x} [render-cell db page x y (cell-colors colors page x y)])])])
     (finally
       (when observer (.disconnect observer))
       (unlisten! @doc))))

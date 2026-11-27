@@ -111,30 +111,47 @@
       (is (= ["d"] @seen))
       (is (not (contains? (frame-stream/attached :room) :self))))))
 
+(defn- lanes-at [token view-token view lanes]
+  (into {} (map (fn [[lane parts]] [lane (frame-stream/frame token view-token view parts)])) lanes))
+
 (deftest lanes-split-from-and-rejoin-only-their-exact-baseline
   (let [view {:runtime-id "r" :show-id :main :epoch 1 :revision 2 :frame-number 5 :time-ms 10 :master 0.5
-              :status {:last-intents [{:type :instance/finished}]}
+              :transport {:beat 3.5 :time-ms 9 :bpm 120} :schedule {:beat 3.5 :upcoming []}
+              :status {:last-intents [{:type :instance/finished}] :frame-ms 1.2 :output-scheduler {:published 4}}
               :output {:values {:head-1 {:intensity 0.4}} :universes {1 [255]} :atmosphere {:sources []}}
               :draft-output {:draft {:id "scene"} :values {:head-1 {:intensity 1}}}}
         [app-view lanes] (frame-stream/split-view view)
-        lane-frame (frame-stream/frame "t" view (:room lanes))
-        installed {:room lane-frame}
+        installed (lanes-at "t" "t" view lanes)
+        lane-frame (:room installed)
         projection {:token "t" :view app-view}]
     (is (= {:universes {1 [255]} :atmosphere {:sources []}} (:output app-view)))
     (is (= {:draft {:id "scene"}} (:draft-output app-view)))
+    (testing "every per-frame field leaves the app-db view"
+      (is (not-any? #(contains? app-view %) [:frame-number :time-ms]))
+      (is (= {:bpm 120} (:transport app-view)))
+      (is (= {:upcoming []} (:schedule app-view)))
+      (is (= {:last-intents [{:type :instance/finished}]} (:status app-view)))
+      (is (= {:frame-number 5 :time-ms 10 :beat 3.5 :transport-time-ms 9 :schedule-beat 3.5 :frame-ms 1.2
+              :output-scheduler {:published 4}}
+             (:clock lanes))))
     (is (= {:values {:head-1 {:intensity 0.4}} :audition {:head-1 {:intensity 1}}} (:room lanes)))
     (is (= [5 10 0.5 [{:type :instance/finished}] {:sources []}]
            ((juxt :frame-number :time-ms :master :last-intents :atmosphere) lane-frame)))
     (is (= {:token "t" :view view} (frame-stream/join-view projection installed)))
+    (testing "a projection whose view was last written earlier joins lanes of the current token"
+      (is (= {:token "u" :view view} (frame-stream/join-view projection (lanes-at "u" "t" view lanes))))
+      (is (nil? (:token (frame-stream/join-view projection (lanes-at "u" "u" view lanes))))))
     (testing "a patch to joined values applies at the exact token"
       (let [patch {:protocol projection/protocol :kind :patch :base-token "t" :token "u"
                    :identity (projection/identity-of view)
                    :changes [[:set [:output :values :head-1 :intensity] 0.9]]}]
         (is (= 0.9 (get-in (projection/receive (frame-stream/join-view projection installed) patch)
                            [:state :view :output :values :head-1 :intensity])))
-        (testing "and requests a full view when the lane belongs to another token or show"
+        (testing "and requests a full view when a lane belongs to another token or show"
           (doseq [stale [(assoc-in installed [:room :token] "old")
+                         (assoc-in installed [:clock :view-token] "old")
                          (assoc-in installed [:room :identity :epoch] 0)
+                         (dissoc installed :clock)
                          {}]]
             (let [joined (frame-stream/join-view projection stale)]
               (is (nil? (:token joined)))
@@ -145,7 +162,15 @@
     (testing "absent parts join nothing and still keep the token"
       (let [bare (-> view (update :output dissoc :values) (dissoc :draft-output))
             [bare-view bare-lanes] (frame-stream/split-view bare)
-            joined (frame-stream/join-view {:token "t" :view bare-view}
-                                           {:room (frame-stream/frame "t" bare (:room bare-lanes))})]
+            joined (frame-stream/join-view {:token "t" :view bare-view} (lanes-at "t" "t" bare bare-lanes))]
         (is (= {} (:room bare-lanes)))
         (is (= {:token "t" :view bare} joined))))))
+
+(deftest only-patches-inside-lane-subtrees-leave-app-db-alone
+  (is (frame-stream/lane-only? [[:set [:frame-number] 3] [:set [:transport :beat] 1.5]
+                                [:set [:status :output-scheduler :published] 9] [:remove [:output :values :head-1]]]))
+  (is (frame-stream/lane-only? []))
+  (is (not (frame-stream/lane-only? [[:set [:frame-number] 3] [:set [:transport :bpm] 128]])))
+  (is (not (frame-stream/lane-only? [[:set [:transport] {:beat 1}]])) "replacing a parent is not lane-only")
+  (is (not (frame-stream/lane-only? [[:set [:output] {}]])))
+  (is (not (frame-stream/lane-only? nil))))

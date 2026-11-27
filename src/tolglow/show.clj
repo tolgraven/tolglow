@@ -97,6 +97,7 @@
             [tolglow.show.recovery :as recovery]
             [tolglow.show.lighting :as lighting]
             [tolglow.show.position-hold :as position-hold]
+            [tolglow.show.programs :as programs]
             [tolglow.integrations.analysis :as analysis]
             [tolglow.integrations.mpv-session :as mpv-session]
             [tolglow.integrations.reference-position :as reference-position]
@@ -433,18 +434,19 @@
                 demanded?))
           false (some-> (:response-sample-readers runtime) deref)))
 
-(defn- compiler-context [fixtures batch? compute-owner]
-  (let [options (cond-> {:enabled? batch? :bind-pure reuse/evaluator}
-                  (compute/expressions-enabled? compute-owner) (assoc :prepare-group (compute/group-preparer compute-owner)))]
-    {:fixtures fixtures :compiler (batch/compiler-for-rig fixtures options) :cache (atom {})}))
+(defn- compiler-context
+  "The rig's compiler and program cache. `submit` runs compiles off the frame
+  owner (see tolglow.show.programs). GPU expression groups prepare against
+  the show's compute session, so a show using them compiles on the owner."
+  [fixtures batch? compute-owner submit]
+  (let [gpu? (compute/expressions-enabled? compute-owner)
+        options (cond-> {:enabled? batch? :bind-pure reuse/evaluator}
+                  gpu? (assoc :prepare-group (compute/group-preparer compute-owner)))]
+    (assoc (programs/context (batch/compiler-for-rig fixtures options) (when-not gpu? submit))
+           :fixtures fixtures)))
 
 (defn- cached-compile [compiler-context]
-  (fn [definition]
-    (let [{:keys [compiler cache]} @compiler-context]
-      (or (get @cache definition)
-          (let [compiled (compiler definition)]
-            (swap! cache #(assoc (if (>= (count %) 256) {} %) definition compiled))
-            compiled)))))
+  (fn [definition] (programs/compile! @compiler-context definition)))
 
 (defn- open-compute! [{:keys [compute-backend movement-backend batch? frame-rate gpu-budget-ms]
                        :or {batch? true frame-rate 40} :as options}]
@@ -518,6 +520,23 @@
        :device-sends {:requests 0 :executed 0 :failed 0 :not-connected 0}
        :device-cost {:samples 0 :total-ns 0 :max-ns 0 :max-values 0 :values 0}})))
 
+(defn- compile-worker
+  "The :background-compile option: false or nil compiles on the owner, true
+  starts an owned worker on first use, and a function receives each compile
+  task (tests and replay step it themselves)."
+  [options]
+  (let [choice (get options :background-compile false)]
+    (cond
+      (or (nil? choice) (false? choice)) nil
+      (true? choice) {:owned (delay (programs/worker))}
+      (fn? choice) {:submit choice}
+      :else (throw (ex-info "Background compile must be a boolean or a function" {:background-compile choice})))))
+
+(defn- compile-submit [worker]
+  (cond
+    (:submit worker) (:submit worker)
+    (:owned worker) (fn [task] ((:submit @(:owned worker)) task))))
+
 (defn- configure-runtime
   [compute-owner {:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
    (let [model (-> (or model (demo/model))
@@ -526,6 +545,7 @@
                    calibration/disarm-restored photometry/disarm fog-scan/disarm)
          _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
              (throw (ex-info "Effect log sink must be callable" {})))
+         compile-worker (compile-worker options)
          reference (:section-reference options)
          music (when-let [policy (:section-patterns options)]
                  (let [planner (section-patterns/new-planner (:profile reference) policy)]
@@ -556,7 +576,7 @@
          _ (doseq [definition (vals (get-in model [:registry :effects]))] (compiler/compile-effect definition))
          fixtures (get-in model [:rig :fixtures])
          patch (render/compile-patch fixtures)
-         compiler-context (atom (compiler-context fixtures batch? compute-owner))
+         compiler-context (atom (compiler-context fixtures batch? compute-owner (compile-submit compile-worker)))
          clock (atom {:origin-nanos (System/nanoTime) :time-ms (:time-ms model)})
          runtime-ref (atom nil)
          browser-inputs (observations/create (get options :browser-observations observations/defaults))
@@ -668,6 +688,7 @@
       :patch (atom {:fixtures fixtures :compiled patch :retirement (retirement/plan nil nil patch)
                     :brightness-gains (preview/brightness-gains fixtures)})
       :compile (cached-compile compiler-context)
+      :compile-worker compile-worker
       ;; Video sources open on their own thread, outside the lighting frame (#672).
       :video (video-hub/create (:video-options options {}))
       ;; Shader cues render on their own cadence, outside the lighting frame (#673).
@@ -685,6 +706,12 @@
   "Create an unscheduled show. The CPU backend is the default. Explicit
   :compute-backend :native-gpu acquires one session owned by this show.
   :worker-timeout-ms sets the per-frame effect worker deadline (default 500).
+  :background-compile true compiles the programs of published revisions and
+  first launches on an owned worker, off the frame: a revision is adopted,
+  by all its instances together, once its programs are ready, and a first
+  launch renders from then (`start!` turns it on). The default compiles them
+  on the owner before the engine runs, which keeps manual ticks
+  deterministic; a function receives each compile task instead.
   :spatial-sampling {:workers n :partitions n :min-fixtures n} bounds the
   workers that sample volume fields on a large patch; {:workers 1} is serial.
   An enabled :section-patterns policy publishes pattern intents from opted-in
@@ -993,19 +1020,19 @@
 
 (def ^:private audition-state-keys
   [:keyframes :variable-observation :spatial-cache :hdr-scope :autopilot-cache :lighting-history
-   :parameter-samples :modulation-view :preview-hdr])
+   :parameter-samples :modulation-view :preview-hdr :reload-waits])
 
 (defn- audition-caches
   "Private render resources. The audition compiles for the CPU in its own
   cache and never reads or resets live caches, compute or GPU state, the
   effect worker pool or the spatial sampling pool."
   [runtime model]
-  (let [context (atom (compiler-context (get-in model [:rig :fixtures]) (:batch? runtime) nil))]
+  (let [context (atom (compiler-context (get-in model [:rig :fixtures]) (:batch? runtime) nil nil))]
     {:patch (atom nil) :capacity-plan (volatile! nil) :pause-layer-cache (volatile! nil)
      :response-cache (atom {:responses [] :middleware identity})
      :variable-plan (volatile! nil) :scene-plans (volatile! {})
      :optics-plan (atom (reflections/plan (:rig model)))
-     :compiler-context context :compile (cached-compile context)
+     :compiler-context context :compile (cached-compile context) :compile-worker nil
      :state-migrations (atom {})
      :compute nil :executor nil :spatial-sampling nil}))
 
@@ -1760,8 +1787,9 @@
 
 (defn- prepare-compiler! [runtime fixtures]
   (when-not (= fixtures (:fixtures @(:compiler-context runtime)))
+    (programs/retire! @(:compiler-context runtime))
     (reset! (:compiler-context runtime)
-            (compiler-context fixtures (:batch? runtime) (:compute runtime)))))
+            (compiler-context fixtures (:batch? runtime) (:compute runtime) (compile-submit (:compile-worker runtime))))))
 
 (defn- advance-transport [model time-ms]
   (let [transport (:transport model)
@@ -2689,6 +2717,79 @@
                        :keyframe-params overrides
                        ::engine/priority-overrides (:priority-overrides samples {}))}))))
 
+(defn- cue-effect [model cue]
+  (if-let [version (:effect-version cue)]
+    (or (get-in model [:registry :versions [:effects (:effect-id cue) version]])
+        (let [current (get-in model [:registry :effects (:effect-id cue)])]
+          (when (= version (:version current)) current)))
+    (get-in model [:registry :effects (:effect-id cue)])))
+
+(defn- launch-effect [model command]
+  (if-let [cue (get-in model [:registry :cues (:cue-id command)])]
+    (cue-effect model cue)
+    (get-in model [:registry :effects (:effect-id command)])))
+
+(defn- launch-targets
+  "The launch targets `command` resolves to, or ::unresolved."
+  [model command]
+  (try (get-in (targets/resolve-command model command) [:launch :targets])
+       (catch Exception _ ::unresolved)))
+
+(defn- launch-program
+  "The program a launch of `command` (a cue or effect launch) compiles, or nil."
+  ([model command] (launch-program model command (launch-targets model command)))
+  ([model command targets]
+   (let [effect (launch-effect model command)]
+     (when (and effect (not= ::unresolved targets)) (programs/program effect {:targets targets})))))
+
+(def ^:private scheduled-warm-limit
+  "Scheduled launches added to the warm tier between rebuilds before the
+  next frame rebuilds it, dropping what no longer applies (#774)."
+  256)
+
+(defn- warm-programs!
+  "Compile ahead, off the frame, what a launch is likely to need (#774):
+  every registered effect's untargeted program, each cue's fixture or group
+  selection, each recorded live-run take's targets, and each quantized launch
+  as soon as it is scheduled. The owner only compares identities and submits;
+  the worker resolves selections from the immutable snapshot, reusing each
+  cue's resolution while the cue, the rig and the scene groups it can name
+  are unchanged. Volume selections follow moving volumes and are left to the
+  launch."
+  [runtime context model]
+  (when (:submit context)
+    (let [registry (:registry model)
+          takes (some-> (:live-runs runtime) deref :record :takes)
+          ;; What selector resolution reads, besides the cue (spatial.targets).
+          basis [(:rig model) (get-in model [:extensions :tolglow.lighting-scenes/control :groups])]
+          scheduled (cue-timing/scheduled-commands model)
+          scheduled-key #(or (:command-id %) %)
+          seen @(:scheduled-seen context)
+          fresh (remove #(contains? seen (scheduled-key %)) scheduled)]
+      (when (> (swap! (:scheduled-added context) + (count fresh)) scheduled-warm-limit)
+        (reset! (:warm-key context) ::rebuild))
+      (when (programs/warm! context [registry basis takes]
+                            (fn []
+                              (swap! (:resolutions context) select-keys (keys (:cues registry)))
+                              (concat
+                               ;; In a stable order, so the worker's first-in-first-out queue is reproducible.
+                               (map #(programs/program (val %) {}) (sort-by (comp str key) (:effects registry)))
+                               (keep (fn [[id cue]]
+                                       (when (and (:selector cue) (not (:volume-id (:selector cue))))
+                                         (let [command {:op :cue/launch :cue-id id}]
+                                           ;; The program follows the effect's current revision.
+                                           (launch-program model command
+                                                           (programs/resolved! context id cue basis #(launch-targets model command))))))
+                                     (sort-by (comp str key) (:cues registry)))
+                               (keep (fn [take] (launch-program model {:op :cue/launch :cue-id (:cue-id take)
+                                                                       :launch (select-keys (:launch take) [:targets])}))
+                                     (vals takes))
+                               (keep #(launch-program model %) scheduled))))
+        (reset! (:scheduled-added context) 0))
+      (reset! (:scheduled-seen context) (into #{} (map scheduled-key) scheduled))
+      (when (seq fresh)
+        (programs/warm-more! context (fn [] (keep #(launch-program model %) fresh)))))))
+
 (defn- spatial-levels
   "Split the frame's group levels into those the spatial native-member mix
   applies to `groups` and those the engine applies itself."
@@ -2711,11 +2812,23 @@
         frame-master (get ramp-frame :master (:master model))
         ;; A pending revision must accept a ramped parameter's committed and
         ;; frame values alike; modulation reads which revision to follow here.
-        reading #(modulation/with-frame-params % (:params ramp-frame) (:param-targets ramp-frame))
+        ;; Programs are compiled ahead of launches and of pending revisions,
+        ;; off the frame. Until a revision's programs are ready the engine and
+        ;; modulation read its instances on their captured definition (#774).
+        _ (prepare-compiler! runtime (get-in model [:rig :fixtures]))
+        programs (let [context @(:compiler-context runtime)
+                       frame-number (inc (get model :frame-number 0))
+                       plan (programs/plan model (modulation/with-frame-params model (:params ramp-frame) (:param-targets ramp-frame))
+                                           (:reload-waits before) frame-number)]
+                   (warm-programs! runtime context model)
+                   (programs/request! context (:programs plan))
+                   (assoc (programs/hold context plan) :frame frame-number))
+        attempting #(programs/frame-view % programs)
+        reading #(modulation/with-frame-params (attempting %) (:params ramp-frame) (:param-targets ramp-frame))
         parameter-samples (parameter-sources/sample (reading model) {:time-ms time-ms :transport (:transport model)}
                                                    (:parameter-samples before))
         pending-reloads (let [view (reading model)]
-                          (into #{} (keep #(when (modulation/reload-candidate view %) (:id %))) (vals (:instances model))))
+                          (into #{} (keep #(when (modulation/reload-candidate view %) (:id %))) (vals (:instances view))))
         ;; This frame's engine pass may reject a pending hot reload. Sample the
         ;; waveforms for that outcome too, from the same prior state.
         last-good-samples (when (seq pending-reloads)
@@ -2864,14 +2977,15 @@
         ;; it receives that value, so it turns the revision down instead of
         ;; adopting one that cannot hold what the model keeps or the ramp
         ;; commits. The ramp still reaches evaluation through the overrides.
+        engine-model (programs/frame-view model programs)
         engine-ramps (reduce (fn [frame id]
-                               (if-let [values (modulation/ramp-preparation model (get-in model [:instances id])
+                               (if-let [values (modulation/ramp-preparation engine-model (get-in engine-model [:instances id])
                                                                             (get-in ramp-frame [:params id])
                                                                             (get-in ramp-frame [:param-targets id]))]
                                  (if (seq values) (assoc-in frame [:params id] values) (update frame :params dissoc id))
                                  frame))
                              ramp-frame (keys (:param-targets ramp-frame)))
-        result (update (engine/advance (subscribers/with-frame-overlays model engine-ramps) frame-input compile-step
+        result (update (engine/advance (subscribers/with-frame-overlays engine-model engine-ramps) frame-input compile-step
                                        ;; An audition evaluates serially, off the live worker pool.
                                        (if audition? mapv (executor/mapper (:executor runtime))))
                        :model subscribers/without-frame-overlays model engine-ramps)
@@ -2935,7 +3049,15 @@
                        (if (seq groups) (spatial-cues/mask-contributions result groups levels) result))))
         ;; A renderer rejection rebuilds the result from the engine's frame
         ;; model, which carries the ramp overlay: take it out of that one too.
-        result (update (:result resolved) :model subscribers/without-frame-overlays model engine-ramps)
+        ;; Both results come from the engine's view, so deferred and hidden
+        ;; instances are restored here, once, for either path.
+        result (update (:result resolved) :model (comp #(programs/restore % model programs) subscribers/without-frame-overlays)
+                       model engine-ramps)
+        [adopted-intents adopted-emissions] (programs/mark-adoptions (:intents result) (:intent-emissions result) (:waits programs)
+                                                                     #(get-in model [:instances % :effect-id]) (:frame programs))
+        result (cond-> result
+                 (seq adopted-intents) (assoc :intents adopted-intents)
+                 (seq adopted-emissions) (assoc :intent-emissions adopted-emissions))
         ;; Commit the controller and waveform state behind the inputs the
         ;; engine read, so a rejected reload leaves no trace in either.
         last-good? (= :fallback (:reload-inputs result))
@@ -2985,8 +3107,12 @@
      :parameter-samples (assoc parameter-samples :spatial-overrides (:overrides spatial-fields)
                                :live-routing (when-not audition? (live-sync/parameter-routing (connections/sync (:connections runtime)))))
      :resolved-param-overrides input-overrides
+     :reload-waits (:waits programs)
      :modulation-view (select-keys modulation-result [:overrides :diagnostics])
-     :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}})))
+     :status (let [failures (programs/repeated-failures @(:compiler-context runtime))]
+               (cond-> {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}
+                 ;; A program that keeps failing transiently is still retried; this says so.
+                 (seq failures) (assoc :compile-failures failures)))})))
 
 (defn- fire-scene-draft
   "Apply a quantized draft once the transport reaches its boundary. The owner
@@ -3685,6 +3811,9 @@
                               #(mpv-session/close! (:section-player runtime))
                               #(effect-faults/close! (:effect-logs runtime))
                               #(compute/close! (:compute runtime))
+                              #(programs/retire! @(:compiler-context runtime))
+                              #(when-let [worker (get-in runtime [:compile-worker :owned])]
+                                 (when (realized? worker) ((:close! @worker))))
                               #(when (realized? (:audition-worker runtime))
                                  (.shutdownNow ^java.util.concurrent.ExecutorService @(:audition-worker runtime)))
                               #(duplex/stop! (:audio-returns runtime))
@@ -5007,7 +5136,7 @@
    (when-not (and (number? frame-rate) (<= 1 frame-rate 120)) (throw (ex-info "Frame rate must be 1..120" {})))
    (let [recovery-options (recovery/options (:recovery options))
          sink (open-sink! options)
-         runtime (try (create-runtime (merge {:adaptive-keyframes {:enabled? true}} options
+         runtime (try (create-runtime (merge {:adaptive-keyframes {:enabled? true} :background-compile true} options
                                              {:sink sink :independent-output? true}))
                       (catch Throwable error
                         (when sink

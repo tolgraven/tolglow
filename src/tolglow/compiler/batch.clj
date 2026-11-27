@@ -59,29 +59,36 @@
                                          (prepare-group expressions positions plan)))
                 (let [inputs (into [] (comp (mapcat ir/input-paths)
                                             (remove #{[:position] [:surface-uv]}) (distinct)) (vals expressions))]
+                  ;; finish-fields never writes to evaluated arrays, so the
+                  ;; binding may retain and return them without a copy.
                   (assoc group :evaluate (if bind-pure
-                                           (bind-pure {:pure? true :inputs inputs} evaluate)
+                                           (bind-pure {:pure? true :inputs inputs :shared-outputs? true} evaluate)
                                            evaluate))))))
           groups)))
 
-(defn- finish-fields!
-  "Validate and optionally scale exclusively owned IR results before publication."
+(defn- finish-fields
+  "Validate IR results before publication and scale envelope attributes.
+  Evaluated arrays are read-only: a pure binding may retain them and return
+  them again on a later frame or to another worker. A scaled attribute gets a
+  new array that this frame owns; unscaled attributes keep the evaluated one."
   [outputs envelope-result envelope-attributes hdr?]
-  (doseq [[attribute {:keys [values]}] outputs]
-    (let [^doubles values values
-          geometric? (contains? compiler/geometry-attributes attribute)
-          emission-hdr? (and hdr? (compiler/hdr-attribute? attribute))
-          scale (double (if (and envelope-result (contains? envelope-attributes attribute))
-                          (:value envelope-result) 1.0))
-          scale? (not (== 1.0 scale))]
-      (dotimes [index (alength values)]
-        (let [value (* scale (aget values index))]
-          (when-not (and (Double/isFinite value) (or geometric? (and (<= 0.0 value) (or emission-hdr? (<= value 1.0)))))
-            (fail! [:outputs attribute :value]
-                   (if geometric? "World coordinates must be finite"
-                       "Computed fixture output must be finite and within [0,1]")))
-          (when scale? (aset values index value))))))
-  outputs)
+  (reduce-kv
+   (fn [finished attribute {:keys [values] :as field}]
+     (let [^doubles values values
+           geometric? (contains? compiler/geometry-attributes attribute)
+           emission-hdr? (and hdr? (compiler/hdr-attribute? attribute))
+           scale (double (if (and envelope-result (contains? envelope-attributes attribute))
+                           (:value envelope-result) 1.0))
+           ^doubles scaled (when-not (== 1.0 scale) (double-array (alength values)))]
+       (dotimes [index (alength values)]
+         (let [value (* scale (aget values index))]
+           (when-not (and (Double/isFinite value) (or geometric? (and (<= 0.0 value) (or emission-hdr? (<= value 1.0)))))
+             (fail! [:outputs attribute :value]
+                    (if geometric? "World coordinates must be finite"
+                        "Computed fixture output must be finite and within [0,1]")))
+           (when scaled (aset scaled index value))))
+       (if scaled (assoc finished attribute (assoc field :values scaled)) finished)))
+   outputs outputs))
 
 (defn- contribution [{:keys [target-ids evaluate blend prepared expressions]} env envelope-result envelope-attributes hdr?]
   (let [batch {:target-ids target-ids :blend blend}]
@@ -94,8 +101,8 @@
                          (into {} (for [attribute (keys expressions) :when (envelope-attributes attribute)]
                                     [attribute (:value envelope-result)])))})
        (let [result (evaluate env)]
-         (finish-fields! (:outputs result) envelope-result envelope-attributes hdr?)
-         (merge result batch)))}))
+         (merge (assoc result :outputs (finish-fields (:outputs result) envelope-result envelope-attributes hdr?))
+                batch)))}))
 
 (defn- floating-value? [value]
   (if (vector? value) (every? floating-value? value)
