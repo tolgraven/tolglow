@@ -322,8 +322,13 @@
                          :holds (modulation/portable-holds (get-in model [:modulation :holds] {}))
                          :overrides (:overrides modulation-view {})
                          :diagnostics (:diagnostics modulation-view [])}
-            :compositions (mapv #(assoc % :running? (contains? (:composition-runs model) (:id %))
-                                        :playback (get-in model [:composition-runs (:id %) :playback]))
+            :compositions (mapv (fn [definition]
+                                  (let [run (get-in model [:composition-runs (:id definition)])]
+                                    (cond-> (assoc definition :running? (some? run) :playback (:playback run))
+                                      ;; A running member instance carries this layer ID and its
+                                      ;; slot index, so views find its card (#795).
+                                      run (assoc :layer-id (:owner-id run)
+                                                 :member-slots (mapv :id (get-in run [:definition :slots]))))))
                                 (sort-by (comp str :id) (vals (:compositions model))))
             :scene-draft (not-empty (dissoc audition :output))
             :draft-output (when-let [frame (:output audition)]
@@ -1569,6 +1574,8 @@
        :ack {:status :accepted :fixture-id (:id fixture)}})
     :composition {:model (composition/save model payload) :ack {:status :accepted}}
     :composition-append (apply-composition-append model payload)
+    :composition-cards {:model (composition/set-cards model (:id payload) (select-keys payload [:cards :resize :move]))
+                        :ack {:status :accepted :id (:id payload)}}
     :composition-run {:model (composition/start model (:id payload) time-ms) :ack {:status :accepted}}
     :composition-stop {:model (composition/stop model (:id payload) time-ms) :ack {:status :accepted}}
     :response

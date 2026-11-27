@@ -391,8 +391,19 @@
         ;; The shared description chooses the widget (#655): a declared fader
         ;; is vertical in the strip and in detail.
         fader? (= :fader (controls/widget schema))
-        skin @(rf/subscribe [:ui/knob-skin])]
-    [:div.param-row {:data-param (name parameter) :class (when (:strip? options) "strip-control")}
+        skin @(rf/subscribe [:ui/knob-skin])
+        ;; A driven parameter shows its plot below the control. On a slot
+        ;; grid (#795) the bank draws plots below the grid instead, so a card
+        ;; never grows when a source starts driving it.
+        visual? (and (not (:slot-grid? options)) (sources/driven? instance parameter) (not (:strip? options))
+                     (#{"number" "integer" "vector" "color" "range"} type)
+                     (or (not (:compact? options)) (visualization/spatial-kind schema)))
+        ;; Every card of one widget type takes the same standard slot (#795).
+        description (controls/control parameter schema @(rf/subscribe [:waveform/catalog]))]
+    [:div.param-row (merge {:data-param (name parameter) :class (when (:strip? options) "strip-control")
+                            :data-control (name (or (:widget description) (:type description)))
+                            :data-slot (name (:slot description))}
+                           (:slot-attrs options))
      [:label [:span title] [:output (cond (= "gradient" type) (str (count value) (if (= 1 (count value)) " stop" " stops"))
                                           (vector? value) (str/join ", " (map #(numeric/number-label schema %) value))
                                           :else (widgets/value-label schema value))]]
@@ -460,8 +471,7 @@
          [numeric/number-input {:display-schema schema :type "number" :aria-label title :value (or value 0) :step (if (= "integer" type) 1 "any")
                         :on-change #(when-let [n (number-value %)] (change! n))}]))
      (when (and (nil? handlers) (:id instance)) [sources/trigger (:id instance) parameter title source nil (:source-mount options)])
-     (when (and (sources/driven? instance parameter) (not (:strip? options)) (#{"number" "integer" "vector" "color" "range"} type)
-                (or (not (:compact? options)) (visualization/spatial-kind schema)))
+     (when visual?
        [sources/result-visual visualization/studio instance parameter schema])]))
 
 (defn- preview-film-controls [settings]

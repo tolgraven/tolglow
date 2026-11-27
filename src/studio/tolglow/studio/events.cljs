@@ -58,7 +58,7 @@
 (defn- dispatch-result [event result] (when event (rf/dispatch (conj event result))))
 
 (def guarded-paths
-  #{"/api/definition" "/api/materials" "/api/rig" "/api/composition" "/api/composition/append" "/api/composition/run"
+  #{"/api/definition" "/api/materials" "/api/rig" "/api/composition" "/api/composition/append" "/api/composition/cards" "/api/composition/run"
     "/api/composition/stop" "/api/import" "/api/auto" "/api/response"
     "/api/response/release" "/api/response/delete" "/api/page/generate" "/api/settings"
     "/api/fixtures/publish" "/api/fixtures/patch"
@@ -1146,12 +1146,13 @@
                           (some? (get-in typed [:slots i :transforms]))
                           (assoc :transforms (get-in typed [:slots i :transforms]))))
                       (range) (:slots composition))]
-      (assoc-in db [:ui :composition] (assoc (dissoc composition :running? :playback) :slots slots)))))
+      (assoc-in db [:ui :composition] (assoc (dissoc composition :running? :playback :layer-id :member-slots) :slots slots)))))
 (rf/reg-event-db :studio/composition-new [(rf/inject-cofx :studio/unique)]
   (fn [db _] (assoc-in db [:ui :composition] {:id "new-composition" :name "New composition" :mode "sequence" :loop "once" :slots []})))
 (rf/reg-event-fx :studio/composition-save
   (fn [{:keys [db]} [_ run?]]
-    (let [composition (get-in db [:ui :composition])]
+    ;; The show keeps a macro's card arrangement when a save omits it (#795).
+    (let [composition (dissoc (get-in db [:ui :composition]) :cards)]
       (if (seq (:slots composition))
         {:studio/http {:path "/api/composition" :body composition :on-success [:studio/composition-saved (:id composition) run?]}}
         {:dispatch [:studio/failure "Add at least one cue to the composition."]}))))

@@ -551,3 +551,97 @@
         (.add queue :occupied)
         (is (= :rejected (:status @(show/register-event-subscriber! full (assoc descriptor :middleware replacement)))))
         (is (= {[:test/inline callback-id] original} @(get-in r [:event-callbacks :inline-handlers])))))))
+
+(deftest macro-card-sizes-share-one-validated-command-and-survive-export
+  (with-runtime [r]
+    (let [macro {:id :opening-look :mode :macro :name "Opening look"
+                 :slots [{:id :first :cue-id :ember} {:id :second :cue-id :ice}]}
+          saved #(some (fn [c] (when (= :opening-look (:id c)) c)) (:compositions (show/snapshot r)))]
+    (is (= :accepted (:status (apply-at! r :composition macro 0))))
+    (testing "the REPL sets a size and an order and reads them back"
+      (is (= :accepted (:status (apply-at! r :composition-cards
+                                           {:id :opening-look :cards [{:slot-id :second :size :large}]} 1))))
+      (is (= [{:slot-id :second :size :large}] (:cards (saved)))))
+    (testing "Studio sends the same command over typed transit"
+      (let [{:keys [epoch runtime-id]} (show/snapshot r)
+            handler (studio/handler r)
+            payload {:id :opening-look :cards [{:slot-id :first :size :medium} {:slot-id :second :size :large}]
+                     :expected-epoch epoch :runtime-id runtime-id}
+            response (future (handler {:request-method :post :uri "/api/composition/cards"
+                                       :headers {"host" "localhost" "accept" "application/transit+json"
+                                                 "content-type" "application/transit+json"}
+                                       :body (java.io.StringReader. (wire/encode payload))}))]
+        (loop [n 0] (when (and (not (realized? response)) (< n 300)) (show/tick! r (+ 2 n)) (Thread/sleep 5) (recur (inc n))))
+        (is (= 200 (:status (deref response 1000 ::missing))))
+        (is (= [{:slot-id :first :size :medium} {:slot-id :second :size :large}] (:cards (saved))))))
+    (testing "a resize and a move apply to the arrangement the show holds"
+      (is (= :accepted (:status (apply-at! r :composition-cards {:id :opening-look :move {:slot-id :second :offset -1}} 300))))
+      (is (= :accepted (:status (apply-at! r :composition-cards {:id :opening-look :resize {:slot-id "first" :size "small"}} 301))))
+      (is (= [{:slot-id :second :size :large} {:slot-id :first :size :small}] (:cards (saved))))
+      (is (= :accepted (:status (apply-at! r :composition-cards {:id :opening-look :move {:slot-id :second :offset 1}} 302))))
+      (is (= :accepted (:status (apply-at! r :composition-cards {:id :opening-look :resize {:slot-id :first :size :medium}} 303))))
+      (is (= [{:slot-id :first :size :medium} {:slot-id :second :size :large}] (:cards (saved)))))
+    (testing "invalid cards are refused and leave the saved arrangement alone"
+      (let [before (:cards (saved))]
+        (doseq [cards [[{:slot-id :first :size :huge}] [{:slot-id :missing :size :small}]
+                       [{:slot-id :first :size :small} {:slot-id :first :size :large}]]]
+          (is (= :rejected (:status (apply-at! r :composition-cards {:id :opening-look :cards cards} 400)))))
+        (is (= :rejected (:status (apply-at! r :composition
+                                             {:id :steps :mode :sequence :slots [{:id :a :cue-id :ember}]
+                                              :cards [{:slot-id :a :size :large}]} 400))))
+        (is (= :rejected (:status (apply-at! r :composition-cards {:id :nothing :cards []} 400))))
+        (doseq [change [{:resize {:slot-id :first :size :huge}} {:resize {:slot-id :missing :size :small}}
+                        {:move {:slot-id :first :offset 0.5}} {:move {:slot-id :missing :offset 1}}
+                        {} {:cards [] :resize {:slot-id :first :size :small}}]]
+          (is (= :rejected (:status (apply-at! r :composition-cards (assoc change :id :opening-look) 400))) (pr-str change)))
+        (is (= before (:cards (saved))))))
+    (testing "a running member carries the macro's layer and slot"
+      (apply-at! r :composition-run {:id :opening-look} 500)
+      (let [{:keys [layer-id member-slots]} (saved)
+            members (filter #(= layer-id (get-in % [:source :native-layer :id])) (:instances (show/snapshot r)))]
+        (is (= [:first :second] member-slots))
+        (is (= #{0 1} (set (map #(get-in % [:source :native-layer :member]) members))))))
+    (testing "the arrangement survives export and import"
+      (let [exported (:body ((studio/handler r) {:request-method :get :uri "/api/export"}))]
+        (is (= :accepted (:status (apply-at! r :import {:source exported} 600))))
+        (is (= [{:slot-id :first :size :medium} {:slot-id :second :size :large}] (:cards (saved))))))
+    (testing "nil returns every card to its default"
+      (is (= :accepted (:status (apply-at! r :composition-cards {:id :opening-look :cards nil} 700))))
+      (is (not (contains? (saved) :cards)))))))
+
+(deftest re-saving-a-macro-keeps-its-cards-for-the-same-members
+  (with-runtime [r]
+    (let [saved #(some (fn [c] (when (= :m (:id c)) c)) (:compositions (show/snapshot r)))
+          rejection #(get-in % [:details :errors 0 :path])]
+      (apply-at! r :composition {:id :m :mode :macro :slots [{:id :a :cue-id :ember} {:id :b :cue-id :ice}]} 0)
+      (apply-at! r :composition-cards {:id :m :cards [{:slot-id :b :size :large} {:slot-id :a :size :medium}]} 1)
+      (testing "a REPL save that omits :cards keeps them, as a Compose save does"
+        (is (= :accepted (:status (apply-at! r :composition {:id :m :mode :macro :name "Renamed"
+                                                             :slots [{:id :a :cue-id :ember} {:id :b :cue-id :ice}]} 2))))
+        (is (= [{:slot-id :b :size :large} {:slot-id :a :size :medium}] (:cards (saved)))))
+      (testing "removing a member drops its card instead of refusing the save"
+        (is (= :accepted (:status (apply-at! r :composition {:id :m :mode :macro :slots [{:id :a :cue-id :ember}]} 3))))
+        (is (= [{:slot-id :a :size :medium}] (:cards (saved)))))
+      (testing "a card follows its member: a positional slot ID that now names another cue loses it"
+        (apply-at! r :composition {:id :m :mode :macro :slots [{:cue-id :ember} {:cue-id :ice}]} 4)
+        (apply-at! r :composition-cards {:id :m :cards [{:slot-id "slot-1" :size :large}]} 5)
+        (is (= :accepted (:status (apply-at! r :composition {:id :m :mode :macro :slots [{:cue-id :ice} {:cue-id :spot}]} 6))))
+        (is (nil? (:cards (saved)))))
+      (testing "an explicit :cards nil clears them"
+        (apply-at! r :composition-cards {:id :m :cards [{:slot-id "slot-0" :size :large}]} 7)
+        (apply-at! r :composition {:id :m :mode :macro :cards nil :slots [{:cue-id :ice} {:cue-id :spot}]} 8)
+        (is (not (contains? (saved) :cards))))
+      (testing "projection keys read back from a snapshot are not saved"
+        (apply-at! r :composition-run {:id :m} 9)
+        (is (:layer-id (saved)))
+        (is (= :accepted (:status (apply-at! r :composition (assoc (saved) :name "Again") 10))))
+        (apply-at! r :composition-stop {:id :m} 11)
+        (is (= [false nil nil] ((juxt :running? :layer-id :member-slots) (saved))))
+        (is (not-any? #(contains? (get-in @(:state r) [:model :compositions :m]) %)
+                      [:running? :playback :layer-id :member-slots])))
+      (testing "a size that is not a keyword is refused with a path"
+        (is (= [:resize :size] (rejection (apply-at! r :composition-cards {:id :m :resize {:slot-id "slot-0" :size 3}} 12))))
+        (is (= :rejected (:status (apply-at! r :composition-cards {:id :m :resize {:slot-id "slot-0" :size "huge"}} 12)))))
+      (testing "a sequence refuses :cards, even nil"
+        (is (= [:cards] (rejection (apply-at! r :composition {:id :s :mode :sequence :cards nil
+                                                              :slots [{:cue-id :ember :duration-ms 100}]} 13))))))))
