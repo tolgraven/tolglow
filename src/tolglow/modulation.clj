@@ -427,6 +427,26 @@
   [model]
   (boolean (some #(reload-candidate model %) (vals (:instances model)))))
 
+(defn deferred-reloads
+  "The effect IDs whose pending hot reload waits for a later frame, so that
+  one frame attempts at most `limit` newly published effect revisions. Each
+  revision is compiled once and attempted by every instance that reloads it.
+  Revisions go in the launch order of the first instance that attempts them;
+  this counts revisions the engine will refuse at preparation too (#774)."
+  [model limit]
+  (into #{} (drop limit)
+        (eduction (filter #(attempted-revision model %)) (map :effect-id) (distinct)
+                  (sort-by :order (vals (:instances model))))))
+
+(defn without-reloads
+  "Return `model` as the engine and modulation read it in a frame that defers
+  the hot reloads of `effect-ids`: their newer registry revisions are hidden,
+  so every instance of them keeps its captured definition, as the engine keeps
+  one when a candidate is refused. A frame view only; the committed model
+  keeps its registry."
+  [model effect-ids]
+  (if (seq effect-ids) (update-in model [:registry :effects] #(apply dissoc % effect-ids)) model))
+
 (defn owner-definition
   "Select the definition for the next frame: the pending reload candidate, or
   the captured definition."

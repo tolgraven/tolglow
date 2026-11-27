@@ -421,14 +421,23 @@
 (defn- compiler-context [fixtures batch? compute-owner]
   (let [options (cond-> {:enabled? batch? :bind-pure reuse/evaluator}
                   (compute/expressions-enabled? compute-owner) (assoc :prepare-group (compute/group-preparer compute-owner)))]
-    {:fixtures fixtures :compiler (batch/compiler-for-rig fixtures options) :cache (atom {})}))
+    {:fixtures fixtures :compiler (batch/compiler-for-rig fixtures options) :cache (atom {}) :retired (atom {})}))
 
-(defn- cached-compile [compiler-context]
+(defn- cached-compile
+  "Compile through a cache of at most 256 definitions. A full cache becomes the
+  retired generation, and a definition found there moves back without being
+  compiled again, so filling the cache with published revisions never makes
+  one frame recompile every running effect (#774). Only the frame owner of
+  this context compiles."
+  [compiler-context]
   (fn [definition]
-    (let [{:keys [compiler cache]} @compiler-context]
+    (let [{:keys [compiler cache retired]} @compiler-context]
       (or (get @cache definition)
-          (let [compiled (compiler definition)]
-            (swap! cache #(assoc (if (>= (count %) 256) {} %) definition compiled))
+          (let [compiled (or (get @retired definition) (compiler definition))]
+            (when (>= (count @cache) 256)
+              (reset! retired @cache)
+              (reset! cache {}))
+            (swap! cache assoc definition compiled)
             compiled)))))
 
 (defn- open-compute! [{:keys [compute-backend movement-backend batch? frame-rate gpu-budget-ms]
@@ -503,6 +512,16 @@
        :device-sends {:requests 0 :executed 0 :failed 0 :not-connected 0}
        :device-cost {:samples 0 :total-ns 0 :max-ns 0 :max-values 0 :values 0}})))
 
+(def default-reloads-per-frame
+  "Newly published effect revisions one frame attempts at most (#774)."
+  8)
+
+(defn- reloads-per-frame [options]
+  (let [limit (get options :reloads-per-frame default-reloads-per-frame)]
+    (when-not (pos-int? limit)
+      (throw (ex-info "Reloads per frame must be a positive integer" {:reloads-per-frame limit})))
+    limit))
+
 (defn- configure-runtime
   [compute-owner {:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
    (let [model (-> (or model (demo/model))
@@ -511,6 +530,7 @@
                    calibration/disarm-restored photometry/disarm fog-scan/disarm)
          _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
              (throw (ex-info "Effect log sink must be callable" {})))
+         reload-limit (reloads-per-frame options)
          reference (:section-reference options)
          music (when-let [policy (:section-patterns options)]
                  (let [planner (section-patterns/new-planner (:profile reference) policy)]
@@ -653,6 +673,7 @@
       :patch (atom {:fixtures fixtures :compiled patch :retirement (retirement/plan nil nil patch)
                     :brightness-gains (preview/brightness-gains fixtures)})
       :compile (cached-compile compiler-context)
+      :reloads-per-frame reload-limit
       ;; Video sources open on their own thread, outside the lighting frame (#672).
       :video (video-hub/create (:video-options options {}))
       ;; Shader cues render on their own cadence, outside the lighting frame (#673).
@@ -670,6 +691,8 @@
   "Create an unscheduled show. The CPU backend is the default. Explicit
   :compute-backend :native-gpu acquires one session owned by this show.
   :worker-timeout-ms sets the per-frame effect worker deadline (default 500).
+  :reloads-per-frame bounds the newly published effect revisions one frame
+  attempts (default 8); later ones take over on the following frames.
   :spatial-sampling {:workers n :partitions n :min-fixtures n} bounds the
   workers that sample volume fields on a large patch; {:workers 1} is serial.
   An enabled :section-patterns policy publishes pattern intents from opted-in
@@ -2672,6 +2695,13 @@
                        :keyframe-params overrides
                        ::engine/priority-overrides (:priority-overrides samples {}))}))))
 
+(defn- restore-registry
+  "Put the registry of `model` back into `result`, a model the engine
+  evaluated from a frame view that deferred some hot reloads. The engine never
+  edits the registry."
+  [result model]
+  (if (identical? (:registry result) (:registry model)) result (assoc result :registry (:registry model))))
+
 (defn- spatial-levels
   "Split the frame's group levels into those the spatial native-member mix
   applies to `groups` and those the engine applies itself."
@@ -2694,7 +2724,12 @@
         frame-master (get ramp-frame :master (:master model))
         ;; A pending revision must accept a ramped parameter's committed and
         ;; frame values alike; modulation reads which revision to follow here.
-        reading #(modulation/with-frame-params % (:params ramp-frame) (:param-targets ramp-frame))
+        ;; One frame attempts a bounded number of newly published revisions;
+        ;; the engine and modulation read the others' captured definitions
+        ;; until a later frame takes them over (#774).
+        deferred (modulation/deferred-reloads model (get runtime :reloads-per-frame default-reloads-per-frame))
+        attempting #(modulation/without-reloads % deferred)
+        reading #(modulation/with-frame-params (attempting %) (:params ramp-frame) (:param-targets ramp-frame))
         parameter-samples (parameter-sources/sample (reading model) {:time-ms time-ms :transport (:transport model)}
                                                    (:parameter-samples before))
         pending-reloads (let [view (reading model)]
@@ -2848,16 +2883,16 @@
         ;; adopting one that cannot hold what the model keeps or the ramp
         ;; commits. The ramp still reaches evaluation through the overrides.
         engine-ramps (reduce (fn [frame id]
-                               (if-let [values (modulation/ramp-preparation model (get-in model [:instances id])
+                               (if-let [values (modulation/ramp-preparation (attempting model) (get-in model [:instances id])
                                                                             (get-in ramp-frame [:params id])
                                                                             (get-in ramp-frame [:param-targets id]))]
                                  (if (seq values) (assoc-in frame [:params id] values) (update frame :params dissoc id))
                                  frame))
                              ramp-frame (keys (:param-targets ramp-frame)))
-        result (update (engine/advance (subscribers/with-frame-overlays model engine-ramps) frame-input compile-step
+        result (update (engine/advance (subscribers/with-frame-overlays (attempting model) engine-ramps) frame-input compile-step
                                        ;; An audition evaluates serially, off the live worker pool.
                                        (if audition? mapv (executor/mapper (:executor runtime))))
-                       :model subscribers/without-frame-overlays model engine-ramps)
+                       :model (comp #(restore-registry % model) subscribers/without-frame-overlays) model engine-ramps)
         manual-aim (surface-aim/contribution model patch)
         pause-layer (pause-layer! runtime model)
         meter-opts (get-in model [:settings :lighting-capacity])
@@ -2918,7 +2953,8 @@
                        (if (seq groups) (spatial-cues/mask-contributions result groups levels) result))))
         ;; A renderer rejection rebuilds the result from the engine's frame
         ;; model, which carries the ramp overlay: take it out of that one too.
-        result (update (:result resolved) :model subscribers/without-frame-overlays model engine-ramps)
+        result (update (:result resolved) :model (comp #(restore-registry % model) subscribers/without-frame-overlays)
+                       model engine-ramps)
         ;; Commit the controller and waveform state behind the inputs the
         ;; engine read, so a rejected reload leaves no trace in either.
         last-good? (= :fallback (:reload-inputs result))
