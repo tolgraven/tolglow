@@ -390,6 +390,14 @@
         (describe-renderer [_] {:backend :test :terminated? true})
         (close-renderer [_] true)))))
 
+(defn- reopen-now!
+  "Move the manual clock exactly to the end of the producer's pending reopen
+  delay, if any. Advancing only by what the producer is waiting for keeps
+  every loss well inside the loss window however slowly the test runs."
+  [p clock]
+  (when-let [ms (get-in (producer/status p) [:error :retry-in-ms])]
+    (when (pos? ms) (advance! clock (Math/ceil ms)))))
+
 (defn- heavy? [shader] (.contains ^String (:source shader) "HEAVY"))
 
 (deftest a-cue-that-overruns-the-fence-stops-alone-and-its-fix-recovers-it
@@ -403,15 +411,17 @@
         row (fn [id] (some #(when (= id (:instance-id %)) %) (:instances (status))))]
     (try
       (producer/sync! p {"good" (good 0.0) "heavy" (heavy "// HEAVY")})
-      ;; Reopen delays are 0, 4 and 8 s; move the clock past each.
-      (is (eventually #(do (advance! clock 10000) (:halted? (row "heavy"))) 5000))
+      ;; Reopen delays are 0, 4 and 8 s; move the clock through each.
+      (is (eventually #(do (reopen-now! p clock) (:halted? (row "heavy"))) 5000))
       (is (eventually #(= {:code :shader/frame-timeout :strikes 3} (select-keys (:error (row "heavy")) [:code :strikes]))))
       (testing "the healthy cue keeps rendering on a fresh renderer"
-        (advance! clock 60000)
+        ;; good may still publish a frame it drew on the third renderer before
+        ;; heavy's draw closed it, so wait for the fresh renderer first.
+        (is (eventually #(do (reopen-now! p clock) (= 4 @opens))) "One more renderer opens, for good")
         (let [rendered (:rendered (row "good"))]
           (producer/sync! p {"good" (good 1.0) "heavy" (heavy "// HEAVY")})
           (is (eventually #(and (> (:rendered (row "good")) rendered) (nil? (:error (row "good")))))))
-        (is (= 4 @opens) "Three renderers lost to heavy, one more for good")
+        (is (= 4 @opens) "Nothing else was lost")
         (is (not (get-in (status) [:error :final?]))))
       (testing "fixing heavy's GLSL in place (same instance) recovers it"
         (producer/sync! p {"good" (good 1.0) "heavy" (heavy "// fixed")})
@@ -442,7 +452,7 @@
       ;; New uniforms each step, until the third overrun stops the cue; no
       ;; offer after that until the checks below.
       (let [t (atom 0.0)]
-        (is (eventually #(do (advance! clock 10000)
+        (is (eventually #(do (reopen-now! p clock)
                              (or (:halted? (row "newer"))
                                  (do (producer/sync! p {"older" older "newer" (newer (swap! t + 0.01))}) false)))
                         5000)))
@@ -450,7 +460,10 @@
       (is (not (contains? (:instance-frames (producer/frames p)) "newer")))
       (producer/sync! p {"older" older "newer" (newer 99.0)})
       (is (= [] (:refused (status))) "The stopped cue's slot and pixel-budget share are free")
-      (is (eventually #(get-in (producer/frames p) [:instance-frames "older" :shader/index-strip]))
+      ;; The halt can land before the loss is recorded, so keep stepping the
+      ;; clock to any reopen that loss schedules.
+      (is (eventually #(do (reopen-now! p clock)
+                           (get-in (producer/frames p) [:instance-frames "older" :shader/index-strip])))
           "The older launch on the same feed renders")
       (is (= (get-in (producer/frames p) [:instance-frames "older" :shader/index-strip])
              (get-in (producer/frames p) [:frames :shader/index-strip]))
