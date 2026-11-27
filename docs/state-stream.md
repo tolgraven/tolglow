@@ -107,14 +107,14 @@ has no such window: its lane frames stop with Studio's frames, as before lanes.
 
 Measured in headless Chrome 155 with the Metal GPU on the M4 Pro
 (`dev/studio/room-frame-cost.mjs`, Perform view, about 29 frames a second;
-before is master 5fc4ab78, after is #790):
+before is master 50260e75, after is #790):
 
 | Per received frame | Idle show, before | Idle, after | 96 heads and 3 cues, before | Dense, after |
 |---|---|---|---|---|
-| Components rendered | 85.6 | 6.6 | 90.8 | 6.6 |
-| Reaction runs (development build) | 72.2 | 15.5 | 90.6 | 15.5 |
+| Components rendered | 85.2 | 6.6 | 91.2 | 6.6 |
+| Reaction runs (development build) | 72.9 | 15.4 | 91.6 | 15.6 |
 | DOM mutations | 56 | 13 | 57 | 14 |
-| Main-thread task time | 4.50 ms | 3.55 ms | 6.63 ms | 5.45 ms |
+| Main-thread task time | 5.53 ms | 4.46 ms | 6.81 ms | 5.62 ms |
 
 What still renders on an idle frame is the pad whose preview animates, the pad
 grid, the pad clock and the frame-time readout. Headless results are not
