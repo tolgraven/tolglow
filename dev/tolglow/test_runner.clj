@@ -41,7 +41,7 @@
     tolglow.fixtures.definitions-test tolglow.fixtures.library-test
     tolglow.connections-test tolglow.studio.connections-host-test
     tolglow.studio.output-options-test
-    tolglow.studio.fixture-host-test tolglow.rig-test tolglow.pixel-layout-test tolglow.pixel-layout-host-test tolglow.rig-surfaces-test
+    tolglow.studio.fixture-host-test tolglow.rig-placement-test tolglow.rig-test tolglow.pixel-layout-test tolglow.pixel-layout-host-test tolglow.rig-surfaces-test
     tolglow.reflected-surfaces-test tolglow.fixture-photometry-test
     tolglow.rig.rdm-test tolglow.studio.rdm-host-test
     tolglow.integrations.live-sync-test tolglow.integrations.phrase-capture-test tolglow.integrations.phrase-clip-test

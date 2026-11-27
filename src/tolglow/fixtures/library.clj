@@ -5,9 +5,9 @@
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [afterglow.render.frame :as render]
-            [afterglow.render.photometry :as photometry]
             [tolglow.fixtures.bounds :as bounds]
             [tolglow.registry :as registry]
+            [tolglow.rig.placement :as placement]
             [tolglow.fixtures.definitions :as library])
   (:import [java.nio.charset StandardCharsets] [java.security MessageDigest] [java.util Base64]))
 
@@ -218,17 +218,8 @@
                               :else []))
         offsets (vec (mapcat offset-values (vals channels)))
         covered (set offsets)
-        policy (or (:rgbw-policy options) (:rgbw-policy definition) :none)
-        policy (if (string? policy) (keyword policy) policy)
-        calibration (merge (:calibration definition) (:calibration options))
-        footprint (:footprint definition (reduce max 0 (filter integer? offsets)))
-        properties (into [:name :emission-color :fogger :bounds-m] photometry/fixture-keys)
-        candidate (merge (select-keys definition properties)
-                         (select-keys options properties)
-                         {:id (:id options) :fixture-type-id (:id definition) :fixture-type-version (:version definition)
-                          :position (:position options [0 0 0]) :rotation-deg (:rotation-deg options [0 0 0])
-                          :universe (:universe options) :address (:address options)
-                          :channels channels :footprint footprint :rgbw-policy policy :calibration calibration})
+        candidate (placement/instance definition options)
+        {:keys [footprint calibration]} candidate
         diagnostics (vec
                      (concat
                       (map #(assoc % :severity :error :code :invalid-definition)
@@ -248,6 +239,43 @@
                       (map #(assoc % :severity :error :code :invalid-patch) (render/validate-patch [candidate]))))
         valid? (not-any? #(= :error (:severity %)) diagnostics)]
     {:valid? valid? :fixture (when valid? candidate) :candidate candidate :diagnostics diagnostics}))
+
+(defn- registry-type [types id]
+  (or (get types id)
+      (when (string? id) (get types (keyword id)))
+      (when (keyword? id) (get types (subs (str id) 1)))))
+
+(defn- wire-id [id] (if (keyword? id) (subs (str id) 1) (str id)))
+
+(defn admit-placements
+  "Instantiate fixtures newly placed in a proposed rig from their published type.
+  A new fixture (its ID is not in `existing`) that names a registry
+  `:fixture-type-id` takes its channels, footprint and type data from that type;
+  only `placement/instance-keys` come from the entry. Its channels may differ
+  from the type's only by axis reversal. It must pass `instantiate`'s patch
+  checks, including documented movement calibration. A new fixture without
+  `:channels` must name a registry type. Other entries are returned unchanged."
+  [types existing fixtures]
+  (let [existing (set (map wire-id existing))]
+    (mapv (fn [entry]
+            (let [definition (registry-type types (:fixture-type-id entry))]
+              (cond
+                (or (not (map? entry)) (contains? existing (wire-id (:id entry)))) entry
+                (and (nil? definition) (contains? entry :channels)) entry
+                (nil? definition)
+                (throw (ex-info "Fixture type not found" {:id (:fixture-type-id entry) :fixture-id (:id entry)}))
+                (and (contains? entry :channels) (not (placement/same-patch? (:channels definition) (:channels entry))))
+                (throw (ex-info "A placed fixture's channels must match its fixture type"
+                                {:fixture-id (:id entry) :fixture-type-id (:id definition)}))
+                :else
+                (let [result (instantiate definition (select-keys entry placement/instance-keys))]
+                  (when-not (:valid? result)
+                    (throw (ex-info (str "Fixture " (wire-id (:id entry)) " cannot be placed: "
+                                         (str/join "; " (keep :message (filter #(= :error (:severity %)) (:diagnostics result)))))
+                                    (select-keys result [:diagnostics]))))
+                  (cond-> (:fixture result)
+                    (contains? entry :channels) (assoc :channels (:channels entry)))))))
+          fixtures)))
 
 (defn close! [manager]
   (locking (:lock manager)

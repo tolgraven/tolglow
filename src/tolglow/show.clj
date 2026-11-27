@@ -112,6 +112,7 @@
             [tolglow.sensors.audience.zones :as audience-zones]
             [tolglow.sensors.osc :as sensor-osc]
             [tolglow.fixtures.library :as fixture-service]
+            [tolglow.rig.aim-calibration :as aim-calibration]
             [tolglow.rig :as rig]
             [tolglow.fixtures.patch :as fixture-patch]
             [tolglow.rig.rdm :as rdm]
@@ -3436,8 +3437,14 @@
 (defn- prepare-rig-edit [model proposed]
   (let [basis (:rig model)
         proposed (dissoc proposed :runtime-id :expected-epoch)
-        proposed (cond-> proposed (map? (:fixtures proposed))
-                   (update :fixtures (partial fixture-patch/expand (get-in model [:registry :fixtures]))))]
+        types (get-in model [:registry :fixtures])
+        proposed (cond-> proposed
+                   (map? (:fixtures proposed))
+                   (update :fixtures (partial fixture-patch/expand types))
+                   ;; Fixtures placed from the library are instantiated from
+                   ;; their published type, as :fixture-patch does (#226).
+                   (vector? (:fixtures proposed))
+                   (update :fixtures (partial fixture-service/admit-placements types (map :id (:fixtures basis)))))]
     {:basis basis :rig (rig/prepare-edit basis proposed)}))
 
 (defn- ingress-queue [runtime type payload]
@@ -4295,6 +4302,12 @@
                         5000 {:status :pending :message "Publication remains queued"}))
       :patch (deref (submit! runtime :fixture-patch payload)
                     5000 {:status :pending :message "Patch remains queued"})
+      ;; Read-only aim calibration against the committed rig plus draft
+      ;; overrides (#226). Live test aims use :surface-aim.
+      :aim-check (let [rig (get-in @(:state runtime) [:model :rig])]
+                   (aim-calibration/check (aim-calibration/fixture rig payload) (:point payload)))
+      :aim-fit (let [rig (get-in @(:state runtime) [:model :rig])]
+                 (aim-calibration/fit (aim-calibration/fixture rig payload) (:samples payload) (:axis-verified? payload)))
       (throw (ex-info "Unknown fixture operation" {:operation operation})))))
 
 (defn- session-operation!

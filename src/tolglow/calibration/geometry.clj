@@ -1,6 +1,7 @@
 (ns tolglow.calibration.geometry
   "Pure metric geometry. Rig and AR worlds are right handed, metres, +Y up.
-  Matrices are row-major; AR camera looks down -Z, image pixels have +Y down.")
+  Matrices are row-major; AR camera looks down -Z, image pixels have +Y down."
+  (:require [tolglow.rig.placement :as placement]))
 
 (defn finite? [v] (and (number? v) (Double/isFinite (double v))))
 
@@ -123,12 +124,10 @@
 
 (defn angular-error [a b] (Math/toDegrees (Math/acos (max -1.0 (min 1.0 (dot (unit a) (unit b)))))))
 
-(defn rotation-euler [r]
-  (let [y (Math/asin (max -1.0 (min 1.0 (- (get-in r [2 0])))))
-        singular? (< (Math/abs (Math/cos y)) 1.0e-7)]
-    (mapv #(Math/toDegrees %)
-          [(if singular? (Math/atan2 (- (get-in r [1 2])) (get-in r [1 1])) (Math/atan2 (get-in r [2 1]) (get-in r [2 2])))
-           y (if singular? 0.0 (Math/atan2 (get-in r [1 0]) (get-in r [0 0])))])))
+(defn rotation-euler
+  "Renderer Euler degrees for a rotation matrix; shared with the rig editor."
+  [r]
+  (placement/rotation-euler r))
 
 (defn fit-aim
   "Fit mounting rotation against verified axis calibration. Does NOT guess axis
