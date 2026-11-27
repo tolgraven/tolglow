@@ -47,21 +47,25 @@ try {
   const page = context.pages()[0] || await context.newPage();
   if (process.env.ROOM_COUNT) await page.addInitScript(() => {
     // React reports each commit to an installed DevTools hook. A component
-    // rendered in a commit if it mounted or performed work (flag 1).
+    // rendered in this commit if its fiber object is new to the committed
+    // tree (a bailed-out subtree keeps last commit's objects) and it mounted
+    // or performed work (flag 1, cleared whenever a fiber is cloned).
     const counts = window.__renders = {commits: 0, components: 0, byName: {}};
-    const visit = fiber => {
+    let seen = new WeakSet();
+    const visit = (fiber, next) => {
       for (let f = fiber; f; f = f.sibling) {
-        if ([0, 1, 11, 14, 15].includes(f.tag) && (f.alternate === null || (f.flags & 1))) {
+        next.add(f);
+        if ([0, 1, 11, 14, 15].includes(f.tag) && !seen.has(f) && (f.alternate === null || (f.flags & 1))) {
           counts.components++;
           const name = f.type?.displayName || f.type?.name || 'anonymous';
           counts.byName[name] = (counts.byName[name] || 0) + 1;
         }
-        if (f.child) visit(f.child);
+        if (f.child) visit(f.child, next);
       }
     };
     window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {supportsFiber: true, renderers: new Map(), inject() { return 1; },
       checkDCE() {}, onScheduleFiberRoot() {}, onCommitFiberUnmount() {}, onPostCommitFiberRoot() {},
-      onCommitFiberRoot(_, root) { counts.commits++; visit(root.current.child); }};
+      onCommitFiberRoot(_, root) { counts.commits++; const next = new WeakSet(); visit(root.current.child, next); seen = next; }};
   });
   await page.addInitScript(() => {
     const stats = window.__bench = {messages: 0, onmessageMs: 0, bytes: 0};
