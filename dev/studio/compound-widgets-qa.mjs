@@ -268,6 +268,8 @@ async function touchPhase(browser) {
   const card = page.locator('article.live-effect-card[data-live-instance=' + JSON.stringify(id) + ']');
   await card.waitFor();
   await card.getByRole('button', {name: /^Expand /}).click();
+  // Detail mounts its own slot grid (#795); use the pad in it, not the strip's.
+  await card.locator('[data-slot-grid=detail] .parameter-xy').first().waitFor();
   const pad = card.getByRole('slider', {name: 'Offset pad', exact: true});
   await pad.scrollIntoViewIfNeeded();
   await touchDrag(page, pad, [0.5, 0.5], [0.1, 0.9]);

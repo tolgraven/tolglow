@@ -143,6 +143,38 @@
         (and (= :xyz asked) (= 3 n)) :xyz
         :else (case n 2 :xy 3 :xyz :rings)))))
 
+(def slot-sizes
+  "The standard slots a parameter card occupies on a surface's card grid
+  (#795), as [columns rows] of one shared slot unit. A surface places the
+  cards with `tolglow.authoring.slot-grid/pack` on one column and row unit;
+  it changes its column count with its width, never a card's geometry."
+  {:compact [1 1] :wide [2 1] :large [2 2]})
+
+(defn slot-size
+  "The standard slot a control description (from `control`) occupies:
+  :compact for a knob, fader, toggle, choice, colour swatch, plain field or
+  rings; :wide for a shape picker, a gradient, a range and a vector of
+  component readouts; :large for an XY pad, an XY pad with a Z fader and a
+  waveform selector with its live curve. Every card of one widget type gets the same slot. A card never
+  changes slot while it is used: opened rings and plots are drawn over or
+  beside the grid, so nothing repacks under the operator's hand."
+  [{:keys [type widget]}]
+  (cond
+    (#{:xy :xyz} widget) :large
+    ;; A registered waveform selector draws its live curve above the choices.
+    (= :waveform type) :large
+    (= :axes widget) :wide
+    ;; A vector drawn without a compound widget (a colour vector) shows its
+    ;; component readouts.
+    (and (= :vector type) (nil? widget)) :wide
+    (#{:waveform :shape :gradient :range} type) :wide
+    :else :compact))
+
+(defn slot-span
+  "[columns rows] of a slot size, defaulting to :compact."
+  [size]
+  (get slot-sizes size (:compact slot-sizes)))
+
 (defn choices
   "[{:value :label}] for a :choice, :shape, :waveform or :enum control, in
   order, else nil. Values are the schema's own."
@@ -158,17 +190,19 @@
 
 (defn control
   "The control description of one parameter. catalog is the waveform catalog
-  (`[{:id :name :glyph}]`), used only to recognise waveform choices."
+  (`[{:id :name :glyph}]`), used only to recognise waveform choices. :slot is
+  the standard card slot (`slot-size`) every surface lays it out in."
   ([parameter schema] (control parameter schema nil))
   ([parameter schema catalog]
    (let [type (control-type schema catalog)
-         listed (choices schema catalog)]
-     (cond-> {:param parameter :label (title parameter schema) :type type
-              :places (decimal-places schema)}
-       (unit-label schema) (assoc :unit (unit-label schema))
-       (bounds schema) (assoc :bounds (bounds schema))
-       (input-step schema) (assoc :step (input-step schema))
-       (#{:number :integer} type) (assoc :widget (widget schema))
-       (compound-widget schema) (assoc :widget (compound-widget schema))
-       (and listed (#{:waveform :shape :choice :enum} type)) (assoc :choices listed)
-       (:dmx-bits schema) (assoc :dmx-bits (:dmx-bits schema))))))
+         listed (choices schema catalog)
+         description (cond-> {:param parameter :label (title parameter schema) :type type
+                              :places (decimal-places schema)}
+                       (unit-label schema) (assoc :unit (unit-label schema))
+                       (bounds schema) (assoc :bounds (bounds schema))
+                       (input-step schema) (assoc :step (input-step schema))
+                       (#{:number :integer} type) (assoc :widget (widget schema))
+                       (compound-widget schema) (assoc :widget (compound-widget schema))
+                       (and listed (#{:waveform :shape :choice :enum} type)) (assoc :choices listed)
+                       (:dmx-bits schema) (assoc :dmx-bits (:dmx-bits schema)))]
+     (assoc description :slot (slot-size description)))))

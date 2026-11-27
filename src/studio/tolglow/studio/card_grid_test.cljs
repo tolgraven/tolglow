@@ -1,0 +1,132 @@
+(ns tolglow.studio.card-grid-test
+  "Parameter cards take standard slots from the shared description, and only
+  a macro arranges its member cards (#795). The geometry itself is measured
+  in Chromium by dev/studio/performance-layout-qa.mjs."
+  (:require [cljs.test :refer-macros [deftest is testing]]
+            [clojure.string :as str]
+            ["react-dom/server" :refer [renderToStaticMarkup]]
+            [re-frame.db :as rf-db]
+            [re-frame.interceptor :as interceptor]
+            [re-frame.registrar :as registrar]
+            [reagent.core :as r]
+            [tolglow.studio.events :as events]
+            [tolglow.studio.performance :as performance]
+            [tolglow.studio.subs]
+            [tolglow.studio.views :as views]))
+
+(def schemas
+  {:level {:type :number :name "Level" :bounds [0 1]}
+   :steps {:type :integer :name "Steps" :ui/widget :fader :bounds [0 8]}
+   :on {:type :boolean :name "On"}
+   :tint {:type :color :name "Tint"}
+   :tone {:type :vector :size 4 :bounds [0 1] :name "Tone"}
+   :offset {:type :vector :size 2 :bounds [-1 1] :name "Offset"}
+   :aim {:type :vector :size 3 :bounds [0 1] :name "Aim"}
+   :span {:type :range :bounds [0 1] :name "Span"}
+   :drift {:type :vector :size 3 :name "Drift"}})
+
+(def params {:level 0.2 :steps 3 :on true :tint [1 0 0] :tone [0.1 0.2 0.3 0.4]
+             :offset [0 0] :aim [0.1 0.2 0.3] :span [0.2 0.8] :drift [1 2 3]})
+
+(defn- row-tag [markup]
+  (re-find #"<div [^>]*class=\"param-row[^\"]*\"[^>]*>" markup))
+
+(defn- attribute [tag name] (second (re-find (re-pattern (str name "=\"([^\"]*)\"")) tag)))
+
+(defn- render-row [parameter options]
+  (reset! rf-db/app-db (assoc-in (events/initial-db "card-grid-test") [:show :instances] [{:id "i1" :params params}]))
+  (row-tag (renderToStaticMarkup
+            (r/as-element [@#'views/parameter-control {:id "i1" :params params} parameter (get schemas parameter) nil options]))))
+
+(deftest every-parameter-card-names-its-standard-slot
+  (doseq [[options surface] [[{:compact? true :strip? true} "strip"] [{} "detail"]]]
+    (testing surface
+      (is (= {:level ["rotary" "compact"] :steps ["fader" "compact"] :on ["boolean" "compact"]
+              :tint ["color" "compact"] :tone ["rings" "compact"] :offset ["xy" "large"]
+              :aim ["xyz" "large"] :span ["range" "wide"] :drift ["axes" "wide"]}
+             (into {} (for [parameter (keys schemas)
+                            :let [tag (render-row parameter options)]]
+                        [parameter [(attribute tag "data-control") (attribute tag "data-slot")]])))))))
+
+(def macro {:id :opening-look :mode :macro :name "Opening look" :running? true :layer-id "1:4::opening-look"
+            :member-slots [:first :second :third]
+            :slots [{:id :first :cue-id :ember} {:id :second :cue-id :ice} {:id :third :cue-id :spot}]
+            :cards [{:slot-id :third :size :large} {:slot-id :first :size :medium}]})
+
+(defn- member [id index] {:id id :cue-id :ember :source {:native-layer {:id "1:4::opening-look" :member index}}})
+
+(deftest a-running-macro-arranges-its-member-cards
+  (let [instances [(member "a" 0) (member "b" 1) (member "c" 2) {:id "d" :cue-id :ember}]
+        macros (performance/macro-cards [macro {:id :steps :mode :sequence}] instances)
+        cards (:cards (first macros))
+        cards-of (fn [m running] (:cards (first (performance/macro-cards [m] running))))]
+    (is (= 1 (count macros)) "a sequence has no section")
+    (is (= [["c" :large] ["a" :medium] ["b" :small]] (mapv (juxt (comp :id :instance) :size) cards))
+        "listed cards first in card order, the rest in slot order at the default size")
+    (is (= [] (performance/macro-cards [(dissoc macro :layer-id)] instances)) "an idle macro has no section")
+    (is (= [] (performance/macro-cards [(assoc macro :running? false)] instances)) "a stopped macro has no section")
+    (testing "positions count the whole arrangement, as a move does"
+      (is (= [[0 3] [2 3]] (mapv (juxt :position :total) (cards-of macro (take 2 (rest instances)))))))
+    (testing "a member that is not running has no card"
+      (is (= ["a" "b"] (mapv (comp :id :instance) (cards-of (dissoc macro :cards) (take 2 instances))))))
+    (testing "typed member slots keep their identities"
+      (is (= [:first :second :third] (mapv :slot-id (cards-of (dissoc macro :cards) (take 3 instances))))))))
+
+(defn- transition [db event]
+  (reset! rf-db/app-db db)
+  (:effects (interceptor/execute event (remove #(= :do-fx (:id %)) (registrar/get-handler :event (first event))))))
+
+(deftest the-size-picker-sends-the-shared-card-command
+  (let [db (assoc-in (events/initial-db "card-grid-test") [:server-projection :view :compositions] [macro])]
+    (testing "a size applies to the arrangement the show holds when it arrives"
+      (is (= {:path "/api/composition/cards" :typed? true :raw-response? true
+              ;; The session guard ties the command to the show epoch it was sent for.
+              :body {:expected-epoch nil :id :opening-look :resize {:slot-id :first :size :small}}
+              :on-failure [:studio/failure]}
+             (:studio/http (transition db [:performance/macro-card-size :opening-look :first :small])))))
+    (testing "a move names its slot and offset"
+      (is (= {:slot-id :first :offset -1}
+             (get-in (transition db [:performance/macro-card-move :opening-look :first -1]) [:studio/http :body :move]))))
+    (is (nil? (transition db [:performance/macro-card-size :unknown :first :large])) "only a saved macro")))
+
+(deftest saving-in-compose-leaves-the-cards-to-the-show
+  (let [db (-> (events/initial-db "card-grid-test")
+               (assoc-in [:ui :composition] {:id "m" :mode "macro" :cards [{:slot-id "a" :size "large"}]
+                                             :slots [{:id "a" :cue-id "ember"}]}))]
+    (is (= {:expected-epoch nil :id "m" :mode "macro" :slots [{:id "a" :cue-id "ember"}]}
+           (get-in (transition db [:studio/composition-save false]) [:studio/http :body]))
+        "the show keeps the saved arrangement, so a stale editor copy cannot revert it")))
+
+(deftest small-macro-cards-show-their-leading-controls
+  (let [control (fn [id schema] {:parameter id :schema schema})
+        knob {:type :number :bounds [0 1]}
+        pad {:type :vector :size 2 :bounds [0 1]}]
+    (is (= [:a :b :c :d] (mapv :parameter (performance/small-controls (mapv #(control % knob) [:a :b :c :d :e]) nil))))
+    (is (= [:p] (mapv :parameter (performance/small-controls [(control :p pad) (control :a knob)] nil))))
+    (is (= [:a] (mapv :parameter (performance/small-controls [(control :a knob) (control :p pad)] nil))))
+    (is (= [:a :c :d] (mapv :parameter (performance/small-controls (mapv control [:a :b :c :d] [knob pad knob knob]) nil)))
+        "a control that does not fit is skipped and later ones keep filling the cells")
+    (is (= [:p :q] (mapv :parameter (take 2 (performance/small-controls [(control :p {:type :range :bounds [0 1]})
+                                                                          (control :q {:type :range :bounds [0 1]})] nil)))))))
+
+(deftest macro-sizes-are-fractions-of-the-board
+  (is (= [[2 1] [3 1] [6 1]] (mapv #(performance/macro-span 6 %) [:small :medium :large])))
+  (is (= [[1 1] [1 1] [2 1]] (mapv #(performance/macro-span 2 %) [:small :medium :large])))
+  (is (= [[1 1] [1 1] [1 1]] (mapv #(performance/macro-span 1 %) [:small :medium :large]))))
+
+(deftest opened-rings-cover-the-fewest-cards-beside-their-slot
+  (testing "a free 2x2 area beside the rings is used before any card"
+    (let [cells [{:index 0 :col 0 :row 0 :w 1 :h 1} {:index 1 :col 1 :row 0 :w 1 :h 1}]
+          {:keys [covers style]} (performance/overlay-anchor 4 2 cells (first cells))]
+      (is (= #{1} covers) "on one row of four, the area right of the rings still holds the next card")
+      (is (string? (get style "--overlay-left")))))
+  (testing "the widget study's Detail: Tone opens over one card, never over itself"
+    (let [cells [{:index 0 :col 0 :row 0 :w 1 :h 1} {:index 3 :col 1 :row 0 :w 1 :h 1} {:index 1 :col 2 :row 0 :w 2 :h 2}
+                 {:index 2 :col 0 :row 1 :w 2 :h 2} {:index 4 :col 2 :row 2 :w 1 :h 1}]
+          {:keys [covers]} (performance/overlay-anchor 4 3 cells (second cells))]
+      (is (= 1 (count covers)))
+      (is (not (contains? covers 3)))))
+  (testing "an empty area wins"
+    (let [cells [{:index 0 :col 0 :row 0 :w 1 :h 1} {:index 1 :col 0 :row 1 :w 1 :h 1}]
+          {:keys [covers]} (performance/overlay-anchor 3 2 cells (first cells))]
+      (is (= #{} covers)))))
