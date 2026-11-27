@@ -315,6 +315,31 @@
                 (:late-beats outcome) (assoc :late-beats-on-arrival (:late-beats outcome))))))
         agent-log))
 
+(defn- launch-observer
+  "Read accepted auto launches from the show's shared command receipts as
+  they commit, including launches ended again within the same owner tick that
+  no frame shows. Returns a function to call after each run of ticks; it
+  stamps new launches with the transport beat they committed at and returns
+  all observed so far, in commit order."
+  [rt]
+  (let [seen (volatile! (peek (get-in @(:state rt) [:model :control :history-order])))
+        launches (volatile! [])]
+    (fn []
+      (let [model (:model @(:state rt))
+            order (get-in model [:control :history-order] [])
+            from (if-let [last-id @seen] (inc (.lastIndexOf ^java.util.List order last-id)) 0)
+            beat (get-in model [:transport :beat])]
+        (doseq [id (subvec order (max 0 (min from (count order))))
+                :let [{:keys [command ack]} (get-in model [:control :history id])]
+                :when (and (= :cue/launch (:op command)) (= :auto (get-in command [:source :adapter]))
+                           (= :accepted (:status ack)) (:instance-id ack))]
+          (vswap! launches conj {:id (:instance-id ack) :cue-id (:cue-id command) :adapter :auto
+                                 :session (get-in command [:source :session-id])
+                                 :params (get-in command [:launch :params])
+                                 :started-at-beat beat :seen-beat beat}))
+        (when (seq order) (vreset! seen (peek order)))
+        @launches))))
+
 (defn- capture-sink [captured]
   {:send! (fn [universes _] (reset! captured (update-vals universes aclone)))})
 
@@ -334,20 +359,24 @@
      (try
        (show/tick! rt 0.0)
        (route-stems! rt (:routes passage) #(show/tick! rt 0.0))
-       (let [callbacks (show/audio-callbacks rt)]
+       (let [callbacks (show/audio-callbacks rt)
+             observe! (launch-observer rt)]
          (loop [t 0.0 progress (initial-progress passage) frames [] n 0]
            (let [beat (get-in @(:state rt) [:model :transport :beat])]
              (if (or (>= beat end-beat) (>= n max-frames))
                (let [schedule (select-keys (show/schedule rt) [:recent])]
                  (merge (select-keys progress [:gestures :transport])
                         {:passage passage :frame-ms frame-ms :frames frames
+                         ;; From receipts, so a launch ended in its own tick counts too.
+                         :auto-launches (observe!)
                          :agent (applied (:agent progress) (:recent schedule))
                          :schedule schedule
                          :status (select-keys (:status @(:state rt)) [:error])}))
                (let [[progress pending] (deliver! rt callbacks passage progress t beat
-                                                  (fn [result] (tick-until! rt t #(realized? result))))
+                                                  (fn [result] (tick-until! rt t #(realized? result)) (observe!)))
                      next-t (+ t frame-ms)
                      _ (show/tick! rt next-t)
+                     _ (observe!)
                      record (frame-record (:model @(:state rt)) meter @captured categories passage next-t)]
                  (recur next-t (settle progress pending (:beat record)) (conj frames record) (inc n)))))))
        (finally (show/stop! rt))))))

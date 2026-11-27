@@ -100,12 +100,14 @@ the host's agent turnaround, kept apart from frame timing.
   accepted, whether it waited on the line (*On the line*), the beat it applied
   and how late that was, *carry-over launches*, *early launches* and whether
   the change landed in a later section than it was for (stale). Each launch is
-  attributed to the auto session that made it (its source session, recorded
-  per frame), not to when it was seen. Carry-over launches are the previous
-  session's launches from the line on; early launches are the new session's
-  launches before the line. A planner that decided before the change on the
-  line's frame would therefore show carry-over even though the change applied
-  on time.
+  attributed to the auto session that made it (its source session), read
+  from the show's committed launch receipts after every run of ticks rather
+  than from frames, since a look launched and ended within one tick appears
+  in no frame. Carry-over launches are the previous session's launches from
+  the line on; early launches are the new session's launches before the line.
+  Checked by mutation: with the old planner made to decide before the change
+  on its frame, the club reports 3, 1 and 1 carry-over launches on its later
+  lines instead of 0.
 - *Phrasing.* Each auto section the planner entered: on the bar grid, on a
   multiple of its own length, on the phrase grid. A section whose timer starts
   after the frame that entered it is reported at that frame. Auto launches are
@@ -206,7 +208,8 @@ real-time `play!` is not frame-for-frame repeatable; use `run-take` for that.
 - `tolglow.rehearsal.review-test`: the overwritten-gesture, anchor, repeat,
   stop and contrast detectors fire on hand-built frames, and two silent
   phrases are not a repeat. A launch the previous session made on the frame a
-  change applied counts as carry-over. A `{:beats 3/2}` interval is on its grid while a
+  change applied counts as carry-over, including one that only the launch
+  receipts show. A `{:beats 3/2}` interval is on its grid while a
   whole-beat interval off its grid is flagged; a change on its line is measured
   where it applied, with its first section not counted as a plan boundary, and
   the same frame counts as carry-over for a change applied on arrival.

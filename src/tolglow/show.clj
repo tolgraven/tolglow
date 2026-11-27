@@ -1264,7 +1264,10 @@
 (defn- prepare-auto-events
   "Check and normalize the :auto/configure events of a schedule post the way
   schedule-auto does, so a post through schedule_events cannot hold a config
-  the show would refuse."
+  the show would refuse and meets the same late policy: a position passed by
+  less than a bar applies at once, marked late; a bar or more is refused.
+  Only that policy marks an event late; a post that supplies the marker is
+  refused."
   [model payload]
   (if-not (and (= :schedule/post (:op payload)) (vector? (:events payload)))
     payload
@@ -1274,14 +1277,19 @@
                               (let [request (:request event)]
                                 (when-not (map? request)
                                   (throw (ex-info "An auto/configure event needs a request map" {})))
+                                (when (or (contains? event :late-beats) (contains? event :late?))
+                                  (throw (ex-info "Only the show's late policy marks an auto change late" {})))
                                 (auto-request model request)
-                                (assoc event :request (policy/normalize-config request) :op :auto/configure))
+                                (cond-> (assoc event :request (policy/normalize-config request) :op :auto/configure)
+                                  (map? (:at event))
+                                  (as-> e (merge (dissoc e :at) (late-position model {:at (:at e)})))))
                               event))))))
 
 (defn- trial-auto-plan
   "Plan one decision with the config and session just installed on model and
   throw if the planner fails, so a config it cannot run is refused before it
-  is committed. The result is discarded."
+  is committed. Returns the planned {:state :commands :reasons}, or nil when
+  auto is off; an immediate configure discards it, a due change commits it."
   [runtime model time-ms]
   (when (get-in model [:auto :enabled?])
     (let [fixtures (get-in model [:rig :fixtures])
@@ -1291,17 +1299,22 @@
       (policy/advance (assoc model :fixtures fixtures) (get-in model [:auto :config]) (get-in model [:auto :state])
                       time-ms plans))))
 
+(declare ^:private advance-auto-plan)
+
 (defn- scheduled-auto-configure
   "The owner's handler for a due :auto/configure step (#767). It installs the
   request through the same path as an immediate configure, checked against
-  the show as it is now, including one trial decision; a refused request is
-  rejected and recorded in the schedule's recent outcomes, leaving auto mode
-  and its looks as they were. The step's command ID names the new session,
-  so a replay is deterministic."
+  the show as it is now, and commits the new session's first decision on
+  this frame, so the planner plans once (advance-auto then finds that
+  decision's interval running). A request refused, by validation or by the
+  planner, is rejected and recorded in the schedule's recent outcomes,
+  leaving auto mode and its looks as they were. The step's command ID names
+  the new session, so a replay is deterministic."
   [runtime model {:keys [request command-id time-ms]}]
   (try
-    (let [{:keys [model enabled?]} (configure-auto model request time-ms command-id)]
-      (trial-auto-plan runtime model time-ms)
+    (let [{:keys [model enabled?]} (configure-auto model request time-ms command-id)
+          planned (trial-auto-plan runtime model time-ms)
+          model (if planned (advance-auto-plan model time-ms planned) model)]
       {:model model :events [] :result {:enabled? enabled?}})
     (catch InterruptedException error
       (.interrupt (Thread/currentThread))

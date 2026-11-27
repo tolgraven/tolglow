@@ -78,14 +78,21 @@ send the words as text. `:event-id` and `:label` name the event.
 
 A request is checked when it is posted, against the config it would install
 (with `:keep-plan?`, the plan saved then). It is checked again when it
-applies, against the plan saved at that point, with one trial decision as an
-immediate configure has. A request refused then is recorded as `:rejected` in
-the schedule's recent outcomes, and auto mode and its looks stay as they were.
+applies, against the plan saved at that point. Its new session's first
+decision is made then and committed as that frame's decision, so the frame
+plans once. A request refused then, by validation or by the planner, is
+recorded as `:rejected` in the schedule's recent outcomes, and auto mode and
+its looks stay as they were. On the red show the due frame's owner tick took
+a median 1.41–1.58 ms over 15 runs, against 1.38 ms with no planning on the
+change path (ordinary frames 0.17–0.18 ms; captured output, this M4 Pro at
+load 1.5).
 
 **Late changes** (operator policy). A position that has already passed by less
 than one bar applies at once, before auto decides on that frame. Its receipt
 and its recent outcome carry `:late? true` and `:late-beats`. A position a bar
-or more behind is refused as already passed.
+or more behind is refused as already passed. The same policy applies to an
+`auto/configure` posted through `schedule_events`, and only the policy marks a
+change late: a post that supplies `:late-beats` or `:late?` is refused.
 
 A pending change behaves like any scheduled event:
 

@@ -136,6 +136,21 @@
           [r] (:responses (review/club {:passage club-passage :frame-ms 500.0 :frames (vec frames) :transport []
                                         :agent agent :gestures [] :schedule {:recent []} :status {}}))]
       (is (= [1 0 64.5] [(:carry-over-launches r) (:early-launches r) (:first-launch-beat r)]))))
+  (testing "a launch made and ended within the change's own tick is read from receipts"
+    ;; No frame shows the groove session's launch on the line frame: installing
+    ;; the change ended it in that tick. The committed launch receipts do.
+    (let [frames (concat (for [b (range 0 64)] (club-frame (double b) [:wash]))
+                         [(club-frame 64.25 [:spot] :session "quiet")])
+          receipts (concat (for [b (range 0 64)] {:id (str b ":0") :cue-id :wash :adapter :auto :session "groove"
+                                                  :started-at-beat (double b) :seen-beat (double b)})
+                           [{:id "late:0" :cue-id :wash :adapter :auto :session "groove" :started-at-beat 64.25 :seen-beat 64.25}
+                            {:id "64.25:0" :cue-id :spot :adapter :auto :session "quiet" :started-at-beat 64.25 :seen-beat 64.25}])
+          agent [{:section :quiet :section-beat 64.0 :suggested-beat 60.0 :accepted-beat 60.0 :scheduled? true
+                  :applied-beat 64.25 :status :completed :tools ["configure_auto"] :receipts {"configure_auto" {:status :accepted}}}]
+          take {:passage club-passage :frame-ms 500.0 :frames (vec frames) :transport [] :agent agent :gestures []
+                :schedule {:recent []} :status {}}]
+      (is (zero? (:carry-over-launches (first (:responses (review/club take))))) "frames alone miss it")
+      (is (= 1 (:carry-over-launches (first (:responses (review/club (assoc take :auto-launches (vec receipts))))))))))
   (testing "the same frame counts as carry-over when the change applied on arrival after it"
     (let [frames (concat (for [b (range 0 64)] (club-frame (double b) [:wash]))
                          [(club-frame 64.25 [:wash]) (club-frame 64.5 [:spot] :session "quiet")])

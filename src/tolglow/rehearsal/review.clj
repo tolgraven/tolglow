@@ -178,8 +178,11 @@
   the previous settings made from the line on (carry-over), launches of the
   new settings before the line (early), and whether it landed in a later
   section than the one it was for (stale). Each launch is attributed to the
-  auto session that made it (its source session), not to when it was seen,
-  so a planner deciding before the change on the line frame would count."
+  auto session that made it (its source session), not to when it was seen.
+  auto-launches come from the take's committed launch receipts when it has
+  them, so a launch the previous settings made on the change's own frame
+  and ended in that tick (as installing the change does) still counts as
+  carry-over; frame snapshots alone cannot show it."
   [passage agent-log auto-launches frames]
   (mapv (fn [{:keys [section section-beat accepted-beat suggested-beat status receipts tools scheduled?
                      applied-beat applied-status late-beats-on-arrival]}]
@@ -396,7 +399,9 @@
         changes (changes agent)
         frame (frame-beats (:bpm passage) frame-ms)
         boundaries (auto-boundaries frames changes frame)
-        responses (agent-responses passage agent auto-launches frames)
+        ;; Committed launches from receipts, when the take has them: a look the
+        ;; previous settings launched and ended within one tick shows in no frame.
+        responses (agent-responses passage agent (or (:auto-launches take) auto-launches) frames)
         phrases (phrase-table passage frames auto-launches)
         result {:id :club :passage (dissoc passage :onsets :levels) :frame-ms frame-ms
                 :boundaries boundaries :responses responses :phrases phrases
@@ -465,7 +470,7 @@
      :gestures (mapv #(dissoc % :delivered-beat) gestures)
      :overwritten (overwritten frames gestures)
      :ramps (agent-ramps schedule)
-     :agent (agent-responses passage agent (:auto by-adapter) frames)
+     :agent (agent-responses passage agent (or (:auto-launches take) (:auto by-adapter)) frames)
      :light (section-contrast passage frames)
      :error (get-in take [:status :error])}))
 

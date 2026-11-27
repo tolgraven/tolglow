@@ -68,6 +68,8 @@
         (is (every? #(>= (:started-at-beat %) 8.0) (by-cue :accent)) "no pre-launch")
         (is (== line-frame (apply min (map :started-at-beat (by-cue :accent))))
             "the new mood decides on the line's own frame")
+        (is (= 1 (count (filter #(== line-frame (:started-at-beat %)) (by-cue :accent))))
+            "once: the change's decision is the frame's decision, not planned again")
         (is (re-matches #"sched/0/\d+/0" (get-in @(:state rt) [:model :auto :state :owner-id]))
             "the step's command ID names the new session, so a replay is deterministic"))
       (finally (show/stop! rt)))))
@@ -213,6 +215,22 @@
         (is (re-find #"already passed by \d"
                      (str (:message (dispatch! rt 2600.0 "configure_auto" {:configuration {:enabled? true} :at {:beat 0}} "run-6" "auto"))))
             "a bar or more late"))
+      (testing "schedule_events meets the same late policy, and only the show marks a change late"
+        (let [posted (dispatch! rt 2600.0 "schedule_events"
+                                {:events [{:op "auto/configure" :request {:enabled? true :scope {:cue-ids ["accent"]}}
+                                           :at {:beat 4}}]} "run-7" "post")]
+          (is (< 1.0 (beat rt) 6.0))
+          (is (= :accepted (:status posted)))
+          (is (= {:status :fired :late? true} (select-keys (some #(when (= (first (:event-ids posted)) (:event-id %)) %) (recent rt))
+                                                           [:status :late?]))))
+        (is (re-find #"already passed by \d"
+                     (str (:message (dispatch! rt 2600.0 "schedule_events"
+                                               {:events [{:op "auto/configure" :request {:enabled? false} :at {:beat 0}}]}
+                                               "run-8" "post")))))
+        (is (re-find #"Only the show's late policy"
+                     (str (:message (dispatch! rt 2600.0 "schedule_events"
+                                               {:events [{:op "auto/configure" :request {:enabled? false} :at {:bar 9} :late-beats 3}]}
+                                               "run-9" "post"))))))
       (testing "an auto/configure posted through schedule_events is checked like configure_auto"
         (is (re-find #"No saved cue"
                      (str (:message (dispatch! rt 600.0 "schedule_events"
