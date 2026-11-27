@@ -2710,6 +2710,46 @@
                        :keyframe-params overrides
                        ::engine/priority-overrides (:priority-overrides samples {}))}))))
 
+(defn- cue-effect [model cue]
+  (if-let [version (:effect-version cue)]
+    (or (get-in model [:registry :versions [:effects (:effect-id cue) version]])
+        (let [current (get-in model [:registry :effects (:effect-id cue)])]
+          (when (= version (:version current)) current)))
+    (get-in model [:registry :effects (:effect-id cue)])))
+
+(defn- launch-program
+  "The program a launch of `command` (a cue or effect launch) compiles, or nil."
+  [model command]
+  (let [resolved (try (targets/resolve-command model command) (catch Exception _ nil))
+        effect (if-let [cue (get-in model [:registry :cues (:cue-id resolved)])]
+                 (cue-effect model cue)
+                 (get-in model [:registry :effects (:effect-id resolved)]))]
+    (when effect (programs/program effect {:targets (get-in resolved [:launch :targets])}))))
+
+(defn- warm-programs!
+  "Compile ahead, off the frame, what a launch is likely to need: every
+  registered effect's untargeted program, each cue's fixture or group
+  selection, each recorded live-run take's targets, and every scheduled
+  quantized launch, so a launch on the beat finds its program ready (#774).
+  Volume selections follow moving volumes and are left to the launch."
+  [runtime context model]
+  (when (:submit context)
+    (let [registry (:registry model)
+          takes (some-> (:live-runs runtime) deref :record :takes)
+          scheduled (cue-timing/scheduled-commands model)]
+      (programs/warm! context [registry (get-in model [:rig :fixtures]) takes scheduled]
+                      (concat
+                       ;; In a stable order, so the worker's first-in-first-out queue is reproducible.
+                       (map #(programs/program (val %) {}) (sort-by (comp str key) (:effects registry)))
+                       (keep (fn [[id cue]]
+                               (when (and (:selector cue) (not (:volume-id (:selector cue))))
+                                 (launch-program model {:op :cue/launch :cue-id id})))
+                             (:cues registry))
+                       (keep (fn [take] (launch-program model {:op :cue/launch :cue-id (:cue-id take)
+                                                               :launch (select-keys (:launch take) [:targets])}))
+                             (vals takes))
+                       (keep #(launch-program model %) scheduled))))))
+
 (defn- spatial-levels
   "Split the frame's group levels into those the spatial native-member mix
   applies to `groups` and those the engine applies itself."
@@ -2732,19 +2772,18 @@
         frame-master (get ramp-frame :master (:master model))
         ;; A pending revision must accept a ramped parameter's committed and
         ;; frame values alike; modulation reads which revision to follow here.
-        ;; Programs for pending revisions and first launches are compiled off
-        ;; the frame. Until they are ready the engine and modulation read the
-        ;; effect's instances on their captured definition, and an instance
-        ;; that never rendered waits (#774).
+        ;; Programs are compiled ahead of launches and of pending revisions,
+        ;; off the frame. Until a revision's programs are ready the engine and
+        ;; modulation read its instances on their captured definition (#774).
         _ (prepare-compiler! runtime (get-in model [:rig :fixtures]))
         programs (let [context @(:compiler-context runtime)
                        frame-number (inc (get model :frame-number 0))
                        plan (programs/plan model (modulation/with-frame-params model (:params ramp-frame) (:param-targets ramp-frame))
-                                           (:reload-waits before) frame-number)
-                       plan (programs/admit-launches context plan)]
+                                           (:reload-waits before) frame-number)]
+                   (warm-programs! runtime context model)
                    (programs/request! context (:programs plan))
                    (assoc (programs/hold context plan) :frame frame-number))
-        attempting #(modulation/without-reloads % (into (:deferred programs) (:hidden programs)))
+        attempting #(modulation/without-reloads % (:deferred programs))
         reading #(modulation/with-frame-params (attempting %) (:params ramp-frame) (:param-targets ramp-frame))
         parameter-samples (parameter-sources/sample (reading model) {:time-ms time-ms :transport (:transport model)}
                                                    (:parameter-samples before))
@@ -3729,6 +3768,7 @@
                               #(mpv-session/close! (:section-player runtime))
                               #(effect-faults/close! (:effect-logs runtime))
                               #(compute/close! (:compute runtime))
+                              #(programs/retire! @(:compiler-context runtime))
                               #(when-let [worker (get-in runtime [:compile-worker :owned])]
                                  (when (realized? worker) ((:close! @worker))))
                               #(when (realized? (:audition-worker runtime))

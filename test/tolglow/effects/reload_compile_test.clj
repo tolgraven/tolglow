@@ -1,10 +1,12 @@
 (ns tolglow.effects.reload-compile-test
-  "Programs for published revisions and first launches compile off the frame
+  "Programs compile ahead of launches and of pending revisions, off the frame
   (#774). A revision is adopted by all its instances together once every
-  program they need is ready; until then they run their captured definition,
-  and an instance that never rendered waits. The compile worker is stepped by
-  hand here: assertions count frames, versions and compilations, never clocks."
-  (:require [clojure.test :refer [deftest is testing]]
+  program they need is ready; until then they run their captured definition.
+  A launch renders on its start: its program is warmed ahead, or compiled in
+  the frame as a fallback. The compile worker is stepped by hand here:
+  assertions count frames, versions and compilations, never clocks."
+  (:require [afterglow.runtime.engine :as engine]
+            [clojure.test :refer [deftest is testing]]
             [tolglow.demo :as demo]
             [tolglow.show :as show]
             [tolglow.show.programs :as programs]))
@@ -171,7 +173,7 @@
       (tick! s 225)
       (is (= (repeat 8 [1 :preserve-state]) (rendered s :probe-0)))
       (publish! s [(wide 2)] 250)
-      (is (= 8 (count @(:tasks s))) "One program per launch target set")
+      (is (= 9 (count @(:tasks s))) "One untargeted program for later launches, and one per launch target set")
       (work! s 5)
       (tick! s 275)
       (is (= (repeat 8 1) (map first (rendered s :probe-0))) "Five of eight programs are not enough")
@@ -179,28 +181,7 @@
       (tick! s 300)
       (is (= (repeat 8 [2 :preserve-state]) (rendered s :probe-0)))
       (is (= [] (frame-compiles s)))
-      (is (= 8 (count (filter #(= [:worker :probe-0 2] %) (compiled-revisions s)))))
-      (finally (stop! s)))))
-
-(deftest a-launch-while-its-revision-compiles-waits-for-the-whole-effect
-  ;; Probe 1 is relaunched in the cycle that publishes it. The new instance
-  ;; captures version 2; it waits unrendered while the running instance keeps
-  ;; version 1, and both render version 2 from the same frame.
-  (let [s (show 2)]
-    (try
-      (let [t (launch-all! s 2 nil)
-            replies [(show/submit! (:rt s) :definition {:kind :effects :definition (probe 1 2)})
-                     (show/submit! (:rt s) :command {:op :cue/launch :cue-id :probe-1})]
-            _ (tick! s t)
-            waiting (rendered s :probe-1)
-            _ (tick! s (+ t 25))
-            still (rendered s :probe-1)
-            _ (work! s)
-            _ (tick! s (+ t 50))]
-        (is (= [:accepted :accepted] (mapv #(:status (deref % 2000 {:status :timeout})) replies)))
-        (is (= [[1 :preserve-state]] waiting still) "Only the running instance renders, on version 1")
-        (is (= [[2 :preserve-state] [2 :preserve-state]] (rendered s :probe-1)))
-        (is (= [] (frame-compiles s))))
+      (is (= 9 (count (filter #(= [:worker :probe-0 2] %) (compiled-revisions s)))))
       (finally (stop! s)))))
 
 (deftest a-superseded-revision-is-never-compiled
@@ -360,8 +341,7 @@
       (is (= 2 (:effect-version (first (vals (get-in @(:state rt) [:model :instances]))))))
       (is (realized? (get-in rt [:compile-worker :owned])))
       (finally (show/stop! rt)))
-    (is (not-any? #(= "tolglow-program-compiler" (.getName ^Thread %)) (keys (Thread/getAllStackTraces)))
-        "Stopping the show stops its compile worker")))
+    (is ((:terminated? @(get-in rt [:compile-worker :owned]))) "Stopping the show stops its compile worker")))
 
 (deftest background-compile-is-a-boolean-or-a-function
   (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Background compile"
@@ -381,25 +361,204 @@
     (is (= 2 (get @calls running)) "An unused program still leaves the cache")
     (is (every? #(= 1 %) (map @calls others)) "Every published revision is compiled once")))
 
-(deftest a-single-first-launch-renders-at-once-and-a-wide-one-waits-for-the-worker
-  ;; A frame compiles up to four first-launch programs itself, so one launch
-  ;; renders on the frame that admits it. Six launches of one effect on six
-  ;; heads need six programs: they wait for the worker and appear together.
-  (let [wide (assoc (probe 0 1) :targets (mapv head (range 6)))
-        s (show 1 {:model (assoc-in (show-model 1) [:registry :effects :probe-0] wide)})
-        launch (fn [i] (show/submit! (:rt s) :command {:op :effect/launch :effect-id :probe-0
-                                                         :launch {:reload-policy :preserve-state :targets [(head i)]}}))]
+
+(deftest five-short-one-shots-launched-in-one-frame-all-render-on-their-start
+  ;; 20 ms one-shots end before the next 25 ms frame. Each must render on the
+  ;; frame that admits it even though none of their programs is warm yet.
+  (let [s (show 5)
+        lit (atom #{})]
     (try
-      (launch 0)
-      (tick! s 25)
-      (is (= [[1 :preserve-state]] (rendered s :probe-0)) "One launch renders on its admission frame")
-      (is (= 0 (count @(:tasks s))))
-      (doseq [i (range 1 6)] (launch i))
-      (tick! s 50)
-      (is (= 1 (count (rendered s :probe-0))) "Five new programs are more than the frame compiles itself")
-      (is (= 5 (count @(:tasks s))))
+      (tick! s 0)
+      (reset! (:tasks s) [])
+      (let [replies (mapv #(show/submit! (:rt s) :command {:op :cue/launch :cue-id (probe-id %)
+                                                          :launch {:mode :one-shot :duration-ms 20}})
+                          (range 5))]
+        (tick! s 25)
+        (is (every? #(= :accepted (:status (deref % 2000 {:status :timeout}))) replies))
+        (doseq [i (range 5) :when (pos? (nth (peek @(:output s)) (head-dimmer i)))] (swap! lit conj i))
+        (tick! s 50)
+        (is (= #{0 1 2 3 4} @lit) "Every one-shot rendered on its first frame")
+        (is (empty? (:instances (model s))) "And all of them have ended"))
+      (finally (stop! s)))))
+
+(deftest a-burst-of-grid-launches-after-a-publish-lands-on-the-beat
+  ;; Like firing a Live scene: one effect, revised just before, launched on
+  ;; five heads for the next beat, each launch with its own targets (five
+  ;; programs). Scheduling them warms those programs, so with the worker run
+  ;; before the boundary they render on the beat without compiling in a frame;
+  ;; with the worker stalled they still render on the beat.
+  (doseq [worker? [true false]]
+    (testing (if worker? "warmed ahead" "worker stalled")
+      (let [wide (fn [version] (assoc (probe 0 version) :targets (mapv head (range 5))))
+            s (show 1 {:model (assoc-in (show-model 1) [:registry :effects :probe-0] (wide 1))})
+            source {:adapter :repl :session-id "burst"}]
+        (try
+          (tick! s 0)
+          (work! s)
+          (publish! s [(wide 2)] 25)
+          (work! s)
+          (reset! (:compiled s) [])
+          ;; 120 BPM: a beat lasts 500 ms, so the boundary at beat 1 is t = 500.
+          (let [replies (mapv #(show/submit! (:rt s) :command {:op :cue/launch :cue-id :probe-0 :grid {:beats 1}
+                                                              :launch {:targets [(head %)]}
+                                                              :command-id (str "burst-" %) :source source})
+                              (range 5))]
+            (tick! s 50)
+            (is (every? #(#{:pending} (:status (deref % 2000 {:status :timeout}))) replies))
+            (when worker? (work! s))
+            (let [frames (mapv (fn [t] (tick! s t) [t (count (rendered s :probe-0))]) (range 75 551 25))]
+              (is (= [500 5] (first (filter #(pos? (second %)) frames))) "All five render first on the beat")
+              (is (= (repeat 5 2) (map first (rendered s :probe-0))) "They launch the published revision")
+              (if worker?
+                (is (= [] (filterv #(= :frame (first %)) @(:compiled s))) "No program compiled in a frame")
+                (is (= 5 (count (filterv #(= :frame (first %)) @(:compiled s)))) "The frame compiled them as a fallback"))))
+          (finally (stop! s)))))))
+
+(deftest a-launch-while-its-revision-compiles-takes-the-whole-effect-over-at-once
+  ;; Probe 1 is relaunched in the cycle that publishes it. The launch must
+  ;; render on its start and the effect must not run two revisions, so the
+  ;; frame compiles what the revision needs and both instances take it over.
+  (let [s (show 2)]
+    (try
+      (let [t (launch-all! s 2 nil)
+            replies [(show/submit! (:rt s) :definition {:kind :effects :definition (probe 1 2)})
+                     (show/submit! (:rt s) :command {:op :cue/launch :cue-id :probe-1})]]
+        (tick! s t)
+        (is (= [:accepted :accepted] (mapv #(:status (deref % 2000 {:status :timeout})) replies)))
+        (is (= [[2 :preserve-state] [2 :preserve-state]] (rendered s :probe-1)))
+        (is (= [[:frame :probe-1 2]] (distinct (frame-compiles s))) "The fallback compiled the revision in the frame"))
+      (finally (stop! s)))))
+
+(deftest a-stack-overflow-while-compiling-refuses-the-revision-once
+  ;; A StackOverflowError while compiling one revision must not leave the
+  ;; effect silently pinned, stop every frame, or compile again each frame.
+  (doseq [inline? [false true]]
+    (testing (if inline? "inline" "worker")
+      (let [s (show 1 {:inline? inline?})
+            attempts (atom 0)]
+        (try
+          (let [t (launch-all! s 1 nil)]
+            (swap! (:compiler-context (:rt s)) update :compiler
+                   (fn [compiler]
+                     (fn [program]
+                       (when (= [:probe-0 2] [(:id program) (:version program)])
+                         (swap! attempts inc)
+                         (throw (StackOverflowError. "deep")))
+                       (compiler program))))
+            (publish! s [(probe 0 2)] t)
+            (dotimes [k 5] (work! s) (tick! s (+ t (* 25 (inc k)))))
+            (let [refused (get (instances s) :probe-0)]
+              (is (= 1 @attempts) "Compiled once, never retried")
+              (is (= [1 :compile 2] [(:effect-version refused) (get-in refused [:reload-fault :stage])
+                                     (get-in refused [:reload-fault :effect-version])]))
+              (is (re-find #"StackOverflowError" (str (get-in refused [:reload-fault :message]))))
+              (is (nil? (get-in @(:state (:rt s)) [:status :error])) "The other frames keep running")))
+          (finally (stop! s)))))))
+
+(deftest results-no-frame-needs-are-dropped
+  (let [tasks (atom [])
+        context (programs/context (fn [program] [:step program]) (fn [task] (swap! tasks conj task)))
+        [a b] [(probe 0 2) (probe 0 3)]]
+    (programs/request! context [a])
+    (doseq [task @tasks] (task))
+    (reset! tasks [])
+    (is (programs/ready? context a))
+    (programs/request! context [b])
+    (is (not (programs/ready? context a)) "A superseded result is not kept")))
+
+(deftest a-retired-context-compiles-and-stores-nothing
+  ;; A rig change or stop! retires the context while compiles are queued.
+  (let [tasks (atom []) calls (atom 0)
+        context (programs/context (fn [program] (swap! calls inc) [:step program]) (fn [task] (swap! tasks conj task)))
+        program (probe 0 2)]
+    (programs/request! context [program])
+    (programs/retire! context)
+    (doseq [task @tasks] (task))
+    (is (= 0 @calls))
+    (is (not (programs/ready? context program)))))
+
+(deftest a-rig-change-while-compiles-wait-adopts-on-the-new-rig
+  (let [s (show 2)]
+    (try
+      (let [t (launch-all! s 2 nil)
+            old-context @(:compiler-context (:rt s))]
+        (publish! s [(probe 0 2)] t)
+        (is (= 1 (count @(:tasks s))))
+        ;; Move head-8 by a centimetre: a new rig, so a new compiler and cache.
+        (let [reply (show/submit! (:rt s) :rig (update-in (:rig (model s)) [:fixtures 7 :position 0] + 0.01))]
+          (tick! s (+ t 25))
+          (is (= :accepted (:status (deref reply 2000 {:status :timeout}))) "The rig edit is admitted"))
+        (is (not (identical? old-context @(:compiler-context (:rt s)))))
+        (work! s)
+        (tick! s (+ t 50))
+        (is (= [2 1] (versions s 2)) "The revision adopts once the new rig's compiler has it")
+        (is (nil? (get-in @(:state (:rt s)) [:status :error]))))
+      (finally (stop! s)))))
+
+(deftest stopping-with-a-compile-queued-is-harmless
+  (let [s (show 1)]
+    (let [t (launch-all! s 1 nil)]
+      (publish! s [(probe 0 2)] t)
+      (is (= 1 (count @(:tasks s))))
+      (stop! s)
+      (reset! (:compiled s) [])
+      (is (= 1 (work! s)) "The queued task still runs after stop!")
+      (is (= [] @(:compiled s)) "It compiles nothing for a stopped show"))))
+
+(deftest the-program-key-matches-the-engine
+  ;; The plan must key programs exactly as the engine compiles them, or a
+  ;; revision would wait on one key while the engine compiles another.
+  (let [render-definition @#'engine/render-definition
+        authored {:id :e :version 1 :targets [:a :b :c] :outputs {:dimmer 1.0}}
+        untargeted (dissoc authored :targets)]
+    (doseq [[definition targets] [[authored nil] [untargeted nil] [untargeted [:c :a]]
+                                  [authored [:b]] [authored [:c :a]] [authored [:x]] [authored []]]]
+      (is (= (render-definition {:definition definition :targets targets})
+             (programs/program definition (cond-> {} (some? targets) (assoc :targets targets))))
+          (pr-str definition targets)))))
+
+(deftest a-cue-selection-is-compiled-before-its-first-launch
+  ;; The cue selects two of the effect's four heads. Publishing it warms that
+  ;; program, so its first launch compiles nothing in the frame.
+  (let [wide (assoc (probe 0 1) :targets (mapv head (range 4)))
+        s (show 1 {:model (-> (show-model 1)
+                              (assoc-in [:registry :effects :probe-0] wide)
+                              (assoc-in [:registry :cues :probe-0 :selector] {:fixture-ids [(head 1) (head 2)]}))})]
+    (try
+      (tick! s 0)
       (work! s)
-      (tick! s 75)
-      (is (= 6 (count (rendered s :probe-0))) "All five appear on the same frame")
-      (is (= 1 (count (filter #(= :frame (first %)) @(:compiled s)))) "Only the single launch compiled in a frame")
+      (reset! (:compiled s) [])
+      (request! s 25 :command {:op :cue/launch :cue-id :probe-0})
+      (is (= [[1 :preserve-state]] (rendered s :probe-0)) "It renders on its first frame")
+      (is (= [] (filterv #(= :frame (first %)) @(:compiled s))) "Its program was warmed ahead")
+      (finally (stop! s)))))
+
+(deftest the-warm-tier-is-kept-apart-from-the-cache
+  (let [tasks (atom []) calls (atom {})
+        context (programs/context (fn [program] (swap! calls update program (fnil inc 0)) [:step program])
+                                  (fn [task] (swap! tasks conj task)))
+        warm (probe 0 1)]
+    (programs/warm! context :registry-1 [warm])
+    (doseq [task @tasks] (task))
+    (doseq [i (range 600)] (programs/compile! context (probe 1 (+ 2 i))))
+    (is (= [:step warm] (programs/compile! context warm)) "Six hundred other programs do not evict it")
+    (is (= 1 (get @calls warm)))
+    (programs/warm! context :registry-2 [])
+    (is (programs/ready? context warm) "A program leaving the tier moves to the cache")))
+
+(deftest a-recorded-take-is-compiled-before-it-replays
+  ;; Live-run playback replays a take with its recorded targets. The take
+  ;; below stands in for one recorded earlier; its program is warmed, so the
+  ;; replayed launch compiles nothing in the frame.
+  (let [wide (assoc (probe 0 1) :targets (mapv head (range 4)))
+        s (show 1 {:model (assoc-in (show-model 1) [:registry :effects :probe-0] wide)})]
+    (try
+      (swap! (:live-runs (:rt s)) assoc-in [:record :takes "take-1"]
+             {:take-id "take-1" :cue-id :probe-0 :launch {:mode :persistent :targets [(head 3)]}})
+      (tick! s 0)
+      (work! s)
+      (reset! (:compiled s) [])
+      (request! s 25 :command {:op :cue/launch :cue-id :probe-0 :launch {:targets [(head 3)]}})
+      (is (= [[1 :preserve-state]] (rendered s :probe-0)))
+      (is (= [] (filterv #(= :frame (first %)) @(:compiled s))) "The take's program was warmed ahead")
       (finally (stop! s)))))

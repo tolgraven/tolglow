@@ -80,39 +80,52 @@ running revisions' samples while a reload is pending and reach an accepted
 candidate one frame later. See [spatial cues](spatial-show.md).
 
 A scheduled show (`show/start!`, or `:background-compile true` on
-`show/create-runtime`) compiles the programs a published revision needs on
-its own worker thread, outside the lighting frame (#774). The engine compiles
-one program per revision and launch target set, so one revision launched once
-per fixture needs one program per fixture. Compiling them inside the frame
-took about 0.45 ms each on the mixed 2,048-pixel/64-head rig, so 32 revisions,
-or one revision on 64 heads, made that frame miss the 25 ms deadline.
+`show/create-runtime`) compiles effect programs ahead of need on its own
+worker thread, outside the lighting frame (#774). The engine compiles one
+program per revision and launch target set. Compiling them inside the frame
+took about 0.45 ms each on the mixed 2,048-pixel/64-head rig, so 32
+revisions, or one revision launched on 64 heads, made that frame miss the
+25 ms deadline.
 
-- **Waiting for compiles.** Until every program is ready, the effect's
-  instances keep their captured definition in modulation, waveform sampling,
-  spatial cues and the engine alike. Then they all adopt the revision on the
-  same frame, so no frame runs two revisions of one effect.
-- **First launches.** A frame still compiles up to 4 first-launch programs
-  itself, so a single launch renders on the frame that admits it. Launches
-  needing more programs wait unrendered for the worker, typically one or two
-  frames, and the instances of one effect appear together. They keep their
-  place on the beat grid. A launch of an effect whose revision is still
-  compiling always waits, then starts on the new revision with the rest.
-- **Order and failures.** The worker runs first in first out. It skips a
-  compile that no frame still needs, such as a superseded revision. A
-  recoverable compile failure is kept and becomes the usual refused-candidate
-  fault.
+- **Compiled ahead of launches.** The worker warms these programs whenever the
+  registry, rig, recorded takes or launch schedule change:
+  - every registered effect's untargeted program;
+  - each cue's fixture or group selection;
+  - each recorded live-run take's targets;
+  - each quantized launch as soon as it is scheduled. One beat at 120 BPM
+    gives 500 ms of lead.
+
+  This warm tier is sized by the registry and kept apart from the 256-entry
+  cache. Volume selections follow moving volumes and are not warmed.
+- **A launch never waits.** If a launch's program is not ready, the frame
+  compiles it, so the launch renders on its start. A short one-shot is never
+  lost, and a burst of grid launches lands on the beat.
+- **Pending revisions wait.** Until every program a revision needs is ready,
+  the effect's instances keep their captured definition in modulation,
+  waveform sampling, spatial cues and the engine alike. Then they all adopt it
+  on the same frame. A launch of that effect in the meantime makes the whole
+  effect take the revision over at once, so no frame runs two revisions of one
+  effect.
+- **Order and supersession.** The worker runs first in first out. It skips a
+  compile that no frame still needs, such as a superseded revision.
+- **Compile failures.** Every compile failure is kept, so the revision is
+  refused at `:compile` once and never compiled again. An error the engine
+  would not attribute to an effect, such as a stack overflow in a deeply
+  nested definition, is kept as a plain failure naming it, because it was
+  raised compiling that one revision.
 - **Events.** Each `:effect/reloaded` event carries `:pending-since-frame` and
   `:adopted-frame`.
-- **Where compiles still happen in the frame.** An unscheduled runtime (the
-  default for manual `tick!`, tests and auditions) compiles on the owner
-  before the engine runs. That keeps manual ticks deterministic and adopts on
-  the publication frame. A show whose GPU expression groups prepare against
-  its compute session compiles on the owner too. A function passed as
-  `:background-compile` receives each compile task instead, which lets tests
-  and replays step the worker.
-- **What the extra pass costs.** Once adopted, the takeover runs with no
-  compiles: the extra engine pass of a frame that turns a candidate down
-  costs about one ordinary evaluation, plus a second render after a renderer
+- **Where compiles stay on the owner.**
+  - An unscheduled runtime (the default for manual `tick!`, tests and
+    auditions) compiles on the owner before the engine runs, which keeps
+    manual ticks deterministic.
+  - A show whose GPU expression groups prepare against its compute session
+    compiles on the owner too.
+  - A function passed as `:background-compile` receives each compile task, so
+    tests and replays can step the worker.
+- **The extra engine pass.** Once adopted, the takeover runs with no
+  compiles. The extra engine pass of a frame that turns a candidate down costs
+  about one ordinary evaluation, plus a second render after a renderer
   rejection.
 - **Compile cache.** The runtime's compile cache keeps its previous 256
   programs as a retired generation, so filling it does not recompile every

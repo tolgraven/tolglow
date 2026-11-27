@@ -228,6 +228,47 @@
         upper (if (= 1.0 (get-in (first (running rt :fan)) [:definition :params :level :bounds 1])) 0.5 1.0)]
     [(fan-effect heads (inc (get-in model [:registry :effects :fan :version])) upper)]))
 
+(defn- burst-effect [heads version]
+  {:id :burst :version version :name "Burst" :targets (mapv :id heads)
+   :params {:level {:type :number :default (if (odd? version) 0.9 0.8) :bounds [0.0 1.0]}}
+   :outputs {:dimmer {:op :param :key :level}}})
+
+(defn- burst!
+  "Publish a revision of the burst effect, and in the same owner cycle
+  schedule one launch of it per head for the next beat, each with its own
+  targets, as firing a Live scene of per-fixture clips does. Tick until every
+  launch has rendered. Launch latency counts frames from the frame that
+  crosses the scheduled beat to the frame where all launches first render."
+  [{:keys [rt] :as recorder} clock heads]
+  (let [model (:model @(:state rt))
+        version (inc (get-in model [:registry :effects :burst :version]))
+        publication (show/submit! rt :definition {:kind :effects :definition (burst-effect heads version)})
+        replies (mapv (fn [[i fixture]]
+                        (show/submit! rt :command {:op :cue/launch :cue-id :burst :grid {:beats 1}
+                                                   :command-id (str "burst-" version "-" i)
+                                                   :source {:adapter :repl :session-id "bench"}
+                                                   :launch {:mode :one-shot :duration {:beats 1/2} :targets [(:id fixture)]}}))
+                      (map-indexed vector heads))
+        rendered #(count (filter (fn [instance] (and (= :burst (:effect-id instance)) (= version (:effect-version instance))
+                                                     (get-in instance [:system :last-frame-number])))
+                                 (vals (get-in @(:state rt) [:model :instances]))))
+        frames (loop [frames []]
+                 (let [observed (assoc (measured-tick! recorder clock)
+                                       :beat (get-in @(:state rt) [:model :transport :beat]) :rendered (rendered))]
+                   (when (empty? frames)
+                     (when-not (= :accepted (:status (deref publication 5000 nil)))
+                       (throw (ex-info "Burst revision was not accepted" {}))))
+                   (cond
+                     (= (count heads) (:rendered observed)) (conj frames observed)
+                     (> (count frames) 200) (throw (ex-info "Burst did not render" {}))
+                     :else (recur (conj frames observed)))))
+        due (some #(:due-beat (deref % 5000 nil)) replies)
+        beat-frame (first (keep-indexed #(when (>= (:beat %2) due) %1) frames))
+        landed (dec (count frames))]
+    {:case [:grid-burst (count heads)] :publication (first frames) :beat-frame (nth frames beat-frame)
+     :launch-latency-frames (- landed beat-frame)
+     :frame-compiles (reduce + (keep :frame-compiles frames))}))
+
 (defn- summary [observations]
   (let [stage (fn [k] (let [xs (keep #(get-in % [k :ms]) observations)] (when (seq xs) (bench/distribution xs))))]
     (cond-> {:n (count observations) :tick-ms (bench/distribution (map :ms observations))
@@ -247,9 +288,14 @@
   :background (compiles off the frame) or :inline (compiles in the frame, the
   behaviour before #774)."
   [{:keys [model heads base-cues fan-heads] :as rig} rounds mode]
-  (let [rt (show/create-runtime {:model (cond-> model fan-heads (bench/command [:fan :definition]
-                                                                               {:op :registry/publish :kind :effects
-                                                                                :definition (fan-effect fan-heads 1 1.0)}))
+  (let [rt (show/create-runtime {:model (cond-> model
+                                          fan-heads (-> (bench/command [:fan :definition]
+                                                                       {:op :registry/publish :kind :effects
+                                                                        :definition (fan-effect fan-heads 1 1.0)})
+                                                        (bench/command [:burst :definition]
+                                                                       {:op :registry/publish :kind :effects
+                                                                        :definition (burst-effect fan-heads 1)})
+                                                        (bench/command [:burst :cue] {:op :cue/put :cue {:id :burst :effect-id :burst}})))
                                  :workers 2 :sink (bench/capture-sink) :background-compile (= :background mode)
                                  :workspace-options nil :effect-log! (fn [_]) :worker-timeout-ms 60000})
         clock (volatile! 0)
@@ -271,12 +317,20 @@
           (doseq [{:keys [label outcome revise]} cases]
             (takeover! recorder clock (revise) outcome label)
             (dotimes [_ 8] (measured-tick! recorder clock)))
+          (when fan-heads
+            (burst! recorder clock fan-heads)
+            (dotimes [_ 30] (measured-tick! recorder clock)))
           (let [gc-before (bench/gc-snapshot)
                 ordinary (mapv (fn [_] (measured-tick! recorder clock)) (range 240))
                 takeovers (vec (for [_ (range rounds) {:keys [label outcome revise]} cases]
                                  (let [observed (takeover! recorder clock (revise) outcome label)]
                                    (dotimes [_ 8] (measured-tick! recorder clock))
                                    observed)))
+                bursts (when fan-heads
+                         (vec (for [_ (range rounds)]
+                                (let [observed (burst! recorder clock fan-heads)]
+                                  (dotimes [_ 30] (measured-tick! recorder clock))
+                                  observed))))
                 gc-after (bench/gc-snapshot)
                 status (:status @(:state rt))]
             (when (:error status) (throw (ex-info "Show error during the benchmark" {:error (:error status)})))
@@ -292,6 +346,12 @@
                                                :frames-to-settle (bench/distribution (map :settle-frames xs))
                                                :compiles-in-frames-per-takeover (bench/distribution (map :frame-compiles xs))}
                                         (seq (mapcat :others xs)) (assoc :other-frames (summary (mapcat :others xs))))]))
+             :grid-burst (when (seq bursts)
+                           {:heads (count fan-heads)
+                            :launch-latency-frames (bench/distribution (map :launch-latency-frames bursts))
+                            :publication-frame (summary (map :publication bursts))
+                            :beat-frame (summary (map :beat-frame bursts))
+                            :compiles-in-frames-per-burst (bench/distribution (map :frame-compiles bursts))})
              :gc {:before gc-before :after gc-after} :load-average-after (load-average)})))
       (finally (show/stop! rt)))))
 
