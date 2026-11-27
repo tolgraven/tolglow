@@ -5,12 +5,21 @@ import {fogTransmission, fogAbsorptance} from './fog-optics.generated.js';
 // deliberately bounded rather than a pressure-projected CFD solver.
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const finite = (v, name) => { if (!Number.isFinite(v)) throw new Error(`Invalid ${name}`); return v; };
+// `pixels` caps the raymarch raster so its cost stops growing with the display
+// once a large or fullscreen canvas exceeds it (#782). `mode: 'haze'` replaces
+// the raymarch with a few density taps and leaves beams to the faked cones.
 export const FOG_QUALITY = Object.freeze({
-  high: Object.freeze({ grid: [48, 24, 48], scale: 0.67, steps: 72, shadows: 4 }),
-  desktop: Object.freeze({ grid: [32, 18, 32], scale: 0.5, steps: 48, shadows: 4 }),
-  mobile: Object.freeze({ grid: [24, 14, 24], scale: 0.34, steps: 32, shadows: 2 }),
-  phone: Object.freeze({ grid: [20, 12, 20], scale: 0.33, steps: 24, shadows: 1 })
+  high: Object.freeze({ grid: [48, 24, 48], scale: 0.67, pixels: 1400000, steps: 72, shadows: 4, mode: 'raymarch' }),
+  desktop: Object.freeze({ grid: [32, 18, 32], scale: 0.5, pixels: 520000, steps: 48, shadows: 4, mode: 'raymarch' }),
+  mobile: Object.freeze({ grid: [24, 14, 24], scale: 0.34, pixels: 300000, steps: 32, shadows: 2, mode: 'raymarch' }),
+  phone: Object.freeze({ grid: [20, 12, 20], scale: 0.33, pixels: 120000, steps: 24, shadows: 1, mode: 'haze' })
 });
+
+/** Fog raster scale for a scene raster: the tier scale, capped by its pixel budget. */
+export function fogRasterScale(width, height, budget) {
+  const area = Math.max(1, width * height);
+  return Math.min(budget.scale, budget.pixels ? Math.sqrt(budget.pixels / area) : budget.scale);
+}
 
 export function intersectRoom(origin, direction, room) {
   const lo = [-room[0] / 2, 0, -room[2] / 2], hi = [room[0] / 2, room[1], room[2] / 2];
