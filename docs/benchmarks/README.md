@@ -224,23 +224,26 @@ took most of the rest.
 
 **The fix.**
 - The aim-path check now indexes the rig only for a synchronized path.
-- The capability report looks authored targets up in a rig index that is
-  reused while the rig vector is unchanged.
+- The capability report looks authored targets up in a rig index. The show
+  keeps that index with its compiled patch, so each runtime has its own, a
+  burst on one rig builds it once, and a rig edit replaces it. A caller
+  outside an owner cycle indexes the rig once per launch.
 
 Nothing moved off the owner. Admitting a launch assigns instance IDs and
 orders and reads the beat's clock, so it is not pure ahead of the beat, and
 without the two passes the remaining cost fits the deadline.
 
-**Measurement.** Fresh `lein run` JVMs, JDK 25.0.2, Apple M4 Pro, harness at
-`2b5eb1b3`, background compile mode, 20 rounds. Beat-frame tick in ms:
+**Measurement.** Fresh `lein run` JVMs, JDK 25.0.2, Apple M4 Pro, background
+compile mode, 20 rounds; before at harness `2b5eb1b3` with master's two
+sources, after at `02575c15`. Beat-frame tick in ms:
 
 | | p50 | p95 | p99 | max | over 25 ms | engine p50 | load average |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [Before](2026-11-27-launch-burst-before.edn) (master `1d7f3a8a` sources) | 25.4 | 29.4 | 30.1 | 30.1 | 16 of 20 | 2.9 | 8.5 → 4.7 |
-| [After](2026-11-27-launch-burst-after.edn) | 12.3 | 16.3 | 18.7 | 18.7 | 0 of 20 | 2.8 | 4.9 → 3.6 |
+| [After](2026-11-27-launch-burst-after.edn) | 11.4 | 13.0 | 17.5 | 17.5 | 0 of 20 | 2.7 | 3.7 → 2.9 |
 
 Both runs launched on the beat (latency 0) and compiled nothing in the frame.
-Ordinary frames were unchanged (p50 4.3 ms).
+Ordinary frames were unchanged (p50 3.7 to 4.3 ms).
 
 **Still left in the beat frame, about 9 ms beyond the engine:**
 - picking a free live-run lane, which scans lanes per launch;
