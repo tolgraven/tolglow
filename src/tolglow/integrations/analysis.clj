@@ -145,31 +145,47 @@
 
 (def ^:private tempo-history-limit 64)
 
+(defn- tempo-change-ms
+  "Where the latest segment's line meets a snapshot at another tempo, if that
+  is after the last snapshot seen on the line: the beat stayed continuous and
+  only the tempo changed, somewhere between two snapshots."
+  [{:keys [seen-ms] :as latest} {:keys [time-ms beat bpm]}]
+  (let [rate (fn [bpm] (/ bpm 60000.0))
+        gap (- (clock-beat-at latest time-ms) beat)
+        at (- time-ms (/ gap (- (rate (:bpm latest)) (rate bpm))))]
+    (when (<= (or seen-ms (:time-ms latest)) at time-ms) at)))
+
 (defn- remember-tempo
   "Add a transport snapshot to the recent segments the analyzer turns capture
-  times into beats with. A snapshot on the latest segment's line adds nothing;
-  a tempo change, a clock correction or a jump starts a new segment. A clock
-  that goes back in time starts the history again."
+  times into beats with. A snapshot on the latest segment's line adds nothing.
+  A tempo change starts a new segment where the two lines meet, when they meet
+  after the last snapshot on the old line; a clock correction, a jump or any
+  other change starts one at the snapshot. A clock that goes back in time
+  starts the history again. At most 64 segments and two seconds are kept."
   [segments clock]
   (let [segment (select-keys clock [:time-ms :beat :bpm])
         latest (peek segments)]
     (cond
-      (or (nil? latest) (< (:time-ms segment) (:time-ms latest))) [segment]
+      (or (nil? latest) (< (:time-ms segment) (max (:time-ms latest) (:seen-ms latest 0.0)))) [segment]
 
       (and (== (:bpm segment) (:bpm latest))
            (< (Math/abs (- (:beat segment) (clock-beat-at latest (:time-ms segment)))) 1.0e-6))
-      segments
+      (assoc segments (dec (count segments)) (assoc latest :seen-ms (:time-ms segment)))
 
       :else
-      (let [segments (conj segments segment)
-            segments (if (> (count segments) tempo-history-limit)
-                       (subvec segments (- (count segments) tempo-history-limit)) segments)
-            cutoff (- (:time-ms segment) tempo-history-ms)]
-        ;; Keep the segment that contains the cutoff.
-        (loop [segments segments]
-          (if (and (> (count segments) 1) (<= (:time-ms (nth segments 1)) cutoff))
-            (recur (subvec segments 1))
-            segments))))))
+      (let [changed-at (when-not (== (:bpm segment) (:bpm latest)) (tempo-change-ms latest segment))
+            segment (if changed-at
+                      {:time-ms changed-at :beat (clock-beat-at segment changed-at) :bpm (:bpm segment)
+                       :seen-ms (:time-ms segment)}
+                      segment)
+            segments (conj segments segment)
+            n (count segments)
+            cutoff (- (:time-ms segment) tempo-history-ms)
+            ;; Keep the segment that contains the cutoff.
+            first-kept (loop [i (max 0 (- n tempo-history-limit))]
+                         (if (and (< (inc i) n) (<= (:time-ms (nth segments (inc i))) cutoff)) (recur (inc i)) i))]
+        ;; A subvec keeps its whole backing vector, so copy what is kept.
+        (if (pos? first-kept) (into [] (subvec segments first-kept)) segments)))))
 
 (defn- tempo-beat-at
   "The transport beat at a capture time, on the segment that time fell in.

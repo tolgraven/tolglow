@@ -210,3 +210,14 @@ evidence for a foreground display or for iPad Safari.
   and a boundary is then confirmed one window or more late. The section tempo
   test passes at 70 and 180 BPM with the synthetic show's music; real material
   at those tempos is not measured.
+- **The last half-beat of each window is sampled short.** A window is
+  described on the hop that crosses its end, when pitch heard in its last
+  80–130 ms has not arrived yet. That evidence is dropped, so the last slot's
+  notes come from its first part. Over a 2-beat window the slots get about
+  44, 44, 40 and 35 pitch observations at 70 BPM, 28, 24, 24 and 16 at 120 BPM,
+  and 16, 16, 16 and 8 at 180 BPM. A short pickup note at the very end of a
+  window is therefore partly missed, more at fast tempos. Waiting for that
+  evidence would delay every confirmation by 80–130 ms. With 2- or 4-beat
+  windows in 4/4, a change on a bar line is confirmed exactly on a later bar
+  line. The delay would move each such pattern decision made `:on :bar` to
+  the following bar, two seconds later at 120 BPM.
