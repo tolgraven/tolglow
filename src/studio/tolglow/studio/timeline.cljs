@@ -93,15 +93,15 @@
     (when (js/Number.isFinite value) value)))
 
 (defn- place-layer!
-  "Slide one layer so `beat` sits under the centre line. The layer carries the
-  origin and scale its children were positioned with, so a zoom or resize can
-  never show old positions under a new transform."
+  "Slide one layer so `beat` sits under the centre line, from the origin and
+  scale its children were positioned with."
   [el beat]
-  (let [origin (number-attribute el "data-origin") ppb (number-attribute el "data-ppb")
-        centre (number-attribute el "data-centre") shift (or (number-attribute el "data-shift") 0)]
-    (when (and origin ppb centre (number? beat))
-      (set! (.. el -style -transform)
-            (str "translate3d(" (.toFixed (- (model/offset {:ppb ppb :centre centre} origin beat) shift) 2) "px,0,0)")))))
+  (when-let [transform (model/translation {:ppb (number-attribute el "data-ppb")
+                                           :centre (number-attribute el "data-centre")}
+                                          (number-attribute el "data-origin")
+                                          (number-attribute el "data-shift")
+                                          beat)]
+    (set! (.. el -style -transform) transform)))
 
 (defn- audio-columns
   "Draw list for the canvas, rebuilt only when new columns arrive."
@@ -166,7 +166,16 @@
 
 (defn- layer
   "Beat-positioned content that the frame loop slides. :shift is the left edge
-  of a clipping parent, for the past-only and future-only halves."
+  of a clipping parent, for the past-only and future-only halves.
+
+  The render writes the transform for the current playhead together with the
+  children's positions. A zoom, resize or origin move then commits new
+  positions and their matching transform in one DOM update. Leaving the
+  transform to the next frame-loop tick showed one painted frame of new
+  positions under the old transform whenever Reagent rendered after that
+  frame's tick. Zooming out then shifted every item left by the playhead's
+  distance from the origin at the new scale, often hundreds of pixels, so
+  upcoming events appeared behind now (#801)."
   [store _ & _]
   (let [node (volatile! nil)
         ref (fn [el]
@@ -176,9 +185,11 @@
                 (swap! (:layers store) conj el)
                 (place-layer! el (model/position @(:playhead store) (.now js/performance)))))]
     (fn [_ {:keys [scale origin shift class]} & children]
-      (into [:div.timeline-layer {:class class :ref ref :data-origin origin :data-ppb (:ppb scale)
-                                  :data-centre (:centre scale) :data-shift (or shift 0)}]
-            children))))
+      (let [transform (model/translation scale origin shift (model/position @(:playhead store) (.now js/performance)))]
+        (into [:div.timeline-layer {:class class :ref ref :data-origin origin :data-ppb (:ppb scale)
+                                    :data-centre (:centre scale) :data-shift (or shift 0)
+                                    :style (when transform {:transform transform})}]
+              children)))))
 
 (defn- geometry [store]
   (let [window (part store :window)
@@ -448,7 +459,9 @@
   (r/with-let [viewport (observe-width store)
                select! (fn [item] (rf/dispatch-sync [::select (model/stack-id item)]))
                ;; A zoom change leases a new window. The lanes keep the previous
-               ;; one until the first sample of the new window arrives.
+               ;; one until the first sample of the new window arrives. The
+               ;; playhead comes from the same samples and never passes the
+               ;; newest one, so it holds still while the old events show.
                feed (r/track! (fn []
                                 (let [bars (:bars @(rf/subscribe [::settings]))
                                       result @(rf/subscribe [:studio/remote-result [query-id {:bars bars}]])

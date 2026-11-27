@@ -176,6 +176,34 @@
     (is (re-find #"<div data-kind=\"bar\" style=\"left:600.00px\"[^>]*><span>5</span></div>" markup))
     (is (re-find #"<div data-kind=\"beat\" style=\"left:450.00px\"[^>]*></div>" markup) "a beat tick carries no label")))
 
+(defn- tick-screen-x
+  "Where the grid tick at content `left` is painted: its left inside the layer
+  plus the translation that layer was rendered with."
+  [markup left]
+  (let [layer (element markup "class=\"timeline-layer")
+        [_ shift] (re-find #"translate3d\((-?[0-9.]+)px" (str layer))]
+    (is (some? shift) "the layer is rendered with its transform")
+    (+ left (js/parseFloat shift))))
+
+(deftest a-zoom-renders-new-positions-with-their-own-transform
+  ;; #801: the frame loop used to apply the new transform one tick after the
+  ;; render that moved the children, so zooming out drew upcoming events behind now.
+  (let [store (store-with view)
+        before (html [timeline/grid-lane store])]
+    (is (re-find #"data-kind=\"bar\" style=\"left:600.00px\"" before) "beat 20 is 12 beats from origin 8 at 50 px a beat")
+    (is (= 400 (tick-screen-x before 600)) "the playhead's bar line is under the centre line")
+    (timeline/install! store (assoc view :window {:bars 4 :past-beats 16.0 :future-beats 16.0 :from-beat 0.0 :to-beat 40.0})
+                       1500)
+    (is (= 8.0 @(:origin store)) "the zoom keeps the layer origin")
+    (let [after (html [timeline/grid-lane store])]
+      (is (re-find #"data-kind=\"bar\" style=\"left:300.00px\"" after) "25 px a beat after zooming out")
+      (is (= 400 (tick-screen-x after 300)) "the same render moves the layer, so the bar line stays at now"))
+    (testing "every layer of the event lane agrees with its children"
+      (let [lane (html [timeline/events-lane store nil identity])]
+        (is (= #{"translate3d(100.00px,0,0)"} (set (map second (re-seq #"transform:(translate3d\([^)]*\))" lane)))))
+        (is (str/includes? (element lane "data-event-id=\"drop\"") "left:378.00px")
+            "the pending event at beat 24 is drawn 16 beats from the origin, so 4 beats right of now")))))
+
 (deftest meters-show-measured-levels-and-mark-missing-readings
   (let [markup (html [timeline/meters-panel (store-with view)])
         tag (partial element markup)]

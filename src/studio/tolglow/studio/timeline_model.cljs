@@ -42,6 +42,14 @@
   [{:keys [ppb centre]} origin playhead]
   (- centre (* ppb (- playhead origin))))
 
+(defn translation
+  "CSS transform for a layer whose children were positioned at `scale` from
+  `origin`, so the `playhead` beat sits under the centre line. `shift` is the
+  left edge of a clipping parent. Nil until there is a playhead."
+  [scale origin shift playhead]
+  (when (and (number? (:ppb scale)) (number? (:centre scale)) (number? origin) (number? playhead))
+    (str "translate3d(" (.toFixed (- (offset scale origin playhead) (or shift 0)) 2) "px,0,0)")))
+
 (def ^:private rebase-px 200000)
 
 (defn origin

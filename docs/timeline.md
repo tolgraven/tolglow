@@ -151,7 +151,12 @@ Open **Perform**. The **Timeline** panel sits above the cue grid and the Room.
 Studio only maps beats to pixels. Between committed frames it moves the
 playhead in a straight line from where it is to the latest committed beat, over
 one frame period, as the Room does for fixture values. It never runs ahead of a
-committed sample. A pause, seek, loop or new show epoch snaps.
+committed sample. A pause, seek, loop or new show epoch snaps. Each lane
+renders its items together with the slide that puts the playhead under the
+centre line, so a zoom or resize never paints new positions under the old
+slide. After a zoom the previous window stays on screen until the first sample
+of the new one arrives. The playhead holds at the last sample meanwhile, so an
+event that has fired is never drawn as scheduled behind now.
 
 ## Check it with the synthetic show
 
@@ -167,7 +172,10 @@ The recording step uses Chrome's screencast and the system ffmpeg
 `tolglow.qa.timeline` is a preview-only show. It runs the real owner,
 scheduler, capture worker and section analyzer on generated PCM that follows
 the transport, posts a phrase of events and ramps every eight bars and simulates
-a recording match. The browser script asserts the layout and behaviour in
+a recording match. The simulated recording lasts four hours at 120 BPM. Its
+matches carry that end as `:until-position-ms`. After the end the lock reports
+"No match · playback-boundary" and no section is predicted, so the browser
+check needs a host younger than that. The browser script asserts the layout and behaviour in
 headless Chrome and writes stills, a recording and `report.json`. Create
 `stop` in the control directory to end the show. Headless desktop Chrome is not
 evidence for a foreground display or for iPad Safari.

@@ -149,14 +149,19 @@ const nearest = (xs, x) => xs.reduce((best, value) => Math.abs(value - x) < Math
 
 // The scenario has short stretches with no ramp running. Take the snapshot
 // while one is under the centre line with room on both sides.
+// The error says which half never appeared: a host whose synthetic recording
+// has ended has ramps but no forecast (#801).
 async function snapshotWithRunningRamp(page) {
+  const seen = {rampUnderNow: 0, predicted: 0, attempts: 0};
   for (let attempt = 0; attempt < 120; attempt++) {
     const shot = await snapshot(page);
     const under = r => r.state === 'running' && shot.now.x - r.span.x > 8 && r.span.x + r.span.w - shot.now.x > 30;
-    if (shot.ramps.some(under) && shot.sections.some(s => s.state === 'predicted')) return shot;
+    const ramp = shot.ramps.some(under), predicted = shot.sections.some(s => s.state === 'predicted');
+    seen.attempts++; if (ramp) seen.rampUnderNow++; if (predicted) seen.predicted++;
+    if (ramp && predicted) return shot;
     await sleep(250);
   }
-  throw new Error('no running ramp reached the centre line');
+  throw new Error('no running ramp reached the centre line while a section was predicted: ' + JSON.stringify(seen));
 }
 
 async function ready(page) {
@@ -207,9 +212,19 @@ async function cancelFromTimeline(page, touch) {
   const outcome = schedule.recent.find(e => e['event-id'] === candidate.id);
   assert.equal(outcome.status, 'cancelled');
   assert.equal(outcome.reason, 'operator-cancel');
+  // The playhead never passes the newest committed sample and covers each step
+  // over one sample period (at most 250 ms), so the marker of a just-cancelled
+  // event can sit up to one delivered step right of now. Wait longer than one
+  // such step before asserting where it ended up (#801).
+  await page.waitForFunction(id => {
+    const now = document.querySelector('#timeline-panel .timeline-now')?.getBoundingClientRect();
+    const chip = document.querySelector(`#timeline-panel .timeline-event[data-event-id="${id}"] .timeline-chip`)?.getBoundingClientRect();
+    return now && chip && chip.x + chip.width / 2 <= now.x + 2;
+  }, candidate.id, {timeout: 1000, polling: 'raf'}).catch(() => {});
   const after = await snapshot(page);
   const marker = after.events.find(e => e.id === candidate.id);
-  assert.ok(marker.chip.cx <= after.now.x + 2, 'the cancelled marker is in the past half');
+  assert.ok(marker.chip.cx <= after.now.x + 2,
+    `the cancelled marker is in the past half: ${(marker.chip.cx - after.now.x).toFixed(2)} px right of now, at ${outcome['at-beat']}`);
   assert.match(await detail.textContent(), /Cancelled/);
   assert.equal(await detail.getByRole('button', {name: /^Cancel event /}).count(), 0, 'nothing left to cancel');
   return {eventId: candidate.id, command: {op: command.op, 'event-ids': command['event-ids'], source: command.source},
