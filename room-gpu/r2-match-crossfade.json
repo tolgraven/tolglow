@@ -1,0 +1,255 @@
+{
+ "label": "r2",
+ "source": "/Users/tol/CODE/pixTol/tolglow/.claude/worktrees/rgo",
+ "method": "wall-clock cost of back-to-back presented frames ending in one GPU fence (median of batches); pass cost = full minus the run with that pass toggled off",
+ "conditions": "production tier rasters and mesh caps; headless Chrome (--headless=new), ANGLE Metal, OffscreenCanvas + bitmaprenderer on the page thread, device scale 1, synthetic rig, audience camera, fog .7 after an 80-step manual burst",
+ "startedAt": "2026-11-27T05:37:39.479Z",
+ "runs": [],
+ "match": [
+  {
+   "density": 0.03,
+   "lumaFull": 40.1160074775697,
+   "lumaFaked": 37.36854139154449,
+   "maxDiff": 91.28659999999999,
+   "over16": 0.032132161458333336
+  },
+  {
+   "density": 0.1,
+   "lumaFull": 61.27578913740943,
+   "lumaFaked": 57.96948854005116,
+   "maxDiff": 75.7118,
+   "over16": 0.03441731770833333
+  },
+  {
+   "density": 0.35,
+   "lumaFull": 73.7647799642567,
+   "lumaFaked": 72.27904761145842,
+   "maxDiff": 39.55199999999999,
+   "over16": 0.011327039930555555
+  }
+ ],
+ "crossfade": [
+  {
+   "target": "head-000",
+   "weight": 0,
+   "slots": [
+    [
+     "head-013",
+     1
+    ],
+    [
+     "head-009",
+     1
+    ],
+    [
+     "head-005",
+     1
+    ],
+    [
+     "head-008",
+     0.67
+    ]
+   ]
+  },
+  {
+   "target": "head-000",
+   "weight": 0,
+   "slots": [
+    [
+     "head-013",
+     1
+    ],
+    [
+     "head-009",
+     1
+    ],
+    [
+     "head-005",
+     1
+    ],
+    [
+     "head-008",
+     0.36
+    ]
+   ]
+  },
+  {
+   "target": "head-000",
+   "weight": 0,
+   "slots": [
+    [
+     "head-013",
+     1
+    ],
+    [
+     "head-009",
+     1
+    ],
+    [
+     "head-005",
+     1
+    ],
+    [
+     "head-008",
+     0.08
+    ]
+   ]
+  },
+  {
+   "target": "head-000",
+   "weight": 0,
+   "slots": [
+    [
+     "head-013",
+     1
+    ],
+    [
+     "head-009",
+     1
+    ],
+    [
+     "head-005",
+     1
+    ],
+    [
+     "head-000",
+     0
+    ]
+   ]
+  },
+  {
+   "target": "head-000",
+   "weight": 0.28633333365122604,
+   "slots": [
+    [
+     "head-013",
+     1
+    ],
+    [
+     "head-009",
+     1
+    ],
+    [
+     "head-005",
+     1
+    ],
+    [
+     "head-000",
+     0.29
+    ]
+   ]
+  },
+  {
+   "target": "head-000",
+   "weight": 0.5593333331743885,
+   "slots": [
+    [
+     "head-013",
+     1
+    ],
+    [
+     "head-009",
+     1
+    ],
+    [
+     "head-005",
+     1
+    ],
+    [
+     "head-000",
+     0.56
+    ]
+   ]
+  },
+  {
+   "target": "head-000",
+   "weight": 0.8369999996821095,
+   "slots": [
+    [
+     "head-013",
+     1
+    ],
+    [
+     "head-009",
+     1
+    ],
+    [
+     "head-005",
+     1
+    ],
+    [
+     "head-000",
+     0.84
+    ]
+   ]
+  },
+  {
+   "target": "head-000",
+   "weight": 1,
+   "slots": [
+    [
+     "head-013",
+     1
+    ],
+    [
+     "head-009",
+     1
+    ],
+    [
+     "head-005",
+     1
+    ],
+    [
+     "head-000",
+     1
+    ]
+   ]
+  },
+  {
+   "target": "head-000",
+   "weight": 1,
+   "slots": [
+    [
+     "head-013",
+     1
+    ],
+    [
+     "head-009",
+     1
+    ],
+    [
+     "head-005",
+     1
+    ],
+    [
+     "head-000",
+     1
+    ]
+   ]
+  },
+  {
+   "target": "head-000",
+   "weight": 1,
+   "slots": [
+    [
+     "head-013",
+     1
+    ],
+    [
+     "head-009",
+     1
+    ],
+    [
+     "head-005",
+     1
+    ],
+    [
+     "head-000",
+     1
+    ]
+   ]
+  }
+ ],
+ "errors": [],
+ "finishedAt": "2026-11-27T05:37:42.903Z"
+}

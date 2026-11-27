@@ -1,0 +1,1897 @@
+{
+ "label": "before",
+ "source": "/Users/tol/CODE/pixTol/tolglow/.claude/worktrees/rgo/target/before-src",
+ "method": "wall-clock cost of back-to-back presented frames ending in one GPU fence (median of batches); pass cost = full minus the run with that pass toggled off",
+ "conditions": "production tier rasters and mesh caps; headless Chrome (--headless=new), ANGLE Metal, OffscreenCanvas + bitmaprenderer on the page thread, device scale 1, synthetic rig, audience camera, fog .7 after an 80-step manual burst",
+ "startedAt": "2026-11-27T05:34:03.439Z",
+ "runs": [
+  {
+   "config": {
+    "name": "full",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 64,
+   "fakedBeams": 0,
+   "frameMs": 15.813749998807907,
+   "batches": [
+    15.784999996423721,
+    15.842500001192093
+   ],
+   "cpuDrawMs": 15.5,
+   "drawCalls": 1197,
+   "triangles": 233126,
+   "quality": "desktop",
+   "scene": [
+    1920,
+    1080
+   ],
+   "display": [
+    1920,
+    1080
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     960,
+     540
+    ],
+    "steps": 48,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 4,
+    "meanDensity": 0.08068565359968084
+   },
+   "lights": {
+    "spotsVisible": 16,
+    "shadowMaps": 4,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 42,
+   "textures": 33,
+   "geometries": 1182,
+   "rounds": [
+    15.798750001192094,
+    15.81875,
+    15.813749998807907
+   ],
+   "name": "full",
+   "size": [
+    1920,
+    1080
+   ],
+   "fixtures": 64,
+   "inventory": {
+    "targets": [
+     {
+      "name": "sceneTarget",
+      "format": "1920x1080 RGBA16F MSAA4 +depthTex"
+     },
+     {
+      "name": "compositeTarget",
+      "format": "1920x1080 RGBA16F"
+     },
+     {
+      "name": "composer.read",
+      "format": "1920x1080 RGBA16F"
+     },
+     {
+      "name": "composer.write",
+      "format": "1920x1080 RGBA16F"
+     },
+     {
+      "name": "bloom.bright",
+      "format": "960x540 RGBA16F"
+     },
+     {
+      "name": "bloom.h0",
+      "format": "960x540 RGBA16F"
+     },
+     {
+      "name": "bloom.h1",
+      "format": "480x270 RGBA16F"
+     },
+     {
+      "name": "bloom.h2",
+      "format": "240x135 RGBA16F"
+     },
+     {
+      "name": "bloom.h3",
+      "format": "120x68 RGBA16F"
+     },
+     {
+      "name": "bloom.h4",
+      "format": "60x34 RGBA16F"
+     },
+     {
+      "name": "bloom.v0",
+      "format": "960x540 RGBA16F"
+     },
+     {
+      "name": "bloom.v1",
+      "format": "480x270 RGBA16F"
+     },
+     {
+      "name": "bloom.v2",
+      "format": "240x135 RGBA16F"
+     },
+     {
+      "name": "bloom.v3",
+      "format": "120x68 RGBA16F"
+     },
+     {
+      "name": "bloom.v4",
+      "format": "60x34 RGBA16F"
+     },
+     {
+      "name": "fog.volume",
+      "format": "960x540 RGBA16F"
+     },
+     {
+      "name": "shadow0",
+      "format": "1024x1024 RGBA8 +depthTex"
+     },
+     {
+      "name": "shadow1",
+      "format": "1024x1024 RGBA8 +depthTex"
+     },
+     {
+      "name": "shadow2",
+      "format": "1024x1024 RGBA8 +depthTex"
+     },
+     {
+      "name": "shadow3",
+      "format": "1024x1024 RGBA8 +depthTex"
+     }
+    ],
+    "programs": [
+     ":1",
+     ":1",
+     ":2",
+     ":5",
+     ":1",
+     ":1",
+     ":1",
+     ":59",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     "OutputShader:1",
+     "FXAAShader:1",
+     "unspecified:1"
+    ],
+    "spots": 16,
+    "shadowCasting": 4,
+    "meshes": 1277,
+    "casters": 1019,
+    "canvas": [
+     1920,
+     1080
+    ]
+   }
+  },
+  {
+   "config": {
+    "moving": true,
+    "name": "moving",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 64,
+   "fakedBeams": 0,
+   "frameMs": 15.94500000178814,
+   "batches": [
+    15.897500002384186,
+    16.044999998807906
+   ],
+   "cpuDrawMs": 15.400000095367432,
+   "drawCalls": 1266,
+   "triangles": 326374,
+   "quality": "desktop",
+   "scene": [
+    1920,
+    1080
+   ],
+   "display": [
+    1920,
+    1080
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     960,
+     540
+    ],
+    "steps": 48,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 4,
+    "meanDensity": 0.08068565359968084
+   },
+   "lights": {
+    "spotsVisible": 16,
+    "shadowMaps": 4,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 42,
+   "textures": 33,
+   "geometries": 1182,
+   "rounds": [
+    15.922499999403954,
+    15.94500000178814,
+    15.971250000596047
+   ],
+   "name": "moving",
+   "size": [
+    1920,
+    1080
+   ],
+   "fixtures": 64
+  },
+  {
+   "config": {
+    "fog": 0,
+    "delta": "fog (raymarch + composite)",
+    "name": "no-fog",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 64,
+   "fakedBeams": 0,
+   "frameMs": 10.84375,
+   "batches": [
+    10.842500001192093,
+    10.844999998807907
+   ],
+   "cpuDrawMs": 10.400000095367432,
+   "drawCalls": 1196,
+   "triangles": 233124,
+   "quality": "desktop",
+   "scene": [
+    1920,
+    1080
+   ],
+   "display": [
+    1920,
+    1080
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     960,
+     540
+    ],
+    "steps": 48,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 4,
+    "meanDensity": 0.08068565359968084
+   },
+   "lights": {
+    "spotsVisible": 16,
+    "shadowMaps": 4,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 42,
+   "textures": 33,
+   "geometries": 1182,
+   "rounds": [
+    10.833749997615815,
+    10.890000000596046,
+    10.84375
+   ],
+   "name": "no-fog",
+   "size": [
+    1920,
+    1080
+   ],
+   "fixtures": 64
+  },
+  {
+   "config": {
+    "shadows": 0,
+    "delta": "shadow maps + shadow sampling",
+    "name": "no-shadows",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 64,
+   "fakedBeams": 0,
+   "frameMs": 11.841250002384186,
+   "batches": [
+    11.842500001192093,
+    11.840000003576279
+   ],
+   "cpuDrawMs": 11.299999952316284,
+   "drawCalls": 1197,
+   "triangles": 233126,
+   "quality": "desktop",
+   "scene": [
+    1920,
+    1080
+   ],
+   "display": [
+    1920,
+    1080
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     960,
+     540
+    ],
+    "steps": 48,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 0,
+    "meanDensity": 0.08068565359968084
+   },
+   "lights": {
+    "spotsVisible": 16,
+    "shadowMaps": 0,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 43,
+   "textures": 33,
+   "geometries": 1182,
+   "rounds": [
+    11.7625,
+    11.85625,
+    11.841250002384186
+   ],
+   "name": "no-shadows",
+   "size": [
+    1920,
+    1080
+   ],
+   "fixtures": 64
+  },
+  {
+   "config": {
+    "spots": 0,
+    "delta": "forward spotlights in opaque shading",
+    "name": "no-spots",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 64,
+   "fakedBeams": 0,
+   "frameMs": 7.6375,
+   "batches": [
+    7.702499997615814,
+    7.665000003576279
+   ],
+   "cpuDrawMs": 7.400000095367432,
+   "drawCalls": 1197,
+   "triangles": 233126,
+   "quality": "desktop",
+   "scene": [
+    1920,
+    1080
+   ],
+   "display": [
+    1920,
+    1080
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     960,
+     540
+    ],
+    "steps": 48,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 4,
+    "meanDensity": 0.08068565359968084
+   },
+   "lights": {
+    "spotsVisible": 0,
+    "shadowMaps": 4,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 44,
+   "textures": 33,
+   "geometries": 1182,
+   "rounds": [
+    7.613749998807907,
+    7.6375,
+    7.683750000596047
+   ],
+   "name": "no-spots",
+   "size": [
+    1920,
+    1080
+   ],
+   "fixtures": 64
+  },
+  {
+   "config": {
+    "tier": "low",
+    "name": "tier-low",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 32,
+   "fakedBeams": 0,
+   "frameMs": 3.157499998807907,
+   "batches": [
+    3.0875,
+    3.0175000011920927
+   ],
+   "cpuDrawMs": 2.9499999284744263,
+   "drawCalls": 623,
+   "triangles": 130382,
+   "quality": "low",
+   "scene": [
+    566,
+    318
+   ],
+   "display": [
+    1920,
+    1080
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     186,
+     104
+    ],
+    "steps": 24,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 1,
+    "meanDensity": 0.08062863226048649
+   },
+   "lights": {
+    "spotsVisible": 16,
+    "shadowMaps": 1,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 42,
+   "textures": 27,
+   "geometries": 607,
+   "rounds": [
+    3.2450000017881395,
+    3.157499998807907,
+    3.052500000596046
+   ],
+   "name": "tier-low",
+   "size": [
+    1920,
+    1080
+   ],
+   "fixtures": 64
+  },
+  {
+   "config": {
+    "name": "full",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 64,
+   "fakedBeams": 0,
+   "frameMs": 17.019999998807904,
+   "batches": [
+    17.060000002384186,
+    17.05499999523163
+   ],
+   "cpuDrawMs": 16.700000047683716,
+   "drawCalls": 1239,
+   "triangles": 262142,
+   "quality": "desktop",
+   "scene": [
+    1920,
+    1080
+   ],
+   "display": [
+    1920,
+    1080
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     960,
+     540
+    ],
+    "steps": 48,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 4,
+    "meanDensity": 0.08068565359968084
+   },
+   "lights": {
+    "spotsVisible": 16,
+    "shadowMaps": 4,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 42,
+   "textures": 33,
+   "geometries": 1223,
+   "rounds": [
+    17.0125,
+    17.019999998807904,
+    17.057499998807906
+   ],
+   "name": "full",
+   "size": [
+    1920,
+    1080
+   ],
+   "fixtures": 128,
+   "inventory": {
+    "targets": [
+     {
+      "name": "sceneTarget",
+      "format": "1920x1080 RGBA16F MSAA4 +depthTex"
+     },
+     {
+      "name": "compositeTarget",
+      "format": "1920x1080 RGBA16F"
+     },
+     {
+      "name": "composer.read",
+      "format": "1920x1080 RGBA16F"
+     },
+     {
+      "name": "composer.write",
+      "format": "1920x1080 RGBA16F"
+     },
+     {
+      "name": "bloom.bright",
+      "format": "960x540 RGBA16F"
+     },
+     {
+      "name": "bloom.h0",
+      "format": "960x540 RGBA16F"
+     },
+     {
+      "name": "bloom.h1",
+      "format": "480x270 RGBA16F"
+     },
+     {
+      "name": "bloom.h2",
+      "format": "240x135 RGBA16F"
+     },
+     {
+      "name": "bloom.h3",
+      "format": "120x68 RGBA16F"
+     },
+     {
+      "name": "bloom.h4",
+      "format": "60x34 RGBA16F"
+     },
+     {
+      "name": "bloom.v0",
+      "format": "960x540 RGBA16F"
+     },
+     {
+      "name": "bloom.v1",
+      "format": "480x270 RGBA16F"
+     },
+     {
+      "name": "bloom.v2",
+      "format": "240x135 RGBA16F"
+     },
+     {
+      "name": "bloom.v3",
+      "format": "120x68 RGBA16F"
+     },
+     {
+      "name": "bloom.v4",
+      "format": "60x34 RGBA16F"
+     },
+     {
+      "name": "fog.volume",
+      "format": "960x540 RGBA16F"
+     },
+     {
+      "name": "shadow0",
+      "format": "1024x1024 RGBA8 +depthTex"
+     },
+     {
+      "name": "shadow1",
+      "format": "1024x1024 RGBA8 +depthTex"
+     },
+     {
+      "name": "shadow2",
+      "format": "1024x1024 RGBA8 +depthTex"
+     },
+     {
+      "name": "shadow3",
+      "format": "1024x1024 RGBA8 +depthTex"
+     }
+    ],
+    "programs": [
+     ":1",
+     ":1",
+     ":2",
+     ":5",
+     ":1",
+     ":1",
+     ":1",
+     ":61",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     "OutputShader:1",
+     "FXAAShader:1",
+     "unspecified:1"
+    ],
+    "spots": 16,
+    "shadowCasting": 4,
+    "meshes": 1281,
+    "casters": 1023,
+    "canvas": [
+     1920,
+     1080
+    ]
+   }
+  },
+  {
+   "config": {
+    "moving": true,
+    "name": "moving",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 64,
+   "fakedBeams": 0,
+   "frameMs": 17.042500001192096,
+   "batches": [
+    17.01500000357628,
+    17.06999999880791
+   ],
+   "cpuDrawMs": 16.5,
+   "drawCalls": 1329,
+   "triangles": 448046,
+   "quality": "desktop",
+   "scene": [
+    1920,
+    1080
+   ],
+   "display": [
+    1920,
+    1080
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     960,
+     540
+    ],
+    "steps": 48,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 4,
+    "meanDensity": 0.08068565359968084
+   },
+   "lights": {
+    "spotsVisible": 16,
+    "shadowMaps": 4,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 42,
+   "textures": 33,
+   "geometries": 1224,
+   "rounds": [
+    17.015000000596046,
+    17.09874999821186,
+    17.042500001192096
+   ],
+   "name": "moving",
+   "size": [
+    1920,
+    1080
+   ],
+   "fixtures": 128
+  },
+  {
+   "config": {
+    "fog": 0,
+    "delta": "fog (raymarch + composite)",
+    "name": "no-fog",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 64,
+   "fakedBeams": 0,
+   "frameMs": 11.76875,
+   "batches": [
+    11.792499995231628,
+    11.75750000476837
+   ],
+   "cpuDrawMs": 11.5,
+   "drawCalls": 1238,
+   "triangles": 262140,
+   "quality": "desktop",
+   "scene": [
+    1920,
+    1080
+   ],
+   "display": [
+    1920,
+    1080
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     960,
+     540
+    ],
+    "steps": 48,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 4,
+    "meanDensity": 0.08068565359968084
+   },
+   "lights": {
+    "spotsVisible": 16,
+    "shadowMaps": 4,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 42,
+   "textures": 33,
+   "geometries": 1224,
+   "rounds": [
+    11.76875,
+    11.734999999403954,
+    11.774999999999999
+   ],
+   "name": "no-fog",
+   "size": [
+    1920,
+    1080
+   ],
+   "fixtures": 128
+  },
+  {
+   "config": {
+    "shadows": 0,
+    "delta": "shadow maps + shadow sampling",
+    "name": "no-shadows",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 64,
+   "fakedBeams": 0,
+   "frameMs": 12.680000001192093,
+   "batches": [
+    12.677500003576279,
+    12.682499998807907
+   ],
+   "cpuDrawMs": 12.5,
+   "drawCalls": 1239,
+   "triangles": 262142,
+   "quality": "desktop",
+   "scene": [
+    1920,
+    1080
+   ],
+   "display": [
+    1920,
+    1080
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     960,
+     540
+    ],
+    "steps": 48,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 0,
+    "meanDensity": 0.08068565359968084
+   },
+   "lights": {
+    "spotsVisible": 16,
+    "shadowMaps": 0,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 43,
+   "textures": 33,
+   "geometries": 1224,
+   "rounds": [
+    12.616250002384186,
+    12.69500000178814,
+    12.680000001192093
+   ],
+   "name": "no-shadows",
+   "size": [
+    1920,
+    1080
+   ],
+   "fixtures": 128
+  },
+  {
+   "config": {
+    "spots": 0,
+    "delta": "forward spotlights in opaque shading",
+    "name": "no-spots",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 64,
+   "fakedBeams": 0,
+   "frameMs": 8.0625,
+   "batches": [
+    8.067499995231628,
+    8.115000003576279
+   ],
+   "cpuDrawMs": 7.799999952316284,
+   "drawCalls": 1239,
+   "triangles": 262142,
+   "quality": "desktop",
+   "scene": [
+    1920,
+    1080
+   ],
+   "display": [
+    1920,
+    1080
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     960,
+     540
+    ],
+    "steps": 48,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 4,
+    "meanDensity": 0.08068565359968084
+   },
+   "lights": {
+    "spotsVisible": 0,
+    "shadowMaps": 4,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 44,
+   "textures": 33,
+   "geometries": 1224,
+   "rounds": [
+    8.00125000178814,
+    8.0625,
+    8.091249999403953
+   ],
+   "name": "no-spots",
+   "size": [
+    1920,
+    1080
+   ],
+   "fixtures": 128
+  },
+  {
+   "config": {
+    "tier": "low",
+    "name": "tier-low",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 32,
+   "fakedBeams": 0,
+   "frameMs": 3.719999998807907,
+   "batches": [
+    3.782499998807907,
+    3.7474999964237212
+   ],
+   "cpuDrawMs": 3.649999976158142,
+   "drawCalls": 631,
+   "triangles": 153086,
+   "quality": "low",
+   "scene": [
+    566,
+    318
+   ],
+   "display": [
+    1920,
+    1080
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     186,
+     104
+    ],
+    "steps": 24,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 1,
+    "meanDensity": 0.08062863226048649
+   },
+   "lights": {
+    "spotsVisible": 16,
+    "shadowMaps": 1,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 42,
+   "textures": 27,
+   "geometries": 615,
+   "rounds": [
+    3.6962500005960464,
+    3.719999998807907,
+    3.7649999976158144
+   ],
+   "name": "tier-low",
+   "size": [
+    1920,
+    1080
+   ],
+   "fixtures": 128
+  },
+  {
+   "config": {
+    "name": "full",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 64,
+   "fakedBeams": 0,
+   "frameMs": 21.33250000178814,
+   "batches": [
+    21.4125,
+    21.37750000357628
+   ],
+   "cpuDrawMs": 20.799999952316284,
+   "drawCalls": 1197,
+   "triangles": 233126,
+   "quality": "desktop",
+   "scene": [
+    2385,
+    1342
+   ],
+   "display": [
+    2560,
+    1440
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     1192,
+     671
+    ],
+    "steps": 48,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 4,
+    "meanDensity": 0.08068565359968084
+   },
+   "lights": {
+    "spotsVisible": 16,
+    "shadowMaps": 4,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 42,
+   "textures": 33,
+   "geometries": 1182,
+   "rounds": [
+    21.263749998807906,
+    21.33250000178814,
+    21.39500000178814
+   ],
+   "name": "full",
+   "size": [
+    2560,
+    1440
+   ],
+   "fixtures": 64,
+   "inventory": {
+    "targets": [
+     {
+      "name": "sceneTarget",
+      "format": "2385x1342 RGBA16F MSAA4 +depthTex"
+     },
+     {
+      "name": "compositeTarget",
+      "format": "2385x1342 RGBA16F"
+     },
+     {
+      "name": "composer.read",
+      "format": "2385x1342 RGBA16F"
+     },
+     {
+      "name": "composer.write",
+      "format": "2385x1342 RGBA16F"
+     },
+     {
+      "name": "bloom.bright",
+      "format": "1193x671 RGBA16F"
+     },
+     {
+      "name": "bloom.h0",
+      "format": "1193x671 RGBA16F"
+     },
+     {
+      "name": "bloom.h1",
+      "format": "597x336 RGBA16F"
+     },
+     {
+      "name": "bloom.h2",
+      "format": "299x168 RGBA16F"
+     },
+     {
+      "name": "bloom.h3",
+      "format": "150x84 RGBA16F"
+     },
+     {
+      "name": "bloom.h4",
+      "format": "75x42 RGBA16F"
+     },
+     {
+      "name": "bloom.v0",
+      "format": "1193x671 RGBA16F"
+     },
+     {
+      "name": "bloom.v1",
+      "format": "597x336 RGBA16F"
+     },
+     {
+      "name": "bloom.v2",
+      "format": "299x168 RGBA16F"
+     },
+     {
+      "name": "bloom.v3",
+      "format": "150x84 RGBA16F"
+     },
+     {
+      "name": "bloom.v4",
+      "format": "75x42 RGBA16F"
+     },
+     {
+      "name": "fog.volume",
+      "format": "1192x671 RGBA16F"
+     },
+     {
+      "name": "shadow0",
+      "format": "1024x1024 RGBA8 +depthTex"
+     },
+     {
+      "name": "shadow1",
+      "format": "1024x1024 RGBA8 +depthTex"
+     },
+     {
+      "name": "shadow2",
+      "format": "1024x1024 RGBA8 +depthTex"
+     },
+     {
+      "name": "shadow3",
+      "format": "1024x1024 RGBA8 +depthTex"
+     }
+    ],
+    "programs": [
+     ":1",
+     ":1",
+     ":2",
+     ":5",
+     ":1",
+     ":1",
+     ":1",
+     ":59",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     "OutputShader:1",
+     "FXAAShader:1",
+     "unspecified:1"
+    ],
+    "spots": 16,
+    "shadowCasting": 4,
+    "meshes": 1277,
+    "casters": 1019,
+    "canvas": [
+     2560,
+     1440
+    ]
+   }
+  },
+  {
+   "config": {
+    "moving": true,
+    "name": "moving",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 64,
+   "fakedBeams": 0,
+   "frameMs": 21.70124999880791,
+   "batches": [
+    21.639999997615813,
+    21.825
+   ],
+   "cpuDrawMs": 21.149999976158142,
+   "drawCalls": 1266,
+   "triangles": 326374,
+   "quality": "desktop",
+   "scene": [
+    2385,
+    1342
+   ],
+   "display": [
+    2560,
+    1440
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     1192,
+     671
+    ],
+    "steps": 48,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 4,
+    "meanDensity": 0.08068565359968084
+   },
+   "lights": {
+    "spotsVisible": 16,
+    "shadowMaps": 4,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 42,
+   "textures": 33,
+   "geometries": 1182,
+   "rounds": [
+    21.70124999880791,
+    21.68125,
+    21.732499998807906
+   ],
+   "name": "moving",
+   "size": [
+    2560,
+    1440
+   ],
+   "fixtures": 64
+  },
+  {
+   "config": {
+    "fog": 0,
+    "delta": "fog (raymarch + composite)",
+    "name": "no-fog",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 64,
+   "fakedBeams": 0,
+   "frameMs": 14.32625000178814,
+   "batches": [
+    14.277500003576279,
+    14.375
+   ],
+   "cpuDrawMs": 14.099999904632568,
+   "drawCalls": 1196,
+   "triangles": 233124,
+   "quality": "desktop",
+   "scene": [
+    2385,
+    1342
+   ],
+   "display": [
+    2560,
+    1440
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     1192,
+     671
+    ],
+    "steps": 48,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 4,
+    "meanDensity": 0.08068565359968084
+   },
+   "lights": {
+    "spotsVisible": 16,
+    "shadowMaps": 4,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 42,
+   "textures": 33,
+   "geometries": 1182,
+   "rounds": [
+    14.342500001192093,
+    14.248750001192093,
+    14.32625000178814
+   ],
+   "name": "no-fog",
+   "size": [
+    2560,
+    1440
+   ],
+   "fixtures": 64
+  },
+  {
+   "config": {
+    "shadows": 0,
+    "delta": "shadow maps + shadow sampling",
+    "name": "no-shadows",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 64,
+   "fakedBeams": 0,
+   "frameMs": 16.508750000596045,
+   "batches": [
+    16.525,
+    16.517500001192094
+   ],
+   "cpuDrawMs": 16.350000023841858,
+   "drawCalls": 1197,
+   "triangles": 233126,
+   "quality": "desktop",
+   "scene": [
+    2385,
+    1342
+   ],
+   "display": [
+    2560,
+    1440
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     1192,
+     671
+    ],
+    "steps": 48,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 0,
+    "meanDensity": 0.08068565359968084
+   },
+   "lights": {
+    "spotsVisible": 16,
+    "shadowMaps": 0,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 43,
+   "textures": 33,
+   "geometries": 1182,
+   "rounds": [
+    16.36125000119209,
+    16.508750000596045,
+    16.521250000596048
+   ],
+   "name": "no-shadows",
+   "size": [
+    2560,
+    1440
+   ],
+   "fixtures": 64
+  },
+  {
+   "config": {
+    "spots": 0,
+    "delta": "forward spotlights in opaque shading",
+    "name": "no-spots",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 64,
+   "fakedBeams": 0,
+   "frameMs": 11.008750000596047,
+   "batches": [
+    11.027499997615815,
+    11.00750000476837
+   ],
+   "cpuDrawMs": 10.599999904632568,
+   "drawCalls": 1197,
+   "triangles": 233126,
+   "quality": "desktop",
+   "scene": [
+    2385,
+    1342
+   ],
+   "display": [
+    2560,
+    1440
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     1192,
+     671
+    ],
+    "steps": 48,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 4,
+    "meanDensity": 0.08068565359968084
+   },
+   "lights": {
+    "spotsVisible": 0,
+    "shadowMaps": 4,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 44,
+   "textures": 33,
+   "geometries": 1182,
+   "rounds": [
+    10.916249999403952,
+    11.008750000596047,
+    11.017500001192094
+   ],
+   "name": "no-spots",
+   "size": [
+    2560,
+    1440
+   ],
+   "fixtures": 64
+  },
+  {
+   "config": {
+    "tier": "low",
+    "name": "tier-low",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 32,
+   "fakedBeams": 0,
+   "frameMs": 3.1087500005960464,
+   "batches": [
+    3.1625,
+    3.055000001192093
+   ],
+   "cpuDrawMs": 2.6999999284744263,
+   "drawCalls": 623,
+   "triangles": 130382,
+   "quality": "low",
+   "scene": [
+    566,
+    318
+   ],
+   "display": [
+    2560,
+    1440
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     186,
+     104
+    ],
+    "steps": 24,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 1,
+    "meanDensity": 0.08062863226048649
+   },
+   "lights": {
+    "spotsVisible": 16,
+    "shadowMaps": 1,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 42,
+   "textures": 27,
+   "geometries": 607,
+   "rounds": [
+    3.0987500011920925,
+    3.1212500005960466,
+    3.1087500005960464
+   ],
+   "name": "tier-low",
+   "size": [
+    2560,
+    1440
+   ],
+   "fixtures": 64
+  },
+  {
+   "config": {
+    "name": "full",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 64,
+   "fakedBeams": 0,
+   "frameMs": 23.190000000596047,
+   "batches": [
+    23.1625,
+    23.217500001192093
+   ],
+   "cpuDrawMs": 23.09999990463257,
+   "drawCalls": 1239,
+   "triangles": 262142,
+   "quality": "desktop",
+   "scene": [
+    2385,
+    1342
+   ],
+   "display": [
+    2560,
+    1440
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     1192,
+     671
+    ],
+    "steps": 48,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 4,
+    "meanDensity": 0.08068565359968084
+   },
+   "lights": {
+    "spotsVisible": 16,
+    "shadowMaps": 4,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 42,
+   "textures": 33,
+   "geometries": 1223,
+   "rounds": [
+    23.083750000596048,
+    23.196250000596045,
+    23.190000000596047
+   ],
+   "name": "full",
+   "size": [
+    2560,
+    1440
+   ],
+   "fixtures": 128,
+   "inventory": {
+    "targets": [
+     {
+      "name": "sceneTarget",
+      "format": "2385x1342 RGBA16F MSAA4 +depthTex"
+     },
+     {
+      "name": "compositeTarget",
+      "format": "2385x1342 RGBA16F"
+     },
+     {
+      "name": "composer.read",
+      "format": "2385x1342 RGBA16F"
+     },
+     {
+      "name": "composer.write",
+      "format": "2385x1342 RGBA16F"
+     },
+     {
+      "name": "bloom.bright",
+      "format": "1193x671 RGBA16F"
+     },
+     {
+      "name": "bloom.h0",
+      "format": "1193x671 RGBA16F"
+     },
+     {
+      "name": "bloom.h1",
+      "format": "597x336 RGBA16F"
+     },
+     {
+      "name": "bloom.h2",
+      "format": "299x168 RGBA16F"
+     },
+     {
+      "name": "bloom.h3",
+      "format": "150x84 RGBA16F"
+     },
+     {
+      "name": "bloom.h4",
+      "format": "75x42 RGBA16F"
+     },
+     {
+      "name": "bloom.v0",
+      "format": "1193x671 RGBA16F"
+     },
+     {
+      "name": "bloom.v1",
+      "format": "597x336 RGBA16F"
+     },
+     {
+      "name": "bloom.v2",
+      "format": "299x168 RGBA16F"
+     },
+     {
+      "name": "bloom.v3",
+      "format": "150x84 RGBA16F"
+     },
+     {
+      "name": "bloom.v4",
+      "format": "75x42 RGBA16F"
+     },
+     {
+      "name": "fog.volume",
+      "format": "1192x671 RGBA16F"
+     },
+     {
+      "name": "shadow0",
+      "format": "1024x1024 RGBA8 +depthTex"
+     },
+     {
+      "name": "shadow1",
+      "format": "1024x1024 RGBA8 +depthTex"
+     },
+     {
+      "name": "shadow2",
+      "format": "1024x1024 RGBA8 +depthTex"
+     },
+     {
+      "name": "shadow3",
+      "format": "1024x1024 RGBA8 +depthTex"
+     }
+    ],
+    "programs": [
+     ":1",
+     ":1",
+     ":2",
+     ":5",
+     ":1",
+     ":1",
+     ":1",
+     ":61",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     ":1",
+     "OutputShader:1",
+     "FXAAShader:1",
+     "unspecified:1"
+    ],
+    "spots": 16,
+    "shadowCasting": 4,
+    "meshes": 1281,
+    "casters": 1023,
+    "canvas": [
+     2560,
+     1440
+    ]
+   }
+  },
+  {
+   "config": {
+    "moving": true,
+    "name": "moving",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 64,
+   "fakedBeams": 0,
+   "frameMs": 23.107499998807906,
+   "batches": [
+    23.13249999880791,
+    23.155000001192093
+   ],
+   "cpuDrawMs": 22.59999990463257,
+   "drawCalls": 1329,
+   "triangles": 448046,
+   "quality": "desktop",
+   "scene": [
+    2385,
+    1342
+   ],
+   "display": [
+    2560,
+    1440
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     1192,
+     671
+    ],
+    "steps": 48,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 4,
+    "meanDensity": 0.08068565359968084
+   },
+   "lights": {
+    "spotsVisible": 16,
+    "shadowMaps": 4,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 42,
+   "textures": 33,
+   "geometries": 1224,
+   "rounds": [
+    23.092500001192093,
+    23.107499998807906,
+    23.14375
+   ],
+   "name": "moving",
+   "size": [
+    2560,
+    1440
+   ],
+   "fixtures": 128
+  },
+  {
+   "config": {
+    "fog": 0,
+    "delta": "fog (raymarch + composite)",
+    "name": "no-fog",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 64,
+   "fakedBeams": 0,
+   "frameMs": 15.576249998807906,
+   "batches": [
+    15.535000002384185,
+    15.61749999523163
+   ],
+   "cpuDrawMs": 15.400000095367432,
+   "drawCalls": 1238,
+   "triangles": 262140,
+   "quality": "desktop",
+   "scene": [
+    2385,
+    1342
+   ],
+   "display": [
+    2560,
+    1440
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     1192,
+     671
+    ],
+    "steps": 48,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 4,
+    "meanDensity": 0.08068565359968084
+   },
+   "lights": {
+    "spotsVisible": 16,
+    "shadowMaps": 4,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 42,
+   "textures": 33,
+   "geometries": 1224,
+   "rounds": [
+    15.590000000596046,
+    15.526249998807906,
+    15.576249998807906
+   ],
+   "name": "no-fog",
+   "size": [
+    2560,
+    1440
+   ],
+   "fixtures": 128
+  },
+  {
+   "config": {
+    "shadows": 0,
+    "delta": "shadow maps + shadow sampling",
+    "name": "no-shadows",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 64,
+   "fakedBeams": 0,
+   "frameMs": 17.63125,
+   "batches": [
+    17.8,
+    17.8125
+   ],
+   "cpuDrawMs": 17.59999990463257,
+   "drawCalls": 1239,
+   "triangles": 262142,
+   "quality": "desktop",
+   "scene": [
+    2385,
+    1342
+   ],
+   "display": [
+    2560,
+    1440
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     1192,
+     671
+    ],
+    "steps": 48,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 0,
+    "meanDensity": 0.08068565359968084
+   },
+   "lights": {
+    "spotsVisible": 16,
+    "shadowMaps": 0,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 43,
+   "textures": 33,
+   "geometries": 1224,
+   "rounds": [
+    17.63125,
+    17.62874999940395,
+    17.80625
+   ],
+   "name": "no-shadows",
+   "size": [
+    2560,
+    1440
+   ],
+   "fixtures": 128
+  },
+  {
+   "config": {
+    "spots": 0,
+    "delta": "forward spotlights in opaque shading",
+    "name": "no-spots",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 64,
+   "fakedBeams": 0,
+   "frameMs": 11.64375,
+   "batches": [
+    11.897500002384186,
+    11.914999997615814
+   ],
+   "cpuDrawMs": 11.5,
+   "drawCalls": 1239,
+   "triangles": 262142,
+   "quality": "desktop",
+   "scene": [
+    2385,
+    1342
+   ],
+   "display": [
+    2560,
+    1440
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     1192,
+     671
+    ],
+    "steps": 48,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 4,
+    "meanDensity": 0.08068565359968084
+   },
+   "lights": {
+    "spotsVisible": 0,
+    "shadowMaps": 4,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 44,
+   "textures": 33,
+   "geometries": 1224,
+   "rounds": [
+    11.48624999821186,
+    11.64375,
+    11.90625
+   ],
+   "name": "no-spots",
+   "size": [
+    2560,
+    1440
+   ],
+   "fixtures": 128
+  },
+  {
+   "config": {
+    "tier": "low",
+    "name": "tier-low",
+    "frames": 40,
+    "repeats": 2
+   },
+   "meshes": 32,
+   "fakedBeams": 0,
+   "frameMs": 3.7712500005960465,
+   "batches": [
+    3.8125,
+    3.8150000035762788
+   ],
+   "cpuDrawMs": 3.6999999284744263,
+   "drawCalls": 631,
+   "triangles": 153086,
+   "quality": "low",
+   "scene": [
+    566,
+    318
+   ],
+   "display": [
+    2560,
+    1440
+   ],
+   "samples": 4,
+   "fog": {
+    "target": [
+     186,
+     104
+    ],
+    "steps": 24,
+    "mode": "raymarch",
+    "lights": 16,
+    "shadows": 1,
+    "meanDensity": 0.08062863226048649
+   },
+   "lights": {
+    "spotsVisible": 16,
+    "shadowMaps": 1,
+    "active": 16,
+    "lod": null
+   },
+   "programs": 42,
+   "textures": 27,
+   "geometries": 615,
+   "rounds": [
+    3.7712500005960465,
+    3.75,
+    3.813750001788139
+   ],
+   "name": "tier-low",
+   "size": [
+    2560,
+    1440
+   ],
+   "fixtures": 128
+  }
+ ],
+ "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Pro, Unspecified Version)",
+ "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36",
+ "errors": [],
+ "finishedAt": "2026-11-27T05:35:40.617Z"
+}
