@@ -359,7 +359,7 @@
           (when (and (< n 400) (not (realized? reply)))
             (Thread/sleep 5)
             (recur (inc n))))
-        (is (= :accepted (:status @reply))))
+        (is (= :accepted (:status (deref reply 0 nil)))))
       (settle!)
       (next!)
       (is (= 2 (:effect-version (first (vals (get-in @(:state rt) [:model :instances]))))))

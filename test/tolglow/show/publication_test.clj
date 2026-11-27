@@ -66,7 +66,12 @@
 
 (defn- model [s] (:model @(:state (:rt s))))
 
-(defn- ack [reply] (when (realized? reply) (dissoc @reply :revision :command-id)))
+(defn- receipt
+  "The reply's receipt, or nil while the owner has not answered it."
+  [reply]
+  (deref reply 0 nil))
+
+(defn- ack [reply] (some-> (receipt reply) (dissoc :revision :command-id)))
 
 (defn- calls-since! [{:keys [calls]}]
   (let [seen @calls] (reset! calls []) (frequencies seen)))
@@ -125,7 +130,7 @@
           (work! s)
           (tick! s 75)
           (is (= [:accepted :accepted] [(:status (ack published)) (:status (ack cue))]))
-          (is (< (:revision @published) (:revision @cue)) "Committed in submission order")
+          (is (< (:revision (receipt published) 0) (:revision (receipt cue) -1)) "Committed in submission order")
           (is (= 2 (get-in (model s) [:registry :cues :pinned :effect-version])))
           (is (= {[:worker :validate] 1 [:worker :compile] 1} (calls-since! s)))))
       (finally (show/stop! (:rt s))))))
@@ -146,7 +151,7 @@
           (work! s)
           (tick! s 50)
           (is (= :accepted (:status (ack second-reply))))
-          (is (= [2 3] [(:version @first-reply) (:version @second-reply)]))
+          (is (= [2 3] [(:version (receipt first-reply)) (:version (receipt second-reply))]))
           (is (= "Again" (get-in (model s) [:registry :effects :probe :name])))
           (is (= {[:worker :validate] 3 [:worker :compile] 3} (calls-since! s))
               "Nothing is validated or compiled on the owner")))
