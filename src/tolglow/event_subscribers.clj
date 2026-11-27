@@ -21,13 +21,14 @@
             [tolglow.lighting-levels :as lighting-levels]))
 
 (def actions [:lighting/scene :cue/launch :effect/launch :instance/end :instance/kill :instance/opacity
-              :param/set :param/ramp :master/set :blackout/set :variable/set :macro/run :macro/stop :callback])
+              :param/set :param/ramp :master/set :blackout/set :variable/set :macro/run :macro/stop :callback
+              :auto/configure])
 
 (def categories
   "Display category for each action type, shared by Studio, Push, REPL and agents."
   {:lighting/scene :scene :cue/launch :cue :effect/launch :cue :instance/end :instance :instance/kill :instance
    :instance/opacity :instance :param/set :param :param/ramp :ramp :master/set :master :blackout/set :master
-   :variable/set :variable :macro/run :macro :macro/stop :macro :callback :callback})
+   :variable/set :variable :macro/run :macro :macro/stop :macro :callback :callback :auto/configure :auto})
 
 (def operations
   "Owner domain commands: schedule edits, validated show-variable writes and
@@ -35,6 +36,11 @@
   #{:schedule/post :schedule/cancel :schedule/move :variable/set :macro/run :macro/stop})
 
 (def ^:private timing-keys #{:delay :at :in :grid})
+
+(def host-operations
+  "Actions the show owner applies with a handler it passes to advance: an auto
+  configure needs the planner, which this namespace cannot depend on."
+  #{:auto/configure})
 
 (def ^:private instance-ops #{:instance/end :instance/kill :instance/opacity})
 
@@ -140,6 +146,7 @@
                                          (:master/set :blackout/set) #{:op :value}
                                          :variable/set #{:op :variable :value}
                                          (:macro/run :macro/stop) #{:op :macro-id}
+                                         :auto/configure #{:op :request}
                                          #{:op :select}))))
          "Unknown event action or option" {:op op})
   (check (<= (count (filter #(contains? action %) timing-keys)) 1)
@@ -181,6 +188,9 @@
     (check (boolean? value) "Blackout must be true or false" {}))
   (when (#{:macro/run :macro/stop} op)
     (check (identifier? (:macro-id action)) "A macro action needs a macro ID" {}))
+  (when (= :auto/configure op)
+    (check (and (map? (:request action)) (registry/data? (:request action)) (not-any? timing-keys (keys (:request action))))
+           "An auto configure carries its request as portable data, with its timing outside it" {}))
   (when (#{:param/set :param/ramp :variable/set} op)
     (let [target (destination-target action)
           level (if (= op :param/ramp) (:to action) value)]
@@ -256,6 +266,10 @@
                          (or (identifier? pattern) (integer? pattern) (uuid? pattern)))))
               (vector? actions) (<= 1 (count actions) 32))
          "Invalid event subscriber definition" {:id id})
+  ;; Auto changes are scheduled on a line, never repeated by a subscriber: one
+  ;; would restart auto behind an operator's Stop on every trigger (#767).
+  (check (not-any? #(contains? #{:auto/configure "auto/configure"} (:op %)) actions)
+         "An auto configure is scheduled with :at, not run by a subscriber" {:id id})
   (run! validate-action actions)
   registration)
 
@@ -345,7 +359,9 @@
       (if (neg? n) f (inc f)))
     q))
 
-(defn- position-beat [at meter]
+(defn position-beat
+  "Beat of a zero-based {:beat :bar :phrase} position in meter."
+  [at meter]
   (let [{:keys [beats-per-bar bars-per-phrase]} (time/normalize-meter meter)]
     (+ (:beat at 0) (* (:bar at 0) beats-per-bar) (* (:phrase at 0) beats-per-bar bars-per-phrase))))
 
@@ -626,11 +642,17 @@
 
 (defn- submit-command
   "Admit one command through the shared reducer: schedule/variable/macro
-  operations as domain commands, everything else through spatial/apply-command."
-  [model cmd]
-  (if (operations (:op cmd))
-    (control/apply-domain-command model cmd apply-operation)
-    (spatial/apply-command model cmd)))
+  operations as domain commands, a host operation through the handler the
+  owner supplied in host, everything else through spatial/apply-command."
+  ([model cmd] (submit-command model cmd nil))
+  ([model cmd host]
+   (cond
+     (operations (:op cmd)) (control/apply-domain-command model cmd apply-operation)
+     (host-operations (:op cmd))
+     (if-let [handler (get host (:op cmd))]
+       (control/apply-domain-command model cmd handler)
+       {:model model :ack {:status :rejected :message "Only the show owner can apply this action"}})
+     :else (spatial/apply-command model cmd))))
 
 (defn- commit-ramp
   "Write a ramp's value to its destination through the shared reducer: the
@@ -800,9 +822,10 @@
 (defn- apply-step
   "Admit one step command. A destination names the ramp an accepted write
   replaces; a rejected write leaves that ramp running."
-  ([model run base cmd-id cmd] (apply-step model run base cmd-id cmd nil))
-  ([model run base cmd-id cmd destination]
-   (let [result (submit-command model (merge base cmd {:command-id cmd-id}))]
+  ([model run base cmd-id cmd] (apply-step model run base cmd-id cmd nil nil))
+  ([model run base cmd-id cmd destination] (apply-step model run base cmd-id cmd destination nil))
+  ([model run base cmd-id cmd destination host]
+   (let [result (submit-command model (merge base cmd {:command-id cmd-id}) host)]
      (if (= :accepted (get-in result [:ack :status]))
        (cond-> (:model result) destination (supersede destination (run-event-id run)))
        (report model run (get-in result [:ack :message] "Action rejected"))))))
@@ -838,12 +861,14 @@
     [model (when (< stop (count targets)) (assoc run :targets targets :offset stop))
      (- budget (max 1 (- stop offset)))]))
 
-(defn- perform-global [model run action now]
+(defn- perform-global [model run action now host]
   (let [base (command-base model run now)
         cmd-id (command-id model run 0)
         target (destination-target action)
         value (:value action)]
     (case (:op action)
+      ;; The owner's handler commits it before the planner decides on this frame.
+      :auto/configure (apply-step model run base cmd-id {:op :auto/configure :request (:request action)} nil host)
       :blackout/set (apply-step model run base cmd-id {:op :blackout/set :value value})
       ;; Macros run as owner commands with the poster's source in the receipt.
       (:macro/run :macro/stop) (apply-step model run base cmd-id {:op (:op action) :macro-id (:macro-id action)})
@@ -855,7 +880,7 @@
         :variable (apply-step model run base cmd-id {:op :variable/set :variable (:variable action) :value value}
                               {:target :variable :variable (:variable action)})))))
 
-(defn- perform [model run action now budget]
+(defn- perform [model run action now budget host]
   (cond
     (= :lighting/scene (:op action))
     [(try
@@ -880,7 +905,7 @@
     (or (contains? action :select) (#{:cue/launch :effect/launch} (:op action)) (instance-ops (:op action)))
     (select-and-perform model run action now budget)
 
-    :else [(perform-global model run action now) nil (dec budget)]))
+    :else [(perform-global model run action now host) nil (dec budget)]))
 
 (defn- following [run meter]
   (let [i (inc (:index run))]
@@ -912,6 +937,7 @@
                     :at-beat (double (get-in model [:transport :beat] 0)) :time-ms (:time-ms model)
                     :source (if scheduled (:source scheduled) (run-source run))}
              (:label scheduled) (assoc :label (:label scheduled))
+             (:late-beats scheduled) (assoc :late? true :late-beats (:late-beats scheduled))
              (:subscriber run) (assoc :subscriber-id (:subscriber run)))
            extra)))
 
@@ -922,7 +948,7 @@
                                  (when-not (identical? error before) {:message (:message error)}))))
     model))
 
-(defn- advance-runs [model now results]
+(defn- advance-runs [model now results host]
   (if-not (seq (get-in model [:event-subscribers :runs])) model
     (let [meter (get-in model [:transport :meter]) beat (get-in model [:transport :beat])
           ;; Due order, then admission order. The queue is rewritten in due order each
@@ -944,7 +970,7 @@
                     (try
                       (if callback?
                         (let [[model updated] (callback-result model run result)] [model (following updated meter) (dec budget) false])
-                        (let [[model remainder budget] (perform model run action now budget)]
+                        (let [[model remainder budget] (perform model run action now budget host)]
                           [model (or remainder (following run meter)) budget (some? remainder)]))
                       (catch Throwable error
                         [(report model run (.getMessage error) (error-details error)) nil (dec budget) false]))
@@ -956,9 +982,11 @@
   "Apply up to 128 commands per cycle, then settle ramp lifecycles. A large
   :all selection keeps its exact candidate list and cursor across ticks. Other
   runs can progress during a callback. Due runs fire in due-beat order, then in
-  admission order."
-  [model now results]
-  (-> (advance-runs model now results) (advance-ramps now)))
+  admission order. host maps a host operation (host-operations) to the
+  owner's [model command] handler; without one such a step is rejected."
+  ([model now results] (advance model now results nil))
+  ([model now results host]
+   (-> (advance-runs model now results host) (advance-ramps now))))
 
 ;; Scheduling commands -----------------------------------------------------
 
@@ -1033,11 +1061,14 @@
     (check (map? event) "An event must be a map" {})
     (let [id (id-text (or (:id event) (str (:command-id command) "/" index)))
           label (:label event)
-          action (->> (validate-action (normalize-action (dissoc event :id :label)))
+          late (:late-beats event)
+          action (->> (validate-action (normalize-action (dissoc event :id :label :late-beats)))
                       (resolve-references model))]
       (check (identifier? id) "Event ID must be a keyword or nonblank string" {})
       (check (or (nil? label) (and (string? label) (<= (count label) 128))) "Label must be text up to 128 characters" {})
       (check (not= :callback (:op action)) "Scheduled events use built-in actions; register middleware as a subscriber" {})
+      (check (or (nil? late) (and (= :auto/configure (:op action)) (registry/finite-number? late) (pos? late)))
+             "Only an auto configure that arrived after its line carries :late-beats" {})
       (check-authority (:source command) action)
       (check-protected model (:source command) action)
       (check-references model action)
@@ -1046,7 +1077,7 @@
                (str "Position " (position-text (:at action)) " (beat " (double due) ") has already passed; the transport is at beat "
                     (double beat) ". Positions are zero-based: {:bar 0} is the first bar.")
                {:due-beat due :beat beat})
-        {:id id :label label :action action :due due :anchor anchor}))
+        {:id id :label label :action action :due due :anchor anchor :late late}))
     (catch clojure.lang.ExceptionInfo error
       (throw (ex-info (str "Event " index ": " (.getMessage error))
                       {:index index :errors [{:path [:events index] :message (.getMessage error)}]})))))
@@ -1070,7 +1101,7 @@
            "The schedule is full" {:limit scheduled-limit})
     {:event-ids ids
      :due-beats (mapv (comp double :due) prepared)
-     :model (reduce (fn [m {:keys [id label action due anchor]}]
+     :model (reduce (fn [m {:keys [id label action due anchor late]}]
                       (let [serial (inc (get-in m [:event-subscribers :next-run]))]
                         (-> m
                             (assoc-in [:event-subscribers :next-run] serial)
@@ -1080,7 +1111,8 @@
                                         :scheduled (cond-> {:event-id id :source (portable-source source)
                                                             :category (get categories (:op action))
                                                             :command-id command-id :posted-beat (double beat)}
-                                                     label (assoc :label label))}))))
+                                                     label (assoc :label label)
+                                                     late (assoc :late-beats (double late)))}))))
                     (assoc model :event-subscribers (merge empty-state s)) prepared)}))
 
 (defn- action-destination [action]
@@ -1153,6 +1185,20 @@
     {:model (-> (remove-ramps model ramp-hit? :cancelled {:reason reason})
                 (hold-ramps stopped (:time-ms request (:time-ms model 0))))
      :event-ids (vec (distinct (concat (map run-event-id gone) (map :event-id stopped))))}))
+
+(defn withdraw
+  "Cancel the pending scheduled events whose action is one of ops, recording
+  reason. A human operator surface, or a requester with no source (the show's
+  own REPL call), withdraws them all; any other requester only those it
+  posted, as cancel allows. Returns {:model .. :event-ids [..]}."
+  [model ops reason source]
+  (let [may? (if (or (nil? source) (human-source? source)) (constantly true) #(owner? source %))
+        hit? #(and (:scheduled %) (contains? ops (:op (get (:steps %) (:index %))))
+                   (may? (get-in % [:scheduled :source])))
+        {gone true kept false} (group-by (comp boolean hit?) (get-in model [:event-subscribers :runs] []))]
+    {:model (reduce #(remember %1 (run-entry %1 %2 :cancelled {:reason reason}))
+                    (cond-> model (seq gone) (assoc-in [:event-subscribers :runs] (vec kept))) gone)
+     :event-ids (mapv run-event-id gone)}))
 
 (defn move
   "Reschedule one pending event to new timing: {:event-id .. :at|:in|:grid ..}.
@@ -1298,6 +1344,7 @@
 (defn- action-summary [action]
   (cond-> (select-keys action [:param :variable :to :over :curve :value :select :macro-id :at :in :grid :delay])
     (destination-target action) (assoc :target (destination-target action))
+    (= :auto/configure (:op action)) (assoc :enabled? (true? (get-in action [:request :enabled?])))
     (:select action) (update :select select-keys [:ids :categories :page-id :pick])))
 
 (defn- upcoming-entry [run]
@@ -1310,8 +1357,16 @@
                     :step (:index run) :steps (count (:steps run))
                     :source (if scheduled (:source scheduled) (run-source run))}
              (:label scheduled) (assoc :label (:label scheduled))
+             (:late-beats scheduled) (assoc :late-beats (:late-beats scheduled))
              (:posted-beat scheduled) (assoc :posted-beat (:posted-beat scheduled))
              (:subscriber run) (assoc :subscriber-id (:subscriber run))))))
+
+(defn upcoming
+  "Pending scheduled events whose action is op, in due order, as the schedule
+  view lists them."
+  [model op]
+  (into [] (comp (filter #(and (:scheduled %) (= op (:op (get (:steps %) (:index %)))))) (map upcoming-entry))
+        (sort-by (juxt :due-beat :id) (:runs (state model)))))
 
 (defn- ramp-view [ramp]
   (-> (select-keys ramp [:event-id :label :source :category :destination :from :to :curve :unit :over])

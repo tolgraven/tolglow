@@ -302,10 +302,10 @@
                                  (deref finish-stop 5000 nil)
                                  work))
                              #'sub/advance
-                             (fn [model time-ms results]
+                             (fn [model time-ms results & host]
                                (deliver frame-ready true)
                                (deref finish-frame 5000 nil)
-                               (advance model time-ms results))}
+                               (apply advance model time-ms results host))}
               (fn []
                 (let [stop-call (future (show/audio-action! runtime :stop {}))
                       due-frame (future

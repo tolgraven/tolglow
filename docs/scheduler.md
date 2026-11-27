@@ -62,6 +62,7 @@ in `cue_timing`. A cue launch with `:at` or `:in` uses this queue.
 | `:blackout/set` | `:value` boolean | Blackout on or off |
 | `:variable/set` | `:variable`, `:value` | Write a show variable (`[:variables k]`) |
 | `:macro/run`, `:macro/stop` | `:macro-id` | Start or stop a saved macro or sequence |
+| `:auto/configure` | `:request` (an [auto](auto-show.md) request) | Configure auto mode on its line, before auto decides on that frame. Usually posted by an auto request with `:at` |
 | `:lighting/scene`, `:callback` | As in [event subscribers](event-subscribers.md) | Subscriber-only. A scheduled event uses built-in actions |
 
 `:cue-id`, `:effect-id` and `:instance-id` are shorthand for `:select {:ids
@@ -179,6 +180,20 @@ These are operator defaults:
   explicit.
 - A scheduled `:macro/run` or `:macro/stop` runs as a domain command carrying the
   poster's source, so the receipt records who started the macro.
+- A scheduled `:auto/configure` is checked against the show when it is posted
+  and again when it is due, when its first decision is committed as that
+  frame's decision. The show owner applies it through the same path as an
+  immediate auto request. This
+  namespace only carries it, so without the owner's handler it is rejected. A
+  request the show refuses when due is recorded as `:rejected` with its
+  message, and auto mode and its looks stay as they were. One posted less
+  than a bar after its position fires at once, and its outcome carries
+  `:late? true :late-beats`; a bar or more is refused. Only that policy sets
+  the marker. It is scheduler-only: a subscriber definition
+  with it is refused. An
+  immediate **Stop auto** withdraws the pending auto changes its sender may
+  cancel (`:reason :auto-stopped`), so a change waiting on its line cannot
+  start auto again.
 
 ## Commands
 

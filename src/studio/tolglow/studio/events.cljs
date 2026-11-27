@@ -1468,6 +1468,34 @@
 (defn auto-keeps-plan? [db]
   (and (some? (auto-plan db)) (get-in db [:ui :auto-form :keep-plan?] true)))
 
+(def auto-lines
+  "When Start and Stop take effect: now, or on the next bar, phrase or auto
+  section line, as the REPL's and agent's :at (#767)."
+  [["now" "Now"] ["next-bar" "Next bar"] ["next-phrase" "Next phrase"] ["next-section" "Next section line"]])
+
+(defn auto-at
+  "The :at Start and Stop send, or nil to apply now. A section line chosen
+  while no section plays is still sent, so the show refuses it with its
+  reason, as it does for the REPL and agents, rather than applying now."
+  [db]
+  (let [line (get-in db [:ui :auto-form :applies] "now")]
+    (when-not (= "now" line) line)))
+
+(defn- auto-request [db body]
+  (let [at (auto-at db)]
+    (cond-> body
+      at (assoc :at at :source {:adapter "web" :session-id (:session db)}))))
+
+(defn auto-pending-text
+  "One line per auto change waiting on its line, with its zero-based position."
+  [db]
+  (let [per-bar (get-in db [:show :transport :meter :beats-per-bar] 4)]
+    (mapv (fn [{:keys [label due-beat]}]
+            (let [bar (js/Math.floor (/ (+ due-beat 1e-6) per-bar))
+                  beat (- due-beat (* bar per-bar))]
+              (str label " at bar " bar (when (> (js/Math.abs beat) 1e-6) (str " beat " (.toFixed beat 2))))))
+          (get-in db [:show :auto :pending]))))
+
 (def ^:private auto-reason-text
   {:eligible "chose cues" :added-emission "added light for a moving cue"
    :intentional-darkness "moving in darkness" :unsatisfied-emission "nothing in scope lights the moving heads"
@@ -1496,18 +1524,21 @@
           randomize? (auto-varies? db)
           {:keys [enabled? target]} (auto-activity db)]
       {:studio/http {:path "/api/auto"
-                     :body (cond-> {:enabled? true :interval (musical-duration interval-value interval-unit) :count count
-                                    :scope (if (= scope "all") "all" {:page-id (get-in db [:ui :page-id])})
-                                    :launch {:mode mode :duration (musical-duration duration-value duration-unit)}
-                                    :seed (or seed (get-in db [:show :auto :config :seed]) 42)}
-                             enabled? (assoc :activity-target target)
-                             randomize? (assoc :randomize {:params "marked"})
-                             (auto-keeps-plan? db) (assoc :keep-plan? true))
-                     :on-success [:studio/success "Auto mode started. You can keep playing alongside it."]}})))
+                     :body (auto-request db
+                             (cond-> {:enabled? true :interval (musical-duration interval-value interval-unit) :count count
+                                      :scope (if (= scope "all") "all" {:page-id (get-in db [:ui :page-id])})
+                                      :launch {:mode mode :duration (musical-duration duration-value duration-unit)}
+                                      :seed (or seed (get-in db [:show :auto :config :seed]) 42)}
+                               enabled? (assoc :activity-target target)
+                               randomize? (assoc :randomize {:params "marked"})
+                               (auto-keeps-plan? db) (assoc :keep-plan? true)))
+                     :on-success [:studio/success (if (auto-at db)
+                                                    "Auto mode starts on the line. You can keep playing alongside it."
+                                                    "Auto mode started. You can keep playing alongside it.")]}})))
 (rf/reg-event-fx :studio/auto-stop
   (fn [{:keys [db]} _]
-    {:studio/http {:path "/api/auto" :body (cond-> {:enabled? false} (auto-keeps-plan? db) (assoc :keep-plan? true))
-                   :on-success [:studio/success "Auto mode stopped."]}}))
+    {:studio/http {:path "/api/auto" :body (auto-request db (cond-> {:enabled? false} (auto-keeps-plan? db) (assoc :keep-plan? true)))
+                   :on-success [:studio/success (if (auto-at db) "Auto mode stops on the line." "Auto mode stopped.")]}}))
 
 (defn response-definition [db]
   (let [{:keys [id params scope attack-value decay-value sustain release-value unit curve]

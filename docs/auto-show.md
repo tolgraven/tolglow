@@ -23,7 +23,8 @@ In Studio, open **Perform → Tools → Let it wander**. **Every**, **Cues per
 step**, **Choose from** (current page or every page), **Launch as** and **Cue
 duration** fill the same fields. **Start auto** and **Stop auto** send the same
 `:auto` request through `POST /api/auto`. An agent uses the `configure_auto`
-tool. A config the planner refuses comes back as `:status :rejected` with the
+tool. A request applies when it arrives, or on a musical line with `:at` (see
+[on a musical line](#on-a-musical-line)). A config the planner refuses comes back as `:status :rejected` with the
 first problem in the message, for example `Invalid auto config: Count must be
 an integer from 1 to 64 at [:count]`; the committed config is left as it was.
 
@@ -42,12 +43,92 @@ length) by one rule
 follows another starts where the previous one fell due, so a decision that
 fires on the first frame after its line does not push later decisions off the
 beat. A timer with nothing on the grid to follow (a start, a changed interval,
-a gap, a seek or loop that shifted it off the grid) ends on the first grid line
-at least its length less half a step away: its first run is within half a step
-of its length and never falls due on the next frame. A decision still fires on
+a gap, or the end of an interval that a seek or loop shifted off the grid)
+ends on the first grid line at least its length less half a step away: its
+first run is within half a step of its length and never falls due on the next
+frame. A seek or loop moves the running interval with the clock, so that
+interval finishes once at the progress it kept, off the grid; the next one
+re-anchors. A decision still fires on
 the first frame at or after its line, so it is up to one frame late. A stopped transport
 makes no decision and holds every timer, so play resumes where the plan was,
 without a burst of catch-up launches.
+
+## On a musical line
+
+A request applies when it arrives unless it carries `:at`. With `:at` it waits
+on the [beat scheduler](scheduler.md) as an `:auto/configure` event and the show
+owner applies it on the first frame at or past its line, before auto decides
+on that frame. A mood change for a section therefore lands on the downbeat:
+the previous settings make no decision on the line and the new ones none
+before it ([#767](https://github.com/tolgraven/tolglow/issues/767)).
+
+```clojure
+@(show/submit! runtime :auto (assoc (red-show/auto-config 218) :at {:bar 16}))
+;; => {:status :accepted :scheduled? true :event-ids ["auto/…/0"] :due-beats [64.0] …}
+@(show/submit! runtime :auto {:enabled? false :at :next-phrase})
+(get-in (show/snapshot runtime) [:auto :pending])
+;; => [{:event-id "auto/…/0" :label "Auto configure" :due-beat 64.0 :enabled? true :source {…}} …]
+@(show/submit! runtime :command {:op :schedule/cancel :event-ids ["auto/…/0"]})
+```
+
+`:at` takes a zero-based position (`{:bar n}`, `{:beat n}`, `{:phrase n}` or a
+sum of them) or one of `:next-bar`, `:next-phrase` and `:next-section`, the end
+of the auto section now playing (refused when no section plays). JSON clients
+send the words as text. `:event-id` and `:label` name the event.
+
+A request is checked when it is posted, against the config it would install
+(with `:keep-plan?`, the plan saved then). It is checked again when it
+applies, against the plan saved at that point. Its new session's first
+decision is made then and committed as that frame's decision, so the frame
+plans once. A request refused then, by validation or by the planner, is
+recorded as `:rejected` in the schedule's recent outcomes, and auto mode and
+its looks stay as they were. On the red show the due frame's owner tick took
+a median 1.41–1.58 ms over 15 runs, against 1.38 ms with no planning on the
+change path (ordinary frames 0.17–0.18 ms; captured output, this M4 Pro at
+load 1.5).
+
+**Late changes** (operator policy). A position that has already passed by less
+than one bar applies at once, before auto decides on that frame. Its receipt
+and its recent outcome carry `:late? true` and `:late-beats`. A position a bar
+or more behind is refused as already passed. The same policy applies to an
+`auto/configure` posted through `schedule_events`, and only the policy marks a
+change late: a post that supplies `:late-beats` or `:late?` is refused.
+
+A pending change behaves like any scheduled event:
+
+- It holds while the transport is stopped and fires at its beat after play
+  resumes, never caught up.
+- A seek or loop moves a `:next-section` change with the section timer, so it
+  stays on the section line. A seek past a position reports the change missed.
+  A next-bar or next-phrase line re-quantizes from the new position.
+- It is saved with the show and listed by `show/schedule`, Studio's timeline
+  and `inspect_schedule`. A show saved, or a recovery checkpoint written, while
+  a change is pending does not restore on a build that predates
+  `:auto/configure`.
+- It is cancelled by event ID. An agent cancels what its conversation posted,
+  in any turn: an agent source is `{:adapter :agent :session-id
+  <conversation-id> :run-id <run-id>}`.
+- A subscriber cannot run `:auto/configure`. A subscriber would restart auto
+  behind an operator's Stop on every trigger.
+
+Each auto session is named deterministically: `sched/<epoch>/<run>/0` for a
+scheduled change, `auto/<epoch>/<revision>` for an immediate one. A replay
+gives the same names. Several changes due on the same frame apply in the order
+they were posted.
+
+An immediate **Stop auto** withdraws the pending auto changes its sender may
+cancel: from Studio or the REPL, all of them; from an agent, its
+conversation's. The receipt lists them in `:withdrawn-event-ids` and any that
+still wait in `:pending-event-ids`, so nothing waiting on a line starts auto
+again unannounced. An immediate start leaves pending changes waiting.
+
+In Studio, **Start or stop** chooses **Now**, **Next bar**, **Next phrase** or
+**Next section line** (offered while a plan section plays; the projection gives
+its end as `:section-end-beat`; chosen while none plays, the show refuses it, as
+it does for the REPL). Pending changes are listed under the buttons
+with their position and a **Cancel** button. An agent passes `configure_auto`
+an `at` beside its `configuration`, for example `{"configuration": {...},
+"at": {"bar": 16}}` or `"at": "next-bar"`.
 
 ## Settings
 
@@ -198,6 +279,17 @@ discards ownership and the section, and the next decision starts a new one.
   covers domains, seeded replay, takeover, yielding, categories, lit limits,
   section boundaries and the R1o scenario through the real show owner with
   captured DMX at 120 BPM, including a Push-sourced performer and a transport stop.
+- `lein test tolglow.automation.configure-at-test` runs auto changes with `:at`
+  through the real show owner: a change on bar 2 lands on the first frame past
+  it with no launch of the previous mood from the line and none of the new one
+  before it, a pending change holds across a stop and fires once on its beat
+  after resume, positions and next bar, phrase and section lines resolve,
+  refusals leave nothing scheduled, an immediate stop withdraws a pending change
+  and reports what still waits, the agent tool posts, lists and withdraws its
+  own (across turns of one conversation, not another conversation's), a
+  change arriving a beat after its line applies at once marked late while one
+  a bar late is refused, a `:next-section` change stays on the section line
+  across seeks of ±2 beats, and a subscriber cannot carry an auto change.
 - `lein with-profile +dev run -m tolglow.qa.auto-show-browser` runs the
   optimized Studio in headless Chrome against the red-show example: a REPL plan
   reaching the panel, a Studio start that keeps it, refusals on both sides and a

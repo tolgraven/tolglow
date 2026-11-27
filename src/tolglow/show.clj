@@ -293,8 +293,14 @@
                                            #(mapv (fn [[[x y] cue]] {:x x :y y :cue-id cue})
                                                   (sort-by key %)))) (sort-by (comp str :id) (vals (:pages model))))
             :recent-page (recent-page-snapshot model)
-            :auto (cond-> (select-keys (:auto model) [:enabled? :config :reasons])
-                    (get-in model [:auto :state :section]) (assoc :section (get-in model [:auto :state :section :id])))
+            :auto (let [{:keys [started-at duration]} (get-in model [:auto :state :section :timer])
+                        pending (subscribers/upcoming model :auto/configure)]
+                    (cond-> (select-keys (:auto model) [:enabled? :config :reasons])
+                      (get-in model [:auto :state :section]) (assoc :section (get-in model [:auto :state :section :id]))
+                      ;; The beat the playing section ends: the line :next-section waits for.
+                      (and (number? started-at) (= :beats (:unit duration)))
+                      (assoc :section-end-beat (double (+ started-at (:value duration))))
+                      (seq pending) (assoc :pending (mapv #(select-keys % [:event-id :label :due-beat :enabled? :source]) pending))))
             :responses (vec (:responses model))
             :effect-group-channels (group-channels/projection model)
             :control-surfaces (surface/with-refusals (surface/projection model) ; surfaces, links, session boxes (#705)
@@ -1145,6 +1151,183 @@
         (reset! state nil)))
     result))
 
+(def ^:private auto-envelope-keys
+  "Request keys that say when and for whom an auto configure applies, not how
+  auto mode plays."
+  [:expected-epoch :runtime-id :at :event-id :label :command-id :source])
+
+(defn- auto-request
+  "The config an auto request installs on model, checked against the show:
+  {:config .. :enabled? ..}. Studio's start and stop keep a plan authored at
+  the REPL (#217). Throws when an enabled config is invalid or names a page or
+  cue the show does not have."
+  [model request]
+  (let [enabled? (true? (:enabled? request))
+        requested (policy/normalize-config (dissoc request :enabled? :seed :keep-plan?))
+        config (if (:keep-plan? request)
+                 (policy/keep-plan (get-in model [:auto :config]) requested enabled?)
+                 requested)]
+    (when enabled?
+      ;; Section scopes are checked here too, not first when a section begins.
+      (when-let [{:keys [path message]} (first (concat (policy/validate-references model config)
+                                                       (policy/validate-config config)))]
+        (throw (ex-info (str "Invalid auto config: " message (when (seq path) (str " at " (pr-str path))))
+                        {:config config}))))
+    {:config config :enabled? enabled?}))
+
+(defn- configure-auto
+  "Install an auto request now: end the looks the previous session still
+  owns, then start a new session named owner-id. Returns the model with the
+  installed :config, :enabled? and :state."
+  [model request time-ms owner-id]
+  (let [{:keys [config enabled?]} (auto-request model request)
+        old-state (get-in model [:auto :state])
+        model (if old-state
+                (reduce (fn [m c] (:model (command m c time-ms))) model
+                        (:commands (policy/stop-plan model old-state time-ms)))
+                model)
+        state (when enabled? (policy/initial-state (:seed request 0) time-ms owner-id))]
+    {:config config :enabled? enabled? :state state
+     :model (assoc model :auto (cond-> {:enabled? enabled? :config config :state state}
+                                 ;; Settings another build wrote travel with a kept plan.
+                                 (and (:keep-plan? request) (get-in model [:auto :unrecognized]))
+                                 (assoc :unrecognized (get-in model [:auto :unrecognized]))))}))
+
+(defn- auto-timing
+  "Scheduler timing for an auto request's :at: a zero-based position
+  {:bar n :beat n :phrase n}, or :next-bar, :next-phrase or :next-section
+  (the end of the auto section now playing). JSON sends the words as text."
+  [model at]
+  (let [at (if (string? at) (keyword at) at)]
+    (cond
+      (map? at) {:at at}
+      (= :next-bar at) {:grid {:bars 1}}
+      (= :next-phrase at) {:grid {:phrases 1}}
+      (= :next-section at)
+      (let [{:keys [started-at duration]} (get-in model [:auto :state :section :timer])
+            beat (get-in model [:transport :beat] 0)]
+        (if (and (get-in model [:auto :enabled?]) (number? started-at) (= :beats (:unit duration)))
+          ;; Relative, as the section timer is: a seek or loop moves both by
+          ;; the same offset and a stop holds both.
+          {:in {:beats (max 0 (- (+ started-at (:value duration)) beat))}}
+          (throw (ex-info "No auto section is playing, so there is no section line; choose a bar or phrase line" {}))))
+      :else
+      (throw (ex-info "Auto :at is a zero-based position {:bar n :beat n :phrase n} or :next-bar, :next-phrase or :next-section"
+                      {:at at})))))
+
+(defn- late-position
+  "Operator policy for a position that has already passed (#767): less than
+  one bar late, the change applies now and is marked late by that many beats;
+  a bar or more late it is refused. Returns the timing to post."
+  [model timing]
+  (let [beat (get-in model [:transport :beat] 0)
+        meter (get-in model [:transport :meter])
+        due (when (contains? timing :at) (subscribers/position-beat (:at timing) meter))
+        late (when (and due (< due beat)) (- beat due))
+        bar (:beats-per-bar (musical-time/normalize-meter meter))]
+    (cond
+      (nil? late) timing
+      (< late bar) {:late-beats (double late)}
+      :else (throw (ex-info (str "Position " (pr-str (:at timing)) " (beat " (double due) ") has already passed by "
+                                 (double late) " beats, a bar or more; the transport is at beat " (double beat)
+                                 ". Positions are zero-based: {:bar 0} is the first bar.")
+                            {:due-beat due :beat beat})))))
+
+(defn- auto-event
+  "The :auto/configure event that carries request to its line. The request is
+  checked now against the current show and again when it applies."
+  [model request at label]
+  (auto-request model request)
+  (when (and (map? at) (not (and (seq at) (every? #{:beat :bar :phrase} (keys at))
+                                 (every? #(and (number? %) (Double/isFinite (double %)) (not (neg? %))) (vals at)))))
+    (throw (ex-info "A musical position needs nonnegative :beat, :bar and/or :phrase coordinates" {:at at})))
+  (merge {:op :auto/configure :request request
+          :label (or label (if (true? (:enabled? request)) "Auto configure" "Stop auto"))}
+         (late-position model (auto-timing model at))))
+
+(defn- schedule-auto
+  "Post an auto request with :at on the beat scheduler. It applies on the
+  first frame at or after its line, before the planner decides on that frame,
+  so the previous settings make no decision on the line and the new ones none
+  before it. The receipt names the event and its due beat."
+  [model payload time-ms]
+  (let [request (apply dissoc payload auto-envelope-keys)
+        event (cond-> (auto-event model request (:at payload) (:label payload))
+                (:event-id payload) (assoc :id (:event-id payload)))
+        source (if (map? (:source payload)) (:source payload) {:adapter :repl :session-id "repl"})]
+    (update (command model {:op :schedule/post :events [event] :source source
+                            :command-id (or (:command-id payload) (str "auto/" (UUID/randomUUID)))}
+                     time-ms)
+            :ack #(cond-> (assoc % :scheduled? true)
+                    (:late-beats event) (assoc :late? true :late-beats (:late-beats event))))))
+
+(defn- prepare-auto-events
+  "Check and normalize the :auto/configure events of a schedule post the way
+  schedule-auto does, so a post through schedule_events cannot hold a config
+  the show would refuse and meets the same late policy: a position passed by
+  less than a bar applies at once, marked late; a bar or more is refused.
+  Only that policy marks an event late; a post that supplies the marker is
+  refused."
+  [model payload]
+  (if-not (and (= :schedule/post (:op payload)) (vector? (:events payload)))
+    payload
+    (update payload :events
+            (partial mapv (fn [event]
+                            (if (and (map? event) (#{:auto/configure "auto/configure"} (:op event)))
+                              (let [request (:request event)]
+                                (when-not (map? request)
+                                  (throw (ex-info "An auto/configure event needs a request map" {})))
+                                (when (or (contains? event :late-beats) (contains? event :late?))
+                                  (throw (ex-info "Only the show's late policy marks an auto change late" {})))
+                                (auto-request model request)
+                                (cond-> (assoc event :request (policy/normalize-config request) :op :auto/configure)
+                                  (map? (:at event))
+                                  (as-> e (merge (dissoc e :at) (late-position model {:at (:at e)})))))
+                              event))))))
+
+(defn- trial-auto-plan
+  "Plan one decision with the config and session just installed on model and
+  throw if the planner fails, so a config it cannot run is refused before it
+  is committed. Returns the planned {:state :commands :reasons}, or nil when
+  auto is off; an immediate configure discards it, a due change commits it."
+  [runtime model time-ms]
+  (when (get-in model [:auto :enabled?])
+    (let [fixtures (get-in model [:rig :fixtures])
+          ;; An earlier queued rig edit may still be provisional. Validation
+          ;; can reuse a matching cache without changing the output patch.
+          plans (when (and runtime (= fixtures (:fixtures @(:patch runtime)))) (auto-plans runtime fixtures))]
+      (policy/advance (assoc model :fixtures fixtures) (get-in model [:auto :config]) (get-in model [:auto :state])
+                      time-ms plans))))
+
+(declare ^:private advance-auto-plan)
+
+(defn- scheduled-auto-configure
+  "The owner's handler for a due :auto/configure step (#767). It installs the
+  request through the same path as an immediate configure, checked against
+  the show as it is now, and commits the new session's first decision on
+  this frame, so the planner plans once (advance-auto then finds that
+  decision's interval running). A request refused, by validation or by the
+  planner, is rejected and recorded in the schedule's recent outcomes,
+  leaving auto mode and its looks as they were. The step's command ID names
+  the new session, so a replay is deterministic."
+  [runtime model {:keys [request command-id time-ms]}]
+  (try
+    (let [{:keys [model enabled?]} (configure-auto model request time-ms command-id)
+          planned (trial-auto-plan runtime model time-ms)
+          model (if planned (advance-auto-plan model time-ms planned) model)]
+      {:model model :events [] :result {:enabled? enabled?}})
+    (catch InterruptedException error
+      (.interrupt (Thread/currentThread))
+      (throw error))
+    (catch Exception error
+      (throw (ex-info (str (or (.getMessage error) (.getName (class error))))
+                      {:control/error :invalid-auto-config})))))
+
+(defn- scheduler-host
+  "Host operations the beat scheduler applies through the show owner."
+  [runtime]
+  {:auto/configure #(scheduled-auto-configure runtime %1 %2)})
+
 (defn- dispatch-owner-command [runtime model payload time-ms authority]
   (cond
     (scene-draft/operations (:op payload))
@@ -1158,7 +1341,7 @@
     (follow-candidate-audition! runtime (command model payload time-ms authority) time-ms)
 
     (subscribers/schedulable? payload)
-    (command model (subscribers/as-post payload) time-ms authority)
+    (command model (prepare-auto-events model (subscribers/as-post payload)) time-ms authority)
 
     (and (= :cue/launch (:op payload)) (contains? payload :grid))
     (cue-timing/schedule model (cue-clock-identity runtime model) time-ms
@@ -1167,6 +1350,9 @@
 
     (and (cue-timing/active? model) (cue-timing/receipt model (:command-id payload)))
     {:model model :ack {:status :rejected :reason :command-id-conflict :command-id (:command-id payload)}}
+
+    (= :schedule/post (:op payload))
+    (command model (prepare-auto-events model payload) time-ms authority)
 
     (= :cue/cancel-launch (:op payload))
     (cue-timing/cancel-owned model (cue-clock-identity runtime model) time-ms payload command)
@@ -1465,35 +1651,24 @@
                           (update :revision inc))]
           {:model updated :ack {:status :accepted :revision (:revision updated)}})))
     :auto
-    (let [old-state (get-in model [:auto :state])
-          model (if old-state
-                  (reduce (fn [m c] (:model (command m c time-ms))) model
-                          (:commands (policy/stop-plan model old-state time-ms))) model)
-          enabled? (true? (:enabled? payload))
-          requested (policy/normalize-config (dissoc payload :enabled? :seed :expected-epoch :keep-plan?))
-          ;; Studio's start and stop keep a plan authored at the REPL (#217).
-          config (if (:keep-plan? payload)
-                   (policy/keep-plan (get-in model [:auto :config]) requested enabled?)
-                   requested)
-          state (when enabled? (policy/initial-state (:seed payload 0) time-ms (str (UUID/randomUUID))))]
-      (when enabled?
-        ;; Section scopes are checked here too, not first when a section begins.
-        (when-let [{:keys [path message]} (first (policy/validate-references model config))]
-          (throw (ex-info (str "Invalid auto config: " message (when (seq path) (str " at " (pr-str path))))
-                          {:config config}))))
-      (when enabled?
-        (let [fixtures (get-in model [:rig :fixtures])
-              ;; An earlier queued rig edit may still be provisional. Validation
-              ;; can reuse a matching cache without changing the output patch.
-              plans (when (and runtime (= fixtures (:fixtures @(:patch runtime)))) (auto-plans runtime fixtures))]
-          (policy/advance (assoc model :fixtures fixtures) config state time-ms plans)))
-      {:model (-> model
-                  (assoc :auto (cond-> {:enabled? enabled? :config config :state state}
-                                 ;; Settings another build wrote travel with a kept plan.
-                                 (and (:keep-plan? payload) (get-in model [:auto :unrecognized]))
-                                 (assoc :unrecognized (get-in model [:auto :unrecognized]))))
-                  (update :revision inc))
-       :ack {:status :accepted}})
+    (if (some? (:at payload))
+      ;; A musical :at waits on the beat scheduler and applies on its line (#767).
+      (schedule-auto model payload time-ms)
+      (let [request (apply dissoc payload auto-envelope-keys)
+            ;; The epoch and revision name the session: unique within a show
+            ;; session and the same on replay.
+            {:keys [model enabled?]} (configure-auto model request time-ms (str "auto/" (:epoch model) "/" (:revision model)))
+            ;; Stop auto means stop: a change still waiting on its line would start it again.
+            {model :model withdrawn :event-ids} (if enabled? {:model model}
+                                                  (subscribers/withdraw model #{:auto/configure} :auto-stopped
+                                                                        (:source payload)))
+            waiting (mapv :event-id (subscribers/upcoming model :auto/configure))]
+        (trial-auto-plan runtime model time-ms)
+        {:model (update model :revision inc)
+         :ack (cond-> {:status :accepted}
+                (seq withdrawn) (assoc :withdrawn-event-ids withdrawn)
+                ;; What still waits on a line, so a stop that could not withdraw it says so.
+                (seq waiting) (assoc :pending-event-ids waiting))}))
     :import
     (do
       (when authority (require-import-device! runtime authority))
@@ -2891,7 +3066,7 @@
                    (try
                      (let [model (-> (advance-sensors! runtime model time-ms)
                                      (fence-section-pattern-runs runtime audio-clock-confidence)
-                                     (subscribers/advance time-ms (event-callbacks/results (:event-callbacks runtime)))
+                                     (subscribers/advance time-ms (event-callbacks/results (:event-callbacks runtime)) (scheduler-host runtime))
                                      (composition/advance time-ms) (advance-auto time-ms runtime)
                                      (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms routing/admit-sync)
                                      (routing/advance time-ms command)
@@ -3291,9 +3466,13 @@
         arguments (if (= "set_lighting_scene" tool)
                     (venue-tools/scene-request model arguments)
                     (data/normalize-json arguments))
+        ;; An agent owns what its conversation posted, across runs (turns), so it
+        ;; can cancel or stop a change it scheduled in an earlier turn (#767).
         envelope (merge (select-keys metadata [:epoch :show-id :expected-epoch])
                         {:command-id (:command-id metadata)
-                         :source {:adapter :agent :session-id (:run-id metadata)}})
+                         :source (if-let [conversation (:conversation-id metadata)]
+                                   {:adapter :agent :session-id conversation :run-id (:run-id metadata)}
+                                   {:adapter :agent :session-id (:run-id metadata)})})
         [type payload]
         (case tool
           "configure_energy_scene" [:event-subscriber (merge (select-keys envelope [:expected-epoch])
@@ -3309,14 +3488,16 @@
                                             {:op (keyword "knob-candidate" (name (:op arguments)))})]
           "schedule_events" [:command (merge envelope {:op :schedule/post :events (vec (:events arguments))})]
           "cancel_scheduled" [:command (merge envelope (select-keys arguments [:event-ids :label :destination])
-                                              (when (:mine? arguments) {:posted-by (:source envelope)})
+                                              (when (:mine? arguments) {:posted-by (select-keys (:source envelope) [:adapter :session-id])})
                                               {:op :schedule/cancel})]
           "inspect_schedule" [:inspect-schedule nil]
           "set_lighting_scene" [:lighting-scene (merge envelope arguments)]
           "configure_energy_autopilot" [:settings (merge (venue-tools/autopilot-request model arguments)
                                                          (select-keys envelope [:expected-epoch]))]
           "set_lighting_budget" [:settings (merge (venue-tools/budget-request model arguments) (select-keys envelope [:expected-epoch]))]
-          "configure_auto" [:auto (merge (:configuration arguments) (select-keys envelope [:expected-epoch]))]
+          ;; An :at waits for its line on the scheduler, posted by this agent run (#767).
+          "configure_auto" [:auto (merge (:configuration arguments) (select-keys arguments [:at])
+                                         (select-keys envelope [:expected-epoch :command-id :source]))]
           (throw (ex-info "Unknown studio tool" {:tool tool})))]
     (case type
       :inspect (agent-inspection runtime state #(agent-snapshot runtime state))

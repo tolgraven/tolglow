@@ -81,14 +81,16 @@
   suggestion with receipts. :wall-ms is the host's turnaround for the run,
   kept apart from frame timing."
   [rt suggestion wait!]
-  (let [suggested-beat (get-in @(:state rt) [:model :transport :beat])
+  (let [suggested-beat (:asked-beat suggestion (get-in @(:state rt) [:model :transport :beat]))
         identity (select-keys (:model @(:state rt)) [:epoch :show-id])
         events (atom [])
         started (System/nanoTime)
         result (future
                  (agent/run! provider-config nil [{:role :user :content (:prompt suggestion)}] agent/default-tools
                              (fn [tool arguments metadata]
-                               (show/dispatch-tool! rt tool arguments (merge metadata identity {:expected-epoch (:epoch identity)})))
+                               ;; One conversation per take: the agent owns what it posted in earlier turns.
+                               (show/dispatch-tool! rt tool arguments (merge metadata identity {:expected-epoch (:epoch identity)
+                                                                                                :conversation-id (:conversation-id suggestion)})))
                              #(swap! events conj %)
                              {:transport (recorded-transport [(sse-round (:text suggestion) (:calls suggestion))
                                                               (sse-round "Done." [])])
@@ -98,11 +100,12 @@
           results (into {} (keep (fn [e] (when (= :tool/result (:type e)) [(:name e) (:result e)]))) @events)]
       {:run-id (:run-id suggestion) :section (:section-id suggestion)
        :section-beat (:beat suggestion)
+       :scheduled? (:scheduled? suggestion)
        :suggested-beat suggested-beat
        :accepted-beat (get-in @(:state rt) [:model :transport :beat])
        :status (:status outcome)
        :tools (mapv :name (:calls suggestion))
-       :receipts (update-vals results #(select-keys % [:status :message :code :event-ids :due-beats]))
+       :receipts (update-vals results #(select-keys % [:status :message :code :event-ids :due-beats :late? :late-beats]))
        :wall-ms (/ (- (System/nanoTime) started) 1e6)})))
 
 (defn- newest-instance [model pred]
@@ -123,6 +126,9 @@
 (defn- instance-summary [categories instance]
   {:cue-id (:cue-id instance)
    :adapter (get-in instance [:source :adapter])
+   ;; The auto session that launched it, so the review attributes a launch to
+   ;; the settings that made it rather than to when it was seen.
+   :session (get-in instance [:source :session-id])
    :phase (:phase instance)
    :params (:params instance)
    :launch-mode (:launch-mode instance)
@@ -157,6 +163,7 @@
                         {:started-at started-at :value (:value duration)
                          :step (grid/step (:source duration) (:value duration) (:meter duration))}))
      :auto-tick (get-in model [:auto :state :tick])
+     :auto-session (get-in model [:auto :state :owner-id])
      :instances instances
      :lit lit :brightness brightness
      :strobe? (boolean (some #(and (= :running (:phase %)) (contains? (:categories %) :strobe)) (vals instances)))
@@ -179,6 +186,11 @@
         (throw (ex-info "Stem routes were refused" {:statuses statuses})))
       statuses)))
 
+(defn- conversation-id
+  "One agent conversation per passage take."
+  [passage]
+  (str "rehearsal:" (name (:id passage)) (when (:take passage) (str ":" (name (:take passage))))))
+
 (defn- window [items prev-beat beat first?]
   (filterv #(let [b (:beat %)] (and (<= b beat) (if first? (>= b prev-beat) (> b prev-beat)))) items))
 
@@ -188,7 +200,7 @@
   {:adapter :repl :session-id "rehearsal"})
 
 (defn- initial-progress [passage]
-  {:prev-beat 0.0 :first? true :next-section 0 :agent [] :gestures [] :transport []
+  {:prev-beat 0.0 :first? true :next-section 0 :in-flight nil :agent [] :gestures [] :transport []
    :onset-counts {} :taken {} :stopped nil :pending-stops (:stops passage)})
 
 (defn- deliver!
@@ -199,15 +211,26 @@
   this one reach the owner on its next tick, as a capture block does.
   Returns [progress pending], where pending holds unresolved receipts for
   settle!."
-  [rt callbacks passage {:keys [prev-beat first? next-section onset-counts taken stopped pending-stops] :as progress}
+  [rt callbacks passage {:keys [prev-beat first? next-section in-flight onset-counts taken stopped pending-stops] :as progress}
    t beat wait!]
   (let [sections (:sections passage)
-        ;; The agent hears about a section on the first frame at or past its line.
-        ;; :agent-lag-beats on a passage simulates a slow or late agent.
-        suggestion (when (and (< next-section (count sections))
-                              (>= beat (+ (* passage/beats-per-bar (:start-bar (nth sections next-section)))
-                                          (:agent-lag-beats passage 0))))
-                     (run-agent! rt (script/suggestion passage next-section) wait!))
+        ;; The agent hears of a section line on the first frame at or past
+        ;; the line plus its offset: a bar ahead by default, as a song map
+        ;; gives it; :agent-lag-beats simulates a slow or late agent. It
+        ;; decides then; its reply arrives :agent-latency-beats later.
+        in-flight (or in-flight
+                      (when (and (< next-section (count sections))
+                                 (>= beat (+ (* passage/beats-per-bar (:start-bar (nth sections next-section)))
+                                             (passage/agent-heard-offset passage))))
+                        (assoc (script/suggestion passage next-section beat)
+                               :asked-beat beat
+                               ;; The first round is the agent's plan before the downbeat (a
+                               ;; Room rehearsal takes it before play starts); later replies
+                               ;; take the latency.
+                               :arrives-beat (+ beat (if (zero? next-section) 0 (:agent-latency-beats passage 0)))
+                               :conversation-id (conversation-id passage))))
+        suggestion (when (and in-flight (>= beat (- (:arrives-beat in-flight) 1e-9)))
+                     (run-agent! rt in-flight wait!))
         model (:model @(:state rt))
         onsets (window (:onsets passage) prev-beat beat first?)
         levels (window (:levels passage) prev-beat beat first?)
@@ -253,6 +276,7 @@
                           resume? (show/submit! rt :command {:op :transport/set :source transport-source :transport {:playing? true}}))]
     [(-> progress
          (assoc :prev-beat beat :first? false :onset-counts onset-counts :taken taken
+                :in-flight (when-not suggestion in-flight)
                 :stopped (cond stop-now (assoc stop-now :at-ms t) resume? nil :else stopped)
                 :pending-stops (if stop-now (vec (rest pending-stops)) pending-stops))
          (cond-> suggestion (-> (update :next-section inc) (update :agent conj suggestion))))
@@ -273,6 +297,49 @@
     transport (update :transport conj (-> (dissoc transport :reply)
                                           (assoc :status (:status (deref (:reply transport) 5000 {:status :missing})))))))
 
+(defn- applied
+  "Where each agent change took effect. A change sent with :at applies when
+  the scheduler fires it, on the first frame at or past its line, before the
+  planner decides on that frame: :applied-beat is that frame's beat, from the
+  scheduler's recent outcomes (nil, with :applied-status, if it was refused
+  or missed). Any other change applied when the owner accepted it."
+  [agent-log recent]
+  (mapv (fn [{:keys [scheduled? receipts accepted-beat] :as entry}]
+          (if-not scheduled?
+            (assoc entry :applied-beat accepted-beat)
+            (let [id (first (get-in receipts ["configure_auto" :event-ids]))
+                  outcome (last (filter #(= id (:event-id %)) recent))]
+              (cond-> (assoc entry :applied-beat (when (= :fired (:status outcome)) (:at-beat outcome))
+                             :applied-status (:status outcome :pending))
+                ;; Arrived after its line, within a bar: applied at once, marked late.
+                (:late-beats outcome) (assoc :late-beats-on-arrival (:late-beats outcome))))))
+        agent-log))
+
+(defn- launch-observer
+  "Read accepted auto launches from the show's shared command receipts as
+  they commit, including launches ended again within the same owner tick that
+  no frame shows. Returns a function to call after each run of ticks; it
+  stamps new launches with the transport beat they committed at and returns
+  all observed so far, in commit order."
+  [rt]
+  (let [seen (volatile! (peek (get-in @(:state rt) [:model :control :history-order])))
+        launches (volatile! [])]
+    (fn []
+      (let [model (:model @(:state rt))
+            order (get-in model [:control :history-order] [])
+            from (if-let [last-id @seen] (inc (.lastIndexOf ^java.util.List order last-id)) 0)
+            beat (get-in model [:transport :beat])]
+        (doseq [id (subvec order (max 0 (min from (count order))))
+                :let [{:keys [command ack]} (get-in model [:control :history id])]
+                :when (and (= :cue/launch (:op command)) (= :auto (get-in command [:source :adapter]))
+                           (= :accepted (:status ack)) (:instance-id ack))]
+          (vswap! launches conj {:id (:instance-id ack) :cue-id (:cue-id command) :adapter :auto
+                                 :session (get-in command [:source :session-id])
+                                 :params (get-in command [:launch :params])
+                                 :started-at-beat beat :seen-beat beat}))
+        (when (seq order) (vreset! seen (peek order)))
+        @launches))))
+
 (defn- capture-sink [captured]
   {:send! (fn [universes _] (reset! captured (update-vals universes aclone)))})
 
@@ -292,18 +359,24 @@
      (try
        (show/tick! rt 0.0)
        (route-stems! rt (:routes passage) #(show/tick! rt 0.0))
-       (let [callbacks (show/audio-callbacks rt)]
+       (let [callbacks (show/audio-callbacks rt)
+             observe! (launch-observer rt)]
          (loop [t 0.0 progress (initial-progress passage) frames [] n 0]
            (let [beat (get-in @(:state rt) [:model :transport :beat])]
              (if (or (>= beat end-beat) (>= n max-frames))
-               (merge (select-keys progress [:agent :gestures :transport])
-                      {:passage passage :frame-ms frame-ms :frames frames
-                       :schedule (select-keys (show/schedule rt) [:recent])
-                       :status (select-keys (:status @(:state rt)) [:error])})
+               (let [schedule (select-keys (show/schedule rt) [:recent])]
+                 (merge (select-keys progress [:gestures :transport])
+                        {:passage passage :frame-ms frame-ms :frames frames
+                         ;; From receipts, so a launch ended in its own tick counts too.
+                         :auto-launches (observe!)
+                         :agent (applied (:agent progress) (:recent schedule))
+                         :schedule schedule
+                         :status (select-keys (:status @(:state rt)) [:error])}))
                (let [[progress pending] (deliver! rt callbacks passage progress t beat
-                                                  (fn [result] (tick-until! rt t #(realized? result))))
+                                                  (fn [result] (tick-until! rt t #(realized? result)) (observe!)))
                      next-t (+ t frame-ms)
                      _ (show/tick! rt next-t)
+                     _ (observe!)
                      record (frame-record (:model @(:state rt)) meter @captured categories passage next-t)]
                  (recur next-t (settle progress pending (:beat record)) (conj frames record) (inc n)))))))
        (finally (show/stop! rt))))))
@@ -333,14 +406,18 @@
            ;; already behind it.
            progress (if (get-in @(:state runtime) [:model :transport :playing?])
                       (initial-progress passage)
-                      (let [first-suggestion (run-agent! runtime (script/suggestion passage 0) wait!)]
+                      (let [first-suggestion (run-agent! runtime (assoc (script/suggestion passage 0)
+                                                                         :conversation-id (conversation-id passage))
+                                                         wait!)]
                         (deref (show/submit! runtime :command {:op :transport/set :source transport-source
                                                                :transport {:playing? true}}) 5000 nil)
                         (-> (initial-progress passage) (assoc :next-section 1) (update :agent conj first-suggestion))))]
        (loop [progress progress]
          (let [beat (get-in @(:state runtime) [:model :transport :beat])]
            (if (or (>= beat end-beat) (> (now) timeout-ms))
-             (assoc (select-keys progress [:agent :gestures :transport]) :ended-at-beat beat :timed-out? (< beat end-beat))
+             (assoc (select-keys progress [:gestures :transport])
+                    :agent (applied (:agent progress) (:recent (show/schedule runtime)))
+                    :ended-at-beat beat :timed-out? (< beat end-beat))
              (let [[progress pending] (deliver! runtime callbacks passage progress (now) beat wait!)
                    progress (settle progress pending (get-in @(:state runtime) [:model :transport :beat]))]
                (Thread/sleep (long poll-ms))
