@@ -460,7 +460,10 @@
       (is (not (contains? (:instance-frames (producer/frames p)) "newer")))
       (producer/sync! p {"older" older "newer" (newer 99.0)})
       (is (= [] (:refused (status))) "The stopped cue's slot and pixel-budget share are free")
-      (is (eventually #(get-in (producer/frames p) [:instance-frames "older" :shader/index-strip]))
+      ;; The halt can land before the loss is recorded, so keep stepping the
+      ;; clock to any reopen that loss schedules.
+      (is (eventually #(do (reopen-now! p clock)
+                           (get-in (producer/frames p) [:instance-frames "older" :shader/index-strip])))
           "The older launch on the same feed renders")
       (is (= (get-in (producer/frames p) [:instance-frames "older" :shader/index-strip])
              (get-in (producer/frames p) [:frames :shader/index-strip]))
