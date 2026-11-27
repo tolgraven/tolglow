@@ -17,9 +17,12 @@ second browser lighting engine may independently advance effects.
 Studio selects up to 128 emitting targets from the whole output patch. A sparse
 frame also supplies a small idle sample. A rotating solo can reach any patched ID
 across universes. The browser reserves geometry for the selected rig fixture and
-assigns up to 16 persistent spotlights to visible emitters. Its shadow slots keep
-their textures across cue changes. Camera tours and room fog use the allocated
-lights. Both Transit state pushes and Ring inspection use the same projection.
+ranks emitters by prominence from the current camera (emission × screen
+coverage × a bonus for beams aimed at the viewer, with hysteresis) and assigns
+the most prominent to a persistent pool of up to 16 spotlights (8 on desktop and
+mobile, 4 low, 16 high). Its shadow slots keep their textures across cue
+changes. Camera tours and raymarched fog use the allocated lights; every other
+emitter is a faked beam with a painted floor/wall footprint. Both Transit state pushes and Ring inspection use the same projection.
 The device-tier budgets and selection order are in `js/preview/README.md`.
 
 Where OffscreenCanvas workers are available, the one scene implementation runs
@@ -95,7 +98,10 @@ pause, hidden views and long frame gaps; never simulate an enormous catch-up ste
 Volumetric integration uses opaque scene depth, extinction, directional phase
 scattering and light visibility. Geometry occludes beams. At zero density there
 is no illuminated volume in free space, while lit surfaces still receive light.
-No solid transparent cone is an acceptable substitute for the density field.
+No solid transparent cone is an acceptable substitute for the density field
+for a full light. Lights outside the prominence-ranked full-light budget, and
+all lights in the low tier, are drawn as faked cones that read the same density
+field and opaque depth (operator decision on #782; see `js/preview/fog.md`).
 
 ### Live spatial volumes
 
