@@ -1,30 +1,36 @@
 (ns tolglow.bench-reload-takeover
-  "Owner tick cost on hot-reload takeover frames that carry the engine's reload
-  fallback (#663, #774), against ordinary frames of the same show.
+  "Owner tick cost and adoption latency of hot-reload takeovers (#663, #774).
 
   Every probe cue has a waveform bound to its level, so a revision that changes
   the level's bounds makes the candidate and last-good samples differ and the
-  owner supplies `::engine/reload-fallback`. Each takeover round publishes a
-  revision of 1, 8 or 32 probes in one owner cycle, whose outcome is:
+  owner supplies `::engine/reload-fallback`. Each round publishes a revision
+  of 1, 8 or 32 probes in one owner cycle, whose outcome is:
 
-  - :accepted  the engine adopts every candidate (trial pass, then the rest);
-  - :evaluate  every candidate divides by zero (trial pass, then every
-               instance again on the fallback inputs);
-  - :output    every candidate aims its head at the head's own position, which
-               the renderer refuses after the engine accepted it (a whole
-               evaluation and render, then the fallback pass and a second
-               render).
+  - :accepted  the engine adopts every candidate;
+  - :evaluate  every candidate divides by zero (fallback pass);
+  - :output    every candidate aims its head at its own position, which the
+               renderer refuses after the engine accepted it (a second
+               evaluation and render; one candidate per frame).
 
-  Rigs: the showcase show with five cues and their authored waveforms, and the
-  mixed 2,048-pixel/64-head corpus of `tolglow.bench-show`. Logical 25 ms clock,
-  capture sink, two effect workers. No network output or devices.
+  On the mixed rig a further case revises one effect launched once per moving
+  head with its own :targets (64 programs), as spatial actions launch.
 
-    bin/repl run tolglow.bench-reload-takeover [rounds] [rig ...]
-    lein with-profile +dev run -m tolglow.bench-reload-takeover 20 showcase mixed
+  Each rig runs in two modes: :inline compiles new programs inside the frame,
+  as before #774; :background compiles them on the show's worker and adopts
+  the revision once they are ready. Frames hold a 25 ms cadence with a spin.
+  Reported per case: the publication frame, the adoption frame (first frame
+  that attempts the revision), adoption latency in frames, frames until every
+  instance settled, and programs compiled on the owner inside those frames.
 
-  Stage timings come from wrapping `engine/advance`, `engine/reject-output` and
-  the runtime's own `:compile` function during the run; they are inside the
-  measured tick."
+  Rigs: the showcase with five cues and their waveforms, and the mixed
+  2,048-pixel/64-head corpus of `tolglow.bench-show`. Capture sink, two
+  effect workers. No network output or devices.
+
+    bin/repl run tolglow.bench-reload-takeover [rounds] [showcase|mixed ...] [inline|background ...]
+    lein with-profile +dev run -m tolglow.bench-reload-takeover 20
+
+  Stage timings come from wrapping `engine/advance`, `engine/reject-output`,
+  command handling and modulation sampling during the run."
   (:require [afterglow.runtime.engine :as engine]
             [clojure.pprint :as pprint]
             [clojure.string :as str]
@@ -87,7 +93,9 @@
         heads (into [] (comp (filter #(str/starts-with? (:id %) "mover-")) (map #(select-keys % [:id :position])))
                     fixtures)]
     ;; The corpus launches its four effects in the model already.
-    {:rig :mixed-2048-64 :model (with-probes model heads) :heads heads :fixtures (count fixtures) :base-cues []}))
+    {:rig :mixed-2048-64 :model (with-probes model heads) :heads heads :fixtures (count fixtures) :base-cues []
+     ;; One more effect launched once per moving head, as spatial actions do.
+     :fan-heads heads}))
 
 (defn- request!
   "Submit one payload, tick once, and return the accepted reply."
@@ -123,7 +131,7 @@
                             (when (and (= k :engine) @frame) (vswap! frame assoc :reload-inputs (:reload-inputs result)))
                             (when (and (= k :reject-output) @frame) (vswap! frame assoc :final-inputs (:reload-inputs result)))
                             result)))]
-    {:rt (update rt :compile #(timed :compile %))
+    {:rt rt
      :frame frame
      :redefs {#'engine/advance (timed :engine engine/advance)
               #'engine/reject-output (timed :reject-output engine/reject-output)
@@ -137,65 +145,97 @@
                                        (try (apply (if (= 1 @depth) outer apply-message) args)
                                             (finally (vswap! depth dec)))))}}))
 
-(defn- measured-tick! [{:keys [rt frame]} clock]
+(defn- spin-until! [deadline-ns]
+  ;; A spin, not a sleep: a sleeping owner lets macOS move it to a slower core.
+  (while (< (System/nanoTime) deadline-ns)))
+
+(defn- measured-tick!
+  "Tick once and hold the 25 ms frame cadence, so the compile worker gets the
+  wall time a scheduled show gives it between frames."
+  [{:keys [rt frame]} clock]
   (vreset! frame {})
   (let [start (System/nanoTime)]
     (show/tick! rt (vswap! clock + 25))
     (let [ms (/ (- (System/nanoTime) start) 1e6)
           stages @frame]
       (vreset! frame nil)
+      (spin-until! (+ start 25000000))
       (assoc stages :ms ms))))
 
-(defn- running-probe [rt i]
-  (let [model (:model @(:state rt))]
-    (some #(when (= (probe-id i) (:cue-id %)) %) (vals (:instances model)))))
+(defn- count-frame-compiles!
+  "Count programs the rig compiler builds on the owner thread inside a tick."
+  [rt frame owner]
+  (swap! (:compiler-context rt) update :compiler
+         (fn [compiler]
+           (fn [program]
+             (when (and @frame (identical? owner (Thread/currentThread)))
+               (vswap! frame update :frame-compiles (fnil inc 0)))
+             (compiler program)))))
+
+(defn- running [rt effect-id]
+  (filter #(= effect-id (:effect-id %)) (vals (get-in @(:state rt) [:model :instances]))))
+
+(defn- running-probe [rt i] (first (running rt (probe-id i))))
 
 (defn- settled?
-  "True when probe `i` has adopted `revision`, or recorded its reload fault."
-  [rt i revision outcome]
-  (let [probe (running-probe rt i)]
-    (if (= :accepted outcome)
-      (= (:version revision) (:effect-version probe))
-      (and (= (:version revision) (get-in probe [:reload-fault :effect-version]))
-           (= outcome (get-in probe [:reload-fault :stage]))))))
+  "True when every instance of the revision's effect adopted it, or recorded
+  its reload fault."
+  [rt revision outcome]
+  (every? (fn [instance]
+            (if (= :accepted outcome)
+              (= (:version revision) (:effect-version instance))
+              (and (= (:version revision) (get-in instance [:reload-fault :effect-version]))
+                   (= outcome (get-in instance [:reload-fault :stage])))))
+          (running rt (:id revision))))
 
 (defn- takeover!
-  "Publish a revision of the first `k` probes in one owner cycle, then tick
-  until every probe has adopted or refused it. Returns the takeover frame with
-  the frames that followed until then."
-  [{:keys [rt] :as recorder} clock heads k outcome]
+  "Publish `revisions` in one owner cycle, then tick until every instance has
+  adopted or refused them. The adoption frame is the first that attempted a
+  candidate with the reload fallback."
+  [{:keys [rt] :as recorder} clock revisions outcome label]
+  (let [replies (mapv #(show/submit! rt :definition {:kind :effects :definition %}) revisions)
+        frames (loop [frames [(measured-tick! recorder clock)]]
+                 (when (= 1 (count frames))
+                   (doseq [r replies]
+                     (when-not (= :accepted (:status (deref r 5000 nil)))
+                       (throw (ex-info "Revision publication was not accepted" {})))))
+                 (cond
+                   (every? #(settled? rt % outcome) revisions) frames
+                   (> (count frames) 400) (throw (ex-info "Takeover did not settle" {:case label}))
+                   :else (recur (conj frames (measured-tick! recorder clock)))))
+        adoption (first (keep-indexed #(when (:reload-inputs %2) %1) frames))]
+    (when-not adoption
+      (throw (ex-info "No frame attempted the revisions with a reload fallback" {:case label})))
+    {:case label :publication (first frames) :adoption (nth frames adoption) :adoption-frames adoption
+     :settle-frames (count frames) :frame-compiles (reduce + (keep :frame-compiles frames))
+     :others (into [] (keep-indexed (fn [i f] (when-not (or (zero? i) (= i adoption)) f))) frames)}))
+
+(defn- probe-revisions [rt heads k outcome]
+  (let [model (:model @(:state rt))]
+    (mapv (fn [i]
+            (let [upper (if (= 1.0 (get-in (running-probe rt i) [:definition :params :level :bounds 1])) 0.5 1.0)]
+              (probe-effect i (nth heads (mod i (count heads))) (inc (get-in model [:registry :effects (probe-id i) :version]))
+                            upper outcome)))
+          (range k))))
+
+(defn- fan-effect [heads version upper]
+  {:id :fan :version version :name "Fan" :targets (mapv :id heads)
+   :params {:level {:type :number :default 0.5 :bounds [0.0 upper]}}
+   :outputs {:dimmer {:op :param :key :level}}})
+
+(defn- fan-revision [rt heads]
   (let [model (:model @(:state rt))
-        revisions (mapv (fn [i]
-                          (let [running (running-probe rt i)
-                                upper (if (= 1.0 (get-in running [:definition :params :level :bounds 1])) 0.5 1.0)
-                                version (inc (get-in model [:registry :effects (probe-id i) :version]))]
-                            (probe-effect i (nth heads (mod i (count heads))) version upper outcome)))
-                        (range k))
-        replies (mapv #(show/submit! rt :definition {:kind :effects :definition %}) revisions)
-        observed (measured-tick! recorder clock)
-        _ (doseq [r replies]
-            (when-not (= :accepted (:status (deref r 5000 nil)))
-              (throw (ex-info "Revision publication was not accepted" {}))))
-        pending #(remove (fn [i] (settled? rt i (nth revisions i) outcome)) (range k))
-        follow-up (loop [frames []]
-                    (cond
-                      (empty? (pending)) frames
-                      (> (count frames) (+ k 8))
-                      (throw (ex-info "Takeover did not settle" {:outcome outcome :k k :pending (vec (pending))}))
-                      :else (recur (conj frames (measured-tick! recorder clock)))))]
-    (when-not (:reload-inputs observed)
-      (throw (ex-info "The takeover frame carried no reload fallback" {:outcome outcome :k k})))
-    (assoc observed :outcome outcome :reloading k :follow-up follow-up)))
+        upper (if (= 1.0 (get-in (first (running rt :fan)) [:definition :params :level :bounds 1])) 0.5 1.0)]
+    [(fan-effect heads (inc (get-in model [:registry :effects :fan :version])) upper)]))
 
 (defn- summary [observations]
   (let [stage (fn [k] (let [xs (keep #(get-in % [k :ms]) observations)] (when (seq xs) (bench/distribution xs))))]
     (cond-> {:n (count observations) :tick-ms (bench/distribution (map :ms observations))
              :over-25-ms (count (filter #(> (:ms %) 25.0) observations))
-             :engine-ms (stage :engine)}
+             :engine-ms (stage :engine)
+             :frame-compiles (bench/distribution (map #(:frame-compiles % 0) observations))}
       (stage :commands) (assoc :commands-ms (stage :commands))
       (stage :sampling) (assoc :sampling-ms (stage :sampling))
-      (stage :compile) (assoc :compile-ms (stage :compile)
-                              :compiled-per-frame (bench/distribution (map #(get-in % [:compile :calls] 0) observations)))
       (stage :reject-output) (assoc :reject-output-ms (stage :reject-output))
       (some :reload-inputs observations) (assoc :reload-inputs (frequencies (map #(or (:final-inputs %) (:reload-inputs %)) observations))))))
 
@@ -203,50 +243,63 @@
   (.getSystemLoadAverage (java.lang.management.ManagementFactory/getOperatingSystemMXBean)))
 
 (defn profile
-  "Ordinary frames, then `rounds` takeover rounds for each reload count and outcome."
-  [{:keys [model heads base-cues] :as rig} rounds]
-  (let [rt (show/create-runtime {:model model :workers 2 :sink (bench/capture-sink)
+  "Ordinary frames, then `rounds` takeover rounds for each case. `mode` is
+  :background (compiles off the frame) or :inline (compiles in the frame, the
+  behaviour before #774)."
+  [{:keys [model heads base-cues fan-heads] :as rig} rounds mode]
+  (let [rt (show/create-runtime {:model (cond-> model fan-heads (bench/command [:fan :definition]
+                                                                               {:op :registry/publish :kind :effects
+                                                                                :definition (fan-effect fan-heads 1 1.0)}))
+                                 :workers 2 :sink (bench/capture-sink) :background-compile (= :background mode)
                                  :workspace-options nil :effect-log! (fn [_]) :worker-timeout-ms 60000})
         clock (volatile! 0)
-        {:keys [redefs] :as recorder} (stage-recorder rt)
-        recorder (assoc recorder :rt (:rt recorder))]
+        {:keys [redefs frame] :as recorder} (stage-recorder rt)
+        cases (concat (for [k reloading outcome outcomes] {:label [k outcome] :outcome outcome :revise #(probe-revisions rt heads k outcome)})
+                      (when fan-heads [{:label [:per-fixture (count fan-heads)] :outcome :accepted :revise #(fan-revision rt fan-heads)}]))]
     (try
+      (count-frame-compiles! rt frame (Thread/currentThread))
       (doseq [{:keys [cue-id sources]} base-cues] (launch! rt clock cue-id sources))
       (doseq [i (range probes)] (launch! rt clock (probe-id i) {:level level-binding}))
+      (doseq [fixture fan-heads]
+        (let [ack (request! rt clock :command {:op :effect/launch :effect-id :fan
+                                                :launch {:reload-policy :preserve-state :targets [(:id fixture)]}})]
+          (request! rt clock :modulation-bind {:instance-id (:instance-id ack) :param :level :binding level-binding})))
       (with-redefs-fn redefs
         (fn []
           (dotimes [_ 200] (measured-tick! recorder clock))
           ;; One untimed round of every case compiles the code paths first.
-          (doseq [k reloading outcome outcomes]
-            (takeover! recorder clock heads k outcome)
+          (doseq [{:keys [label outcome revise]} cases]
+            (takeover! recorder clock (revise) outcome label)
             (dotimes [_ 8] (measured-tick! recorder clock)))
           (let [gc-before (bench/gc-snapshot)
                 ordinary (mapv (fn [_] (measured-tick! recorder clock)) (range 240))
-                takeovers (vec (for [_ (range rounds) k reloading outcome outcomes]
-                                 (let [observed (takeover! recorder clock heads k outcome)
-                                       after (mapv (fn [_] (measured-tick! recorder clock)) (range 8))]
-                                   (assoc observed :next-ms (:ms (first after))))))
+                takeovers (vec (for [_ (range rounds) {:keys [label outcome revise]} cases]
+                                 (let [observed (takeover! recorder clock (revise) outcome label)]
+                                   (dotimes [_ 8] (measured-tick! recorder clock))
+                                   observed)))
                 gc-after (bench/gc-snapshot)
                 status (:status @(:state rt))]
             (when (:error status) (throw (ex-info "Show error during the benchmark" {:error (:error status)})))
-            {:rig (:rig rig) :fixtures (:fixtures rig) :probes probes
+            {:rig (:rig rig) :mode mode :fixtures (:fixtures rig) :probes probes
              :instances (count (get-in @(:state rt) [:model :instances]))
              :rounds rounds
              :ordinary (summary ordinary)
-             :takeover (into (sorted-map)
-                             (for [[[k outcome] xs] (group-by (juxt :reloading :outcome) takeovers)]
-                               [[k outcome]
-                                (let [follow-up (mapcat :follow-up xs)]
-                                  (cond-> (assoc (summary xs)
-                                                 :next-frame-ms (bench/distribution (map :next-ms xs))
-                                                 :frames-to-settle (bench/distribution (map #(inc (count (:follow-up %))) xs)))
-                                    (seq follow-up) (assoc :follow-up-frames (summary follow-up))))]))
+             :takeover (into (sorted-map-by #(compare (pr-str %1) (pr-str %2)))
+                             (for [[label xs] (group-by :case takeovers)]
+                               [label (cond-> {:publication-frame (summary (map :publication xs))
+                                               :adoption-frame (summary (map :adoption xs))
+                                               :adoption-latency-frames (bench/distribution (map :adoption-frames xs))
+                                               :frames-to-settle (bench/distribution (map :settle-frames xs))
+                                               :compiles-in-frames-per-takeover (bench/distribution (map :frame-compiles xs))}
+                                        (seq (mapcat :others xs)) (assoc :other-frames (summary (mapcat :others xs))))]))
              :gc {:before gc-before :after gc-after} :load-average-after (load-average)})))
       (finally (show/stop! rt)))))
 
 (defn -main [& args]
   (let [rounds (or (some-> (first args) parse-long) 20)
-        rigs (or (seq (map keyword (rest args))) [:showcase :mixed])
+        words (map keyword (rest args))
+        rigs (or (seq (filter #{:showcase :mixed} words)) [:showcase :mixed])
+        modes (or (seq (filter #{:inline :background} words)) [:inline :background])
         build {:showcase showcase-rig :mixed mixed-rig}]
     (pprint/pprint {:benchmark :reload-takeover :measured-at (str (java.time.Instant/now))
                     :source-revisions {:tolglow (bench/revision ".")
@@ -255,6 +308,6 @@
                                   :processors (.availableProcessors (Runtime/getRuntime))
                                   :heap-bytes (.maxMemory (Runtime/getRuntime))
                                   :load-average (load-average)}})
-    (doseq [rig rigs]
+    (doseq [rig rigs mode modes]
       (binding [pprint/*print-right-margin* 160]
-        (pprint/pprint (profile ((get build rig)) rounds))))))
+        (pprint/pprint (profile ((get build rig)) rounds mode))))))

@@ -368,7 +368,7 @@
      (seq params) (assoc ::frame-params params)
      (seq targets) (assoc ::ramp-targets targets))))
 
-(defn- attempted-revision
+(defn attempted-revision
   "The newer registry definition the engine attempts for this instance on the
   next frame, or nil. Paused and pinned instances defer hot reload."
   [model instance]
@@ -427,25 +427,25 @@
   [model]
   (boolean (some #(reload-candidate model %) (vals (:instances model)))))
 
-(defn deferred-reloads
-  "The effect IDs whose pending hot reload waits for a later frame, so that
-  one frame attempts at most `limit` newly published effect revisions. Each
-  revision is compiled once and attempted by every instance that reloads it.
-  Revisions go in the launch order of the first instance that attempts them;
-  this counts revisions the engine will refuse at preparation too (#774)."
-  [model limit]
-  (into #{} (drop limit)
-        (eduction (filter #(attempted-revision model %)) (map :effect-id) (distinct)
-                  (sort-by :order (vals (:instances model))))))
-
 (defn without-reloads
   "Return `model` as the engine and modulation read it in a frame that defers
-  the hot reloads of `effect-ids`: their newer registry revisions are hidden,
-  so every instance of them keeps its captured definition, as the engine keeps
-  one when a candidate is refused. A frame view only; the committed model
-  keeps its registry."
-  [model effect-ids]
-  (if (seq effect-ids) (update-in model [:registry :effects] #(apply dissoc % effect-ids)) model))
+  the hot reloads of `instance-ids` until their programs are compiled (#774):
+  those instances read as pinned, so they keep their captured definition for
+  this frame. A frame view only; `restore-reloads` puts the policies back."
+  [model instance-ids]
+  (reduce (fn [model id]
+            (if (contains? (:instances model) id) (assoc-in model [:instances id :reload-policy] :pinned) model))
+          model instance-ids))
+
+(defn restore-reloads
+  "Give the instances of `result`, a model evaluated from a `without-reloads`
+  view, the reload policies they have in `model`."
+  [result model instance-ids]
+  (reduce (fn [result id]
+            (if (and (contains? (:instances result) id) (contains? (:instances model) id))
+              (assoc-in result [:instances id :reload-policy] (get-in model [:instances id :reload-policy]))
+              result))
+          result instance-ids))
 
 (defn owner-definition
   "Select the definition for the next frame: the pending reload candidate, or
