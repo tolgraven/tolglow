@@ -617,10 +617,12 @@ one.
 Whether that insert joins the group in real Live is the first group question
 for the host run. A packaged template is the fallback creation path.
 
-**Values in Live.** A run clip carries its timing. Launch values and moves
-stay in the Tolglow record. A run track has no device whose parameters an
-envelope could automate until the parameter racks of #625 exist, so editing a
-run's envelope in Live waits for #625.
+**Values in Live.** A run clip carries its timing. When its run track holds a
+Tolglow parameters device, the clip also carries the take's launch values
+and moves as envelopes of the device's slots (see
+[Edit an effect's parameters from Live](#edit-an-effects-parameters-from-live)).
+Without a device, launch values and moves stay in the Tolglow record and the
+player replays them.
 
 **Playback.** Playback is wired from Live to the show:
 - The companion's `watch-run-tracks` observes `Track.playing_slot_index` on the
@@ -695,6 +697,123 @@ Arrangement status.
   Track inspection, group placement, scenes, non-looping clips, `place-clip`,
   the playback watch with its session ID, origin marking and closing the
   watches when the device stops.
+
+## Edit an effect's parameters from Live
+
+Issue #625, first slice. The Tolglow side, the companion operations, the
+in-device script and their HTTP contract are tested against the simulated
+Set and a simulated Live object graph. Nothing here has run in a licensed
+Live Set; the host checklist is on the pull request.
+
+**One control projection.** `tolglow.authoring.parameter-controls` describes a
+parameter's control: label, unit, hard bounds, readout decimals (five for a
+normalized 16-bit channel on this patch, as Studio's readouts), input step
+and control family (waveform selector, waveform glyph choices, choices,
+enum, toggle, colour, vector, range, integer or number, with rotary, fader or
+field). Studio's parameter rows and the Live device read it.
+
+**Slots.** `tolglow.integrations.live-devices` gives every parameter component
+of a cue channel a stable slot:
+- numbers and integers with bounds (or a `:recommended` range) are one slot in
+  their own units; choices, enums and booleans are enumeration slots;
+- a colour is three slots, hue, saturation and brightness in [0, 1], edited
+  through `afterglow.control.parameter-edit` as Push's encoders edit it; a
+  vector (up to four components) and a range are one slot per component;
+- gradients, unbounded numbers and longer vectors are listed under
+  `:unsupported`.
+
+Slots follow Studio's parameter order. A parameter added by a later revision
+takes the next free slot, a removed one keeps its slot (shown as unused) and a
+re-added one gets its old slot back, so automation recorded in Live stays on
+its parameter. A device holds 32 slots; a channel can use up to eight devices
+(`Tolglow parameters`, `Tolglow parameters 2`, ...). Banks of eight follow
+Studio's order, as on Push's encoders.
+
+**The device.** `tolglow-parameters.maxpat` declares 32 automatable `live.dial`
+slots (`slot-1` .. `slot-32`) after Live's Device On, and runs
+`parameter_device.js`. The Live Object Model reads `DeviceParameter.name`,
+`min` and `max` but cannot set them, and it inserts only native devices
+(`Track.insert_device`, Live 12.3). So:
+- the performer drops the device on a run track (or a template holds it);
+- `configure-parameter-device` hands the slot layout to the device through
+  Max's global `messnamed`; only the device whose Live id matches applies it,
+  as `_parameter_longname`, `_parameter_type`, `_parameter_mmin`/`mmax`,
+  `_parameter_steps`, `_parameter_units` (printf format with the unit) and
+  `_parameter_range` (choices) messages to its dials;
+- the next `inspect-set` reads every slot's name and range back, and the
+  mirror reconfigures a device whose read-back differs.
+
+**Sync.** `show/sync-live-runs!` (Studio: **Sync to Live**):
+- refreshes each channel's layout and spec;
+- finds the devices on each bound run track by name (a missing one is
+  reported in `:parameter-devices`, not as a problem);
+- writes each new run clip with `:parameter-envelopes`, one step per point,
+  in the slot's own units, when every device the channel needs is present.
+  Envelopes larger than one request are left out and reported as
+  `:envelopes-too-large`; that take keeps replaying its moves itself;
+- watches the bound run tracks (`watch-run-tracks`, also every slot's
+  `value` and `automation_state`). `{:watch? false}` skips the watch.
+
+A clip with envelopes (`Clip.has_envelopes` in the read-back) replays only
+its launch and release from Tolglow: its moves come from Live automation, so
+an envelope edited in Live is what plays.
+
+**Values from Live.** Each slot change reaches the show as a
+`parameter-device` callback through the bridge, then
+`show/live-parameter-device-value!`, which only queues it (at most 1024). The
+owner decodes the queue at its next cycle:
+- the slot steers the instance its run track's playing clip launched, else
+  the open run on that track's lane;
+- `automation_state` 1 (automation playing) gives origin `:live-playback`:
+  no take is made. Anything else is `:live-input`: a performance, kept as a
+  take move;
+- one `:param/set` per instance parameter per cycle, the last value winning;
+  repeated serials are dropped.
+
+**Tolglow's writes in Live.** Every accepted `:param/set` from Studio, Push,
+the REPL or an agent on an instance shown on a run track is sent to its slot
+(`set-parameter-values`) from a separate thread, coalesced per track. The
+slot then expects its echo once (within 1e-5 of its range) and holds Live
+automation until Live reports the automation playing again after an
+override, or a run clip starts on that track. Nothing from Live
+(`:live-playback`, `:live-input`) or `:tolglow-feedback` is written back. A
+write that did not execute forgets its echo. Without a connected bridge the
+writes are counted as not sent.
+
+**Cost.** Over the integration test the owner step averaged well under 2 ms
+per cycle (asserted); the projection reports `:cost` from the running show.
+Sending, rendering and every Live request stay off the owner thread.
+
+**Shared parameter frames.** `tolglow.visualization.parameter-frames` renders a
+parameter's recent history once for every compatible view:
+- a view is `{:instance-id :param :window-beats :style :width :height :dpr}`;
+  views of the same instance, parameter, window, style and pixel ratio within
+  10% of a size share one render key;
+- one worker samples each shown parameter once per cycle (100 ms) from the
+  committed snapshot, renders each key once with Java2D into a PNG and puts it
+  in each view's mailbox (one frame by default; a full mailbox drops its
+  oldest frame and counts it). A lease not read for 5 s expires; the last view
+  leaving ends the worker;
+- Studio and the REPL use `show/parameter-frames-action!` and
+  `/api/parameter-frames` (`/subscribe`, `/frame?lease=`, `/unsubscribe`).
+
+Measured on this Mac under other lanes' load (headless JVM, Java2D, no GPU):
+a 960x192 frame takes about 3.4 ms, 2.7 ms of it PNG encoding; a 320x64
+frame about 0.7 ms. Shared, a cycle costs one render however many views; two
+or four separate views would cost two or four. Sampling took about 80 µs per
+cycle in the browser check, which joined a Live-device view to Studio's frame
+at 10 renders per second and saw the render stop when the last view left.
+Delivery across the Live host boundary (the companion fetching the PNG and a
+`jsui` drawing it), Push mounting the frame and GPU rendering are not built
+or measured.
+
+Evidence: `live-devices-test` (projection parity, stable slots, every control
+shape's round trip, envelopes, ownership, and a real runtime against the
+simulated Set), `live-companion-contract-test` (configure and envelopes over
+HTTP through `node_bridge.js`, `max_adapter.js`, `live_session.js` and
+`parameter_device.js`), `test/js/ableton-live/parameter_device.test.js`,
+`parameter-frames-test`, the Studio event tests and
+`dev/studio/live-parameter-devices-browser-qa.mjs`.
 
 ## Verified Live APIs and limits
 
