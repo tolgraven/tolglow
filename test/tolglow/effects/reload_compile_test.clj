@@ -719,6 +719,7 @@
           (is (= [2] (versions s 1)))
           (is (= 255 (first (dimmers s 1))))))
       (finally (stop! s)))))
+
 (deftest a-pad-press-resolves-no-cue-selection-on-the-owner
   ;; Twenty selector cues. Scheduling a grid launch must not resolve them on
   ;; the frame owner, and editing one cue re-resolves only that cue.
