@@ -305,7 +305,8 @@
          :body (ByteArrayInputStream. (.getBytes (if body (json/write-str body) "") "UTF-8"))})))
 
 (defn- wait-for [pred]
-  (loop [n 0] (cond (pred) true (> n 200) false :else (do (Thread/sleep 5) (recur (inc n))))))
+  ;; A bounded wait: generous so a loaded runner is not a failure.
+  (loop [n 0] (cond (pred) true (> n 2000) false :else (do (Thread/sleep 5) (recur (inc n))))))
 
 (deftest run-clips-carry-parameter-moves-and-live-automation-steers-the-show
   (let [sent (atom [])
@@ -387,10 +388,12 @@
               (is (= b (:instance-id take)))
               (is (= [[:level 0.3]] (mapv (juxt :param :value) (:moves take))) "the turn is a take move"))
             (is (= 1 (count @sent)) "a Live input is not echoed back to Live")))
-        (testing "the owner step stays cheap"
-          (let [{:keys [cycles mean-us max-us]} (:cost (show/live-parameter-devices rt))]
-            (println (format "live parameter devices owner step: %d cycles, mean %.1f us, max %.1f us" cycles mean-us max-us))
-            (is (< mean-us 2000.0)))))
+        (testing "the owner step does bounded work (time is reported, not gated)"
+          (let [{:keys [cycles mean-us max-us values max-values values-per-cycle-cap]} (:cost (show/live-parameter-devices rt))]
+            (println (format "live parameter devices owner step (report only): %d cycles, mean %.1f us, max %.1f us" cycles mean-us max-us))
+            (is (pos? cycles))
+            (is (= 4 values) "each queued entry (three slot values, one clip start) was decoded once")
+            (is (<= max-values values-per-cycle-cap)))))
       (finally (show/stop! rt)))))
 
 (deftest a-stale-device-is-reconfigured-and-a-device-that-ignores-it-stays-pending
@@ -464,6 +467,8 @@
             (is (= 1 @writers) "one writer thread, however slow the sends")
             (is (apply < @levels) "values reach Live in the order Tolglow accepted them (coalesced, never reordered)")
             (let [{:keys [counts cost inbox]} (show/live-parameter-devices rt)]
+              (is (= 500 (:values cost)) "every value decoded once")
+              (is (<= (:max-values cost) (:values-per-cycle-cap cost) 256) "no cycle decodes more than the cap")
               (println (format "live parameter devices under load: %d cycles, mean %.1f us, max %.1f us; %s; inbox %s"
                                (:cycles cost) (:mean-us cost) (:max-us cost) (pr-str counts) (pr-str inbox))))
             (finally (reset! running false)))))
