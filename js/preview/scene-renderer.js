@@ -374,11 +374,14 @@ export class SceneRenderer {
     this.fakedEntries = faked;
     // Approximate one diffuse floor bounce from beams whose axes hit the
     // room floor. Use the same energy for surfaces and airborne haze.
-    // Faked lights contribute the same bounce as full ones.
+    // The bounce estimate keeps its earlier envelope: the brightest sixteen
+    // lit fixtures, full or faked, independent of the full-light budget. A
+    // linear sum over a 128-head rig flooded the haze ambient to white.
     const bounce = new THREE.Color(0, 0, 0);
-    for (const entry of this.fixtures) {
+    const bouncing = lit.filter(entry => !entry.fixture['pseudo-fixture'] && entry.beam.optics.axis.y < 0)
+      .sort((a, b) => b.beam.level - a.beam.level || (a.id < b.id ? -1 : 1)).slice(0, MAX_LIGHTS);
+    for (const entry of bouncing) {
       const beam = entry.beam;
-      if (!beam || entry.fixture['pseudo-fixture'] || beam.optics.axis.y >= 0) continue;
       const position = beam.optics.optical, direction = beam.optics.axis;
       const distance = -position.y / direction.y;
       const x = position.x + distance * direction.x;
