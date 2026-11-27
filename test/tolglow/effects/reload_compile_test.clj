@@ -75,6 +75,16 @@
      (reset! phase :setup)
      (count run))))
 
+(defn- check-publications!
+  "Run the publication checks queued on the worker. They run ahead of its
+  compiles, before the owner cycle that commits them (#784)."
+  [{:keys [tasks phase]}]
+  (let [run (filterv programs/ahead? @tasks)]
+    (swap! tasks #(into [] (remove programs/ahead?) %))
+    (reset! phase :worker)
+    (doseq [task run] (task))
+    (reset! phase :setup)))
+
 (defn- tick! [{:keys [rt phase]} t]
   (reset! phase :frame)
   (show/tick! rt t)
@@ -89,6 +99,7 @@
   "Publish every revision in one owner cycle and render that frame."
   [s definitions t]
   (let [replies (mapv #(show/submit! (:rt s) :definition {:kind :effects :definition %}) definitions)]
+    (check-publications! s)
     (tick! s t)
     (mapv #(:status (deref % 2000 {:status :timeout})) replies)))
 
@@ -341,7 +352,14 @@
       (show/submit! rt {:op :cue/launch :cue-id :probe-0})
       (settle!)
       (next!)
-      (show/submit! rt :definition {:kind :effects :definition (probe 0 2)})
+      (let [reply (show/submit! rt :definition {:kind :effects :definition (probe 0 2)})]
+        ;; The worker checks the publication before an owner cycle commits it.
+        (loop [n 0]
+          (next!)
+          (when (and (< n 400) (not (realized? reply)))
+            (Thread/sleep 5)
+            (recur (inc n))))
+        (is (= :accepted (:status @reply))))
       (settle!)
       (next!)
       (is (= 2 (:effect-version (first (vals (get-in @(:state rt) [:model :instances]))))))

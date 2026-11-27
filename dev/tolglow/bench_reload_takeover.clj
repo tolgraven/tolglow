@@ -18,6 +18,9 @@
   Each rig runs in two modes: :inline compiles new programs inside the frame,
   as before #774; :background compiles them on the show's worker and adopts
   the revision once they are ready. Frames hold a 25 ms cadence with a spin.
+  Publications arrive half a frame before the owner cycle, as an operator's
+  do between frames; with a worker their checks run there first (#784), and
+  :ack-latency-frames counts frames any of them still waited.
   Reported per case: the publication frame, the adoption frame (first frame
   that attempts the revision), adoption latency in frames, frames until every
   instance settled, and programs compiled on the owner inside those frames.
@@ -149,6 +152,13 @@
   ;; A spin, not a sleep: a sleeping owner lets macOS move it to a slower core.
   (while (< (System/nanoTime) deadline-ns)))
 
+(defn- mid-frame!
+  "Spin half a frame after a frame boundary: operators publish between
+  frames, so a show checks a publication on its worker before the owner
+  cycle that commits it (#784)."
+  []
+  (spin-until! (+ (System/nanoTime) 12500000)))
+
 (defn- measured-tick!
   "Tick once and hold the 25 ms frame cadence, so the compile worker gets the
   wall time a scheduled show gives it between frames."
@@ -194,19 +204,23 @@
   candidate with the reload fallback."
   [{:keys [rt] :as recorder} clock revisions outcome label]
   (let [replies (mapv #(show/submit! rt :definition {:kind :effects :definition %}) revisions)
+        _ (mid-frame!)
+        acked (volatile! nil)
         frames (loop [frames [(measured-tick! recorder clock)]]
-                 (when (= 1 (count frames))
+                 (when (and (nil? @acked) (every? realized? replies))
+                   (vreset! acked (dec (count frames)))
                    (doseq [r replies]
-                     (when-not (= :accepted (:status (deref r 5000 nil)))
-                       (throw (ex-info "Revision publication was not accepted" {})))))
+                     (when-not (= :accepted (:status @r))
+                       (throw (ex-info "Revision publication was not accepted" {:ack @r})))))
                  (cond
-                   (every? #(settled? rt % outcome) revisions) frames
+                   (and @acked (every? #(settled? rt % outcome) revisions)) frames
                    (> (count frames) 400) (throw (ex-info "Takeover did not settle" {:case label}))
                    :else (recur (conj frames (measured-tick! recorder clock)))))
         adoption (first (keep-indexed #(when (:reload-inputs %2) %1) frames))]
     (when-not adoption
       (throw (ex-info "No frame attempted the revisions with a reload fallback" {:case label})))
     {:case label :publication (first frames) :adoption (nth frames adoption) :adoption-frames adoption
+     :ack-frames @acked
      :settle-frames (count frames) :frame-compiles (reduce + (keep :frame-compiles frames))
      :others (into [] (keep-indexed (fn [i f] (when-not (or (zero? i) (= i adoption)) f))) frames)}))
 
@@ -249,15 +263,15 @@
                                                    :source {:adapter :repl :session-id "bench"}
                                                    :launch {:mode :one-shot :duration {:beats 1/2} :targets [(:id fixture)]}}))
                       (map-indexed vector heads))
+        _ (mid-frame!)
         rendered #(count (filter (fn [instance] (and (= :burst (:effect-id instance)) (= version (:effect-version instance))
                                                      (get-in instance [:system :last-frame-number])))
                                  (vals (get-in @(:state rt) [:model :instances]))))
         frames (loop [frames []]
                  (let [observed (assoc (measured-tick! recorder clock)
                                        :beat (get-in @(:state rt) [:model :transport :beat]) :rendered (rendered))]
-                   (when (empty? frames)
-                     (when-not (= :accepted (:status (deref publication 5000 nil)))
-                       (throw (ex-info "Burst revision was not accepted" {}))))
+                   (when (and (empty? frames) (not= :accepted (:status (deref publication 0 nil))))
+                     (throw (ex-info "Burst revision was not accepted in its first frame" {})))
                    (cond
                      (= (count heads) (:rendered observed)) (conj frames observed)
                      (> (count frames) 200) (throw (ex-info "Burst did not render" {}))
@@ -343,6 +357,8 @@
                                [label (cond-> {:publication-frame (summary (map :publication xs))
                                                :adoption-frame (summary (map :adoption xs))
                                                :adoption-latency-frames (bench/distribution (map :adoption-frames xs))
+                                               ;; Frames after the first until every publication was acknowledged.
+                                               :ack-latency-frames (bench/distribution (map :ack-frames xs))
                                                :frames-to-settle (bench/distribution (map :settle-frames xs))
                                                :compiles-in-frames-per-takeover (bench/distribution (map :frame-compiles xs))}
                                         (seq (mapcat :others xs)) (assoc :other-frames (summary (mapcat :others xs))))]))
@@ -390,6 +406,7 @@
                 (vec (for [round (range (inc rounds))]
                        (let [version (inc (get-in @(:state rt) [:model :registry :effects :accent :version]))
                              _ (show/submit! rt :definition {:kind :effects :definition (accent version)})
+                             _ (mid-frame!)
                              publication (measured-tick! recorder clock)
                              _ (dotimes [_ 40] (measured-tick! recorder clock))
                              cue (keyword (str "sel-" (mod (* 7 round) n)))

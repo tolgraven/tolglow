@@ -114,6 +114,13 @@
         [{:path [:effect-version] :effect-errors errors
           :message (str "Pinned effect revision " effect-version " does not compile: " (:message (first errors)))}]))))
 
+(def ^:dynamic *checked*
+  "A publication the owner has already checked (`tolglow.show.publication/check`):
+  {:captured definition :errors period-errors}. `publication-errors` reuses its
+  verdict for that definition instead of validating and compiling it again
+  (#784). Bound only by the owner around its own command, never from a payload."
+  nil)
+
 (defn- publication-errors
   "Tolglow's definition checks for a new :registry/publish or :cue/put, which
   Afterglow's structural publish does not run: the definition must validate, an
@@ -124,10 +131,12 @@
   (when (nil? (get-in model [:control :history command-id]))
     (let [[kind definition] (case op :registry/publish [kind definition] :cue/put [:cues cue] nil)]
       (when (map? definition)
-        (not-empty (or (not-empty (compiler/definition-errors
-                                   kind (cond->> definition (= :effects kind) (captured model))
-                                   {:publication? true}))
-                       (when (= :cues kind) (pinned-effect-errors model definition))))))))
+        (let [definition (cond->> definition (= :effects kind) (captured model))
+              checked *checked*]
+          (not-empty (or (not-empty (if (and checked (= definition (:captured checked)))
+                                      (:errors checked)
+                                      (compiler/definition-errors kind definition {:publication? true})))
+                         (when (= :cues kind) (pinned-effect-errors model definition)))))))))
 
 (defn apply-command
   "Resolve a cue's selected fixture scope on every Tolglow control surface,
