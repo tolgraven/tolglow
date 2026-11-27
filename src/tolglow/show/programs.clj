@@ -18,8 +18,9 @@
             [afterglow.runtime.faults :as runtime-faults]
             [tolglow.modulation :as modulation])
   (:import [java.nio.channels ClosedByInterruptException]
-           [java.util.concurrent CancellationException ExecutorService LinkedBlockingQueue
-            RejectedExecutionException ThreadFactory ThreadPoolExecutor TimeUnit]))
+           [java.util.concurrent CancellationException ExecutorService PriorityBlockingQueue
+            RejectedExecutionException ThreadFactory ThreadPoolExecutor TimeUnit]
+           [java.util.concurrent.atomic AtomicLong]))
 
 (def cache-size
   "Programs per cache generation."
@@ -244,15 +245,38 @@
                   [[(:id program) (:version program)] (assoc entry :targets (:targets program))])))
         @transient-failures))
 
+(defn ahead
+  "Mark `task` to run ahead of queued compiles, such as checking a published
+  definition the frame owner waits for (#784)."
+  [task]
+  (vary-meta task assoc ::ahead true))
+
+(defn ahead?
+  "True for a task marked with `ahead`."
+  [task]
+  (boolean (::ahead (meta task))))
+
+(deftype QueuedTask [^long lane ^long sequence task]
+  Runnable
+  (run [_] (task))
+  Comparable
+  (compareTo [_ other]
+    (let [^QueuedTask other other]
+      (if (== lane (.-lane other))
+        (Long/compare sequence (.-sequence other))
+        (Long/compare lane (.-lane other))))))
+
 (defn worker
-  "An owned single-thread compile worker, first in first out. :submit takes a
+  "An owned single-thread compile worker. Tasks marked `ahead` run first, in
+  their order, then every other task, first in first out. :submit takes a
   task; :close! stops it, drops queued work and waits up to a second for a
   running compile; :terminated? says it has stopped."
   []
   (let [factory (reify ThreadFactory
                   (newThread [_ task] (doto (Thread. ^Runnable task "tolglow-program-compiler") (.setDaemon true))))
-        pool (ThreadPoolExecutor. 1 1 0 TimeUnit/MILLISECONDS (LinkedBlockingQueue.) factory)]
-    {:submit (fn [task] (.execute pool ^Runnable task))
+        pool (ThreadPoolExecutor. 1 1 0 TimeUnit/MILLISECONDS (PriorityBlockingQueue.) factory)
+        sequence (AtomicLong.)]
+    {:submit (fn [task] (.execute pool ^Runnable (QueuedTask. (if (ahead? task) 0 1) (.incrementAndGet sequence) task)))
      :close! (fn []
                (.shutdownNow ^ExecutorService pool)
                (try (.awaitTermination ^ExecutorService pool 1000 TimeUnit/MILLISECONDS)

@@ -119,6 +119,12 @@
          (every? #(and (registry/finite-number? %) (<= 0 %) (or hdr? (<= % 1))) value))
     :else (and (registry/finite-number? value) (<= 0 value) (or (and hdr? (hdr-attribute? attribute)) (<= value 1)))))
 
+(def ^:dynamic *validated*
+  "The effect definition its caller has just validated with
+  `registry/validate-definition`, found free of errors. `compile-plan` does not
+  validate that identical object again (#784)."
+  nil)
+
 (defn compile-plan
   "Validate an effect once and expose a reusable runtime compilation plan.
   Prepared output :expression trees have parameter types resolved; tween outputs
@@ -126,8 +132,9 @@
   artifacts, never serializable show state or registry definitions."
   ([definition] (compile-plan definition nil))
   ([definition bind-pure]
-  (let [errors (registry/validate-definition :effects definition)]
-    (when (seq errors) (throw (ex-info "Invalid effect definition" {:errors errors}))))
+  (when-not (identical? definition *validated*)
+    (let [errors (registry/validate-definition :effects definition)]
+      (when (seq errors) (throw (ex-info "Invalid effect definition" {:errors errors})))))
   (when (contains? definition :modulation)
     (let [errors (modulation/validate-saved-config (:modulation definition))]
       (when (seq errors)
@@ -326,6 +333,14 @@
         block-plan (vary-meta blocks/step-info block-plan)
         (predictable-outputs? definition) keyframes/predictable)))))
 
+(defn publication-period-errors
+  "A new effect revision's modulation period errors, at their definition
+  paths; saved shows load without this check (see `definition-errors`)."
+  [kind definition]
+  (when (and (= :effects kind) (map? (:modulation definition)))
+    (mapv #(update % :path (partial into [:modulation]))
+          (modulation/validate-config (:modulation definition)))))
+
 (defn definition-errors
   "Path/message errors that keep a registry definition from being published or
   saved, relative to the definition. Effects must also compile against their
@@ -338,14 +353,12 @@
   ([kind definition] (definition-errors kind definition nil))
   ([kind definition {:keys [publication?]}]
   (let [errors (registry/validate-definition kind definition)
-        period-errors (when (and publication? (= :effects kind) (map? (:modulation definition)))
-                        (mapv #(update % :path (partial into [:modulation]))
-                              (modulation/validate-config (:modulation definition))))]
+        period-errors (when publication? (publication-period-errors kind definition))]
     (cond
       (seq errors) errors
       (not= :effects kind) []
       (seq period-errors) period-errors
-      :else (try (compile-effect definition) []
+      :else (try (binding [*validated* definition] (compile-effect definition)) []
                  (catch clojure.lang.ExceptionInfo cause
                    (or (not-empty (:errors (ex-data cause)))
                        [{:path [] :message (ex-message cause)}]))

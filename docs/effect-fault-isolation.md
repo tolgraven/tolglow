@@ -149,6 +149,65 @@ revisions, or one revision launched on 64 heads, made that frame miss the
   programs as a retired generation, so filling it does not recompile every
   running effect in one frame.
 
+Publishing a definition (`submit! :definition`, which Studio's editor, the
+REPL and agents' `publish_effect` use) checks the revision once (#784). It
+used to validate each effect revision 4 times and compile it twice on the
+owner. Its pure checks are now in `tolglow.show.publication`:
+
+- **One check.** Validation, then the effect's compile, then its modulation
+  period, in that order. The compile does not validate the same definition
+  again. One that captured shared prefab stages is validated once more,
+  because the capture differs from what was validated. Afterglow's structural
+  publish (version order, dependent cue presets) still runs at commit.
+- **Off the owner, ahead of compiles.** With a compile worker, `submit!`
+  queues the check there, ahead of the program compiles already queued. The
+  check runs against the last committed model.
+- **The owner decides and commits.** The owner derives the revision again
+  against its current registry: the expected version, an output patch and the
+  next version. If the worker checked that same revision, the owner uses its
+  verdict and validates and compiles nothing. If an earlier message in the
+  same cycle changed what the revision derives to, such as two unversioned
+  publications of one effect, the owner checks it again on the worker. The
+  owner checks a message itself only if that second check is stale too.
+- **At most one cycle.** The owner holds a publication whose check is not
+  ready for one owner cycle. If the worker has not checked it by then
+  (stalled, or busy with a long compile or warm-tier build), the owner checks
+  it inline, at about 0.1 to 0.4 ms. A publication submitted between frames
+  is normally checked before the next one, since a small effect checks in
+  under 0.1 ms.
+- **Only what depends on it waits, safe by default.** An explicit allow-list
+  of messages that neither read nor write the registry goes ahead in the
+  same cycle, in order:
+  - blackout, master, transport, parameters and ramps;
+  - gestures and their ends, and edit history;
+  - instance, group and selection controls;
+  - knobs, knob looks, audio LFOs and control-surface links;
+  - device and sensor input, parameter sources and surface aim.
+
+  Launches, immediate or quantized, wait only when they launch the held
+  effect or cue, or a cue the show does not know yet. A launch cancel waits
+  only behind a held launch. Every other message waits with the publication,
+  in submission order. That includes publications and registry, page and
+  settings edits, lighting scenes, surface cues, compositions and imports,
+  and any message type added later until it is classified. A test reads
+  every message type in `apply-message` and every command op, and fails on
+  one it has not classified. Revision numbers, the order of dependent
+  messages and their acks are unchanged.
+- **Queue capacity.** Held messages count against the queue's 256 slots, so
+  a stalled check pushes back on submitters instead of growing a list.
+- **Time.** A held message is applied at the time of the cycle that applies
+  it, at most one cycle (25 ms at 40 Hz) after it would have been. Quantized
+  launches keep their scheduled beat.
+- **Unchanged.** The acks, refusal messages and codes, and the error order
+  are the same with and without a worker. An invalid revision leaves the last
+  valid definition running. `stop!` answers a held publication with "Show
+  stopped".
+- **Where it runs on the owner.** An unscheduled runtime (no
+  `:background-compile`) checks on the owner, once, so manual ticks and
+  replay stay deterministic. A function passed as `:background-compile`
+  receives the check as a task marked `programs/ahead?`, so tests can step
+  it.
+
 Measurements: [reload takeover benchmark](benchmarks/README.md#hot-reload-takeover-frames).
 
 Full backups preserve faults and event history. Restore remaps active diagnostic

@@ -196,8 +196,9 @@ Findings:
   once per cue value, rig and settings. The owner only compares identities, so
   a publish or pad press costs about the same with 500 selector cues as with
   none.
-- **Publishing still costs time on the owner.** The publication frame still
-  validates each revision on the owner, at about 0.1 to 0.4 ms each (#784).
+- **Publishing still cost time on the owner.** The publication frame
+  validated each revision on the owner, at about 0.1 to 0.4 ms each. See
+  [publication checks](#publication-checks) for the fix (#784).
 - **A full compile cache recompiled every running effect in one frame.** It
   now keeps a retired generation. The warm tier, about 55 KB per program on
   this rig, is kept apart from it, and programs leaving the tier never evict
@@ -250,3 +251,82 @@ Ordinary frames were unchanged (p50 3.7 to 4.3 ms).
 - per-frame history bookkeeping in sync observation;
 - Afterglow's command admission and history;
 - packing the 64 new contributions.
+
+## Publication checks
+
+#784 measured the owner cost of publishing effect revisions in the
+reload-takeover benchmark above: 32 revisions published in one owner cycle on
+the mixed 2,048-pixel/64-head rig, in background compile mode.
+
+**Where the time went.** Counting calls during publication showed 4
+validations and 2 compiles of each revision on the owner. (Counting calls of
+`compile-effect` gives 8, the figure in the issue, because each compile
+passes through its 4 arities.) `show/apply-message` validated the revision, then
+compiled it, and that compile validated it again. Then `spatial/publication-errors`
+ran `compiler/definition-errors`, which validated and compiled it once more,
+and that compile validated it a fourth time. Timing the owner per publication
+in a pooled JVM (JDK 25.0.2, load average about 7, 870 archived revisions):
+
+| Stage | ms per publication |
+| --- | --- |
+| Whole publication on the owner | 0.11 |
+| Its validations and compiles | about 0.04 |
+| Afterglow's `latest-version` scan of the archive | 0.03, growing with every kept revision |
+| Command admission, history and the rest | about 0.04 |
+
+**The fix.**
+- *One check, off the owner* (`tolglow.show.publication`, see
+  [effect fault isolation](../effect-fault-isolation.md)). The definition is
+  validated once and compiled once, on the compile worker, before the owner
+  sees the message. The owner derives the revision against its registry and
+  adopts the worker's verdict when it checked that same revision. It holds a
+  publication whose check is not ready, with every later message, for a later
+  cycle.
+- *An archive index in Afterglow* (tolgraven/afterglow#168, master
+  `8d969a15`). A publication finds the
+  latest archived version from an index kept beside the archive map it
+  describes, instead of scanning every revision the show has kept. The
+  benchmark keeps about 4,000 revisions by its last rounds, so this scan was
+  most of its publication cost.
+
+**Measurement.** Pooled JVMs (`bin/repl run tolglow.bench-reload-takeover 30
+mixed background`), JDK 25.0.2, Apple M4 Pro, 30 rounds, run one after the
+other. Publications now arrive half a frame before the owner cycle, as an
+operator's do between frames. The before run used the earlier harness, which
+submitted them just before the cycle; the owner checked them inline either
+way. The Tolglow-only run used branch code at `5dc882f2`. The final run used
+`b65d87a5`, which holds only messages that depend on a waiting publication,
+for at most one cycle, and lets only an explicit allow-list go ahead. 32 accepted revisions, publication frame, ms:
+
+| | Commands p50 / p99 | Tick p50 / p99 | Over 25 ms | Ack latency | Load average |
+| --- | --- | --- | --- | --- | --- |
+| [Before](2026-11-27-publication-before.edn) (master `ed0dad0f`, Afterglow `6f4871fd`) | 5.12 / 9.95 | 11.2 / 25.0 | 1 of 30 | 0 | 3.2 → 4.1 |
+| [Tolglow change only](2026-11-27-publication-tolglow-only.edn) (Afterglow `6f4871fd`) | 4.63 / 7.84 | 9.9 / 22.5 | 0 of 30 | 0 | 4.2 → 5.1 |
+| [Both changes](2026-11-27-publication-after.edn) (`b65d87a5`, Afterglow `8d969a15`) | 0.69 / 1.38 | 5.7 / 10.1 | 0 of 30 | 0 | 2.7 → 2.5 |
+
+An earlier before run on the same machine gave commands 5.37 / 10.89 ms and
+ticks 9.9 / 23.2 ms (load 2.8 → 3.9). The same both-changes code before the
+selective hold (`5dc882f2` with Afterglow `0dec26eb`) gave 0.74 / 1.72 and
+5.8 / 15.8 ms at load 4.3. With both changes, the other 32-revision cases
+have commands p50 0.65 to 0.90 ms, against 6.3 to 6.7 ms before.
+
+**Blackout behind publication.** Each round also sends 32 revisions just
+before an owner cycle, too late for the worker to check them, followed by a
+blackout. In all 30 rounds the blackout applied in that first cycle (latency
+0 frames), and the publications landed one cycle later (latency 1). That
+first frame ran tick p50 / p99 4.1 / 11.3 ms, commands 0.08 / 1.52 ms. (The
+run at `85cf52af`, before the allow-list, gave the same latencies, commands
+0.61 / 1.39 ms for 32 accepted revisions, at load 2.2.)
+Before the selective hold, the review measured such a blackout waiting 2
+cycles with an idle worker, and 9 cycles (332 ms) behind a warm-tier rebuild
+with 500 selector cues. In that probe the blackout now applies in the
+first cycle after it is submitted (35 to 39 ms of wall time, including the
+probe's 25 ms sleep). A
+single publication's command time is about 0.55 ms in every run; most of it
+is not publication work. Every publication was acknowledged in its first
+frame, adoption latency stayed 1 frame, and ordinary frames ran p50 2.9 to
+4.3 ms across the runs.
+
+Excluded: the worker's own CPU time (one validation and one compile per
+publication, on its thread), inline mode, physical output and Studio/browser
+load.
