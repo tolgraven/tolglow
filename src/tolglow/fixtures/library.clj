@@ -249,7 +249,8 @@
 
 (def ^:private type-derived
   "Keys a placement always takes from its registry type."
-  (into [:fixture-type-id :fixture-type-version :channels :footprint :placement?] placement/type-properties))
+  (into [:fixture-type-id :fixture-type-version :channels :footprint :placement?]
+        (remove (set placement/instance-keys)) placement/type-properties))
 
 (defn admit-placements
   "Instantiate the entries of a proposed rig marked `:placement? true` from their
@@ -259,11 +260,16 @@
   may differ from the type's only by axis reversal (`placement/same-patch?`).
   The library's patch checks apply, including documented movement calibration.
   Unmarked entries are returned unchanged, so committed, renamed and restored
-  fixtures keep all of their data."
+  fixtures keep all of their data. `:placement? false` is removed; any other
+  value is refused, so the key is never stored."
   [types fixtures]
   (mapv (fn [entry]
-          (if-not (and (map? entry) (true? (:placement? entry)))
-            entry
+          (cond
+            (not (and (map? entry) (contains? entry :placement?))) entry
+            (false? (:placement? entry)) (dissoc entry :placement?)
+            (not (true? (:placement? entry)))
+            (throw (ex-info "A fixture's :placement? mark must be true or false" {:fixture-id (:id entry)}))
+            :else
             (let [definition (registry-type types (:fixture-type-id entry))]
               (cond
                 (nil? definition)

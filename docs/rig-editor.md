@@ -51,9 +51,12 @@ A placement is a draft edit, so **Undo** removes it and **Save rig** patches
 it. The draft entry carries `:placement? true`. On save the host instantiates
 every marked entry from its published `:fixture-type-id`, whatever its ID, and
 removes the mark: channels, footprint and type data come from the registry; the
-ID, name, universe, address, position, rotation, RGBW policy, calibration and any
-other per-instance keys come from the entry. Its channels may differ from the
-type's only by `:inverted-from 0` reversal. The library's patch checks apply, so
+ID, name, universe, address, position, rotation, RGBW policy, calibration,
+numeric photometry (beam angle, zoom range, lens radius, maximum watts, measured
+relative brightness) and any other per-instance keys come from the entry. Its
+channels may differ from the type's only by `:inverted-from 0` reversal, and only
+where the type has no partial pivot of its own. `:placement? false` is removed and
+any other value is refused, so the mark is never stored. The library's patch checks apply, so
 a moving head needs its documented pan and tilt travel before it can be saved.
 Unmarked entries are never re-derived: renaming a fixture or submitting a whole
 saved rig keeps every key, and an untyped fixture without channels still gets
@@ -85,7 +88,7 @@ it only about its mounting axis. The rotation fields remain the exact form.
 Moving heads also show **Pan travel** and **Tilt travel**: the documented minimum
 and maximum mechanical angle, where home falls in that travel, and **Reverse**,
 which sets the channel's `:inverted-from 0` for a motor that runs against the
-model. Each of these is one undoable draft edit. A reversed legacy
+model. A channel whose type sets a partial pivot keeps it and shows no toggle. Each of these is one undoable draft edit. A reversed legacy
 `[centre -half]` calibration shows as its equivalent range; editing it stores
 that range with **Reverse** switched, which sends the same DMX for every angle.
 
@@ -95,7 +98,8 @@ that range with **Reverse** switched, which sends the same DMX for every angle.
 point, or enter it, then **Check aim**. The host solves the pan and tilt with
 Afterglow's renderer from the committed fixture with the draft position, rotation
 and travel substituted, and returns mechanical degrees, the 8-bit coarse DMX each channel sends after
-its reversal, and whether the travel reaches the point. The check never
+its reversal (the high byte of a 16-bit channel, as Afterglow encodes it), and
+whether the travel reaches the point. The check never
 changes the show. **Send test aim** points the real head at the target through
 the ordinary surface-aim command (`:mode :together` in world coordinates), so
 the rig must be saved first.

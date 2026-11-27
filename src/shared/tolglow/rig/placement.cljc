@@ -10,9 +10,14 @@
   "Fixture-type data copied onto every instance."
   (into [:name :emission-color :fogger :bounds-m] photometry/fixture-keys))
 
+(def photometry-overrides
+  "Numeric photometry an instance may set over its type's (for example a
+  measured brightness or a lamp's actual wattage)."
+  [:beam-angle :zoom-range-deg :lens-radius-m :max-watts :measured-relative-brightness])
+
 (def instance-keys
   "Per-instance choices a placement may supply. Everything else comes from the type."
-  [:id :name :universe :address :position :rotation-deg :rgbw-policy :calibration])
+  (into [:id :name :universe :address :position :rotation-deg :rgbw-policy :calibration] photometry-overrides))
 
 (defn- offsets [channel]
   (cond (integer? channel) [channel]
@@ -47,8 +52,9 @@
 
 (defn same-patch?
   "Does `instance` patch exactly the type's channels? The only permitted
-  difference is full-range axis reversal: an instance channel may add or drop
-  `:inverted-from 0`, or keep the type's own value. Everything else, including
+  difference is full-range axis reversal: where the type has no reversal of its
+  own (or `:inverted-from 0`), an instance may add or drop `:inverted-from 0`; a
+  type's partial `:inverted-from` must be kept. Everything else, including
   offsets, ranges and functions, must match."
   [type-channels instance-channels]
   (and (map? type-channels) (map? instance-channels)
@@ -58,7 +64,10 @@
                        b (channel-spec (get instance-channels attribute))
                        reversal (:inverted-from b)]
                    (and (= (dissoc a :inverted-from) (dissoc b :inverted-from))
-                        (or (nil? reversal) (and (number? reversal) (zero? reversal)) (= reversal (:inverted-from a))))))
+                        (or (= reversal (:inverted-from a))
+                            ;; Full reversal may be switched only where the type has none of its own.
+                            (and (contains? #{nil 0} (some-> (:inverted-from a) long))
+                                 (contains? #{nil 0} (some-> reversal long)))))))
                (keys type-channels))))
 
 (defn- footprint [fixture]
@@ -203,13 +212,22 @@
   [channel]
   (and (map? channel) (number? (:inverted-from channel)) (zero? (:inverted-from channel))))
 
+(defn switchable-reversal?
+  "Can full-range reversal be switched? Not on a channel with its own partial
+  `:inverted-from` pivot, which belongs to the fixture type."
+  [channel]
+  (let [from (when (map? channel) (:inverted-from channel))]
+    (or (nil? from) (and (number? from) (zero? from)))))
+
 (defn reverse-channel
-  "Set or clear full-range axis reversal on a channel specification."
+  "Set or clear full-range axis reversal on a channel specification. A channel
+  with a partial pivot is returned unchanged."
   [channel on?]
+  (if-not (switchable-reversal? channel) channel
   (let [[offset fine] (offsets channel)
         spec (cond-> (if (map? channel) (dissoc channel :inverted-from) {:offset offset})
                (and fine (not (map? channel))) (assoc :fine-offset fine))]
-    (if on? (assoc spec :inverted-from 0) spec)))
+    (if on? (assoc spec :inverted-from 0) spec))))
 
 (defn axis-range
   "{:min-deg :max-deg} of an axis calibration. Legacy [centre half-circle]
@@ -227,25 +245,38 @@
   (when (and (finite? min-deg) (finite? max-deg) (< min-deg max-deg))
     (/ (- (double min-deg)) (- max-deg min-deg))))
 
+(defn- reversal [channel] (when (map? channel) (:inverted-from channel)))
+
+(defn- fine? [channel] (boolean (second (offsets channel))))
+
 (defn dmx-sent
-  "8-bit DMX value a channel sends for a normalized model value, after its
-  `:inverted-from` reversal (Afterglow's encoding, coarse byte)."
+  "8-bit coarse DMX value a channel sends for a normalized model value, after its
+  `:inverted-from` reversal. A 16-bit channel's coarse byte is the high byte of
+  round(257 x units), or the whole units for a function-range channel, as in
+  Afterglow's `encoded-channel-code` and `afterglow.render.dmx/fine-word`."
   [channel value]
-  (let [v (* 255.0 value) from (when (map? channel) (:inverted-from channel))]
-    (Math/round (double (if (and (number? from) (>= v from)) (- 255.0 (- v from)) v)))))
+  (let [units (* 255.0 value) from (reversal channel)
+        units (if (and (number? from) (>= units from)) (- 255.0 (- units from)) units)]
+    (cond (not (fine? channel)) (Math/round (double units))
+          (and (map? channel) (seq (:functions channel))) (long (Math/floor (double units)))
+          :else (bit-shift-right (Math/round (* 257.0 units)) 8))))
 
 (defn dmx-model
-  "Normalized model value that makes a channel send the 8-bit DMX value `dmx`;
-  the inverse of `dmx-sent`."
+  "A normalized model value that makes a channel send the 8-bit coarse DMX
+  value `dmx` (the centre of that coarse step for 16-bit channels); the inverse
+  of `dmx-sent`."
   [channel dmx]
-  (let [from (when (map? channel) (:inverted-from channel))]
-    (/ (if (and (number? from) (>= dmx from)) (- (+ 255.0 from) dmx) (double dmx)) 255.0)))
+  (let [from (reversal channel)
+        units (cond (not (fine? channel)) (double dmx)
+                    (and (map? channel) (seq (:functions channel))) (+ dmx 0.5)
+                    :else (/ (+ (* 256.0 dmx) 127.5) 257.0))]
+    (/ (if (and (number? from) (>= units from)) (- (+ 255.0 from) units) units) 255.0)))
 
 (defn unreverse-legacy
   "Express a reversed legacy [centre -half] axis calibration as an ordinary
   range plus channel reversal that sends the same DMX for every angle. Returns
   [range channel], or nil when the calibration is not reversed legacy data."
   [calibration channel]
-  (when (and (vector? calibration) (number? (second calibration)) (neg? (second calibration)))
+  (when (and (vector? calibration) (number? (second calibration)) (neg? (second calibration)) (switchable-reversal? channel))
     (let [[centre half] calibration]
       [(axis-range [(- 255 centre) (- half)]) (reverse-channel channel (not (reversed? channel)))])))

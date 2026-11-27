@@ -108,9 +108,11 @@
      [:div.rig-vector-fields
       [fields/number-field (str (str/capitalize (name axis)) " minimum · °") (:min-deg range) [:rig-editor/axis-range axis :min-deg] {:step 1}]
       [fields/number-field (str (str/capitalize (name axis)) " maximum · °") (:max-deg range) [:rig-editor/axis-range axis :max-deg] {:step 1}]]
-     [:label.rig-checkbox [checkbox/input {:checked (placement/reversed? (get-in fixture [:channels axis]))
-                                           :on-change #(dispatch! [:rig-editor/reverse-axis axis (.. % -target -checked)])}]
-      (str "Reverse " (name axis) " (DMX runs the other way)")]
+     (if (placement/switchable-reversal? (get-in fixture [:channels axis]))
+       [:label.rig-checkbox [checkbox/input {:checked (placement/reversed? (get-in fixture [:channels axis]))
+                                             :on-change #(dispatch! [:rig-editor/reverse-axis axis (.. % -target -checked)])}]
+        (str "Reverse " (name axis) " (DMX runs the other way)")]
+       [:p.small.muted (str "The fixture type reverses " (name axis) " from DMX " (get-in fixture [:channels axis :inverted-from]) "; that pivot stays.")])
      (when legacy [:p.small.muted "Reversed legacy calibration. Editing the range stores it as this range with Reverse switched, sending the same DMX."])
      [:p.small.muted (cond (nil? range) "Enter the range from the fixture's manual."
                            (<= 0 home 1) (str "Home (0°) is at " (round (* 100 home) 1) " % of travel, DMX " (js/Math.round (* 255 home)) ".")

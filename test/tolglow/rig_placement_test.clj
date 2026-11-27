@@ -181,3 +181,29 @@
         (is (= :hanging (:mounting-kind fit)))
         (is (close? [0 -1 0] (:up (placement/axes (:rotation-deg fit))) 1.0e-3))
         (is (false? (:accepted? (aim/fit fixture samples false))) "Unverified axes stay a candidate")))))
+
+(deftest dmx-sent-matches-the-bytes-afterglow-writes
+  (doseq [channel [5 [5 6] {:offset 5 :inverted-from 0} {:offset 5 :fine-offset 6 :inverted-from 0}]]
+    (let [fixture {:id :h :universe 1 :address 1 :footprint 7 :position [0 0 0]
+                   :channels {:pan channel :tilt 7}
+                   :calibration {:pan {:min-deg -270 :max-deg 270} :tilt {:min-deg -135 :max-deg 135}}}
+          patch (render/compile-patch [fixture])
+          coarse (fn [v] (bit-and 255 (aget ^bytes (get (:universes (render/resolve-frame patch [{:target-id :h :attribute :pan :value v}])) 1) 4)))
+          mismatches (vec (for [i (range 1001) :let [v (/ i 1000.0)] :when (not= (coarse v) (placement/dmx-sent channel v))] [v (coarse v) (placement/dmx-sent channel v)]))]
+      (is (empty? mismatches) (str (pr-str channel) " " (take 5 mismatches)))
+      (doseq [dmx (range 256)]
+        (is (= dmx (coarse (placement/dmx-model channel dmx))) (pr-str channel dmx))))))
+
+(deftest review-follow-ups
+  (is (not (placement/same-patch? {:dimmer {:offset 1 :inverted-from 128}} {:dimmer 1})) "A type's partial pivot is kept")
+  (is (placement/same-patch? {:dimmer {:offset 1 :inverted-from 128}} {:dimmer {:offset 1 :inverted-from 128}}))
+  (is (placement/same-patch? {:pan {:offset 1 :inverted-from 0}} {:pan 1}))
+  (is (= {:offset 1 :inverted-from 128} (placement/reverse-channel {:offset 1 :inverted-from 128} true)))
+  (is (not (placement/switchable-reversal? {:offset 1 :inverted-from 128})))
+  (is (nil? (placement/unreverse-legacy [100 -90] {:offset 1 :inverted-from 128})))
+  (let [entry {:id "r" :fixture-type-id "spot" :universe 1 :address 1}]
+    (is (= [entry] (library/admit-placements types [(assoc entry :placement? false)])) "false is removed, never stored")
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"true or false"
+                          (library/admit-placements types [(assoc entry :placement? "true" :channels {:dimmer 1})])))
+    (let [[admitted] (library/admit-placements types [(assoc entry :placement? true :max-watts 300 :measured-relative-brightness 0.4)])]
+      (is (= [300 0.4] [(:max-watts admitted) (:measured-relative-brightness admitted)]) "Per-instance photometry is kept"))))

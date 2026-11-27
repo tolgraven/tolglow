@@ -106,7 +106,8 @@
                          (run [:rig-editor/sample-value 2 :tilt 51]))
             samples (get-in (editor/editor recorded) [:calibration :samples])
             {:keys [studio/http]} (fx (run recorded [:rig-editor/set [:calibration :verified?] true]) [:rig-editor/aim-fit])]
-        (is (= [{:target [2 0 1] :pan 0.25 :tilt 0.75} {:target [-2 0 1] :pan 0.25 :tilt 0.75} {:target [0 0 4] :pan 0.25 :tilt 0.2}] samples))
+        (is (= [{:target [2 0 1] :pan 0.25 :tilt 0.75} {:target [-2 0 1] :pan 0.25 :tilt 0.75} {:target [0 0 4] :pan 0.25 :tilt (placement/dmx-model [3 4] 51)}] samples))
+        (is (= 51 (placement/dmx-sent [3 4] (get-in samples [2 :tilt]))) "The 16-bit tilt field reads back the DMX typed")
         (is (= "/api/fixtures/aim-fit" (:path http)))
         (is (true? (get-in http [:body :axis-verified?])))
         (is (= 3 (count (get-in http [:body :samples]))))
