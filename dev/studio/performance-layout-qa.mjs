@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {checkCardAlignment} from './live-card-alignment.mjs';
-import {checkCardGrid} from './card-grid-checks.mjs';
+import {checkCardGrid, checkDetachedRepack} from './card-grid-checks.mjs';
 import {join} from 'node:path';
 import {chromium, devices, webkit} from 'playwright-core';
 
@@ -343,6 +343,7 @@ try {
     await positionBoard(page);
     // The wide run checks layout only; the source and shell flows ran at desktop.
     if(process.env.STUDIO_CARD_LAYOUT_ONLY==='1' || name==='wide') {
+      if(name==='desktop') measurements[name].detached=await checkDetachedRepack(page,directory);
       await page.close();
       continue;
     }

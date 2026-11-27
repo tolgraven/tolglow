@@ -113,7 +113,7 @@ function place(bank) {
     span: [Math.round((card.box.w + gap) / (unit + gap)), Math.round((card.box.h + rowGap) / (row + rowGap))]}));
 }
 
-export function checkBanks(banks, where, {padCap} = {}) {
+export function checkBanks(banks, where) {
   const sizes = {};
   for (const bank of banks) {
     const name = `${where} ${bank.effect}`;
@@ -136,9 +136,11 @@ export function checkBanks(banks, where, {padCap} = {}) {
       assert.equal(card.cramped, 0, `${id}: its controls keep a usable size in the slot`);
       for (const pad of card.pads) {
         assert.ok(near(pad.w, pad.h), `${id}: the pad is square (${pad.w}x${pad.h})`);
-        if (padCap) assert.ok(pad.w <= padCap + 1, `${id}: the pad stays within ${padCap}px`);
-        if (padCap && card.slot === 'large') assert.ok(pad.w >= Math.min(padCap, card.box.w - 70, card.box.h - 140) - 1,
-          `${id}: the pad uses the slot up to its cap (${pad.w}px)`);
+        // The pad fills its slot: the largest square beside the Z fader and
+        // above the readout (slot padding, title and source take the rest).
+        const fader = card.control === 'xyz' ? (where.includes('strip') ? 34 : 48) : 0;
+        const fit = Math.min(card.box.w - 14 - fader, card.box.h - 60 - 44);
+        assert.ok(pad.w >= fit - 3, `${id}: the pad fills its slot (${Math.round(pad.w)}px of ${Math.round(fit)}px)`);
       }
       for (let r = 0; r < card.span[1]; r++) for (let c = 0; c < card.span[0]; c++) {
         const cell = `${card.row + r}:${card.col + c}`;
@@ -230,10 +232,17 @@ async function checkRingsOverlay(page, card, where) {
     });
     const trigger = panel.closest('.parameter-rings').querySelector('.rings-trigger').getBoundingClientRect();
     const onTrigger = document.elementFromPoint(trigger.x + trigger.width / 2, trigger.y + trigger.height / 2);
-    return {inside: r.left >= bank.left - 1 && r.right <= bank.right + 1, knobs,
+    const own = panel.closest('.param-row');
+    const covered = [...own.parentElement.children].filter(row => row !== own && row.matches('.param-row')).filter(row => {
+      const b = row.getBoundingClientRect();
+      return Math.min(b.right, r.right) - Math.max(b.left, r.left) > 2 && Math.min(b.bottom, r.bottom) - Math.max(b.top, r.top) > 2;
+    }).map(row => row.dataset.param ? 'param/' + row.dataset.param : row.dataset.group).sort();
+    return {inside: r.left >= bank.left - 1 && r.right <= bank.right + 1, knobs, covered,
+            recorded: (own.dataset.overlayCovers || '').split(' ').filter(Boolean).sort(),
             toggle: Boolean(onTrigger?.closest('.rings-trigger'))};
   });
   assert.ok(geometry.toggle, `${where}: the rings and their toggle stay uncovered`);
+  assert.deepEqual(geometry.covered, geometry.recorded, `${where}: the overlay covers exactly the cards it records`);
   assert.ok(geometry.inside, `${where}: the ring overlay stays within the bank`);
   assert.equal(geometry.knobs.length, 4, `${where}: one knob per ring`);
   for (const knob of geometry.knobs) {
@@ -242,24 +251,30 @@ async function checkRingsOverlay(page, card, where) {
   }
   return async (path) => {
     if (path) await card.screenshot({path});
-    await page.keyboard.press('Escape');
+    // Light dismiss: a press anywhere outside the rings and their knobs closes them.
+    await card.locator('h3').click();
     await overlay.waitFor({state: 'detached'});
     assert.deepEqual(await cardBoxes(page), before, `${where}: closing rings moves no card`);
+    await card.locator('.rings-trigger').click();
+    await overlay.waitFor();
+    await page.keyboard.press('Escape');
+    await overlay.waitFor({state: 'detached'});
+    return geometry.covered;
   };
 }
 
 export async function checkCardGrid(page, profile, directory, measurement) {
   const result = measurement.slots = {};
-  result.strip = checkBanks(await banks(page, 'strip'), `${profile} strip`, {padCap: 176});
+  result.strip = checkBanks(await banks(page, 'strip'), `${profile} strip`);
   const study = effectCard(page, 'Widget study');
-  await (await checkRingsOverlay(page, study, `${profile} strip`))(join(directory, `${profile}-strip-rings.png`));
+  result.ringsCover = {strip: await (await checkRingsOverlay(page, study, `${profile} strip`))(join(directory, `${profile}-strip-rings.png`))};
 
   for (const title of ['Widget study', 'Orbital wash', 'Slot study']) await setExpanded(page, title, true);
   await study.scrollIntoViewIfNeeded();
-  result.detail = checkBanks(await banks(page, 'detail'), `${profile} detail`, {padCap: 220});
-  checkBanks(await banks(page, 'strip'), `${profile} strip beside detail`, {padCap: 176});
+  result.detail = checkBanks(await banks(page, 'detail'), `${profile} detail`);
+  checkBanks(await banks(page, 'strip'), `${profile} strip beside detail`);
   await study.locator('.live-effect-body').screenshot({path: join(directory, `${profile}-detail.png`)});
-  await (await checkRingsOverlay(page, study, `${profile} detail`))(join(directory, `${profile}-detail-rings.png`));
+  result.ringsCover.detail = await (await checkRingsOverlay(page, study, `${profile} detail`))(join(directory, `${profile}-detail-rings.png`));
   for (const title of ['Widget study', 'Orbital wash', 'Slot study']) await setExpanded(page, title, false);
   for (const surface of ['strip', 'detail'])
     for (const type of ['rotary', 'fader', 'rings', 'color', 'boolean', 'enum', 'xy', 'xyz', 'range', 'axes', 'shape'])
@@ -288,6 +303,10 @@ export async function checkCardGrid(page, profile, directory, measurement) {
   assert.deepEqual([study2.size, orbit.size, solitary.size], ['medium', 'large', 'small'], `${profile}: saved sizes`);
   assert.deepEqual([study2.density, orbit.density], ['strip', 'detail'], `${profile}: medium shows the strip, large the Detail bank`);
   assert.equal(study2.controls, 5, `${profile}: a medium card shows every control`);
+  const orbitCard = members.filter({has: page.getByRole('heading', {name: 'Orbit set', exact: true})});
+  assert.equal(await orbitCard.locator('.live-effect-advanced:visible, .layer-priority-source:visible').count(), 0,
+    `${profile}: a large card shows its controls and plots, not the inspector`);
+  assert.equal(await orbitCard.locator('details.live-effect-inspector:not([open])').count(), 1, `${profile}: the inspector waits behind a disclosure`);
   assert.equal(await macro.locator('.live-effect-expand').count(), 0, `${profile}: a macro card's size replaces its Detail toggle`);
   assert.equal(await macro.locator('.card-size-picker').count(), 0, `${profile}: sizes are hidden outside Arrange`);
   assert.ok(near(orbit.width, full), `${profile}: a large card takes the whole row`);
@@ -304,12 +323,28 @@ export async function checkCardGrid(page, profile, directory, measurement) {
   assert.equal(await page.locator('.live-effect-grid>[data-live-instance][data-card-size]').count(), 0,
     `${profile}: default cards never take a custom size`);
 
+  if (tracks === 6) {
+    // A card's width depends on its size, never on its siblings: M, S, S
+    // keeps M at half the row and each S at a third.
+    await repl(page, `@(tolglow.show/submit! runtime :composition-cards {:id :qa/card-set :cards [{:slot-id :study :size :medium} {:slot-id :orbit :size :small} {:slot-id :solitary :size :small}]})`);
+    await page.waitForFunction(() => [...document.querySelectorAll('.live-macro [data-live-instance]')].every(c => c.dataset.cardSize !== 'large'));
+    const msS = await state();
+    const named = Object.fromEntries((await names()).map((n, i) => [n, msS[i]]));
+    assert.ok(near(named['Study set'].width, (full - 9) / 2, 2), `${profile}: with M, S, S a medium card is still half the row (${named['Study set'].width} of ${full})`);
+    for (const n of ['Orbit set', 'Solitary'])
+      assert.ok(near(named[n].width, (full - 18) / 3, 2), `${profile}: with M, S, S a small card is still a third (${named[n].width} of ${full})`);
+    assert.equal(await grid.getAttribute('data-columns'), '6', `${profile}: the macro board keeps its six tracks`);
+    await macro.screenshot({path: join(directory, `${profile}-macro-mss.png`)});
+    await repl(page, `@(tolglow.show/submit! runtime :composition-cards {:id :qa/card-set :cards [{:slot-id :study :size :medium} {:slot-id :orbit :size :large}]})`);
+    await page.waitForFunction(() => [...document.querySelectorAll('.live-macro [data-live-instance]')].some(c => c.dataset.cardSize === 'large'));
+  }
   await macro.getByRole('button', {name: 'Arrange Card set'}).click();
   const studyCard = members.filter({has: page.getByRole('heading', {name: 'Study set', exact: true})});
   await studyCard.getByRole('button', {name: 'Small card for Study set'}).click();
   await page.waitForFunction(() => document.querySelector('.live-macro [data-live-instance]')?.dataset.cardSize === 'small');
   const small = (await state())[(await names()).indexOf('Study set')];
-  assert.ok(small.controls < 5 && small.controls >= 1, `${profile}: a small card shows its leading controls (${small.controls})`);
+  const smallParams = await studyCard.locator('[data-slot-grid]>.param-row').evaluateAll(rows => rows.map(r => r.dataset.param).sort());
+  assert.deepEqual(smallParams, ['level', 'steps', 'tone'], `${profile}: a small card fills its four cells with every control that fits (${small.controls})`);
   await macro.locator('.live-effect-more').first().waitFor();
   await studyCard.getByRole('button', {name: 'Move Study set card later'}).click();
   await page.waitForFunction(() => document.querySelectorAll('.live-macro [data-live-instance] h3')[1]?.textContent === 'Study set');
@@ -327,6 +362,74 @@ export async function checkCardGrid(page, profile, directory, measurement) {
   await macro.getByRole('button', {name: 'Finish arranging Card set'}).click();
   await macro.locator('.card-size-picker').first().waitFor({state: 'detached'});
   await macro.screenshot({path: join(directory, `${profile}-macro.png`)});
+  result.packMs = await measurePackTime(page);
+  assert.ok(!result.packMs.error, result.packMs.error);
+  for (const [range, {max}] of Object.entries(result.packMs))
+    assert.ok(max < 500, `${profile}: packing ${range} cards stays bounded (${max} ms)`);
   result.macro = {tracks, full, widths: [study2.width, orbit.width, solitary.width], heights: [study2.height, orbit.height, solitary.height]};
   console.info(profile, 'slot sizes', JSON.stringify(result));
+}
+
+// A Live panel popped out into its own window re-packs its slot grids when
+// that window resizes: the grids' ResizeObserver comes from the window that
+// owns them (#795). The window keeps one size tier, so nothing remounts and
+// only the observers can re-pack.
+export async function checkDetachedRepack(page, directory) {
+  const popup = page.waitForEvent('popup');
+  await page.locator('#edit-layout').click();
+  await page.locator('#view-perform [data-panel="live"] .layout-detach').click();
+  const live = await popup;
+  await live.waitForSelector('[data-live-instance] [data-slot-grid]', {timeout: 20000});
+  const tier = () => live.evaluate(() => document.querySelector('.panel-window-content[data-panel="live"]')?.dataset.tier);
+  // Orbital wash's strip: its column count and width, once the grid has
+  // settled to the most columns that fit (or fewer only by the packer's rule).
+  const orbital = () => live.evaluate(() => {
+    const bank = [...document.querySelectorAll('[data-live-instance]')]
+      .find(c => c.querySelector('h3')?.textContent === 'Orbital wash')?.querySelector('[data-slot-grid]');
+    return bank && {columns: Number(bank.dataset.columns), width: bank.clientWidth};
+  });
+  const settle = async width => {
+    await live.setViewportSize({width, height: 1000});
+    await live.waitForFunction(width => innerWidth === width, width);
+    await live.waitForTimeout(400);
+    return {...await orbital(), tier: await tier()};
+  };
+  const wide = await settle(1400);
+  const narrow = await settle(680);
+  assert.equal(narrow.tier, wide.tier, 'the pop-out keeps its size tier, so nothing remounts');
+  assert.ok(wide.width > narrow.width + 100, `the pop-out's bank narrows (${wide.width} -> ${narrow.width})`);
+  assert.ok(narrow.columns < wide.columns, `the popped-out Live panel re-packs when its window narrows (${JSON.stringify(wide)} -> ${JSON.stringify(narrow)})`);
+  const unit = 92, gap = 6;
+  assert.ok(narrow.columns * (unit + gap) - gap <= narrow.width + 1, 'the re-packed grid fits the narrow window');
+  await live.screenshot({path: join(directory, 'desktop-live-window-narrow.png')});
+  await live.close();
+  return {wide, narrow};
+}
+
+// slot-grid/pack's cost in the optimized ClojureScript build, in this page:
+// random banks of 5 to 24 cards (a fixed seed), each packed once without the
+// view's cache, at a column limit of 8. Returns p50/p99/max milliseconds.
+export async function measurePackTime(page) {
+  return page.evaluate(() => {
+    const pack = globalThis.tolglow?.authoring?.slot_grid?.pack_js;
+    if (!pack) return {error: 'pack_js is not exported'};
+    let seed = 795;
+    const random = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    const shapes = [[1, 1], [1, 1], [1, 1], [2, 1], [2, 2]];
+    const stats = {};
+    for (const [from, to] of [[5, 8], [9, 12], [13, 18], [19, 24]]) {
+      const times = [];
+      for (let i = 0; i < 60; i++) {
+        const n = from + Math.floor(random() * (to - from + 1));
+        const spans = Array.from({length: n}, () => shapes[Math.floor(random() * shapes.length)]);
+        const start = performance.now();
+        pack(spans, 8, false);
+        times.push(performance.now() - start);
+      }
+      times.sort((a, b) => a - b);
+      const at = q => +times[Math.min(times.length - 1, Math.floor(q * times.length))].toFixed(2);
+      stats[`${from}-${to}`] = {p50: at(0.5), p99: at(0.99), max: +times.at(-1).toFixed(2)};
+    }
+    return stats;
+  });
 }

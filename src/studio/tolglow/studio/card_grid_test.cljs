@@ -104,6 +104,8 @@
     (is (= [:a :b :c :d] (mapv :parameter (performance/small-controls (mapv #(control % knob) [:a :b :c :d :e]) nil))))
     (is (= [:p] (mapv :parameter (performance/small-controls [(control :p pad) (control :a knob)] nil))))
     (is (= [:a] (mapv :parameter (performance/small-controls [(control :a knob) (control :p pad)] nil))))
+    (is (= [:a :c :d] (mapv :parameter (performance/small-controls (mapv control [:a :b :c :d] [knob pad knob knob]) nil)))
+        "a control that does not fit is skipped and later ones keep filling the cells")
     (is (= [:p :q] (mapv :parameter (take 2 (performance/small-controls [(control :p {:type :range :bounds [0 1]})
                                                                           (control :q {:type :range :bounds [0 1]})] nil)))))))
 
@@ -111,3 +113,20 @@
   (is (= [[2 1] [3 1] [6 1]] (mapv #(performance/macro-span 6 %) [:small :medium :large])))
   (is (= [[1 1] [1 1] [2 1]] (mapv #(performance/macro-span 2 %) [:small :medium :large])))
   (is (= [[1 1] [1 1] [1 1]] (mapv #(performance/macro-span 1 %) [:small :medium :large]))))
+
+(deftest opened-rings-cover-the-fewest-cards-beside-their-slot
+  (testing "a free 2x2 area beside the rings is used before any card"
+    (let [cells [{:index 0 :col 0 :row 0 :w 1 :h 1} {:index 1 :col 1 :row 0 :w 1 :h 1}]
+          {:keys [covers style]} (performance/overlay-anchor 4 2 cells (first cells))]
+      (is (= #{1} covers) "on one row of four, the area right of the rings still holds the next card")
+      (is (string? (get style "--overlay-left")))))
+  (testing "the widget study's Detail: Tone opens over one card, never over itself"
+    (let [cells [{:index 0 :col 0 :row 0 :w 1 :h 1} {:index 3 :col 1 :row 0 :w 1 :h 1} {:index 1 :col 2 :row 0 :w 2 :h 2}
+                 {:index 2 :col 0 :row 1 :w 2 :h 2} {:index 4 :col 2 :row 2 :w 1 :h 1}]
+          {:keys [covers]} (performance/overlay-anchor 4 3 cells (second cells))]
+      (is (= 1 (count covers)))
+      (is (not (contains? covers 3)))))
+  (testing "an empty area wins"
+    (let [cells [{:index 0 :col 0 :row 0 :w 1 :h 1} {:index 1 :col 0 :row 1 :w 1 :h 1}]
+          {:keys [covers]} (performance/overlay-anchor 3 2 cells (first cells))]
+      (is (= #{} covers)))))

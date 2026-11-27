@@ -392,10 +392,10 @@
                      (or (not (:compact? options)) (visualization/spatial-kind schema)))
         ;; Every card of one widget type takes the same standard slot (#795).
         description (controls/control parameter schema @(rf/subscribe [:waveform/catalog]))]
-    [:div.param-row {:data-param (name parameter) :class (when (:strip? options) "strip-control")
-                     :data-control (name (or (:widget description) (:type description)))
-                     :data-slot (name (:slot description))
-                     :style (:slot-style options)}
+    [:div.param-row (merge {:data-param (name parameter) :class (when (:strip? options) "strip-control")
+                            :data-control (name (or (:widget description) (:type description)))
+                            :data-slot (name (:slot description))}
+                           (:slot-attrs options))
      [:label [:span title] [:output (cond (= "gradient" type) (str (count value) (if (= 1 (count value)) " stop" " stops"))
                                           (vector? value) (str/join ", " (map #(numeric/number-label schema %) value))
                                           :else (widgets/value-label schema value))]]

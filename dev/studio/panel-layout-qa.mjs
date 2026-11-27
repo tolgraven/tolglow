@@ -463,8 +463,17 @@ for (const viewport of viewports) {
       const liveSize = liveWindow.viewportSize();
       await liveWindow.setViewportSize({width: 720, height: 240});
       await liveWindow.waitForFunction(() => document.querySelector('.panel-window-content[data-panel="live"]')?.dataset.tier === 'compact', null, {timeout: 5000});
+      // Slot grids in the window fit its width after a resize (#795); their
+      // observer comes from the window that owns them, not from Studio's.
+      const banksFit = () => liveWindow.waitForFunction(() => [...document.querySelectorAll('[data-slot-grid]')].every(bank => {
+        const style = getComputedStyle(bank), unit = parseFloat(style.getPropertyValue('--slot-col')), gap = parseFloat(style.getPropertyValue('--slot-gap'));
+        const columns = Number(bank.dataset.columns);
+        return columns >= 1 && (columns <= 2 || columns * (unit + gap) - gap <= bank.clientWidth + 1);
+      }), null, {timeout: 5000});
+      await banksFit();
       await liveWindow.setViewportSize(liveSize);
       await liveWindow.waitForFunction(() => document.querySelector('.panel-window-content[data-panel="live"]')?.dataset.tier === 'full', null, {timeout: 5000});
+      await banksFit();
       // A parameter tile detaches too.
       roomPage = null;
       await tile.locator('.layout-detach').click();

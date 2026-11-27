@@ -46,24 +46,72 @@
   (is (= 2 (:columns (grid/pack [[2 1]] 1))) "a wide card still gets two columns")
   (is (= {:columns 1 :rows 0 :empty 0 :cells []} (grid/pack [] 4))))
 
-(deftest packing-matches-the-optimum-across-mixed-banks
+(defn- brute-force-rows
+  "The fewest rows any arrangement of `spans` fits in `cols` columns, by
+  trying every position of every card: independent of the packer's search.
+  Cards of one shape take increasing positions, which only removes repeats."
+  [spans cols]
+  (let [spans (vec (sort spans))]
+    (first
+     (for [rows (iterate inc 1)
+           :when (letfn [(place [i occupied last-pos]
+                           (or (= i (count spans))
+                               (let [[w h] (nth spans i)
+                                     same? (and (pos? i) (= (nth spans i) (nth spans (dec i))))]
+                                 (some (fn [pos]
+                                         (let [r (quot pos cols) c (rem pos cols)
+                                               cells (for [dr (range h) dc (range w)] [(+ r dr) (+ c dc)])]
+                                           (when (and (<= (+ c w) cols) (<= (+ r h) rows)
+                                                      (not-any? occupied cells))
+                                             (place (inc i) (into occupied cells) pos))))
+                                       (range (if same? last-pos 0) (* rows cols))))))]
+                   (place 0 #{} 0))]
+       rows))))
+
+(deftest packing-reaches-the-brute-force-optimum-on-small-banks
+  (let [shapes [[1 1] [2 1] [2 2]]
+        banks (for [a shapes b shapes c shapes d shapes e [nil [1 1] [2 2]]] (vec (remove nil? [a b c d e])))]
+    (doseq [spans (distinct banks) cols [2 3 4]
+            :let [{:keys [columns rows] :as packed} (grid/pack spans cols {:exact-columns? true})]]
+      (is (= cols columns))
+      (is (= (brute-force-rows spans cols) rows) [spans cols])
+      (is (every? #(= 1 %) (vals (occupancy packed))) [spans cols])
+      (is (= (count spans) (count (:cells packed)))))))
+
+(deftest known-optimal-layouts
+  (testing "hand-checked optimal layouts"
+    (doseq [[spans cols rows] [[widget-study 4 3] [widget-study 6 2] [widget-study 2 6]
+                               [(repeat 8 [1 1]) 4 2] [[[2 2] [2 2] [2 2]] 4 4] [[[2 1] [2 1] [2 1] [1 1] [1 1]] 4 2]
+                               [[[2 2] [1 1] [1 1] [1 1] [1 1] [1 1] [1 1]] 4 3]]]
+      (is (= rows (:rows (grid/pack spans cols {:exact-columns? true}))) [spans cols]))))
+
+(deftest the-shortest-and-then-narrowest-grid-wins
   (doseq [spans [[[1 1] [2 2] [1 1] [2 1] [1 1] [1 1] [2 2]]
                  [[2 1] [2 1] [2 1] [1 1]]
-                 [[2 2] [2 2] [2 2] [1 1] [1 1] [1 1] [1 1] [2 1]]
                  (mapv controls/slot-span [:large :large :compact :compact :compact :compact :compact :compact])]
-          cols [2 3 4 5 6 8]]
-    (let [packed (grid/pack spans cols)]
+          cols [2 3 4 5 6]]
+    (let [packed (grid/pack spans cols)
+          heights (into {} (for [c (range (reduce max (map first spans)) (inc cols))]
+                             [c (:rows (grid/pack spans c {:exact-columns? true}))]))
+          shortest (reduce min (vals heights))]
       (is (<= (:columns packed) cols))
-      (is (= (grid/optimum spans (:columns packed)) (select-keys packed [:empty :rows])) [spans cols])
-      (is (every? #(= 1 %) (vals (occupancy packed))))
-      (is (= (count spans) (count (:cells packed))))
-      (testing "no column count up to the limit is shorter, and none as short is narrower"
-        (let [options (map #(assoc (grid/optimum spans %) :columns %) (range (reduce max (map first spans)) (inc cols)))
-              shortest (reduce min (map :rows options))]
-          (is (= shortest (:rows packed)))
-          (is (= (:columns packed) (reduce min (map :columns (filter #(= shortest (:rows %)) options))))))))))
+      (is (= shortest (:rows packed)) [spans cols])
+      (is (= (:columns packed) (reduce min (keep (fn [[c r]] (when (= r shortest) c)) heights))) [spans cols]))))
 
-(deftest large-banks-fall-back-to-first-fit
-  (let [{:keys [cells columns]} (grid/pack (repeat 30 [1 1]) 6)]
-    (is (= 6 columns))
-    (is (= (range 30) (map :index cells)))))
+(deftest a-board-of-fixed-tracks-keeps-its-column-count
+  (is (= 6 (:columns (grid/pack [[3 1]] 6 {:exact-columns? true}))) "a lone medium card is half of six tracks")
+  (is (= 3 (:columns (grid/pack [[3 1]] 6))) "a bank of fixed slots narrows to its content"))
+
+(deftest the-step-budget-bounds-large-banks-without-a-cliff
+  (testing "thirty knobs still pack in order on full rows"
+    (let [{:keys [cells columns rows]} (grid/pack (repeat 30 [1 1]) 6)]
+      (is (= [6 5] [columns rows]))
+      (is (= (range 30) (map :index cells)))))
+  (testing "a 24-card mixed bank finishes quickly and stays a valid placement"
+    (let [spans (vec (take 24 (cycle [[1 1] [2 2] [1 1] [2 1] [1 1] [2 2] [1 1]])))
+          start (System/nanoTime)
+          packed (grid/pack spans 8)
+          ms (/ (- (System/nanoTime) start) 1e6)]
+      (is (< ms 2000) (str ms " ms"))
+      (is (= 24 (count (:cells packed))))
+      (is (every? #(= 1 %) (vals (occupancy packed)))))))

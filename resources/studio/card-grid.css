@@ -85,23 +85,24 @@
 #view-perform [data-slot-grid] .axis-trigger>span { display: inline-flex; gap: 3px; line-height: 16px; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 #view-perform [data-slot-grid] .axis-trigger b { font-size: 10px; }
 
-/* Pads stay square, so X and Y move equally per pixel, at the largest size
-   the slot holds up to a cap (220 px in Detail, 176 px in the strip), centred
-   with the Z fader beside the pad and the readout below. */
+/* Pads stay square, so X and Y move equally per pixel, and fill their slot:
+   the largest square beside the Z fader and above the readout, centred. In
+   the strip the Z fader is narrower, so the pad uses more of the slot. */
 #view-perform [data-slot-grid] .param-row>.compound-control:not([data-widget=rings]) {
-  --pad-cap: 176px; --pad-fader: 0px;
+  --z-fader: 44px; --pad-fader: 0px;
   container-type: size; display: grid; grid-template-columns: auto; grid-template-rows: auto auto;
   justify-content: center; align-content: center; gap: 4px; width: auto; max-width: none;
 }
-#view-perform [data-slot-grid=detail] .param-row>.compound-control:not([data-widget=rings]) { --pad-cap: 220px; }
-#view-perform [data-slot-grid] .param-row>.compound-control[data-widget=xyz] { --pad-fader: 48px; grid-template-columns: auto 44px; }
+#view-perform [data-slot-grid=strip] .param-row>.compound-control:not([data-widget=rings]) { --z-fader: 30px; }
+#view-perform [data-slot-grid] .param-row>.compound-control[data-widget=xyz] { --pad-fader: calc(var(--z-fader) + 4px); grid-template-columns: auto var(--z-fader); }
 #view-perform [data-slot-grid] .compound-control>.parameter-xy {
-  grid-column: 1; grid-row: 1; width: min(100cqw - var(--pad-fader), 100cqh - 44px, var(--pad-cap));
+  grid-column: 1; grid-row: 1; width: min(100cqw - var(--pad-fader), 100cqh - 44px);
   height: auto; aspect-ratio: 1; min-width: 0; max-width: none; min-height: 0;
 }
 #view-perform [data-slot-grid] .compound-control>.parameter-fader {
-  grid-column: 2; grid-row: 1; width: 44px; height: min(100cqw - var(--pad-fader), 100cqh - 44px, var(--pad-cap)); min-height: 0; padding: 0;
+  grid-column: 2; grid-row: 1; width: var(--z-fader); height: min(100cqw - var(--pad-fader), 100cqh - 44px); min-height: 0; padding: 0;
 }
+#view-perform [data-slot-grid=strip] .compound-control>.parameter-fader .fader-thumb { left: -4px; right: -4px; }
 #view-perform [data-slot-grid] .compound-control>.axis-control { grid-column: 1 / -1; grid-row: 2; justify-self: stretch; }
 
 /* Rings fill a compact slot (Detail adds the legend). Opened, the component

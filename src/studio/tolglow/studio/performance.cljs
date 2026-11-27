@@ -481,7 +481,7 @@
                           [authored (wire parameter)])]
     (if description (str axis " · " description) axis)))
 
-(defn- xyz-editor [show instance {:keys [components] :as control} compact? & [slot-style]]
+(defn- xyz-editor [show instance {:keys [components] :as control} compact? & [slot-attrs]]
   (let [{:keys [base effective]} (xyz-readings show instance components)
         title (control-title control)
         axes (mapv (fn [[id schema] axis] (assoc schema :axis-label (xyz-axis-label axis id schema)))
@@ -497,11 +497,11 @@
         key! (fn [index schema key]
                (rf/dispatch-sync [:studio/param-key (:id instance) (first (nth components index)) schema key]))
         widget (controls/compound-widget (xyz-schema control))
-        visual? (and (not slot-style) (not compact?) (some #(sources/driven? instance (first %)) components))]
-    [:div.param-row {:data-group (control-id control) :class (when compact? "strip-control")
-                     :data-control (name widget)
-                     :data-slot (name (controls/slot-size {:type :vector :widget widget}))
-                     :style slot-style}
+        visual? (and (not slot-attrs) (not compact?) (some #(sources/driven? instance (first %)) components))]
+    [:div.param-row (merge {:data-group (control-id control) :class (when compact? "strip-control")
+                            :data-control (name widget)
+                            :data-slot (name (controls/slot-size {:type :vector :widget widget}))}
+                           slot-attrs)
      [:label title]
      (if (#{:xyz :rings} widget)
        [widgets/compound-control {:title title :widget widget :components (mapv second components)
@@ -520,54 +520,73 @@
 (defn- pack
   "slot-grid/pack, remembered per spans and column limit: a bank re-renders
   on every value change, its layout only when its cards or width change."
-  [spans columns]
-  (let [key [spans columns]]
+  [spans columns exact?]
+  (let [key [spans columns exact?]]
     (or (get @packings key)
-        (let [packed (slot-grid/pack spans columns)]
+        (let [packed (slot-grid/pack spans columns {:exact-columns? exact?})]
           (swap! packings #(assoc (if (< 256 (count %)) {} %) key packed))
           packed))))
 
 (defn- css-px [style property]
   (let [n (js/parseFloat (.getPropertyValue style property))] (when (js/Number.isFinite n) n)))
 
+(defn- element-window
+  "The window that owns `element`: Studio's own, or a popped-out panel's."
+  [element]
+  (or (some-> element .-ownerDocument .-defaultView) js/window))
+
 (defn slot-columns
   "How many slot columns of the element's own --slot-col and --slot-gap fit
   its width."
   [node]
-  (let [style (js/getComputedStyle node)
+  (let [style (.getComputedStyle (element-window node) node)
         unit (or (css-px style "--slot-col") 92)
         gap (or (css-px style "--slot-gap") 6)]
     (max 1 (js/Math.floor (/ (+ (.-clientWidth node) gap) (+ unit gap))))))
 
 (defn overlay-anchor
-  "CSS offsets for an overlay two slots wide and two tall opened from the
-  card at col/row (`w` columns wide): beside the card, on the side with room,
-  so the card itself and its toggle stay uncovered; below it when neither
-  side has two columns. Vertically it starts at the card, or ends at it in
-  the last row."
-  [columns rows col row w]
-  (let [gap "var(--slot-gap)"
-        beside (str "calc(100% + " gap ")")
-        right-room (- columns col w)]
-    (merge
-     (cond
-       (>= right-room 2) {"--overlay-left" beside "--overlay-right" "auto"}
-       (>= col 2) {"--overlay-left" "auto" "--overlay-right" beside}
-       (> (+ col 2) columns) {"--overlay-left" "auto" "--overlay-right" "-1px"}
-       :else {"--overlay-left" "-1px" "--overlay-right" "auto"})
-     (cond
-       (and (< right-room 2) (< col 2)) {"--overlay-top" beside "--overlay-bottom" "auto"}
-       (and (> rows 1) (> (+ row 2) rows)) {"--overlay-top" "auto" "--overlay-bottom" "-1px"}
-       :else {"--overlay-top" "-1px" "--overlay-bottom" "auto"}))))
+  "Where an overlay two slots wide and two tall, opened from the card at
+  `col`/`row` (`w` columns wide, `h` rows tall), draws: the 2x2 area of the
+  grid touching the card that covers the fewest other cards, never the card
+  itself, so the card and its toggle stay uncovered. Areas inside the grid
+  win over areas that hang below or above it (over other content); among
+  those, the fewest covered cards, so a free area is used when there is one;
+  ties prefer the right, then the left, then below, then above.
+  Returns {:style {css offsets} :covers #{indices of covered cards}}."
+  [columns rows cells {:keys [index col row w h]}]
+  (let [owner (into {} (for [{i :index c :col r :row cw :w ch :h} cells dr (range ch) dc (range cw)]
+                         [[(+ r dr) (+ c dc)] i]))
+        candidates (concat (for [dy [0 -1]] [:right (+ col w) (+ row dy)])
+                           (for [dy [0 -1]] [:left (- col 2) (+ row dy)])
+                           (for [dx [0 -1]] [:below (+ col dx) (+ row h)])
+                           (for [dx [0 -1]] [:above (+ col dx) (- row 2)]))
+        scored (for [[side c r] candidates
+                     :when (and (<= 0 c) (<= (+ c 2) (max 2 columns)) (<= 0 r))
+                     :let [area (for [dr (range 2) dc (range 2)] [(+ r dr) (+ c dc)])
+                           covers (disj (set (keep owner area)) nil)]
+                     :when (not (contains? covers index))]
+                 {:side side :col c :row r :covers covers
+                  :rank [(if (<= (+ r 2) rows) 0 1) (count covers)
+                         ({:right 0 :left 1 :below 2 :above 3} side)]})
+        {c :col r :row covers :covers} (first (sort-by :rank scored))
+        step (fn [n unit] (str "calc(" n " * (var(" unit ") + var(--slot-gap)) - 1px)"))]
+    (if c
+      {:style {"--overlay-left" (step (- c col) "--slot-col") "--overlay-top" (step (- r row) "--slot-row")}
+       :covers covers}
+      {:style {} :covers #{}})))
 
 (defn packed-grid
   "A grid whose cards `slot-grid/pack` places. `measure` turns the element
-  into its column limit (a ResizeObserver owned by this component re-measures
-  it), `spans` turns that limit into each card's [columns rows], and `render`
-  draws card `i` with its grid-area style. Cards are drawn in reading order,
-  so DOM and tab order follow the screen; they are keyed, so moving one never
-  remounts it."
-  [{:keys [attrs measure spans render keys]}]
+  into its column limit (a ResizeObserver from the element's own window,
+  owned by this component, re-measures it, also in a popped-out panel),
+  `spans` turns that limit into each card's [columns rows], and `render`
+  draws card `i` with its grid-area style and the keys of the cards its
+  overlay would cover. With `exact?` the grid keeps the measured column
+  count (fractional board tracks); otherwise it narrows to its content
+  (fixed-width slot tracks). Cards are drawn in reading order, so DOM and
+  tab order follow the screen; they are keyed, so moving one never remounts
+  it."
+  [{:keys [attrs measure spans render keys exact?]}]
   (r/with-let [limit (r/atom nil)
                node (atom nil)
                observer (atom nil)
@@ -577,20 +596,22 @@
                          (reset! node element)
                          (when element
                            (reset! limit (measure element))
-                           (when (exists? js/ResizeObserver)
-                             (let [o (js/ResizeObserver. #(when-let [n @node] (reset! limit (measure n))))]
+                           (when-let [Observer (.-ResizeObserver (element-window element))]
+                             (let [o (Observer. #(when-let [n @node] (reset! limit (measure n))))]
                                (.observe o element)
                                (reset! observer o)))))]
     (let [span-list (spans (or @limit 4))
-          {:keys [columns rows cells]} (pack span-list (or @limit 4))]
+          {:keys [columns rows cells]} (pack span-list (or @limit 4) exact?)]
       (into [:div (merge attrs {:ref attach! :data-columns columns :data-rows rows
                                 :style (merge (:style attrs) {"--slot-columns" columns})})]
-            (for [{:keys [index col row w h]} cells]
+            (for [{:keys [index col row w h] :as cell} cells
+                  :let [{overlay :style covers :covers} (overlay-anchor columns rows cells cell)]]
               ;; `render` returns hiccup: called as a function, not mounted as
               ;; a component, so a parent re-render never remounts a card.
               (with-meta
                 (render index (merge {:grid-column (str (inc col) " / span " w) :grid-row (str (inc row) " / span " h)}
-                                     (overlay-anchor columns rows col row w)))
+                                     overlay)
+                        (mapv #(nth keys %) (sort covers)))
                 {:key (nth keys index)}))))
     (finally (some-> @observer .disconnect))))
 
@@ -617,12 +638,13 @@
       :measure slot-columns
       :spans (constantly spans)
       :keys (mapv control-id controls)
-      :render (fn [index style]
-                (let [{:keys [parameter schema components] :as control} (nth controls index)]
+      :render (fn [index style covers]
+                (let [{:keys [parameter schema components] :as control} (nth controls index)
+                      attrs {:style style :data-overlay-covers (str/join " " covers)}]
                   (if components
-                    [xyz-editor show instance control compact? style]
+                    [xyz-editor show instance control compact? attrs]
                     [parameter-control instance parameter schema nil
-                     {:compact? compact? :strip? compact? :slot-grid? true :slot-style style}])))}]))
+                     {:compact? compact? :strip? compact? :slot-grid? true :slot-attrs attrs}])))}]))
 
 (defn driven-controls [instance controls]
   (filter (fn [{:keys [parameter components]}]
@@ -754,11 +776,17 @@
   4)
 
 (defn small-controls
-  "The leading controls whose slots fit in `small-cells` cells, at least one."
+  "The controls a small card shows: in layout order, every control whose
+  slot still fits in the `small-cells` left, skipping larger ones, and at
+  least the first."
   [controls catalog]
-  (let [areas (map #(apply * (controls/slot-span (control-slot % catalog))) controls)
-        taken (count (take-while #(<= % small-cells) (reductions + areas)))]
-    (vec (take (max 1 taken) controls))))
+  (let [picked (:picked (reduce (fn [{:keys [left] :as acc} control]
+                                  (let [area (apply * (controls/slot-span (control-slot control catalog)))]
+                                    (if (<= area left)
+                                      (-> acc (update :picked conj control) (update :left - area))
+                                      acc)))
+                                {:picked [] :left small-cells} controls))]
+    (if (seq picked) picked (vec (take 1 controls)))))
 
 (defn macro-columns
   "Board tracks for macro cards: six on a board at least 960 px wide, so a
@@ -893,18 +921,25 @@
        (let [group (some #(when (some (fn [[p _]] (= p editing)) (:components %)) (:components %)) controls)]
          ^{:key [id (or (ffirst group) editing)]} [sources/editor instance editing schema group]))
      (when (and priority (= "running" (name (:phase instance)))
-                (or expanded? (sources/bound? instance (:param priority))))
+                (or (and expanded? (not macro-card)) (sources/bound? instance (:param priority))))
        [layer-priority-source instance priority])
      [instance-controls instance {:compact? true}]
      (when expanded?
-       [:div.live-effect-advanced
-        (when (and cue (contains? #{:running "running"} (:phase instance)) (seq (:params definition)))
-          [variations/panel instance])
-        [inspect/panel show instance faults]
-        (when (:cue-id instance) [spatial/cue-target-picker (:cue-id instance)])
-        [envelope-controls state key target instances (empty? instances)]
-        [action-button target "instance/remove" "Remove immediately" {:class "performance-remove"}]
-        [:span.live-effect-identity id]])]))
+       (let [advanced [:div.live-effect-advanced
+                       (when (and macro-card priority (= "running" (name (:phase instance))))
+                         [layer-priority-source instance priority])
+                       (when (and cue (contains? #{:running "running"} (:phase instance)) (seq (:params definition)))
+                         [variations/panel instance])
+                       [inspect/panel show instance faults]
+                       (when (:cue-id instance) [spatial/cue-target-picker (:cue-id instance)])
+                       [envelope-controls state key target instances (empty? instances)]
+                       [action-button target "instance/remove" "Remove immediately" {:class "performance-remove"}]
+                       [:span.live-effect-identity id]]]
+         ;; A large macro card is a large widget: its controls and plots. The
+         ;; inspector waits behind a disclosure.
+         (if macro-card
+           [:details.live-effect-inspector [:summary "Inspector"] advanced]
+           advanced)))]))
 
 (defn board [db parameter-control]
   (let [show (:show db)
@@ -980,10 +1015,10 @@
                (if arranging? "Done" "Arrange")]]
              [packed-grid
               {:attrs {:class "live-effect-grid live-macro-grid"}
-               :measure macro-columns
+               :measure macro-columns :exact? true
                :spans (fn [columns] (mapv #(macro-span columns (:size %)) cards))
                :keys (mapv (comp wire :id :instance) cards)
-               :render (fn [index style]
+               :render (fn [index style _]
                          (let [{:keys [instance] :as card} (nth cards index)]
                            [:div.live-macro-slot {:style (select-keys style [:grid-column :grid-row])}
                             [instance-card show instance parameter-control
