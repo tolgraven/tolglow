@@ -2674,7 +2674,7 @@
         frame-master (get ramp-frame :master (:master model))
         ;; A pending revision must accept a ramped parameter's committed and
         ;; frame values alike; modulation reads which revision to follow here.
-        reading #(modulation/with-frame-params % (:params ramp-frame))
+        reading #(modulation/with-frame-params % (:params ramp-frame) (:param-targets ramp-frame))
         parameter-samples (parameter-sources/sample (reading model) {:time-ms time-ms :transport (:transport model)}
                                                    (:parameter-samples before))
         ;; This frame's engine pass may reject a pending hot reload. Sample the
@@ -2794,14 +2794,17 @@
                          (state-migration/attach (:state-migrations runtime) definition
                                                  (keyframes/with-inputs step inputs {:preserve-time-invariance? true}))))
         ;; The engine prepares a revision from the model it receives. Where the
-        ;; revision refuses a committed value that a ramp overlays this frame,
-        ;; it receives the committed value, so it turns the revision down instead
-        ;; of adopting one that cannot hold the value the model keeps. The ramp
-        ;; still reaches evaluation through the parameter overrides.
-        engine-ramps (if-let [ids (seq (filter #(modulation/refuses-committed-params? model (get-in model [:instances %]))
-                                               (keys (:params ramp-frame))))]
-                       (update ramp-frame :params #(apply dissoc % ids))
-                       ramp-frame)
+        ;; revision refuses a ramped parameter's committed value or its target,
+        ;; it receives that value, so it turns the revision down instead of
+        ;; adopting one that cannot hold what the model keeps or the ramp
+        ;; commits. The ramp still reaches evaluation through the overrides.
+        engine-ramps (reduce (fn [frame id]
+                               (if-let [values (modulation/ramp-preparation model (get-in model [:instances id])
+                                                                            (get-in ramp-frame [:params id])
+                                                                            (get-in ramp-frame [:param-targets id]))]
+                                 (if (seq values) (assoc-in frame [:params id] values) (update frame :params dissoc id))
+                                 frame))
+                             ramp-frame (keys (:param-targets ramp-frame)))
         result (update (engine/advance (subscribers/with-frame-overlays model engine-ramps) frame-input compile-step
                                        ;; An audition evaluates serially, off the live worker pool.
                                        (if audition? mapv (executor/mapper (:executor runtime))))

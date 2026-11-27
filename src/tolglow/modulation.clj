@@ -262,10 +262,14 @@
 
 (defn with-frame-params
   "Return `model` as modulation reads it in a frame whose parameter ramps
-  overlay `params` ({instance-id {param value}}) on the committed values. The
-  view only answers which revision each instance follows; it is never committed."
-  [model params]
-  (cond-> model (seq params) (assoc ::frame-params params)))
+  overlay `params` ({instance-id {param value}}) on the committed values and
+  will commit `targets` ({instance-id {param to}}). The view only answers which
+  revision each instance follows; it is never committed."
+  ([model params] (with-frame-params model params nil))
+  ([model params targets]
+   (cond-> model
+     (seq params) (assoc ::frame-params params)
+     (seq targets) (assoc ::ramp-targets targets))))
 
 (defn- attempted-revision
   "The newer registry definition the engine attempts for this instance on the
@@ -283,29 +287,42 @@
        true
        (catch Exception _ false)))
 
-(defn refuses-committed-params?
-  "True when the engine attempts a newer revision of this instance whose schemas
-  refuse a retained committed parameter. A ramp's frame value can fit where the
-  committed value does not, so the owner prepares such an instance on its
-  committed parameters and the engine turns the revision down."
-  [model instance]
-  (boolean (when-let [current (attempted-revision model instance)]
-             (not (accepts? current (:params instance {}))))))
+(defn- ramp-values
+  "The committed parameters, the frame's ramp values and the ramp targets of an
+  instance: the three parameter sets a revision must accept during a ramp."
+  [committed framed targets]
+  [committed (merge committed framed) (merge committed targets)])
+
+(defn ramp-preparation
+  "The parameter overlay the owner gives the engine for an instance whose
+  attempted revision refuses one of its ramped values, or nil to keep the
+  frame's ramp values. The engine prepares a revision from the parameters it
+  receives, so it refuses the revision at preparation when it receives the
+  refused set: the committed values ({}, no overlay) or the ramp targets. The
+  engine already refuses one that rejects the frame values. The ramp still
+  reaches the captured revision through the parameter overrides."
+  [model instance framed targets]
+  (when-let [current (attempted-revision model instance)]
+    (let [[committed frame target] (ramp-values (:params instance {}) framed targets)]
+      (cond
+        (not (accepts? current committed)) {}
+        (not (accepts? current frame)) nil
+        (not (accepts? current target)) (merge framed targets)))))
 
 (defn reload-candidate
   "Return the newer registry definition the engine attempts for this instance
   on the next frame, or nil. Paused and pinned instances defer hot reload. A
   candidate whose schemas reject a retained parameter is none: the engine
   refuses it at preparation and keeps the captured definition. During a ramp
-  the retained parameter must fit with both its committed and its frame value
-  (see `with-frame-params`)."
+  the retained parameter must fit with its committed value, its frame value
+  and the ramp's target (see `with-frame-params` and `ramp-preparation`)."
   [model instance]
   (when-not (::last-good? model)
     (when-let [current (attempted-revision model instance)]
-      (let [committed (:params instance {})
-            framed (get-in model [::frame-params (:id instance)])]
-        (when (and (accepts? current committed)
-                   (or (empty? framed) (accepts? current (merge committed framed))))
+      (let [id (:id instance)]
+        (when (every? #(accepts? current %)
+                      (ramp-values (:params instance {}) (get-in model [::frame-params id])
+                                   (get-in model [::ramp-targets id])))
           current)))))
 
 (defn reload-pending?

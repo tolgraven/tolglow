@@ -145,12 +145,12 @@ the captured definition. A pinned or paused instance has no candidate, and
 neither does one whose retained parameters the newer schemas reject, because
 the engine refuses that revision at preparation. During a parameter ramp the
 show owner reads candidates through `(modulation/with-frame-params model
-ramp-params)`: a retained parameter must then fit with both its committed value
-and the ramp's frame value. Where the frame value fits and the committed value
-does not (`refuses-committed-params?`), the owner gives the engine the
-committed value for that instance, so the engine also refuses the revision
-instead of adopting one that cannot hold the value the model keeps. See
-[scheduler](scheduler.md#ramp-semantics).
+ramp-params ramp-targets)`: a retained parameter must then fit with its
+committed value, the ramp's frame value and the ramp's target. Where a revision
+refuses the committed value or the target, `ramp-preparation` gives the engine
+those values for that instance, so the engine also refuses the revision instead
+of adopting one that cannot hold the value the model keeps or the ramp commits.
+See [scheduler](scheduler.md#ramp-semantics).
 
 A controller follows candidates in both roles. Its owner's candidate supplies
 the `:modulation` config, and each target's candidate supplies the parameter

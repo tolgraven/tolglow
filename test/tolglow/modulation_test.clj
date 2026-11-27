@@ -273,25 +273,28 @@
         (is (= 0.0 (level (modulation/advance (start {:ranges {:level [0.0 0.0]}}) unfit (frame 0))))
             "The frame samples the captured schema instead of failing")
         (is (map? (modulation/source-index (assoc unfit :modulation (start)) [])))))
-    (testing "during a ramp a retained parameter must fit with its committed and its frame value"
+    (testing "during a ramp a retained parameter must fit its committed value, frame value and target"
       (let [narrowed (fn [bounds] (assoc-in pending [:registry :effects :wash :params :level]
                                             {:type :number :default (first bounds) :bounds bounds}))
             committed (get-in wash [:params :level])
-            ramped #(modulation/with-frame-params % {"0:1" {:level (+ committed 0.2)}})]
-        (is (= pending (modulation/with-frame-params pending {})) "No ramp leaves the model as it is")
-        (is (= newer (candidate (ramped pending) {})) "A revision that accepts both values is a candidate")
-        (let [refuses-committed (narrowed [(+ committed 0.1) 1.0])]
-          (is (nil? (candidate refuses-committed {})))
-          (is (nil? (candidate (ramped refuses-committed) {})) "The frame value fits, the committed one does not")
-          (is (true? (modulation/refuses-committed-params? refuses-committed wash))
-              "The owner prepares this instance on its committed value"))
-        (let [refuses-frame (narrowed [0.0 (+ committed 0.1)])]
-          (is (= (get-in refuses-frame [:registry :effects :wash]) (candidate refuses-frame {})))
-          (is (nil? (candidate (ramped refuses-frame) {})) "The committed value fits, the frame value does not")
-          (is (false? (modulation/refuses-committed-params? refuses-frame wash))
-              "The engine already refuses it on the frame value"))
-        (is (false? (modulation/refuses-committed-params? pending (assoc wash :reload-policy :pinned)))
-            "An instance the engine does not reload is never refused")))
+            framed {:level (+ committed 0.2)}
+            target {:level (+ committed 0.4)}
+            ramped #(modulation/with-frame-params % {"0:1" framed} {"0:1" target})
+            preparation #(modulation/ramp-preparation % (merge wash %2) framed target)]
+        (is (= pending (modulation/with-frame-params pending {} {})) "No ramp leaves the model as it is")
+        (is (= newer (candidate (ramped pending) {})) "A revision that accepts all three values is a candidate")
+        (is (nil? (preparation pending {})) "Its engine pass keeps the frame's ramp values")
+        (doseq [[label bounds prepared]
+                [["the committed value" [(+ committed 0.1) 1.0] {}]
+                 ["the frame value" [0.0 (+ committed 0.1)] nil]
+                 ["the ramp target" [0.0 (+ committed 0.3)] target]]]
+          (testing (str "a revision that refuses " label)
+            (let [unfit (narrowed bounds)]
+              (is (nil? (candidate (ramped unfit) {})) "is no candidate")
+              (is (= prepared (preparation unfit {}))
+                  "is prepared on the refused values, or on the frame values the engine already refuses"))))
+        (is (nil? (preparation (narrowed [(+ committed 0.1) 1.0]) {:reload-policy :pinned}))
+            "An instance the engine does not reload keeps its ramp values")))
     (testing "the last-good view has no candidates and leaves the model data alone"
       (let [view (modulation/last-good-view pending)]
         (is (nil? (modulation/reload-candidate view wash)))

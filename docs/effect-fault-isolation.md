@@ -52,8 +52,8 @@ The owner supplies the fallback only when the outcomes differ; other rejected
 reloads keep the per-instance recovery in the table. A running beat-clock
 ramp keeps running through a rejected reload: its frame value is not committed
 by the rejection, and a candidate reads only the ramped parameters its schemas
-accept. A candidate that refuses a ramped parameter's committed value or its
-frame value is rejected at preparation. See
+accept. A candidate that refuses a ramped parameter's committed value, its
+frame value or its target is rejected at preparation. See
 [modulation](modulation.md#a-frame-with-a-pending-hot-reload) and
 [scheduler](scheduler.md#ramp-semantics).
 
