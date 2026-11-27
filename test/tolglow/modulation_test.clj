@@ -524,13 +524,12 @@
     (is (= 1000.5 (:next-beat (controller after-seek))))
     (is (= [] (modulation/validate-state (edn/read-string (pr-str rebased)))))))
 
-(deftest invalid-config-saved-state-clock-and-catchup-fail-before-returning-partial-output
+(deftest invalid-config-saved-state-and-clock-fail-before-returning-partial-output
   (doseq [config [{:every {:ms 100}} {:every {:beats 0}} {:every {:beats Double/NaN}}
                   {:select {:effects [:wash]}} {:mode :unknown} {:curve :unknown}
                   {:ranges {:level [1 0]}} {:seed 0.5} {:max-catch-up 0}]]
     (is (seq (modulation/validate-config config))))
   (let [state (start {:max-catch-up 2}) first-frame (modulation/advance state (model) (frame 0))]
-    (is (thrown? clojure.lang.ExceptionInfo (modulation/advance state (model) (frame 2))))
     (is (= 7 (get-in state [:controllers 0 :seed])))
     (is (thrown? clojure.lang.ExceptionInfo (modulation/advance (:state first-frame) (model) (frame -1))))
     (is (seq (modulation/validate-state (assoc-in state [:controllers 0 :seed] (atom 2)))))
@@ -577,10 +576,12 @@
         (is (= [:every unit] (:path error)))
         (is (re-find #"^Modulation period :every \{" (:message error)))
         (is (re-find #"between 1/1024 and 2\^40" (:message error))))
-      (let [error (try (compiler/compile-plan (assoc effect :modulation {:every every})) nil
-                       (catch clojure.lang.ExceptionInfo error error))]
-        (is (re-find #"^Invalid modulation definition: Modulation period :every" (ex-message error)))
-        (is (= [[:modulation :every unit]] (mapv :path (:errors (ex-data error))))))
+      (let [errors (compiler/definition-errors :effects (assoc effect :modulation {:every every})
+                                               {:publication? true})]
+        (is (= [[:modulation :every unit]] (mapv :path errors)))
+        (is (re-find #"^Modulation period :every" (:message (first errors)))))
+      (is (= [] (compiler/definition-errors :effects (assoc effect :modulation {:every every})))
+          "A saved show still compiles the definition an older owner accepted")
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Modulation period :every"
                             (start {:every every})))))
   (doseq [every [{:beats 0} {:beats -1}]]
@@ -679,11 +680,95 @@
     (is (re-find #"no longer advances its schedule" (:message (first (:diagnostics result)))))
     (is (= [] (modulation/validate-state (:state result))))))
 
-(deftest saved-controllers-outside-the-period-range-still-load
-  (let [state (start {:every {:beats 1/4}})
-        saved (-> state
-                  (assoc-in [:controllers 0 :config :every] {:beats 1/4096})
-                  (assoc-in [:controllers 0 :interval-beats] 1/4096))]
-    (is (seq (modulation/validate-config {:every {:beats 1/4096}})))
-    (is (= [] (modulation/validate-state saved)) "Backups keep their controllers")
-    (is (= [] (:diagnostics (modulation/advance saved (model) (frame 0)))))))
+(deftest saved-controllers-outside-the-period-range-load-and-are-refused-alone
+  (doseq [interval [1/4096 1.0e-9]]
+    (testing (str interval)
+      (let [state (-> (modulation/new-state)
+                      (modulation/start {:id :random :seed 7 :every {:beats 1/4} :params [:level]} (frame 0))
+                      (modulation/start {:id :other :seed 9 :every {:beats 1/4} :params [:level]
+                                         :ranges {:level [0.3 0.3]} :priority -1} (frame 0)))
+            saved (-> state
+                      (assoc-in [:controllers 0 :config :every] {:beats interval})
+                      (assoc-in [:controllers 0 :interval-beats] interval))
+            frames (reductions (fn [result beat] (modulation/advance (:state result) (model) (frame beat)))
+                               {:state saved} [0 1 5 9])]
+        (is (= [] (modulation/validate-state saved)) "Backups keep their controllers")
+        (is (= [[:modulation/refused] [] [] []] (mapv #(mapv :type (:diagnostics %)) (rest frames)))
+            "Refused once, with no frame failure")
+        (is (re-find #"^Saved modulation interval of .* beats is outside" (:message (first (:diagnostics (second frames))))))
+        (is (every? #(= [:other] (mapv :id (get-in % [:state :controllers]))) (rest frames)))
+        (is (every? #(= 0.3 (level %)) (rest frames)))))))
+
+(defn- revise-owner [show config version]
+  (-> show
+      (assoc-in [:instances "0:2" :definition :modulation] config)
+      (assoc-in [:instances "0:2" :definition :version] version)
+      (assoc-in [:instances "0:2" :effect-version] version)
+      (assoc-in [:registry :effects :modulator :modulation] config)
+      (assoc-in [:registry :effects :modulator :version] version)))
+
+(deftest a-valid-revision-after-a-refused-one-starts-at-its-frame-beat
+  ;; v1 runs for 400 beats in eight-beat bars, v2 is refused in that meter,
+  ;; v3 is valid again. v3 must start like a reload at its own frame beat, not
+  ;; like a first launch that catches up over the cue's whole life.
+  (let [meter {:beats-per-bar 8 :bars-per-phrase 4}
+        at (fn [beat] (assoc (frame beat) :meter meter))
+        valid {:every {:beats 1/4} :params [:level] :ranges {:level [0.6 0.6]}}
+        refused (assoc valid :every {:bars (/ two-to-the-40 4)})
+        base (-> (with-owner (model) valid) (assoc-in [:instances "0:2" :timing-meter] meter))
+        v1 (reduce (fn [state beat] (:state (modulation/advance state base (at beat)))) nil (range 0 400))
+        v2 (revise-owner base refused 2)
+        r2 (modulation/advance v1 v2 (at 400))
+        r2b (modulation/advance (:state r2) v2 (at 401))
+        r3 (modulation/advance (:state r2b) (revise-owner base valid 3) (at 402))]
+    (is (= [] (get-in r2 [:state :controllers])))
+    (is (= [:modulation/refused] (mapv :type (:diagnostics r2)) (mapv :type (:diagnostics r2b))))
+    (is (identical? (first (:diagnostics r2)) (first (:diagnostics r2b)))
+        "An unchanged refused revision reports its recorded diagnostic without another attempt")
+    (is (= {:owner-instance-id "0:2" :owner-version 2 :owner-config refused}
+           (select-keys (get-in r2 [:state :refused [:cue "0:2"]]) [:owner-instance-id :owner-version :owner-config])))
+    (is (= [] (modulation/validate-state (:state r2))))
+    (is (= [] (:diagnostics r3)))
+    (is (nil? (get-in r3 [:state :refused])) "The record goes once the owner has a controller again")
+    (is (= [[[:cue "0:2"] 402 1]] (mapv (juxt :id :anchor-beat :ticks) (get-in r3 [:state :controllers]))))
+    (is (= 0.6 (level r3)))
+    (testing "the record follows a restore and goes with its owner"
+      (let [restored (modulation/restore-state (:state r2) {:show-id :modulation-test :epoch 0
+                                                            :instance-ids {"0:1" "0:1" "0:2" "0:7"}})]
+        (is (= [[:cue "0:7"]] (keys (:refused restored))))
+        (is (= "0:7" (get-in restored [:refused [:cue "0:7"] :diagnostic :owner-instance-id])))
+        (is (nil? (:refused (:state (modulation/advance (:state r2) (update base :instances dissoc "0:2") (at 401))))))))))
+
+(deftest a-backlog-beyond-the-catch-up-budget-skips-to-the-current-boundary
+  (doseq [[label config beats]
+          [["1/1024 beat with a budget of one at 120 BPM and 40 Hz"
+            {:every {:beats 1/1024} :max-catch-up 1} (map #(* % 1/20) (range 0 40))]
+           ["a 1/64-note shimmer with a budget of one at 180 BPM and 40 Hz"
+            {:every {:beats 1/16} :max-catch-up 1} (map #(* % 3/40) (range 0 40))]
+           ["1/1024 beat with the default budget across a two-beat frame gap"
+            {:every {:beats 1/1024}} [0 1/20 1/10 21/10 43/20 11/5]]]]
+    (testing label
+      (let [show (with-owner (model) (assoc config :params [:level]))
+            frames (rest (reductions (fn [result beat] (modulation/advance (:state result) show (frame beat)))
+                                     {:state nil} beats))
+            rebased (filter #(some #{:modulation/rebased} (map :type (:diagnostics %))) frames)]
+        (is (seq rebased) "The budget was exceeded")
+        (is (every? #(number? (level %)) frames) "Every frame is modulated")
+        (doseq [[result beat] (map vector frames beats)
+                :let [c (controller result)]]
+          (is (<= (:next-beat c) (+ beat (:interval-beats c))) "Its schedule is at the current boundary")
+          (is (< beat (:next-beat c))))
+        (let [{:keys [skipped max-catch-up message]} (first (filter #(= :modulation/rebased (:type %))
+                                                                    (mapcat :diagnostics rebased)))]
+          (is (pos? skipped))
+          (is (= (:max-catch-up config 1024) max-catch-up))
+          (is (re-find #"^Skipped \d+ missed modulation steps" message))))))
+  (testing "a skip keeps the controller's grid and is deterministic"
+    (let [show (with-owner (model) {:every {:beats 1/4} :max-catch-up 2 :params [:level]})
+          first-frame (modulation/advance nil show (frame 0))
+          jumped (modulation/advance (:state first-frame) show (frame 10))
+          again (modulation/advance (:state first-frame) show (frame 10))]
+      (is (= jumped again))
+      ;; 39 boundaries from 1/4 to 39/4 are skipped and beat 10 is sampled.
+      (is (= [41 10.25] ((juxt :ticks :next-beat) (controller jumped))))
+      (is (= 39 (:skipped (first (:diagnostics jumped))))))))

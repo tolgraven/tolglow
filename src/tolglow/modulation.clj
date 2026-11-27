@@ -70,12 +70,15 @@
 
 (defn period-range-error
   "The message refusing a finite positive musical period outside
-  [min-period-beats, max-period-beats] in the default meter, or nil. `label`
-  names the field, such as \"Waveform period :period\"."
-  [label every]
-  (let [beats (period-beats every)]
-    (when (and (some? beats) (not (period-in-range? beats)))
-      (period-range-message label every beats time/default-meter "default"))))
+  [min-period-beats, max-period-beats] in `meter`, or nil. `label` names the
+  field, such as \"Waveform period :period\", and `meter-name` the meter,
+  such as \"default\"."
+  ([label every] (period-range-error label every time/default-meter "default"))
+  ([label every meter meter-name]
+   (let [meter (time/normalize-meter meter)
+         beats (period-beats every meter)]
+     (when (and (some? beats) (not (period-in-range? beats)))
+       (period-range-message label every beats meter meter-name)))))
 
 (defn- period-errors
   "Errors for :every. A bounded check also refuses periods outside
@@ -143,6 +146,13 @@
   [config]
   (config-errors config true))
 
+(defn validate-saved-config
+  "Return the errors of validate-config except the period range. Saved shows
+  and running definitions use it, so a backup whose period an older owner
+  accepted still loads; the frame refuses that controller alone."
+  [config]
+  (config-errors config false))
+
 (defn- with-defaults [config]
   (merge {:seed 0 :every {:beats 1} :select {} :params :all :mode :sample-hold
           :curve :linear :priority 0 :ranges {} :exclude-owner? true :max-catch-up 1024} config))
@@ -168,7 +178,13 @@
                  (or (nil? (:show-id state)) (id? (:show-id state)))
                  (or (nil? (:epoch state)) (and (integer? (:epoch state)) (not (neg? (:epoch state)))))
                  (or (nil? (:last-beat state)) (time/finite-number? (:last-beat state)))
-                 (= (count (:controllers state)) (count (distinct (map :id (:controllers state))))))
+                 (= (count (:controllers state)) (count (distinct (map :id (:controllers state)))))
+                 (or (nil? (:refused state))
+                     (and (map? (:refused state))
+                          (every? (fn [[id record]]
+                                    (and (controller-id? id) (map? record) (id? (:owner-instance-id record))
+                                         (map? (:diagnostic record))))
+                                  (:refused state)))))
     (fail! ::invalid-state "Invalid portable modulation state" {}))
   (doseq [controller (:controllers state)]
     ;; Saved controllers keep loading with a period outside today's bounds;
@@ -438,6 +454,24 @@
          (when-let [path (:path (first (:errors (ex-data error))))] {:path path})
          (select-keys (ex-data error) [:path :every :meter])))
 
+(defn- with-refused
+  "Store refusal records under :refused, keyed by controller ID, and leave the
+  key out when there are none."
+  [state refused]
+  (if (seq refused) (assoc state :refused refused) (dissoc state :refused)))
+
+(defn- refusal-record
+  "What an owner's refusal was judged on, with the diagnostic it reports each
+  frame. The same owner version, config and priority stay refused without
+  another attempt; a change starts the controller at that frame's beat."
+  [instance version owner-config diagnostic]
+  {:owner-instance-id (:id instance) :owner-version version :owner-config owner-config
+   :priority (:priority instance) :diagnostic diagnostic})
+
+(defn- same-refusal? [record instance version owner-config]
+  (and record (= version (:owner-version record)) (= owner-config (:owner-config record))
+       (= (:priority instance) (:priority record))))
+
 (defn- reconcile [state model frame]
   (let [state (bind-epoch state model) clock (clock model frame)
         owners (->> (:instances model) vals (sort instance-order/authored-instance-comparator)
@@ -447,37 +481,51 @@
                               (when (and (:modulation definition) (owner-active? instance definition clock))
                                 [instance definition])))))
         ids (set (map (comp :id first) owners))
-        state (update state :controllers #(vec (remove (fn [c]
-                                                         (and (:owner-instance-id c)
-                                                              (not (ids (:owner-instance-id c))))) %)))]
+        state (-> state
+                  (update :controllers #(vec (remove (fn [c]
+                                                       (and (:owner-instance-id c)
+                                                            (not (ids (:owner-instance-id c))))) %)))
+                  (with-refused (into {} (filter (fn [[_ record]] (ids (:owner-instance-id record))))
+                                      (:refused state))))]
     (reduce
       (fn [{:keys [state] :as result} [instance definition]]
         (let [id [:cue (:id instance)]
               old (some #(when (= id (:id %)) %) (:controllers state))
-              version (:version definition)]
-          (try
-            (let [config (normalize-config (merge {:priority (:priority instance)} (:modulation definition) {:id id}))
-                  restart? (and old (not= version (:owner-version old)) (= :restart (:reload-policy instance)))
-                  changed? (and old (or (not= (:modulation definition) (:owner-config old))
-                                       (not= (:priority config) (get-in old [:config :priority]))))]
-              (assoc result :state
-                     (if (and old (not restart?) (not changed?))
-                       (update state :controllers #(mapv (fn [c] (if (= id (:id c)) (assoc c :owner-version version) c)) %))
-                       (let [launch-clock (if old clock
-                                             (assoc clock :beat (:started-at-beat instance (:beat clock))
-                                                          :meter (:timing-meter instance (:meter clock))))]
-                         (update (start state config launch-clock) :controllers
-                                 #(mapv (fn [c] (if (= id (:id c))
-                                                  (assoc c :owner-instance-id (:id instance) :owner-version version
-                                                           :owner-config (:modulation definition)) c)) %))))))
-            ;; Refuse this owner's controller alone; every other owner,
-            ;; controller and effect keeps its frame.
-            (catch clojure.lang.ExceptionInfo error
-              (if (refusable-start (:type (ex-data error)))
-                (-> result
-                    (update-in [:state :controllers] #(vec (remove (fn [c] (= id (:id c))) %)))
-                    (update :diagnostics conj (refused-controller id instance error)))
-                (throw error))))))
+              refused (get-in state [:refused id])
+              version (:version definition)
+              owner-config (:modulation definition)]
+          (if (same-refusal? refused instance version owner-config)
+            ;; Judged already: report the same refusal without another attempt.
+            (update result :diagnostics conj (:diagnostic refused))
+            (try
+              (let [config (normalize-config (merge {:priority (:priority instance)} owner-config {:id id}))
+                    restart? (and old (not= version (:owner-version old)) (= :restart (:reload-policy instance)))
+                    changed? (and old (or (not= owner-config (:owner-config old))
+                                         (not= (:priority config) (get-in old [:config :priority]))))]
+                (assoc result :state
+                       (if (and old (not restart?) (not changed?))
+                         (update state :controllers #(mapv (fn [c] (if (= id (:id c)) (assoc c :owner-version version) c)) %))
+                         ;; A revision after a refusal starts like a reload, at
+                         ;; this frame's beat and meter, not like a first launch.
+                         (let [launch-clock (if (or old refused) clock
+                                               (assoc clock :beat (:started-at-beat instance (:beat clock))
+                                                            :meter (:timing-meter instance (:meter clock))))]
+                           (-> (start state config launch-clock)
+                               (update :controllers
+                                       #(mapv (fn [c] (if (= id (:id c))
+                                                        (assoc c :owner-instance-id (:id instance) :owner-version version
+                                                                 :owner-config owner-config) c)) %))
+                               (with-refused (dissoc (:refused state) id)))))))
+              ;; Refuse this owner's controller alone; every other owner,
+              ;; controller and effect keeps its frame.
+              (catch clojure.lang.ExceptionInfo error
+                (if (refusable-start (:type (ex-data error)))
+                  (let [diagnostic (refused-controller id instance error)]
+                    (-> result
+                        (update-in [:state :controllers] #(vec (remove (fn [c] (= id (:id c))) %)))
+                        (update :state #(with-refused % (assoc (:refused %) id (refusal-record instance version owner-config diagnostic))))
+                        (update :diagnostics conj diagnostic)))
+                  (throw error)))))))
       {:state state :diagnostics []} owners)))
 
 (defn reconcile-cues
@@ -638,19 +686,40 @@
                 (merge-with merge result (cell-overrides cells selected last-beat))))
             {} (sort controller-comparator controllers))))
 
+(defn- rebase-backlog
+  "Skip the missed boundaries a controller cannot sample within its catch-up
+  budget. Its schedule moves to the last boundary at or before `beat` and its
+  tick count by the skipped boundaries, so it then samples that boundary once
+  and keeps its own grid, as a stopped transport resumes without catch-up.
+  Return [controller skipped], or nil when the backlog is not countable."
+  [controller fraction beat]
+  (when (< fraction 9.0E15)
+    (let [{:keys [anchor-beat ticks interval-beats]} controller
+          boundary #(+ anchor-beat (* (+ ticks %) interval-beats))
+          skipped (long (Math/floor fraction))
+          skipped (if (and (pos? skipped) (> (boundary skipped) beat)) (dec skipped) skipped)]
+      [(assoc controller :ticks (+ ticks skipped) :next-beat (boundary skipped)) skipped])))
+
 (defn- advance-controller [controller model holds beat]
   (let [targets (targets model controller)
         fraction (if (< beat (:next-beat controller)) -1.0
                      (double (/ (- beat (:next-beat controller)) (:interval-beats controller))))
         budget (get-in controller [:config :max-catch-up])
-        _ (when (or (not (Double/isFinite fraction)) (>= fraction budget))
-            (fail! ::catch-up-limit "Modulation catch-up exceeds its explicit work budget"
-                   {:controller-id (:id controller) :max-catch-up budget
-                    :next-beat (:next-beat controller) :current-beat beat
-                    :minimum-samples (when (Double/isFinite fraction) (inc (bigint (Math/floor fraction))))
-                    :recovery [:capture-clock-discontinuity-and-rebase :increase-explicit-budget]}))
-        due (if (neg? fraction) 0 (inc (long (Math/floor fraction))))]
-    (loop [remaining due controller controller diagnostics []]
+        over? (>= fraction budget)
+        rebased (when (and over? (Double/isFinite fraction)) (rebase-backlog controller fraction beat))
+        _ (when (and over? (nil? rebased))
+            (fail! ::clock-precision (str "Modulation period :every " (pr-str (get-in controller [:config :every]))
+                                          " cannot count its boundaries up to beat " beat)
+                   {:controller-id (:id controller)}))
+        [controller skipped] (or rebased [controller 0])
+        due (cond (neg? fraction) 0 rebased 1 :else (inc (long (Math/floor fraction))))]
+    (loop [remaining due controller controller diagnostics
+           (if rebased
+             [{:type :modulation/rebased :controller-id (:id controller) :skipped skipped
+               :max-catch-up budget :next-beat (:next-beat controller) :current-beat beat
+               :message (str "Skipped " skipped " missed modulation steps beyond the catch-up budget of "
+                             budget "; the controller resumes at its next boundary")}]
+             [])]
       (if (zero? remaining)
         (let [values (eligible-values (:values controller) targets holds beat)
               overrides (cell-overrides values targets beat)]
@@ -661,26 +730,41 @@
         (let [result (sample-boundary controller targets holds (:next-beat controller))]
           (recur (dec remaining) (:controller result) (into diagnostics (:diagnostics result))))))))
 
+(defn- refused-in-frame
+  "A controller refused alone, with the record that keeps an owner's
+  controller refused until its revision, config or priority changes."
+  [controller model message]
+  (let [owner (:owner-instance-id controller)
+        diagnostic (cond-> {:type :modulation/refused :controller-id (:id controller) :message message
+                            :every (get-in controller [:config :every]) :interval-beats (:interval-beats controller)}
+                     owner (assoc :owner-instance-id owner))]
+    {:controller nil :overrides {} :events [] :diagnostics [diagnostic]
+     :refusal (when-let [instance (and owner (get-in model [:instances owner]))]
+                [(:id controller) (refusal-record instance (:owner-version controller)
+                                                  (:owner-config controller) diagnostic)])}))
+
 (defn- safe-advance-controller
-  "Advance one controller, or refuse it alone when its period no longer
-  advances the beat coordinate. The catch-up budget still fails the whole
-  advance, so a known seek is rebased instead of skipping random draws."
+  "Advance one controller, or refuse it alone: a saved interval outside the
+  period range, or a schedule that no longer advances the beat coordinate. A
+  backlog beyond the catch-up budget is skipped, never a frame failure."
   [controller model holds beat]
-  (try (advance-controller controller model holds beat)
-       (catch clojure.lang.ExceptionInfo error
-         (if (= ::clock-precision (:type (ex-data error)))
-           {:controller nil :overrides {} :events []
-            :diagnostics [(merge {:type :modulation/refused :controller-id (:id controller)
-                                  :message (ex-message error)
-                                  :every (get-in controller [:config :every]) :interval-beats (:interval-beats controller)}
-                                 (when-let [owner (:owner-instance-id controller)] {:owner-instance-id owner}))]}
-           (throw error)))))
+  (if-not (period-in-range? (:interval-beats controller))
+    (refused-in-frame controller model
+                      (str "Saved modulation interval of " (double (:interval-beats controller))
+                           " beats is outside 1/1024 to 2^40 (1099511627776) beats"))
+    (try (advance-controller controller model holds beat)
+         (catch clojure.lang.ExceptionInfo error
+           (if (= ::clock-precision (:type (ex-data error)))
+             (refused-in-frame controller model (ex-message error))
+             (throw error))))))
 
 (defn advance
   "Advance all controllers once per owner frame, then share returned overlays
   with workers. Intersect selectors; later priority/activation wins per parameter.
   Missing numeric domains produce diagnostics, not guessed ranges. Catch-up
-  samples each missed boundary using the supplied model, with a fail-loud budget.
+  samples each missed boundary using the supplied model, up to the controller's
+  budget; a longer backlog skips to the current boundary and reports it.
+  A controller that cannot schedule is refused alone with a diagnostic.
   Same-beat frames do not consume RNG. An actual show/epoch change clears state."
   [state model frame]
   (let [previous state
@@ -694,8 +778,10 @@
         holds (into {} (keep (fn [[id parameters]]
                               (let [active (into {} (filter (fn [[param _]] (held? (:holds state) id param beat))) parameters)]
                                 (when (and (contains? (:instances model) id) (seq active)) [id active])))) (:holds state))]
-    {:state (assoc state :last-beat beat :holds holds
-                   :controllers (into [] (keep #(get by-id (:id %))) (:controllers state)))
+    {:state (-> state
+                (assoc :last-beat beat :holds holds
+                       :controllers (into [] (keep #(get by-id (:id %))) (:controllers state)))
+                (with-refused (into (or (:refused state) {}) (keep :refusal) results)))
      :overrides (reduce (fn [result item] (merge-with merge result (:overrides item))) {} results)
      :events (into (if (and (:epoch previous) (not= [(:show-id previous) (:epoch previous)]
                                                    [(:show-id model) (:epoch model)]))
@@ -798,16 +884,24 @@
     (fail! ::invalid-restore "Restore needs show/epoch and an injective instance ID map" {}))
   (let [remap-values (fn [values] (into {} (keep (fn [[id value]] (when-let [next-id (get instance-ids id)]
                                                                  [next-id value]))) values))]
-    (assoc state :show-id show-id :epoch epoch :holds (remap-values (portable-holds (:holds state)))
-           :controllers
-           (into []
-                 (keep (fn [controller]
-                         (let [owner (:owner-instance-id controller)
-                               next-owner (get instance-ids owner)]
-                           (when (or (nil? owner) next-owner)
-                             (cond-> (update controller :values remap-values)
-                               owner (assoc :owner-instance-id next-owner :id [:cue next-owner])
-                               owner (assoc-in [:config :id] [:cue next-owner])
-                               (contains? (get-in controller [:config :select]) :instance-ids)
-                               (update-in [:config :select :instance-ids] #(into [] (keep instance-ids) %)))))))
-                 (:controllers state)))))
+    (-> state
+        (assoc :show-id show-id :epoch epoch :holds (remap-values (portable-holds (:holds state)))
+               :controllers
+               (into []
+                     (keep (fn [controller]
+                             (let [owner (:owner-instance-id controller)
+                                   next-owner (get instance-ids owner)]
+                               (when (or (nil? owner) next-owner)
+                                 (cond-> (update controller :values remap-values)
+                                   owner (assoc :owner-instance-id next-owner :id [:cue next-owner])
+                                   owner (assoc-in [:config :id] [:cue next-owner])
+                                   (contains? (get-in controller [:config :select]) :instance-ids)
+                                   (update-in [:config :select :instance-ids] #(into [] (keep instance-ids) %)))))))
+                     (:controllers state)))
+        (with-refused (into {} (keep (fn [[_ record]]
+                                       (when-let [next-owner (get instance-ids (:owner-instance-id record))]
+                                         [[:cue next-owner]
+                                          (-> record (assoc :owner-instance-id next-owner)
+                                              (update :diagnostic assoc :owner-instance-id next-owner
+                                                      :controller-id [:cue next-owner]))])))
+                            (:refused state))))))

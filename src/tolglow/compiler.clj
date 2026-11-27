@@ -136,7 +136,7 @@
   (let [errors (registry/validate-definition :effects definition)]
     (when (seq errors) (throw (ex-info "Invalid effect definition" {:errors errors}))))
   (when (contains? definition :modulation)
-    (let [errors (modulation/validate-config (:modulation definition))]
+    (let [errors (modulation/validate-saved-config (:modulation definition))]
       (when (seq errors)
         (throw (ex-info (str "Invalid modulation definition: " (:message (first errors)))
                         {:errors (mapv #(update % :path (partial into [:modulation])) errors)})))))
@@ -336,19 +336,26 @@
   own parameters, so an output still reading a parameter the revision removed
   is reported at its expression path (#703). An expression the compiler cannot
   read at all, such as `{:op :add :args 0}`, is an error at the definition root.
-  Empty when the definition is valid."
-  [kind definition]
-  (let [errors (registry/validate-definition kind definition)]
+  Empty when the definition is valid. With :publication? a new revision's
+  modulation period must also be in range; saved shows load without that
+  check, so a backup an older owner wrote stays readable."
+  ([kind definition] (definition-errors kind definition nil))
+  ([kind definition {:keys [publication?]}]
+  (let [errors (registry/validate-definition kind definition)
+        period-errors (when (and publication? (= :effects kind) (map? (:modulation definition)))
+                        (mapv #(update % :path (partial into [:modulation]))
+                              (modulation/validate-config (:modulation definition))))]
     (cond
       (seq errors) errors
       (not= :effects kind) []
+      (seq period-errors) period-errors
       :else (try (compile-effect definition) []
                  (catch clojure.lang.ExceptionInfo cause
                    (or (not-empty (:errors (ex-data cause)))
                        [{:path [] :message (ex-message cause)}]))
                  (catch Exception cause
                    [{:path [] :message (str "Effect does not compile: "
-                                            (or (ex-message cause) (.getName (class cause))))}])))))
+                                            (or (ex-message cause) (.getName (class cause))))}]))))))
 
 (defn demo-definitions
   "Portable example effects for the studio, REPL, and deterministic tests."

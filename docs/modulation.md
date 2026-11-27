@@ -45,7 +45,7 @@ can omit it because cue reconciliation derives an activation ID.
 | `:max-change` | Optional nonnegative componentwise change limit; otherwise use parameter metadata. |
 | `:priority` | Finite precedence. Later activation wins at equal priority, independently for each overlapping parameter. |
 | `:exclude-owner?` | Defaults true for a modulator cue; explicitly false permits targeting its own effect instance. |
-| `:max-catch-up` | Integer 1–100000; exceeding it fails the whole advance instead of skipping random draws. |
+| `:max-catch-up` | Integer 1–100000. A longer backlog skips to the current boundary and reports `:modulation/rebased`; see [catch-up budget](#catch-up-budget). |
 
 Categories include the registry's union derived from controlled output attributes
 (such as dimmer → intensity and aim/pan/tilt → movement), plus `:category` or
@@ -66,7 +66,8 @@ A period must be between `min-period-beats` (1/1024 beat) and
 - **Shortest.** 1/1024 beat is 0.33 ms at 180 BPM and 0.84 ms at 70 BPM, which
   is shorter than any lighting frame. A faster period would spend the catch-up
   budget on samples that no output can show. With the default budget of 1024,
-  a frame may span just under one beat at this period.
+  a frame may span just under one beat at this period before the controller
+  skips its backlog (see [catch-up budget](#catch-up-budget)).
 - **Longest.** The schedule adds a period to a beat coordinate. With an anchor
   and a period both at most 2^40 beats, the next boundary stays below 2^41
   beats. A double still resolves 2^-11 beat there, half the shortest period,
@@ -74,9 +75,10 @@ A period must be between `min-period-beats` (1/1024 beat) and
   `{:bars 1e308}`, overflows the boundary or rounds it back onto its anchor. It
   cannot start or schedule. 2^40 beats is about 11,600 years at 180 BPM.
 
-`validate-config`, and therefore effect publication, `:modulation-cue` and
-`:modulation-start`, refuses a period outside the range in the default meter
-(four beats per bar, four bars per phrase). The error has the path
+`validate-config` refuses a period outside the range in the default meter
+(four beats per bar, four bars per phrase). Effect publication
+(`compiler/definition-errors` with `{:publication? true}`, which Tolglow's
+publish gate runs), `:modulation-cue` and `:modulation-start` use it. The error has the path
 `[:every <unit>]`, or `[:modulation :every <unit>]` in an effect, and a message
 that names the period, its length in beats and the range:
 
@@ -87,19 +89,50 @@ that names the period, its length in beats and the range:
 ```
 
 A bar or phrase period is checked again against the meter that the controller
-captures when it starts. If a cue owner's period falls outside the range in
-that meter, its controller is refused alone, and the same applies to a
-controller whose schedule stops advancing at a very large beat coordinate.
-The owner effect still renders, and every other controller and effect keeps
-its frame. Each frame reports a `:modulation/refused` diagnostic with the
-controller ID, owner instance, path, captured meter and message. The diagnostic
-appears in the `[:modulation :diagnostics]` projection, which the Studio
-modulation panel lists. A new waveform binding (`:modulation-bind`) uses the
-same range for its `:period`.
+captures when it starts: the owner's launch meter on a first launch, and the
+frame's meter on a reload. A controller is refused alone when:
 
-Saved states and saved bindings with a period outside the range still load,
-because backups keep their contents. Their frames are refused alone as above
-if they cannot schedule.
+- a cue owner's period falls outside the range in that meter, or its config
+  does not validate;
+- a saved controller's `:interval-beats` is outside the range;
+- its schedule stops advancing at a very large beat coordinate.
+
+The owner effect still renders, and every other controller and effect keeps
+its frame. A `:modulation/refused` diagnostic carries the controller ID, owner
+instance, path, meter and message. It appears in the `[:modulation :diagnostics]`
+projection, which the Studio modulation panel lists.
+
+An owner's refusal is recorded in the state under `:refused`, keyed by its
+controller ID, with the owner version, modulation config and priority it was
+judged on. While those are unchanged the owner is not attempted again and
+reports the recorded diagnostic each frame. A new revision, config or priority
+starts the controller like a reload, at that frame's beat and meter, not like a
+first launch that would catch up over the cue's whole life. The record follows
+`restore-state` and goes when the owner ends. A refused global controller is
+dropped; its diagnostic appears in that frame only.
+
+Saved shows load without the range check: registry and running definitions
+(`compiler/definition-errors` without `:publication?`), saved controller
+states and saved waveform bindings. A backup that an older owner wrote keeps
+its contents, and its frames refuse the affected controller alone.
+
+A new waveform binding (`:modulation-bind`) uses the same range for its
+`:period`, measured in the meter its phase follows: the transport meter for
+`:phase-reference :transport`, otherwise the cue's captured meter. Binding
+sampling has no schedule, so this is shared vocabulary rather than a precision
+limit.
+
+### Catch-up budget
+
+A late frame samples every missed boundary, up to `:max-catch-up` samples per
+controller per frame. A longer backlog never fails the frame. The controller
+skips the missed boundaries: its schedule moves to the last boundary at or
+before the frame's beat, its tick count advances by the skipped boundaries,
+and it samples that boundary once. It keeps its own grid and consumes one
+random draw, as a stopped transport resumes without catch-up. The frame
+reports `:modulation/rebased` with the controller ID, the number of skipped
+steps, the budget, the next beat and the current beat. The skip is
+deterministic for a given state and beat.
 
 ## Parameter domains and interpolation
 
@@ -343,10 +376,10 @@ of invented random samples. Requiring that signal distinguishes a transport jump
 from an actual missed-frame backlog; ordinary backward input remains an error.
 
 The host must apply the same timeline policy to the engine's instance timers and
-last-frame beat. This helper only owns modulation state. A catch-up-budget error
-contains controller ID, current/next beat, minimum samples and explicit recovery
-choices; it returns no partially advanced RNG state. It is not silently retried
-as if the transport had continued normally after a known seek.
+last-frame beat. This helper only owns modulation state. Without a rebase, a
+backlog beyond the catch-up budget skips to the current boundary as described
+under [catch-up budget](#catch-up-budget); a rebase keeps the glide phase and
+every tick instead.
 
 ## Verification and limits
 

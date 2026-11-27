@@ -125,7 +125,8 @@
     (let [[kind definition] (case op :registry/publish [kind definition] :cue/put [:cues cue] nil)]
       (when (map? definition)
         (not-empty (or (not-empty (compiler/definition-errors
-                                   kind (cond->> definition (= :effects kind) (captured model))))
+                                   kind (cond->> definition (= :effects kind) (captured model))
+                                   {:publication? true}))
                        (when (= :cues kind) (pinned-effect-errors model definition))))))))
 
 (defn apply-command

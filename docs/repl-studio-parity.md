@@ -91,9 +91,12 @@ Studio modulation panel lists:
 (get-in (show/snapshot runtime) [:modulation :diagnostics])
 ```
 
-Gap: the Studio interval field checks only that the value is positive, so the
-range is refused by the server rather than by the form. The panel's rendering
-of the refusal has not had a browser review.
+A controller that skips a backlog beyond its catch-up budget reports
+`:modulation/rebased` in the same projection.
+
+Gap: the Studio interval field checks only that the value is positive. The
+server's request error is the only range feedback Studio gives. The panel's
+rendering of the refusal has not had a browser review.
 
 Gaps: Studio has no control that sets a cue's reload policy; author it in cue
 EDN or the REPL. The diagnostics summary does not print `:from-version`, which

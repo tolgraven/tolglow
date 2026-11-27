@@ -135,7 +135,11 @@
     (require! (not (and (= priority-param param) (get-in instance [:source :native-layer])))
               "Compound layer members share one priority. Set it with the layer priority command.")
     ;; A new binding takes the controller period range; saved bindings keep loading.
-    (when-let [message (modulation/period-range-error "Waveform period :period" (:period binding))]
+    (when-let [message (modulation/period-range-error
+                        "Waveform period :period" (:period binding)
+                        (if (= :transport (:phase-reference binding))
+                          (get-in model [:transport :meter]) (:timing-meter instance))
+                        (if (= :transport (:phase-reference binding)) "transport" "cue's captured"))]
       (require! false message))
     (assoc-in model [:instances instance-id :parameter-bindings]
               (assoc (cond-> bindings moving? (dissoc from-param)) param

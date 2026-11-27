@@ -723,3 +723,51 @@
             (is (= 2 (:effect-version (instance rt :modulator))))
             (is (= [:modulation/refused] (mapv :type (refusals rt)))))
           (finally (show/stop! rt)))))))
+
+(deftest a-valid-revision-after-a-refused-one-runs-in-the-show
+  ;; v1 runs for 140 s in eight-beat bars, v2 is refused in that meter and v3
+  ;; is valid again. v3 starts at its own frame beat and no frame fails.
+  (let [output (atom []) rt (runtime output (eight-beat-model [wash owner]))
+        times (into (vec (range 5000 145001 5000)) (range 145050 147001 50))]
+    (try
+      (let [frames (capture! rt output [:wash :modulator]
+                             {140000 [(with-period owner 2 {:bars (/ two-to-the-40 4)})]
+                              145000 [(with-period owner 3 {:beats 1/4})]} times)
+            at #(some (fn [frame] (when (= % (:time-ms frame)) frame)) frames)
+            beat (get-in @(:state rt) [:model :transport :beat])]
+        (is (= [[:accepted] [:accepted]] (keep :acks frames)))
+        (is (every? nil? (map :error frames)) "No frame fails")
+        (is (empty? (:controllers (at 140000))))
+        (is (= [[290.0 1]] (mapv (juxt (comp double :anchor-beat) :ticks) (:controllers (at 145000))))
+            "v3 starts at its frame beat, 145 s at 120 BPM")
+        (is (< 290 beat))
+        (is (= [] (refusals rt)))
+        (is (< 1 (count (distinct (map #(nth (:dmx %) head-2-dimmer) (filter #(> (:time-ms %) 145000) frames)))))
+            "v3 modulates the wash again"))
+      (finally (show/stop! rt)))))
+
+(deftest a-backup-with-a-period-an-older-owner-accepted-loads-and-runs
+  (doseq [every [{:beats 1/2048} {:bars 1.0e12}]]
+    (testing (pr-str every)
+      (let [old-owner (with-period owner 1 every)
+            output (atom []) saved-rt (runtime output (model {} [wash old-owner]))
+            [source saved-refusals]
+            (try (doseq [cue [:wash :modulator]] (apply! saved-rt {:op :cue/launch :cue-id cue} 0))
+                 (show/tick! saved-rt 100)
+                 [(show/export-show-source saved-rt) (refusals saved-rt)]
+                 (finally (show/stop! saved-rt)))
+            restored-output (atom []) rt (runtime restored-output (model {} [wash]))]
+        (is (= [:modulation/refused] (mapv :type saved-refusals)) "The older period is refused in the frame")
+        (try
+          (let [reply (show/submit! rt :import {:source source})
+                _ (show/tick! rt 200)
+                ack (deref reply 2000 ::timeout)
+                frames (mapv (fn [t] (show/tick! rt t)
+                               {:error (get-in @(:state rt) [:status :error]) :dmx (peek @restored-output)})
+                             (range 250 801 50))]
+            (is (= :accepted (:status ack)) (pr-str ack))
+            (is (= every (get-in @(:state rt) [:model :registry :effects :modulator :modulation :every])))
+            (is (every? nil? (map :error frames)) "No restored frame fails")
+            (is (= #{128} (set (map #(nth (:dmx %) head-2-dimmer) frames))) "The wash keeps its canonical level")
+            (is (= [:modulation/refused] (mapv :type (refusals rt)))))
+          (finally (show/stop! rt)))))))
