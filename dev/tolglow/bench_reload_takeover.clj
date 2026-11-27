@@ -29,6 +29,8 @@
             [clojure.pprint :as pprint]
             [clojure.string :as str]
             [tolglow.bench-show :as bench]
+            [tolglow.effects.parameter-sources :as parameter-sources]
+            [tolglow.modulation :as modulation]
             [tolglow.show :as show]
             [tolglow.showcase :as showcase]
             [tolglow.showcase.looks :as looks]
@@ -105,10 +107,14 @@
     instance-id))
 
 (defn- stage-recorder
-  "Wrap the runtime's compiler and record engine, renderer-rejection and
-  compile time for the frame being ticked."
+  "Wrap the runtime's compiler and record engine, renderer-rejection,
+  compile, command-handling and modulation-sampling time for the frame being
+  ticked. Commands include validating each published revision; sampling is
+  waveform and controller sampling, done for both outcomes while a reload is
+  pending."
   [rt]
   (let [frame (volatile! nil)
+        depth (volatile! 0)
         add! (fn [k ms] (when @frame (vswap! frame #(-> % (update-in [k :ms] (fnil + 0.0) ms) (update-in [k :calls] (fnil inc 0))))))
         timed (fn [k f] (fn [& args]
                           (let [start (System/nanoTime)
@@ -120,7 +126,16 @@
     {:rt (update rt :compile #(timed :compile %))
      :frame frame
      :redefs {#'engine/advance (timed :engine engine/advance)
-              #'engine/reject-output (timed :reject-output engine/reject-output)}}))
+              #'engine/reject-output (timed :reject-output engine/reject-output)
+              #'parameter-sources/sample (timed :sampling parameter-sources/sample)
+              #'modulation/advance (timed :sampling modulation/advance)
+              ;; Outermost command only: a command may apply nested ones.
+              #'show/apply-message (let [apply-message @#'show/apply-message
+                                         outer (timed :commands apply-message)]
+                                     (fn [& args]
+                                       (vswap! depth inc)
+                                       (try (apply (if (= 1 @depth) outer apply-message) args)
+                                            (finally (vswap! depth dec)))))}}))
 
 (defn- measured-tick! [{:keys [rt frame]} clock]
   (vreset! frame {})
@@ -177,10 +192,15 @@
     (cond-> {:n (count observations) :tick-ms (bench/distribution (map :ms observations))
              :over-25-ms (count (filter #(> (:ms %) 25.0) observations))
              :engine-ms (stage :engine)}
+      (stage :commands) (assoc :commands-ms (stage :commands))
+      (stage :sampling) (assoc :sampling-ms (stage :sampling))
       (stage :compile) (assoc :compile-ms (stage :compile)
                               :compiled-per-frame (bench/distribution (map #(get-in % [:compile :calls] 0) observations)))
       (stage :reject-output) (assoc :reject-output-ms (stage :reject-output))
       (some :reload-inputs observations) (assoc :reload-inputs (frequencies (map #(or (:final-inputs %) (:reload-inputs %)) observations))))))
+
+(defn- load-average []
+  (.getSystemLoadAverage (java.lang.management.ManagementFactory/getOperatingSystemMXBean)))
 
 (defn profile
   "Ordinary frames, then `rounds` takeover rounds for each reload count and outcome."
@@ -221,7 +241,7 @@
                                                  :next-frame-ms (bench/distribution (map :next-ms xs))
                                                  :frames-to-settle (bench/distribution (map #(inc (count (:follow-up %))) xs)))
                                     (seq follow-up) (assoc :follow-up-frames (summary follow-up))))]))
-             :gc {:before gc-before :after gc-after}})))
+             :gc {:before gc-before :after gc-after} :load-average-after (load-average)})))
       (finally (show/stop! rt)))))
 
 (defn -main [& args]
@@ -233,7 +253,8 @@
                                        :afterglow (bench/revision (or (System/getenv "AFTERGLOW_ROOT") "../afterglow"))}
                     :environment {:java (System/getProperty "java.version") :cpu-model (bench/cpu-model)
                                   :processors (.availableProcessors (Runtime/getRuntime))
-                                  :heap-bytes (.maxMemory (Runtime/getRuntime))}})
+                                  :heap-bytes (.maxMemory (Runtime/getRuntime))
+                                  :load-average (load-average)}})
     (doseq [rig rigs]
       (binding [pprint/*print-right-margin* 160]
         (pprint/pprint (profile ((get build rig)) rounds))))))
