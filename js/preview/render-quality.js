@@ -1,12 +1,22 @@
 // Budgets are in physical pixels. Only the last pass and editor overlay run
 // at display resolution when the lighting scene needs a smaller raster.
 const UHD = 3840 * 2160;
+// `fullLights` is the default number of prominence-ranked full lights (real
+// SpotLight in forward shading + raymarched fog beam). Every other emitting
+// fixture is a faked cone with a painted footprint (#782).
+export const MAX_FULL_LIGHTS = 16;
 export const TIERS = {
-  low: {dpr: .75, maxPixels: 180000, shadows: 1, shadowSize: 256, fps: 10, fixtures: 32, fog: 'phone'},
-  mobile: {dpr: 2, maxPixels: 1500000, shadows: 2, shadowSize: 512, fps: 120, fixtures: 32},
-  desktop: {dpr: 2, maxPixels: 3200000, shadows: 4, shadowSize: 1024, fps: 120, fixtures: 64},
-  high: {dpr: 4, maxPixels: UHD, shadows: 4, shadowSize: 2048, fps: 120, fixtures: 128},
+  low: {dpr: .75, maxPixels: 180000, shadows: 1, shadowSize: 256, fps: 10, fixtures: 32, fullLights: 4, fog: 'phone'},
+  mobile: {dpr: 2, maxPixels: 1500000, shadows: 2, shadowSize: 512, fps: 120, fixtures: 32, fullLights: 8},
+  desktop: {dpr: 2, maxPixels: 6000000, shadows: 4, shadowSize: 1024, fps: 120, fixtures: 64, fullLights: 8},
+  high: {dpr: 4, maxPixels: UHD, shadows: 4, shadowSize: 2048, fps: 120, fixtures: 128, fullLights: 16},
 };
+
+/** Full-light budget for a tier, or an explicit override, within the slot cap. */
+export function lightBudget(tier, override = null) {
+  const value = override ?? tier?.fullLights ?? MAX_FULL_LIGHTS;
+  return Math.max(0, Math.min(MAX_FULL_LIGHTS, Math.floor(Number(value) || 0)));
+}
 
 // Auto may use low's spatial budget on a hardware GPU while still presenting
 // faster than 10 Hz. Manual low and software rendering retain their explicit cap.
