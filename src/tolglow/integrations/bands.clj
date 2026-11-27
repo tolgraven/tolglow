@@ -73,4 +73,7 @@
        due? (assoc :since-pitch 0))
      {:low-rms low :mid-rms mid :high-rms high :bass-pitch-hz (:frequency pitch)
       :bass-pitch-confidence (get pitch :confidence 0.0)
-      :bass-window-ms (* 1000.0 (/ (:window-size state) rate))}]))
+      :bass-window-ms (* 1000.0 (/ (:window-size state) rate))
+      ;; The pitch describes its analysis window, which is refreshed every 40 ms
+      ;; and held between. Its centre lies this far before the hop end.
+      :bass-pitch-delay-ms (* 1000.0 (/ (+ (* 0.5 (:window-size state)) (if due? 0 (:since-pitch state))) rate))}]))

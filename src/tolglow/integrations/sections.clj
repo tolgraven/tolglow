@@ -23,10 +23,13 @@
    {:anchor-beat (double anchor-beat) :beats-per-window beats-per-window}))
 
 (defn- empty-slot []
-  {:hops 0 :power 0.0 :pitch-hops 0 :pitch-confidence 0.0 :notes {}})
+  {:hops 0 :power 0.0 :pitch-observations 0 :pitch-hops 0 :pitch-confidence 0.0 :notes {}})
 
-(defn- add-hop [slot {:keys [rms bass-pitch-hz bass-pitch-confidence]}]
-  (let [slot (-> slot (update :hops inc) (update :power + (* rms rms)))]
+(defn- add-power [slot {:keys [rms]}]
+  (-> slot (update :hops inc) (update :power + (* rms rms))))
+
+(defn- add-pitch [slot {:keys [bass-pitch-hz bass-pitch-confidence]}]
+  (let [slot (update slot :pitch-observations inc)]
     (if (and bass-pitch-hz (>= bass-pitch-confidence 0.88))
       (let [semitone (Math/round (+ 69.0 (* 12.0 (/ (Math/log (/ bass-pitch-hz 440.0))
                                                     (Math/log 2.0)))))]
@@ -38,8 +41,9 @@
 (defn- describe-window [{:keys [start-beat complete-start? slots]} beats-per-window]
   (let [hops (transduce (map :hops) + slots)
         power (transduce (map :power) + slots)
-        pitch-coverage (mapv #(/ (:pitch-hops %) (double (max 1 (:hops %)))) slots)
-        confidence (/ (transduce (map :pitch-confidence) + slots) hops)
+        observations (transduce (map :pitch-observations) + slots)
+        pitch-coverage (mapv #(/ (:pitch-hops %) (double (max 1 (:pitch-observations %)))) slots)
+        confidence (/ (transduce (map :pitch-confidence) + slots) (max 1 observations))
         slot-power (mapv #(/ (:power %) (max 1 (:hops %))) slots)
         total-slot-power (reduce + slot-power)]
     {:start-beat start-beat :end-beat (+ start-beat beats-per-window)
@@ -100,21 +104,32 @@
   belong to the half-beat slot containing their end. A hop on the next window's
   boundary closes the prior window and returns its :window descriptor.
 
+  Optional :pitch-beat is where the hop's bass pitch evidence was heard: the
+  centre of the pitch analysis window, converted to beats through the transport
+  by the caller (the analyzer's window is a fixed span of milliseconds, so its
+  delay in beats depends on tempo). Pitch evidence counts in the slot containing
+  :pitch-beat. Evidence for a window that has already closed is dropped, and
+  pitch coverage is measured over the evidence each slot received. Without
+  :pitch-beat the evidence counts at :beat.
+
   Feed every completed hop exactly once in strictly increasing beat order.
   Set :discontinuity? across clock epochs, pauses and input resets. A gap over
   1/8 beat resets the comparison. Low pitch coverage clears pending changes.
   Confidence summarizes monophonic pitch evidence in the contributing windows."
-  [state {:keys [beat available-at-beat features discontinuity?]}]
+  [state {:keys [beat pitch-beat available-at-beat features discontinuity?]}]
   (let [{:keys [last-beat anchor-beat beats-per-window]} state
         {:keys [rms bass-pitch-hz bass-pitch-confidence]} features
-        available-at-beat (or available-at-beat beat)]
+        available-at-beat (or available-at-beat beat)
+        pitch-beat (or pitch-beat beat)]
     (when-not (and (finite? beat) (finite? available-at-beat) (<= beat available-at-beat)
+                   (finite? pitch-beat) (<= pitch-beat beat)
                    (or discontinuity? (nil? last-beat) (< last-beat beat))
                    (finite? rms) (<= 0 rms 16)
                    (finite? bass-pitch-confidence) (<= 0 bass-pitch-confidence 1)
                    (or (nil? bass-pitch-hz) (and (finite? bass-pitch-hz) (<= 20 bass-pitch-hz 180))))
       (throw (ex-info "Section hop requires ordered beat positions and valid audio features" {})))
     (let [beat (double beat)
+          pitch-beat (double pitch-beat)
           available-at-beat (double available-at-beat)
           state (if (or discontinuity? (and last-beat (> (- beat last-beat) max-hop-gap-beats)))
                   (new-detector state) state)
@@ -129,7 +144,11 @@
                    {:start-beat start-beat :complete-start? (<= phase max-hop-gap-beats)
                     :slots (vec (repeat (* slots-per-beat beats-per-window) (empty-slot)))}
                    active)
-          slot (int (* slots-per-beat phase))]
-      {:state (assoc state :last-beat beat :active (update-in active [:slots slot] add-hop features))
+          slot (int (* slots-per-beat phase))
+          pitch-phase (- pitch-beat (:start-beat active))
+          active (cond-> (update-in active [:slots slot] add-power features)
+                   (>= pitch-phase 0.0)
+                   (update-in [:slots (int (* slots-per-beat pitch-phase))] add-pitch features))]
+      {:state (assoc state :last-beat beat :active active)
        :window window
        :event event})))
