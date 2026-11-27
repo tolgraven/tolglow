@@ -186,8 +186,6 @@
   (let [s (-> value str/lower-case str/trim (str/replace #"[^a-z0-9._/-]+" "-") (str/replace #"^-+|-+$" ""))]
     (if (seq s) s "untitled")))
 
-(defn snapshot-order [show] (mapv #(get show % 0) [:epoch :revision :frame-number]))
-
 (defn outstanding-drafts [drafts show]
   (into {} (filter (fn [[_ draft]]
                     (and (= (:epoch draft) (:epoch show))
@@ -370,7 +368,6 @@
                                               (get-in db [:server-projection :view]) (:server-presentation db))
         runtime-changed? (and (:show db) (not= (:runtime-id presentation) (get-in db [:show :runtime-id])))
         drafts (if runtime-changed? {} (outstanding-drafts (:drafts db) presentation))
-        order (snapshot-order presentation)
         show (apply-drafts presentation drafts)
         previous (when (= (projection/identity-of show) (projection/identity-of (:server-presentation db)))
                    (:server-presentation db))
@@ -382,7 +379,7 @@
                                       (or (not (get-in db [:connection :connected?]))
                                           (not= (projection/identity-of (:view server))
                                                 (projection/identity-of (get-in db [:server-projection :view])))))
-        updated (-> db (assoc :show show :snapshot-order order :drafts drafts :connection {:connected? true}
+        updated (-> db (assoc :show show :drafts drafts :connection {:connected? true}
                              :server-projection server :server-presentation presentation)
                     settle-history
                     spatial-drafts/settle
@@ -482,7 +479,6 @@
                         {:fx lane-fx}
                         (-> (install-show db app-state)
                             (update :db dissoc :awaiting-full?)
-                            (update :db assoc :snapshot-order (snapshot-order (:view state)))
                             (update :fx (fnil into []) lane-fx))))
           :duplicate (cond-> {:db (-> db (dissoc :awaiting-full?) (assoc :connection {:connected? true}))
                               :studio/stream-reply [id {:op :ack :token (:token envelope)}]}
