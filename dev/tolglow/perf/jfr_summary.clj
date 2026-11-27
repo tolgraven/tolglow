@@ -2,7 +2,9 @@
   "Summarise a JFR recording by application frame: CPU samples by first and
   inclusive Tolglow/Afterglow function, allocation weight by first application
   frame and allocated class. Library frames (clojure.lang, java.*) are skipped
-  when choosing the first application frame."
+  when choosing the first application frame. Allocation is counted in samples,
+  not their byte weight: a few samples carry weights of gigabytes (all bytes
+  since the thread's previous sample), which would swamp every site."
   (:require [clojure.string :as str])
   (:import [jdk.jfr.consumer RecordedEvent RecordedFrame RecordingFile]))
 
@@ -38,7 +40,7 @@
                    (update-in [:leaf (top-frame event)] (fnil inc 0))
                    (update :inclusive #(reduce (fn [m f] (update m f (fnil inc 0))) % (distinct fs)))))
              "jdk.ObjectAllocationSample"
-             (let [weight (.getLong event "weight")
+             (let [weight 1
                    fs (frames event)]
                (-> out (update :allocation-bytes + weight)
                    (update-in [:allocation-first (or (first fs) "(no application frame)")] (fnil + 0) weight)
@@ -52,7 +54,7 @@
   (let [n (or (some-> n parse-long) 25)
         s (summary path)
         pct (fn [x total] (format "%5.1f%%" (* 100.0 (/ (double x) (max 1 total)))))]
-    (println "CPU samples" (:cpu-samples s) " sampled allocation" (format "%.1f MB" (/ (:allocation-bytes s) 1048576.0)))
+    (println "CPU samples" (:cpu-samples s) " allocation samples" (:allocation-bytes s))
     (doseq [[title k total] [["Leaf method" :leaf (:cpu-samples s)]
                              ["First application frame (CPU)" :first (:cpu-samples s)]
                              ["Inclusive application frame (CPU)" :inclusive (:cpu-samples s)]
@@ -64,7 +66,7 @@
 
 (defn stacks
   "Top n leaf-first stacks (depth frames) for events of `event-type` whose
-  stack contains a frame matching `pattern`. Allocation events weigh bytes."
+  stack contains a frame matching `pattern`, counted in samples."
   [path event-type pattern depth n]
   (with-open [file (RecordingFile. (.toPath (java.io.File. ^String path)))]
     (loop [out {}]
@@ -78,6 +80,6 @@
                                          (str (.getName (.getType (.getMethod f))) "." (.getName (.getMethod f)) ":" (.getLineNumber f)))))]
                (if (some #(re-find pattern %) names)
                  (update out (vec (take depth names)) (fnil + 0)
-                         (if (= event-type "jdk.ObjectAllocationSample") (.getLong event "weight") 1))
+                         1)
                  out))
              out)))))))
