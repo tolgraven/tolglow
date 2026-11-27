@@ -524,13 +524,12 @@
     (is (= 1000.5 (:next-beat (controller after-seek))))
     (is (= [] (modulation/validate-state (edn/read-string (pr-str rebased)))))))
 
-(deftest invalid-config-saved-state-clock-and-catchup-fail-before-returning-partial-output
+(deftest invalid-config-saved-state-and-clock-fail-before-returning-partial-output
   (doseq [config [{:every {:ms 100}} {:every {:beats 0}} {:every {:beats Double/NaN}}
                   {:select {:effects [:wash]}} {:mode :unknown} {:curve :unknown}
                   {:ranges {:level [1 0]}} {:seed 0.5} {:max-catch-up 0}]]
     (is (seq (modulation/validate-config config))))
   (let [state (start {:max-catch-up 2}) first-frame (modulation/advance state (model) (frame 0))]
-    (is (thrown? clojure.lang.ExceptionInfo (modulation/advance state (model) (frame 2))))
     (is (= 7 (get-in state [:controllers 0 :seed])))
     (is (thrown? clojure.lang.ExceptionInfo (modulation/advance (:state first-frame) (model) (frame -1))))
     (is (seq (modulation/validate-state (assoc-in state [:controllers 0 :seed] (atom 2)))))
@@ -564,3 +563,224 @@
     (is (= [:cue "0:2"] (:id (controller reload-frame))))
     (is (= 8.0 (:anchor-beat (controller reload-frame))) "the private beat, not the shared 10.0")
     (is (= (controller reloaded) (controller reload-frame)))))
+
+(def two-to-the-40 1099511627776)
+
+(deftest periods-that-cannot-start-or-schedule-are-refused-with-the-field
+  (doseq [[every unit] [[{:bars 1.0e308} :bars] [{:phrases 1.0e307} :phrases] [{:beats 1.0e-300} :beats]
+                        [{:beats 1/2048} :beats] [{:beats (inc two-to-the-40)} :beats]
+                        [{:bars (/ two-to-the-40 2)} :bars] [{:phrases (/ two-to-the-40 8)} :phrases]]]
+    (testing (pr-str every)
+      (let [[error :as errors] (modulation/validate-config {:every every})]
+        (is (= 1 (count errors)))
+        (is (= [:every unit] (:path error)))
+        (is (re-find #"^Modulation period :every \{" (:message error)))
+        (is (re-find #"between 1/1024 and 2\^40" (:message error))))
+      (let [errors (compiler/definition-errors :effects (assoc effect :modulation {:every every})
+                                               {:publication? true})]
+        (is (= [[:modulation :every unit]] (mapv :path errors)))
+        (is (re-find #"^Modulation period :every" (:message (first errors)))))
+      (is (= [] (compiler/definition-errors :effects (assoc effect :modulation {:every every})))
+          "A saved show still compiles the definition an older owner accepted")
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Modulation period :every"
+                            (start {:every every})))))
+  (doseq [every [{:beats 0} {:beats -1}]]
+    (is (= [[:every :beats]] (mapv :path (modulation/validate-config {:every every}))) (pr-str every)))
+  (doseq [every [{:beats Double/NaN} {:beats ##Inf}]]
+    (is (seq (modulation/validate-config {:every every})) "Non-finite numbers are not portable data"))
+  (is (= [[:every]] (mapv :path (modulation/validate-config {:every {:ms 100}}))))
+  (doseq [every [{:beats 1/1024} {:beats two-to-the-40} {:bars (/ two-to-the-40 4)} {:phrases (/ two-to-the-40 16)}
+                 {:bars 1/4096} {:phrases 1/16384}]]
+    (is (= [] (modulation/validate-config {:every every})) (pr-str every))))
+
+(deftest start-refuses-a-period-outside-the-range-in-its-captured-meter
+  ;; Publication checks the default meter; the meter a controller captures can
+  ;; still take an accepted bar period past the bound.
+  (is (= [] (modulation/validate-config {:every {:bars (/ two-to-the-40 4)}})))
+  (let [error (try (modulation/start (modulation/new-state) {:id :wide :every {:bars (/ two-to-the-40 4)}}
+                                     {:beat 0.0 :meter {:beats-per-bar 8 :bars-per-phrase 4}})
+                   nil (catch clojure.lang.ExceptionInfo error error))]
+    (is (= ::modulation/invalid-period (:type (ex-data error))))
+    (is (= [:every :bars] (:path (ex-data error))))
+    (is (re-find #"captured meter \(8 beats per bar" (ex-message error)))))
+
+(deftest borderline-periods-start-and-advance-their-schedule
+  (testing "the shortest period catches up within the default budget"
+    (let [state (start {:every {:beats 1/1024}})
+          first-frame (modulation/advance state (model) (frame 0))
+          later (modulation/advance (:state first-frame) (model) (frame 1/2))]
+      (is (= [] (:diagnostics later)))
+      (is (= 513 (:ticks (controller later))))
+      (is (= 513/1024 (:next-beat (controller later))))
+      (is (number? (level later)))))
+  (testing "the shortest period still advances near the top of the beat range"
+    (let [anchor (double (dec (* 2 two-to-the-40)))
+          state (modulation/start (modulation/new-state) {:id :fine :seed 7 :every {:beats 1/1024} :params [:level]}
+                                  {:beat anchor})
+          result (modulation/advance state (model) {:beat (+ anchor 1/256) :time-ms 0.0})]
+      (is (= [] (:diagnostics result)))
+      (is (= 5 (:ticks (controller result))))
+      (is (< anchor (:next-beat (controller result))))))
+  (testing "the longest period samples once and waits for its next boundary"
+    (let [anchor (double two-to-the-40)
+          state (modulation/start (modulation/new-state) {:id :slow :seed 7 :every {:beats two-to-the-40} :params [:level]}
+                                  {:beat anchor})
+          first-frame (modulation/advance state (model) {:beat anchor :time-ms 0.0})
+          later (modulation/advance (:state first-frame) (model) {:beat (+ anchor 1000.0) :time-ms 500000.0})]
+      (is (= [] (:diagnostics later)))
+      (is (= 1 (:ticks (controller later))))
+      (is (= (* 2.0 two-to-the-40) (double (:next-beat (controller later)))))
+      (is (= (level first-frame) (level later))))))
+
+(deftest an-owner-whose-period-cannot-start-is-refused-alone
+  (let [refused-config {:every {:bars (/ two-to-the-40 4)} :params [:level] :ranges {:level [0.7 0.7]}}
+        show (-> (with-owner (model) refused-config)
+                 (assoc-in [:instances "0:2" :timing-meter] {:beats-per-bar 8 :bars-per-phrase 4}))
+        global (modulation/start (modulation/new-state)
+                                 {:id :global :seed 3 :params [:level] :ranges {:level [0.4 0.4]} :priority -1} (frame 0))
+        result (modulation/advance global show (frame 0))
+        next-frame (modulation/advance (:state result) show (frame 1))
+        [diagnostic] (:diagnostics result)]
+    (is (= [:global] (mapv :id (get-in result [:state :controllers]))) "Only the refused owner has no controller")
+    (is (= 0.4 (level result)) "The other controller still modulates")
+    (is (= {:type :modulation/refused :controller-id [:cue "0:2"] :owner-instance-id "0:2"
+            :effect-id :modulator :path [:every :bars]}
+           (select-keys diagnostic [:type :controller-id :owner-instance-id :effect-id :path])))
+    (is (re-find #"Modulation period :every \{:bars 274877906944\}" (:message diagnostic)))
+    (is (= [:modulation/refused] (mapv :type (:diagnostics next-frame))) "Every frame reports the refusal")
+    (is (= 2 (:ticks (controller next-frame))))
+    (testing "a running owner reloaded to such a period stops its controller instead of the frame"
+      (let [valid (-> (with-owner (model) (assoc refused-config :every {:beats 1/4}))
+                      (assoc-in [:instances "0:2" :timing-meter] {:beats-per-bar 8 :bars-per-phrase 4}))
+            running (modulation/advance nil valid (frame 0))
+            revised (-> valid
+                        (assoc-in [:instances "0:2" :definition :modulation] refused-config)
+                        (assoc-in [:registry :effects :modulator :modulation] refused-config))
+            ;; A changed config restarts on the frame's meter.
+            reloaded (modulation/advance (:state running) revised
+                                         (assoc (frame 1/2) :meter {:beats-per-bar 8 :bars-per-phrase 4}))]
+        (is (= [[:cue "0:2"]] (mapv :id (get-in running [:state :controllers]))))
+        (is (= [] (get-in reloaded [:state :controllers])))
+        (is (= {} (:overrides reloaded)))
+        (is (= [:modulation/refused] (mapv :type (:diagnostics reloaded))))))))
+
+(deftest a-schedule-that-no-longer-advances-its-beat-coordinate-is-refused-alone
+  ;; A double cannot add 1/1024 to beat 2^60, but can add 1024. Only the
+  ;; first controller is refused; the frame and the other controller go on.
+  (let [beat (Math/pow 2 60)
+        state (-> (modulation/new-state)
+                  (modulation/start {:id :fine :seed 7 :every {:beats 1/1024} :params [:level]} {:beat beat})
+                  (modulation/start {:id :coarse :seed 9 :every {:beats 1024} :params [:level]
+                                     :ranges {:level [0.3 0.3]}} {:beat beat}))
+        result (modulation/advance state (model) {:beat beat :time-ms 0.0})]
+    (is (= [:coarse] (mapv :id (get-in result [:state :controllers]))))
+    (is (= 0.3 (level result)))
+    (is (= [{:type :modulation/refused :controller-id :fine :every {:beats 1/1024}}]
+           (mapv #(select-keys % [:type :controller-id :every]) (:diagnostics result))))
+    (is (re-find #"no longer advances its schedule" (:message (first (:diagnostics result)))))
+    (is (= [] (modulation/validate-state (:state result))))
+    (testing "a refused global controller keeps reporting until it is stopped or started again"
+      (let [later (modulation/advance (:state result) (model) {:beat (+ beat 4096.0) :time-ms 1.0})
+            restored (modulation/restore-state (:state later) {:show-id :modulation-test :epoch 0
+                                                               :instance-ids {"0:1" "0:1"}})
+            stopped (modulation/advance (modulation/stop (:state later) :fine) (model) {:beat (+ beat 8192.0) :time-ms 2.0})
+            restarted (modulation/start (:state later) {:id :fine :seed 7 :every {:beats 1} :params [:level]} {:beat 0.0})]
+        (is (= [(first (:diagnostics result))] (filterv #(= :fine (:controller-id %)) (:diagnostics later))))
+        (is (= [:fine] (keys (:refused restored))) "Restore keeps a global refusal")
+        (is (= [] (filterv #(= :fine (:controller-id %)) (:diagnostics stopped))))
+        (is (nil? (:refused (:state stopped))))
+        (is (nil? (:refused restarted)))))))
+
+(deftest saved-controllers-outside-the-period-range-load-and-are-refused-alone
+  (doseq [interval [1/4096 1.0e-9]]
+    (testing (str interval)
+      (let [state (-> (modulation/new-state)
+                      (modulation/start {:id :random :seed 7 :every {:beats 1/4} :params [:level]} (frame 0))
+                      (modulation/start {:id :other :seed 9 :every {:beats 1/4} :params [:level]
+                                         :ranges {:level [0.3 0.3]} :priority -1} (frame 0)))
+            saved (-> state
+                      (assoc-in [:controllers 0 :config :every] {:beats interval})
+                      (assoc-in [:controllers 0 :interval-beats] interval))
+            frames (reductions (fn [result beat] (modulation/advance (:state result) (model) (frame beat)))
+                               {:state saved} [0 1 5 9])]
+        (is (= [] (modulation/validate-state saved)) "Backups keep their controllers")
+        (is (= (repeat 4 [:modulation/refused]) (mapv #(mapv :type (:diagnostics %)) (rest frames)))
+            "Refused, reported every frame, with no frame failure")
+        (is (apply = (map #(first (:diagnostics %)) (rest frames))) "The recorded diagnostic")
+        (is (re-find #"^Saved modulation interval of .* beats is outside" (:message (first (:diagnostics (second frames))))))
+        (is (every? #(= [:other] (mapv :id (get-in % [:state :controllers]))) (rest frames)))
+        (is (every? #(= 0.3 (level %)) (rest frames)))))))
+
+(defn- revise-owner [show config version]
+  (-> show
+      (assoc-in [:instances "0:2" :definition :modulation] config)
+      (assoc-in [:instances "0:2" :definition :version] version)
+      (assoc-in [:instances "0:2" :effect-version] version)
+      (assoc-in [:registry :effects :modulator :modulation] config)
+      (assoc-in [:registry :effects :modulator :version] version)))
+
+(deftest a-valid-revision-after-a-refused-one-starts-at-its-frame-beat
+  ;; v1 runs for 400 beats in eight-beat bars, v2 is refused in that meter,
+  ;; v3 is valid again. v3 must start like a reload at its own frame beat, not
+  ;; like a first launch that catches up over the cue's whole life.
+  (let [meter {:beats-per-bar 8 :bars-per-phrase 4}
+        at (fn [beat] (assoc (frame beat) :meter meter))
+        valid {:every {:beats 1/4} :params [:level] :ranges {:level [0.6 0.6]}}
+        refused (assoc valid :every {:bars (/ two-to-the-40 4)})
+        base (-> (with-owner (model) valid) (assoc-in [:instances "0:2" :timing-meter] meter))
+        v1 (reduce (fn [state beat] (:state (modulation/advance state base (at beat)))) nil (range 0 400))
+        v2 (revise-owner base refused 2)
+        r2 (modulation/advance v1 v2 (at 400))
+        r2b (modulation/advance (:state r2) v2 (at 401))
+        r3 (modulation/advance (:state r2b) (revise-owner base valid 3) (at 402))]
+    (is (= [] (get-in r2 [:state :controllers])))
+    (is (= [:modulation/refused] (mapv :type (:diagnostics r2)) (mapv :type (:diagnostics r2b))))
+    (is (identical? (first (:diagnostics r2)) (first (:diagnostics r2b)))
+        "An unchanged refused revision reports its recorded diagnostic without another attempt")
+    (is (= {:owner-instance-id "0:2" :owner-version 2 :owner-config refused}
+           (select-keys (get-in r2 [:state :refused [:cue "0:2"]]) [:owner-instance-id :owner-version :owner-config])))
+    (is (= [] (modulation/validate-state (:state r2))))
+    (is (= [] (:diagnostics r3)))
+    (is (nil? (get-in r3 [:state :refused])) "The record goes once the owner has a controller again")
+    (is (= [[[:cue "0:2"] 402 1]] (mapv (juxt :id :anchor-beat :ticks) (get-in r3 [:state :controllers]))))
+    (is (= 0.6 (level r3)))
+    (testing "the record follows a restore and goes with its owner"
+      (let [restored (modulation/restore-state (:state r2) {:show-id :modulation-test :epoch 0
+                                                            :instance-ids {"0:1" "0:1" "0:2" "0:7"}})]
+        (is (= [[:cue "0:7"]] (keys (:refused restored))))
+        (is (= "0:7" (get-in restored [:refused [:cue "0:7"] :diagnostic :owner-instance-id])))
+        (is (nil? (:refused (:state (modulation/advance (:state r2) (update base :instances dissoc "0:2") (at 401))))))))))
+
+(deftest a-backlog-beyond-the-catch-up-budget-skips-to-the-current-boundary
+  (doseq [[label config beats]
+          [["1/1024 beat with a budget of one at 120 BPM and 40 Hz"
+            {:every {:beats 1/1024} :max-catch-up 1} (map #(* % 1/20) (range 0 40))]
+           ["a 1/64-note shimmer with a budget of one at 180 BPM and 40 Hz"
+            {:every {:beats 1/16} :max-catch-up 1} (map #(* % 3/40) (range 0 40))]
+           ["1/1024 beat with the default budget across a two-beat frame gap"
+            {:every {:beats 1/1024}} [0 1/20 1/10 21/10 43/20 11/5]]]]
+    (testing label
+      (let [show (with-owner (model) (assoc config :params [:level]))
+            frames (rest (reductions (fn [result beat] (modulation/advance (:state result) show (frame beat)))
+                                     {:state nil} beats))
+            rebased (filter #(some #{:modulation/rebased} (map :type (:diagnostics %))) frames)]
+        (is (seq rebased) "The budget was exceeded")
+        (is (every? #(number? (level %)) frames) "Every frame is modulated")
+        (doseq [[result beat] (map vector frames beats)
+                :let [c (controller result)]]
+          (is (<= (:next-beat c) (+ beat (:interval-beats c))) "Its schedule is at the current boundary")
+          (is (< beat (:next-beat c))))
+        (let [{:keys [skipped max-catch-up message]} (first (filter #(= :modulation/rebased (:type %))
+                                                                    (mapcat :diagnostics rebased)))]
+          (is (pos? skipped))
+          (is (= (:max-catch-up config 1024) max-catch-up))
+          (is (re-find #"^Skipped \d+ missed modulation steps" message))))))
+  (testing "a skip keeps the controller's grid and is deterministic"
+    (let [show (with-owner (model) {:every {:beats 1/4} :max-catch-up 2 :params [:level]})
+          first-frame (modulation/advance nil show (frame 0))
+          jumped (modulation/advance (:state first-frame) show (frame 10))
+          again (modulation/advance (:state first-frame) show (frame 10))]
+      (is (= jumped again))
+      ;; 39 boundaries from 1/4 to 39/4 are skipped and beat 10 is sampled.
+      (is (= [41 10.25] ((juxt :ticks :next-beat) (controller jumped))))
+      (is (= 39 (:skipped (first (:diagnostics jumped))))))))

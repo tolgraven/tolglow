@@ -80,6 +80,24 @@ keeps its value. Both surfaces read the same controller projection, so its
 (get-in (show/snapshot runtime) [:modulation :controllers])
 ```
 
+A modulation period outside 1/1024 to 2^40 beats is refused when it is
+published, started or bound. The REPL acknowledgement and Studio's request
+error carry the same message, which names the field. A cue owner whose bar
+period leaves the range only in its captured meter runs without its controller.
+Both surfaces then read the same `:modulation/refused` diagnostic, which the
+Studio modulation panel lists:
+
+```clojure
+(get-in (show/snapshot runtime) [:modulation :diagnostics])
+```
+
+A controller that skips a backlog beyond its catch-up budget reports
+`:modulation/rebased` in the same projection.
+
+Gap: the Studio interval field checks only that the value is positive. The
+server's request error is the only range feedback Studio gives. The panel's
+rendering of the refusal has not had a browser review.
+
 Gaps: Studio has no control that sets a cue's reload policy; author it in cue
 EDN or the REPL. The diagnostics summary does not print `:from-version`, which
 is present in the projected fault data. The automated check compares the REPL
