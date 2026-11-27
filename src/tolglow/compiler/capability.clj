@@ -41,37 +41,37 @@
                                  (filterv (set authored) targets)
                                  targets))))
 
-(def ^:private last-rig
-  ;; [fixtures index] of the last rig a lookup used. A pure memo of one
-  ;; immutable value: a burst of launches on one rig indexes it once (#798).
-  (atom nil))
-
-(defn- rig-index
-  "Fixture ID -> [rig position, fixture] for `fixtures`."
+(defn rig-index
+  "Fixture ID -> [rig position, fixture] for `fixtures`: one pass over the rig."
   [fixtures]
-  (let [[cached index] @last-rig]
-    (if (identical? cached fixtures)
-      index
-      (let [index (into {} (map-indexed (fn [i fixture] [(:id fixture) [i fixture]])) fixtures)]
-        (reset! last-rig [fixtures index])
-        index))))
+  (into {} (map-indexed (fn [i fixture] [(:id fixture) [i fixture]])) fixtures))
+
+(def ^:dynamic *rig-index*
+  "A function from a rig's fixtures to its `rig-index`, bound by a runtime
+  owner for one cycle so that a burst of launches on one rig indexes it once
+  (#798). The show keeps the index with its compiled patch, so each runtime
+  has its own and a rig edit replaces it. Unbound, each launch indexes the rig
+  it is admitted against."
+  nil)
+
+(defn- index-for [fixtures]
+  (if *rig-index* (*rig-index* fixtures) (rig-index fixtures)))
 
 (defn- scope
   "The heads `definition` addresses, in rig order. Authored targets are looked
-  up instead of filtering the whole rig, since a launch narrowed to one head
-  should not cost a pass over every fixture."
-  [definition fixtures]
+  up in the rig index instead of filtering the whole rig, since a launch
+  narrowed to one head should not cost a pass over every fixture."
+  [definition fixtures index]
   (if (contains? definition :targets)
-    (let [index (rig-index fixtures)]
-      (mapv second (sort-by first (keep #(get index %) (distinct (:targets definition))))))
+    (mapv second (sort-by first (keep #(get @index %) (distinct (:targets definition)))))
     fixtures))
 
 (defn- addressed [heads {:keys [targets]}]
   (let [targets (when (some? targets) (set targets))]
     (filterv #(or (nil? targets) (contains? targets (:id %))) heads)))
 
-(defn- incapable [definition fixtures output?]
-  (let [heads (scope definition fixtures)
+(defn- incapable [definition fixtures index output?]
+  (let [heads (scope definition fixtures index)
         entries (filterv output? (registry/output-entries (:outputs definition)))]
     (into []
           (keep (fn [attribute]
@@ -89,8 +89,8 @@
   "Heads an output would address but cannot implement, per written attribute,
   in rig order: [{:attribute :color :heads [:par :hazer] :requires [:red :green
   :blue]}]. Empty when every addressed head implements every attribute."
-  [definition fixtures]
-  (incapable definition fixtures any?))
+  ([definition fixtures] (skipped definition fixtures (delay (index-for fixtures))))
+  ([definition fixtures index] (incapable definition fixtures index any?)))
 
 (defn- explicit-output? [definition explicit-launch?]
   (fn [output]
@@ -101,9 +101,10 @@
   implementing the attribute. Output :targets, authored definition :targets and
   launch fixture IDs are explicit. explicit-launch? is false when the launch
   targets came from a group, volume or :all scope; those are filtered instead."
-  [instance explicit-launch? fixtures]
-  (incapable (program instance) fixtures
-             (explicit-output? (:definition instance) (and (contains? instance :targets) explicit-launch?))))
+  ([instance explicit-launch? fixtures] (launch-conflicts instance explicit-launch? fixtures (delay (index-for fixtures))))
+  ([instance explicit-launch? fixtures index]
+   (incapable (program instance) fixtures index
+              (explicit-output? (:definition instance) (and (contains? instance :targets) explicit-launch?)))))
 
 (defn- explicit-launch? [command]
   (let [{:keys [selector] :as launch} (:launch command)]
@@ -130,11 +131,13 @@
   (let [id (:instance-id ack)
         instance (get-in result [:model :instances id])
         retry? (contains? (get-in model [:control :history]) (:command-id command))
-        fixtures (get-in result [:model :rig :fixtures])]
+        fixtures (get-in result [:model :rig :fixtures])
+        ;; Indexed once per launch, or once per rig in a runtime owner cycle.
+        index (delay (index-for fixtures))]
     (if (or retry? (not= :accepted (:status ack)) (nil? instance))
       result
-      (let [conflicts (launch-conflicts instance (explicit-launch? command) fixtures)
-            skips (when (empty? conflicts) (skipped (program instance) fixtures))]
+      (let [conflicts (launch-conflicts instance (explicit-launch? command) fixtures index)
+            skips (when (empty? conflicts) (skipped (program instance) fixtures index))]
         (cond
           (seq conflicts)
           {:model model :events []

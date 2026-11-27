@@ -109,3 +109,30 @@
             definition (assoc color :targets [:white-par :hazer])]
         (capability/skipped definition fixtures)
         (is (= (vec (reference-skipped definition other)) (capability/skipped definition other)))))))
+
+(deftest a-burst-on-one-rig-indexes-it-once-per-runtime
+  ;; Each launch looks its heads up in the rig index instead of filtering the
+  ;; whole rig. A runtime keeps that index with its compiled patch, so a burst
+  ;; indexes the rig once, and two shows on different rigs never rebuild each
+  ;; other's index as they alternate.
+  (let [indexed (atom [])
+        rig-index capability/rig-index
+        a-output (atom []) b-output (atom [])
+        a (runtime a-output)
+        b (show/create-runtime {:model (update-in (show-model) [:rig :fixtures] #(vec (reverse %)))
+                                :workspace-options nil :effect-log! (fn [_]) :workers 2
+                                :sink {:send! (fn [universes _] (swap! b-output conj (get universes 1)))}})]
+    (with-redefs [capability/rig-index (fn [fixtures] (swap! indexed conj (count fixtures)) (rig-index fixtures))]
+      (try
+        (show/tick! a 0)
+        (show/tick! b 0)
+        (doseq [command (launches "a" {})] (show/submit! a command))
+        (show/tick! a 25)
+        (is (= 8 (count (fan-instances a))))
+        (is (= 1 (count @indexed)) "Eight launches index the rig once")
+        (doseq [round (range 3)]
+          (doseq [[rt prefix] [[a "a"] [b "b"]]]
+            (doseq [command (launches (str prefix round) {})] (show/submit! rt command))
+            (show/tick! rt (+ 50 (* 25 round)))))
+        (is (= 2 (count @indexed)) "Each runtime indexed its own rig once, however they alternate")
+        (finally (show/stop! a) (show/stop! b))))))

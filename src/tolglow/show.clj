@@ -45,6 +45,7 @@
             [tolglow.agents.venue :as venue-tools]
             [clojure.java.io :as io]
             [tolglow.compiler :as compiler]
+            [tolglow.compiler.capability :as capability]
             [tolglow.compiler.gradient :as gradient]
             [tolglow.compiler.batch :as batch]
             [tolglow.registry :as registry]
@@ -1743,6 +1744,21 @@
                                   :retirement (retirement/plan (:retirement cached) (:compiled cached) patch)})
           patch))))
 
+(defn- rig-indexer
+  "The capability rig index for launches admitted in one owner cycle (#798),
+  kept with this runtime's compiled patch: built on first use for the
+  patched rig and dropped when a rig edit replaces the patch. A rig that is
+  not the patched one is indexed for that call alone."
+  [runtime]
+  (fn [fixtures]
+    (let [cached @(:patch runtime)]
+      (if (identical? fixtures (:fixtures cached))
+        (or (:capability-index cached)
+            (let [index (capability/rig-index fixtures)]
+              (swap! (:patch runtime) #(if (identical? fixtures (:fixtures %)) (assoc % :capability-index index) %))
+              index))
+        (capability/rig-index fixtures)))))
+
 (defn- capacity-plan! [runtime patch]
   (let [cache (:capacity-plan runtime)]
     (when-not (identical? patch (:patch @cache))
@@ -3324,7 +3340,8 @@
        (locking (:lock runtime)
          ;; Launch checks read the last committed frame only on this owner
          ;; thread, under the lock and before the next frame is resolved.
-         (push-thread-bindings {#'aim-paths/*committed-values* (committed-values runtime)})
+         (push-thread-bindings {#'aim-paths/*committed-values* (committed-values runtime)
+                                #'capability/*rig-index* (rig-indexer runtime)})
          (vreset! committed-bound? true)
          (when-let [[target output-slot] (when @(:running runtime) (capture-render-time runtime time-ms output-slot))]
            (let [before @(:state runtime)
