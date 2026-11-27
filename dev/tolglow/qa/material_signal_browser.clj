@@ -26,7 +26,7 @@
 (defn -main [& _]
   (let [model (assoc-in (demo/model) [:variables :controller "wrist" :tint] [0.35 0.8 0.92])
         host (app/start! {:init {:components [:show] :modules [:web-server]}
-                          :show {:model model :workspace-options nil}
+                          :show {:model model :workspace-options nil :recovery false}
                           :web-server {:host "127.0.0.1" :port 0}})
         producer (future (send-audio! (:features! (show/audio-callbacks host))))
         origin (str "http://127.0.0.1:" (get-in host [:application :modules :web-server :port]))]

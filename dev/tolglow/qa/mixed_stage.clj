@@ -164,7 +164,7 @@
 
 (defn- serve! []
   (let [host (app/start! {:init {:components [:show] :modules [:web-server]}
-                          :show {:model (model) :workspace-options nil}
+                          :show {:model (model) :workspace-options nil :recovery false}
                           :web-server {:host "127.0.0.1" :port 0}})
         port (get-in host [:application :modules :web-server :port])]
     (try

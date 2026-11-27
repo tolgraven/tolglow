@@ -4,6 +4,7 @@
   they are in a twin show where that revision was never published."
   (:require [clojure.test :refer [deftest is testing]]
             [tolglow.demo :as demo]
+            [tolglow.event-subscribers :as subscribers]
             [tolglow.show :as show]))
 
 (def level {:type :number :default 0.5 :bounds [0.0 1.0]})
@@ -521,3 +522,276 @@
         (is (= [1 nil] ((juxt :effect-version :reload-fault) (owner-of (:model @(:state staged))))))
         (is (= {:rendered (inc (count times)) :skipped 0} (:frames (show/scene-draft staged)))))
       (finally (show/stop! plain) (show/stop! staged)))))
+
+(defn- ramped-reload-run
+  "Launch the cues, ramp the owner's level to `to` between 100 and 1100 ms, and
+  publish `publish` at 300 ms, beside a twin that never publishes it."
+  [show-model cues to publish]
+  (let [capture (fn [rt output publications]
+                  (doseq [cue cues] (apply! rt {:op :cue/launch :cue-id cue} 0))
+                  (let [started (ramp! rt [[:modulator :level to]] 100)]
+                    (reset! output [])
+                    {:started started
+                     :frames (mapv (fn [t]
+                                     (let [acks (if-let [definitions (get publications t)]
+                                                  (publish! rt definitions t)
+                                                  (do (show/tick! rt t) nil))]
+                                       (merge (observed rt) {:time-ms t :acks acks :dmx (peek @output)})))
+                                   (conj times 1200))
+                     ;; Without the runtime-specific event identity.
+                     :recent (mapv #(-> % (dissoc :event-id) (update :source dissoc :scheduled-event-id))
+                                   (get-in @(:state rt) [:model :event-subscribers :recent]))
+                     :events (mapv :type (get-in @(:state rt) [:model :variables :runtime :events]))}))
+        broken-output (atom []) control-output (atom [])
+        broken (runtime broken-output show-model) control (runtime control-output show-model)]
+    (try
+      {:control (capture control control-output {})
+       :broken (capture broken broken-output {300 [publish]})
+       :owner (instance broken :modulator)}
+      (finally (show/stop! broken) (show/stop! control)))))
+
+(def ramp-types
+  "Per parameter type: the owner's schema with its committed value as default,
+  its output, the ramp target, and bounds that refuse only the committed value,
+  the frame value at 300 ms (a fifth of the way) or the target."
+  (let [color #(vector % % %)
+        schema (fn [type default bounds] {:type type :default default :bounds bounds})]
+    [{:type :number :schema (schema :number 0.5 [0.0 1.0]) :to 1.0
+      :outputs {:dimmer (param :level)}
+      :default first
+      :refusals {:committed [0.55 1.0] :frame [0.0 0.55] :target [0.0 0.8]}}
+     {:type :integer :schema (schema :integer 2 [0 10]) :to 10
+      :outputs {:dimmer {:op :divide :args [(param :level) {:op :const :value 10}]}}
+      :default first
+      :refusals {:committed [3 10] :frame [0 2] :target [0 8]}}
+     {:type :color :schema (schema :color (color 0.5) [0.0 1.0]) :to (color 1.0)
+      :outputs {:dimmer {:op :const :value 1.0} :color (param :level)}
+      :default #(color (first %))
+      :refusals {:committed [0.55 1.0] :frame [0.0 0.55] :target [0.0 0.8]}}]))
+
+(defn- ramped-owner [{:keys [schema outputs]} modulated?]
+  (cond-> (assoc owner :params {:level schema} :outputs outputs)
+    (not modulated?) (dissoc :modulation)))
+
+(deftest a-reload-during-a-ramp-must-accept-its-committed-value-frame-value-and-target
+  ;; At 300 ms the ramp is a fifth of the way from the committed value to its
+  ;; target. The committed value stays in the model until the ramp commits its
+  ;; target, so a revision that refuses any of the three cannot run, and is
+  ;; rejected at preparation whichever policy the cue reloads under.
+  (doseq [{:keys [type schema to default refusals] :as case} ramp-types
+          [refused bounds] refusals
+          policy [:preserve-state :restart :migrate]
+          modulated? [true false]]
+    (testing (str type " revision refusing the " (name refused) " value under " policy
+                  (if modulated? ", with a changed modulation config" ", without modulation"))
+      (let [base (ramped-owner case modulated?)
+            publish (cond-> (-> base (assoc :version 2)
+                                (assoc-in [:params :level] (assoc schema :default (default bounds) :bounds bounds)))
+                      modulated? (assoc :modulation changed-modulation)
+                      (= :migrate policy) (assoc :state-migration migration))
+            cues (if modulated? [:wash :modulator] [:modulator])
+            {:keys [control broken owner]} (ramped-reload-run (model {:modulator policy} [wash base]) cues to publish)]
+        (is (= [:accepted] (:started control) (:started broken)))
+        (is (= [:accepted] (some :acks (:frames broken))))
+        (is (< 2 (count (distinct (map #(subvec (:dmx %) 0 5) (:frames control))))) "The ramp moves head-1 in the twin")
+        (is (= [1 :reload 2] [(:effect-version owner) (get-in owner [:reload-fault :stage])
+                              (get-in owner [:reload-fault :effect-version])]))
+        (is (= [:effect/reload-failed] (:events broken)) "Exactly one rejection event for the publication")
+        (doseq [[field what] [[:dmx "Captured DMX"] [:controllers "Controller state"] [:ramps "Running ramps"]
+                              [:committed "Committed versions and parameters"]
+                              [:overrides "Resolved parameter overrides"] [:error "Frame errors"]]]
+          (is (= [] (differing field (:frames control) (:frames broken))) (str what " differ at these frame times")))
+        (is (every? nil? (map :error (:frames broken))))
+        (is (= (:recent control) (:recent broken)))
+        (is (= [:fired :completed] (mapv :status (:recent broken))))
+        (is (= to (get-in owner [:params :level])) "The ramp completes and commits its target")))))
+
+(deftest a-revision-that-accepts-a-ramps-three-values-takes-over-mid-ramp
+  (doseq [{:keys [type schema to] :as case} ramp-types
+          policy [:preserve-state :restart :migrate]]
+    (testing (str type " under " policy)
+      (let [base (ramped-owner case false)
+            publish (cond-> (assoc base :version 2 :name "Modulator 2")
+                      (= :migrate policy) (assoc :state-migration migration))
+            {:keys [broken owner]} (ramped-reload-run (model {:modulator policy} [wash base]) [:modulator] to publish)]
+        (is (= [2 nil nil] [(:effect-version owner) (:reload-fault owner) (:fault owner)]))
+        (is (= [] (:events broken)))
+        (is (every? nil? (map :error (:frames broken))))
+        (is (= [:fired :completed] (mapv :status (:recent broken))))
+        (is (= to (get-in owner [:params :level])) "The ramp commits its target under the new revision")
+        (is (= schema (get-in owner [:definition :params :level])))))))
+
+(deftest a-ramp-whose-target-its-destination-refuses-says-so-instead-of-completing
+  ;; A destination schema that changed under a running ramp without a reload
+  ;; check, e.g. a revision adopted by an older owner, must not drop the write silently.
+  (let [output (atom []) rt (runtime output (model {:modulator :pinned} [(dissoc owner :modulation)]))]
+    (try
+      (apply! rt {:op :cue/launch :cue-id :modulator} 0)
+      (is (= [:accepted] (ramp! rt [[:modulator :level 1.0]] 100)))
+      (let [model (:model @(:state rt))
+            id (instance-id rt :modulator)
+            narrowed (-> model
+                         (assoc-in [:instances id :definition :params :level :bounds] [0.0 0.8])
+                         (assoc-in [:transport :beat] 10.0))
+            settled (subscribers/advance-ramps narrowed 5000)
+            entry (peek (get-in settled [:event-subscribers :recent]))]
+        (is (empty? (get-in settled [:event-subscribers :ramps])))
+        (is (= 0.5 (get-in settled [:instances id :params :level])) "The committed value is unchanged")
+        (is (= [:cancelled :commit-refused] [(:status entry) (:reason entry)]))
+        (is (string? (:message entry))))
+      (finally (show/stop! rt)))))
+
+(def two-to-the-40 1099511627776)
+
+(def eight-beat-bars
+  "A meter in which an accepted bar period of 2^38 bars is 2^41 beats."
+  {:beats-per-bar 8 :bars-per-phrase 4})
+
+(defn- with-period [effect version every]
+  (-> effect (assoc :version version) (assoc-in [:modulation :every] every)))
+
+(defn- refusals [runtime]
+  (filterv #(= :modulation/refused (:type %)) (get-in (show/snapshot runtime) [:modulation :diagnostics])))
+
+(deftest a-modulation-period-that-cannot-start-is-refused-at-publish
+  (let [unstartable (with-period owner 2 {:bars 1.0e308})]
+    (testing "the revision is refused with the field and the show runs as if it was never published"
+      (let [{:keys [control broken owner]} (twin-run (model {} [wash owner]) [:wash :modulator] {300 [unstartable]} {})]
+        (is (= [:rejected] (some :acks broken)))
+        (is (= 1 (:effect-version owner)))
+        (frames-match control broken)))
+    (testing "the publication and the global start say which period and why"
+      (let [output (atom []) rt (runtime output (model {} [wash owner]))]
+        (try
+          (let [published (apply! rt {:kind :effects :definition unstartable} 0)
+                started (let [reply (show/submit! rt :modulation-start
+                                                  {:id :global :every {:beats 1/4096} :params [:level]})]
+                          (show/tick! rt 50)
+                          (deref reply 2000 ::timeout))]
+            (is (= :rejected (:status published)))
+            (is (re-find #"Modulation period :every \{:bars 1\.0E308\} is beyond the finite beat range" (:message published)))
+            (is (= [[:modulation :every :bars]] (mapv :path (get-in published [:details :errors]))))
+            (is (= :rejected (:status started)))
+            (is (re-find #"Modulation period :every \{:beats 1/4096\} is 2\.44140625E-4 beats" (:message started)))
+            (is (nil? (get-in @(:state rt) [:status :error]))))
+          (finally (show/stop! rt)))))))
+
+(deftest borderline-modulation-periods-launch-and-run
+  (doseq [every [{:beats 1/1024} {:beats two-to-the-40}]]
+    (testing (pr-str every)
+      (let [output (atom []) rt (runtime output (model {} [wash (with-period owner 1 every)]))]
+        (try
+          (let [frames (capture! rt output [:wash :modulator] {} times)]
+            (is (every? nil? (map :error frames)))
+            (is (= [[:cue (instance-id rt :modulator)]] (mapv :id (:controllers (peek frames)))))
+            (is (= [] (refusals rt)))
+            (if (= every {:beats 1/1024})
+              (is (< 4 (count (distinct (map #(nth (:dmx %) head-2-dimmer) frames)))) "The fast glide moves the wash")
+              (is (= 1 (:ticks (first (:controllers (peek frames))))) "The slow controller sampled once at launch")))
+          (finally (show/stop! rt)))))))
+
+(defn- eight-beat-model [effects]
+  (assoc-in (model {} effects) [:transport :meter] eight-beat-bars))
+
+(deftest a-period-outside-the-range-in-the-captured-meter-never-halts-a-frame
+  (let [wide {:bars (/ two-to-the-40 4)}]
+    (testing "on launch the owner renders without its controller and the refusal is projected"
+      (let [output (atom []) rt (runtime output (eight-beat-model [wash (with-period owner 1 wide)]))]
+        (try
+          (let [frames (capture! rt output [:wash :modulator] {} times)
+                [refusal :as all] (refusals rt)]
+            (is (every? nil? (map :error frames)) "No frame fails")
+            (is (every? empty? (map :controllers frames)))
+            (is (= #{128} (set (map #(nth (:dmx %) head-2-dimmer) frames))) "The wash keeps its canonical level")
+            (is (= 1 (count all)))
+            (is (= {:controller-id [:cue (instance-id rt :modulator)] :effect-id :modulator :path [:every :bars]
+                    :meter eight-beat-bars}
+                   (select-keys refusal [:controller-id :effect-id :path :meter])))
+            (is (re-find #"captured meter \(8 beats per bar" (:message refusal))))
+          (finally (show/stop! rt)))))
+    (testing "on reload the revision is adopted, its controller is refused and frames go on"
+      (let [output (atom []) rt (runtime output (eight-beat-model [wash owner]))]
+        (try
+          (let [frames (capture! rt output [:wash :modulator] {300 [(with-period owner 2 wide)]} times)
+                before (filter #(< (:time-ms %) 300) frames)
+                after (filter #(> (:time-ms %) 300) frames)]
+            (is (= [:accepted] (some :acks frames)) "The default meter accepts the period")
+            (is (every? nil? (map :error frames)) "No frame fails")
+            (is (every? seq (map :controllers before)))
+            (is (every? empty? (map :controllers after)))
+            (is (= #{128} (set (map #(nth (:dmx %) head-2-dimmer) after))))
+            (is (= 2 (:effect-version (instance rt :modulator))))
+            (is (= [:modulation/refused] (mapv :type (refusals rt)))))
+          (finally (show/stop! rt)))))))
+
+(deftest a-valid-revision-after-a-refused-one-runs-in-the-show
+  ;; v1 runs for 140 s in eight-beat bars, v2 is refused in that meter and v3
+  ;; is valid again. v3 starts at its own frame beat and no frame fails.
+  (let [output (atom []) rt (runtime output (eight-beat-model [wash owner]))
+        times (into (vec (range 5000 145001 5000)) (range 145050 147001 50))]
+    (try
+      (let [frames (capture! rt output [:wash :modulator]
+                             {140000 [(with-period owner 2 {:bars (/ two-to-the-40 4)})]
+                              145000 [(with-period owner 3 {:beats 1/4})]} times)
+            at #(some (fn [frame] (when (= % (:time-ms frame)) frame)) frames)
+            beat (get-in @(:state rt) [:model :transport :beat])]
+        (is (= [[:accepted] [:accepted]] (keep :acks frames)))
+        (is (every? nil? (map :error frames)) "No frame fails")
+        (is (empty? (:controllers (at 140000))))
+        (is (= [[290.0 1]] (mapv (juxt (comp double :anchor-beat) :ticks) (:controllers (at 145000))))
+            "v3 starts at its frame beat, 145 s at 120 BPM")
+        (is (< 290 beat))
+        (is (= [] (refusals rt)))
+        (is (< 1 (count (distinct (map #(nth (:dmx %) head-2-dimmer) (filter #(> (:time-ms %) 145000) frames)))))
+            "v3 modulates the wash again"))
+      (finally (show/stop! rt)))))
+
+(deftest a-backup-with-a-period-an-older-owner-accepted-loads-and-runs
+  (doseq [every [{:beats 1/2048} {:bars 1.0e12}]]
+    (testing (pr-str every)
+      (let [old-owner (with-period owner 1 every)
+            output (atom []) saved-rt (runtime output (model {} [wash old-owner]))
+            [source saved-refusals]
+            (try (doseq [cue [:wash :modulator]] (apply! saved-rt {:op :cue/launch :cue-id cue} 0))
+                 (show/tick! saved-rt 100)
+                 [(show/export-show-source saved-rt) (refusals saved-rt)]
+                 (finally (show/stop! saved-rt)))
+            restored-output (atom []) rt (runtime restored-output (model {} [wash]))]
+        (is (= [:modulation/refused] (mapv :type saved-refusals)) "The older period is refused in the frame")
+        (try
+          (let [reply (show/submit! rt :import {:source source})
+                _ (show/tick! rt 200)
+                ack (deref reply 2000 ::timeout)
+                frames (mapv (fn [t] (show/tick! rt t)
+                               {:error (get-in @(:state rt) [:status :error]) :dmx (peek @restored-output)})
+                             (range 250 801 50))]
+            (is (= :accepted (:status ack)) (pr-str ack))
+            (is (= every (get-in @(:state rt) [:model :registry :effects :modulator :modulation :every])))
+            (is (every? nil? (map :error frames)) "No restored frame fails")
+            (is (= #{128} (set (map #(nth (:dmx %) head-2-dimmer) frames))) "The wash keeps its canonical level")
+            (is (= [:modulation/refused] (mapv :type (refusals rt)))))
+          (finally (show/stop! rt)))))))
+
+(deftest a-refused-global-controller-stays-visible-until-it-is-stopped
+  ;; A double cannot add 1/1024 to beat 2^60: the global controller starts and
+  ;; is then refused in the frame. REPL and Studio read the same diagnostic.
+  (let [output (atom []) rt (runtime output (assoc-in (model {} [wash]) [:transport :beat] (Math/pow 2 60)))]
+    (try
+      (apply! rt {:op :cue/launch :cue-id :wash} 0)
+      (let [started (let [reply (show/submit! rt :modulation-start {:id :fine :every {:beats 1/1024} :params [:level]})]
+                      (show/tick! rt 50)
+                      (deref reply 2000 ::timeout))
+            seen (mapv (fn [t] (show/tick! rt t)
+                         {:error (get-in @(:state rt) [:status :error]) :refusals (mapv :controller-id (refusals rt))})
+                       [100 150 200])
+            stopped (let [reply (show/submit! rt :modulation-stop {:id :fine})]
+                      (show/tick! rt 250)
+                      (deref reply 2000 ::timeout))]
+        (is (= :accepted (:status started)))
+        (is (= [nil nil nil] (map :error seen)))
+        (is (= (repeat 3 [:fine]) (map :refusals seen)) "Every frame shows the refusal")
+        (is (= :accepted (:status stopped)))
+        (show/tick! rt 300)
+        (is (= [] (refusals rt)))
+        (is (nil? (get-in @(:state rt) [:model :modulation :refused]))))
+      (finally (show/stop! rt)))))

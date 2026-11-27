@@ -40,7 +40,7 @@
                     (:live @(:resources run)) (= (:bridge-id config) (:bridge-id payload))
                     (= (:id run) (:sync-session-id payload))
                     (string? (:event-id payload)) (<= 1 (count (:event-id payload)) 256)
-                    (case kind :status (map? (:status payload)) :midi (map? (:event payload))
+                    (case kind :status (map? (:status payload)) (:midi :run-clip :parameter-device) (map? (:event payload))
                           (:parameter :parameter-error) (map? (:sample payload))
                           :handoff (#{:live :lighting "live" "lighting"} (:mode payload)) false))]
     (if-not valid? false
@@ -49,6 +49,13 @@
                     :midi {:type :live/midi :time-ms ((get-in manager [:options :now-ms]))
                            :event (-> (:event payload) (update :type #(if (string? %) (keyword %) %))
                                                                     (update :origin #(if (string? %) (keyword %) %)))}
+                    ;; Run-track playback (#683): decoded by the show's run-clip player.
+                    :run-clip {:type :live/run-clip :time-ms ((get-in manager [:options :now-ms]))
+                               :event (update (:event payload) :watch-session #(or % (:sync-session-id payload)))}
+                    ;; Parameter-device slot values (#625): decoded by the show's
+                    ;; live-devices owner step.
+                    :parameter-device {:type :live/parameter-device :time-ms ((get-in manager [:options :now-ms]))
+                                       :event (update (:event payload) :watch-session #(or % (:sync-session-id payload)))}
                     (:parameter :parameter-error) {:type (if (= kind :parameter) :live/parameter :live/parameter-error)
                                 :sample (:sample payload) :event-id (:event-id payload)
                                 :time-ms ((get-in manager [:options :now-ms]))}
@@ -117,6 +124,64 @@
                                             :time-ms (/ (+ start end) 2.0) :received-at-ms end :round-trip-ms (- end start)
                                             :status-version status-version})
                        (when (= op :inspect) (reset! (:poll-pending? run) false))))))))
+
+(defn bridge-connected?
+  "Has the running Live bridge opened its companion connection? Until then,
+  companion-transport refuses operations as :not-connected."
+  [manager]
+  (let [{:keys [active]} @(:state manager)]
+    (boolean (and active (get-in @(:resources active) [:live :transport])))))
+
+(defn companion-transport
+  "A live-connection transport ({:open! :request! :close!}) that sends each
+  operation through the running Live bridge's own companion connection, under
+  the bridge's sync session and in order with its status polls and recording
+  writes. The companion accepts operations only from the session of its last
+  inspect handshake, so a second connection with its own session would take
+  the companion's callbacks from the bridge, and the bridge's next poll would
+  take them back between that connection's operations. Each request blocks the
+  calling thread until its receipt (never call it from the show owner).
+  Refused as never sent: without a running bridge (:not-connected), with a
+  full queue, or when the bridge stops or rebinds before the operation left
+  its queue (:not-sent, reported at once). No receipt within the wait after
+  the operation started is indeterminate."
+  [manager]
+  {:open! (fn [_] :live-bridge)
+   :close! (fn [_] nil)
+   :request! (fn [_ id op payload]
+               (let [{:keys [active config]} @(:state manager)
+                     {:keys [transport handle]} (when active (:live @(:resources active)))
+                     reply (promise)
+                     ;; :queued until the IO thread claims it (:running) or the
+                     ;; waiter gives it up (:abandoned); exactly one wins.
+                     claim (atom :queued)
+                     generation (some-> active :binding-generation deref)
+                     wait-ms (+ 1000 (* 4 (get-in config [:live :timeout-ms] 2000)))
+                     not-sent (fn [message] (ex-info message {:live/not-sent? true :live/code :not-sent}))
+                     dropped? (fn []
+                                (let [^java.util.concurrent.ExecutorService io (:io active)]
+                                  (or (not (identical? active (:active @(:state manager))))
+                                      (not= generation @(:binding-generation active))
+                                      (and io (.isShutdown io)))))]
+                 (when-not transport
+                   (throw (ex-info "Connect the Live bridge first" {:live/not-sent? true})))
+                 (when-not (enqueue-io! manager active
+                                        (fn [] (when (compare-and-set! claim :queued :running)
+                                                 (deliver reply (try ((:request! transport) handle id op payload)
+                                                                     (catch Exception error error))))))
+                   (throw (ex-info "The Live bridge's request queue is full" {:live/not-sent? true})))
+                 (loop [waited 0]
+                   (let [result (deref reply 25 ::waiting)]
+                     (cond
+                       (instance? Exception result) (throw result)
+                       (not= ::waiting result) result
+                       (and (= :queued @claim) (dropped?) (compare-and-set! claim :queued :abandoned))
+                       (throw (not-sent "The Live bridge stopped or rebound before sending the operation"))
+                       (>= waited wait-ms)
+                       (throw (if (compare-and-set! claim :queued :abandoned)
+                                (not-sent "The Live bridge did not reach the operation in time; it was not sent")
+                                (ex-info "No receipt from the Live bridge in time" {:wait-ms wait-ms})))
+                       :else (recur (+ waited 25)))))))})
 
 (defn edit-observed-parameter! [manager op id]
   (when-not (live-params/valid-id? id)
@@ -222,7 +287,8 @@
             instance (when (and mapping (not (:disabled? mapping)) (:resolve-instance! callbacks))
                        ((:resolve-instance! callbacks) (:cue-id mapping)))
             source (cond-> {:sync-run-id (:id run) :source-id (:source-id event)}
-                     (contains? event :note) (assoc :note (:note event)))
+                     (contains? event :note) (assoc :note (:note event))
+                     (and (= :note-on (:type event)) (pos? (or (:velocity event) 0))) (assoc :velocity (:velocity event)))
             result (bridge-step! manager #(ableton/midi->commands % event (assoc envelope :source source) instance))]
         (doseq [notice (:events result)] (emit! manager run notice))
         (commands! manager run (:commands result))))))
@@ -301,6 +367,8 @@
                  (when-not (= :tolglow-feedback (:origin message))
                    (midi/observe-midi! manager run message :live :live-playback at))
                  (midi-control! manager run message))
+    :live/run-clip (when-let [run-clip! (:run-clip! (run-callbacks run))] (run-clip! (:event event)))
+    :live/parameter-device (when-let [device! (:parameter-device! (run-callbacks run))] (device! (:event event)))
     :live/acknowledgement (receive-ack! manager (:note event) (:ack event) (:envelope event))
     :live/handoff (receive-handoff! manager run event)
     :record/command (receive-recording! manager run event at)
@@ -339,7 +407,7 @@
    :transport (fn [settings _ run-id] (factory (assoc settings :sync-session-id run-id)))
    :prepare-state prepare-state :run-state run-state :lifecycle! lifecycle! :tick! tick!
    :status #(select-keys % [:recording :last-execution :parameter-watch])
-   :events #{:live/parameter :live/parameter-error :live/forget-parameter :midi/control :live/status :live/midi :live/acknowledgement :live/handoff
+   :events #{:live/parameter :live/parameter-error :live/forget-parameter :midi/control :live/status :live/midi :live/run-clip :live/parameter-device :live/acknowledgement :live/handoff
              :record/command :live/executed :live/response}
    :receive! receive!})
 

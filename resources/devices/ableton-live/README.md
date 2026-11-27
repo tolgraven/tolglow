@@ -54,6 +54,22 @@ Replacing or renaming the paired track/clip requires pairing again. Numeric Live
 object IDs are session-scoped: durable connection settings should retain indices,
 expected names and bridge ID, then establish a fresh pairing after Set reload.
 
+## Parameter device for run tracks (#625)
+
+`tolglow-parameters.maxpat` with `parameter_device.js` is a second device:
+one per Tolglow run track, holding 32 automatable slot dials. Build it like
+the bridge: paste the patcher into a blank Max Audio or MIDI Effect, keep
+`parameter_device.js` beside it and save it as **Tolglow parameters** (a second
+one on the same track for an effect with more than 32 slots as **Tolglow
+parameters 2**, and so on). Drop it on a `Tolglow run <cue>` track. A sync
+from Studio (**Sync to Live**) or the REPL (`show/sync-live-runs!`) names and
+ranges the slots through the bridge, writes each take's moves into its run
+clip as envelopes of those slots and watches them. The device itself never
+talks to Tolglow; the bridge reads and observes its parameters through the
+Live Object Model. Which run-time parameter attributes Live accepts, and how
+recorded automation behaves when a range changes, are listed on the pull
+request's host checklist. [Live routing](../../../docs/live-routing.md#edit-an-effects-parameters-from-live)
+
 ## What the adapter executes
 
 - MIDI note/CC input in Lighting mode is forwarded to the studio's common
@@ -92,8 +108,12 @@ The [pickup and loop qualification](../../../docs/live-routing.md#record-a-picku
    bridge, choose **Bridge · confirmed clip writes** and pair the track with a
    Session clip slot or an Arrangement clip. Use zero-based indices. Save and
    start. The saved show includes the generated note numbers, CCs and pairing.
-2. The 8×8 grid maps to Drum Rack pitches 36–99, with the upper-left pad at 92.
-   Insufficient space and incompatible fields appear under **Unassigned cue
+2. The 8×8 grid maps to Drum Rack pitches 36–99 in Push's 64 Pads layout:
+   bottom-left pad 36, top-left 64, bottom-right 71, top-right 99, so a cell
+   is the same pad on Push (see
+   [Play a cue page from one Drum Rack track](../../../docs/live-routing.md#play-a-cue-page-from-one-drum-rack-track)).
+   Settings saved before that layout keep rows of eight (upper-left pad 92);
+   **Pad layout** chooses. Insufficient space and incompatible fields appear under **Unassigned cue
    and parameter mappings** after saving. Existing assignments reserve their
    pitches. Disable automatic mapping to maintain your own layout, or clear
    **Enabled** on an individual row to reserve it without responding. Moving an
@@ -240,10 +260,21 @@ Status includes arm/recording/automation flags, paired destination, clip-relativ
 time signature is also reported, with quarter-note beats per bar; for 7/8 that
 value is 3.5 rather than an incorrect seven quarter notes.
 
-All forwarded MIDI input carries `origin: "live-playback"`; existing common
-recording logic suppresses re-recording of that origin. `tolglow-feedback` input
-is discarded. This bridge never emits its clip-recording intents as MIDI wire
+Forwarded MIDI input carries `origin: "live-input"` only when the companion's
+track plays and has launched no Session clip, holds no Arrangement clip, takes
+no MIDI from another track (its input names no track and no MIDI track's output
+names it) and changed none of that in the 250 ms after it was noted (a
+performer). Everything else carries `origin: "live-playback"` (#683). Common recording logic never
+re-records either origin. `tolglow-feedback` input is discarded. `kind:
+"run-clip"` callbacks report run-track clip starts and stops. This bridge never emits its clip-recording intents as MIDI wire
 feedback as well.
+
+The cue launcher (#228) adds `ensure-launcher`, `write-pads` and
+`inspect-launcher`: the companion's own track gets a Drum Rack after the
+companion (`Track.insert_device`, Live 12.3+) and one named, coloured chain per
+page pad (`RackDevice.insert_chain`, `DrumChain.in_note`, `Chain.name`/`color`).
+They are specified in
+[Play a cue page from one Drum Rack track](../../../docs/live-routing.md#play-a-cue-page-from-one-drum-rack-track).
 
 Automatic setup, Capture and clip write operations (`inspect-set`,
 `ensure-track`, `configure-track`, `write-clip`, `extend-clip`, `capture-midi`, `read-clip`,

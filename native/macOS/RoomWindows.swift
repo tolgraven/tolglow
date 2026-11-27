@@ -1,19 +1,50 @@
 import AppKit
 import WebKit
 
-/// Hosts the Room window that Studio opens with `window.open` and places it on
-/// another display. WebKit creates the window's web view from Studio's own
+/// Hosts the windows Studio opens with `window.open`: the Room's (#665) and
+/// any detached Perform panel's (#668), and places the Room on another
+/// display. WebKit creates each window's web view from Studio's own
 /// configuration, so it shares Studio's process and page group: Studio still
-/// owns the single preview engine and portals the Room into that window (see
-/// docs/studio-ui.md, Room in its own window). WKWebView has no Window
-/// Management API, so placement is a script message answered with a
-/// `tolglow-room-window` event on Studio's window.
+/// owns the state socket and the single preview engine, and portals the panel
+/// into that window (see docs/studio-ui.md, Room in its own window and Panel
+/// layouts). WKWebView has no Window Management API, so placement and closing
+/// are script messages answered with a `tolglow-room-window` event on Studio's
+/// window.
+///
+/// Each window's role and panel come from the name Studio gives it in
+/// `window.open` (`tolglow-room-<token>-<generation>`,
+/// `tolglow-panel-<id>-<token>-<generation>`), read from the new window once
+/// WebKit has created it. Studio also identifies each window right after
+/// opening it with `{action: "identify", role: "room" | "panel", id}`, posted
+/// from the new window's own document (or, failing that, from Studio's, which
+/// names the window opened last); that only fills in a window whose name gave
+/// nothing. Only the Room's window is placed, and closing a window reports its
+/// role and id so the right panel redocks.
 @MainActor
 final class RoomWindows: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler, NSWindowDelegate {
     static let messageName = "tolglowRoomWindow"
+
+    /// One window Studio opened.
+    private final class Hosted {
+        let window: NSWindow
+        let view: WKWebView
+        var role: String?
+        var id: String?
+        /// The role came from the window's own name, which nothing overrides.
+        var named = false
+        var title: NSKeyValueObservation?
+        init(window: NSWindow, view: WKWebView) {
+            self.window = window
+            self.view = view
+        }
+    }
+
     private let origin: URL
     private weak var studio: WKWebView?
-    private var room: (window: NSWindow, view: WKWebView)?
+    /// In opening order.
+    private var hosted: [Hosted] = []
+    /// The window an identification from Studio's own document refers to.
+    private weak var lastOpened: WKWebView?
     private var screensObserver: NSObjectProtocol?
     /// A move requested while the Room window was fullscreen waits for the exit animation.
     private var placeAfterFullScreen = false
@@ -43,80 +74,166 @@ final class RoomWindows: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptM
         view.uiDelegate = self
     }
 
+    private var room: Hosted? { hosted.first { $0.role == "room" } }
+
+    private func entry(for view: WKWebView) -> Hosted? { hosted.first { $0.view === view } }
+
+    private func entry(for window: NSWindow) -> Hosted? { hosted.first { $0.window === window } }
+
     // MARK: Window lifetime
 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        // Only Studio's main frame may open the Room window, and only as an
-        // empty same-origin page; one Room window at a time.
+        // Only Studio's main frame may open a window, and only as an empty
+        // same-origin page. Each panel has at most one window; Studio enforces it.
         guard webView === studio, action.sourceFrame.isMainFrame, sameOrigin(action.sourceFrame.request.url),
               action.request.url.map({ $0.absoluteString.isEmpty || $0.absoluteString == "about:blank" }) ?? true
         else { return nil }
-        close()
-        placeAfterFullScreen = false
         let size = NSSize(width: windowFeatures.width?.doubleValue ?? 960, height: windowFeatures.height?.doubleValue ?? 640)
         let view = WKWebView(frame: NSRect(origin: .zero, size: size), configuration: configuration)
         view.uiDelegate = self
         view.navigationDelegate = self
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "Tolglow Room"
+        window.title = "Tolglow"
         window.isReleasedWhenClosed = false
         window.collectionBehavior.insert(.fullScreenPrimary)
         window.contentView = view
         window.delegate = self
-        if let parent = studio?.window { window.setFrameOrigin(NSPoint(x: parent.frame.maxX - size.width, y: parent.frame.minY)) }
+        let entry = Hosted(window: window, view: view)
+        // Studio titles each window ("Tolglow · Live") once it has prepared it.
+        entry.title = view.observe(\.title, options: [.new]) { [weak window] view, _ in
+            MainActor.assumeIsolated {
+                if let title = view.title, !title.isEmpty { window?.title = title }
+            }
+        }
+        if let last = hosted.last?.window {
+            // Below and to the right of the window opened before it.
+            window.setFrameTopLeftPoint(NSPoint(x: last.frame.minX + 24, y: last.frame.maxY - 24))
+        } else if let parent = studio?.window {
+            window.setFrameOrigin(NSPoint(x: parent.frame.maxX - size.width, y: parent.frame.minY))
+        }
         window.makeKeyAndOrderFront(nil)
-        room = (window, view)
+        hosted.append(entry)
+        lastOpened = view
+        // WebKit names the new window's frame after this returns.
+        DispatchQueue.main.async { [weak self, weak view] in
+            view?.evaluateJavaScript("window.name") { result, _ in
+                MainActor.assumeIsolated {
+                    guard let self, let view, let entry = self.entry(for: view),
+                          let identity = Self.identity(windowName: result as? String) else { return }
+                    self.assign(entry, role: identity.role, id: identity.id, named: true)
+                }
+            }
+        }
         return view
     }
 
-    /// Studio called `close()` on the Room window.
+    private func assign(_ entry: Hosted, role: String, id: String?, named: Bool) {
+        if entry.named && !named { return }
+        if role == "room" { for other in hosted where other !== entry && other.role == "room" { other.role = nil } }
+        entry.role = role
+        entry.id = id
+        entry.named = entry.named || named
+    }
+
+    /// The role and panel id in a window name Studio gave: `tolglow-room-<uuid>-<n>`
+    /// or `tolglow-panel-<id>-<uuid>-<n>` (a panel id may contain dashes).
+    static func identity(windowName name: String?) -> (role: String, id: String?)? {
+        guard let parts = name?.split(separator: "-", omittingEmptySubsequences: false).map(String.init),
+              parts.count >= 8, parts[0] == "tolglow", Int(parts[parts.count - 1]) != nil,
+              UUID(uuidString: parts[(parts.count - 6)..<(parts.count - 1)].joined(separator: "-")) != nil
+        else { return nil }
+        let middle = parts[1..<(parts.count - 6)]
+        switch middle.first {
+        case "room" where middle.count == 1: return ("room", nil)
+        case "panel" where middle.count >= 2: return ("panel", middle.dropFirst().joined(separator: "-"))
+        default: return nil
+        }
+    }
+
+    /// Studio called `close()` on one of its windows.
     func webViewDidClose(_ webView: WKWebView) {
-        if webView === room?.view { close() }
+        if let entry = entry(for: webView) { close(entry) }
     }
 
-    /// The operator closed the Room window: let Studio redock.
+    /// The operator closed a window: let Studio redock that panel.
     func windowWillClose(_ notification: Notification) {
-        guard let current = room, notification.object as? NSWindow === current.window else { return }
-        room = nil
-        placeAfterFullScreen = false
-        current.view.stopLoading()
-        current.window.contentView = nil
-        reply(["status": "closed"])
+        guard let window = notification.object as? NSWindow, let entry = entry(for: window) else { return }
+        release(entry)
+        reply(Self.closedReply(role: entry.role, id: entry.id))
     }
 
-    /// The Room shares Studio's web content process. If that process ends, Studio
-    /// reloads docked and the Room window would be left showing nothing.
+    /// Every window shares Studio's web content process. If that process ends,
+    /// Studio reloads docked and the windows would be left showing nothing.
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        if webView === room?.view { close() }
+        if entry(for: webView) != nil { close() }
     }
 
-    /// The Room window never outlives Studio's web view.
+    /// No window outlives Studio's web view.
     func close() {
-        guard let current = room else { return }
-        room = nil
-        placeAfterFullScreen = false
-        current.window.delegate = nil
-        current.view.stopLoading()
-        current.window.contentView = nil
-        current.window.close()
+        for entry in hosted { close(entry) }
     }
 
-    /// The Room window shows Studio's empty page and nothing else.
+    private func close(_ entry: Hosted) {
+        release(entry)
+        entry.window.delegate = nil
+        entry.window.close()
+    }
+
+    private func release(_ entry: Hosted) {
+        hosted.removeAll { $0 === entry }
+        if entry.role == "room" { placeAfterFullScreen = false }
+        entry.title?.invalidate()
+        entry.title = nil
+        entry.view.stopLoading()
+        entry.window.contentView = nil
+    }
+
+    /// A Studio window shows Studio's empty page and nothing else.
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         let url = action.request.url
         decisionHandler(url == nil || url?.absoluteString == "about:blank" || sameOrigin(url) ? .allow : .cancel)
     }
 
-    // MARK: Placement
+    // MARK: Messages
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard message.frameInfo.isMainFrame, sameOrigin(message.frameInfo.request.url),
-              let body = message.body as? [String: Any], body["action"] as? String == "move-to-display" else { return }
-        moveToDisplay()
+        let origin = message.frameInfo.securityOrigin
+        guard message.frameInfo.isMainFrame, origin.protocol == self.origin.scheme, origin.host == self.origin.host,
+              origin.port == (self.origin.port ?? 0), let body = message.body as? [String: Any] else { return }
+        let fromStudio = message.webView === studio
+        switch body["action"] as? String {
+        case "identify":
+            // From the window's own document, or from Studio's about the window it opened last.
+            let target = fromStudio ? lastOpened : message.webView
+            guard let target, let entry = entry(for: target),
+                  let role = Self.role(body["role"]) else { return }
+            assign(entry, role: role, id: body["id"] as? String, named: false)
+        case "move-to-display" where fromStudio:
+            moveToDisplay()
+        default:
+            return
+        }
     }
+
+    /// The roles a window can have; anything else is ignored.
+    static func role(_ value: Any?) -> String? {
+        guard let role = value as? String, role == "room" || role == "panel" else { return nil }
+        return role
+    }
+
+    /// What Studio hears when a window closes: a Room window's close is the
+    /// Room's, a panel's carries its id, and an unidentified window's nothing.
+    static func closedReply(role: String?, id: String?) -> [String: Any] {
+        var detail: [String: Any] = ["status": "closed"]
+        if let role { detail["role"] = role }
+        if let id { detail["id"] = id }
+        return detail
+    }
+
+    // MARK: Placement
 
     private func moveToDisplay() {
         // A move already waiting for the fullscreen exit places and replies;
@@ -126,7 +243,7 @@ final class RoomWindows: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptM
         let studioScreen = studio?.window?.screen.flatMap { screens.firstIndex(of: $0) }
         let roomScreen = window.screen.flatMap { screens.firstIndex(of: $0) }
         guard let target = Self.target(count: screens.count, studio: studioScreen, room: roomScreen) else {
-            reply(["status": "single"])
+            reply(["status": "single", "role": "room"])
             return
         }
         let screen = screens[target]
@@ -139,9 +256,9 @@ final class RoomWindows: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptM
         }
         window.setFrame(screen.visibleFrame, display: true)
         if window.screen == screen {
-            reply(["status": "placed", "label": screen.localizedName])
+            reply(["status": "placed", "role": "room", "label": screen.localizedName])
         } else {
-            reply(["status": "manual"])
+            reply(["status": "manual", "role": "room"])
         }
     }
 
@@ -154,7 +271,7 @@ final class RoomWindows: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptM
     func windowDidFailToExitFullScreen(_ window: NSWindow) {
         guard placeAfterFullScreen, window === room?.window else { return }
         placeAfterFullScreen = false
-        reply(["status": "manual"])
+        reply(["status": "manual", "role": "room"])
     }
 
     /// A display other than Studio's; the next free one when the Room is
@@ -168,7 +285,7 @@ final class RoomWindows: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptM
 
     private func screensChanged() {
         guard room != nil else { return }
-        reply(["status": "screens", "count": NSScreen.screens.count])
+        reply(["status": "screens", "role": "room", "count": NSScreen.screens.count])
     }
 
     // MARK: Helpers

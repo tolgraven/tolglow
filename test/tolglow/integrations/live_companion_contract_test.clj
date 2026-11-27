@@ -8,12 +8,17 @@
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [tolglow.integrations.live-connection :as live]
+            [tolglow.integrations.live-devices :as devices]
+            [tolglow.integrations.live-launcher :as launcher]
+            [tolglow.integrations.live-sync :as live-sync]
+            [afterglow.sync :as sync]
+            [tolglow.integrations.live-runs :as runs]
             [tolglow.integrations.live-transport :as transport]
             [tolglow.integrations.phrase-clip :as clip])
   (:import [java.util.concurrent TimeUnit]))
 
-(defn- with-companion [f]
-  (let [child (.start (doto (ProcessBuilder. ^java.util.List ["node" "test/js/ableton-live/live_set_fixture.js"])
+(defn- with-companion [f & args]
+  (let [child (.start (doto (ProcessBuilder. ^java.util.List (into ["node" "test/js/ableton-live/live_set_fixture.js"] args))
                         (.redirectError java.lang.ProcessBuilder$Redirect/INHERIT)))]
     (try
       (with-open [output (io/reader (.getInputStream child))]
@@ -122,3 +127,178 @@
         r (live/request! conn :write-clip {:track-id "track:1" :clip {:length-beats 4 :notes []}})]
     (is (= :rejected (:status r)))
     (is (= :not-connected (get-in r [:error :code])))))
+
+(defn- run-record
+  "A run record as observe-model leaves it after A (held 1-4, in group warm
+  inside stage), B (2-7, in stage) and A again (6-10), folded from plain show
+  models so this test needs no runtime."
+  []
+  (let [config {:manual [{:id :stage :cue-ids [:b] :groups [{:id :warm :cue-ids [:a]}]}]}
+        commands [[1 {:op :cue/launch :cue-id :a :launch {:mode :persistent :params {:level 0.5}}} "0:1"]
+                  [2 {:op :cue/launch :cue-id :b :launch {:mode :persistent}} "0:2"]
+                  [4 {:op :instance/end :instance-id "0:1"} nil]
+                  [6 {:op :cue/launch :cue-id :a :launch {:mode :persistent}} "0:3"]
+                  [7 {:op :instance/end :instance-id "0:2"} nil]
+                  [10 {:op :instance/end :instance-id "0:3"} nil]]
+        running (fn [upto] (into {} (for [[b {:keys [op cue-id]} id] commands
+                                          :when (and (= :cue/launch op) (<= b upto))
+                                          :when (not (some (fn [[eb c]] (and (<= eb upto) (= id (:instance-id c)))) commands))]
+                                      [id {:id id :cue-id cue-id :phase :running}])))]
+    (reduce (fn [record [i [beat command id]]]
+              (let [cid (str "c" i)
+                    model {:epoch 0 :transport {:beat (double beat) :bpm 120.0 :playing? true :time-ms (* 500 beat)}
+                           :settings {:effect-group-channels config}
+                           :registry {:cues {:a {:name "Amber"} :b {:name "Blue"}}}
+                           :instances (running beat)
+                           :control {:history {cid {:command (assoc command :command-id cid :time-ms (* 500 beat) :source {:adapter :push})
+                                                    :ack (cond-> {:status :accepted} id (assoc :instance-id id))}}
+                                     :history-order [cid]}}]
+                (runs/observe-model record model)))
+            (runs/new-record {:record-id "contract"})
+            (map-indexed vector commands))))
+
+(deftest the-companion-mirrors-a-run-record-over-http
+  (with-companion
+    (fn [port]
+      (let [t (transport/transport {:endpoint (str "http://127.0.0.1:" port "/live") :bridge-id "tolglow-m4l"
+                                    :sync-session-id "contract-runs" :timeout-ms 3000})
+            handle ((:open! t) {})
+            _ ((:request! t) handle "handshake-1" :inspect {})
+            conn (live/open (assoc t :open! (constantly handle)) {:session-id "runs"})
+            record (run-record)
+            result (runs/sync! conn record {:arrangement-offset-beats 0})
+            tracks (get-in result [:set :tracks])
+            id-of (fn [name] (:track-id (first (filter #(= name (:name %)) tracks))))]
+        (is (= [[:a 0 1 4] [:b 0 2 7] [:a 0 6 10]] (mapv (juxt :cue-id :lane :start-beat :release-beat) (runs/takes record))))
+        (testing "run tracks are created inside the placed Group Tracks and verified from the read-back"
+          (is (:complete? result) (pr-str (:problems result) (:applied result)))
+          (is (= [["Bass" :midi nil] ["MIDI" :midi nil]
+                  ["Tolglow group stage" :group nil] ["Tolglow run b" :midi (id-of "Tolglow group stage")]
+                  ["Tolglow group warm" :group (id-of "Tolglow group stage")] ["Tolglow run a" :midi (id-of "Tolglow group warm")]]
+                 (mapv (juxt :name :kind :group-track-id) tracks))))
+        (testing "one clip per take, with its held length, named by take ID"
+          (is (= [["Amber run 1 [contract.1]" 3] ["Amber run 2 [contract.3]" 4]]
+                 (mapv (juxt :name :length-beats) (:clips (first (filter #(= "Tolglow run a" (:name %)) tracks))))))
+          (is (= ["Blue run 1 [contract.2]"] (mapv :name (:clips (first (filter #(= "Tolglow run b" (:name %)) tracks)))))))
+        (testing "each clip is copied into the Arrangement at its start beat by its own step"
+          (is (= {"contract.1" 1 "contract.2" 2 "contract.3" 6}
+                 (update-vals (:arranged result) :start-beat))))
+        (testing "a rerun over HTTP writes nothing"
+          (is (empty? (:applied (runs/sync! conn record {:arrangement-offset-beats 0})))))
+        (testing "the companion accepts the run-track watch"
+          (let [r (live/request! conn :watch-run-tracks {:track-ids (vec (vals (:tracks result)))})]
+            (is (= :executed (:status r)) (pr-str r))
+            (is (= {:watching 2 :watching-slots 0} (:result r)))))))
+    "http://127.0.0.1:9/api/live" "groups"))
+
+(deftest the-companion-configures-a-parameter-device-and-writes-run-clip-envelopes-over-http
+  ;; #625: the run track for cue :a holds one Tolglow parameters device; the
+  ;; track for :b has none. The take's launch value and its move travel as
+  ;; envelope steps of the device's Level slot.
+  (with-companion
+    (fn [port]
+      (let [t (transport/transport {:endpoint (str "http://127.0.0.1:" port "/live") :bridge-id "tolglow-m4l"
+                                    :sync-session-id "contract-devices" :timeout-ms 3000})
+            handle ((:open! t) {})
+            _ ((:request! t) handle "handshake-1" :inspect {})
+            conn (live/open (assoc t :open! (constantly handle)) {:session-id "devices"})
+            record (-> (run-record) (update-in [:takes "contract.1" :moves] conj {:beat 2 :at 1 :param :level :value 0.75}))
+            model {:registry {:effects {:wash (get-in registry [:effects :wash])}
+                              :cues {:a {:id :a :effect-id :wash :version 1 :name "Amber"}}}
+                   :rig {:fixtures []}}
+            layout (devices/allocate nil (:keys (devices/slot-keys (get-in registry [:effects :wash]) {} nil)))
+            spec (devices/device-spec model :a layout nil)
+            options {:groups? false
+                     :parameter-devices {:specs {:a spec}
+                                         :envelopes (fn [take spec] (devices/take-envelopes model spec layout take (runs/held-beats take) nil))}}
+            result (runs/sync! conn record options)
+            run-a (first (filter #(= "Tolglow run a" (:name %)) (get-in result [:set :tracks])))
+            [device] (:parameter-devices run-a)]
+        (is (:complete? result) (pr-str (:problems result) (:applied result)))
+        (is (= {:present [0] :missing [] :stale []} (dissoc (get-in result [:parameter-devices [:a 0]]) :devices)))
+        (testing "the device shows the spec's names and ranges in the read-back"
+          (is (= [["level" 0 1 false] ["mode" 0 2 true]]
+                 (mapv (juxt :name :min :max :quantized?) (take 2 (:parameters device))))))
+        (testing "the first take's clip carries envelopes; the second, without moves or launch values, does not"
+          (is (= [true false] (mapv :envelopes? (:clips run-a)))))
+        (testing "a rerun writes nothing"
+          (is (empty? (:applied (runs/sync! conn record options)))))))
+    "http://127.0.0.1:9/api/live" "parameters"))
+
+(defn- bridge-manager
+  "Studio's Live bridge against the companion: its own sync session, polling
+  the companion every 100 ms."
+  [port]
+  (let [manager (live-sync/create-manager
+                 {:config {:live {:enabled? true :endpoint (str "http://127.0.0.1:" port "/live")
+                                  :poll-ms 100 :timeout-ms 3000}}})]
+    (let [inspected (promise)]
+      (sync/start! manager {:events! (fn [event] (when (= :live/status (:type event)) (deliver inspected true)) true)
+                            :commands! (fn [_] true) :envelope! (constantly nil)})
+      (is (true? (deref inspected 5000 false)) "the bridge's handshake and first status"))
+    manager))
+
+(def launcher-pads
+  {:page-id :pads :scroll-row 9
+   :pads [{:note 36 :cue-id :red :label "Red" :live-color 0xff0000}
+          {:note 68 :cue-id :blue :label "Blue" :live-color 0x0000ff}]})
+
+(deftest the-launcher-is-set-up-through-the-running-bridge-while-it-polls
+  (with-companion
+    (fn [port]
+      (let [manager (bridge-manager port)
+            bridge (live-sync/companion-transport manager)
+            polls (atom 0)
+            ;; Besides the bridge's own 100 ms polls, force one between every
+            ;; launcher operation: the bridge's inspect handshake under its session.
+            polled (assoc bridge :request! (fn [handle id op payload]
+                                             ((:request! bridge) handle (str "poll-" (swap! polls inc)) :inspect {})
+                                             ((:request! bridge) handle id op payload)))
+            conn (live/open polled {:session-id "launcher"})]
+        (try
+          (let [setup (launcher/setup! conn (launcher/desired launcher-pads))]
+            (testing "setup inserts a Drum Rack after the companion and names a chain per pad, verified by read-back"
+              (is (:ready? setup) (pr-str (:problems setup)))
+              (is (= [[:ensure-launcher :executed] [:write-pads :executed]] (:applied setup)))
+              (is (= 3 @polls) "a bridge poll landed between every operation")
+              (is (= "Tolglow launcher pads" (get-in setup [:launcher :name])))
+              (is (= {:port "All Ins" :channel nil} (get-in setup [:launcher :input])))
+              (is (= {:device-index 1 :scroll-row 9
+                      :pads [{:note 36 :name "Red" :color 0xff0000 :chains 1} {:note 68 :name "Blue" :color 0x0000ff :chains 1}]}
+                     (get-in setup [:launcher :rack]))))
+            (testing "a rerun over HTTP finds the same track and Drum Rack"
+              (let [again (launcher/setup! conn (launcher/desired launcher-pads))]
+                (is (:ready? again))
+                (is (= (:track-id setup) (:track-id again)))))
+            (testing "a pad clip is written to the launcher track and reads back note for note"
+              (let [record {:take-order ["p.1" "p.2"]
+                            :takes {"p.1" {:take-id "p.1" :cue-id :red :start-beat 1 :release-beat 3 :source {:velocity 90}}
+                                    "p.2" {:take-id "p.2" :cue-id :blue :start-beat 5/2 :release-beat 4}}}
+                    {:keys [clip]} (launcher/pad-clip record launcher-pads)
+                    written (launcher/write-clip! conn setup clip {:name "Pads"})
+                    read (live/request! conn :read-clip {:clip-id (get-in written [:result :clip-id])})]
+                (is (= :executed (:status written)) (pr-str written))
+                (is (= [{:pitch 36 :start 1 :duration 2 :velocity 90} {:pitch 68 :start 5/2 :duration 3/2 :velocity 127}]
+                       (mapv #(select-keys % [:pitch :start :duration :velocity]) (get-in read [:result :clip :notes]))))
+                (is (= 4 (get-in read [:result :clip :length-beats]))))))
+          (testing "a connection with its own session loses the companion at the bridge's next poll"
+            (let [t (transport/transport {:endpoint (str "http://127.0.0.1:" port "/live") :bridge-id "tolglow-m4l"
+                                          :sync-session-id "repl-session" :timeout-ms 3000})
+                  handle ((:open! t) {})
+                  _ (is (= :executed (:status ((:request! t) handle "repl-handshake" :inspect {}))))
+                  _ ((:request! bridge) nil "bridge-poll" :inspect {})
+                  own (live/open (assoc t :open! (constantly handle)) {:session-id "repl"})
+                  r (live/request! own :inspect-launcher {})]
+              (is (= :rejected (:status r)))
+              (is (= :bridge-session-mismatch (get-in r [:error :code])))
+              (is (:ready? (launcher/setup! conn (launcher/desired launcher-pads)))
+                  "the bridge's own connection is unaffected")))
+          (finally (sync/close! manager)))))))
+
+(deftest launcher-setup-without-a-running-bridge-is-refused-as-never-sent
+  (let [manager (live-sync/create-manager {})
+        conn (live/open (live-sync/companion-transport manager) {})
+        setup (launcher/setup! conn (launcher/desired launcher-pads))]
+    (is (= [[:ensure-launcher :rejected]] (:applied setup)))
+    (is (= :not-connected (:code (first (:problems setup)))))
+    (sync/close! manager)))

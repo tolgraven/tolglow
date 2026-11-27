@@ -5,6 +5,7 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.chat :as chat]
+            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.checkpoints :as checkpoints]
             [tolglow.studio.cue-pad-preview :as pad-preview]
             [tolglow.studio.pad-breath :as pad-breath]
@@ -15,6 +16,7 @@
             [tolglow.studio.preview-playback :as playback]
             [tolglow.studio.airplay :as airplay]
             [tolglow.studio.room-window :as room-window]
+            [tolglow.studio.view-tabs :as view-tabs]
             [tolglow.studio.panel-layout :as panel-layout]
             [tolglow.studio.panel-tiles :as panel-tiles]
             [tolglow.studio.block-builder :as block-builder]
@@ -36,11 +38,14 @@
             [tolglow.studio.spatial :as spatial]
             [tolglow.studio.spatial-preview :as spatial-preview]
             [tolglow.studio.video-strips :as video-strips]
+            [tolglow.studio.shader-cues :as shader-cues]
+            [tolglow.studio.video-surfaces :as video-surfaces]
             [tolglow.studio.modulation :as modulation]
             [tolglow.studio.navigation :as nav]
             [tolglow.studio.operator-history :as history]
             [tolglow.studio.page-routes :as pages]
             [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.authoring.parameter-controls :as controls]
             [tolglow.studio.numeric-display :as numeric]
             [tolglow.studio.parameter-source :as sources]
             [tolglow.studio.param-visualization :as visualization]
@@ -365,18 +370,29 @@
 (defn- parameter-control [instance parameter schema & [handlers options]]
   (let [value (get-in instance [:params parameter] (:default schema))
         choices (:choices schema)
-        shapes (when-not (waveform/waveform-schema? schema) (waveform/shape-choices schema))
-        type (cond (waveform/waveform-schema? schema) "waveform" shapes "shape" (seq choices) "choice" :else (:type schema "number"))
+        ;; The shared control projection names the control family, as the
+        ;; Live parameter device reads it (#625).
+        type (name (controls/control-type schema @(rf/subscribe [:waveform/catalog])))
+        shapes (when (= "shape" type) (waveform/shape-choices schema))
         change! (or (:change handlers) #(input! [:studio/param-set (:id instance) parameter %]))
         component! (or (:component handlers) #(input! [:studio/param-component (:id instance) parameter %1 %2]))
         source (when-not handlers (sources/reading instance parameter))
         overlay (if (and source (some? (:effective-value source))) (:effective-value source)
                   (when-not handlers @(rf/subscribe [:performance/parameter-overlay (:id instance) parameter])))
-        bounds (:bounds schema) title (or (:name schema) (label parameter))
+        bounds (:bounds schema) title (controls/title parameter schema)
         fader? (and (:strip? options) (#{:fader "fader"} (:ui/widget schema)))]
     [:div.param-row {:data-param (name parameter) :class (when (:strip? options) "strip-control")}
-     [:label [:span title] [:output (if (vector? value) (str/join ", " (map #(numeric/number-label schema %) value)) (widgets/value-label schema value))]]
+     [:label [:span title] [:output (cond (= "gradient" type) (str (count value) (if (= 1 (count value)) " stop" " stops"))
+                                          (vector? value) (str/join ", " (map #(numeric/number-label schema %) value))
+                                          :else (widgets/value-label schema value))]]
      (case type
+       ;; Stops are edited from the REPL, definitions or the scheduler (#529);
+       ;; the row shows the ramp and says when outputs sample fewer stops (#689).
+       "gradient" [:div.param-gradient
+                   [widgets/color-view value {:schema schema}]
+                   (when-let [{:keys [from to]} (get-in instance [:gradient-reductions parameter])]
+                     [:span.gradient-reduced {:role "status"}
+                      (str "Outputs sample " to " evenly spaced stops of " from)])]
        "waveform" [waveform/picker (:id instance) parameter schema value change!
                    {:params (:params instance) :live? (nil? handlers)}]
        "shape" [widgets/shape-picker title shapes value change!]
@@ -384,7 +400,7 @@
                   [:select {:aria-label title :value selected :on-change #(change! (:value (get choices (js/parseInt (input-value %) 10))))}
                    (for [[index choice] (map-indexed vector choices)]
                      ^{:key index} [:option {:value index} (or (:label choice) (label (:id choice)) (str (:value choice)))])])
-       "boolean" [:input {:type "checkbox" :aria-label title :checked (boolean value) :on-change #(change! (checked? %))}]
+       "boolean" [checkbox/input {:aria-label title :checked (boolean value) :on-change #(change! (checked? %))}]
        "enum" (let [choices (vec (or (:values schema) (:options schema)))
                     selected (or (first (keep-indexed #(when (= value %2) %1) choices)) 0)]
                 [:select {:aria-label title :value selected :on-change #(change! (get choices (js/parseInt (input-value %) 10)))}
@@ -410,7 +426,7 @@
           [:div.parameter-number-fields
            [numeric/number-input {:type "range" :aria-label title :value (or value 0)
                           :min (first bounds) :max (second bounds)
-                          :step (if (= "integer" type) 1 (or (numeric/channel-step schema) (/ (- (second bounds) (first bounds)) 1000)))
+                          :step (controls/input-step schema)
                           :on-change #(when-let [n (number-value %)] (change! n))}]
            (when fader?
              [:span.strip-fader-bounds
@@ -422,7 +438,7 @@
                             :on-change #(when-let [n (number-value %)] (change! n))}])]]
          [numeric/number-input {:display-schema schema :type "number" :aria-label title :value (or value 0) :step (if (= "integer" type) 1 "any")
                         :on-change #(when-let [n (number-value %)] (change! n))}]))
-     (when (and (nil? handlers) (:id instance)) [sources/trigger (:id instance) parameter title source])
+     (when (and (nil? handlers) (:id instance)) [sources/trigger (:id instance) parameter title source nil (:source-mount options)])
      (when (and (sources/driven? instance parameter) (not (:strip? options)) (#{"number" "integer" "vector" "color" "range"} type)
                 (or (not (:compact? options)) (visualization/spatial-kind schema)))
        [sources/result-visual visualization/studio instance parameter schema])]))
@@ -541,7 +557,7 @@
       [duration-control "auto-duration" "Cue duration" (:duration-value form 4) (:duration-unit form "beats")
        (fn [value unit] (when (some? value) (set-ui! [:auto-form :duration-value] value))
          (when unit (set-ui! [:auto-form :duration-unit] unit)))]
-      [:label.policy-toggle [:input {:type "checkbox" :checked enabled?
+      [:label.policy-toggle [checkbox/input {:checked enabled?
                                     :on-change #(set-ui! [:auto-form :target-activity?] (checked? %))}]
        "Choose cues by visual activity"]
       (when enabled?
@@ -550,8 +566,29 @@
          [:input {:type "range" :min 0 :max 100 :step 1 :value percent
                   :aria-label "Target visual activity" :aria-valuetext (str percent "%")
                   :on-change #(set-ui! [:auto-form :activity-target] (/ (js/Number (input-value %)) 100))}]])
+      [:label.policy-toggle [checkbox/input {:id "auto-randomize" :checked (events/auto-varies? db)
+                                             :on-change #(set-ui! [:auto-form :randomize?] (checked? %))}]
+       "Vary marked parameters within their ranges"]
+      (when-let [plan (events/auto-plan db)]
+        [:label.policy-toggle [checkbox/input {:id "auto-keep-plan" :checked (events/auto-keeps-plan? db)
+                                               :on-change #(set-ui! [:auto-form :keep-plan?] (checked? %))}]
+         (str "Keep the section plan"
+              (when-let [sections (seq (:sections plan))]
+                (str " (" (str/join ", " (map (comp events/wire-id :id) sections)) ")")))])
+      (let [section? (some? (get-in db [:show :auto :section-end-beat]))]
+        [:label "Start or stop" [:select#auto-applies {:value (:applies form "now") :on-change #(set-ui! [:auto-form :applies] (input-value %))}
+                                 (for [[value label] events/auto-lines]
+                                   ^{:key value} [:option {:value value :disabled (and (= "next-section" value) (not section?))} label])]])
       [:div.button-row [button "auto-start" "Start auto" [:studio/auto-start] "button primary"] [button "auto-stop" "Stop auto" [:studio/auto-stop]]]
-      [:p.small.muted "Persistent cues remain active until released. You can keep playing the grid while auto mode runs."]]]))
+      (let [summary (events/auto-summary db)]
+        (when-not (str/blank? summary) [:p#auto-reason.small {:role "status"} summary]))
+      (when-let [pending (seq (get-in db [:show :auto :pending]))]
+        [:ul#auto-pending.small {:aria-label "Auto changes waiting on their line"}
+         (for [[i {:keys [event-id]} text] (map vector (range) pending (events/auto-pending-text db))]
+           ^{:key event-id} [:li {:data-event-id event-id} text " "
+                             [button (str "auto-pending-cancel-" i) "Cancel"
+                              [:studio/command "schedule/cancel" {:event-ids [event-id]}] "text-button"]])])
+      [:p.small.muted "Persistent cues remain active until released. You can keep playing the grid while auto mode runs. A look you change is handed to you and auto mode leaves it running."]]]))
 
 (defn- response-duration-label [envelope stage]
   (if-let [[unit value] (or (first (get envelope stage))
@@ -840,6 +877,8 @@
      [rig-editor/panel db]
      (when (= :rig (get-in db [:ui :view])) [spatial/panel])
      (when (= :rig (get-in db [:ui :view])) [video-strips/panel])
+     (when (= :rig (get-in db [:ui :view])) [shader-cues/panel])
+     (when (= :rig (get-in db [:ui :view])) [video-surfaces/panel])
      [:details.rig-plan-alternative [:summary "Top-down placement alternative"] [rig-plan rig]]
      [:div.rig-layout
       [:section.panel [:div.panel-top [:span.section-label "ROOM & FIXTURES"] [button "add-fixture" "Add RGBW head +" [:studio/rig-add] "text-button"]]
@@ -924,10 +963,10 @@
               (when unit (set-ui! [:builder :release-unit] unit))) true]
            [keyframes/editor (:keyframes builder) [:level] #(set-ui! [:builder :keyframes] %)]
            (when (and (= :library (get-in db [:ui :view])) (= :form (get-in db [:ui :definition :mode])))
-             [block-builder/field {:id (some-> builder :id not-empty keyword) :params {:level {}}
+             [block-builder/field {:id (some-> builder :id not-empty keyword) :params {:level {:type :number}}
                                    :outputs {:color nil :dimmer nil}}
               (or (:blocks builder) {}) (fn [f] (input! [:studio/ui-update [:builder :blocks] #(f (or % {}))]))])])
-        [:label.checkbox-label [:input#builder-cue {:type "checkbox" :checked (boolean (:cue? builder)) :on-change #(set-ui! [:builder :cue?] (checked? %))}]
+        [:label.checkbox-label [checkbox/input {:id "builder-cue" :checked (boolean (:cue? builder)) :on-change #(set-ui! [:builder :cue?] (checked? %))}]
          "Create matching cue"]])
      [button "builder-preview" "Generate EDN ↗" [:studio/builder-generate]]]))
 
@@ -975,8 +1014,8 @@
     [:label "Editor" [:select#editor-engine {:value (name (:engine definition :textarea)) :disabled (= :form (:mode definition))
                                              :on-change #(send! [:studio/editor-engine (keyword (input-value %))])}
                       [:option {:value "textarea"} "Text editor"] [:option {:value "neovim"} "Neovim · WASM"]]]
-    [:label.auto-publish [:input#auto-publish {:type "checkbox" :checked (boolean (:auto? definition))
-                                                             :on-change #(set-ui! [:definition :auto?] (checked? %))}]
+    [:label.auto-publish [checkbox/input {:id "auto-publish" :checked (boolean (:auto? definition))
+                                          :on-change #(set-ui! [:definition :auto?] (checked? %))}]
      "Publish valid edits"]]
    [:div.definition-feedback
     [:span#definition-status.small.muted (:status definition "Ready to create")]
@@ -1121,11 +1160,12 @@
     [:<>
      [:a.skip {:href "#main"} "Skip to show controls"]
      [sidebar db]
-     [:div.workspace [topbar db]
-      [:main#main {:tab-index -1}
+     [:div.workspace [topbar db] [view-tabs/strip db]
+      [:main#main (merge {:tab-index -1} (view-tabs/panel-attributes db))
        (when (or error (not connected?))
          [:div#connection-banner.connection-banner {:role "status"}
           (or error "Connecting to the studio. Cue controls become available when the show is ready.")])
+       [checkpoints/folder-notice (checkpoints/notice-props db)]
        [perform-view db]
        (when (= :compose (get-in db [:ui :view])) [composition-view {:ui (:ui db) :show (select-keys (:show db) [:cues :effects :compositions])}])
        (when (= :rig (get-in db [:ui :view])) [rig-view (select-keys db [:ui :show :server-presentation :session])])

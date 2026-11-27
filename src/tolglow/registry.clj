@@ -53,6 +53,24 @@
   (or (nil? bounds)
       (and (ordered-pair? bounds) (<= (first bounds) value (second bounds)))))
 
+(def max-gradient-stops
+  "The largest sampling capacity a gradient schema may declare with :max-stops."
+  16)
+
+(def default-gradient-stops
+  "The sampling capacity of a gradient schema that declares no :max-stops."
+  8)
+
+(defn gradient-capacity
+  "How many stops an effect output samples from a gradient parameter. The
+  compiler lowers a sample to this many fixed IR segments, so it bounds the
+  per-fixture cost. A value with more stops stays valid; sampling drops the
+  interior stops that change its ramp least (tolglow.compiler.gradient)."
+  [schema]
+  (let [declared (:max-stops schema)]
+    ;; validate-parameter reports a malformed declaration; values still use the default.
+    (if (and (integer? declared) (<= 1 declared max-gradient-stops)) declared default-gradient-stops)))
+
 (defn valid-value?
   "Test a parameter value against a normalized schema. Does not coerce types."
   [{:keys [type bounds values size] :as schema} value]
@@ -149,6 +167,11 @@
                     (not (and (finite-number? (:max-change random))
                               (not (neg? (:max-change random))))))
            [(error (conj path :random :max-change) "Maximum change must be finite and nonnegative")])
+         (when (and (contains? schema :max-stops)
+                    (not (and (= type :gradient) (integer? (:max-stops schema))
+                              (<= 1 (:max-stops schema) max-gradient-stops))))
+           [(error (conj path :max-stops)
+                   (str "Only a gradient declares :max-stops, an integer from 1 to " max-gradient-stops))])
          (when (and (= type :gradient) (map? random) (true? (:enabled? random)))
            [(error (conj path :random :enabled?) "Gradient parameters do not support randomization")])
          (when-not (data? schema)
@@ -336,6 +359,8 @@
                                (validate-parameter schema [:params k]))) params))
            (when (contains? definition :layer) (validate-layer (:layer definition)))
            (if (and (or (true? (:show-control? definition)) (map? (:modulation definition))
+                        ;; A shader cue can drive only a direct output (#673).
+                        (map? (:shader definition))
                         (and (vector? (get-in definition [:layer :transforms]))
                              (seq (get-in definition [:layer :transforms]))))
                     (or (nil? (:outputs definition))

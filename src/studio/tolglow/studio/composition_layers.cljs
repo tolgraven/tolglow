@@ -1,6 +1,7 @@
 (ns tolglow.studio.composition-layers
   "Re-frame controls for typed transforms in an ordered compound cue."
-  (:require [re-frame.core :as rf]))
+  (:require [re-frame.core :as rf]
+            [tolglow.studio.checkbox :as checkbox]))
 
 (defn- previous [attribute fallback]
   {:op :previous :attribute attribute
@@ -73,7 +74,7 @@
 (defn slot-controls [i {:keys [transforms targets]}]
   [:details.slot-parameter-editor.layer-transforms
    [:summary (str "Layer transforms" (when (seq transforms) (str " · " (count transforms))))]
-   [:label.layer-targets [:input {:type "checkbox" :checked (= :previous (some-> targets keyword))
+   [:label.layer-targets [checkbox/input {:checked (= :previous (some-> targets keyword))
                     :on-change #(rf/dispatch-sync [:composition-layer/include-previous i (.. % -target -checked)])}]
     "Include earlier members’ heads"]
    (for [[j transform] (map-indexed vector transforms)

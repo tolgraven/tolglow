@@ -134,6 +134,94 @@ Use `output` directly for an existing output-level tween expression. A tween
 is sampled by the existing tween compiler and is not an arbitrary numeric node
 that can be nested inside other arithmetic.
 
+### Sample a gradient parameter
+
+A `:gradient` parameter holds ordered `{:position p :color [r g b]}` stops. An
+output reads it with `{:op :gradient :key k :args [position]}`, or
+`fx/gradient`, which gives a linear RGB colour. The position is any scalar
+expression: a constant, a fixture coordinate, another parameter, an oscillator
+phase or arithmetic on them. The colour nests in arithmetic like any other
+`vec3` (#689).
+
+```clojure
+(def tide
+  (fx/effect :user/tide
+    {:params {:palette (fx/parameter [{:position 0.0 :color [0.02 0.05 0.55]}
+                                      {:position 0.5 :color [0.28 0.03 0.75]}
+                                      {:position 1.0 :color [0.75 0.02 0.42]}])
+              :shift [0.0 -1.0 1.0]
+              :level [0.8 0.0 1.0]}}
+    (fx/color (fx/multiply (fx/gradient :palette (fx/add (fx/divide (fx/position :x) 8.0) (fx/param :shift))
+                                        {:extend :mirror})
+                           (fx/param :level)))))
+```
+
+- Colours interpolate component by component between neighbouring stops, on
+  the stored linear values. Studio's gradient swatch draws the same stops with
+  a CSS ramp, which interpolates the same numbers the same way.
+- Before the first stop and after the last, the end colours hold. That is the
+  default `:extend :clamp`, which matches the swatch. `:extend :repeat` wraps the
+  position into [0,1), so 1.0 shows the first stop again. `:extend :mirror`
+  reflects the position back over [1,2].
+- One stop is a solid colour.
+- `fx/parameter` infers `:gradient` from a vector of stops and makes the
+  numbers doubles.
+
+A block stage's colour input can hold the same sample. Studio's block builder
+writes one through its **Gradient sample** input mode
+([Studio controls](studio-ui.md#assigning-and-inspecting-effect-blocks)).
+
+Reading the gradient with `{:op :param :key :palette}` is refused when the
+definition is published, and the message names the `:gradient` form. A
+`:gradient` sample of a numeric parameter, a vector position, a missing
+position or an unknown `:extend` is refused at the expression's path.
+Reactive outputs cannot sample a gradient, because they read only their declared
+signal inputs.
+
+The compiler lowers each sample to ordinary numeric IR: one clamped mix for each
+segment between stops. A compiled effect expands only the gradients that one of
+its outputs, blocks or shader uniforms samples. It does so once each time the
+value changes (identical or equal values reuse the previous expansion), never
+per fixture, and the fixtures only do arithmetic. A gradient parameter that
+nothing samples costs no more than before this change. The scalar, batch and
+GLSL backends all run the lowered sample. The batch compiler keeps its typed
+path with no fallback reason, including on a rig with integer coordinates.
+Live edits (`:param/set`, ramps) and definition revisions take effect on the
+next frame without recompiling the effect.
+
+The schema's `:max-stops` sets how many segments the IR contains, from 1 to 16.
+The default is 8. A default with more stops than the capacity is refused when an
+output samples it.
+
+A live value with more stops stays valid. It is resampled at `:max-stops`
+evenly spaced positions from its first stop to its last. This takes linear time
+and moves continuously while the value moves, for example during a ramp. The
+running instance reports the reduction as `:gradient-reductions`, for example
+`{:palette {:from 10 :to 8}}`, in `show/snapshot` and Studio's state. Studio's
+parameter row then says "Outputs sample 8 evenly spaced stops of 10". If two
+stops are closer than float32 GLSL can represent, the gap is a hard step rather
+than a fault.
+
+Each fixture pays for every segment, and the position expression is repeated
+once per segment, because the IR has no shared subexpressions. A smaller
+capacity and a simple position are therefore cheaper. Measured on 2,048 pixels
+on this M4 Pro under load from other agents, per frame, with warm JIT and
+excluding output packing, network and UI:
+
+| Position | `:max-stops` | Batch | Scalar fallback |
+| --- | ---: | ---: | ---: |
+| `(position :x)` | 3 | 0.6 ms | 12 ms |
+| `(position :x)` | 8 (default) | 1.5 ms | 33 ms |
+| `(position :x)` | 16 | 3.1 ms | 66 ms |
+| `fract(sin 3x + cos 5x)` | 3 | 1.0 ms | 18 ms |
+| `fract(sin 3x + cos 5x)` | 8 (default) | 3.0 ms | 52 ms |
+| `fract(sin 3x + cos 5x)` | 16 | 8.0 ms | 108 ms |
+
+The same `fract(sin 3x + cos 5x)` written once as a colour, without a
+gradient, costs 0.34 ms on the batch path. When a position is expensive, use a
+small capacity. The show renders through the batch compiler. The scalar path
+runs only on fallback and for single-head cue-pad previews.
+
 ## Musical oscillators
 
 All oscillators default to one elapsed bar per cycle. They accept `:period`,

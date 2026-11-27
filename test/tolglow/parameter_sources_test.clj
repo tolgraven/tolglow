@@ -208,6 +208,19 @@
                  (assoc saw :from 2) (assoc saw :inputs {:bogus 1}) (assoc saw :waveform :missing)]]
       (is (thrown? clojure.lang.ExceptionInfo (bind-to model :level bad))))))
 
+(deftest new-bindings-take-the-controller-period-range-and-saved-ones-keep-loading
+  (let [model (fixture/model)]
+    (doseq [period [{:bars 1.0e308} {:beats 1.0e-300} {:beats 1/2048} {:phrases 1.0e307}]]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                            #"^Waveform period :period \{.*between 1/1024 and 2\^40"
+                            (bind-to model :level (assoc saw :period period)))
+          (pr-str period)))
+    (doseq [period [{:beats 1/1024} {:beats modulation/max-period-beats}]]
+      (is (bind-to model :level (assoc saw :period period)) (pr-str period)))
+    (let [bound (bind-to model :level saw)
+          saved (assoc-in (get-in bound [:instances "0:1"]) [:parameter-bindings :level :binding :period] {:beats 1/4096})]
+      (is (nil? (sources/validate-saved! bound saved)) "A saved binding is not refused by the newer range"))))
+
 (deftest registered-waveform-hot-reload-and-unavailable-targets-isolate-one-binding
   (let [library (signals/new-registry)
         constant (fn [v value] {:id :custom :version v :range [0 1] :params {} :expression {:op :const :value value}})

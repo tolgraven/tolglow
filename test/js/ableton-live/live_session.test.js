@@ -11,8 +11,8 @@ const { COARSE, OPERATIONS } = require("../../../resources/devices/ableton-live/
 const { liveSet, PORTS, CHANNELS } = require("./live_set_fixture.js");
 
 test("operation list matches tolglow.integrations.live-connection/operations", () => {
-  assert.deepEqual([...OPERATIONS].sort(), ["capture-midi", "configure-track", "ensure-track", "extend-clip", "fire-clip", "inspect-set",
-    "read-clip", "show-clip", "stop-clips", "write-clip"]);
+  assert.deepEqual([...OPERATIONS].sort(), ["capture-midi", "configure-parameter-device", "configure-track", "ensure-group", "ensure-launcher", "ensure-track", "extend-clip", "fire-clip",
+    "inspect-launcher", "inspect-set", "place-clip", "read-clip", "set-parameter-values", "show-clip", "stop-clips", "watch-run-tracks", "write-clip", "write-pads"]);
   assert.deepEqual(COARSE, Array.from({ length: 31 }, (_, i) => i + 1).filter(c => c !== 6), "same as phrase-clip/coarse-controllers");
 });
 
@@ -151,8 +151,9 @@ test("echo rule: the feed channel is dropped, playback is tagged with its track,
   live.request("configure-track", { "track-id": track, input: { port: "Tolglow", channel: 16 } });
   live.request("handoff", { mode: "lighting" });
   assert.equal(live.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 16 }), null, "Tolglow's own monitored feed");
+  live.play(0, 0);
   assert.deepEqual(live.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 }),
-    { type: "note-on", note: 36, velocity: 127, channel: 1, "track-id": track, origin: "live-playback" });
+    { type: "note-on", note: 36, velocity: 127, channel: 1, "track-id": track, origin: "live-playback" }, "the track plays a clip");
   assert.deepEqual(live.adapter.lane(6, 1), [
     { type: "cc", controller: 7, value: 127, channel: 1, origin: "live-playback", "track-id": track },
     { type: "cc", controller: 39, value: 127, channel: 1, origin: "live-playback", "track-id": track }]);
@@ -264,4 +265,261 @@ test("MIDI events and lane moves reuse the cached companion track", () => {
   assert.equal(lookups, 0, "no LiveAPI object per event");
   live.request("inspect-set");
   assert.ok(lookups > 0, "a Set operation refreshes the cache");
+});
+
+// Run tracks, run clips and Group Tracks (#683).
+
+test("inspect-set reads Group Track membership without touching a group's input, arm or monitoring", () => {
+  const live = liveSet({ tracks: [{ name: "Tolglow group stage", group: true }, { name: "Tolglow group warm", group: true, parent: "Tolglow group stage" },
+    { name: "Tolglow run a", parent: "Tolglow group warm" }, { name: "Bass" }] });
+  const r = live.request("inspect-set");
+  assert.equal(r.status, "executed", JSON.stringify(r.error));
+  const [stage, warm] = live.song.tracks;
+  assert.deepEqual(r.result.tracks.map(t => [t.name, t.kind, t["group-track-id"]]),
+    [["Tolglow group stage", "group", null], ["Tolglow group warm", "group", "track:" + stage.id],
+     ["Tolglow run a", "midi", "track:" + warm.id], ["Bass", "midi", null]]);
+  assert.equal(r.result.tracks[0].input, null);
+});
+
+test("ensure-group finds a placed Group Track by name and refuses to invent one", () => {
+  const live = liveSet({ tracks: [{ name: "Tolglow group stage", group: true }, { name: "Tolglow group stage" }] });
+  assert.deepEqual(live.request("ensure-group", { name: "Tolglow group stage" }).result,
+    { "track-id": "track:" + live.song.tracks[0].id, "created?": false }, "a MIDI track with the same name is not a group");
+  const missing = live.request("ensure-group", { name: "Tolglow group warm" });
+  assert.equal(missing.status, "rejected");
+  assert.equal(missing.error.code, "group-creation-unavailable");
+  assert.deepEqual(live.writes, []);
+  assert.deepEqual(live.calls.filter(c => c.method.startsWith("create")), []);
+});
+
+test("ensure-track inserts a run track after a group's last member and reports where Live put it", () => {
+  const live = liveSet({ tracks: [{ name: "Tolglow group stage", group: true }, { name: "Tolglow group warm", group: true, parent: "Tolglow group stage" },
+    { name: "Tolglow run a", parent: "Tolglow group warm" }, { name: "Bass" }] });
+  const [stage, warm] = live.song.tracks;
+  const b = live.request("ensure-track", { name: "Tolglow run b", kind: "midi", "group-track-id": "track:" + stage.id });
+  assert.equal(b.status, "executed", JSON.stringify(b.error));
+  assert.equal(b.result["group-track-id"], "track:" + stage.id);
+  const a2 = live.request("ensure-track", { name: "Tolglow run a · 2", kind: "midi", "group-track-id": "track:" + warm.id });
+  assert.deepEqual(live.song.tracks.map(t => t.props.name),
+    ["Tolglow group stage", "Tolglow run b", "Tolglow group warm", "Tolglow run a", "Tolglow run a · 2", "Bass"],
+    "never after a nested group's members, where membership would be ambiguous");
+  assert.equal(a2.result["group-track-id"], "track:" + warm.id);
+  assert.deepEqual(live.request("ensure-track", { name: "Tolglow run b", kind: "midi" }).result,
+    { "track-id": b.result["track-id"], "created?": false, "group-track-id": "track:" + stage.id }, "found again by name");
+  const notGroup = live.request("ensure-track", { name: "Tolglow run c", kind: "midi", "group-track-id": "track:" + live.song.tracks[5].id });
+  assert.equal(notGroup.status, "rejected"); assert.equal(notGroup.error.code, "not-a-group");
+});
+
+test("ensure-track reports a track that did not join its group instead of claiming membership", () => {
+  const live = liveSet({ tracks: [{ name: "Tolglow group stage", group: true }], joinsGroup: false });
+  const r = live.request("ensure-track", { name: "Tolglow run b", kind: "midi", "group-track-id": "track:" + live.song.tracks[0].id });
+  assert.equal(r.status, "executed");
+  assert.equal(r.result["group-track-id"], null);
+});
+
+test("write-clip adds a scene when the run track is full and places the clip in the Arrangement", () => {
+  const live = liveSet({ tracks: [{ name: "Tolglow run a" }], slots: 1 });
+  const track = "track:" + live.song.tracks[0].id;
+  const clip = { "length-beats": 3, notes: [{ pitch: 60, start: 0, duration: 3, velocity: 127 }] };
+  const first = live.request("write-clip", { "track-id": track, "expected-name": "Tolglow run a", name: "A run 1 [r.1]", clip, "create-scene?": true });
+  assert.equal(first.result["scene-created?"], false);
+  const refused = live.request("write-clip", { "track-id": track, name: "A run 2 [r.2]", clip });
+  assert.equal(refused.status, "rejected"); assert.equal(refused.error.code, "no-empty-slot");
+  const second = live.request("write-clip", { "track-id": track, name: "A run 2 [r.2]", clip, "create-scene?": true, "looping?": false });
+  assert.equal(second.status, "executed", JSON.stringify(second.error));
+  assert.deepEqual([second.result["slot-index"], second.result["scene-created?"]], [1, true]);
+  assert.equal(live.song.tracks[0].slots[1].clip.props.name, "A run 2 [r.2]");
+  assert.equal(live.song.tracks[0].slots[1].clip.props.looping, 0, "run clips do not loop");
+  assert.equal(live.song.tracks[0].slots[0].clip.props.looping, undefined, "without looping? Live's default stays");
+  const placed = live.request("place-clip", { "track-id": track, "expected-name": "Tolglow run a", "clip-id": second.result["clip-id"], "arrangement-beat": 16 });
+  assert.deepEqual(placed.result, { "arrangement-beat": 16 });
+  const overlap = live.request("place-clip", { "track-id": track, "clip-id": first.result["clip-id"], "arrangement-beat": 18 });
+  assert.equal(overlap.status, "rejected", "an Arrangement overlap is refused before the copy");
+  assert.equal(overlap.error.code, "placement-overlap");
+  const inspected = live.request("inspect-set").result.tracks[0];
+  assert.deepEqual(inspected["arrangement-clips"], [{ name: "A run 2 [r.2]", "start-beat": 16, "end-beat": 19 }]);
+});
+
+test("forwarded MIDI is live input only while the companion's track plays, launches and routes in nothing", () => {
+  let clock = 1000;
+  const live = liveSet({ tracks: [{ name: "Tolglow Cues" }], now: () => clock });
+  live.request("handoff", { mode: "lighting" });
+  const note = () => live.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 }).origin;
+  live.request("inspect-set");
+  assert.equal(note(), "live-input", "no clip playing or launched, no Arrangement clips: a performer");
+  live.fire(0, 0);
+  assert.equal(note(), "live-playback", "a launched clip waiting for its quantized start");
+  live.play(0, 0);
+  assert.equal(note(), "live-playback", "a Session clip plays on the companion's track");
+  clock += 1000; live.play(0, -1);
+  assert.equal(note(), "live-playback", "notes just after a stop may still be the clip's");
+  clock += 300;
+  assert.equal(note(), "live-input", "after the transition window: a performer again");
+  live.session.closeWatches();
+  assert.ok(live.observers.every(o => !o.open), "closing the device ends every watch");
+
+  const arranged = liveSet({ tracks: [{ name: "Tolglow Cues" }], now: () => clock });
+  arranged.request("handoff", { mode: "lighting" });
+  arranged.song.tracks[0].props.arrangement_clips = ["id", 9999];
+  arranged.session.hostTrackId(true);
+  assert.equal(arranged.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 }).origin, "live-playback",
+    "a track with Arrangement clips counts as playback even while stopped, so Play's first downbeat is never a performance");
+
+  const routed = liveSet({ tracks: [{ name: "Tolglow Cues" }, { name: "Keystep" }], now: () => clock });
+  routed.request("handoff", { mode: "lighting" });
+  routed.song.tracks[0].props.input_routing_type = PORTS[2];   // display name "Keystep", like another track
+  routed.session.hostTrackId(true);
+  assert.equal(routed.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 }).origin, "live-playback",
+    "MIDI From another track carries that track's clips");
+
+  const sent = liveSet({ tracks: [{ name: "Tolglow Cues" }, { name: "Launcher", output: { display_name: "Tolglow Cues", identifier: 901 } }],
+    now: () => clock });
+  sent.request("handoff", { mode: "lighting" });
+  sent.session.hostTrackId(true);
+  assert.equal(sent.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 }).origin, "live-playback",
+    "another track's MIDI To the companion's track carries that track's clips");
+
+  const grouped = liveSet({ tracks: [{ name: "Tolglow Cues" }, { name: "Tolglow group stage", group: true }, { name: "Bass" }], now: () => clock });
+  grouped.request("handoff", { mode: "lighting" });
+  grouped.session.hostTrackId(true);
+  assert.equal(grouped.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 }).origin, "live-input",
+    "a Group Track or a track sending to the Master does not route into the companion");
+});
+
+test("with notifications delivered later, as LiveAPI does, the value is kept inside the notification", async () => {
+  let clock = 1000;
+  const live = liveSet({ tracks: [{ name: "Tolglow Cues" }, { name: "Tolglow run a" }], notify: "deferred", now: () => clock });
+  live.request("handoff", { mode: "lighting" });
+  live.request("inspect-set");
+  const note = () => live.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 }).origin;
+  clock += 1000;
+  assert.equal(note(), "live-input");
+  live.fire(0, 0);
+  live.play(0, 0);
+  await new Promise(resolve => setImmediate(resolve));   // notifications delivered; their deferred tasks not yet run
+  assert.equal(note(), "live-playback", "classified from the notification itself, before any deferred task");
+  // Run-track watch: the clip identity is read in the deferred task.
+  const clip = { "length-beats": 2, notes: [{ pitch: 60, start: 0, duration: 2, velocity: 127 }] };
+  const written = live.request("write-clip", { "track-id": "track:" + live.song.tracks[1].id, name: "A run 1 [r.1]", clip });
+  live.request("watch-run-tracks", { "track-ids": ["track:" + live.song.tracks[1].id] });
+  live.play(1, 0, 8);
+  assert.equal(live.emitted.length, 0, "nothing is emitted inside the call");
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.deepEqual(live.emitted.map(e => [e.type, e["clip-id"]]), [["clip-started", written.result["clip-id"]]]);
+});
+
+test("watch-run-tracks reports each clip start and stop once, with the clip identity", () => {
+  const live = liveSet({ tracks: [{ name: "Tolglow run a" }, { name: "Tolglow run b" }] });
+  const [a, b] = live.song.tracks;
+  const clip = { "length-beats": 2, notes: [{ pitch: 60, start: 0, duration: 2, velocity: 127 }] };
+  const written = live.request("write-clip", { "track-id": "track:" + a.id, name: "A run 1 [r.1]", clip });
+  const writes = live.writes.length;
+  const r = live.request("watch-run-tracks", { "track-ids": ["track:" + a.id, "track:" + b.id] });
+  assert.deepEqual(r.result, { watching: 2, "watching-slots": 0 });
+  assert.equal(live.writes.length, writes, "watching writes nothing");
+  live.play(0, 0, 32); live.play(0, 0, 32); live.play(0, -2, 34);
+  assert.deepEqual(live.emitted, [
+    { type: "clip-started", "track-id": "track:" + a.id, "watch-session": live.session.watchSession, serial: 1, "slot-index": 0,
+      "clip-id": written.result["clip-id"], "song-beat": 32 },
+    { type: "clip-stopped", "track-id": "track:" + a.id, "watch-session": live.session.watchSession, serial: 2, "song-beat": 34 }]);
+  live.request("watch-run-tracks", { "track-ids": ["track:" + b.id] });
+  live.play(0, 0);
+  assert.equal(live.emitted.length, 2, "a replaced watch no longer reports");
+  assert.equal(live.request("watch-run-tracks", { "track-ids": ["track:999"] }).error.code, "stale-track");
+});
+
+// Cue launcher (#228): a Drum Rack after the companion on its own track,
+// one named and colored chain per page pad.
+test("ensure-launcher adopts the companion's empty track, inserts a Drum Rack after it and scrolls the pads to note 36", () => {
+  const live = liveSet({ tracks: [{ name: "Bass", arm: true }, { name: "MIDI" }], host: 1, launcher: true });
+  const r = live.request("ensure-launcher", { name: "Tolglow launcher page-1", "scroll-row": 9 });
+  assert.equal(r.status, "executed");
+  assert.deepEqual(r.result, { "track-id": "track:" + live.song.tracks[1].id, "device-index": 1, "rack-created?": true, "renamed?": true });
+  assert.deepEqual(live.calls.filter(c => c.method === "insert_device").map(c => c.args), [["Drum Rack", 1]], "right after the companion");
+  assert.equal(live.song.tracks[1].props.name, "Tolglow launcher page-1");
+  assert.equal(live.song.tracks[0].props.name, "Bass", "the musician's track is untouched");
+  const again = live.request("ensure-launcher", { name: "Tolglow launcher page-1", "scroll-row": 9 });
+  assert.deepEqual(again.result, { "track-id": "track:" + live.song.tracks[1].id, "device-index": 1 }, "a rerun writes nothing");
+  assert.equal(live.calls.filter(c => c.method === "insert_device").length, 1);
+  live.rackOf(1).view.props.drum_pads_scroll_position = 3;
+  live.request("ensure-launcher", { name: "Tolglow launcher page-1", "scroll-row": 9 });
+  assert.equal(live.rackOf(1).view.props.drum_pads_scroll_position, 9, "the pad overview is scrolled back for Push's 64 Pads layout");
+});
+
+test("write-pads names and colors existing chains, inserts chains for empty pads and reads them back", () => {
+  const live = liveSet({ tracks: [{ name: "Tolglow launcher page-1", drumRack: { 36: "Kick" } }], host: 0, launcher: true });
+  const track = "track:" + live.song.tracks[0].id;
+  const r = live.request("write-pads", { "track-id": track, "expected-name": "Tolglow launcher page-1",
+    pads: [{ note: 36, name: "Ember", color: 0xff2200 }, { note: 99, name: "Moon", color: 0xeeeeee }] });
+  assert.equal(r.status, "executed");
+  assert.deepEqual(r.result.pads, [{ note: 36, name: "Ember", color: 0xff2200, "chain-created?": false },
+    { note: 99, name: "Moon", color: 0xeeeeee, "chain-created?": true }]);
+  const rack = live.rackOf(0);
+  assert.deepEqual(rack.chains.map(c => [c.props.in_note, c.props.name, c.props.is_auto_colored]), [[36, "Ember", 0], [99, "Moon", 0]]);
+  assert.ok(live.writes.every(w => live.entities[w.id].kind === "chain"), "only chains are written: no DrumPad setter");
+  const inspected = live.request("inspect-launcher").result;
+  assert.deepEqual(inspected.rack.pads, [{ note: 36, name: "Ember", color: 0xff2200, chains: 1 }, { note: 99, name: "Moon", color: 0xeeeeee, chains: 1 }]);
+  assert.equal(inspected.rack["scroll-row"], 9);
+  const writes = live.writes.length;
+  live.request("write-pads", { "track-id": track, pads: [{ note: 36, name: "Ember", color: 0xff2200 }] });
+  assert.equal(live.writes.length, writes, "an unchanged pad is not written again");
+  assert.equal(live.request("write-pads", { "track-id": track, "expected-name": "Lights", pads: [] }).error.code, "track-renamed");
+});
+
+test("an older Live uses a placed Drum Rack, and a musician's track is refused before any write", () => {
+  const old = liveSet({ tracks: [{ name: "MIDI" }], host: 0, launcher: true, version: [12, 2, 5] });
+  const refused = old.request("ensure-launcher", { name: "Tolglow launcher page-1" });
+  assert.equal(refused.status, "rejected");
+  assert.equal(refused.error.code, "drum-rack-creation-unavailable");
+  assert.deepEqual(old.writes, []); assert.deepEqual(old.calls.filter(c => c.method === "insert_device"), []);
+  const placed = liveSet({ tracks: [{ name: "Drums", drumRack: {} }], host: 0, launcher: true, version: [12, 2, 5] });
+  assert.equal(placed.request("ensure-launcher", { name: "Tolglow launcher page-1" }).status, "executed", "a performer's Drum Rack is used");
+  const skipped = placed.request("write-pads", { pads: [{ note: 36, name: "Ember", color: 0xff2200 }] }).result.skipped;
+  assert.deepEqual(skipped, [{ note: 36, code: "chain-creation-unavailable" }]);
+  const busy = liveSet({ tracks: [{ name: "Keys", clip: true }], host: 0, launcher: true });
+  assert.equal(busy.request("ensure-launcher", { name: "Tolglow launcher page-1" }).error.code, "host-track-in-use");
+  assert.deepEqual(busy.writes, []);
+  assert.equal(liveSet({ tracks: [{ name: "MIDI" }], host: 0, launcher: true }).request("ensure-launcher", { name: "Tolglow Cues" }).error.code,
+    "track-name", "launcher tracks are named Tolglow launcher");
+});
+
+test("the launcher never adopts Capture's cue track, and reports where pad hits come from", () => {
+  for (const capture of [{ name: "Tolglow Cues", clip: true, arm: true, port: PORTS[1], channel: CHANNELS[16] }, { name: "Tolglow Capture" }]) {
+    const live = liveSet({ tracks: [capture], host: 0, launcher: true });
+    const r = live.request("ensure-launcher", { name: "Tolglow launcher page-1" });
+    assert.equal(r.status, "rejected", capture.name);
+    assert.equal(r.error.code, "tolglow-track-in-use");
+    assert.deepEqual(live.writes, []); assert.deepEqual(live.calls.filter(c => c.method === "insert_device"), []);
+    assert.equal(live.song.tracks[0].props.name, capture.name);
+  }
+  const fed = liveSet({ tracks: [{ name: "Tolglow launcher page-1", port: PORTS[1], channel: CHANNELS[16], drumRack: {} }], host: 0, launcher: true });
+  const read = fed.request("inspect-launcher").result;
+  assert.deepEqual(read.input, { port: "Tolglow", channel: 16 });
+  assert.equal(read["routed-from-track?"], false);
+  assert.equal(read.monitor, "auto");
+  const open = liveSet({ tracks: [{ name: "Tolglow launcher page-1", drumRack: {} }], host: 0, launcher: true }).request("inspect-launcher").result;
+  assert.deepEqual(open.input, { port: "All Ins", channel: null });
+});
+
+test("a chain colour Live snapped to its palette is not rewritten on the next setup; a changed cue colour is", () => {
+  const live = liveSet({ tracks: [{ name: "Tolglow launcher page-1", drumRack: { 36: "Kick" } }], host: 0, launcher: true,
+    palette: [0xff3a34, 0x1aff2f, 0x10a4ee, 0xffffff] });
+  const track = "track:" + live.song.tracks[0].id;
+  live.request("write-pads", { "track-id": track, pads: [{ note: 36, name: "Ember", color: 0xff2200 }] });
+  assert.equal(live.rackOf(0).chains[0].props.color, 0xff3a34, "Live keeps the nearest palette colour");
+  const writes = live.writes.length;
+  live.request("write-pads", { "track-id": track, pads: [{ note: 36, name: "Ember", color: 0xff2200 }] });
+  assert.equal(live.writes.length, writes, "a rerun leaves the snapped colour alone");
+  live.request("write-pads", { "track-id": track, pads: [{ note: 36, name: "Ember", color: 0x0000ff }] });
+  assert.equal(live.rackOf(0).chains[0].props.color, 0x10a4ee, "a new cue colour is written");
+});
+
+test("pad hits on the launcher track are live input until a clip plays there, then playback", () => {
+  const live = liveSet({ tracks: [{ name: "Tolglow launcher page-1", drumRack: {} }], host: 0, launcher: true });
+  live.request("inspect-launcher");
+  live.request("handoff", { mode: "lighting" });
+  const hit = { type: "note-on", note: 36, velocity: 100, channel: 1 };
+  assert.equal(live.adapter.midi({ ...hit }).origin, "live-input", "a performer on the pads");
+  live.play(0, 0);
+  assert.equal(live.adapter.midi({ ...hit }).origin, "live-playback", "the recorded pad clip replaying");
 });

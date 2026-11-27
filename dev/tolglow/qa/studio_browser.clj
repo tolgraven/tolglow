@@ -20,7 +20,7 @@
         store (Files/createTempDirectory "tolglow-browser-qa" (make-array FileAttribute 0))]
     (try
       (let [host (app/start! {:init {:components [:show] :modules [:web-server]}
-                              :show (merge {:model (demo/model) :workspace-options nil} show-options
+                              :show (merge {:model (demo/model) :workspace-options nil :recovery false} show-options
                                            {:credential-path (str (.resolve store "credentials.edn"))})
                               :web-server {:host "127.0.0.1" :port 0}})]
         (try

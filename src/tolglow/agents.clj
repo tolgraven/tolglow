@@ -398,7 +398,11 @@
    "Use configure_energy_autopilot to steer average brightness and visual activity over musical time. Supply targets for fixed levels or audio-targets to follow music. Set enabled? explicitly when asked to start or stop it. A mapped enable cue can keep it active. After an interval, inspect_lighting reports the effective targets and the rolling measurements. "
    "Example configure_auto: {\"configuration\":{\"enabled?\":true,\"interval\":{\"bars\":1},\"count\":1,\"scope\":{\"cue-ids\":[\"agent-red-cue\"]},"
    "\"launch\":{\"mode\":\"one-shot\",\"duration\":{\"beats\":4}},\"seed\":42}}. Scope may instead be \"all\" or {\"page-id\":\"actual-page-id\"}; "
-   "scope also constrains any required emission companion. Disable auto with {\"configuration\":{\"enabled?\":false}}.\n\n"
+   "scope also constrains any required emission companion. Optional: randomize {params marked|all, palette [{color [r g b] weight}], ranges {param [lo hi]}}, "
+   "categories {include [..] exclude [..]}, max-lit n, intent darkness, and sections [{id, weight, length {bars n}, transition overlap|release|cut, config {...}}] "
+   "for a weighted musical plan; keep-plan? true keeps the saved plan. Disable auto with {\"configuration\":{\"enabled?\":false}}. "
+   "To change mood on a section line, send it ahead with at beside configuration, e.g. {\"configuration\":{...},\"at\":{\"bar\":32}} "
+   "or \"at\":\"next-phrase\": it applies on that downbeat, before auto decides there, with no launch of the old mood on the line.\n\n"
    "Current show snapshot (bounded JSON):\n" (providers/content-string (summarize-snapshot snapshot))))
 
 (defn- conversation [manager payload snapshot credential]
@@ -586,7 +590,8 @@
                                                        (emit! (assoc event :conversation-id conversation-id))))
                                                    (merge (select-keys config [:timeout-ms :connect-timeout-ms :max-rounds :max-tool-calls])
                                                           {:transport (get-in manager [:options :transport])
-                                                           :cancelled? cancelled? :run-id run-id}))]
+                                                           :cancelled? cancelled? :run-id run-id
+                                                           :conversation-id conversation-id}))]
                            (finish! (redact outcome secret))))
                        (catch Exception _
                          (finish! {:status (if @cancelled? :cancelled :error) :run-id run-id

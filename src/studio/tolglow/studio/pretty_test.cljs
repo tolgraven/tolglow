@@ -90,3 +90,27 @@
     (is (= (subs (pretty/edn value {:length 64 :level 10}) 0 500) text))
     (is (= {:text golden-text :truncated? false}
            (pretty/edn-within (edn/read-string golden-source) {:max-chars (count golden-text)})))))
+
+(deftest a-deep-finite-lazy-value-prints-the-whole-budget-as-on-the-host
+  ;; #760: realized elements are charged once per call, so depth does not cut
+  ;; the text short; an infinitely deep and wide value still stops. A
+  ;; ClojureScript (range) is chunked, so up to one 32-element chunk may be
+  ;; realized past the allowance before the budget is reached.
+  (let [realized (atom 0)
+        nest (fn nest [d] (if (zero? d) 0 (map (fn [_] (swap! realized inc) (nest (dec d))) (range 2000))))
+        {:keys [text truncated?]} (pretty/edn-within (nest 16) {:max-chars 1024})]
+    (is truncated?)
+    (is (= 1024 (count text)))
+    (is (= "((((((((((((((((0 0" (subs text 0 19)))
+    (is (<= @realized (* 64 1025))))
+  (let [realized (atom 0)
+        node (fn node [] (lazy-seq (map (fn [_] (swap! realized inc) (node)) (range))))
+        {:keys [text truncated?]} (pretty/edn-within (node) {:max-chars 1024})]
+    (is truncated?)
+    (is (<= (count text) 1024))
+    (is (<= @realized (+ (* 64 1025) 32)))))
+
+(deftest an-infinite-width-keeps-everything-on-one-line-as-on-the-host
+  (let [value [1 [2 3] (map inc (range 3))]]
+    (is (= "[1 [2 3] (1 2 3)]" (pretty/edn value {:width ##Inf})))
+    (is (= {:text "[1 [2 3] (1 2 3)]" :truncated? false} (pretty/edn-within value {:width ##Inf :max-chars 100})))))

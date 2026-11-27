@@ -10,6 +10,10 @@ registry, launch and restore operations. Afterglow resolves per-head optical
 weights and blends native groups. The host supplies immutable previous-frame
 observations and keeps the optical reader out of saved state. A faulty shape
 affects only its own cue. [Volume cue regressions](../../../test/tolglow/spatial_cues_test.clj)
+Read and commit the revision each instance runs. A pending hot reload's
+fields are frame inputs and masks only, selected by the engine's
+`:reload-inputs`; never shape leases or bodies from a revision the engine has
+not accepted. [Reload regressions](../../../test/tolglow/spatial_reload_test.clj)
 
 A static sphere or rounded-box cue may declare a `:personality` input. Resolve
 it from the frame's model with `tolglow.personalities/input-choice` and keep

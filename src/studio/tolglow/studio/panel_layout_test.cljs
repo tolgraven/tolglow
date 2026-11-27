@@ -234,7 +234,78 @@
               (is (= [[:panel-window/redock :param-1]] (:dispatch-n resized)))
               (is (nil? (:dispatch resized)) "no editing ended, so no notice"))))))
     (testing "removing a tile in edit mode"
-      (is (= [:cues :live :room :tools :viz] (ids (layout/active-layout (run editing [:panel-layout/remove :param-1]))))))))
+      (is (= [:cues :live :room :tools :viz] (ids (layout/active-layout (run editing [:panel-layout/remove :param-1])))))
+      (is (nil? (:dispatch (transition editing [:panel-layout/remove :param-1]))) "a docked tile has no window")
+      (testing "closes its window at once instead of leaving it empty until Done"
+        (let [detached (assoc-in editing [:ui :panel-windows :param-1] {:phase :popped :generation 1})
+              removed (transition detached [:panel-layout/remove :param-1])]
+          (is (= [:panel-window/redock :param-1] (:dispatch removed)))
+          (is (= [:cues :live :room :tools :viz] (ids (layout/active-layout (:db removed)))))
+          (is (nil? (transition detached [:panel-layout/remove :live])) "Perform panels cannot be removed"))))))
+
+(deftest a-detached-panel-follows-its-window-size
+  (testing "a window's tier comes from its height in rows at its size class's full width"
+    (is (= :full (layout/window-tier 720 760)))
+    (is (= :full (layout/window-tier 380 300)))
+    (is (= :compact (layout/window-tier 900 260)))
+    (is (= :single (layout/window-tier 1400 150)))
+    (is (= :single (layout/window-tier 300 179)))
+    (is (= :compact (layout/window-tier 300 180))))
+  (let [db (assoc-in desktop [:ui :panel-layout :saved :desktop]
+                     {:active "Show" :layouts [{:name "Show" :panels [{:id :live :w 2 :h 6} {:id :param-1 :w 2 :h 6}]}]})
+        sized (run db [:panel-layout/window-size :live 720 260] [:panel-layout/window-size :param-1 720 900])
+        detached (assoc-in sized [:ui :panel-windows] {:live {:phase :popped :generation 1}
+                                                       :param-1 {:phase :popped :generation 1}})
+        tiers (atom {})
+        _ (renderToStaticMarkup
+           (r/as-element [layout/arrangement detached {}
+                          {:cues [:div "cues"] :live [:div "live"] :room [:div "room"] :tools [:div "tools"]}
+                          {:render (fn [entry tier] (swap! tiers assoc (:id entry) tier) [:div "tile"])}]))]
+    (is (= :compact (layout/detached-tier sized :live)))
+    (is (= :full (layout/detached-tier sized :param-1)))
+    (is (= :full (layout/detached-tier db :tools)) "a window that has not reported is full")
+    (is (= sized (run sized [:panel-layout/window-size :live 0 0])) "a closed window's zero size is ignored")
+    (testing "the docked tile is single, but its window is tall, so the tile renders full"
+      (is (= :single (layout/tier :desktop {:w 2 :h 6})))
+      (is (= :full (:param-1 @tiers))))
+    (testing "docked, the tile renders at its own tier"
+      (reset! tiers {})
+      (renderToStaticMarkup
+       (r/as-element [layout/arrangement sized {}
+                      {:cues [:div "cues"] :live [:div "live"] :room [:div "room"] :tools [:div "tools"]}
+                      {:render (fn [entry tier] (swap! tiers assoc (:id entry) tier) [:div "tile"])}]))
+      (is (= :single (:param-1 @tiers))))))
+
+(deftest a-second-pointer-does-not-take-over-auto-scroll
+  (let [first-drag {:pointer-id 1 :client-y 880}
+        second {:pointer-id 2 :client-y 300}]
+    (is (= first-drag (layout/claim-autoscroll first-drag {:pointer-id 1} second))
+        "the drag in progress keeps auto-scroll")
+    (is (= second (layout/claim-autoscroll first-drag nil second)) "with no drag in progress the new one takes it")
+    (is (= first-drag (layout/claim-autoscroll nil {:pointer-id 1} first-drag)) "the gesture's own pointer claims it")
+    (is (nil? (layout/claim-autoscroll {:pointer-id 9} {:pointer-id 1} second))
+        "a stale owner is dropped and the ignored pointer gets nothing")))
+
+(deftest a-save-is-kept-only-once-the-app-says-so
+  (let [notice "Saved “Layout 1” for this desktop screen."]
+    (testing "in a browser, local storage decides"
+      (is (= [notice false] (layout/store-toast true nil notice)))
+      (is (nil? (layout/store-toast true nil nil)))
+      (is (= [layout/failed-notice true] (layout/store-toast false nil notice))))
+    (testing "in the Mac app, only the app's copy survives a relaunch"
+      (is (= [notice false] (layout/store-toast true :kept notice)))
+      (is (= [notice false] (layout/store-toast false :kept notice)))
+      (is (= [layout/host-refused-notice true] (layout/store-toast true :refused notice)))
+      (is (= [layout/host-refused-notice true] (layout/store-toast true :silent nil)))
+      (is (= [layout/failed-notice true] (layout/store-toast false :refused notice)))
+      (is (= [layout/failed-notice true] (layout/store-toast false :silent notice)))))
+  (testing "an answer to a newer save settles older pending ones, so their timeouts stay silent"
+    (let [[pending done] (layout/settle-reply {1 :one 2 :two 3 :three} 2)]
+      (is (= {3 :three} pending))
+      (is (= :two done)))
+    (let [[pending done] (layout/settle-reply {3 :three} 2)]
+      (is (= {3 :three} pending) "a late answer to an older save leaves the newer one waiting")
+      (is (nil? done)))))
 
 (deftest pointer-gestures-preview-then-commit-or-cancel
   (let [rects [{:id :cues :left 0 :top 0 :width 400 :height 600}

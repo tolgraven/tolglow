@@ -42,8 +42,11 @@ engine retires them.
 Auto mode is a disclosure beneath the inspector. It configures cue interval,
 count, page/all scope, launch mode and duration through `/api/auto`; the server's
 policy supplies cue selection and emission dependencies. Persistent mode leaves
-instances active until explicitly released. This is a policy-driven local mode,
-not an LLM that autonomously invents new definitions.
+instances active until explicitly released. **Vary marked parameters within
+their ranges** randomizes launch values inside each schema's domain, and **Keep
+the section plan** retains a plan saved from the REPL; a status line names the
+current section and last decision. This is a policy-driven local mode, not an
+LLM that autonomously invents new definitions. [Auto show](auto-show.md)
 
 Response envelopes have a separate disclosure. An attack/release gate multiplies
 named numeric parameters globally, across the selected effect type, or on the
@@ -107,8 +110,26 @@ Text equal to it shows that baseline's status (`ember · v2` or Published); any
 other text shows Unpublished changes. A publication reply marks Published only
 when the editor still holds the text that was sent, so an edit (or a late Neovim
 delivery) that arrives while the request is in flight stays unpublished and, with
-Publish valid edits on, is published next. Neovim echoes of the text Studio
-already holds change nothing.
+Publish valid edits on, is published next. A refused publication follows the same
+rule: Publication failed describes the text Studio still holds, while newer text
+stays Unpublished changes (the result names the refusal of the earlier text) and,
+with Publish valid edits on, goes out after the usual 850 ms quiet time. If the
+editor was taken back to the published text meanwhile, a refusal leaves that
+text's baseline status, with nothing queued. Switching from Neovim to the text
+editor is an edit too. **Generate EDN** takes its status from the baseline the
+same way, but only produces text: it never queues Publish valid edits. Neovim
+echoes of the text Studio already holds change nothing.
+
+Every controlled checkbox in Studio uses one component
+(`tolglow.studio.checkbox/input`). React restores a controlled checkbox to its
+rendered state when the change event ends, before Reagent's next frame renders
+the new state; the component renders pending updates first. That keeps the new
+state only when the handler has already changed what the box renders from, so
+every checkbox handler that changes app-db or a local atom does it
+synchronously (`rf/dispatch-sync`, `swap!`), including optimistic pending
+state such as a submitted lighting policy or an audience inclusion. The few
+that only send a request and keep no pending state (spatial settings, follow
+selection, fog control) show the committed state until the reply arrives.
 
 The default editor is a labeled accessible textarea with Tab indentation and
 Ctrl/Cmd+Enter publication. Selecting Neovim loads the actual pinned WASM runtime
@@ -147,8 +168,23 @@ In **Library**, open an effect in the EDN editor and select **Assign blocks**.
 Choose a parameter or output under **Block binding**, pick a material or waveform,
 then select **Add stage**. The catalog includes the effect’s own prefab definitions.
 Choose **Inputs** to change a constant, reference another parameter, or use the
-beat, bar, phrase or time clock. **Coordinates** selects world XYZ or surface UV.
-The arrow buttons change stage order. **Wet amount** controls how much of that
+beat, bar, phrase or time clock. A parameter or private varying input lists only
+what the input can read. A scalar input reads numbers. A colour input reads
+colours and numbers, because a number spreads across all three components.
+A private varying has the type of its base, so a varying whose base reads a
+colour parameter is a colour. A gradient parameter is never a plain parameter
+input, and **Block binding** does not list it. A colour input instead offers **Gradient sample** when the
+definition has a gradient. Choose the gradient (its stops draw as the parameter
+row's ramp), the extension (clamp, repeat or mirror) and the position. The
+position is a scalar input with its own modes: a constant, **Fixture position**
+on an axis, a number parameter, a clock, **Musical period** or a scalar private varying.
+That varying can carry an oscillator block such as **Sine**. **Write stages to EDN** writes
+`{:op :gradient :key k :args [position]}`, adding `:extend` unless it is clamp.
+**Coordinates** selects world XYZ or surface UV.
+The arrow buttons change stage order. Each control addresses its stage by a
+stable ID (metadata on the stage map, never written to the EDN), not by the
+index it was rendered at, so edits that land before the next render, such as two
+quick taps on Remove, reach the stage they were made for. **Wet amount** controls how much of that
 stage reaches the next one. **Add private or variable binding** accepts a private
 varying name or a space-separated show variable path such as `weather density`.
 
@@ -335,7 +371,9 @@ their plots) and *single*, the 1×1 tile (one reading; the Room keeps only its
 3D view). A tile is single at up to a sixth of the columns (two on desktop,
 one on tablet or phone) or at most 8 rows, and compact at up to a third of the
 columns or at most 14 rows. Growing a tile back restores its full controls and
-keeps its chosen parameter.
+keeps its chosen parameter. A tile's **Source** opens the source editor inside
+the tile, with its own element IDs and keyboard focus in that window, not in the Live card (which may be in another
+window).
 
 **Any panel in its own window.** Every frame has **Detach**/**Redock**. The Room
 uses its pop-out window above. Other panels use `tolglow.studio.panel-window`,
@@ -348,7 +386,12 @@ Show window and Redock, and its content exists in that window only. Closing
 the window, pressing Redock, closing Studio, or switching to a layout without
 that panel (including the layout of another screen size class) brings it back.
 Plots in a panel window follow that window's visibility, not Studio's, so they
-keep drawing while Studio is hidden.
+keep drawing while Studio is hidden, and the cue pad previews in a Cues window
+follow that window's focus. Content in a window takes its tier from the window,
+not from the tile it left: the full width of the window's size class and its
+height in rows (single up to 179 px, compact up to 299 px, else full), for the
+Room as for other panels. Removing a detached tile in edit mode closes its
+window at once; Cancel brings the tile back docked.
 
 Layouts are kept per screen size class, matching the built-in breakpoints:
 phone (up to 600 px, 2 columns), tablet (601–1199 px, 6 columns) and desktop
@@ -360,10 +403,16 @@ In the packaged Mac app the loopback port, and with it the page's storage,
 changes on every launch. When the app's window binding (#669,
 `window.tolglowStudioWindow`) carries a `layouts` copy, Studio uses whichever
 of that copy and local storage was saved last (each records `savedAt`), and
-every save also posts `{type: "layouts", layouts}` to the app's
+every save also posts `{type: "layouts", layouts, request}` to the app's
 `tolglowStudioWindow` message handler so the app can keep it per show folder.
-A save counts as kept when either copy was accepted. Until the app provides
-and stores that copy, the Mac app keeps layouts only for one launch.
+The app answers with a `tolglow-studio-window` event whose detail is
+`{type: "layouts", request, kept}`; it refuses a copy over 64 KB. Inside the app
+a save is confirmed only once the app says it kept its copy, because only that
+copy survives a relaunch; a refusal, or no answer within 3 s, warns that the
+layout will be gone after the app relaunches. An answer to a newer save settles
+older pending ones, so an older save's timeout cannot warn after a newer save was
+kept. In a browser local storage
+decides, as above.
 Editing a new layout starts from a measurement of the built-in layout on
 screen. A saved layout is repaired on load: unknown panels are dropped, missing
 Perform panels come back at a default size, invalid tile bindings are cleared
@@ -386,13 +435,190 @@ Chrome, with CDP touch events at the two touch sizes. It also names, switches
 and deletes layouts, adds a tile, picks its parameter, shrinks it to 1×1 and
 grows it back, adds the visualization panel, and (desktop and tablet) detaches
 the Live panel and a tile, acts in the Live window, then redocks by closing
-the window and by Redock. Throughout it checks that the running cue keeps its
-instance ID, that the card and Room canvas stay the same DOM nodes where no
-panel was detached, and that there is one socket and one preview worker. It
-is not evidence for iPad Safari, a physical touch screen or the packaged Mac
-app. The app answers every blank `window.open` with its single Room window
-(`native/macOS/RoomWindows.swift`), so there Detach keeps panels other than the
-Room docked and says it is unsupported until the app hosts panel windows.
+the window and by Redock. It shrinks the Room and Live windows and checks
+that their content turns compact, opens the tile's own source editor in the
+tile window, removes a detached tile in edit mode, holds a second finger on
+another handle during a tablet auto-scroll and lifts it, and (desktop) checks
+that a Cues window samples its pads while Studio lacks focus (Studio's focus is
+faked; headless Chrome reports focus for every page). Throughout it checks that
+the running cue keeps its instance ID, that the card and Room canvas stay the
+same DOM nodes where no panel was detached, and that there is one socket and
+one preview worker. It simulates the Mac app's bindings with stand-in message
+handlers: the layouts answer (kept, refused, none) and the window host's
+identify and close messages. It is not evidence for iPad Safari, a physical
+touch screen or the packaged Mac app.
+
+In the packaged Mac app `native/macOS/RoomWindows.swift` hosts every blank
+same-origin `window.open` from Studio's main frame in its own native window,
+cascaded and titled from the page's `document.title`. The app reads each
+window's role and panel from the name Studio gives it in `window.open`
+(`tolglow-room-<token>-<n>`, `tolglow-panel-<id>-<token>-<n>`). Studio also
+identifies each window right after opening it (`{action: "identify", role:
+"room" | "panel", id}` on the `tolglowRoomWindow` handler, posted from the new
+window's own document when it has the handler, else from Studio's, which names
+the window opened last); that only fills in a window whose name gave nothing. Only the Room's window is placed on another display. Closing a
+window sends `{status: "closed", role, id}` on the `tolglow-room-window` event,
+so the Room and each panel redock only for their own window.
+`native/Tests/RoomWindows` checks the window names, roles, close replies, display
+choice and the layouts reply;
+the window lifetime itself has not been exercised in the running app.
+
+`dev/studio/definition-controls-qa.mjs` uses Playwright `check()` and `uncheck()`
+on Publish valid edits, Create matching cue, Evaluate when inputs change, the
+auto-launch visual activity box, a parameter motion target and a video strip's
+direction; holds a refused publication while a newer edit
+is typed and checks the follow-up; checks the status after Generate EDN; and
+taps one stage's Remove twice in one task. Headless Chrome only.
+
+## Windows and tabs
+
+A window is one show; tabs are views of that show (#669).
+
+**Tabs.** The strip under the top bar holds one tab per open view (Perform, Rig
+& space, Compose, …). **+** opens a tab on the current view, the sidebar and
+the number shortcuts change the active tab's view, **×** closes a tab and
+**Reopen** brings back the last closed view. In the tab list, arrow keys,
+Home and End move between tabs and Delete closes the focused one. The tablist
+holds only its tabs: a tab's × is a pointer shortcut hidden from assistive
+technology, and the **Close tab** button after the list closes the active tab.
+`<main>` is the active tab's `tabpanel`, labelled by that tab. Choosing a
+tab navigates to its view, so the address and browser history follow the active
+tab. A deep link to a view that a restored tab already shows selects that tab.
+
+Tabs live in one page. They share its single state connection, its preview
+engine and its Room window, and opening, closing or switching a tab starts
+nothing: no socket, worker, device, command or output. A view keeps its own
+resources as before (the Rig editor runs its preview only while Rig is shown).
+`view_tabs.cljs` owns the model (`:view-tabs` in app-db). Tabs belong to the
+device: a browser keeps them in local storage (`tolglow.studio.view-tabs`) and
+repairs damaged entries on load; restored tabs choose the opening view before
+the show's saved view preference. The document title is the active view and
+the show, which is what a browser tab and the Mac window show.
+
+**Windows.** The Mac app opens one window per show (**File › New Window**,
+⌘N), and each window runs its show in its own process on its own loopback port,
+as before. One Clojure runtime cannot hold two shows: user namespaces such as
+`show` are global and the compiled host's isolate owns one show. So the app
+keeps the processes apart (`native/macOS/ShowRegistry.swift`):
+
+- A folder runs in one window. Opening it again selects that window, because
+  two processes would autosave and restore the same show.
+- The first running show owns devices and physical output. A show opened while
+  another owns them is preview-only (`TOLGLOW_DESKTOP_DEVICES=none`, see
+  `tolglow.desktop.launch/device-free`). It starts without `:ola`/`:artnet`
+  output and with the Push 3 display, RDM, OSC, sensor OSC, clock sync and
+  audio modules off. While it runs, its show owner (`show/require-devices!`)
+  refuses with code `preview-only` (HTTP 409 from Studio's routes) every action
+  that would open RDM (`/api/rdm/connect`, the `:rdm` module), audio input or
+  audio returns, MIDI clock or Link (`/api/sync/start`), the sensor OSC listener
+  or audience stage, AirPlay sharing, a REPL `connect-device!`, the Push 3
+  display module, or arm output for rig calibration, photometry or fog
+  calibration. Because the refusal is in the owner, a configured custom module
+  or a startup action that goes through these functions is refused too, and a
+  show configured to start one of these modules fails to start with that code.
+  Studio greys those controls and shows the reason. Code that opens a device
+  some other way (a custom module calling a transport, MIDI or Java API
+  directly) is not covered. Devices go to the next show started after the owner
+  stops; a running preview-only show stays preview-only.
+- Each folder autosaves to its own recovery directory. Every new show model has
+  the show ID `:main` and recovery files are keyed by show ID, so two folders
+  would otherwise restore each other's working checkpoint. The directory is
+  named by a UUID kept in the folder's `.tolglow-folder-id`, written on first
+  open, so renaming or moving the folder keeps its recovery. A process holds a
+  lock on its folder's directory while it runs, and the directory records the
+  folder that last claimed it. A copied folder (a Finder duplicate, a backup, a
+  clone of a repository that tracks the identity file) therefore gets a fresh
+  identity, whether it is opened beside its original or after it; a moved or
+  renamed folder keeps its identity. A folder that cannot be written
+  keeps the shared directory. This applies only to Mac windows
+  (`TOLGLOW_DESKTOP_WINDOW`), JVM and compiled; the iOS on-device host keeps
+  the shared directory.
+- On a folder's first open, and when a copy was given a new identity, Studio
+  shows a note above the view: what `.tolglow-folder-id` is, that copies are
+  detected and keep separate recovery, and, for a copy, which folder it was
+  copied from. **OK** closes it. The same text stays in **Restore show** under
+  **Show folder**, which the Mac app also opens from **File › Show Folder and
+  Checkpoints…**. The REPL reads the same map from `(:folder
+  (show/recovery-status runtime))`; Studio reads it from `:show-folder` in the
+  show state.
+- **The checkpoint from before the update.** Before per-folder recovery, every
+  desktop window autosaved to the shared directory, which `lein run` and other
+  hosts still use. The first time any Mac folder claims its own recovery, the
+  shared directory's working and prior checkpoints are copied once, with their
+  saved times, into `before-folders/` beside them, which nothing autosaves to
+  (`recovery/freeze-shared!`; a lock makes the copy happen once even when two
+  windows start together). A later `lein run` session therefore never appears
+  under this label. Every Mac show folder offers the frozen files in **Restore
+  show** as **Checkpoint from before the update** and **Previous session from
+  before the update**, beside its own checkpoints, and a note above the view
+  says one is waiting and when each was saved (**Review checkpoint** opens the
+  dialog, **Later** hides the note).
+
+  Nothing applies them on their own, including a folder whose `:show-state`
+  restores at startup: startup restore reads only the folder's own
+  `:recovery`, `:named` or `:prior` checkpoint. **Restore** loads one into this
+  folder through the ordinary show restore, after a confirmation; **Dismiss**
+  drops both without loading either. While one window restores or dismisses
+  them it holds a lock in the frozen directory, so another window's attempt is
+  refused ("Another show window is restoring or dismissing …"). When the restore
+  is accepted, or on dismissal, `legacy-resolution.edn` records which folder
+  took which file and the SHA-256 of the restored bytes (or of each dismissed
+  file), and no folder offers them again; a refused restore releases them,
+  still offered. If that record cannot be written, Studio says so after the
+  restore. No file is moved or deleted. From the REPL, see
+  [show files](show-files.md#the-checkpoint-from-before-per-folder-recovery).
+
+  The frozen checkpoints are found for the show's current show ID, normally
+  `:main`; after an import changes the show ID, the note follows by the next
+  autosave. If an earlier build already copied the shared checkpoint into one
+  folder (the one-time copy of #739, which left `offered-to-folder` beside it),
+  the freeze records it as applied to that folder, so no folder offers it again.
+
+**`.tolglow-folder-id` in git.** The file holds a random UUID and nothing else.
+Copies are safe whether or not it is committed. We suggest adding it to the
+show repository's `.gitignore`: the recovery it names lives only on this Mac,
+and a second checkout of a repository that commits it, opened on the same Mac
+while the first exists, is given a new identity and rewrites the file, which
+then shows as a change. Ignoring it has one cost: removing ignored files
+(`git clean -x`) or cloning afresh gives the folder a new identity, so its
+earlier recovery is no longer offered there. Those files stay in
+`~/Library/Application Support/Tolglow/Recovery/folders/<old id>/`, and
+`show/load-show!` can load one by path.
+- Before loading Studio, the window reads its show's runtime ID from
+  `GET /api/identity` and binds the page to it
+  (`window.tolglowStudioWindow`, `show_window.cljs`). A bound page sends that
+  runtime ID with every command, which any other runtime refuses, and refuses to
+  install another runtime's state. An ordinary browser tab is unbound and
+  follows its server as before.
+
+The views of one show are Studio tabs, not native window tabs: a native tab
+would be another web view with its own state connection and preview engine.
+The app turns off automatic window tabbing, and its menus drive Studio's tabs:
+**New Tab** ⌘T, **Reopen Closed Tab** ⇧⌘T, **Close Tab** ⌥⌘W (⌘W still closes
+the window and stops its show), **Show Next/Previous Tab** ⌃Tab/⌃⇧Tab. Because
+the loopback port, and with it the page's storage, changes on every launch, the
+app keeps each folder's tabs itself and passes them back to the page
+(`FolderStore.swift`, at most 4 KB per folder). It keeps the Perform panel
+layouts of #668 the same way: it passes the folder's saved `layouts` string in
+`window.tolglowStudioWindow` and stores each `{type: "layouts", layouts}`
+message the page posts on save (at most 64 KB per folder).
+
+`dev/studio/view-tabs-qa.mjs` exercises tabs and two bound windows in headless
+Chrome against two runtimes from a production build; the Mac menus and binding
+are simulated with the same event and global the app uses.
+`test/tolglow/desktop_test.clj` runs two desktop shows through
+`tolglow.desktop/run-show!` and checks that each refuses the other's runtime
+ID, that a failed second launch leaves the others running and that closing one
+releases only its listener; it also checks every preview-only refusal, the
+folder identity and lock, and that the checkpoint from before the update is
+frozen once, offered, never restored at startup, and applied or dismissed
+only on request by exactly one folder
+(also through Studio's routes and the show's own REPL session).
+`lein run -m tolglow.qa.show-folder target/show-folder` checks the folder note,
+the dialog, a Studio restore read back in the REPL and a REPL dismissal seen in
+an open Studio, in headless Chrome against three folder shows started the way a
+Mac window starts them (`npm run studio:build` first). `native/Tests/ShowWindows` checks the registry. The
+packaged app with two windows has been built but not run.
 
 ## API and lifecycle
 

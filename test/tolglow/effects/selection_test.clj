@@ -240,3 +240,27 @@
                (mapv :params (views/active-instances (model)))))
         (is (= :unknown-layer (:code (send :command select-layer)))))
       (finally (show/stop! runtime)))))
+
+(deftest show-owner-applies-a-one-action-exclusive-mode-from-the-repl
+  (let [runtime (show/create-runtime {:model (three-effects) :workers 1 :workspace-options nil})
+        clock (atom 0)
+        send (fn [payload]
+               (let [receipt (show/submit! runtime :command (merge {:source {:adapter :repl}} payload))]
+                 (show/tick! runtime (swap! clock + 10))
+                 (deref receipt 1000 {:status :timeout})))
+        solo (fn [id & [mode]] (cond-> (operation :solo id) mode (assoc :mode mode)))
+        snapshot #(:effect-selection (show/snapshot runtime))]
+    (try
+      (is (= :accepted (:status (send {:op :effect-selection/configure :modes {:solo :additive}}))))
+      (send (solo "0:1"))
+      (send (solo "0:3"))
+      (is (= ["0:1" "0:3"] (:included-instance-ids (snapshot))))
+      (let [revision (:revision (show/snapshot runtime))
+            receipt (send (solo "0:2" :exclusive))]
+        (is (= [:accepted :exclusive ["0:2"]] ((juxt :status :mode :selected-instance-ids) receipt)))
+        (is (= (inc revision) (:revision receipt)) "One commit replaces the additive selection")
+        (is (= ["0:2"] (:included-instance-ids (snapshot)))))
+      (is (= :additive (get-in (snapshot) [:modes :solo])) "The override leaves the default alone")
+      (is (= ["0:2" "0:1"] (:included-instance-ids (do (send (solo "0:1")) (snapshot)))))
+      (is (= :invalid-value (:code (send (assoc (solo "0:3" :exclusive) :additive? true)))))
+      (finally (show/stop! runtime)))))

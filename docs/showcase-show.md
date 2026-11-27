@@ -274,10 +274,12 @@ Observed while building the show at `5cf910f6` with Afterglow `d4e6f4c2`.
    ;; => ["Fixture does not implement batch attribute" [0.0 0.0 0.0]]
    ```
 
-2. **A typed `:gradient` parameter cannot drive an output.** `{:op :param :key k}`
-   on a `:gradient` schema fails to compile: "This parameter type is not
-   supported by the numeric expression IR". `looks/gradient` lowers the stops
-   into the expression when the effect is authored.
+2. **A typed `:gradient` parameter could not drive an output.** Fixed by #689:
+   `{:op :gradient :key k :args [position]}` (`fx/gradient`) samples the
+   parameter, and `{:op :param :key k}` on a gradient now names that form. The
+   showcase looks still bake their stops with `looks/gradient`; moving them to
+   editable gradient parameters is separate work.
+   [Gradient samples](effect-recipes.md#sample-a-gradient-parameter)
 3. **A cue cannot declare the sources to attach on launch.** Bindings belong to
    running instances, so a grid launch from Studio gets none, and the
    scheduler has no bind action.

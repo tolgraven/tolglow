@@ -4,7 +4,8 @@
             [cljs.reader :as reader]
             [clojure.string :as str]
             [reagent.core :as r]
-            [tolglow.transit :as transit]))
+            [tolglow.transit :as transit]
+            [tolglow.studio.checkbox :as checkbox]))
 
 (def defaults {:interval {:beats 1} :curve :linear})
 
@@ -134,8 +135,8 @@
   (let [[unit amount] (first (get spec key))]
     [:<>
      [:label.checkbox-label
-      [:input {:type "checkbox" :checked (some? unit)
-               :on-change #(change (toggle-duration spec key default (.. % -target -checked)))}]
+      [checkbox/input {:checked (some? unit)
+                       :on-change #(change (toggle-duration spec key default (.. % -target -checked)))}]
       toggle-label]
      (when unit
        [:div.keyframe-fields

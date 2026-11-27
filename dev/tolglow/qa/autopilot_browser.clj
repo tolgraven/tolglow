@@ -14,7 +14,7 @@
   (let [model (update-in (demo/model) [:rig :fixtures]
                          #(mapv fixture-group (range) %))]
     (app/start! {:init {:components [:show] :modules [:web-server]}
-                 :show {:model model :workspace-options nil}
+                 :show {:model model :workspace-options nil :recovery false}
                  :web-server {:host "127.0.0.1" :port 0}})))
 
 (defn- check-browser! [port]

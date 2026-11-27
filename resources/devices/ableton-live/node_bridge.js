@@ -125,7 +125,7 @@ function createBridge({ sendToMax, log = () => {}, timeoutMs = 3000, maxBody = 6
   function forward(event) {
     if (!server && event && event.kind === "status") return Promise.resolve({ "not-forwarded": "bridge-stopped" });
     if (!server) return Promise.reject(new Error("Start the bridge before forwarding Live input"));
-    if (!event || !["midi", "status", "handoff", "parameter", "parameter-error"].includes(event.kind)) return Promise.reject(new Error("Unknown Live callback kind"));
+    if (!event || !["midi", "run-clip", "parameter-device", "status", "handoff", "parameter", "parameter-error"].includes(event.kind)) return Promise.reject(new Error("Unknown Live callback kind"));
     if (!syncSessionId && event.kind === "status") return Promise.resolve({ "not-forwarded": "awaiting-sync-handshake" });
     if (!syncSessionId) return Promise.reject(new Error("A successful inspect sync handshake is required before forwarding Live input"));
     // Capture ownership now. Queued callbacks are never rebound to a newer run.
@@ -141,6 +141,16 @@ function createBridge({ sendToMax, log = () => {}, timeoutMs = 3000, maxBody = 6
       if (event.kind === "parameter" && last && last.body.kind === "parameter" &&
           last.body["sync-session-id"] === syncSessionId && last.body.sample && body.sample &&
           last.body.sample.generation === body.sample.generation && last.body.sample.id === body.sample.id) {
+        events[events.length - 1] = {body, resolve, reject};
+        last.resolve({coalesced: true});
+        return;
+      }
+      // A newer value of the same parameter-device slot replaces one still
+      // waiting (#625): Studio needs the latest value, not every intermediate.
+      if (event.kind === "parameter-device" && last && last.body.kind === "parameter-device" &&
+          last.body["sync-session-id"] === syncSessionId && last.body.event && body.event &&
+          last.body.event["track-id"] === body.event["track-id"] && last.body.event.slot === body.event.slot &&
+          last.body.event["automation-state"] === body.event["automation-state"]) {
         events[events.length - 1] = {body, resolve, reject};
         last.resolve({coalesced: true});
         return;

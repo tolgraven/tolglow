@@ -37,7 +37,7 @@
                                                         :effect-id :orbital :swatch "#b6df91"})
                   (assoc-in [:pages :main :cells [0 2]] :orbital))
         host (app/start! {:init {:components [:show] :modules [:web-server]}
-                          :show {:model model :workspace-options nil}
+                          :show {:model model :workspace-options nil :recovery false}
                           :web-server {:host "127.0.0.1" :port 0}})
         origin (str "http://127.0.0.1:" (get-in host [:application :modules :web-server :port]))
         directory (or directory "target/performance-layout")]

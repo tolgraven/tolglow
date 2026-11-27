@@ -4,7 +4,10 @@
   (:require [afterglow.render.ir :as ir]
             [tolglow.compiler.blocks :as blocks]
             [tolglow.compiler.capability :as capability]
+            [tolglow.compiler.gradient :as gradient]
             [tolglow.compiler.video :as video]
+            [tolglow.authoring.parameter-controls :as controls]
+            [tolglow.video.shader :as shader]
             [tolglow.effects.reactive :as reactive]
             [afterglow.runtime.keyframes :as keyframes]
             [afterglow.runtime.keyframes.values :as keyframe-values]
@@ -27,14 +30,6 @@
                                             [{:path [] :message (.getMessage cause)}]))}
                          cause)))))
 
-(defn- parameter-type [schema]
-  (case (:type schema)
-    (:number :integer) :number
-    :color :vec3
-    :range :vec2
-    :vector (when (<= 2 (:size schema) 4) (keyword (str "vec" (:size schema))))
-    nil))
-
 (defn- prepare-expression
   ([expression schemas path] (prepare-expression expression schemas nil path))
   ([expression schemas reactive-inputs path]
@@ -50,12 +45,21 @@
        {:op :param :key input :type (:type expression :number)})
      (= :param (:op expression))
      (let [schema (get schemas (:key expression))
-           type (when schema (parameter-type schema))]
+           type (when schema (controls/expression-type schema))]
        (when-not schema (fail! (conj path :key) "Expression references an unknown parameter"))
+       (when (= :gradient (:type schema)) (fail! path (gradient/misuse-message (:key expression))))
        (when-not type (fail! path "This parameter type is not supported by the numeric expression IR"))
        (when (and (:type expression) (not= type (:type expression)))
          (fail! (conj path :type) "Expression parameter type disagrees with its schema"))
        (assoc expression :type type))
+     (gradient/gradient-node? expression)
+     (do (when reactive-inputs
+           (fail! path "Reactive outputs read only declared signal values and constants"))
+         (gradient/lower schemas
+                         (cond-> expression
+                           (vector? (:args expression))
+                           (update :args #(mapv (fn [i arg] (prepare-expression arg schemas reactive-inputs (conj path :args i))) (range) %)))
+                         path))
      (contains? expression :args)
      (if (vector? (:args expression))
        (update expression :args #(mapv (fn [i arg] (prepare-expression arg schemas reactive-inputs (conj path :args i))) (range) %))
@@ -125,10 +129,11 @@
   (let [errors (registry/validate-definition :effects definition)]
     (when (seq errors) (throw (ex-info "Invalid effect definition" {:errors errors}))))
   (when (contains? definition :modulation)
-    (let [errors (modulation/validate-config (:modulation definition))]
+    (let [errors (modulation/validate-saved-config (:modulation definition))]
       (when (seq errors)
-        (throw (ex-info "Invalid modulation definition"
+        (throw (ex-info (str "Invalid modulation definition: " (:message (first errors)))
                         {:errors (mapv #(update % :path (partial into [:modulation])) errors)})))))
+  (gradient/validate-schemas (:params definition {}))
   (let [schemas (:params definition {})
         defaults (registry/resolve-params schemas {})
         entries (registry/output-entries (:outputs definition))
@@ -145,14 +150,19 @@
         envelope-spec (:envelope definition)
         envelope-fn (when (contains? definition :envelope)
                       (with-path [:envelope] #(envelope/compile-envelope envelope-spec)))
-        envelope-attributes (:attributes envelope-spec [:dimmer])]
+        envelope-attributes (:attributes envelope-spec [:dimmer])
+        shader-plan (when (shader/shader? definition)
+                      (when reactive-inputs (fail! [:shader] "A reactive effect cannot run a shader"))
+                      (shader/compile-shader definition #(prepare-expression %1 schemas reactive-inputs %2)))]
     (when (and envelope-fn
                (not (and (vector? envelope-attributes)
                           (every? (into registry/emitter-attributes [:dimmer :color :strobe :fog])
                                   envelope-attributes))))
       (fail! [:envelope :attributes] "Envelope targets must be intensity/color attributes"))
-    {:schemas schemas :defaults defaults :outputs outputs :block-plan block-plan :selected selected
-     :envelope-fn envelope-fn :envelope-attributes envelope-attributes})))
+    {:schemas schemas :defaults defaults :gradients (let [sampled (gradient/sampled-keys definition)]
+                  (filterv #(contains? sampled (:key %)) (gradient/gradients schemas)))
+     :outputs outputs :block-plan block-plan :selected selected
+     :envelope-fn envelope-fn :envelope-attributes envelope-attributes :shader shader-plan})))
 
 (defn- validate-frame-fixtures! [fixtures]
   (when-not (and (vector? fixtures) (every? #(and (map? %) (some? (:id %))) fixtures))
@@ -168,10 +178,12 @@
         (select (validate-frame-fixtures! fixtures))))))
 
 (defn predictable-outputs?
-  "Video outputs follow received frames, never an interpolated forecast."
+  "Video outputs follow received frames, never an interpolated forecast, and
+  a shader cue evaluates its uniforms on every frame."
   [definition]
   (let [outputs (registry/output-entries (:outputs definition))]
     (and (seq outputs) (every? (comp keyframe-values/continuous :attribute) outputs)
+         (not (shader/shader? definition))
          (not-any? (comp video/video-output? :value) outputs))))
 
 (defn- compile-reactive-effect [definition outputs rig]
@@ -207,9 +219,11 @@
   ([definition bind-pure] (compile-effect definition bind-pure nil))
   ([definition bind-pure match-plan] (compile-effect definition bind-pure match-plan nil))
   ([definition bind-pure match-plan rig]
-  (let [{:keys [schemas defaults outputs selected block-plan envelope-fn envelope-attributes]}
+  (let [{:keys [schemas defaults gradients outputs selected block-plan envelope-fn envelope-attributes]
+         shader-plan :shader}
         (compile-plan definition bind-pure)
         fixture-index (when block-plan (blocks/fixture-index rig))
+        expand-gradients (gradient/expander gradients)
         select-fixtures (fixture-selector rig selected)
         step (fn [{:keys [frame instance state] :as context}]
       (let [now (:time-ms frame)
@@ -217,6 +231,8 @@
             _ (when-not (and (registry/finite-number? now) (registry/finite-number? start))
                 (fail! [:frame :time-ms] "Effect frame/start time must be finite milliseconds"))
             params (registry/resolve-params schemas (merge defaults (:params instance)))
+            ;; Expand each sampled gradient's stops per changed value, never per fixture.
+            params (expand-gradients params)
             params (if block-plan (blocks/with-variables block-plan params frame) params)
             releasing? (= :releasing (:phase instance))
             clock (time/frame-clock frame)
@@ -263,11 +279,11 @@
                             (when (and (or (nil? targets) (some #{(:id fixture)} targets))
                                        (capability/capable? fixture attribute)
                                        ;; A video output writes only the targets its mapping sampled.
-                                       (or (nil? video) (contains? sampled-value (:id fixture))))
+                                       (or (nil? video) (contains? (:values sampled-value) (:id fixture))))
                               (let [value (try
                                             (cond
                                               frame-only? sampled-value
-                                              video (get sampled-value (:id fixture))
+                                              video (get (:values sampled-value) (:id fixture))
                                               :else
                                                 (evaluate (assoc env :fixture fixture :position (:position fixture [0 0 0])
                                                                  :surface-uv (:surface-uv fixture))))
@@ -281,14 +297,24 @@
                                                 (* (:value envelope-result) value)) value)]
                                 (when-not (normalized-output? attribute value (:hdr? frame))
                                   (fail! [:outputs i :value] "Computed fixture output must be finite and within [0,1]"))
-                                {:target-id (:id fixture) :attribute attribute :value value :blend blend}))) outputs)]
+                                (let [opacity (when video (get (:opacity sampled-value) (:id fixture)))]
+                                  ;; A surface's contact feather writes with partial opacity (#674).
+                                  (cond-> {:target-id (:id fixture) :attribute attribute :value value :blend blend}
+                                    opacity (assoc :opacity opacity)))))) outputs)]
                            (if targets
                              (matching/match-rows (get targets (:id fixture)) (get params matching/target-param) rows)
                              rows))))
                     fixtures))]
         (-> context
             (blocks/observed block-plan env frame (when (identical? rig frame-fixtures) fixture-index))
-            (assoc :state state :done? done?)
+            ;; Surface outputs record their evaluated pose (#674), and a shader
+            ;; cue's uniforms are evaluated once here and committed with the
+            ;; instance; its producer renders from them (#673).
+            (assoc :state (cond-> state
+                            (not done?) (video/observe outputs)
+                            (and shader-plan (not done?))
+                            (shader/with-uniforms (with-path [:shader] #((:evaluate shader-plan) env))))
+                   :done? done?)
             (update :assignments (fnil into []) assignments)
             (update :intents #(or % [])))))]
     (if (:reactive definition)
@@ -303,19 +329,26 @@
   own parameters, so an output still reading a parameter the revision removed
   is reported at its expression path (#703). An expression the compiler cannot
   read at all, such as `{:op :add :args 0}`, is an error at the definition root.
-  Empty when the definition is valid."
-  [kind definition]
-  (let [errors (registry/validate-definition kind definition)]
+  Empty when the definition is valid. With :publication? a new revision's
+  modulation period must also be in range; saved shows load without that
+  check, so a backup an older owner wrote stays readable."
+  ([kind definition] (definition-errors kind definition nil))
+  ([kind definition {:keys [publication?]}]
+  (let [errors (registry/validate-definition kind definition)
+        period-errors (when (and publication? (= :effects kind) (map? (:modulation definition)))
+                        (mapv #(update % :path (partial into [:modulation]))
+                              (modulation/validate-config (:modulation definition))))]
     (cond
       (seq errors) errors
       (not= :effects kind) []
+      (seq period-errors) period-errors
       :else (try (compile-effect definition) []
                  (catch clojure.lang.ExceptionInfo cause
                    (or (not-empty (:errors (ex-data cause)))
                        [{:path [] :message (ex-message cause)}]))
                  (catch Exception cause
                    [{:path [] :message (str "Effect does not compile: "
-                                            (or (ex-message cause) (.getName (class cause))))}])))))
+                                            (or (ex-message cause) (.getName (class cause))))}]))))))
 
 (defn demo-definitions
   "Portable example effects for the studio, REPL, and deterministic tests."

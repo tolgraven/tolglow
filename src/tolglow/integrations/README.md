@@ -36,6 +36,13 @@ protocol. `midi->commands [bridge event envelope]` emits shared cue/parameter
 commands. Events use `:note-on`, `:note-off`, or `:cc`, 1-based channels and
 7-bit values. Note-on velocity zero is release.
 
+`pad-note [layout [x y]]` gives a page cell's Drum Rack note: `:push-64-pads`
+follows Push's 64 Pads drum grid, `:rows` the earlier rows of eight.
+`map-page` uses the bridge's `:pad-layout`. `tolglow.integrations.live-launcher`
+projects a page's 64 pads, sets the launcher track up over a companion
+connection and turns run-record takes into a clip of pad hits (#228,
+[Live routing](../../../docs/live-routing.md#play-a-cue-page-from-one-drum-rack-track)).
+
 Apply emitted launch commands through the control reducer, then call
 `acknowledge-launch [bridge note ack envelope]` to retain the exact activated
 instance. If note-off or mode handoff preceded that ack, it emits an end for
@@ -124,7 +131,11 @@ provider output cannot execute partial tools.
 `dispatch! [name arguments metadata]` uses the same semantic registry/control
 operations as humans and returns portable result data. Metadata includes run,
 round, tool-call and idempotent command IDs. The dispatcher still validates
-definitions, parameter bounds, show epochs and auto policy. No eval/shell tool is
+definitions, parameter bounds, show epochs and auto policy. `configure_auto`
+takes an optional `at` (a zero-based `{bar, beat, phrase}` position or
+`next-bar`, `next-phrase`, `next-section`): the change is posted on the beat
+scheduler as this run's event and applies on that line
+([auto show](../../../docs/auto-show.md#on-a-musical-line)). No eval/shell tool is
 provided. Event consumers receive `:text/delta`, `:tool/start`, `:tool/result` and
 `:agent/done`/`:agent/error`; a disconnected consumer cancels generation.
 

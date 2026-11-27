@@ -5,22 +5,25 @@
   '[tolglow.visualization.cue-pads-test tolglow.visualization.parameter-views-test tolglow.visualization.musical-grid-test
     tolglow.visualization.vector-space-test
     tolglow.visualization.waveform-shapes-test
-    tolglow.effects.sampling-quality-test tolglow.effects.selection-test tolglow.compute-test tolglow.fixtures.patch-test tolglow.application-test tolglow.build-manifest-test tolglow.utils.iters-test tolglow.registry-test tolglow.effects-test tolglow.signals-test tolglow.modulation-test tolglow.parameter-sources-test
+    tolglow.effects.sampling-quality-test tolglow.effects.selection-test tolglow.compute-test tolglow.fixtures.patch-test tolglow.application-test tolglow.desktop-test tolglow.build-manifest-test tolglow.utils.iters-test tolglow.registry-test tolglow.effects-test tolglow.signals-test tolglow.modulation-test tolglow.parameter-sources-test
     tolglow.clock-test tolglow.transport-pause-test tolglow.observations-test tolglow.system-controls-test tolglow.aim-paths-test tolglow.studio.aim-paths-host-test tolglow.position-hold-test
     tolglow.studio.http-transit-test tolglow.transit-test tolglow.studio.state-stream-test tolglow.studio.debug-stream-test
     tolglow.compiler-test tolglow.block-bindings-test tolglow.material-library-test tolglow.material-inputs-test
     tolglow.legacy-frame-oracle-test tolglow.worker-publication-oracle-test
     tolglow.effects.material-design-test tolglow.effects.variable-edit-test tolglow.effects.group-channels-test
     tolglow.effects.group-channels-host-test tolglow.compiler.batch-test tolglow.compiler.capability-test
+    tolglow.compiler.gradient-test
     tolglow.predictive-keyframes-test
     tolglow.perf.effect-samples-test
-    tolglow.spatial.actions-test tolglow.spatial.sampling-test tolglow.spatial-cues-test tolglow.spatial-host-test tolglow.authoring.output-patch-test
+    tolglow.spatial.actions-test tolglow.spatial.sampling-test tolglow.spatial-cues-test tolglow.spatial-host-test tolglow.spatial-reload-test tolglow.authoring.output-patch-test
     tolglow.authoring.cue-variations-test tolglow.authoring.variation-control-test
     tolglow.composition.tween-test tolglow.composition.envelope-test
     tolglow.composition.sequence-test tolglow.composition.macro-test
     tolglow.composition.sequence-edit-test
     tolglow.composition.response-test tolglow.native-composition-test
-    tolglow.automation.random-test tolglow.automation.policy-test
+    tolglow.automation.random-test tolglow.automation.policy-test tolglow.automation.launch-params-test
+    tolglow.automation.sections-test tolglow.automation.r1o-scenario-test tolglow.automation.configure-at-test
+    tolglow.rehearsal.review-test tolglow.rehearsal-test
     tolglow.integrations.fixtures-test tolglow.integrations.ableton-test
     tolglow.integrations.audio-test tolglow.studio.audio-return-test tolglow.integrations.providers-test
     tolglow.integrations.agent-test
@@ -44,13 +47,15 @@
     tolglow.integrations.live-sync-test tolglow.integrations.phrase-capture-test tolglow.integrations.phrase-clip-test
     tolglow.integrations.live-connection-test tolglow.integrations.live-capture-roundtrip-test
     tolglow.integrations.live-companion-contract-test tolglow.integrations.phrase-capture-host-test
+    tolglow.integrations.live-runs-test
+    tolglow.integrations.live-launcher-test
     tolglow.studio.link-pause-test tolglow.studio.sync-host-test tolglow.studio.modulation-host-test
     tolglow.studio.display-test tolglow.integrations.patch-test tolglow.studio.routing-host-test tolglow.studio.stem-routing-host-test
     tolglow.repl-test tolglow.repl.sessions-test tolglow.studio.repl-host-test
     tolglow.development.workspace-test tolglow.development-test tolglow.studio.restart-host-test tolglow.cue-timing-host-test
     tolglow.development.terminal-test tolglow.sensors-test tolglow.sensors.osc-test tolglow.sensors.audience-test
     tolglow.studio.sensor-host-test tolglow.output.scheduler-test tolglow.perf.output-deadlines-test
-    tolglow.waveforms-test tolglow.development.agents-test tolglow.studio.application-agent-host-test
+    tolglow.waveforms-test tolglow.parameter-sample-test tolglow.development.agents-test tolglow.studio.application-agent-host-test
     tolglow.render.workers-test tolglow.request-archive-test
     tolglow.knobs-test tolglow.knob-sweep-test tolglow.controllers.push-knobs-test tolglow.knob-presets-test
     tolglow.knob-candidates.generate-test tolglow.knob-candidates-test
@@ -63,7 +68,8 @@
     tolglow.preview.airplay-test
     tolglow.personalities-test tolglow.personalities.icon-test tolglow.personalities-host-test
     tolglow.showcase-test tolglow.venues.gig-2023-test
-    tolglow.video-strips-test tolglow.studio.video-strips-host-test])
+    tolglow.video-strips-test tolglow.studio.video-strips-host-test
+    tolglow.video-surfaces-test tolglow.studio.video-surfaces-host-test tolglow.video-shader-test])
 
 (def suites
   {"pure" pure-tests

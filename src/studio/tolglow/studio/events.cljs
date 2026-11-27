@@ -11,6 +11,8 @@
             [tolglow.studio.reactive-editor :as reactive-editor]
             [tolglow.studio.state-socket]
             [tolglow.studio.spatial-drafts :as spatial-drafts]
+            [tolglow.studio.show-window :as show-window]
+            [tolglow.studio.view-tabs :as view-tabs]
             [tolglow.transit :as transit]
             [tolglow.studio.parameter-widgets :as widgets]))
 
@@ -63,13 +65,14 @@
     "/api/sensors/stage/start" "/api/sensors/stage/stop"
     "/api/sensors/audience-zone" "/api/sensors/pair" "/api/sensors/configure" "/api/sensors/arm" "/api/sensors/calibrate" "/api/sensors/osc/start" "/api/sensors/osc/stop"
     "/api/repl/eval" "/api/repl/interrupt" "/api/repl/scratch" "/api/repl/session"
-    "/api/patch/save" "/api/patch/enabled"
+    "/api/patch/save" "/api/patch/enabled" "/api/video/shader/save"
     "/api/modulation/start" "/api/modulation/stop" "/api/modulation/hold" "/api/modulation/resume" "/api/modulation/cue"})
 
 (defn guard-request [db request]
   (if (and (:body request) (guarded-paths (:path request)))
     (update request :body #(merge {:expected-epoch (get-in db [:show :epoch])}
-                                  (when-let [runtime (get-in db [:show :runtime-id])] {:runtime-id runtime}) %))
+                                  (when-let [runtime (or (get-in db [:show :runtime-id]) (show-window/runtime-id db))]
+                                    {:runtime-id runtime}) %))
     request))
 (rf/reg-global-interceptor
   (rf/->interceptor
@@ -170,7 +173,9 @@
 
 (defn command [db op fields & [on-success epoch beacon? runtime-id]]
   [:studio/send-command {:op op :fields fields :epoch (or epoch (get-in db [:show :epoch]))
-                        :session (:session db) :runtime-id (or runtime-id (get-in db [:show :runtime-id]))
+                        :session (:session db)
+                        ;; A window bound to its show names that runtime even before the first frame (#669).
+                        :runtime-id (or runtime-id (get-in db [:show :runtime-id]) (show-window/runtime-id db))
                         :on-success on-success :beacon? beacon?}])
 
 (defn notice [message] [:dispatch [:studio/toast message]])
@@ -313,7 +318,10 @@
       db)))
 
 (rf/reg-event-fx :studio/initialize
-  (fn [_ [_ session]] {:db (initial-db session) :studio/open-stream session}))
+  [(rf/inject-cofx :show-window/host) (rf/inject-cofx :view-tabs/saved)]
+  (fn [{host :show-window/host saved :view-tabs/saved} [_ session]]
+    (let [db (-> (initial-db session) (show-window/install host) (view-tabs/install saved))]
+      {:db db :studio/open-stream session :fx [[:view-tabs/listen true] (view-tabs/store-fx db)]})))
 
 (defn- settle-connection-drafts [db old-presentation old-typed]
   (let [show (:show db) owner ((juxt :runtime-id :epoch) show)
@@ -438,7 +446,12 @@
             received (if (and (:awaiting-full? db) (not= :full (:kind envelope)))
                        {:status :resync}
                        (projection/receive current envelope))]
-        (case (:status received)
+        (case (if (and (= :accepted (:status received))
+                       (show-window/refuses? db (get-in received [:state :view :runtime-id])))
+                :foreign (:status received))
+          ;; Another show answered on this window's address: never install or acknowledge it.
+          :foreign {:db (assoc db :awaiting-full? true
+                               :connection {:connected? false :error (show-window/refusal-message db)})}
           :accepted (-> (install-show db (:state received))
                         (update :db dissoc :awaiting-full?)
                         (assoc :studio/stream-reply [id {:op :ack :token (:token envelope)}]))
@@ -481,7 +494,8 @@
 (rf/reg-event-db :studio/settings-unavailable (fn [db _] (assoc db :settings-supported? false)))
 (defn apply-ui-preferences [db settings]
   (let [prefs (:ui settings) raw-view (:view prefs)
-        view (when (or (string? raw-view) (keyword? raw-view)) (keyword raw-view))]
+        ;; This device's restored tabs choose the opening view before the show's preference.
+        view (or (view-tabs/restored-view db) (when (or (string? raw-view) (keyword? raw-view)) (keyword raw-view)))]
     (cond-> (assoc db :settings-loaded? true :settings-supported? true)
       (and (contains? #{nil :home} (:route-name db)) (pages/views view)) (assoc-in [:ui :view] view)
       (string? (:page-id prefs)) (assoc-in [:ui :page-id] (:page-id prefs))
@@ -510,12 +524,15 @@
         (:settings-loaded? db) (assoc :studio/navigate [:replace (get-in db [:ui :view])]))
 
       (and (pages/views page) (not= page (:route-name db)))
-      {:db (-> db (assoc :route-name page) (assoc-in [:ui :view] page) (assoc-in [:ui :rig-drag] nil))
-       :fx (cond-> [[:dispatch [:studio/release-pointers]] [:studio/scroll-top true]]
-             ;; Initial deep links and the home preference restore are read-only.
-             (pages/views (:route-name db)) (conj [:dispatch [:studio/persist-ui]])
-             (and (= page :assistant) (not (get-in db [:chat :provider]))) (conj [:dispatch [:chat/load]]))
-       :dispatch-later (when (= page :perform) [{:ms 30 :dispatch [:studio/preview-resize]}])})))
+      (let [updated (-> db (assoc :route-name page) (assoc-in [:ui :view] page) (assoc-in [:ui :rig-drag] nil)
+                        (view-tabs/follow-route page (not (pages/views (:route-name db)))))]
+        {:db updated
+         :fx (cond-> [[:dispatch [:studio/release-pointers]] [:studio/scroll-top true]]
+               (:view-tabs updated) (conj (view-tabs/store-fx updated))
+               ;; Initial deep links and the home preference restore are read-only.
+               (pages/views (:route-name db)) (conj [:dispatch [:studio/persist-ui]])
+               (and (= page :assistant) (not (get-in db [:chat :provider]))) (conj [:dispatch [:chat/load]]))
+         :dispatch-later (when (= page :perform) [{:ms 30 :dispatch [:studio/preview-resize]}])}))))
 
 (rf/reg-event-fx :studio/set-page
   (fn [{:keys [db]} [_ id typed-id]]
@@ -1232,8 +1249,13 @@
       (and (= engine :neovim) (not (and (.-crossOriginIsolated js/window) (exists? js/SharedArrayBuffer))))
       {:dispatch [:studio/editor-error "Neovim requires localhost or HTTPS with COOP/COEP. The accessible editor remains available."]}
       :else {:db (assoc-in db [:ui :definition :engine] engine)})))
-(rf/reg-event-db :studio/editor-to-text
-  (fn [db [_ source]] (update-in db [:ui :definition] merge {:source source :engine :textarea})))
+;; Neovim may hold an edit it has not delivered yet; reading it is that delivery.
+(rf/reg-event-fx :studio/editor-to-text
+  (fn [{:keys [db]} [_ source]]
+    (let [db (assoc-in db [:ui :definition :engine] :textarea)]
+      (if (= source (get-in db [:ui :definition :source]))
+        {:db db}
+        (edit-definition-source db source)))))
 (rf/reg-event-db :studio/editor-status
   (fn [db [_ status]] (assoc-in db [:ui :definition :editor-status] status)))
 (rf/reg-event-db :studio/editor-error
@@ -1303,18 +1325,50 @@
   (fn [{:keys [db]} _]
     (try
       (let [source (builder-source db)]
-        {:db (update-in db [:ui :definition] merge {:source source :kind "effects" :mode :source :status "Generated EDN"})
-         :studio/nvim-source source})
+        ;; Generated text takes its status from the published baseline, like an edit,
+        ;; but Generate only produces text: it never queues Publish valid edits.
+        (-> (edit-definition-source db source)
+            (dissoc :dispatch-later)
+            (update :db update-in [:ui :definition] merge {:kind "effects" :mode :source
+                                                           :result "Generated EDN from the builder."})
+            (assoc :studio/nvim-source source)))
       (catch :default error {:dispatch [:studio/editor-error (error-message error)]}))))
 (defn- publication-current? [db token]
   (and (some? token) (= token (get-in db [:ui :definition :publication]))
        (= (:epoch token) (get-in db [:show :epoch])) (= (:runtime-id token) (get-in db [:show :runtime-id]))))
 
+(defn- publication-failed
+  "The show refused the text that was sent, or it could not be sent. An edit made
+  while the request was in flight was never sent: like a reply to a publication
+  (:studio/published), the failure leaves it unpublished and, with auto-publish
+  on, queues it after the usual quiet time, because its own debounce fired during
+  the request and was dropped. `sent` is nil when nothing was sent."
+  [db token sent error]
+  (when (publication-current? db token)
+    (let [definition (get-in db [:ui :definition])
+          newer? (and (some? sent) (not= sent (:source definition)))
+          ;; Edited back to the text the show runs: nothing is unpublished.
+          clean? (and newer? (published-source? definition (:source definition)))]
+      (cond-> {:db (update-in db [:ui :definition] merge
+                              (cond
+                                clean? {:publishing? false :error? false
+                                        :status (get-in definition [:baseline :status])
+                                        :result (str "The text sent earlier was not published: " (error-message error)
+                                                     " The editor holds the text the show runs.")}
+                                newer? {:publishing? false :error? true :status "Unpublished changes"
+                                        :result (str "The text sent earlier was not published: " (error-message error)
+                                                     " Your newer edits are not published yet.")}
+                                :else {:publishing? false :error? true :status "Publication failed"
+                                       :result (error-message error)}))}
+        (and newer? (not clean?) (:auto? definition))
+        (assoc :dispatch-later [{:ms auto-publish-delay-ms
+                                 :dispatch [:studio/auto-publish (:edit-revision definition)]}])))))
+
 (rf/reg-event-fx :studio/publication-error
-  (fn [{:keys [db]} [_ token error]]
-    (when (publication-current? db token)
-      {:db (update-in db [:ui :definition] merge {:publishing? false :error? true :status "Publication failed"
-                                                  :result (error-message error)})})))
+  (fn [{:keys [db]} [_ token error]] (publication-failed db token nil error)))
+
+(rf/reg-event-fx :studio/publication-refused
+  (fn [{:keys [db]} [_ token sent error]] (publication-failed db token sent error)))
 
 (rf/reg-event-fx :studio/definition-publish
   (fn [{:keys [db]} [_ automatic?]]
@@ -1350,7 +1404,7 @@
                        :body (cond-> {:kind kind :source source :expected-epoch (:epoch token) :runtime-id (:runtime-id token)}
                                expected (assoc :expected-version expected))
                        :on-success [:studio/published token automatic? built kind expected source]
-                       :on-failure [:studio/publication-error token]}}))))
+                       :on-failure [:studio/publication-refused token source]}}))))
 
 (rf/reg-event-fx :studio/published
   ;; The show now runs the source that was sent. An edit that arrived while the
@@ -1393,23 +1447,98 @@
 
 (defn auto-activity [db]
   (let [form (get-in db [:ui :auto-form])
-        saved (get-in db [:show :auto :config :activity-target])]
+        ;; A signal binding set from the REPL is kept by the plan, not this slider.
+        saved (let [target (get-in db [:show :auto :config :activity-target])] (when (number? target) target))]
     {:enabled? (get form :target-activity? (some? saved))
      :target (or (:activity-target form) saved 0.5)}))
+
+(defn auto-plan
+  "The section plan and filters saved on the show's auto config, if any."
+  [db]
+  (let [config (get-in db [:show :auto :config])]
+    (when (or (seq (:sections config)) (:categories config) (:max-lit config)) config)))
+
+(defn auto-varies?
+  "Vary marked parameters: the form's choice, else whether the saved config varies."
+  [db]
+  (let [saved (get-in db [:show :auto :config :randomize])]
+    (get-in db [:ui :auto-form :randomize?]
+            (boolean (and (map? saved) (not (#{:none "none"} (:params saved))))))))
+
+(defn auto-keeps-plan? [db]
+  (and (some? (auto-plan db)) (get-in db [:ui :auto-form :keep-plan?] true)))
+
+(def auto-lines
+  "When Start and Stop take effect: now, or on the next bar, phrase or auto
+  section line, as the REPL's and agent's :at (#767)."
+  [["now" "Now"] ["next-bar" "Next bar"] ["next-phrase" "Next phrase"] ["next-section" "Next section line"]])
+
+(defn auto-at
+  "The :at Start and Stop send, or nil to apply now. A section line chosen
+  while no section plays is still sent, so the show refuses it with its
+  reason, as it does for the REPL and agents, rather than applying now."
+  [db]
+  (let [line (get-in db [:ui :auto-form :applies] "now")]
+    (when-not (= "now" line) line)))
+
+(defn- auto-request [db body]
+  (let [at (auto-at db)]
+    (cond-> body
+      at (assoc :at at :source {:adapter "web" :session-id (:session db)}))))
+
+(defn auto-pending-text
+  "One line per auto change waiting on its line, with its zero-based position."
+  [db]
+  (let [per-bar (get-in db [:show :transport :meter :beats-per-bar] 4)]
+    (mapv (fn [{:keys [label due-beat]}]
+            (let [bar (js/Math.floor (/ (+ due-beat 1e-6) per-bar))
+                  beat (- due-beat (* bar per-bar))]
+              (str label " at bar " bar (when (> (js/Math.abs beat) 1e-6) (str " beat " (.toFixed beat 2))))))
+          (get-in db [:show :auto :pending]))))
+
+(def ^:private auto-reason-text
+  {:eligible "chose cues" :added-emission "added light for a moving cue"
+   :intentional-darkness "moving in darkness" :unsatisfied-emission "nothing in scope lights the moving heads"
+   :empty-scope "no eligible cues" :lit-limit "the room already has its light"
+   :cut "cut to the new section" :release "released the last section"
+   :show-restarted "the show restarted" :planner-failed "auto mode stopped"})
+
+(defn auto-summary
+  "One line describing the planner's current section and last decision."
+  [db]
+  (let [{:keys [section reasons]} (get-in db [:show :auto])
+        decision (last reasons)
+        handed (some #(when (= :performer-took-over (keyword (:reason %))) (count (:instance-ids %))) reasons)
+        refused (some #(when (= :launch-refused (keyword (:reason %))) (count (:refused %))) reasons)
+        text (get auto-reason-text (keyword (:reason decision)))]
+    (str/join " · " (cond-> []
+                      section (conj (str "Section " (wire-id section)))
+                      text (conj (str/capitalize text))
+                      (:message decision) (conj (:message decision))
+                      handed (conj (str "handed " handed " to a performer"))
+                      refused (conj (str "skipped " refused " refused cue" (when (> refused 1) "s")))))))
 
 (rf/reg-event-fx :studio/auto-start
   (fn [{:keys [db]} _]
     (let [{:keys [interval-value interval-unit count scope mode duration-value duration-unit seed]} (get-in db [:ui :auto-form])
+          randomize? (auto-varies? db)
           {:keys [enabled? target]} (auto-activity db)]
       {:studio/http {:path "/api/auto"
-                     :body (cond-> {:enabled? true :interval (musical-duration interval-value interval-unit) :count count
-                                    :scope (if (= scope "all") "all" {:page-id (get-in db [:ui :page-id])})
-                                    :launch {:mode mode :duration (musical-duration duration-value duration-unit)}
-                                    :seed (or seed (get-in db [:show :auto :config :seed]) 42)}
-                             enabled? (assoc :activity-target target))
-                     :on-success [:studio/success "Auto mode started. You can keep playing alongside it."]}})))
+                     :body (auto-request db
+                             (cond-> {:enabled? true :interval (musical-duration interval-value interval-unit) :count count
+                                      :scope (if (= scope "all") "all" {:page-id (get-in db [:ui :page-id])})
+                                      :launch {:mode mode :duration (musical-duration duration-value duration-unit)}
+                                      :seed (or seed (get-in db [:show :auto :config :seed]) 42)}
+                               enabled? (assoc :activity-target target)
+                               randomize? (assoc :randomize {:params "marked"})
+                               (auto-keeps-plan? db) (assoc :keep-plan? true)))
+                     :on-success [:studio/success (if (auto-at db)
+                                                    "Auto mode starts on the line. You can keep playing alongside it."
+                                                    "Auto mode started. You can keep playing alongside it.")]}})))
 (rf/reg-event-fx :studio/auto-stop
-  (fn [_ _] {:studio/http {:path "/api/auto" :body {:enabled? false} :on-success [:studio/success "Auto mode stopped."]}}))
+  (fn [{:keys [db]} _]
+    {:studio/http {:path "/api/auto" :body (auto-request db (cond-> {:enabled? false} (auto-keeps-plan? db) (assoc :keep-plan? true)))
+                   :on-success [:studio/success (if (auto-at db) "Auto mode stops on the line." "Auto mode stopped.")]}}))
 
 (defn response-definition [db]
   (let [{:keys [id params scope attack-value decay-value sustain release-value unit curve]

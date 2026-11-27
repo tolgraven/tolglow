@@ -2,14 +2,14 @@
   "Pure presentation shared by the web inspector and device displays."
   (:require [clojure.string :as str]
             [reagent.core :as r]
+            [tolglow.authoring.parameter-controls :as controls]
             [tolglow.studio.numeric-display :as numeric]
             [tolglow.visualization.musical-grid :as musical-grid]
             [tolglow.visualization.parameter-views :as views]
             [tolglow.visualization.waveform-shapes :as shapes]
             [thi.ng.color.core :as color]))
 
-(defn label [value]
-  (str/replace (cond (keyword? value) (name value) (nil? value) "—" :else (str value)) #"[-_]" " "))
+(def label controls/label)
 
 (def finite? numeric/finite?)
 
@@ -98,12 +98,9 @@
 
 (def parameter-kind views/parameter-kind)
 
-(defn unit-label [schema]
-  (when-let [unit (or (:unit schema) (:units schema))] (label unit)))
+(def unit-label controls/unit-label)
 
-(defn numeric-range [schema]
-  (let [[low high] (:bounds schema)]
-    (when (and (finite? low) (finite? high) (< low high)) [low high])))
+(def numeric-range controls/bounds)
 
 (defn normalized-value [schema amount]
   (when-let [[low high] (numeric-range schema)]

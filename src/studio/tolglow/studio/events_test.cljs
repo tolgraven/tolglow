@@ -86,6 +86,90 @@
            (get-in accepted [:db :show-checkpoints :feedback])))
     (is (= [:checkpoints/refresh] (:dispatch accepted)))))
 
+(def show-folder {:id "5f0c3c1e-0000-4000-8000-000000000001" :file ".tolglow-folder-id"
+                  :path "/Users/op/Shows/Club" :new? true})
+
+(defn- legacy-checkpoint-db []
+  (let [db (:db (full-frame base (merge (:show base) checkpoint-owner)))
+        loading (transition (:db (transition db [:checkpoints/open])) [:checkpoints/refresh])
+        loaded (conj (get-in loading [:studio/http :on-success])
+                     (assoc checkpoint-owner :enabled? true :folder show-folder
+                            :checkpoints {:legacy {:modified-at-ms 1600000000000}
+                                          :legacy-prior {:modified-at-ms 1590000000000}}))]
+    (:db (transition (:db loading) loaded))))
+
+(deftest the-checkpoint-from-before-the-update-is-a-separate-explicit-choice
+  (let [db (legacy-checkpoint-db)
+        markup (renderToStaticMarkup (r/as-element [checkpoints/panel (checkpoints/view-props db)]))
+        restore (transition (:db (transition db [:checkpoints/confirm :restore :legacy])) [:checkpoints/submit])
+        confirming (:db (transition db [:checkpoints/confirm :discard :legacy]))
+        confirm-markup (renderToStaticMarkup (r/as-element [checkpoints/panel (checkpoints/view-props confirming)]))
+        dismissal (transition confirming [:checkpoints/submit])
+        accepted (transition (:db dismissal) (conj (get-in dismissal [:studio/http :on-success]) {:status :accepted}))]
+    (is (every? #(str/includes? markup %)
+                ["Checkpoint from before the update" "data-checkpoint=\"legacy\"" "Restore Checkpoint from before the update"
+                 "Dismiss Checkpoint from before the update" "applies it to this folder only"
+                 "Previous session from before the update" "data-checkpoint=\"legacy-prior\""
+                 "Show folder" ".tolglow-folder-id" "Copies are detected and safe"]))
+    (is (= "/api/show/checkpoints/restore" (get-in restore [:studio/http :path])))
+    (is (= (assoc checkpoint-owner :kind :legacy) (get-in restore [:studio/http :body])))
+    (is (str/includes? confirm-markup "No show folder will offer them again"))
+    (is (str/includes? confirm-markup "Dismiss checkpoints"))
+    (is (= "/api/show/checkpoints/dismiss-legacy" (get-in dismissal [:studio/http :path])))
+    (is (= checkpoint-owner (get-in dismissal [:studio/http :body])))
+    (is (= {:message "Checkpoints from before the update dismissed." :error? false}
+           (get-in accepted [:db :show-checkpoints :feedback])))
+    (testing "a show that does not run from a Mac folder has no such row or folder section"
+      (let [{:keys [db]} (checkpoint-db)
+            markup (renderToStaticMarkup (r/as-element [checkpoints/panel (checkpoints/view-props db)]))]
+        (is (not (str/includes? markup "before the update")))
+        (is (not (str/includes? markup "Show folder")))
+        (is (nil? (get-in (transition db [:checkpoints/confirm :discard :legacy]) [:db :show-checkpoints :confirmation])))))))
+
+(deftest a-restore-that-could-not-be-recorded-says-so
+  (let [db (legacy-checkpoint-db)
+        posted (transition (:db (transition db [:checkpoints/confirm :restore :legacy-prior])) [:checkpoints/submit])
+        restored-view (:db (full-frame (:db posted) (merge (:show base) checkpoint-owner {:epoch 8 :revision 4})))
+        ack (conj (get-in posted [:studio/http :on-success])
+                  {:status :accepted :epoch 8 :legacy-resolution-error "Read-only file system"})
+        {:keys [message error?]} (get-in (transition restored-view ack) [:db :show-checkpoints :feedback])]
+    (is (= (assoc checkpoint-owner :kind :legacy-prior) (get-in posted [:studio/http :body])))
+    (is (true? error?))
+    (is (str/includes? message "Restored Previous session from before the update, but Tolglow could not record it"))
+    (is (str/includes? message "Read-only file system"))))
+
+(deftest a-new-show-folder-explains-its-identity-file-once
+  (let [render #(renderToStaticMarkup (r/as-element [checkpoints/folder-notice (checkpoints/notice-props %)]))
+        with-folder #(assoc-in base [:show :show-folder] %)
+        fresh (with-folder show-folder)
+        closing (transition fresh [:show-folder/close-notice (checkpoints/notice-key show-folder :identity)])
+        closed (:db closing)]
+    (is (= [:show-folder/remember #{(checkpoints/notice-key show-folder :identity)}] (first (:fx closing)))
+        "closing a note is remembered across reloads")
+    (is (str/includes? (render fresh) "This show folder now has its own recovery"))
+    (is (str/includes? (render fresh) ".tolglow-folder-id"))
+    (is (str/includes? (render fresh) "Read this again under Restore show"))
+    (is (= "" (render closed)) "closing it hides it for this folder")
+    (is (= "" (render (with-folder (assoc show-folder :new? false)))) "a folder opened before says nothing")
+    (is (= "" (render base)) "an ordinary show has no folder")
+    (is (str/includes? (render (with-folder (assoc show-folder :copy-of "/Users/op/Shows/Original")))
+                       "This folder is a copy of <code>/Users/op/Shows/Original</code>"))
+    (testing "a waiting checkpoint from before the update is offered, never applied"
+      (let [waiting (with-folder (assoc show-folder :new? false
+                                        :legacy-checkpoints {:legacy {:modified-at-ms 1600000000000}
+                                                             :legacy-prior {:modified-at-ms 1590000000000}}))
+            markup (render waiting)
+            later (:db (transition waiting [:show-folder/close-notice (checkpoints/notice-key show-folder :legacy)]))]
+        (is (str/includes? markup "A checkpoint from before the update is waiting"))
+        (is (str/includes? markup "Nothing has been applied"))
+        (is (str/includes? markup "Review checkpoint"))
+        (is (every? #(str/includes? markup %) ["Checkpoint from before the update, saved" "2020-09-13T12:26:40.000Z"
+                                               "Previous session from before the update, saved"]))
+        (is (= "" (render later)))
+        (is (true? (get-in (transition waiting [:checkpoints/open]) [:db :show-checkpoints :open?])))
+        (is (= [:checkpoints/open] (:dispatch (transition waiting [:view-tabs/host "checkpoints"])))
+            "the Mac app's File menu opens the same dialog")))))
+
 (deftest restore-acknowledgement-follows-the-owner-across-the-matching-new-epoch
   (let [{:keys [db]} (checkpoint-db)
         db (update db :ui assoc :rig-dirty? true :rig-draft {:name "Old unsaved rig"})
@@ -722,6 +806,44 @@
     (is (= 0 (:activity-target (start edited))))
     (is (not (contains? (start (assoc-in edited [:ui :auto-form :target-activity?] false)) :activity-target)))))
 
+(deftest auto-start-varies-parameters-and-keeps-a-repl-plan
+  (let [start #(get-in (transition % [:studio/auto-start]) [:studio/http :body])
+        planned (assoc base :show (assoc (:show base) :auto
+                                         {:enabled? true :section :quiet
+                                          :config {:sections [{:id :red :length {:bars 2}} {:id :quiet :length {:bars 2}}]
+                                                   :activity-target {:waveform :sine :period {:bars 4}}}
+                                          :reasons [{:reason :performer-took-over :instance-ids ["1:4"]}
+                                                    {:reason :intentional-darkness :section :quiet :lit 1}]}))]
+    (is (not (contains? (start base) :randomize)))
+    (is (not (contains? (start base) :keep-plan?)) "nothing to keep without a plan")
+    (is (= {:params "marked"} (:randomize (start (assoc-in base [:ui :auto-form :randomize?] true)))))
+    (is (true? (:keep-plan? (start planned))))
+    (is (not (contains? (start planned) :activity-target)) "a signal target stays with the plan, not the slider")
+    (is (not (contains? (start (assoc-in planned [:ui :auto-form :keep-plan?] false)) :keep-plan?)))
+    (is (true? (get-in (transition planned [:studio/auto-stop]) [:studio/http :body :keep-plan?])) "stopping keeps the plan for the next start")
+    (is (= {:enabled? false :expected-epoch 7} (get-in (transition base [:studio/auto-stop]) [:studio/http :body])))
+    (is (= "Section quiet · Moving in darkness · handed 1 to a performer" (events/auto-summary planned)))
+    (testing "Start and Stop can wait for the next bar, phrase or section line (#767)"
+      (let [on-bar (assoc-in base [:ui :auto-form :applies] "next-bar")
+            on-section (assoc-in planned [:ui :auto-form :applies] "next-section")]
+        (is (not (contains? (start base) :at)) "now by default")
+        (is (= {:at "next-bar" :source {:adapter "web" :session-id (:session base)}}
+               (select-keys (start on-bar) [:at :source])))
+        (is (= "next-bar" (get-in (transition on-bar [:studio/auto-stop]) [:studio/http :body :at])))
+        (is (= "next-section" (:at (start on-section))) "sent without a playing section, for the show to refuse")
+        (is (= "next-section" (:at (start (assoc-in on-section [:show :auto :section-end-beat] 24.0)))))
+        (is (= ["Auto configure at bar 6" "Stop auto at bar 8 beat 2.00"]
+               (events/auto-pending-text (assoc-in base [:show :auto :pending]
+                                                   [{:event-id "a" :label "Auto configure" :due-beat 24.0}
+                                                    {:event-id "b" :label "Stop auto" :due-beat 34.0}]))))))
+    (is (= "" (events/auto-summary base)))
+    (testing "Vary follows a saved randomizing config until the form chooses"
+      (let [varied (assoc-in planned [:show :auto :config :randomize] {:params :marked :palette [{:color [1 0 0]}]})
+            kept (assoc-in planned [:show :auto :config :randomize] {:params :none :palette [{:color [1 0 0]}]})]
+        (is (= {:params "marked"} (:randomize (start varied))))
+        (is (not (contains? (start kept) :randomize)))
+        (is (not (contains? (start (assoc-in varied [:ui :auto-form :randomize?] false)) :randomize)))))))
+
 (deftest musical-authoring-remains-data
   (let [definition (events/builder-definition (get-in base [:ui :builder]) 3)
         added (transition base [:studio/composition-add "ember"])
@@ -920,6 +1042,84 @@
     (testing "a publication that matches the current text queues nothing"
       (let [current (transition (:db publish) (conj (get-in publish [:studio/http :on-success]) {:id "ember" :version 3}))]
         (is (not-any? #(#{:dispatch :dispatch-later} (first %)) (:fx current)))))))
+
+(deftest a-failed-publication-keeps-an-edit-made-during-the-request
+  (let [source "{:id :ember :version 2}"
+        typed (str source " ;x")
+        newer (str typed "y")
+        request (transition base [:studio/definition-load "effects" "ember"])
+        loaded (-> (:db (transition (:db request) (conj (get-in request [:studio/http :on-success]) {:source source})))
+                   (assoc-in [:ui :definition :auto?] true))
+        edited (:db (transition loaded [:studio/definition-source typed]))
+        opened (transition edited (:dispatch (transition edited [:studio/auto-publish 1])))
+        publish (transition (:db opened) (:dispatch opened))
+        failure (get-in publish [:studio/http :on-failure])
+        in-flight (:db (transition (:db publish) [:studio/definition-source newer]))
+        ;; The newer edit's own debounce fires during the request and is dropped.
+        dropped (transition in-flight (:dispatch (transition in-flight [:studio/auto-publish 2])))
+        refused (transition in-flight (conj failure "EOF while reading"))
+        status #(select-keys (get-in % [:ui :definition]) [:status :error? :publishing?])]
+    (is (= [:studio/publication-refused (get-in publish [:db :ui :definition :publication]) typed] failure))
+    (is (empty? dropped))
+    (testing "the newer text was never sent, so it stays unpublished and goes out after the quiet time"
+      (is (= {:status "Unpublished changes" :error? true :publishing? false} (status (:db refused))))
+      (is (re-find #"EOF while reading.*newer edits are not published" (get-in refused [:db :ui :definition :result])))
+      (is (= [{:ms 850 :dispatch [:studio/auto-publish 2]}] (:dispatch-later refused)))
+      (is (= [:studio/definition-publish true] (:dispatch (transition (:db refused) [:studio/auto-publish 2])))))
+    (testing "an edit typed before the follow-up fires supersedes it"
+      (is (empty? (transition (:db (transition (:db refused) [:studio/definition-source (str newer "z")]))
+                              [:studio/auto-publish 2]))))
+    (testing "without auto-publish the newer text waits for Publish"
+      (let [manual (transition (assoc-in in-flight [:ui :definition :auto?] false) (conj failure "EOF while reading"))]
+        (is (= "Unpublished changes" (get-in manual [:db :ui :definition :status])))
+        (is (nil? (:dispatch-later manual)))))
+    (testing "a refusal of the text Studio still holds is a failure, with nothing queued"
+      (let [same (transition (:db publish) (conj failure "EOF while reading"))]
+        (is (= {:status "Publication failed" :error? true :publishing? false} (status (:db same))))
+        (is (= "EOF while reading" (get-in same [:db :ui :definition :result])))
+        (is (nil? (:dispatch-later same)))))
+    (testing "an edit back to the published baseline during the request reads as that baseline, with no follow-up"
+      (let [back (:db (transition (:db publish) [:studio/definition-source source]))
+            reply (transition back (conj failure "EOF while reading"))]
+        (is (= {:status "ember · v2" :error? false :publishing? false} (status (:db reply))))
+        (is (re-find #"EOF while reading.*holds the text the show runs" (get-in reply [:db :ui :definition :result])))
+        (is (nil? (:dispatch-later reply)))))
+    (testing "a stale failure changes nothing"
+      (is (empty? (transition (assoc-in in-flight [:show :epoch] 999) (conj failure "late")))))))
+
+(deftest every-source-change-derives-the-status-from-the-baseline
+  (let [source "{:id :ember :version 2}"
+        request (transition base [:studio/definition-load "effects" "ember"])
+        loaded (:db (transition (:db request) (conj (get-in request [:studio/http :on-success]) {:source source})))
+        neovim (assoc-in loaded [:ui :definition :engine] :neovim)
+        status #(select-keys (get-in % [:ui :definition]) [:status :engine])]
+    (testing "switching to the text editor installs an undelivered Neovim edit as an edit"
+      (let [switched (transition neovim [:studio/editor-to-text (str source " ;x")])]
+        (is (= {:status "Unpublished changes" :engine :textarea} (status (:db switched))))
+        (is (= (str source " ;x") (get-in switched [:db :ui :definition :source])))))
+    (testing "switching back with the text Studio holds keeps its status"
+      (is (= {:status "ember · v2" :engine :textarea} (status (:db (transition neovim [:studio/editor-to-text source])))))
+      (let [edited (:db (transition neovim [:studio/definition-source (str source " ;x")]))]
+        (is (= {:status "Unpublished changes" :engine :textarea}
+               (status (:db (transition edited [:studio/editor-to-text (str source " ;x")])))))
+        (is (= {:status "ember · v2" :engine :textarea}
+               (status (:db (transition edited [:studio/editor-to-text source])))))))
+    (testing "generated EDN equal to the baseline reads as the baseline, other text as unpublished"
+      (let [generated (transition base [:studio/builder-generate])
+            text (get-in generated [:db :ui :definition :source])
+            ;; The show now runs exactly the text the builder generates.
+            request (transition (:db generated) [:studio/definition-load "effects" "after-hours"])
+            running (:db (transition (:db request) (conj (get-in request [:studio/http :on-success]) {:source text})))
+            again (transition running [:studio/builder-generate])]
+        (is (= {:status "Unpublished changes" :kind "effects" :mode :source :result "Generated EDN from the builder."}
+               (select-keys (get-in generated [:db :ui :definition]) [:status :kind :mode :result])))
+        (is (= text (:studio/nvim-source generated)))
+        (is (nil? (:dispatch-later (transition (assoc-in (:db generated) [:ui :definition :auto?] true)
+                                               [:studio/builder-generate])))
+            "Generate never publishes, even with Publish valid edits on")
+        (is (= "after-hours · v1" (get-in running [:ui :definition :status])))
+        (is (= text (get-in again [:db :ui :definition :source])))
+        (is (= "after-hours · v1" (get-in again [:db :ui :definition :status])))))))
 
 (deftest duration-field-edits-keep-the-other-current-field
   (let [added (transition base [:studio/composition-add "ember"])
@@ -1793,6 +1993,132 @@
     (is (str/includes? (markup (:db done)) "Download MIDI clip"))
     (is (str/includes? (markup (:db done)) "/api/capture/last.mid"))
     (is (not (str/includes? (markup base) "Download MIDI clip")))))
+
+(deftest the-live-runs-panel-reads-the-run-record-projection
+  (let [requested (transition base [:connections/live-runs-refresh])
+        [effect request] (first (:fx requested))
+        token (connections/token (:db requested))
+        projection {:takes 3 :running 1
+                    :channels [{:cue-id "a" :name "Amber sweep" :group-path ["stage" "warm"]
+                                :lanes [{:lane 0 :track-name "Tolglow run a"
+                                         :takes [{:take-id "r.1" :run 1 :start-beat 1 :length-beats 3 :phase "ended" :clip {:status "in-live"}}
+                                                 {:take-id "r.3" :run 2 :start-beat 6 :phase "running" :clip {:status "recording"}}]}]}
+                               {:cue-id "b" :name "Blue wash" :group-path ["stage"]
+                                :lanes [{:lane 0 :track-name "Tolglow run b"
+                                         :takes [{:take-id "r.2" :run 1 :start-beat 2 :length-beats 5 :phase "ended" :clip {:status "not-in-live"}}]}]}]
+                    :mirror {:complete? false :pending 1 :problems [{:code "not-in-group" :name "Tolglow run b"}]}}
+        done (transition (:db requested) [:connections/live-runs-loaded token :live-runs projection])
+        stale (transition (:db requested) [:connections/live-runs-loaded [:other] :live-runs projection])
+        html (renderToStaticMarkup (r/as-element [connections/connection-view (:db done) (connections/state (:db done))]))]
+    (is (= :studio/http effect))
+    (is (= ["/api/live-runs" nil] [(:path request) (:body request)]))
+    (is (= projection (get-in done [:db :connections :live-runs])))
+    (is (not (contains? (get-in done [:db :connections :pending]) :live-runs)))
+    (is (nil? stale) "a reply for another show session is ignored")
+    (is (= "2 launched cues · 3 takes (1 running) · 1 of 3 in Live" (connections/live-runs-text projection)))
+    (is (= "Nothing has run yet" (connections/live-runs-text {:takes 0 :channels []})))
+    (is (= "2 launched cues · 300 takes · 1 of 3 in Live · newest 3 shown"
+           (connections/live-runs-text (assoc projection :takes 300 :running 0 :truncated? true :shown 3))))
+    (is (= "2 launched cues · 3 takes (1 running) · 1 of 3 in Live · 44 playback events dropped"
+           (connections/live-runs-text (assoc projection :playback-events {:queued 0 :dropped 44}))))
+    (is (= "run 1 · beat 1.00 · held 3.00 · in Live" (connections/take-text (get-in projection [:channels 0 :lanes 0 :takes 0]))))
+    (is (= "run 2 · beat 6.00 · running · recording" (connections/take-text (get-in projection [:channels 0 :lanes 0 :takes 1]))))
+    (is (str/includes? html "Amber sweep"))
+    (is (str/includes? html "in stage / warm"))
+    (is (str/includes? html "Tolglow run b"))
+    (is (str/includes? html "not-in-group · Tolglow run b"))
+    (is (not (str/includes? (renderToStaticMarkup (r/as-element [connections/connection-view base (connections/state base)])) "Amber sweep")))))
+
+(deftest the-live-runs-panel-shows-parameter-devices-and-syncs-through-the-bridge
+  ;; #625: the projection show/live-parameter-devices returns, as Ring serves it.
+  (let [requested (transition base [:connections/parameter-devices-refresh])
+        [effect request] (first (:fx requested))
+        token (connections/token (:db requested))
+        projection {:channels [{:cue-id "a" :effect-id "beam" :devices 1
+                                :slots [{:slot 0 :name "Level" :type "float" :min 0 :max 1 :places 5}
+                                        {:slot 1 :name "period" :type "float" :min 0.5 :max 32 :places 3 :unit "beats"}
+                                        {:slot 2 :name "mode" :type "enum" :min 0 :max 2 :choices ["soft" "hard" "strobe"]}
+                                        {:slot 3 :name "Unused 4" :retired? true}]
+                                :banks [[[0 1 2]]] :unsupported [{:param "fade" :reason "gradient"}]
+                                :tracks [{:lane 0 :track-name "Tolglow run a" :present [0] :missing [] :stale []}
+                                         {:lane 1 :track-name "Tolglow run a · 2" :present [] :missing [0] :stale []}]}]
+                    :counts {:applied 3 :echo 1 :held 2} :sends {:executed 4 :failed 0}}
+        done (transition (:db requested) [:connections/parameter-devices-loaded token :parameter-devices projection])
+        html (renderToStaticMarkup (r/as-element [connections/connection-view (:db done) (connections/state (:db done))]))
+        sync (transition (:db done) [:connections/live-runs-sync])
+        [sync-effect sync-request] (first (:fx sync))]
+    (is (= :studio/http effect))
+    (is (= ["/api/live-parameter-devices" nil] [(:path request) (:body request)]))
+    (is (= projection (get-in done [:db :connections :parameter-devices])))
+    (is (= "a · 3 slots on 1 device · 1 not in Live · Tolglow run a: ready, Tolglow run a · 2: drop 1 Tolglow parameters device here"
+           (connections/parameter-devices-text (first (:channels projection)))))
+    (is (= ["Level · 0.00000 – 1.00000" "period · 0.500 – 32.000 beats" "mode · soft / hard / strobe" "Unused 4 (unused)"]
+           (mapv connections/slot-text (get-in projection [:channels 0 :slots])))
+        "Studio's decimals and units")
+    (is (str/includes? html "Values from Live: 3 applied · 1 echoes dropped · 2 held by Tolglow · Tolglow writes sent: 4"))
+    (is (str/includes? html "Banks: 1 2 3"))
+    (is (= :studio/http sync-effect))
+    (is (= ["/api/live-runs/sync" {}] [(:path sync-request) (:body sync-request)]))
+    (is (contains? (get-in sync [:db :connections :pending]) :live-runs-sync))))
+
+(deftest the-cue-launcher-panel-reads-the-launcher-projection
+  (let [db (assoc-in base [:ui :page-id] "pads")
+        requested (transition db [:connections/launcher-refresh])
+        [effect request] (first (:fx requested))
+        token (connections/token (:db requested))
+        pad (fn [x y note & [cue label color]] (cond-> {:cell [x y] :note note} cue (assoc :cue-id cue :label label :live-color color)))
+        pads (vec (for [y (range 8) x (range 8)]
+                    (case [x y]
+                      [0 7] (pad 0 7 36 "red" "Red" 0xff0000)
+                      [4 7] (pad 4 7 68 "blue" "Blue" 0x0000ff)
+                      (pad x y (+ 100 x (* 8 y))))))
+        projection {:page-id "pads" :layout "push-64-pads" :scroll-row 9 :pads pads :elsewhere [] :unmapped [] :off-grid []
+                    :setup {:ready? false :name "Tolglow launcher pads"
+                            :problems [{:code "empty-pad" :note 68 :expected "Blue"}]}}
+        done (transition (:db requested) [:connections/launcher-loaded token :launcher projection])
+        stale (transition (:db requested) [:connections/launcher-loaded [:other] :launcher projection])
+        html (renderToStaticMarkup (r/as-element [connections/connection-view (:db done) (connections/state (:db done))]))]
+    (is (= :studio/http effect))
+    (is (= ["/api/live-launcher?page-id=pads" nil] [(:path request) (:body request)]) "the page selected in Studio")
+    (is (= projection (get-in done [:db :connections :launcher])))
+    (is (nil? stale) "a reply for another show session is ignored")
+    (is (= "Push 64 Pads · 2 of 64 pads play cues · 1 setup problem in Live" (connections/launcher-text projection)))
+    (is (= "Rows of eight · 2 of 64 pads play cues · 1 cue is not under its pad · set up in Live as Tolglow launcher pads · last pad clip 4 hits"
+           (connections/launcher-text (assoc projection :layout "rows" :elsewhere [{:cue-id "amber"}]
+                                             :setup {:ready? true :name "Tolglow launcher pads" :problems []}
+                                             :clip {:status "executed" :notes 4}))))
+    (is (= "Push 64 Pads · 2 of 64 pads play cues · not set up in Live" (connections/launcher-text (dissoc projection :setup))))
+    (testing "the grid is eight rows of eight with the bottom row last, as Push shows it"
+      (let [rows (connections/pad-rows (shuffle pads))]
+        (is (= 8 (count rows)))
+        (is (every? #(= 8 (count %)) rows))
+        (is (= (mapv #(vector % 7) (range 8)) (mapv :cell (last rows))))
+        (is (= [36 68] (keep #(when (:cue-id %) (:note %)) (last rows))))))
+    (is (str/includes? html "Red"))
+    (is (str/includes? html "empty-pad · note 68 · Blue"))
+    (is (= ["empty-pad · notes 64, 68" "no-drum-rack" "scroll-row · 9"]
+           (connections/launcher-problems [{:code "empty-pad" :note 64 :expected "Amber"} {:code "scroll-row" :expected 9}
+                                           {:code "no-drum-rack"} {:code "empty-pad" :note 68 :expected "Blue"}]))
+        "pad problems of one kind share a line")
+    (is (str/includes? html "Push 64 Pads · cells match Push"))
+    (is (= "push-64-pads" (get-in (connections/sync-payload base) [:live :pad-layout])) "Studio always saves an explicit layout")
+    (testing "Set up in Live and Write pad clip run the host's launcher operations, then show the projection again"
+      (let [setup (transition db [:connections/launcher-action :setup])
+            [_ setup-request] (first (:fx setup))
+            write (transition db [:connections/launcher-action :write-clip])
+            [_ write-request] (first (:fx write))
+            acted (transition (:db setup) [:connections/launcher-acted (connections/token (:db setup)) :launcher {:ready? true}])]
+        (is (= ["/api/live-launcher/setup" {:page-id "pads"}] [(:path setup-request) (:body setup-request)]))
+        (is (= ["/api/live-launcher/write-clip" {:page-id "pads"}] [(:path write-request) (:body write-request)]))
+        (is (= [:connections/launcher-refresh] (:dispatch acted)))
+        (is (= 32000 (:timeout-ms setup-request)) "outlasts three bridge operations at the default 2 s timeout")
+        (is (= 20000 (connections/launcher-timeout-ms {:sync {:config {:live {:timeout-ms 1000}}}})))
+        (let [failed (transition (:db setup) [:connections/launcher-failed (connections/token (:db setup)) :launcher "timeout"])]
+          (is (= [:connections/launcher-refresh] (:dispatch failed)) "after a failure Studio shows what the host did")
+          (is (= "timeout" (get-in failed [:db :connections :errors :launcher]))))
+        (is (not (contains? (get-in acted [:db :connections :pending]) :launcher)))))
+    (is (str/includes? (renderToStaticMarkup (r/as-element [connections/connection-view (:db done) (connections/state (:db done))]))
+                       "Set up in Live"))))
 
 (deftest an-edit-after-new-is-what-publishes
   ;; Studio dispatches New synchronously, so an edit typed straight after it lands on the

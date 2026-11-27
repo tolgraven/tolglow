@@ -18,7 +18,7 @@
         (throw (ex-info "Could not light the rehearsal rig" {:receipt receipt}))))))
 
 (defn -main [& _]
-  (let [runtime (show/start! {:model (scene/scenic-show) :workspace-options nil})
+  (let [runtime (show/start! {:model (scene/scenic-show) :workspace-options nil :recovery false})
         studio (studio/listen! runtime {:host "127.0.0.1" :port 0})
         reader (atom nil)]
     (try

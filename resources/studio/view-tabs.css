@@ -1,0 +1,98 @@
+/* Views of one show in tabs (tolglow.studio.view-tabs, #669). One strip under
+   the top bar; every tab shares the page's connection and preview engine. */
+.view-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 20px 0;
+  border-bottom: 1px solid var(--line);
+  min-height: 40px;
+}
+.view-tab-list {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.view-tab-list::-webkit-scrollbar { display: none; }
+.view-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 200px;
+  min-height: 34px;
+  padding: 0 6px 0 11px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.view-tab:hover { background: #1d221c; color: var(--text); }
+.view-tab.selected {
+  background: var(--panel);
+  border-color: var(--line);
+  color: var(--accent);
+  margin-bottom: -1px;
+  padding-bottom: 1px;
+}
+.view-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.view-tab-icon {
+  display: block;
+  width: 15px;
+  height: 15px;
+  flex: none;
+  background-color: currentColor;
+  -webkit-mask: var(--nav-icon) center / contain no-repeat;
+  mask: var(--nav-icon) center / contain no-repeat;
+}
+.view-tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A pointer shortcut; keyboard and assistive technology use Close tab or Delete. */
+.view-tab-close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  font-size: 15px;
+  line-height: 1;
+  opacity: .55;
+}
+.view-tab-close:hover { opacity: 1; background: #2a3127; }
+.view-tab-action {
+  flex: none;
+  min-width: 30px;
+  min-height: 30px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.view-tab-action:hover:not(:disabled) { color: var(--text); background: #1d221c; }
+.view-tab-action:disabled { opacity: .35; cursor: default; }
+.view-tab-action.text-button { font-size: 11px; padding: 0 8px; }
+
+@media (max-width: 600px) {
+  .view-tabs { padding: 4px 8px 0; gap: 2px; }
+  .view-tab { max-width: 160px; }
+  /* Background tabs keep their icon; the active tab keeps its name and close button. */
+  .view-tab.selected { flex: none; }
+  .view-tab:not(.selected) .view-tab-label,
+  .view-tab:not(.selected) .view-tab-close { display: none; }
+  .view-tab { min-height: 44px; padding: 0 8px; }
+  .view-tab-action { min-width: 44px; min-height: 44px; }
+}
+
+/* A preview-only show's device controls (#669). */
+.preview-only-note { margin: 6px 0; padding-left: 8px; border-left: 2px solid var(--danger); color: var(--muted); }

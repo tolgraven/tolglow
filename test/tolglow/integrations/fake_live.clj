@@ -18,24 +18,61 @@
   parameters on every capture track (the real companion has them only on its
   own track; see live-companion-contract-test).
   `json-transport` is the same as `(transport live {:json? true})` with the
-  receipt read exactly as live-transport reads it."
+  receipt read exactly as live-transport reads it.
+
+  Group Tracks (#683): the documented Live Object Model reads membership
+  (`Track.group_track`, `is_foldable`) but has no call that creates a Group
+  Track or moves a track into one. Like the companion, `:ensure-group` here
+  only finds a Group Track a performer or template placed (`add-group-track!`)
+  and refuses with :group-creation-unavailable otherwise. `:ensure-track` with
+  a :group-track-id inserts the new track after the group's last direct member
+  that is not a group (or right after the Group Track); that the inserted
+  track joins the group is an assumption to verify in Live, and
+  `:insert-joins-group? false` models the opposite outcome.
+  `:scenes n` bounds the clip slots per track (default unbounded);
+  `:create-scene? true` on write-clip adds a scene when every slot is full.
+
+  Cue launcher (#228): the companion's track can hold a Drum Rack
+  (`{:drum-rack {36 \"Kick\"}}` on a track spec: one chain per named pad).
+  `:ensure-launcher` adopts the companion's track like `:ensure-track :host?`
+  and inserts a Drum Rack when none follows the companion, and `:write-pads`
+  inserts a chain for an empty pad; both need Live 12.3's insert calls, which
+  `:device-insert? false` takes away (an older Live). Chain colours are kept
+  exactly; real Live picks the nearest palette entry. `record-input!` and
+  `session-record!` stand in for Live recording a performer's MIDI into a
+  Session clip on an armed track, which Tolglow never does itself.
+
+  Parameter devices (#625): `add-parameter-device!` drops a Tolglow
+  parameters device on a track, as a performer or template must (the LOM
+  inserts native devices only). It has 32 slot parameters after Live's
+  Device On parameter. `:configure-parameter-device` applies names and ranges as the
+  device's own patcher is assumed to; `:device-applies? false` models a Live
+  that ignores the run-time attributes, so the read-back stays unchanged.
+  `:relay? false` models a companion without the relay. Tolglow's
+  `:set-parameter-values` writes are kept under `:parameter-writes`, and
+  `:parameter-envelopes` on a run clip under that clip's `:envelopes`."
   (:require [clojure.data.json :as json]))
 
 (defn create
   "tracks: existing musician tracks, e.g. [{:name \"Bass\" :arm? true}]."
   ([] (create {}))
-  ([{:keys [tracks tempo exclusive-arm? can-capture-midi? capture-bars companion? envelope-lanes?]
+  ([{:keys [tracks tempo exclusive-arm? can-capture-midi? capture-bars companion? envelope-lanes? scenes
+            insert-joins-group? device-insert? relay? device-applies?]
      :or {tracks [] tempo 120.0 exclusive-arm? false can-capture-midi? true capture-bars 4 companion? true
-          envelope-lanes? false}}]
-   (atom {:tracks (vec (map-indexed (fn [i t] (merge {:track-id (str "track:" (inc i)) :kind :midi :arm? false
-                                                      :monitor :auto :input {:port "Keyboard" :channel 1}
-                                                      :slots {} :history []} t))
+          envelope-lanes? false insert-joins-group? true device-insert? true relay? true device-applies? true}}]
+   (atom {:tracks (vec (map-indexed (fn [i t] (cond-> (merge {:track-id (str "track:" (inc i)) :kind :midi :arm? false
+                                                              :monitor :auto :input {:port "Keyboard" :channel 1}
+                                                              :slots {} :history []} (dissoc t :drum-rack))
+                                                  (:drum-rack t) (assoc :rack {:scroll-row 9
+                                                                               :chains (into (sorted-map) (for [[n name] (:drum-rack t)]
+                                                                                                            [n {:name name :color 0x777777}]))})))
                                     (cond-> (vec tracks) companion? (conj {:name "MIDI" :companion? true :arm? false
                                                                            :input {:port "All Ins" :channel nil}}))))
           :next-id 100 :tempo tempo :signature {:beats-per-bar 4 :bars-per-phrase 4}
           :exclusive-arm? exclusive-arm? :can-capture-midi? can-capture-midi? :capture-bars capture-bars
-          :envelope-lanes? envelope-lanes?
-          :song-beat 0 :playing {} :selected nil :faults {} :requests []})))
+          :envelope-lanes? envelope-lanes? :scenes scenes :insert-joins-group? insert-joins-group?
+          :device-insert? device-insert? :relay? relay? :device-applies? device-applies? :parameter-writes []
+          :watched [] :song-beat 0 :playing {} :selected nil :faults {} :requests []})))
 
 (defn- next-id! [live prefix]
   (str prefix ":" (:next-id (swap! live update :next-id inc))))
@@ -44,10 +81,43 @@
   (first (keep-indexed (fn [i t] (when (= track-id (:track-id t)) i)) (:tracks state))))
 
 (defn- public-track [track]
-  (-> (select-keys track [:track-id :name :kind :arm? :monitor :input :companion?])
+  (-> (if (= :group (:kind track))
+        (assoc (select-keys track [:track-id :name :kind]) :arm? false :monitor nil :input nil)
+        (select-keys track [:track-id :name :kind :arm? :monitor :input :companion?]))
+      (assoc :group-track-id (:group-track-id track))
+      (assoc :arrangement-clips (vec (for [{:keys [clip-id start length]} (:arrangement track)]
+                                       {:name (get-in (first (filter #(= clip-id (:clip-id %)) (vals (:slots track)))) [:name])
+                                        :start-beat start :end-beat (+ start length)})))
       (assoc :clips (vec (for [[slot c] (sort-by key (:slots track))]
                            {:clip-id (:clip-id c) :slot-index slot :name (:name c)
-                            :length-beats (get-in c [:clip :length-beats])})))))
+                            :length-beats (get-in c [:clip :length-beats])
+                            :envelopes? (boolean (seq (:envelopes c)))})))
+      (cond-> (and (string? (:name track)) (re-find #"^Tolglow(\s|$)" (:name track)))
+        (assoc :parameter-devices (vec (map-indexed (fn [i d] (assoc d :device-index (inc i))) (:parameter-devices track)))))))
+
+(def parameter-slots 32)
+
+(defn add-parameter-device!
+  "Drop a \"Tolglow parameters\" device (ordinal 0, or n for \"Tolglow
+  parameters n+1\") on the named track. Returns its device ID."
+  ([live track-name] (add-parameter-device! live track-name 0))
+  ([live track-name ordinal]
+   (let [id (str "device:" (:next-id (swap! live update :next-id inc)))
+         device {:device-id id :ordinal ordinal
+                 :name (if (zero? ordinal) "Tolglow parameters" (str "Tolglow parameters " (inc ordinal)))
+                 :parameters (vec (for [i (range parameter-slots)]
+                                    {:index i :name (str "slot " (inc i)) :min 0.0 :max 1.0 :quantized? false
+                                     :value 0.0 :automation-state 0}))}]
+     (swap! live update :tracks (fn [ts] (mapv #(if (= track-name (:name %)) (update % :parameter-devices (fnil conj []) device) %) ts)))
+     id)))
+
+(defn parameter-device
+  "The parameter device with this ordinal on the named track."
+  [live track-name ordinal]
+  (some #(when (= ordinal (:ordinal %)) %) (:parameter-devices (first (filter #(= track-name (:name %)) (:tracks @live))))))
+
+(defn- device-on-track [track device-id]
+  (first (keep-indexed (fn [i d] (when (= device-id (:device-id d)) i)) (:parameter-devices track))))
 
 (defn- find-clip [state clip-id]
   (first (for [[ti t] (map-indexed vector (:tracks state)), [slot c] (:slots t) :when (= clip-id (:clip-id c))]
@@ -63,6 +133,18 @@
 
 (defn- first-empty-slot [track] (first (remove (set (keys (:slots track))) (range))))
 
+(defn- insert-index
+  "Like the companion: after the group's last direct member that is not a
+  group itself, or right after the Group Track."
+  [state group-id]
+  (inc (last (keep-indexed (fn [i t] (when (or (= group-id (:track-id t))
+                                               (and (= group-id (:group-track-id t)) (not= :group (:kind t))))
+                                       i))
+                           (:tracks state)))))
+
+(defn- overlaps? [arrangement start length]
+  (some (fn [{s :start l :length}] (and (< start (+ s l)) (< s (+ start length)))) arrangement))
+
 (defn- history->clip
   "Build a clip from received MIDI in [start end), as Capture MIDI would."
   [history start end]
@@ -70,17 +152,18 @@
         rel #(- (rationalize (:song-beat %)) start)
         result (reduce (fn [{:keys [open notes controllers] :as acc} {:keys [type note velocity controller value] :as m}]
                          (case type
-                           :note-on (if (pos? velocity) (update-in acc [:open note] (fnil conj []) (rel m))
+                           ;; Live keeps each note's played velocity.
+                           :note-on (if (pos? velocity) (update-in acc [:open note] (fnil conj []) [(rel m) velocity])
                                         (recur acc (assoc m :type :note-off)))
-                           :note-off (if-let [s (first (get open note))]
+                           :note-off (if-let [[s v] (first (get open note))]
                                        (-> acc (update-in [:open note] subvec 1)
-                                           (update :notes conj {:pitch note :start s :duration (- (rel m) s) :velocity 127}))
+                                           (update :notes conj {:pitch note :start s :duration (- (rel m) s) :velocity v}))
                                        acc)
                            :cc (update acc :controllers conj {:beat (rel m) :controller controller :value value})
                            acc))
                        {:open {} :notes [] :controllers []} in-window)
-        held (for [[pitch starts] (:open result), s starts]
-               {:pitch pitch :start s :duration (- (- end start) s) :velocity 127})]
+        held (for [[pitch starts] (:open result), [s v] starts]
+               {:pitch pitch :start s :duration (- (- end start) s) :velocity v})]
     {:clip/version 1 :length-beats (- end start) :meter {:beats-per-bar 4 :bars-per-phrase 4}
      :notes (vec (sort-by (juxt :start :pitch) (concat (:notes result) held)))
      :controllers (:controllers result)}))
@@ -119,13 +202,117 @@
                             :else (do (swap! live assoc-in [:tracks i :name] (:name payload))
                                       {:status :executed :result {:track-id (:track-id t) :created? false :adopted? true}})))
                         (rejected :no-companion))
-                      (if-let [t (first (filter #(and (= (:name payload) (:name %)) (= :midi (:kind %))) (:tracks state)))]
-                        {:status :executed :result {:track-id (:track-id t) :created? false}}
-                        (let [id (next-id! live "track")]
-                          (swap! live update :tracks conj {:track-id id :name (:name payload) :kind :midi :arm? false
-                                                           :monitor :auto :input {:port "All Ins" :channel nil}
-                                                           :slots {} :history []})
-                          {:status :executed :result {:track-id id :created? true}})))
+                      (let [found (filter #(and (= (:name payload) (:name %)) (= :midi (:kind %))) (:tracks state))
+                            group (:group-track-id payload)]
+                        (cond
+                          (> (count found) 1) (rejected :duplicate-tracks)
+                          (= 1 (count found)) {:status :executed :result {:track-id (:track-id (first found)) :created? false
+                                                                           :group-track-id (:group-track-id (first found))}}
+                          (and group (not= :group (:kind (first (filter #(= group (:track-id %)) (:tracks state))))))
+                          (rejected :not-a-group)
+                          :else
+                          (let [id (next-id! live "track")
+                                joined (when (and group (:insert-joins-group? state)) group)
+                                track {:track-id id :name (:name payload) :kind :midi :arm? false
+                                       :monitor :auto :input {:port "All Ins" :channel nil}
+                                       :slots {} :history [] :group-track-id joined}]
+                            (swap! live update :tracks
+                                   (fn [ts] (let [at (if group (insert-index {:tracks ts} group) (count ts))]
+                                              (into (conj (subvec ts 0 at) track) (subvec ts at)))))
+                            {:status :executed :result {:track-id id :created? true :group-track-id joined}}))))
+      :ensure-launcher
+      (let [i (first (keep-indexed (fn [i t] (when (:companion? t) i)) (:tracks state)))
+            t (when i (get-in state [:tracks i]))
+            name (:name payload)]
+        (cond
+          (nil? i) (rejected :no-companion)
+          (not (re-find #"^Tolglow launcher(\s|$)" (str name))) (rejected :track-name)
+          ;; Like the companion: never another Tolglow track (Capture's cue track).
+          (and (not (re-find #"^Tolglow launcher(\s|$)" (str (:name t)))) (re-find #"^Tolglow(\s|$)" (str (:name t))))
+          (rejected :tolglow-track-in-use)
+          (not (or (re-find #"^Tolglow launcher(\s|$)" (str (:name t)))
+                   (and (empty? (:slots t)) (empty? (:arrangement t)) (not (:instrument? t)))))
+          (rejected :host-track-in-use)
+          (and (nil? (:rack t)) (not (:device-insert? state))) (rejected :drum-rack-creation-unavailable)
+          :else (let [created? (nil? (:rack t))
+                      renamed? (not= name (:name t))]
+                  (swap! live update-in [:tracks i]
+                         (fn [t] (cond-> (assoc t :name name)
+                                   created? (assoc :rack {:scroll-row 9 :chains (sorted-map)})
+                                   (:scroll-row payload) (assoc-in [:rack :scroll-row] (:scroll-row payload)))))
+                  {:status :executed :result (cond-> {:track-id (:track-id t) :device-index 1}
+                                               created? (assoc :rack-created? true)
+                                               renamed? (assoc :renamed? true))})))
+      :write-pads
+      (let [[i code] (check-track state payload)
+            t (when i (get-in state [:tracks i]))]
+        (cond
+          code (rejected code)
+          (not (:companion? t)) (rejected :stale-track)
+          (nil? (:rack t)) (rejected :no-drum-rack)
+          :else (let [results (for [{:keys [note name color]} (:pads payload)
+                                    :let [exists? (contains? (get-in t [:rack :chains]) note)]]
+                                (cond exists? {:pad {:note note :name name :color color :chain-created? false}}
+                                      (:device-insert? state) {:pad {:note note :name name :color color :chain-created? true}}
+                                      :else {:skipped {:note note :code :chain-creation-unavailable}}))]
+                  (swap! live update-in [:tracks i :rack :chains]
+                         (fn [chains] (reduce (fn [c {:keys [note name color]}] (assoc c note {:name name :color color}))
+                                              chains (keep :pad results))))
+                  {:status :executed :result {:pads (vec (keep :pad results)) :skipped (vec (keep :skipped results))
+                                              :color-policy "nearest-live-palette"}})))
+      :inspect-launcher
+      (if-let [t (first (filter :companion? (:tracks state)))]
+        {:status :executed
+         :result {:track-id (:track-id t) :name (:name t) :can-insert? (:device-insert? state)
+                  :input (:input t) :routed-from-track? (boolean (:routed-from-track? t))
+                  :arm? (:arm? t) :monitor (:monitor t)
+                  :rack (when-let [rack (:rack t)]
+                          {:device-index 1 :scroll-row (:scroll-row rack)
+                           :pads (vec (for [[note {:keys [name color]}] (:chains rack)]
+                                        {:note note :name name :color color :chains 1}))})}}
+        (rejected :no-companion))
+      :ensure-group (let [found (filter #(and (= (:name payload) (:name %)) (= :group (:kind %))) (:tracks state))]
+                      (case (count found)
+                        0 (rejected :group-creation-unavailable)
+                        1 {:status :executed :result {:track-id (:track-id (first found)) :created? false}}
+                        (rejected :duplicate-tracks)))
+      :watch-run-tracks (do (swap! live assoc :watched (vec (:track-ids payload)))
+                            {:status :executed
+                             :result {:watching (count (:track-ids payload))
+                                      :watching-slots (* parameter-slots
+                                                         (reduce + (for [t (:tracks state) :when (some #{(:track-id t)} (:track-ids payload))]
+                                                                     (count (:parameter-devices t)))))}})
+      :configure-parameter-device
+      (let [[i code] (check-track state payload)
+            d (when i (device-on-track (get-in state [:tracks i]) (:device-id payload)))]
+        (cond
+          code (rejected code)
+          (nil? d) (rejected :stale-device)
+          (not= (:ordinal payload) (get-in state [:tracks i :parameter-devices d :ordinal])) (rejected :device-renamed)
+          (not (:relay? state)) (rejected :relay-unavailable)
+          :else (do (when (:device-applies? state)
+                      (swap! live update-in [:tracks i :parameter-devices d :parameters]
+                             (fn [ps] (reduce (fn [ps {:keys [index name type min max]}]
+                                                (update ps index #(assoc % :name name :min (double min) :max (double max)
+                                                                         :quantized? (not= :float (keyword type))
+                                                                         :value (clojure.core/max (double min) (clojure.core/min (double max) (:value %))))))
+                                              ps (:slots payload)))))
+                    {:status :executed :result {:device-id (:device-id payload) :relayed (count (:slots payload))}})))
+      :set-parameter-values
+      (let [[i code] (check-track state payload)
+            devices (when i (into {} (map-indexed (fn [n d] [(:ordinal d) n])) (get-in state [:tracks i :parameter-devices])))]
+        (cond
+          code (rejected code)
+          (some #(not (contains? devices (:device %))) (:values payload)) (rejected :parameter-device-missing)
+          :else (do (swap! live (fn [s]
+                                  (reduce (fn [s {:keys [device index value]}]
+                                            (-> s
+                                                (update-in [:tracks i :parameter-devices (devices device) :parameters index]
+                                                           (fn [p] (assoc p :value (clojure.core/max (:min p) (clojure.core/min (:max p) (double value)))
+                                                                          :automation-state (if (= 1 (:automation-state p)) 2 (:automation-state p)))))
+                                                (update :parameter-writes conj {:track-id (:track-id payload) :device device :index index :value value})))
+                                          s (:values payload))))
+                    {:status :executed :result {:written (count (:values payload))}})))
       :configure-track (let [[i code] (check-track state payload)]
                          (if code (rejected code)
                              (do (swap! live (fn [s]
@@ -144,13 +331,35 @@
                       (and (or (seq (get-in payload [:clip :controllers])) (some (comp seq :points) (:lanes payload)))
                            (not (:envelope-lanes? state)))
                       (rejected :controllers-unsupported)
+                      (some #(nil? (device-on-track (get-in state [:tracks i]) (:device-id %))) (:parameter-envelopes payload))
+                      (rejected :stale-device)
                       :else
-                        (let [slot (or (:slot-index payload) (first-empty-slot (get-in state [:tracks i])))]
-                          (if (get-in state [:tracks i :slots slot]) (rejected :slot-occupied)
-                              (let [id (next-id! live "clip")]
-                                (swap! live assoc-in [:tracks i :slots slot]
-                                       {:clip-id id :name (:name payload) :clip (with-lanes (:clip payload) (:lanes payload) nil)})
-                                {:status :executed :result {:clip-id id :slot-index slot}})))))
+                        (let [slot (or (:slot-index payload) (first-empty-slot (get-in state [:tracks i])))
+                              scenes (:scenes state)
+                              full? (and scenes (>= slot scenes))]
+                          (cond
+                            (get-in state [:tracks i :slots slot]) (rejected :slot-occupied)
+                            (and full? (not (and (nil? (:slot-index payload)) (:create-scene? payload)))) (rejected :no-empty-slot)
+                            :else
+                            (let [id (next-id! live "clip")]
+                              (when full? (swap! live update :scenes inc))
+                              (swap! live assoc-in [:tracks i :slots slot]
+                                     (cond-> {:clip-id id :name (:name payload) :looping? (get payload :looping? true)
+                                              :clip (with-lanes (:clip payload) (:lanes payload) nil)}
+                                       (seq (:parameter-envelopes payload))
+                                       (assoc :envelopes (into {} (map (fn [{:keys [device-id index points]}] [[device-id index] (vec points)]))
+                                                               (:parameter-envelopes payload)))))
+                              {:status :executed :result {:clip-id id :slot-index slot :scene-created? (boolean full?)}})))))
+      :place-clip (let [[i code] (check-track state payload)
+                        found (find-clip state (:clip-id payload))
+                        length (get-in found [:entry :clip :length-beats])]
+                    (cond
+                      code (rejected code)
+                      (or (nil? found) (not= i (:track-index found))) (rejected :stale-clip)
+                      (overlaps? (get-in state [:tracks i :arrangement]) (:arrangement-beat payload) length) (rejected :placement-overlap)
+                      :else (do (swap! live update-in [:tracks i :arrangement] (fnil conj [])
+                                       {:clip-id (:clip-id payload) :start (:arrangement-beat payload) :length length})
+                                {:status :executed :result {:arrangement-beat (:arrangement-beat payload)}})))
       :extend-clip (let [[i code] (check-track state payload)
                          found (find-clip state (:clip-id payload))]
                      (cond
@@ -250,6 +459,43 @@
   (let [{:keys [track-index slot]} (find-clip @live clip-id)]
     (swap! live update-in [:tracks track-index :slots slot :clip] f)))
 
+(defn add-group-track!
+  "Place a Group Track, as a performer or a packaged template would, at the
+  end of the Set or inside parent-group-track-id. Returns its track ID."
+  ([live name] (add-group-track! live name nil))
+  ([live name parent]
+   (let [id (next-id! live "track")]
+     (swap! live update :tracks
+            (fn [ts] (let [at (if parent (insert-index {:tracks ts} parent) (count ts))]
+                       (into (conj (subvec ts 0 at) {:track-id id :name name :kind :group :slots {} :history []
+                                                     :group-track-id parent})
+                             (subvec ts at)))))
+     id)))
+
+(defn record-input!
+  "MIDI a performer plays on a track at the current song beat: an armed track
+  keeps it, as Live does while recording. messages: note/cc maps."
+  [live track-id messages]
+  (swap! live (fn [s] (update s :tracks (fn [ts] (mapv #(if (and (= track-id (:track-id %)) (:arm? %))
+                                                             (update % :history into (map (fn [m] (assoc m :song-beat (:song-beat s))) messages))
+                                                             %)
+                                                          ts))))))
+
+(defn session-record!
+  "Live recording what an armed track received in song beats [start end) into
+  a new Session clip in its first empty slot. Returns the clip ID."
+  [live track-id start end]
+  (let [i (track-index @live track-id)
+        id (next-id! live "clip")]
+    (swap! live (fn [s] (let [t (get-in s [:tracks i])]
+                          (assoc-in s [:tracks i :slots (first-empty-slot t)]
+                                    {:clip-id id :name "Recorded" :looping? true :clip (history->clip (:history t) start end)}))))
+    id))
+
+(defn delete-clip! [live clip-id]
+  (let [{:keys [track-index slot]} (find-clip @live clip-id)]
+    (swap! live update-in [:tracks track-index :slots] dissoc slot)))
+
 (defn rename-track! [live track-id name]
   (swap! live update :tracks (fn [ts] (mapv #(if (= track-id (:track-id %)) (assoc % :name name) %) ts))))
 
@@ -265,15 +511,18 @@
     (->> (for [[track-id {:keys [clip-id] :as p}] (:playing state)
                :let [start (:from p)
                      {:keys [track-index entry]} (find-clip state clip-id)
+                     looping? (get entry :looping? true)
                      ;; Live clips keep no channel: playback reaches the companion on
                      ;; channel 1, tagged with the track that played it.
                      channel 1
                      {:keys [length-beats notes controllers]} (:clip entry)]
-               loop (range (long (Math/floor (/ (- from start) length-beats)))
-                           (inc (long (Math/ceil (/ (- to start) length-beats)))))
+               ;; A clip with looping off (Clip.looping 0) plays once.
+               loop (if looping? (range (long (Math/floor (/ (- from start) length-beats)))
+                                        (inc (long (Math/ceil (/ (- to start) length-beats)))))
+                        [0])
                :let [base (+ start (* loop length-beats))]
-               event (concat (for [{:keys [pitch start duration]} notes]
-                               [{:type :note-on :note pitch :velocity 127 :song-beat (+ base start)}
+               event (concat (for [{:keys [pitch start duration velocity]} notes]
+                               [{:type :note-on :note pitch :velocity (or velocity 127) :song-beat (+ base start)}
                                 {:type :note-off :note pitch :velocity 0 :song-beat (+ base start duration)}])
                              (for [{:keys [beat controller value]} controllers]
                                [{:type :cc :controller controller :value value :song-beat (+ base beat)}]))

@@ -38,6 +38,11 @@ runner source in each repository lists the namespaces actually selected.
 “Pure” names the lane: it includes bounded executor and loopback HTTP tests in
 addition to pure functions. It does not mean every test is free of local IO.
 No real OLA service, lights, MIDI ports or controller hardware is activated.
+Inside a clojure.test run, `recovery/default-directory` is a temporary
+directory of the test JVM, so a test that starts a show without a recovery
+directory never reads or rewrites the operator's own recovery files. QA
+harnesses under `dev/` start their shows with `:recovery false` or a temporary
+directory.
 
 ## Observed checkpoints
 

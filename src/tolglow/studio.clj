@@ -129,12 +129,14 @@
                      (assoc :show-id current-id))]
       (case action
         :status (select-keys (show/recovery-status runtime)
-                            [:runtime-id :show-id :epoch :checkpoints :enabled?])
+                            [:runtime-id :show-id :epoch :checkpoints :enabled? :folder])
         :restore
         (let [kind (case (:kind payload)
                      (:recovery "recovery") :recovery
                      (:named "named") :named
                      (:prior "prior") :prior
+                     (:legacy "legacy") :legacy
+                     (:legacy-prior "legacy-prior") :legacy-prior
                      (throw (ex-info "Unknown show checkpoint kind" {})))
               receipt-id (str (random-uuid))]
           (deref (show/load-latest-show! runtime kind identity receipt-id) checkpoint-wait-ms
@@ -142,7 +144,16 @@
         :discard-prior
         (if (show/discard-prior-recovery! runtime identity)
           {:status :accepted}
-          {:status :rejected :message "Previous session checkpoint is unavailable"})))
+          {:status :rejected :message "Previous session checkpoint is unavailable"})
+        :dismiss-legacy
+        (if (show/dismiss-legacy-recovery! runtime identity)
+          {:status :accepted}
+          {:status :rejected :message "The checkpoint from before the update is no longer offered"})))
+    (catch clojure.lang.ExceptionInfo error
+      (let [code (:code (ex-data error))]
+        (if (#{:legacy-busy :legacy-resolved :legacy-unavailable :show-stopped} code)
+          {:status :rejected :code code :message (ex-message error)}
+          (throw error))))
     (catch java.io.IOException error
       (throw (ex-info "Could not access the show checkpoint" {:code :checkpoint-io} error)))))
 
@@ -153,7 +164,8 @@
    (web/app {:snapshot! #(browser-snapshot runtime % (constantly bindings))
             :airplay-interfaces airplay/interfaces
             :airplay-media (partial airplay/studio-media (:airplay bindings))
-            :airplay-start! #(airplay/start! (:airplay bindings) (:address %))
+            :airplay-start! #(do (show/require-devices! runtime :airplay-start)
+                                 (airplay/start! (:airplay bindings) (:address %)))
             :airplay-stop! #(airplay/stop! (:airplay bindings) (:writer %))
             :airplay-publish! (fn [{:keys [path-params body]}]
                                 (airplay/publish! (:airplay bindings) (:writer path-params) (:file path-params) body))
@@ -174,6 +186,8 @@
                                  (when (keyword? id) (get definitions (subs (str id) 1))))))
             :export! #(show/export-show-source runtime)
             :checkpoint! (partial checkpoint-action! runtime)
+            :show-identity! #(let [model (:model @(:state runtime))]
+                               {:runtime-id (:id runtime) :show-id (:show-id model) :epoch (:epoch model)})
             :fog-calibration! #(let [model (:model @(:state runtime))]
                                  {:runtime-id (:id runtime) :epoch (:epoch model)
                                   :fixtures (fog-scan/fixtures model)
@@ -204,6 +218,9 @@
             :rdm! #(show/rdm-action! runtime %1 %2)
             :sync! #(show/sync-action! runtime %1 %2)
             :capture! #(show/capture-action! runtime %1 %2)
+            :live-runs! #(show/live-runs-action! runtime %1 %2)
+            :parameter-frames! #(show/parameter-frames-action! runtime %1 %2)
+            :live-launcher! #(show/live-launcher-action! runtime %1 %2)
             :section-reference! (fn [op payload]
                                   (case op
                                     :status (show/section-reference-status runtime)

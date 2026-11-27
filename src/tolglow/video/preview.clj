@@ -4,8 +4,11 @@
   placement, and a downscaled JPEG of a latched frame for the 2D editor. All
   of it reads the latch the lighting frame already took; nothing here pulls a
   new frame from a source."
-  (:require [tolglow.video.hub :as hub]
-            [tolglow.video.sampler :as sampler])
+  (:require [afterglow.spatial.geometry :as geometry]
+            [tolglow.compiler.video :as video-output]
+            [tolglow.video.hub :as hub]
+            [tolglow.video.sampler :as sampler]
+            [tolglow.video.surface :as surface])
   (:import [java.awt.image BufferedImage]
            [java.io ByteArrayOutputStream]
            [javax.imageio ImageIO]))
@@ -42,12 +45,70 @@
                                                   (range (count (:targets strip))))})
                                  (:strips plan) offsets)}))])))
 
+(defn shader-sources
+  "Status rows for the shader feeds in the latch (#673), in the same shape as
+  hub sources, so strips can be mapped onto a running shader cue's feed."
+  [latch shader-status now-ms]
+  (vec (for [[feed rows] (sort-by (comp str key) (group-by :feed (:instances shader-status)))
+             :let [f (get-in latch [:frames feed])
+                   errors (keep :error rows)
+                   age (when-let [t (:captured-at-ms f)] (max 0 (- now-ms t)))]]
+         (merge {:id feed :kind :shader :label (str "Shader · " (name feed)) :connected? (some? f)
+                 :instances (mapv :instance-id rows) :fps (:fps (first rows))
+                 :frozen? (boolean (:frozen? latch))
+                 ;; A static shader publishes once; it is not stale while its cue runs.
+                 :stale? (nil? f) :age-ms age}
+                (when f {:width (:width f) :height (:height f) :sequence (:sequence f)})
+                (when (seq errors) {:error (:message (first errors)) :code (:code (first errors))})))))
+
+(def max-projected-contacts
+  "Contacts listed per surface view; :count still gives the whole number."
+  4096)
+
+(defn surface-cache
+  "The projection's own cache of surface contacts and the spatial rig index,
+  apart from the strip mapping plans so neither evicts the other."
+  []
+  (sampler/plan-cache 48))
+
+(defn- surface-view [cache fixtures resolved]
+  (let [rig (cache [:rig fixtures] #(try (geometry/prepare-rig fixtures) (catch clojure.lang.ExceptionInfo _ nil)))
+        {:keys [contacts]} (cache [:contacts (video-output/contact-key resolved) fixtures]
+                                  #(video-output/surface-contacts resolved fixtures rig))]
+    ;; :frame-source is the source as the frame route's query reads it.
+    {:resolved resolved :frame-source (str (:source resolved)) :count (count contacts)
+     :contacts (if (> (count contacts) max-projected-contacts) (subvec contacts 0 max-projected-contacts) contacts)}))
+
+(defn surface-views
+  "Surfaces for the Room (#674). :authored has every configured surface at
+  its saved pose. :running has each running surface output at the pose its
+  effect evaluated on its last frame, read from the instance state, so the
+  projection never evaluates a placement, modulation or the musical clock a
+  second time. Each view lists the heads in contact: their surface uv,
+  distance and contact weight. Fixture colours come from the committed
+  output, not from here."
+  [model fixtures cache]
+  {:authored (into {} (for [[id spec] (get-in model [:settings :video :surfaces])]
+                        [id (surface-view cache fixtures (surface/resolve-surface spec nil 0))]))
+   :running (vec (for [instance (sort-by (juxt :order :id) (vals (:instances model)))
+                       [i {:keys [surface resolved]}] (sort-by key (get-in instance [:state :tolglow.video/surfaces]))]
+                   (merge {:instance-id (:id instance) :cue-id (:cue-id instance) :output i :surface surface}
+                          (surface-view cache fixtures resolved))))})
+
 (defn project
-  "The :video key of the show snapshot."
-  [video-hub latch fixtures cache]
-  {:sources (hub/status video-hub latch)
-   :frozen? (boolean (:frozen? latch))
-   :mappings (mapping-samples latch fixtures cache)})
+  "The :video key of the show snapshot. model, when given, adds :surfaces,
+  using surfaces (a `surface-cache`). shader-status, when given, adds the
+  shader producer's status and lists each running shader feed as a source
+  (#673), so strips and surfaces can be placed on it."
+  ([video-hub latch fixtures cache] (project video-hub latch fixtures cache nil nil nil))
+  ([video-hub latch fixtures cache model surfaces] (project video-hub latch fixtures cache model surfaces nil))
+  ([video-hub latch fixtures cache model surfaces shader-status]
+   (cond-> {:sources (into (hub/status video-hub latch)
+                           (when shader-status (shader-sources latch shader-status ((:now-ms video-hub)))))
+            :frozen? (boolean (:frozen? latch))
+            :mappings (mapping-samples latch fixtures cache)}
+     model (assoc :surfaces (surface-views model fixtures (or surfaces (surface-cache))))
+     shader-status (assoc :shaders shader-status))))
 
 (def max-jpeg-dimension
   "Largest served preview width or height, whatever the caller asks for."

@@ -5,6 +5,7 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.autopilot-signal :as signal]
+            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.pretty :as pretty]
             [tolglow.studio.spatial-drafts :as drafts]
             [tolglow.studio.spatial-fields :refer [number-input xyz]]
@@ -118,11 +119,11 @@
        [:<> [xyz "Position · m" position #(edit! :position %)]
         [number-input "Radius · m" radius #(edit! :radius %) {:min 0.001}]
         (when (#{:ball :sphere} shape)
-          [:<> [:label.spatial-check [:input {:type "checkbox" :checked (contains? spec :radius-source)
-                                              :on-change #(edit! :radius-source
-                                                                 (when (.. % -target -checked)
-                                                                   (fn [{r :radius}]
-                                                                     {:waveform :sine :period {:bars 1} :range [(* r 0.5) r]})))}]
+          [:<> [:label.spatial-check [checkbox/input {:checked (contains? spec :radius-source)
+                                                      :on-change #(edit! :radius-source
+                                                                         (when (.. % -target -checked)
+                                                                           (fn [{r :radius}]
+                                                                             {:waveform :sine :period {:bars 1} :range [(* r 0.5) r]})))}]
                 "Modulate radius"]
            (when-some [source (:radius-source spec)]
              [signal/field [:spatial id] "Radius modulation" source {:min 0.001 :max (max 4 radius) :step 0.01}
@@ -133,8 +134,8 @@
               [number-input "Hardness" hardness #(edit! :hardness %) {:min 0 :max 1}]
               [number-input "Attraction · m³/s²" (or attraction 0) #(edit! :attraction %) {:min 0}]
               [xyz "Spin · rad/s" (or angular-velocity [0 0 0]) #(edit! :angular-velocity %)]
-              [:label.spatial-check [:input {:type "checkbox" :checked (boolean (:fixed? spec))
-                                             :on-change #(edit! :fixed? (.. % -target -checked))}] "Fixed attractor"]]
+              [:label.spatial-check [checkbox/input {:checked (boolean (:fixed? spec))
+                                                     :on-change #(edit! :fixed? (.. % -target -checked))}] "Fixed attractor"]]
        :box [:<> [xyz "Minimum · m" (:min spec) #(edit! :min %)] [xyz "Maximum · m" (:max spec) #(edit! :max %)]]
        :cylinder [number-input "Height · m" (:height spec) #(edit! :height %) {:min 0.001}]
        :hdr [:<> [picker/picker {:title "Spill emitter" :kinds [:fixture] :selected (some-> (:source-id spec) picker/label)
@@ -247,15 +248,15 @@
         volumes (:volumes settings)]
     [:section.panel.spatial-panel {:aria-label "Spatial controls"}
      [:div.panel-top [:h2 "Spatial controls"]
-      [:label.spatial-check [:input {:type "checkbox" :aria-label "Enable spatial controls" :checked (boolean (:enabled? settings))
-                                     :disabled disabled? :on-change #(rf/dispatch [::save {:enabled? (.. % -target -checked)} "Spatial controls updated."])}]
+      [:label.spatial-check [checkbox/input {:aria-label "Enable spatial controls" :checked (boolean (:enabled? settings))
+                                             :disabled disabled? :on-change #(rf/dispatch [::save {:enabled? (.. % -target -checked)} "Spatial controls updated."])}]
        "Enabled"]]
      [:div.spatial-toolbar [:div.spatial-volume-list {:aria-label "Venue volumes"}
                             (for [v (sorted-ids volumes)] ^{:key (pr-str v)}
                               [:button.button {:aria-pressed (= id v) :on-click #(rf/dispatch [::choose v])} (picker/label v)])]
-      [:label.spatial-check [:input {:type "checkbox" :checked (= :enabled (:run-when settings)) :disabled disabled?
-                                     :on-change #(rf/dispatch [::save {:run-when (if (.. % -target -checked) :enabled :demand)}
-                                                               "Simulation lifetime updated."])}] "Keep running offscreen"]]
+      [:label.spatial-check [checkbox/input {:checked (= :enabled (:run-when settings)) :disabled disabled?
+                                             :on-change #(rf/dispatch [::save {:run-when (if (.. % -target -checked) :enabled :demand)}
+                                                                       "Simulation lifetime updated."])}] "Keep running offscreen"]]
      [new-volume volumes disabled?] [world-fields settings disabled?]
      (when id ^{:key (pr-str [(:owner current) id])} [body-editor id (volumes id) settings current disabled?])
      (when-let [message (:message current)] [:p.small {:role "status"} message])]))

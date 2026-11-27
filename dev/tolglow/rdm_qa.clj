@@ -14,7 +14,7 @@
         direct (gateway/start!)
         close-peers! #(do ((:close! ola)) ((:close! direct)))]
     (try
-      (let [runtime (app/start! (assoc (app/default-config) :web-server {:port port} :show {:workspace-options nil}))
+      (let [runtime (app/start! (assoc (app/default-config) :web-server {:port port} :show {:workspace-options nil :recovery false}))
             close! #(do (app/stop! runtime) (close-peers!))]
         (.addShutdownHook (Runtime/getRuntime) (Thread. close!))
         (io/make-parents connection-file)

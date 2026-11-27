@@ -84,8 +84,8 @@
 
   `stops` use the typed gradient parameter shape: ordered
   `{:position p :color [r g b]}` maps with strictly increasing positions. The
-  numeric IR cannot read a `:gradient` parameter yet, so the stops are baked
-  into the expression when the effect is authored."
+  stops are baked into the expression when the effect is authored; use
+  `fx/gradient` to sample an editable `:gradient` parameter instead."
   [stops t]
   (when-not (registry/valid-value? gradient-schema stops)
     (throw (ex-info "Gradient stops must be ordered {:position :color} maps" {:stops stops})))

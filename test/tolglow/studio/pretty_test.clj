@@ -102,6 +102,11 @@
   (is (= "{3 :c 2 :b 1 :a}" (pretty/edn (sorted-map-by > 1 :a 2 :b 3 :c))))
   (is (= "{:id :x :a 1}" (pretty/edn (sorted-map :a 1 :id :x)))))
 
+(deftest an-infinite-width-keeps-everything-on-one-line
+  (let [value [1 [2 3] (map inc (range 3))]]
+    (is (= "[1 [2 3] (1 2 3)]" (pretty/edn value {:width ##Inf})))
+    (is (= {:text "[1 [2 3] (1 2 3)]" :truncated? false} (pretty/edn-within value {:width ##Inf :max-chars 100})))))
+
 (deftest printing-ignores-the-callers-print-limits
   (binding [*print-length* 2 *print-level* 1]
     (is (= "[1 2 3 [4 [5]]]" (pretty/edn [1 2 3 [4 [5]]])))))
@@ -124,14 +129,83 @@
     (is (= (pr-str (array-map :a (range) :b [1 [2 [3]]]))
            (str/replace (pretty/edn (array-map :a (range) :b [1 [2 [3]]]) {:length 3 :level 2}) " :b" ", :b")))))
 
+(defrecord Holder [xs])
+
+(defn- guarded
+  "A counter of realized lazy elements that throws past `limit`, so a lost
+  bound fails the test instead of exhausting the heap."
+  [limit]
+  (let [realized (atom 0)]
+    {:realized realized
+     :tick! (fn [] (when (> (swap! realized inc) limit)
+                     (throw (ex-info "Realized past the bound" {:limit limit}))))}))
+
 (deftest a-character-budget-bounds-the-work-not-just-the-text
+  ;; Counted rather than timed: an infinite lazy value is realized only as far
+  ;; as the budget could show, with or without :length and :level limits.
+  (doseq [options [{:max-chars 8192} {:level 10 :max-chars 8192} {:length 64 :level 10 :max-chars 8192}]]
+    (let [{:keys [realized tick!]} (guarded (* 64 (inc (:max-chars options))))
+          counted (fn [] (map (fn [n] (tick!) n) (range)))
+          value (map (fn [_] (map (fn [_] (counted)) (range))) (range))
+          {:keys [text truncated?]} (pretty/edn-within value options)]
+      (is truncated? (pr-str options))
+      (is (= 8192 (count text)) (pr-str options))
+      (is (<= @realized (* 2 (inc (:max-chars options)))) (str (pr-str options) " realized " @realized))))
+  (testing "an infinitely deep and wide lazy value and an infinite chain stop"
+    (let [{:keys [realized tick!]} (guarded (* 64 1025))
+          node (fn node [] (lazy-seq (map (fn [_] (tick!) (node)) (range))))
+          chain (fn chain [] (lazy-seq (list (chain))))]
+      (doseq [[value max-chars] [[(node) 1024] [(chain) 100] [(chain) 8192]]]
+        (let [{:keys [text truncated?]} (pretty/edn-within value {:max-chars max-chars})]
+          (is truncated?)
+          (is (<= (count text) max-chars))
+          (is (every? #{\( \space \newline} text))))
+      (is (<= @realized (* 64 1025)))))
+  (testing "a deep but finite lazy value prints the whole budget (#760)"
+    ;; Elements already realized are not charged again by each ancestor's
+    ;; one-line probe, so depth no longer eats into the allowance.
+    (doseq [depth [1 8 12 16]]
+      (let [{:keys [realized tick!]} (guarded (* 64 8193))
+            nest (fn nest [d] (if (zero? d) 0 (map (fn [_] (tick!) (nest (dec d))) (range 20000))))
+            {:keys [text truncated?]} (pretty/edn-within (nest depth) {:max-chars 8192})]
+        (is truncated? (str "depth " depth))
+        (is (= 8192 (count text)) (str "depth " depth))
+        (is (= (str (apply str (repeat depth "(")) "0 0") (subs text 0 (+ depth 3))))
+        (is (<= @realized (* 64 8193)) (str "depth " depth " realized " @realized)))))
+  (testing "a chunked tail behind cons cells is charged for what it realizes"
+    (let [{:keys [realized tick!]} (guarded (+ (* 64 11) 32))
+          chain (fn chain [d] (if (zero? d) 0 (cons (chain (dec d)) (map (fn [i] (tick!) i) (range 1 1000)))))
+          {:keys [truncated?]} (pretty/edn-within (chain 3000) {:max-chars 10})]
+      (is truncated?)
+      (is (<= @realized (* 64 11)) (str "realized " @realized))))
+  (testing "a finished sequence walked again costs nothing, even with no allowance left"
+    ;; Sized so the allowance (64 × 4) runs out exactly as the inner levels are
+    ;; walked; re-walking the finished first element then must not stop the text.
+    (let [plain (fn plain [xs] (lazy-seq (when (seq xs) (cons (first xs) (plain (rest xs))))))
+          level (fn level [d width] (if (zero? d)
+                                      (plain (range 1 (inc width)))
+                                      (plain (cons (level (dec d) 6) (range 2 (inc width))))))]
+      (is (= {:text "[(1" :truncated? true}
+             (pretty/edn-within [(plain [1 2 3]) (level 50 3)] {:max-chars 3 :width 400})))))
+  (testing "a record holding an infinite seq is cut by the budget too"
+    (let [{:keys [text truncated?]} (pretty/edn-within [(->Holder (range))] {:max-chars 200})]
+      (is truncated?)
+      (is (= 200 (count text)))))
+  (testing "a stack overflow from user code is not passed off as truncation"
+    (let [runaway (fn runaway [n] (inc (runaway n)))]
+      (is (thrown? StackOverflowError
+                   (pretty/edn-within [(lazy-seq [(runaway 0)])] {:max-chars 100})))))
+  (testing "counted collections print exactly as the unbounded layout"
+    (doseq [[value max-chars] [[(set (range 1000)) 100]
+                               [(conj (vec (range 1000)) {:a 1}) 100]
+                               [(vec (mapcat (fn [i] [(keyword (str "k" i)) i]) (range 500))) 101]
+                               [(into {} (map (fn [i] [i (str "v" i)])) (range 2000)) 333]]]
+      (is (= {:text (subs (pretty/edn value) 0 max-chars) :truncated? true}
+             (pretty/edn-within value {:max-chars max-chars})))))
   (let [row (vec (range 64)) value (vec (repeat 64 (vec (repeat 64 (vec (repeat 64 row))))))
-        started (System/nanoTime)
-        {:keys [text truncated?]} (pretty/edn-within value {:length 64 :level 10 :max-chars 8192})
-        elapsed-ms (/ (- (System/nanoTime) started) 1e6)]
+        {:keys [text truncated?]} (pretty/edn-within value {:length 64 :level 10 :max-chars 8192})]
     (is truncated?)
     (is (= 8192 (count text)))
-    (is (< elapsed-ms 500) (str "took " elapsed-ms " ms"))
     (testing "under the budget the text is the unbounded layout"
       (let [definition (get-in (demo/model) [:registry :effects :breathe])
             full (pretty/edn definition)]

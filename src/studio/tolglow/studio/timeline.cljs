@@ -48,7 +48,8 @@
    "macro" [[:path {:d "M3 4.5h10M3 8h7M3 11.5h10"}]]
    "scene" [[:circle {:cx 8 :cy 8 :r 2.6 :class "solid"}]
             [:path {:d "M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4"}]]
-   "callback" [[:path {:d "M6 4.5L2.5 8 6 11.5M10 4.5L13.5 8 10 11.5"}]]})
+   "callback" [[:path {:d "M6 4.5L2.5 8 6 11.5M10 4.5L13.5 8 10 11.5"}]]
+   "auto" [[:path {:d "M2.5 11.5l3-4 2.5 2.5 3-5 2.5 3"}] [:circle {:cx 13.5 :cy 8 :r 1.4 :class "solid"}]]})
 
 (defn- icon [category]
   (into [:svg.timeline-icon {:view-box "0 0 16 16" :aria-hidden true :focusable "false"}]

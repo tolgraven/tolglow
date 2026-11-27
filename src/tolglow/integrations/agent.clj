@@ -40,7 +40,8 @@
    {:name "knob_candidate"
     :description (str "Generate, reroll, audition, edit, keep or discard one draft linked-knob mapping across the running cues. "
                       "generate takes an optional integer seed, character (energy, colour or motion), cue-ids to restrict the selection, "
-                      "size [min max] links, or from-knob to repeat a kept knob's saved recipe. reroll tries the next seed with a different mapping. "
+                      "size as two link-count bounds from 2 to 8 in either order, include-knob-driven? true to also offer destinations existing knobs drive "
+                      "(left out by default), or from-knob to repeat a kept knob's saved recipe. reroll tries the next seed with a different mapping. "
                       "audition stages the candidate in the Room at knob value 0–1; the live show is unchanged. "
                       "link replaces one candidate link by id and unlink drops one. keep creates an ordinary knob (optional knob-id, name, value); "
                       "discard drops the draft. Read the candidate, its explanation, or why too few parameters were eligible under knob-candidates in inspect_show.")
@@ -49,6 +50,7 @@
                               :seed {:type "integer"} :character {:type "string" :enum ["energy" "colour" "motion"]}
                               :cue-ids {:type "array" :items id-schema :maxItems 64}
                               :size {:type "array" :items {:type "integer" :minimum 2 :maximum 8} :minItems 2 :maxItems 2}
+                              :include-knob-driven? {:type "boolean"}
                               :from-knob id-schema :value level-schema :knob-id id-schema
                               :name {:type "string" :minLength 1 :maxLength 128}
                               :link {:type "object"} :link-id id-schema}
@@ -100,8 +102,15 @@
                                              :above {:type "number" :minimum 0 :maximum 1}
                                              :target {:type "number" :minimum 0 :maximum 1}}
                  :required ["op" "group-id"] :additionalProperties false}}
-   {:name "configure_auto" :description "Configure automatic show selection policy using validated cue ids, timing and constraints."
-    :parameters {:type "object" :properties {:configuration {:type "object"}}
+   {:name "configure_auto"
+    :description (str "Configure automatic show selection policy using validated cue ids, timing and constraints. "
+                      "Without at it applies now. With at it waits on the beat clock and applies on that line, before auto decides there, "
+                      "so a mood change lands on the downbeat: at {bar|beat|phrase} (zero-based transport position; one that passed less than a bar ago applies now, marked late; a bar or more is rejected), "
+                      "or \"next-bar\", \"next-phrase\" or \"next-section\" (the end of the auto section now playing). "
+                      "A pending change is listed by inspect_schedule and withdrawn with cancel_scheduled (in any later turn of this conversation).")
+    :parameters {:type "object"
+                 :properties {:configuration {:type "object"}
+                              :at {:description "Zero-based position object {bar, beat, phrase} or one of next-bar, next-phrase, next-section."}}
                  :required ["configuration"] :additionalProperties false}}
    {:name "schedule_events"
     :description (str "Post up to 64 show events ahead of time on the beat clock in one atomic batch; one invalid event rejects all. "
@@ -252,7 +261,8 @@
   "Run a bounded provider/tool conversation. Tools are generic declarations.
   dispatch! [tool-name args metadata] executes validated semantic operations;
   emit! receives streamed text and tool/result events. options: :transport
-  (defaults to providers/http-transport!), :cancelled? atom, :run-id, :max-rounds
+  (defaults to providers/http-transport!), :cancelled? atom, :run-id,
+  :conversation-id (passed to dispatch! in metadata), :max-rounds
   (8), :max-tool-calls (32), and HTTP limits. No operation runs at namespace load.
   Same tool IDs/arguments within a run replay their prior result, never execute
   twice. Changed arguments with a reused ID are rejected. Model calls remain
@@ -295,7 +305,9 @@
                  (throw (ex-info "Agent tool-call limit reached" {:agent/error :tool-limit})))
                (let [processed (reduce (fn [{:keys [executed messages]} call]
                                          (let [result (execute-tool! call definitions executed dispatch! emit! cancelled?
-                                                                     {:run-id run-id :round round})]
+                                                                     (cond-> {:run-id run-id :round round}
+                                                                       (:conversation-id options)
+                                                                       (assoc :conversation-id (:conversation-id options))))]
                                            {:executed (:executed result) :messages (conj messages (:message result))}))
                                        {:executed executed :messages []} calls)]
                  (reset! progress {:messages (into conversation (:messages processed))

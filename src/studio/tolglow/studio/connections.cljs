@@ -2,8 +2,10 @@
   "Explicit connection controls. Reading status never acquires a device; every
   start, stop, clock selection and Live handoff is a named re-frame event."
   (:require [clojure.string :as str]
+            [tolglow.studio.show-window :as show-window]
             [afterglow.sync.peer :as pairing]
             [re-frame.core :as rf]
+            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.compute-client :as compute-client]
             [reagent.core :as r]
             [tolglow.audio.pcm :as pcm]
@@ -26,7 +28,7 @@
    :beat-link {:enabled? false :status? false :align-bars? false :peer nil}
    :live {:enabled? false :endpoint "http://127.0.0.1:8750/live" :bridge-id "tolglow-m4l" :record-route "bridge"
           :mode "lighting" :channel 1 :automap? true :observed-parameters {} :poll-ms 500 :timeout-ms 2000 :pairing nil
-          :mappings {} :parameters {}}})
+          :mappings {} :parameters {} :pad-layout "push-64-pads"}})
 
 (def audio-defaults {:input "" :sample-rate "48000" :channels "1" :input-channel ""
                      :block-frames "480" :buffer-blocks "8" :big-endian? false :analyzer-options {} :stems []})
@@ -277,6 +279,179 @@
          (if (= 1 notes) " activation of " " activations of ") (str/join ", " (map #(if (keyword? %) (name %) (str %)) cues))
          " · " lane-points (if (= 1 lane-points) " parameter move" " parameter moves"))
     (or message "Nothing ran in the captured bars")))
+(rf/reg-event-fx :connections/live-runs-refresh
+  (fn [{:keys [db]} _]
+    {:db (-> db (update-in [:connections :pending] (fnil conj #{}) :live-runs)
+             (update-in [:connections :errors] dissoc :live-runs))
+     :fx [(req db :live-runs "/api/live-runs" nil :connections/live-runs-loaded)]}))
+
+(rf/reg-event-fx :connections/live-runs-loaded
+  (fn [{:keys [db]} [_ request-token _ result]]
+    (when (current? db request-token)
+      {:db (-> db (update-in [:connections :pending] disj :live-runs)
+               (assoc-in [:connections :live-runs] result))})))
+
+(rf/reg-event-fx :connections/live-runs-sync
+  (fn [{:keys [db]} _]
+    {:db (-> db (update-in [:connections :pending] (fnil conj #{}) :live-runs-sync)
+             (update-in [:connections :errors] dissoc :live-runs-sync))
+     :fx [[:studio/http {:path "/api/live-runs/sync" :body {} :timeout-ms 30000
+                         :on-success [:connections/live-runs-synced (token db) :live-runs-sync]
+                         :on-failure [:connections/failed (token db) :live-runs-sync]}]]}))
+
+(rf/reg-event-fx :connections/live-runs-synced
+  (fn [{:keys [db]} [_ request-token _ result]]
+    (when (current? db request-token)
+      {:db (-> db (update-in [:connections :pending] disj :live-runs-sync)
+               (assoc-in [:connections :live-runs-sync] result))
+       :dispatch-n [[:connections/live-runs-refresh] [:connections/parameter-devices-refresh]]})))
+
+;; Parameter devices on run tracks (#625): the projection show/live-parameter-devices returns.
+(rf/reg-event-fx :connections/parameter-devices-refresh
+  (fn [{:keys [db]} _]
+    {:db (-> db (update-in [:connections :pending] (fnil conj #{}) :parameter-devices)
+             (update-in [:connections :errors] dissoc :parameter-devices))
+     :fx [(req db :parameter-devices "/api/live-parameter-devices" nil :connections/parameter-devices-loaded)]}))
+
+(rf/reg-event-fx :connections/parameter-devices-loaded
+  (fn [{:keys [db]} [_ request-token _ result]]
+    (when (current? db request-token)
+      {:db (-> db (update-in [:connections :pending] disj :parameter-devices)
+               (assoc-in [:connections :parameter-devices] result))})))
+
+;; A shared parameter frame (#625): the view subscribes while mounted and reads
+;; the newest frame; the server renders once for every compatible view.
+(rf/reg-event-fx :connections/frame-subscribe
+  (fn [{:keys [db]} [_ request]]
+    {:fx [(req db :frame-preview "/api/parameter-frames/subscribe" (assoc request :consumer "studio-connections")
+               :connections/frame-subscribed)]}))
+
+(rf/reg-event-fx :connections/frame-subscribed
+  (fn [{:keys [db]} [_ request-token _ result]]
+    (when (current? db request-token)
+      {:db (assoc-in db [:connections :frame-preview] result)})))
+
+(rf/reg-event-fx :connections/frame-unsubscribe
+  (fn [{:keys [db]} [_ lease]]
+    {:db (update db :connections dissoc :frame-preview)
+     :fx (if lease [(req db :frame-preview "/api/parameter-frames/unsubscribe" {:lease lease} :connections/frame-unsubscribed)] [])}))
+
+(rf/reg-event-fx :connections/frame-unsubscribed (fn [_ _] nil))
+
+(rf/reg-event-fx :connections/launcher-refresh
+  (fn [{:keys [db]} _]
+    (let [page-id (get-in db [:ui :page-id])]
+      {:db (-> db (update-in [:connections :pending] (fnil conj #{}) :launcher)
+               (update-in [:connections :errors] dissoc :launcher))
+       :fx [(req db :launcher (str "/api/live-launcher" (when page-id (str "?page-id=" (js/encodeURIComponent (str page-id)))))
+                 nil :connections/launcher-loaded)]})))
+
+(rf/reg-event-fx :connections/launcher-loaded
+  (fn [{:keys [db]} [_ request-token _ result]]
+    (when (current? db request-token)
+      {:db (-> db (update-in [:connections :pending] disj :launcher)
+               (assoc-in [:connections :launcher] result))})))
+
+(defn launcher-timeout-ms
+  "How long Studio waits for Set up in Live or Write pad clip. The host sends
+  up to three operations through the Live bridge, each waiting at most 1 s
+  plus four bridge timeouts, so the client outlasts that."
+  [s]
+  (let [bridge-timeout (get-in s [:sync :config :live :timeout-ms] 2000)]
+    (+ 5000 (* 3 (+ 1000 (* 4 bridge-timeout))))))
+
+(rf/reg-event-fx :connections/launcher-action
+  (fn [{:keys [db]} [_ operation]]
+    (let [page-id (get-in db [:ui :page-id])]
+      {:db (-> db (update-in [:connections :pending] (fnil conj #{}) :launcher)
+               (update-in [:connections :errors] dissoc :launcher))
+       :fx [[:studio/http {:path (str "/api/live-launcher/" (name operation))
+                           :body (cond-> {} page-id (assoc :page-id (str page-id)))
+                           :timeout-ms (launcher-timeout-ms (state db))
+                           :on-success [:connections/launcher-acted (token db) :launcher]
+                           :on-failure [:connections/launcher-failed (token db) :launcher]}]]})))
+
+(rf/reg-event-fx :connections/launcher-failed
+  ;; Show the failure, then the projection: the host keeps what it did.
+  (fn [{:keys [db]} [_ request-token key error]]
+    (when (current? db request-token)
+      {:db (-> db (assoc-in [:connections :errors key] (str error))
+               (update-in [:connections :pending] disj key))
+       :dispatch [:connections/launcher-refresh]})))
+
+(rf/reg-event-fx :connections/launcher-acted
+  ;; The host answers with the setup or clip result; show the projection again.
+  (fn [{:keys [db]} [_ request-token _ _]]
+    (when (current? db request-token)
+      {:db (update-in db [:connections :pending] disj :launcher)
+       :dispatch [:connections/launcher-refresh]})))
+
+(defn- plural [n one many] (str n " " (if (= 1 n) one many)))
+
+(defn- id-text [x] (if (keyword? x) (name x) (str x)))
+
+(defn launcher-text
+  "One line summarizing the cue launcher (the same projection as
+  show/live-launcher at the REPL)."
+  [{:keys [layout pads setup clip elsewhere unmapped]}]
+  (let [playing (count (filter :cue-id pads))
+        loose (+ (count elsewhere) (count unmapped))]
+    (str (if (= "rows" (id-text layout)) "Rows of eight" "Push 64 Pads") " · "
+         playing " of " (count pads) " pads play cues"
+         (when (pos? loose) (str " · " (plural loose "cue is" "cues are") " not under its pad"))
+         " · " (cond (nil? setup) "not set up in Live"
+                     (:ready? setup) (str "set up in Live as " (:name setup))
+                     :else (str (plural (count (:problems setup)) "setup problem" "setup problems") " in Live"))
+         (when (and clip (= "executed" (some-> (:status clip) id-text)))
+           (str " · last pad clip " (plural (:notes clip) "hit" "hits"))))))
+
+(defn launcher-problems
+  "Setup problems as lines, one per kind: pad problems list their notes."
+  [problems]
+  (for [[code group] (sort-by (comp id-text key) (group-by (comp id-text :code) problems))
+        :let [notes (keep :note group)]]
+    (if (seq notes)
+      (str code " · " (if (= 1 (count notes)) "note " "notes ") (str/join ", " notes)
+           (when (= 1 (count group)) (some->> (:expected (first group)) (str " · "))))
+      (str/join " · " (cons code (keep #(some-> (:expected %) str) group))))))
+
+(defn pad-rows
+  "The launcher's 64 pads as eight rows of eight, top row first, as Push's
+  64 Pads layout shows them."
+  [pads]
+  (mapv vec (partition-all 8 (sort-by (fn [{[x y] :cell}] [y x]) pads))))
+
+(defn- color-css [n]
+  (when (number? n) (str "#" (.padStart (.toString (js/Math.round n) 16) 6 "0"))))
+
+(defn live-runs-text
+  "One line summarizing the run record (the same projection as show/live-runs
+  at the REPL)."
+  [{:keys [channels takes running mirror truncated? shown playback-events]}]
+  (let [clips (mapcat :takes (mapcat :lanes channels))
+        in-live (count (filter #(= "in-live" (some-> % :clip :status name)) clips))]
+    (if (zero? (or takes 0))
+      "Nothing has run yet"
+      (str (plural (count channels) "launched cue" "launched cues") " · " (plural takes "take" "takes")
+           (when (pos? (or running 0)) (str " (" running " running)"))
+           " · " (if mirror (str in-live " of " (count clips) " in Live") "not synced with Live")
+           (when truncated? (str " · newest " shown " shown"))
+           (when (pos? (or (:dropped playback-events) 0))
+             (str " · " (plural (:dropped playback-events) "playback event" "playback events") " dropped"))))))
+
+(defn- beat-text [b] (if (number? b) (.toFixed b 2) "—"))
+
+(defn take-text
+  "One take: run number, start beat, held beats and where its clip is."
+  [{:keys [run start-beat length-beats phase clip]}]
+  (str "run " run " · beat " (beat-text start-beat) " · "
+       (if length-beats (str "held " (beat-text length-beats)) (name phase))
+       " · " (case (some-> clip :status name)
+               "in-live" "in Live"
+               "recording" "recording"
+               "not-in-live" "not in Live yet"
+               (some-> clip :status name))))
+
 (rf/reg-event-fx :connections/action-complete
   (fn [{:keys [db]} [_ request-token operation result]]
     (when (current? db request-token)
@@ -497,8 +672,8 @@
   [:label title [:input (merge {:type "text" :value (get-in s path "") :on-change #(edit! path (text %))} attrs)]])
 
 (defn- checkbox [s path title disabled?]
-  [:label.checkbox-label [:input {:type "checkbox" :checked (boolean (get-in s path)) :disabled (boolean disabled?)
-                                  :on-change #(edit! path (.. % -target -checked))}] title])
+  [:label.checkbox-label [checkbox/input {:checked (boolean (get-in s path)) :disabled (boolean disabled?)
+                                          :on-change #(edit! path (.. % -target -checked))}] title])
 
 (defn- status-chip [active? title] [:span.connection-chip {:class (when active? "active")} [:i] title])
 
@@ -555,8 +730,8 @@
       [:label (if (= kind :notes) "Note" "CC") [:input {:type "text" :input-mode "numeric" :value (:control row) :disabled disabled?
                                                          :aria-label (str (name kind) " " (inc index) " number")
                                                          :on-change #(rf/dispatch-sync [:connections/mapping-edit kind index :control (text %)])}]]
-      [:label.checkbox-label [:input {:type "checkbox" :checked (not (:disabled? row)) :disabled disabled?
-                                      :on-change #(rf/dispatch-sync [:connections/mapping-edit kind index :disabled? (not (.. % -target -checked))])}] "Enabled"]
+      [:label.checkbox-label [checkbox/input {:checked (not (:disabled? row)) :disabled disabled?
+                                              :on-change #(rf/dispatch-sync [:connections/mapping-edit kind index :disabled? (not (.. % -target -checked))])}] "Enabled"]
       [:label "Cue" [:select {:value (:cue-id row) :disabled disabled? :aria-label (str (name kind) " " (inc index) " cue")
                               :on-change #(rf/dispatch-sync [:connections/mapping-edit kind index :cue-id (text %)])}
                      (for [cue cues] ^{:key (:id cue)} [:option {:value (:id cue)} (or (:name cue) (:id cue))])]]
@@ -646,11 +821,11 @@
                                                              :on-change #(edit! [:sync-form :live :record-route] (text %))}
                                   [:option {:value "bridge"} "Bridge · confirmed clip writes"] [:option {:value "midi"} "MIDI · delivery only"]]]
        [field s [:sync-form :live :channel] "MIDI channel · 1–16" {:id "live-channel" :input-mode "numeric" :disabled disabled?}]]
-      [:label.checkbox-label [:input {:type "checkbox" :checked (:automap? live true) :disabled disabled?
-                                      :on-change #(edit! [:sync-form :live :automap?] (.. % -target -checked))}]
+      [:label.checkbox-label [checkbox/input {:checked (:automap? live true) :disabled disabled?
+                                              :on-change #(edit! [:sync-form :live :automap?] (.. % -target -checked))}]
        "Map this cue page and its parameters when saving"]
-      [:label.checkbox-label [:input {:type "checkbox" :checked (boolean (:pairing live)) :disabled disabled?
-                                       :on-change #(rf/dispatch-sync [:connections/pairing (.. % -target -checked)])}]
+      [:label.checkbox-label [checkbox/input {:checked (boolean (:pairing live)) :disabled disabled?
+                                               :on-change #(rf/dispatch-sync [:connections/pairing (.. % -target -checked)])}]
        "Pair a track, clip slot and drum rack"]
       (when (:pairing live)
         [:div.connection-pairing
@@ -666,6 +841,12 @@
          [:div.form-row
           [field s [:sync-form :live :pairing :expected-track-name] "Expected track name · optional" {:disabled disabled?}]
           [field s [:sync-form :live :pairing :expected-clip-name] "Expected clip name · optional" {:disabled disabled?}]]])
+      [:label "Pad layout"
+       [:select#live-pad-layout {:value (id-text (or (:pad-layout live) "push-64-pads")) :disabled disabled?
+                                 :on-change #(edit! [:sync-form :live :pad-layout] (text %))}
+        [:option {:value "push-64-pads"} "Push 64 Pads · cells match Push's drum grid"]
+        [:option {:value "rows"} "Rows of eight · earlier shows"]]]
+      [:p.small.muted "New pad assignments follow this layout. Existing assignments keep their notes, so recorded clips still address the same cues."]
       [:div.button-row
        (for [[mode title] [["lighting" "Lighting mode"] ["live" "Live mode"]]]
          ^{:key mode} [:button.button {:type "button" :disabled (not active?) :aria-pressed (= mode (get-in s [:sync :config :live :mode]))
@@ -738,8 +919,10 @@
                                                [field s [:audio-form :block-frames] "Frames per block" {:input-mode "numeric" :disabled (or running? pending?)}]
                                                [field s [:audio-form :buffer-blocks] "Buffer blocks" {:input-mode "numeric" :disabled (or running? pending?)}]]]
       [:div.button-row
-       [:button#audio-start.button.primary {:type "button" :disabled (or (nil? audio) running? pending? (str/blank? (get-in s [:audio-form :input])))
-                                            :on-click #(rf/dispatch [:connections/audio-start])} "Start capture"]
+       [:button#audio-start.button.primary (show-window/device-control
+                                            {:type "button" :disabled (or (nil? audio) running? pending? (str/blank? (get-in s [:audio-form :input])))
+                                             :on-click #(rf/dispatch [:connections/audio-start])}
+                                            @(rf/subscribe [:show-window/preview-only])) "Start capture"]
        [:button#audio-stop.button {:type "button" :disabled (or (not running?) pending?)
                                   :on-click #(rf/dispatch [:connections/action :audio-stop])} "Stop capture"]]
       [:div.audio-level [:label {:html-for "audio-level"} "Signal energy · RMS"] [:meter#audio-level {:min 0 :max 1 :value (max 0 (min 1 (:rms features 0)))}]]
@@ -768,6 +951,173 @@
          [:a#capture-download.button {:href "/api/capture/last.mid" :download true} "Download MIDI clip"])]
       (when result [:p.small {:role "status"} (capture-text result)])]]))
 
+(defn- launcher-panel [s]
+  (let [{:keys [pads setup clip] :as launcher} (:launcher s)]
+    [:section.panel {:aria-label "Cue launcher"}
+     [:div.panel-top [:span.section-label "CUE LAUNCHER"]]
+     [:div.form-body
+      [:p.small.muted "The selected cue page on one Drum Rack track in Live: the track of the companion the Live bridge talks to. Each pad is the cell its cue sits in, as Push's 64 Pads layout shows it. Hitting a pad launches its cue; a clip of pad hits replays them without recording them again. Hits played while a clip plays on that track count as playback."]
+      [:div.button-row
+       [:button#launcher-refresh.button {:type "button" :disabled (contains? (:pending s) :launcher)
+                                         :on-click #(rf/dispatch [:connections/launcher-refresh])} "Show pads"]
+       [:button#launcher-setup.button {:type "button" :disabled (or (contains? (:pending s) :launcher) (not (get-in s [:sync :active?])))
+                                       :on-click #(rf/dispatch [:connections/launcher-action :setup])} "Set up in Live"]
+       [:button#launcher-write.button {:type "button" :disabled (or (contains? (:pending s) :launcher) (not (:ready? setup)))
+                                       :on-click #(rf/dispatch [:connections/launcher-action :write-clip])} "Write pad clip"]]
+      (when launcher
+        [:<>
+         [:p.small {:role "status"} (launcher-text launcher)]
+         (into [:div.launcher-pads {:role "grid" :aria-label "Launcher pads"}]
+               (for [row (pad-rows pads)]
+                 (into [:div.launcher-row {:role "row"}]
+                       (for [{:keys [note cue-id label live-color]} row]
+                         ^{:key note}
+                         [:div.launcher-pad {:role "gridcell" :class (when-not cue-id "empty")
+                                             :title (str "Note " note (when cue-id (str " · " (or label (id-text cue-id)))))
+                                             :style (when cue-id {:border-color (color-css live-color)})}
+                          [:span.launcher-note note]
+                          (when cue-id [:span.launcher-label (or label (id-text cue-id))])]))))
+         (for [line (launcher-problems (:problems setup))]
+           ^{:key line} [:p.connection-error.small line])
+         (for [line (launcher-problems (:warnings setup))]
+           ^{:key line} [:p.small.muted (str "Warning · " line)])
+         (when (and clip (not= "executed" (some-> (:status clip) id-text)))
+           [:p.connection-error.small (str "Pad clip " (id-text (:status clip)))])
+         (when-not setup
+           [:p.small.muted "Connect the Live bridge, then Set up in Live (show/setup-live-launcher! at the REPL) to put a Drum Rack after the companion and name its pads."])])]]))
+
+(defn parameter-devices-text
+  "One line per channel's devices on its run tracks (the projection of
+  show/live-parameter-devices)."
+  [{:keys [cue-id devices slots tracks unsupported]}]
+  (let [placed (fn [{:keys [present missing stale]}]
+                 (cond (seq missing) (str "drop " (plural (count missing) "Tolglow parameters device" "Tolglow parameters devices") " here")
+                       (seq stale) "configuring"
+                       (seq present) "ready"
+                       :else "not synced"))]
+    (str (id-text cue-id) " · " (plural (count (remove :retired? slots)) "slot" "slots") " on " (plural devices "device" "devices")
+         (when (seq unsupported) (str " · " (count unsupported) " not in Live"))
+         (when (seq tracks) (str " · " (str/join ", " (map #(str (:track-name %) ": " (placed %)) tracks)))))))
+
+(defn slot-text
+  "A slot as Live shows it: name, range or choices, and unit."
+  [{:keys [name type min max choices unit places retired?]}]
+  (if retired?
+    (str name " (unused)")
+    (str name " · "
+         (if (= "enum" (id-text type))
+           (str/join " / " choices)
+           (str (if (number? min) (.toFixed min (if (= "int" (id-text type)) 0 (or places 3))) min) " – "
+                (if (number? max) (.toFixed max (if (= "int" (id-text type)) 0 (or places 3))) max)
+                (when unit (str " " unit)))))))
+
+(defn- frame-preview
+  "The shared parameter frame of one running instance, as the Live device
+  and the Push display can mount it too."
+  [instance-id param]
+  (let [tick (r/atom 0)
+        timer (atom nil)
+        mounted-lease (atom nil)
+        resubscribed (atom 0)
+        request {:instance-id instance-id :param param :window-beats 4 :style "history" :width 320 :height 64
+                 :dpr (min 2 (max 1 (or js/window.devicePixelRatio 1)))}]
+    (r/create-class
+     {:display-name "Shared parameter frame"
+      :component-did-mount
+      (fn [_]
+        (reset! resubscribed (js/Date.now))
+        (rf/dispatch [:connections/frame-subscribe request])
+        (reset! timer (js/setInterval #(swap! tick inc) 250)))
+      :component-will-unmount
+      (fn [_]
+        (js/clearInterval @timer)
+        (rf/dispatch [:connections/frame-unsubscribe @mounted-lease]))
+      :reagent-render
+      (fn [_ _]
+        (let [{:keys [lease shared?]} @(rf/subscribe [:connections/frame-preview])]
+          (reset! mounted-lease lease)
+          [:figure.parameter-frame
+           (when lease
+             [:img {:width 320 :height 64 :alt (str "Shared frame of " (id-text param))
+                    ;; An image error is either 204 (no frame yet) or 410 (the lease
+                    ;; expired while the tab was hidden or asleep). Only a 410
+                    ;; subscribes again, at most every two seconds.
+                    :on-error (fn [_]
+                                (when (> (- (js/Date.now) @resubscribed) 2000)
+                                  (-> (js/fetch (str "/api/parameter-frames/frame?latest=true&lease=" (js/encodeURIComponent lease)))
+                                      (.then (fn [response]
+                                               (when (and (= 410 (.-status response))
+                                                          (> (- (js/Date.now) @resubscribed) 2000))
+                                                 (reset! resubscribed (js/Date.now))
+                                                 (rf/dispatch [:connections/frame-unsubscribe lease])
+                                                 (rf/dispatch [:connections/frame-subscribe request]))))
+                                      (.catch (fn [_] nil)))))
+                    :src (str "/api/parameter-frames/frame?latest=true&lease=" (js/encodeURIComponent lease) "&n=" @tick)}])
+           [:figcaption.small.muted (str (id-text param) " · 4 beats" (when shared? " · shared with another view"))]]))})))
+
+(rf/reg-sub :connections/frame-preview (fn [db _] (get-in db [:connections :frame-preview])))
+
+;; Only instance identities: the panel re-renders when a run starts or ends,
+;; not on every state update.
+(rf/reg-sub :connections/running-instances
+  (fn [db _] (mapv #(select-keys % [:id :cue-id]) (get-in db [:show :instances]))))
+
+(defn- parameter-devices-section [s instances]
+  (let [{:keys [channels counts sends] :as devices} (:parameter-devices s)]
+    [:div.parameter-devices
+     [:div.button-row
+      [:button#parameter-devices-refresh.button {:type "button" :disabled (contains? (:pending s) :parameter-devices)
+                                                 :on-click #(rf/dispatch [:connections/parameter-devices-refresh])} "Show parameter devices"]]
+     (when devices
+       [:<>
+        (into [:ul.parameter-device-channels]
+              (for [[index {:keys [cue-id slots banks] :as channel}] (map-indexed vector channels)
+                    :let [running (some #(when (= (id-text cue-id) (id-text (:cue-id %))) %) instances)
+                          first-slot (first (remove :retired? slots))
+                          ;; One preview at a time: the first channel with a running instance.
+                          previewed (first (keep-indexed (fn [i c] (when (some #(= (id-text (:cue-id c)) (id-text (:cue-id %))) instances) i)) channels))]]
+                ^{:key (str cue-id)}
+                [:li [:span.small (parameter-devices-text channel)]
+                 (into [:ol.parameter-device-slots {:aria-label (str (id-text cue-id) " slots")}]
+                       (for [slot slots] ^{:key (:slot slot)} [:li.small (slot-text slot)]))
+                 [:p.small.muted (str "Banks: " (str/join " | " (map #(str/join " " (map (fn [i] (inc (mod i 32))) %)) (first banks))))]
+                 (when (and running (= index previewed) first-slot (#{"float" "int"} (id-text (:type first-slot))))
+                   ^{:key (str (:id running) (:param first-slot))}
+                   [frame-preview (:id running) (id-text (:param first-slot))])]))
+        [:p.small.muted (str "Values from Live: " (or (:applied counts) 0) " applied · " (or (:echo counts) 0) " echoes dropped · "
+                             (or (:held counts) 0) " held by Tolglow · Tolglow writes sent: " (or (:executed sends) 0)
+                             (when (pos? (or (:failed sends) 0)) (str " (" (:failed sends) " not sent)")))]])]))
+
+(defn- live-runs-panel [s]
+  (let [{:keys [channels mirror] :as runs} (:live-runs s)]
+    [:section.panel {:aria-label "Live runs"}
+     [:div.panel-top [:span.section-label "LIVE RUNS"]]
+     [:div.form-body
+      [:p.small.muted "What actually ran: one channel per launched cue, one take per run, a lane for each overlapping run, grouped as the effect groups are. Each take becomes one clip on its cue's run track in Live."]
+      [:div.button-row
+       [:button#live-runs-refresh.button {:type "button" :disabled (contains? (:pending s) :live-runs)
+                                          :on-click #(rf/dispatch [:connections/live-runs-refresh])} "Show what ran"]
+       [:button#live-runs-sync.button {:type "button" :disabled (or (contains? (:pending s) :live-runs-sync) (not (get-in s [:sync :active?])))
+                                       :on-click #(rf/dispatch [:connections/live-runs-sync])} "Sync to Live"]]
+      (when runs
+        [:<>
+         [:p.small {:role "status"} (live-runs-text runs)]
+         (into [:ul.live-runs]
+               (for [{:keys [cue-id name group-path lanes]} channels]
+                 ^{:key (str cue-id)}
+                 [:li [:strong name] (when (seq group-path) [:span.small.muted (str " · in " (str/join " / " (map #(if (keyword? %) (cljs.core/name %) (str %)) group-path)))])
+                  (into [:ul]
+                        (for [{:keys [lane track-name takes]} lanes]
+                          ^{:key lane}
+                          [:li [:span.small track-name]
+                           (into [:ul] (for [t takes] ^{:key (:take-id t)} [:li.small (take-text t)]))]))]))
+         (for [{:keys [code name]} (:problems mirror)]
+           ^{:key (str code name)} [:p.connection-error.small (str (cljs.core/name code) (when name (str " · " name)))])
+         (when-not mirror
+           [:p.small.muted "Sync to Live (show/sync-live-runs! at the REPL) mirrors the record into Live; this panel then shows each take's clip."])])
+      [:p.small.muted "A Tolglow parameters device on a run track shows that effect's parameters as Studio does. Live automation on it steers the run; Sync writes each take's moves as its envelopes."]
+      [parameter-devices-section s @(rf/subscribe [:connections/running-instances])]]]))
+
 (defn connection-view [db s]
   (let [active? (boolean (get-in s [:sync :active?])) pending? (boolean (seq (:pending s))) disabled? (or (nil? (:sync s)) active? pending?)]
     [:section#view-connections.view
@@ -783,13 +1133,16 @@
      [:div.connection-actions.panel
       [:div [status-chip active? (str "Synchronization · " (or (get-in s [:sync :state]) "loading"))]
        [:p.small.muted "Save pairings without opening devices, or connect the enabled adapters explicitly."]]
+      [show-window/device-note @(rf/subscribe [:show-window/preview-only])]
       [:div.button-row
        [:button#sync-save.button {:type "button" :disabled disabled? :on-click #(rf/dispatch [:connections/configure false])} "Save configuration"]
-       [:button#sync-start.button.primary {:type "button" :disabled (or disabled? (not-any? #(get-in s [:sync-form % :enabled?]) [:midi :beat-link :link :live]))
-                                          :on-click #(rf/dispatch [:connections/configure true])} "Connect enabled adapters"]
+       [:button#sync-start.button.primary (show-window/device-control
+                                          {:type "button" :disabled (or disabled? (not-any? #(get-in s [:sync-form % :enabled?]) [:midi :beat-link :link :live]))
+                                           :on-click #(rf/dispatch [:connections/configure true])}
+                                          @(rf/subscribe [:show-window/preview-only])) "Connect enabled adapters"]
        [:button#sync-stop.button {:type "button" :disabled (or (not active?) pending?) :on-click #(rf/dispatch [:connections/action :stop])} "Disconnect"]]]
      [:div.connections-layout [midi-panel s disabled?] [beat-link-panel s disabled?] [link-panel s disabled?]
-      [live-panel s (get-in db [:show :cues]) disabled?] [capture-panel s] [audio-panel s] [section-reference-panel s]
+      [live-panel s (get-in db [:show :cues]) disabled?] [launcher-panel s] [capture-panel s] [live-runs-panel s] [audio-panel s] [section-reference-panel s]
       [capacity/panel (contains? (:pending s) :lighting-capacity)] [fog-control/panel (contains? (:pending s) :fog-control)] [output-panel db s] [pause-panel (contains? (:pending s) :pause)]]
      [audio-lfo/panel]
      [compute-client/panel]

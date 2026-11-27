@@ -15,6 +15,7 @@
             [reitit.ring :as ring]
             [tolglow.studio.page-routes :as pages]
             [tolglow.studio.pretty :as pretty]
+            [tolglow.visualization.parameter-frames :as parameter-frames]
             [ring.middleware.content-type :refer [wrap-content-type]]
             [ring.middleware.head :refer [wrap-head]]
             [ring.middleware.params :refer [assoc-query-params]]
@@ -204,7 +205,9 @@
                 (close []
                   (when (compare-and-set! closed? false true)
                     (when-let [cancel! @cancel] (cancel!)))
-                  (proxy-super close)))
+                  ;; A typed `this` keeps the super call reflection-free for
+                  ;; the compiled host, which has no reflection metadata.
+                  (let [^PipedInputStream this this] (proxy-super close))))
         output (PipedOutputStream. input)
         emit! (fn [event]
                 (locking output
@@ -328,10 +331,12 @@
 
 (defn- get-routes
   [{:keys [snapshot! materials! definition! export! heartbeat! provider-get! chat-history! patch! checkpoint!
-           app-agent! fixture! rdm! audio! video! sync! section-reference! waveform! workspace! terminal! sensor! repl! calibration! photometry! fog-calibration! event-subscribers!
-           capture!]}]
+           app-agent! fixture! rdm! audio! video! sync! section-reference! waveform! workspace! terminal! sensor! repl! calibration! photometry! fog-calibration! event-subscribers! show-identity!
+           capture! live-runs! live-launcher! parameter-frames!]}]
   (merge
-   {"/api/event-subscribers" (available event-subscribers! "Event subscribers unavailable" (fn [_] (ok (event-subscribers!))))
+   {;; The runtime, show and epoch a window binds to before it loads Studio (#669).
+    "/api/identity" (available show-identity! "Show identity unavailable" (fn [_] (ok (show-identity!))))
+    "/api/event-subscribers" (available event-subscribers! "Event subscribers unavailable" (fn [_] (ok (event-subscribers!))))
     "/api/fog-calibration" (available fog-calibration! "Venue calibration unavailable" (fn [_] (ok (fog-calibration!))))
     "/api/photometry" (available photometry! "Fixture photometry unavailable" (fn [_] (ok (photometry!))))
     "/api/calibration" (available calibration! "Rig calibration unavailable" (fn [_] (ok (calibration!))))
@@ -366,6 +371,31 @@
     "/api/audio/returns" (read-action audio! :return-status "Audio service unavailable")
     "/api/sync" (read-action sync! :status "Synchronization unavailable")
     "/api/capture" (read-action capture! :status "Phrase capture unavailable")
+    "/api/live-runs" (read-action live-runs! :status "Run record unavailable" #(query-fields % {:limit nil}))
+    ;; Parameter devices on run tracks (#625): the same projection as show/live-parameter-devices.
+    "/api/live-parameter-devices" (read-action live-runs! :parameter-devices "Run record unavailable")
+    ;; Shared parameter-visualization frames (#625): status, and the next frame
+    ;; of a lease as PNG (204 when none is waiting; the lease is renewed; 410 when
+    ;; the lease expired or ended, so the view subscribes again).
+    "/api/parameter-frames" (read-action parameter-frames! :status "Parameter frames unavailable")
+    "/api/parameter-frames/frame"
+    (available parameter-frames! "Parameter frames unavailable"
+               (fn [{:keys [query-params]}]
+                 (let [lease (get query-params "lease")
+                       frame (when (parameter-frames! :lease? {:lease lease})
+                               (or (parameter-frames! :frame {:lease lease})
+                                   (when (= "true" (get query-params "latest")) (parameter-frames! :latest {:lease lease}))
+                                   ::none))]
+                   (cond
+                     (nil? frame) {:status 410 :headers {"Cache-Control" "no-store"} :body ""}
+                     (not= ::none frame)
+                     {:status 200 :body (java.io.ByteArrayInputStream. (parameter-frames/png-bytes frame))
+                      :headers {"Content-Type" "image/png" "Cache-Control" "no-store"
+                                "X-Frame-Key" (:key frame) "X-Frame-Sequence" (str (:sequence frame))
+                                "X-Frame-Size" (str (:width frame) "x" (:height frame))}}
+                     :else {:status 204 :headers {"Cache-Control" "no-store"} :body ""}))))
+    ;; The cue launcher's 64 pads (#228): the same projection as show/live-launcher.
+    "/api/live-launcher" (read-action live-launcher! :status "Cue launcher unavailable" #(query-fields % {:page-id nil}))
     "/api/capture/last.mid" (available capture! "Phrase capture unavailable"
                                        (fn [_]
                                          (let [{:keys [filename bytes]} (capture! :smf {})]
@@ -384,6 +414,37 @@
     "/api/sensors" (read-action sensor! :status "Sensor inputs unavailable")
     "/api/video" (read-action video! :status "Video mapping unavailable")
     "/api/video/syphon" (read-action video! :syphon "Video mapping unavailable")
+    "/api/video/shaders" (read-action video! :shaders "Video mapping unavailable")
+    ;; The projector page's frame pump (#673): wait up to `wait` ms on the
+    ;; show's frame signal for a latched frame other than sequence `after`
+    ;; (or a changed blackout/master gain, `gain`), then send its BGRA8 pixels
+    ;; scaled by that gain; `master=ignore` sends the raw feed. 204 when
+    ;; nothing changed, 404 for a source the show does not have, 503 when
+    ;; too many pages already wait.
+    "/api/video/next" (available video! "Video mapping unavailable"
+                        (fn [request]
+                          (let [{:keys [source after wait gain master]}
+                                (query-fields request {:source nil :after "-1" :wait "1000" :gain nil :master "follow"})
+                                id (when source (if (str/starts-with? source ":") (keyword (subs source 1)) source))
+                                {:keys [status frame pixels] frame-gain :gain}
+                                (when id
+                                  (video! :next-frame {:source id :after (or (parse-long after) -1)
+                                                       :gain-after (some-> gain parse-double)
+                                                       :wait-ms (or (parse-long wait) 1000)
+                                                       :follow-master? (not= "ignore" master)}))]
+                            (case status
+                              :frame {:status 200
+                                      :headers {"Content-Type" "application/octet-stream" "Cache-Control" "no-store"
+                                                "X-Frame-Width" (str (:width frame)) "X-Frame-Height" (str (:height frame))
+                                                "X-Frame-Sequence" (str (:sequence frame)) "X-Frame-Gain" (str frame-gain)
+                                                "Content-Length" (str (alength ^bytes pixels))
+                                                "Access-Control-Expose-Headers" "X-Frame-Width, X-Frame-Height, X-Frame-Sequence, X-Frame-Gain"}
+                                      ;; One write of an immutable array; a stream body
+                                      ;; is copied in small chunks (about 35 ms for 640 × 360).
+                                      :body pixels}
+                              :busy (data-response 503 {:message "Too many video outputs are waiting" :code :video/too-many-waiters})
+                              :none {:status 204 :headers {"Cache-Control" "no-store"} :body ""}
+                              (data-response 404 {:message "The show has no such video source" :code :video/unknown-source})))))
     "/api/video/frame" (available video! "Video mapping unavailable"
                          (fn [request]
                            (let [{:keys [source width]} (query-fields request {:source nil :width "640"})
@@ -420,7 +481,7 @@
 (defn- post-routes [{:keys [material-preview! variable-sources! spatial-search! submit! submit-history! heartbeat! provider-put! chat! chat-select!
                              app-agent! checkpoint! cue-variation-preview!
                              sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync! section-reference!
-                             capture!]
+                             capture! video! live-launcher! live-runs! parameter-frames!]
                      :or {material-preview! materials/preview}}]
   (merge
    (into {} (for [[path op] operations]
@@ -429,7 +490,7 @@
    (post-actions "/api/application-agents/" app-agent! ok
                  {"configure" :configure "start" :start "cancel" :cancel} "Application agents unavailable")
    (post-actions "/api/show/checkpoints/" checkpoint! acknowledgement
-                 {"restore" :restore "discard-prior" :discard-prior} "Show checkpoints unavailable")
+                 {"restore" :restore "discard-prior" :discard-prior "dismiss-legacy" :dismiss-legacy} "Show checkpoints unavailable")
    (post-actions "/api/sensors/" sensor! acknowledgement
                  {"pair" :pair "configure" :configure "sample" :sample "arm" :arm "calibrate" :calibrate
                   "osc/start" :osc-start "osc/stop" :osc-stop
@@ -438,6 +499,10 @@
    (post-actions "/api/workspaces/" workspace! ok {"create" :create "write" :write "check" :check "stage" :stage})
    (post-actions "/api/repl/" repl! ok {"session" :session "scratch" :scratch "interrupt" :interrupt})
    (post-actions "/api/waveforms/" waveform! ok {"preview" :preview})
+   (post-actions "/api/video/shader/" video! ok {"audition" :audition} "Video mapping unavailable")
+   {"/api/video/shader/save"
+    (available video! "Video mapping unavailable"
+               #(await-acknowledgement (video! :save-glsl (:json-params %))))}
    (post-actions "/api/fixtures/" fixture! acknowledgement
                  {"search" :search "refresh" :refresh "fetch" :fetch "import" :import "publish" :publish "patch" :patch})
    (post-actions "/api/rdm/" rdm! acknowledgement
@@ -452,6 +517,14 @@
    (post-actions "/api/capture/" (when capture! (fn [op payload] (dissoc (capture! op payload) :phrase))) ok
                  {"capture" :capture} "Phrase capture unavailable")
    (post-actions "/api/" sync! ok {"live" :live})
+   ;; The cue launcher's Live setup and pad-clip write go through the running
+   ;; Live bridge, as show/setup-live-launcher! does at the REPL (#228).
+   (post-actions "/api/live-launcher/" live-launcher! ok {"setup" :setup "write-clip" :write-clip} "Cue launcher unavailable")
+   ;; Mirror the run record into Live over the running bridge, configuring each
+   ;; run track's parameter devices (#625), as show/sync-live-runs! does.
+   (post-actions "/api/live-runs/" live-runs! ok {"sync" :sync} "Run record unavailable")
+   (post-actions "/api/parameter-frames/" parameter-frames! ok {"subscribe" :subscribe "unsubscribe" :unsubscribe}
+                 "Parameter frames unavailable")
    {"/api/cue-variations/preview"
     (available cue-variation-preview! "Cue variations unavailable" #(ok (cue-variation-preview! (:json-params %))))
     "/api/materials/preview" #(ok (material-preview! (:json-params %)))

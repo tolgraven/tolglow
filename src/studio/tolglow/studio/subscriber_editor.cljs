@@ -2,7 +2,8 @@
   (:require [clojure.string :as str]
             [cognitect.transit :as transit]
             [re-frame.core :as rf]
-            [tolglow.transit :as wire]))
+            [tolglow.transit :as wire]
+            [tolglow.studio.checkbox :as checkbox]))
 
 (def endpoint "/api/event-subscribers")
 
@@ -329,8 +330,8 @@
           (when (= :music/section-pattern (:type match))
             [:label "Pattern ID" [:input {:value (str (:pattern match)) :placeholder ":slow, slow, 42, or #uuid \"…\""
                                           :on-change #(input! [:match :pattern] (raw %))}]])
-          [:label.debug-check [:input {:type "checkbox" :checked (get form :enabled? true)
-                                       :on-change #(input! [:enabled?] (.. % -target -checked))}] "Enabled"]]
+          [:label.debug-check [checkbox/input {:checked (get form :enabled? true)
+                                               :on-change #(input! [:enabled?] (.. % -target -checked))}] "Enabled"]]
          (for [[i action] (map-indexed vector (:actions form))]
            ^{:key i} [action-view i action registry (count (:actions form)) catalog])
          [:div.debug-form-actions

@@ -62,6 +62,7 @@ in `cue_timing`. A cue launch with `:at` or `:in` uses this queue.
 | `:blackout/set` | `:value` boolean | Blackout on or off |
 | `:variable/set` | `:variable`, `:value` | Write a show variable (`[:variables k]`) |
 | `:macro/run`, `:macro/stop` | `:macro-id` | Start or stop a saved macro or sequence |
+| `:auto/configure` | `:request` (an [auto](auto-show.md) request) | Configure auto mode on its line, before auto decides on that frame. Usually posted by an auto request with `:at` |
 | `:lighting/scene`, `:callback` | As in [event subscribers](event-subscribers.md) | Subscriber-only. A scheduled event uses built-in actions |
 
 `:cue-id`, `:effect-id` and `:instance-id` are shorthand for `:select {:ids
@@ -135,7 +136,15 @@ place of a top-level timing key.
   parameter is not rejected because of the ramp. A renderer rejection rebuilds
   the engine result from its frame model; the owner takes the ramp overlay out
   of that result too, so the rejection does not commit the ramp's frame value
-  and the ramp keeps running.
+  and the ramp keeps running. A revision that keeps a ramped parameter must
+  accept its committed value, the ramp's frame value and the ramp's target. If
+  it refuses any of them, it is rejected at preparation (`:stage :reload`, one
+  `:effect/reload-failed` event) under every reload policy, and the ramp keeps
+  running on the captured revision and commits its target. The committed value
+  stays in the model until the ramp commits the target, so a revision that
+  refused either could not hold the value the model keeps or receives. The
+  owner therefore prepares such an instance on the refused values, and the ramp
+  reaches that frame through the parameter overrides.
 - **Supersede.** A new ramp, or a scheduled set on the same destination,
   replaces the running ramp. A new ramp starts from the old ramp's value at its
   start, so there is no jump. `:recent` records
@@ -160,6 +169,11 @@ place of a top-level timing key.
   destination holds where the ramp left it and does not return to the start
   value. `:recent` records `{:status :cancelled :reason :operator-cancel}`.
 - A removed instance cancels its ramps with `:reason :destination-removed`.
+- A ramp whose target the destination refuses when it completes, for example
+  because the destination's schema changed under it, is not recorded as
+  completed. The committed value stays, and `:recent` records
+  `{:status :cancelled :reason :commit-refused :message ...}` with the
+  reducer's message.
 - A seek or loop shifts beat ramps with the clock, so their elapsed musical
   progress is preserved.
 
@@ -179,6 +193,20 @@ These are operator defaults:
   explicit.
 - A scheduled `:macro/run` or `:macro/stop` runs as a domain command carrying the
   poster's source, so the receipt records who started the macro.
+- A scheduled `:auto/configure` is checked against the show when it is posted
+  and again when it is due, when its first decision is committed as that
+  frame's decision. The show owner applies it through the same path as an
+  immediate auto request. This
+  namespace only carries it, so without the owner's handler it is rejected. A
+  request the show refuses when due is recorded as `:rejected` with its
+  message, and auto mode and its looks stay as they were. One posted less
+  than a bar after its position fires at once, and its outcome carries
+  `:late? true :late-beats`; a bar or more is refused. Only that policy sets
+  the marker. It is scheduler-only: a subscriber definition
+  with it is refused. An
+  immediate **Stop auto** withdraws the pending auto changes its sender may
+  cancel (`:reason :auto-stopped`), so a change waiting on its line cannot
+  start auto again.
 
 ## Commands
 
@@ -394,7 +422,12 @@ covers ramps on a frame with a pending hot reload: a running ramp composes
 with both reload outcomes byte-identically to a show that never published the
 rejected revision, a renderer-rejected reload does not commit the ramp's frame
 value, and an accepted revision that drops a ramped parameter is not faulted by
-the ramp.
+the ramp. A revision that refuses the ramped parameter's committed value, its
+frame value or its target is rejected at preparation and matches the twin byte
+for byte, for number, integer and colour parameters, under `:preserve-state`,
+`:restart` and `:migrate`, with and without a modulation controller. A revision
+that accepts all three takes over mid-ramp and the ramp commits its target, and
+a completion the destination refuses is recorded as `:commit-refused`.
 
 ## Remaining gaps
 

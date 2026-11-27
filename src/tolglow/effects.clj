@@ -47,27 +47,49 @@
 
 (defn rgb [r g b] (xyz r g b))
 
+(defn gradient
+  "Sample gradient parameter `key` at a scalar `position`, giving linear RGB.
+  Positions outside the stops hold the end colours; pass {:extend :repeat} to
+  wrap the position or {:extend :mirror} to reflect it. Colours interpolate
+  component by component between stops, as Studio's ramp draws them."
+  ([key position] (gradient key position {}))
+  ([key position {:keys [extend] :as options}]
+   (when-not (keyword? key) (fail! [:key] "Gradient references need keyword IDs"))
+   (when-not (and (map? options) (every? #{:extend} (keys options)))
+     (fail! [] "Gradient options take only :extend"))
+   (cond-> {:op :gradient :key key :args [(expression position)]}
+     extend (assoc :extend extend))))
+
 (defn position [axis]
   (when-not (#{:x :y :z} axis) (fail! [:axis] "Position axis must be :x, :y or :z"))
   {:op :position :axis axis})
 
 (defn parameter
   "Infer a parameter schema from a default and optional schema metadata. Numbers
-  default to normalized :number bounds [0,1]; RGB vectors infer :color. Explicit
-  :type supports integer/vector/range, and :values selects enum."
+  default to normalized :number bounds [0,1]; RGB vectors infer :color and a
+  vector of {:position :color} stops infers :gradient. Explicit :type supports
+  integer/vector/range, and :values selects enum."
   ([default] (parameter default {}))
   ([default options]
    (when-not (map? options) (fail! [:parameter] "Parameter options must be a map"))
    (let [type (or (:type options)
                   (cond (:values options) :enum (number? default) :number
                         (boolean? default) :boolean
+                        (and (vector? default) (seq default) (every? map? default)) :gradient
                         (and (vector? default) (= 3 (count default))) :color
                         (vector? default) :vector))
          floating? (#{:number :color :vector :range} type)
-         default (if floating?
+         default (cond
+                   floating?
                    (cond (registry/finite-number? default) (double default)
                          (and (vector? default) (every? registry/finite-number? default)) (mapv double default)
-                         :else default) default)
+                         :else default)
+                   ;; Gradient stops use doubles like other helper literals.
+                   (and (= :gradient type) (vector? default)
+                        (every? #(and (map? %) (registry/finite-number? (:position %))
+                                      (vector? (:color %)) (every? registry/finite-number? (:color %))) default))
+                   (mapv #(-> % (update :position double) (update :color (partial mapv double))) default)
+                   :else default)
          schema (merge (cond-> {:type type}
                          (= :number type) (assoc :bounds [0.0 1.0])
                          (= :vector type) (assoc :size (count default)))

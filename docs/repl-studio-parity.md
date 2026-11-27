@@ -80,6 +80,24 @@ keeps its value. Both surfaces read the same controller projection, so its
 (get-in (show/snapshot runtime) [:modulation :controllers])
 ```
 
+A modulation period outside 1/1024 to 2^40 beats is refused when it is
+published, started or bound. The REPL acknowledgement and Studio's request
+error carry the same message, which names the field. A cue owner whose bar
+period leaves the range only in its captured meter runs without its controller.
+Both surfaces then read the same `:modulation/refused` diagnostic, which the
+Studio modulation panel lists:
+
+```clojure
+(get-in (show/snapshot runtime) [:modulation :diagnostics])
+```
+
+A controller that skips a backlog beyond its catch-up budget reports
+`:modulation/rebased` in the same projection.
+
+Gap: the Studio interval field checks only that the value is positive. The
+server's request error is the only range feedback Studio gives. The panel's
+rendering of the refusal has not had a browser review.
+
 Gaps: Studio has no control that sets a cue's reload policy; author it in cue
 EDN or the REPL. The diagnostics summary does not print `:from-version`, which
 is present in the projected fault data. The automated check compares the REPL
@@ -120,6 +138,89 @@ REPL's existing bounds (64 items per collection, 10 levels, 8192 characters per
 result). Printing stops at the character bound, and a map or set longer than
 64 items shows the first 64 that `pr` would show, sorted, so a huge result costs
 no more than the text shown. Strings and other values print as `pr` prints them.
+
+## Sample a gradient parameter
+
+An effect output can read a `:gradient` parameter with
+`{:op :gradient :key :palette :args [position]}` (#689). It is ordinary
+definition data. The REPL builds it with `fx/gradient`, and Studio's
+**Definitions** editor accepts the same EDN. Both publish through the shared
+`:definition` operation. Both surfaces get the same refusal for
+`{:op :param :key :palette}`, with a message that names the `:gradient` form.
+[Gradient samples](effect-recipes.md#sample-a-gradient-parameter)
+
+```clojure
+(require '[tolglow.effects :as fx])
+@(show/submit! runtime :definition
+   {:kind :effects
+    :definition (fx/effect :user/ramp
+                  {:params {:palette (fx/parameter [{:position 0.0 :color [1.0 0.0 0.0]}
+                                                    {:position 1.0 :color [0.0 0.0 1.0]}])}}
+                  (fx/color (fx/gradient :palette (fx/position :x))))}})
+```
+
+A running instance's gradient changes through `:param/set` or a `:param/ramp`
+with a vector of stops. The running card's parameter row draws the committed
+stops as one ramp, and the rig output shows the sampled colours on the next
+frame. A value with more stops than the schema's `:max-stops` is resampled for
+output. Both surfaces read the reduction from the same instance projection: the
+REPL reads it as below, and the card's row says "Outputs sample 8 evenly spaced
+stops of 10".
+
+```clojure
+(:gradient-reductions (first (:instances (show/snapshot runtime))))
+;; => {:palette {:from 10 :to 8}}
+```
+
+Gap: Studio and Push have no stop editor. Studio displays a gradient value but
+cannot change its stops, so stops are edited in the REPL, in definition EDN or
+through the scheduler. The Push multi-pad stop editor is tracked in
+[issue #529](https://github.com/tolgraven/tolglow/issues/529).
+
+### Sample a gradient in a block input
+
+A block stage input of colour type can hold the same sample (#775), for
+example a colour gel whose transmission follows the gradient along x. The common
+data is the stage input in the definition's `:blocks` map:
+
+```clojure
+{:blocks {[:outputs :color]
+          {:stages [{:block :optics/gel
+                     :inputs {:transmission (fx/gradient :palette (fx/position :x) {:extend :mirror})}}]}}}
+```
+
+In Studio, **Library → Assign blocks** offers **Gradient sample** for a colour
+input when the definition has a gradient parameter. It picks the gradient,
+draws its stops with the parameter row's ramp, picks the extension and edits
+the position as a scalar input of its own: a constant, a fixture position axis,
+a scalar parameter, a clock, a musical-period oscillator or a scalar private
+varying whose stages run an oscillator block. **Write stages to EDN** writes the
+form above, and loading a definition that contains it shows the same choices.
+A parameter or varying input lists what the compiler accepts there: a scalar
+input reads numbers, and a colour input reads colours and numbers (the IR
+broadcasts a number). A private varying takes its base's type, parameter reads
+included, so only a scalar varying is offered as a gradient position. A gradient
+is never offered as a plain `{:op :param}` input, and **Block binding** no
+longer lists a gradient. Publishing goes through the same `:definition`
+operation as the REPL, with the same refusals and messages.
+
+From the REPL, read what Studio published and the colours it renders:
+
+```clojure
+(get-in (some #(when (= :tide-gel (:id %)) %) (:effects (show/snapshot runtime)))
+        [:blocks [:outputs :color] :stages 0 :inputs :transmission])
+;; => {:op :gradient, :key :palette, :args [{:op :position, :axis :x}], :extend :mirror}
+
+(update-vals (get-in (show/snapshot runtime) [:output :values]) :emitted-color)
+```
+
+A REPL publication of the same definition shows in Studio's registry list.
+Loading it into the EDN editor and opening **Assign blocks** shows the sample
+for editing. After `npm run studio:build`,
+`CHROMIUM_PATH=… lein with-profile +dev run -m tolglow.qa.block-builder-gradient target/block-builder-gradient-qa`
+authors, publishes, reloads and revises the sample in headless Chromium, and
+reads each published definition and the rendered pixel colours from the show
+in between. Gap: Studio cannot edit the stops themselves, as above.
 
 ## View recent cues
 
@@ -255,7 +356,9 @@ In **Perform → In the mix**, use **Solo** or **Mute** on a running card.
 contribution. The action buttons show which controls are selected. A mixed
 button means some of the selected category or layer members have that flag.
 
-Use **Add once** before an action or hold Shift while clicking to use additive mode. The
+Use **Add once** before an action or hold Shift while clicking to use additive
+mode for that action. Use **Exclusive once** or hold Alt/Option to make that
+action replace the selection, even while the default is additive. The
 **Defaults** control sets the normal mode for Solo and Mute independently.
 Choose a category or **All running** to act on that group. Expand **Layers**
 when a native composition is playing to act on a particular layer.
@@ -271,8 +374,35 @@ open cards update. The same selector supports categories and native layer IDs.
                             :additive? true})))
 ```
 
+To solo one running effect exclusively while the Solo default is additive,
+send `:mode :exclusive`. The acknowledgement's `:selected-instance-ids` holds
+only that instance, and the open Studio cards show every other card as
+**Excluded by Solo** after the same commit. Clicking **Exclusive once** and then
+**Solo** in Studio sends the same command; read it back with the snapshot above.
+
+```clojure
+(let [{:keys [effect-selection]} (show/snapshot runtime)]
+  (when-let [instance-id (first (:included-instance-ids effect-selection))]
+    (select-keys @(show/submit! runtime {:op :effect-selection/toggle :control :solo
+                                         :selector {:instance-ids [instance-id]}
+                                         :mode :exclusive})
+                 [:status :mode :selected-instance-ids])))
+```
+
 See [Effect Solo and Mute](effect-selection.md) for the shared policy and
 examples for configuring the default modes.
+
+The X-Touch's CONTROL inverts the configured mode for one press, as the
+operator's Live script does. It sends the same single toggle with the inverted
+`:mode` ([X-Touch](xtouch.md#mixer-layout-tolglow-706-slice-2)), so Studio,
+the REPL and the unit share one atomic command (#749).
+
+After `npm run studio:build`, `lein with-profile +dev run -m
+tolglow.qa.effect-selection-browser 18890 target/effect-selection-qa` checks both directions against the production
+Studio build in headless Chrome: Studio shows a REPL exclusive Solo, and
+`show/snapshot` shows the result of **Exclusive once**, Alt-click and a plain
+click. Remaining gap: these gestures have not been tried on an iPad or other
+real touchscreen.
 
 ## Suspend automatic section patterns
 
@@ -792,11 +922,160 @@ refusal reads the same from both sides: auditioning with no candidate returns
 `:status :rejected :code :no-candidate`, and applying the candidate's Room
 draft as a scene returns `:code :preview-draft`.
 
+Destinations an existing knob drives are left out of a fresh candidate and of
+every reroll on both sides. Only the REPL and the agent tool can opt in with
+`:include-knob-driven? true`. A restart drops the candidate everywhere, and an
+audition whose cues were all released is refused with `:no-running-cues`.
+
 **Tracked gaps.** A Push encoder cannot sweep a candidate yet (it reuses the
 linked-knob Push binding, which waits on an Afterglow adapter change). Enum,
 boolean and vector destinations are not generated. Close this gap when a Push
 encoder sweeps the same candidate in the Room
-([issue #667](https://github.com/tolgraven/tolglow/issues/667)).
+([issue #667](https://github.com/tolgraven/tolglow/issues/667)). Studio has no
+`:include-knob-driven?` control and does not show a link's `:shared-with`, and
+its Room view does not yet compare `:frame-revision` with `:draft-revision`, so
+it can show the previous value's frame for a frame or two during a sweep
+([issue #737](https://github.com/tolgraven/tolglow/issues/737)).
+
+## Take or dismiss the checkpoint from before the update
+
+A show folder opened in the Mac app keeps its own recovery, named by its
+`.tolglow-folder-id`. The working and prior checkpoints that desktop shows
+autosaved to the shared directory before that change are frozen once, at the
+first Mac folder claim, and offered to every Mac show folder as `:legacy` and
+`:legacy-prior`; they are never restored at startup. Both surfaces read
+`show/recovery-status` and call the same functions; Studio reaches them through
+`/api/show/checkpoints`, `/api/show/checkpoints/restore` with `kind legacy` or
+`legacy-prior`, and `/api/show/checkpoints/dismiss-legacy`. [Show files](show-files.md#the-checkpoint-from-before-per-folder-recovery) · [Issue #742](https://github.com/tolgraven/tolglow/issues/742)
+
+```clojure
+(select-keys (show/recovery-status runtime) [:checkpoints :folder])
+@(show/load-latest-show! runtime :legacy)   ; restore it into this folder
+(show/dismiss-legacy-recovery! runtime)     ; or stop offering both to every folder
+```
+
+In Studio, **Restore show** lists **Checkpoint from before the update** and
+**Previous session from before the update** with their saved times, **Restore**
+and **Dismiss**, each behind a confirmation, and its **Show folder** section
+explains the identity file. A note above the view says when one is waiting,
+with the saved times, and, on a folder's first open, what `.tolglow-folder-id`
+is; a closed note stays closed after a reload. After a REPL restore or
+dismissal the waiting note in an open Studio goes away with the next state
+frame. After a Studio restore, `show/recovery-status` no longer lists them in
+any folder. A refusal reads the same: once taken, the REPL restore throws
+naming the folder that took them, a second dismissal returns false, and
+Studio's **Dismiss** shows "The checkpoint from before the update is no longer
+offered". While one window is restoring, the other's restore or dismissal is
+refused with `:legacy-busy` on both surfaces.
+
+Studio's own REPL session (**Open Clojure REPL**, `/api/repl/eval`) binds
+`runtime` to the same show map that now carries its recovery owner; before
+#742 that map lacked it, so `show/recovery-status` returned nil there.
+Checked by `test/tolglow/desktop_test.clj` through the real desktop entry point,
+Studio's routes and the REPL session, by Studio's event tests, and by
+`lein run -m tolglow.qa.show-folder` in headless Chrome. No foreground Mac
+window has shown the note yet.
+
+## Let the show wander with a section plan
+
+Both surfaces send the same `:auto` request (`POST /api/auto` from Studio,
+`show/submit! runtime :auto …` at the REPL, `configure_auto` for agents) and
+read the same `:auto` projection in the snapshot: `:enabled?`, `:config`, the
+current `:section` and the last decision's `:reasons`. [Auto show](auto-show.md)
+
+From the REPL, start the R1o example's plan, read the section and the last
+decision, then hand one look to yourself:
+
+```clojure
+(require '[tolglow.automation.red-show :as red-show])
+@(show/submit! runtime :auto (red-show/auto-config 217))
+(select-keys (:auto (show/snapshot runtime)) [:section :reasons])
+;; Any edit of an auto look hands it over; auto never ends it again.
+@(show/submit! runtime :command {:op :param/set :instance-id "<auto instance>" :param :level :value 0.4})
+```
+
+In Studio, **Perform → Tools → Let it wander** shows **Keep the section plan
+(red, purple, quiet, strobe)** for a plan started at the REPL and a status line
+such as **Section quiet · Moving in darkness**. Ticking **Vary marked
+parameters within their ranges** and pressing **Start auto** sends
+`:randomize {:params :marked}` with `:keep-plan? true`; the REPL then reads the
+same four sections with the palette kept. A REPL stop turns the header to
+**Auto mode · off** and the plan stays on offer. A refusal reads the same from
+both sides: a count of 70 returns `:status :rejected` with `Invalid auto config:
+Count must be an integer from 1 to 64 at [:count]`, Studio shows that message,
+and the committed config is unchanged. Checked in headless Chrome by
+`tolglow.qa.auto-show-browser`.
+
+**On a musical line (#767).** The same request with `:at` waits on the beat
+scheduler and applies on its line before auto decides there. The common data
+is the `:auto/configure` event in `show/schedule` and the snapshot's
+`[:auto :pending]` (event ID, label, due beat, enabled?, source) and
+`[:auto :section-end-beat]`:
+
+```clojure
+@(show/submit! runtime :auto (assoc (red-show/auto-config 218) :at :next-phrase))
+(get-in (show/snapshot runtime) [:auto :pending])
+@(show/submit! runtime :command {:op :schedule/cancel :event-ids ["<event-id>"]})
+```
+
+In Studio, **Start or stop** (Now, Next bar, Next phrase, Next section line)
+makes **Start auto** and **Stop auto** send the same `:at`; the pending change
+appears under the buttons and on the timeline with an **auto** icon, and its
+**Cancel** sends `:schedule/cancel`. A REPL post appears in the panel's list; a
+Studio post appears in the REPL's `[:auto :pending]`; a cancel from either side
+empties both; an immediate stop from either side withdraws it. A refused `:at`
+(a position a bar or more behind, no section playing; Studio's **Next section
+line** chosen while none plays is sent and refused the same way) returns
+`:status :rejected` with its message to both. A position less than a bar
+behind applies at once with `:late? true :late-beats` in the receipt. Agents send `configure_auto` with `at` and read it back with
+`inspect_schedule`. Checked by `tolglow.automation.configure-at-test` (REPL and
+agent paths through the real owner), Studio's event tests and
+`tolglow.qa.auto-show-browser` in headless Chrome.
+
+**Tracked gaps.** Studio cannot author or edit a section plan, palette, ranges,
+category filters or a lit limit; it keeps the ones the REPL saved. The REPL
+reads which instances were handed over only from the reasons of the decision
+that noticed it. Push has no auto-mode control. Close these when a performer can
+build a plan in Studio and start or stop auto mode from Push, both reading the
+same projection ([issue #217](https://github.com/tolgraven/tolglow/issues/217)).
+
+## Rehearse a passage with the agent
+
+A rehearsal uses no command of its own: the recorded agent sends
+`configure_auto` (with `at` the section line) and `schedule_events` through `show/dispatch-tool!`, stems
+enter through `show/audio-callbacks` and are routed with `tolglow.stems`, and
+Push gestures are ordinary commands with a Push 3 source. Whatever reads those
+reads the rehearsal. [Rehearsal](rehearsal.md)
+
+From the REPL, review both modes, or play one in real time on a running show:
+
+```clojure
+(require '[tolglow.rehearsal :as rehearsal] '[tolglow.rehearsal.passage :as passage])
+(println (:report (rehearsal/club 670)))
+(println (:report (rehearsal/concert 670)))
+;; On a show started with (rehearsal/room-model p), Studio open:
+(rehearsal/play! runtime (passage/concert 670 :b))
+```
+
+In Studio, during `play!` (or `tolglow.qa.rehearsal room <port> …`) the show
+is an ordinary running show: the Room renders its committed frames, **Perform →
+Tools → Let it wander** reads the agent's mood as the running auto config and
+section, and the schedule lists the posted anchors and the chorus build. A
+Studio action meanwhile (Stop auto, a cue launch) goes through the same owner;
+the agent's next section line reconfigures auto again. A refusal reads the
+same: an anchor posted after its bar comes back from `schedule_events` with the
+scheduler's "has already passed" message in the agent log. Checked so far
+through Studio's own projection only: `tolglow.qa.rehearsal room 18871 club 670`
+sampled `/api/state` every 4 s and read the auto section (drive, lift, none in
+the breakdown and quiet) and the running looks while the agent's four changes
+were accepted 0–0.1 beats after their lines. The Studio page was not opened in
+a browser for this.
+
+**Tracked gaps.** Studio cannot start a rehearsal, choose a passage or take,
+or read the review and its flags; the review is REPL and file output. Push
+cannot start one. Close these when an operator can start a Room rehearsal and
+read its review in Studio, from the same `tolglow.rehearsal` operations
+([issue #670](https://github.com/tolgraven/tolglow/issues/670)).
 
 ## Reviewing a show feature
 
@@ -834,6 +1113,17 @@ Studio and Push read one committed response sample instead of evaluating the res
 
 Studio does not display these lease faults yet. Close the gap when Studio shows the same fault records as the REPL. [Issue #533](https://github.com/tolgraven/tolglow/issues/533) · [PR #624](https://github.com/tolgraven/tolglow/pull/624)
 
+Each committed frame has one shared parameter sample, held beside the committed state. The Studio stream, the Push parameter display, waveform previews, cue pad prediction and the REPL resolve an instance's effective parameters from it at most once per frame, whether or not a lease retained the owner's response inputs. A Push display leases those inputs only while it shows parameters or audio, not scene, block-trace or pad-overlay views. The REPL reads the same frame:
+
+```clojure
+(show/parameter-sample runtime)
+;; => {:identity {:show-id :main :epoch 0 :frame-number 6 :time-ms 375 :transport-generation 0}
+;;     :instances [{:instance-id "0:1" :definition-version 1 :params {:level 0.5625 ...}
+;;                  :response-values [{:id :gain :value 0.75 ...}]}]}
+```
+
+Studio shows the same values as `:parameter-sources` effective values on each instance, identified by the stream's `:epoch`, `:frame-number` and `:transport-generation`. Studio has no view of the whole-frame sample itself. [Waveform projections](waveform-projections.md#shared-parameter-sample) · [Issue #533](https://github.com/tolgraven/tolglow/issues/533)
+
 Calibrated paired aim arrival uses one host operation from both surfaces. In Studio, **Rig & space → Draw path → Arrive together using calibrated motor rates** lists, reopens, publishes and converts synchronized paths. Studio always sends `:sync-arrival?` explicitly and shows the solved arrival time or the refusal. The REPL submits the same `:aim-path` operation and reads `:arrival-duration-ms` from the acknowledgement. Launch refusals (`:stale-calibration`, `:start-wrap-mismatch`) come back from the shared launch command on both surfaces. A launch at a tempo too fast for the motors is stretched rather than refused on both surfaces. The shared launch acknowledgement and the running instance carry `:arrival-stretch`; the REPL reads it from the acknowledgement, but Studio's cue grid does not display it yet. [Aim paths](aim-paths.md#calibrated-paired-arrival) · [Issue #481](https://github.com/tolgraven/tolglow/issues/481)
 
 ```clojure
@@ -845,4 +1135,141 @@ The remaining gaps are tracked in issue #481. Studio has no editor for `:calibra
 
 Retrospective Capture has a shared operation. The runtime owns the capture buffer. `show/capture-phrase!` at the REPL and **Connections → Capture** in Studio both call `show/capture-action!` with `:capture`. The REPL receives the phrase; Studio receives its summary and a MIDI clip download of the same capture (`:smf`). `(show/capture-action! rt :status {})` reads the buffer and the last capture that both surfaces show. Two gaps remain. Writing the capture into Live from Studio (`live-connection/capture!` over the configured bridge) is REPL-only, and Push has no Capture button: the uniform surface layer lives with the Push controllers, outside this change. Close them when Studio and Push both send the last capture to Live and the REPL can read the resulting clip identities. [Capture into Live](live-routing.md#capture-the-last-phrase-into-live) · [Issue #671](https://github.com/tolgraven/tolglow/issues/671) · [Issue #680](https://github.com/tolgraven/tolglow/issues/680)
 
+## See what ran as Live runs
+
+The runtime keeps a run record (#683). It has one channel per launched cue,
+one take per run, a lane for each overlapping run and the effect-group path.
+Both surfaces read the same projection, `show/live-runs-action!` with
+`:status`. In Studio, open **Connections → Live runs** and choose **Show what
+ran**. It lists each launched cue with its group, lanes and takes. From the
+REPL:
+
+```clojure
+(show/live-runs runtime)          ; the projection Studio shows
+(show/live-runs-record runtime)   ; exact beats, launch values and moves
+```
+
+Mirroring the record into Live needs a companion connection. With the Live
+bridge connected, Studio's **Sync to Live** and the REPL both use the bridge's
+own connection, so the mirror does not take the companion from the bridge (a
+connection with its own session loses it at the bridge's next poll):
+
+```clojure
+(show/sync-live-runs! runtime)   ; through the running Live bridge (show/live-bridge-connection)
+```
+
+After a sync, **Show what ran** marks each take `in Live` with its clip and
+lists the problems the read-back found, such as a run track outside its Group
+Track. The automated check compares the Ring projection with the REPL's
+projection, before and after a sync
+([test](../test/tolglow/integrations/live_runs_test.clj)).
+
+Run-clip playback reaches the show through the Live bridge. The REPL can feed
+the same event to `show/live-run-clip!`. The panel and
+`/api/live-runs?limit=n` list the newest 256 takes by default.
+
+Gaps:
+- The panel refreshes on request, not from the state stream.
+- Push has no run view.
+- The panel was checked through server-rendered markup and event tests and
+  in headless Chrome against Ring. It was not checked on an iPad.
+
+[Run tracks in Live](live-routing.md#mirror-what-ran-as-run-tracks-clips-and-group-tracks) · [Issue #683](https://github.com/tolgraven/tolglow/issues/683)
+
+## Edit an effect's parameters from Live
+
+Each run channel can hold a **Tolglow parameters** Max for Live device
+(#625). Its slots carry the effect's parameters with Studio's labels, units,
+ranges, decimals and control shapes, because both read one control
+projection (`tolglow.authoring.parameter-controls`). The command and data
+both surfaces share:
+
+- the projection: `show/live-parameter-devices` and
+  `GET /api/live-parameter-devices` (Studio: **Connections → Live runs →
+  Show parameter devices**). It lists each channel's slots, Push-style banks,
+  unsupported parameters, where the devices are on the run tracks and the
+  ownership counters;
+- the sync: `show/sync-live-runs!` and `POST /api/live-runs/sync` (Studio:
+  **Sync to Live**). It configures each device and writes a take's launch
+  values and moves into its run clip as slot envelopes;
+- Live's values: `show/live-parameter-device-value!`, which the bridge calls
+  for every `parameter-device` callback. They become ordinary `:param/set`
+  commands with origin `:live-playback` (automation) or `:live-input` (a
+  performer's turn).
+
+```clojure
+(show/live-parameter-devices runtime)    ; the panel's data
+(show/sync-live-runs! runtime)           ; configure devices, write clips, watch the tracks
+(show/live-parameter-device-value! runtime
+  {:type :parameter-device-value :track-id "track:3" :slot 5 :value 0.75
+   :automation-state 1 :watch-session "repl" :serial 1})
+```
+
+Feedback in each direction: a Level move from Studio or Push reaches the Live
+device once (`set-parameter-values`) and holds Live automation on that slot;
+Live's echo of it is dropped. A turn of the dial in Live moves Studio's
+control and is kept as a take move. Automation playback moves Studio's
+control without making a take. The automated checks drive one runtime from
+Push, Studio and simulated Live values and compare the Ring projection with
+the REPL's ([test](../test/tolglow/integrations/live_devices_test.clj),
+[browser check](../dev/studio/live-parameter-devices-browser-qa.mjs)).
+
+The same panel mounts a shared parameter frame of the first running channel
+(`show/parameter-frames-action!`, `/api/parameter-frames`). A Live device or
+the Push display asking for the same instance, parameter, window and style at
+a size within 10% gets the same render.
+
+Gaps:
+- Push does not mount shared frames yet; its display draws its own.
+- The Live side (device creation, parameter attributes at run time,
+  automation recording) has not run in a licensed Live; see the checklist on
+  the pull request.
+- Studio has no per-slot editor in this panel; edit values on the instance
+  card as usual.
+- Checked through event tests, server-rendered markup and headless Chrome,
+  not on an iPad.
+
+[Live routing](live-routing.md#edit-an-effects-parameters-from-live) · [Issue #625](https://github.com/tolgraven/tolglow/issues/625)
+
+## Play a cue page from the launcher pads
+
+The cue launcher (#228) has one runtime operation, `show/live-launcher-action!`,
+for both surfaces. In Studio, open **Connections → Cue launcher**:
+- **Show pads** reads `:status`: the selected page as Push's 64 Pads grid,
+  each pad with its note, cue and colour, a summary of the layout, the Live
+  setup and the last pad clip, setup problems and stale-pad warnings.
+- **Set up in Live** runs `:setup` and **Write pad clip** runs `:write-clip`,
+  through the running Live bridge.
+
+**Connections → Ableton Live → Pad layout** sets the bridge's `:pad-layout`,
+saved with **Save configuration** like the rest of the bridge. From the REPL:
+
+```clojure
+(show/live-launcher runtime :pads)                     ; GET /api/live-launcher?page-id=pads
+(show/setup-live-launcher! runtime {:page-id :pads})   ; POST /api/live-launcher/setup
+(show/write-live-launcher-clip! runtime {:page-id :pads})  ; POST /api/live-launcher/write-clip
+```
+
+Both sides use the Live bridge's own companion connection
+(`show/live-bridge-connection`), so neither takes the companion from the
+other. Refusals match: before the bridge connects, setup reports
+`not-connected` on both; an unknown page gives Studio 404 and the REPL an
+exception naming the page. A setup from either side shows on the other
+([test](../test/tolglow/integrations/live_launcher_test.clj)).
+
+Pad hits themselves use the shared commands: a pad launches its cue with
+`:cue/launch` from the Live bridge, as a Studio pad or the REPL would.
+
+Gaps:
+- The panel refreshes on request, not from the state stream.
+- Push has no launcher setup control; playing the pads on Push goes through
+  Live, which is the point of the layout.
+- The panel was checked through server-rendered markup, event tests and
+  headless Chrome against Ring, not on an iPad.
+
+[Live routing](live-routing.md#play-a-cue-page-from-one-drum-rack-track) · [Issue #228](https://github.com/tolgraven/tolglow/issues/228)
+
 Video strip mapping uses one message from both surfaces. In Studio, **Rig & space → Video strips** sends `:video-mapping` edits through `POST /api/video-mapping`. The REPL sends the same edits with `show/video-action! runtime :edit`, using the geometry helpers in `tolglow.video.mapping`. Both read source status and sampled strip colours from the snapshot's `:video` key. A REPL edit redraws the open editor through the state stream. Studio has no control for a video cue's `:placement` parameters beyond the ordinary parameter controls on its card. [Video on LED strips](video-strips.md) · [Issue #672](https://github.com/tolgraven/tolglow/issues/672)
+
+Shader cues use the definition command and the video actions from both surfaces. In Studio, **Rig & space → Shader cues** launches and stops through the ordinary cue commands. It auditions GLSL through `POST /api/video/shader/audition` and saves the next version through `POST /api/video/shader/save`. The REPL calls `show/video-action! runtime :audition` and `:save-glsl` with the same `{:effect-id :glsl}` payload, and `:shaders` for the producer status Studio shows. Both see compile logs and the last-working fallback in that status. The projector page has no REPL counterpart beyond `:frame`, which returns the latched frame it draws. Studio has no editor for a shader's uniforms, size, rate or viewport. Those are edited as definition data in the library or the REPL. [Shader cues](shader-cues.md) · [Issue #673](https://github.com/tolgraven/tolglow/issues/673)
+Video surfaces use the same message. **Rig & space → Video surfaces** sends `{:op :put-surface}`, `{:op :delete-surface}` and `{:op :surface-cue}` through `POST /api/video-mapping`; the REPL sends them with `show/video-action! runtime :edit`. Both read the heads in contact and each running surface's evaluated pose from the snapshot's `:video :surfaces`, and a REPL edit redraws the editor and the Room. A spawned surface cue's crop, position, rotation, scale, wave and contact parameters use the ordinary parameter controls on its card. Remaining gap: the Room has no drag handles for a surface; its pose is edited with numbers. [Video on 3D surfaces](video-surfaces.md) · [Issue #674](https://github.com/tolgraven/tolglow/issues/674)
