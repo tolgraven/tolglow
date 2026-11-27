@@ -26,6 +26,8 @@ one already-evaluated result removed; healthy effect code is never run twice.
 | New candidate fails preparation, compile or evaluation | Store `:reload-fault`; evaluate captured last-good code in the same frame |
 | Renderer rejects a candidate | Drop its attempt this frame; captured code resumes next frame |
 | Candidate that modulation or a spatial cue follows is rejected at any stage | Every instance renders its captured revision with the last-good modulation and spatial fields in the same frame; other reloads of that frame wait one frame |
+| A published revision's programs are still compiling on the show's worker | Every instance of the effect keeps its captured revision everywhere; all adopt it together on the first frame after the programs are ready |
+| The worker fails to compile a revision | The engine turns it down at `:compile` on the adoption frame, as for an inline compile failure |
 | New valid version with preserve/restart policy | Adopt using the existing state/time policy and emit recovery |
 | Explicit Retry | Try the same version with current parameters and retained state |
 | Faulted one-shot/release reaches deadline | Finish normally; quarantine does not make instances immortal |
@@ -76,6 +78,78 @@ picks by `:reload-inputs` as it does the masks. Autopilot decisions are the
 exception: they edit the model before the engine runs, so they read the
 running revisions' samples while a reload is pending and reach an accepted
 candidate one frame later. See [spatial cues](spatial-show.md).
+
+A scheduled show (`show/start!`, or `:background-compile true` on
+`show/create-runtime`) compiles effect programs ahead of need on its own
+worker thread, outside the lighting frame (#774). The engine compiles one
+program per revision and launch target set. Compiling them inside the frame
+took about 0.45 ms each on the mixed 2,048-pixel/64-head rig, so 32
+revisions, or one revision launched on 64 heads, made that frame miss the
+25 ms deadline.
+
+- **Compiled ahead of launches.** The worker warms these programs:
+  - every registered effect's untargeted program;
+  - each cue's fixture or group selection;
+  - each recorded live-run take's targets;
+  - each quantized launch as soon as it is scheduled. One beat at 120 BPM
+    gives 500 ms of lead.
+
+  The worker rebuilds that list from the immutable model snapshot whenever
+  the registry, rig, scene groups or recorded takes change; the owner only
+  compares identities. Each cue's selection is resolved once per cue value,
+  rig and scene groups, which is all a selection reads, so unrelated settings
+  writes resolve nothing again. Scheduled launches are added one by one as
+  they are queued; after 256 additions the next frame rebuilds the tier. This warm tier is sized by the registry, about 55 KB per program on
+  the mixed rig, and is kept apart from the 256-entry cache: programs leaving
+  it are dropped, so they never evict a running instance's program. Volume
+  selections follow moving volumes and are not warmed.
+- **A launch never waits.** If a launch's program is not ready, the frame
+  compiles it, so the launch renders on its start. A short one-shot is never
+  lost, and a burst of grid launches lands on the beat.
+- **Pending revisions wait.** Until every program a revision needs is ready,
+  the effect's instances keep their captured definition in modulation,
+  waveform sampling, spatial cues and the engine alike. Then they all adopt it
+  on the same frame. A launch of that effect in the meantime starts on the
+  revision its running instances use, compiling at most its own program, and
+  adopts the new revision with them, so no frame runs two revisions of one
+  effect. It does so only when nothing is lost: every value the older revision
+  has must resolve there unchanged, and every value only the newer revision
+  has, from the launch or the cue's saved values, must be its default, and
+  its targets must reach the same fixtures on both revisions. A launch that
+  would lose a value or a fixture, and a pinned launch, start on the revision
+  they captured.
+- **Order and supersession.** The worker runs first in first out. It skips a
+  compile that no frame still needs, such as a superseded revision.
+- **Compile failures.** Every compile failure is kept and met once, and
+  nothing compiles that program again.
+  - A recoverable failure refuses the revision at `:compile`.
+  - A StackOverflowError is kept as a plain failure naming it, because the
+    stack has unwound and the overflow belongs to that definition's nesting.
+  - Any other VM error, such as an out-of-memory error, is rethrown on the
+    owner once and then forgotten, so that frame fails as an inline compile
+    would and the next request compiles again.
+  - A CancellationException is retried once, then treated like a VM error.
+  - A program that fails transiently 5 times in a row is still retried, and
+    the frame status names it under `:compile-failures` until it compiles.
+- **Events.** Each `:effect/reloaded` event carries `:pending-since-frame` and
+  `:adopted-frame`.
+- **Where compiles stay on the owner.**
+  - An unscheduled runtime (the default for manual `tick!`, tests and
+    auditions) compiles on the owner before the engine runs, which keeps
+    manual ticks deterministic.
+  - A show whose GPU expression groups prepare against its compute session
+    compiles on the owner too.
+  - A function passed as `:background-compile` receives each compile task, so
+    tests and replays can step the worker.
+- **The extra engine pass.** Once adopted, the takeover runs with no
+  compiles. The extra engine pass of a frame that turns a candidate down costs
+  about one ordinary evaluation, plus a second render after a renderer
+  rejection.
+- **Compile cache.** The runtime's compile cache keeps its previous 256
+  programs as a retired generation, so filling it does not recompile every
+  running effect in one frame.
+
+Measurements: [reload takeover benchmark](benchmarks/README.md#hot-reload-takeover-frames).
 
 Full backups preserve faults and event history. Restore remaps active diagnostic
 instance IDs/epochs; historical events remain historical evidence. Restore does

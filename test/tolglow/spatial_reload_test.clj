@@ -56,7 +56,7 @@
    :params {:level {:type :number :default 0.5 :bounds [0.0 1.0]}}
    :outputs {:green {:op :param :key :level}}})
 
-(defn- runtime [{:keys [failing-compile]}]
+(defn- runtime [{:keys [failing-compile background-compile]}]
   (let [captured (atom nil)
         admitted (atom [])
         effects {:red {:id :red :version 1 :params {} :outputs {:red 1.0}}
@@ -69,6 +69,7 @@
     (cond-> (assoc (show/create-runtime {:model (assoc (control/new-show {:registry {:effects effects :cues cues}})
                                                        :rig {:fixtures (conj host/fixtures head)})
                                          :worker-timeout-ms 10000 :effect-log! (fn [_])
+                                         :background-compile background-compile
                                          ;; Record every committed domain event on its way to the subscribers.
                                          :event-admit (fn [model events]
                                                         (swap! admitted into events)
@@ -469,3 +470,46 @@
             (is (= 1 (count (invalid-volume-events (into [settled] later)))))
             (is (= 1 (count (admitted-invalid-volumes rt)))))
           (finally (show/stop! rt)))))))
+
+(deftest a-spatial-revision-that-compiles-paints-its-volume-only-when-adopted
+  ;; The orb's wider volume compiles off the frame (#774) while the spatial
+  ;; pass runs. It must keep painting the volume the engine runs: every frame
+  ;; equals a twin that publishes the revision one frame later.
+  (let [run (fn [publish-at]
+              (let [rt (runtime {})]
+                (try
+                  (host/submit rt 0 :spatial-cue (assoc orb :launch {:reload-policy :preserve-state}))
+                  (let [wide (accepted (:revise (variants :volume)) :preserve-state
+                                       (get-in (state rt) [:registry :effects :orb]))]
+                    (mapv (fn [t]
+                            (let [reply (when (= t publish-at)
+                                          (show/submit! rt :definition {:kind :effects :definition wide}))]
+                              (show/tick! rt t)
+                              (assoc (observed rt) :time-ms t :ack (some-> reply (deref 2000 ::timeout) :status))))
+                          times))
+                  (finally (show/stop! rt)))))
+        ;; A worker that finishes each compile before the frame after it is queued.
+        queued (atom [])
+        work! (fn [] (let [tasks @queued] (reset! queued []) (doseq [task tasks] (task))))
+        waiting (let [rt (runtime {:background-compile (fn [task] (swap! queued conj task))})]
+                  (try
+                    (host/submit rt 0 :spatial-cue (assoc orb :launch {:reload-policy :preserve-state}))
+                    (work!)
+                    (let [wide (accepted (:revise (variants :volume)) :preserve-state
+                                         (get-in (state rt) [:registry :effects :orb]))]
+                      (mapv (fn [t]
+                              (work!)
+                              (let [reply (when (= t 200) (show/submit! rt :definition {:kind :effects :definition wide}))]
+                                (show/tick! rt t)
+                                (assoc (observed rt) :time-ms t :ack (some-> reply (deref 2000 ::timeout) :status))))
+                            times))
+                    (finally (show/stop! rt))))
+        later (run 250)
+        orb-version (fn [frames t] (some (fn [frame] (when (= t (:time-ms frame))
+                                                       (some (fn [[_ [cue _ version]]] (when (= :orb cue) version))
+                                                             (:instances frame))))
+                                         frames))]
+    (is (= :accepted (:ack (nth waiting 3))))
+    (is (= [1 2] [(orb-version waiting 200) (orb-version waiting 250)]) "The orb's revision waits one frame for its compile")
+    (is (not= (:dmx (nth later 3)) (:dmx (nth later 4))) "The wider volume changes the captured output")
+    (frames-match later waiting)))
