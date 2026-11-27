@@ -1,54 +1,64 @@
 (ns tolglow.studio.rdm-test
-  (:require [cljs.test :refer-macros [deftest is]]
+  (:require [cljs.test :refer-macros [deftest is use-fixtures]]
             [re-frame.db :as db]
             [re-frame.interceptor :as interceptor]
             [re-frame.registrar :as registrar]
-            [tolglow.studio.rdm :as rdm]))
+            [tolglow.studio.frame-stream :as frame-stream]
+            [tolglow.studio.rdm :as rdm]
+            [tolglow.studio.state-socket :as socket]))
 
 (defn effects [event]
   (:effects (interceptor/execute event (remove #(= :do-fx (:id %)) (registrar/get-handler :event (first event))))))
 
+(use-fixtures :each {:before frame-stream/reset-all! :after frame-stream/reset-all!})
+
 (def show {:runtime-id "runtime" :epoch 2})
 
-(def snapshot-path [:server-projection :view :subscriptions [:rdm/status] :value])
+(defn- remote [snapshot] {[:rdm/status] {:value snapshot}})
 
-(defn- base [snapshot] (assoc-in {:show show} snapshot-path snapshot))
+(defn- base
+  "A db and the pushed status on the :remote lane, as the coeffect reads it."
+  [snapshot]
+  (frame-stream/install! :remote {:token "t" :value {:results (remote snapshot)}})
+  {:show show})
+
+(defn- state [db] (rdm/state db (socket/remote-results)))
 
 (defn- dispatch! [e] (reset! db/app-db (:db (effects e))))
 
 (deftest device-actions-carry-pushed-session-identity-and-transit-values
   (let [db (base {:connected? true :session-id "armed"})
-        action (rdm/request-fx db :discover {:universe 1 :full? false})]
+        action (rdm/request-fx db (socket/remote-results) :discover {:universe 1 :full? false})]
     (is (= "/api/rdm/discover" (get-in action [:studio/http :path])))
     (is (true? (get-in action [:studio/http :typed?])))
     (is (= {:runtime-id "runtime" :expected-epoch 2 :session-id "armed" :universe 1 :full? false}
            (get-in action [:studio/http :body])))))
 
 (deftest old-action-reply-cannot-rearm-or-change-a-new-show
-  (let [request (rdm/request-fx (base {}) :connect {})
+  (let [request (rdm/request-fx (base {}) (socket/remote-results) :connect {})
         token (second (get-in request [:studio/http :on-success]))]
     (reset! db/app-db (assoc (:db request) :show (assoc show :epoch 3)))
     (dispatch! [:rdm/reply token :connect {:session-id "old"}])
-    (is (false? (:busy? (rdm/state @db/app-db))))
-    (is (nil? (:notice (rdm/state @db/app-db))))
-    (is (nil? (get-in (rdm/state @db/app-db) [:snapshot :session-id])))))
+    (is (false? (:busy? (state @db/app-db))))
+    (is (nil? (:notice (state @db/app-db))))
+    (is (nil? (get-in (state @db/app-db) [:snapshot :session-id])))))
 
 (deftest transport-switches-load-appropriate-fields-and-preserve-edits-on-push
   (reset! db/app-db (base {:config {:transport :ola :host "ola.local" :port 9010}}))
-  (is (= "ola.local" (:host (rdm/state @db/app-db))))
+  (is (= "ola.local" (:host (state @db/app-db))))
   (dispatch! [:rdm/set :transport "art-net"])
-  (is (= "6454" (:port (rdm/state @db/app-db))))
+  (is (= "6454" (:port (state @db/app-db))))
   (dispatch! [:rdm/set :host "127.0.0.1"])
   (dispatch! [:rdm/set :controller-uid "7a70:01020304"])
-  (swap! db/app-db assoc-in (conj snapshot-path :jobs) [{:status :completed}])
+  (base {:config {:transport :ola :host "ola.local" :port 9010} :jobs [{:status :completed}]})
   (is (= {:transport :art-net :host "127.0.0.1" :port 6454 :local-port 6454 :bind-index 1
           :physical-port 1 :controller-uid "7a70:01020304" :timeout-ms 2000 :job-timeout-ms 30000}
-         (rdm/config (rdm/state @db/app-db))))
+         (rdm/config (state @db/app-db))))
   (dispatch! [:rdm/set :transport "ola"])
-  (is (= "9010" (:port (rdm/state @db/app-db)))))
+  (is (= "9010" (:port (state @db/app-db)))))
 
 (deftest discovery-status-distinguishes-pending-empty-and-unrecorded-inventories
-  (let [inventory #(-> (base %) rdm/state :inventory)
+  (let [inventory #(-> (base %) state :inventory)
         job {:operation :discover :device {:universe 1}}
         offline {:connected? false :jobs [(assoc job :status :running)]}]
     (is (nil? (inventory nil)))
@@ -64,7 +74,7 @@
            (inventory (assoc offline :discovered {1 []}))))))
 
 (deftest completed-transport-jobs-do-not-replace-the-recorded-inventory
-  (let [inventory #(-> (base %) rdm/state :inventory)
+  (let [inventory #(-> (base %) state :inventory)
         complete {:operation :discover :device {:universe 1} :status :completed
                   :result {:universe 1 :uids []}}
         snapshot {:connected? true :jobs [complete]}]
