@@ -99,11 +99,18 @@
             (card-layout/normalize cards))
       cards)))
 
+(def projection-keys
+  "Keys the compositions projection adds for views; a definition read back
+  from a snapshot and saved again drops them."
+  [:running? :playback :layer-id :member-slots])
+
 (defn save
   "Validate and save a macro or sequence. New sequences default to one-beat slots.
   :duration maps support beats, bars, phrases and explicit milliseconds. Slot overrides and
   cue references validate before a new model is returned. A macro's optional
-  :cards arrange its member cards (`tolglow.authoring.card-layout`). Running executions
+  :cards arrange its member cards (`tolglow.authoring.card-layout`): a save
+  that omits :cards keeps the saved cards whose slot still names the same cue,
+  and an explicit `:cards nil` clears them. Running executions
   retain their captured definition; restart explicitly to use an edited one."
   [model definition]
   (when-not (and (map? definition) (registry/data? definition)
@@ -115,7 +122,10 @@
   (let [opacity (get definition :opacity 1)]
     (when-not (and (registry/finite-number? opacity) (<= 0 opacity 1))
       (fail! [:opacity] "Layer opacity must be between zero and one")))
-  (let [timebase (:timebase (sequence/normalize-spec {:steps (:slots definition)
+  (when (and (contains? definition :cards) (not= :macro (:mode definition)))
+    (fail! [:cards] "Only a macro arranges its cards; other effects keep standard slots"))
+  (let [definition (apply dissoc definition projection-keys)
+        timebase (:timebase (sequence/normalize-spec {:steps (:slots definition)
                                                         :timebase (:timebase definition)}))
         duration {:duration (if (= :beats timebase) {:beats 1} {:ms 1000})}
         slots (mapv (fn [i slot]
@@ -123,8 +133,13 @@
                              (when (and (= :sequence (:mode definition))
                                         (not-any? #(contains? slot %) [:duration :duration-ms :duration-beats])) duration) slot))
                     (range) (assign-slot-ids (:slots definition)))
-        definition (cond-> (assoc definition :timebase timebase :slots slots)
-                     (contains? definition :cards) (update :cards canonical-cards slots))]
+        saved (get-in model [:compositions (:id definition)])
+        cards (if (contains? definition :cards)
+                (canonical-cards (:cards definition) slots)
+                (when (= :macro (:mode definition))
+                  (card-layout/carry (:slots saved) (:cards saved) slots)))
+        definition (cond-> (-> definition (assoc :timebase timebase :slots slots) (dissoc :cards))
+                     (and (some? cards) (not (and (sequential? cards) (empty? cards)))) (assoc :cards cards))]
     (when-let [errors (card-layout/errors (:mode definition) slots (:cards definition))]
       (throw (ex-info "Invalid macro cards" {:errors errors})))
     (doseq [[i slot] (map-indexed vector slots)] (validate-slot! model (:mode definition) i slot))
@@ -166,14 +181,16 @@
     (let [{:keys [slot-id size offset]} (or (:resize change) (:move change))
           next (case (first forms)
                  :cards (:cards change)
-                 :resize (card-layout/resize slots cards slot-id (some-> size name keyword))
+                 :resize (if-let [size (card-layout/size size)]
+                           (card-layout/resize slots cards slot-id size)
+                           (fail! [:resize :size] "A card size is :small, :medium or :large"))
                  :move (if (integer? offset)
                          (card-layout/move slots cards slot-id offset)
                          (fail! [:move :offset] "A move needs a whole number of places")))]
       (when (and (#{:resize :move} (first forms))
                  (not-any? #(= (card-layout/slot-key slot-id) (card-layout/slot-key (:id %))) slots))
         (fail! [(first forms) :slot-id] "A card names a slot of this macro"))
-      (save model (if (some? next) (assoc definition :cards next) (dissoc definition :cards))))))
+      (save model (assoc definition :cards next)))))
 
 (defn- time! [time-ms]
   (when-not (and (registry/finite-number? time-ms) (not (neg? time-ms)))

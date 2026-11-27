@@ -48,7 +48,7 @@
                             :let [tag (render-row parameter options)]]
                         [parameter [(attribute tag "data-control") (attribute tag "data-slot")]])))))))
 
-(def macro {:id :opening-look :mode :macro :name "Opening look" :layer-id "1:4::opening-look"
+(def macro {:id :opening-look :mode :macro :name "Opening look" :running? true :layer-id "1:4::opening-look"
             :member-slots [:first :second :third]
             :slots [{:id :first :cue-id :ember} {:id :second :cue-id :ice} {:id :third :cue-id :spot}]
             :cards [{:slot-id :third :size :large} {:slot-id :first :size :medium}]})
@@ -64,6 +64,9 @@
     (is (= [["c" :large] ["a" :medium] ["b" :small]] (mapv (juxt (comp :id :instance) :size) cards))
         "listed cards first in card order, the rest in slot order at the default size")
     (is (= [] (performance/macro-cards [(dissoc macro :layer-id)] instances)) "an idle macro has no section")
+    (is (= [] (performance/macro-cards [(assoc macro :running? false)] instances)) "a stopped macro has no section")
+    (testing "positions count the whole arrangement, as a move does"
+      (is (= [[0 3] [2 3]] (mapv (juxt :position :total) (cards-of macro (take 2 (rest instances)))))))
     (testing "a member that is not running has no card"
       (is (= ["a" "b"] (mapv (comp :id :instance) (cards-of (dissoc macro :cards) (take 2 instances))))))
     (testing "typed member slots keep their identities"
@@ -86,17 +89,25 @@
              (get-in (transition db [:performance/macro-card-move :opening-look :first -1]) [:studio/http :body :move]))))
     (is (nil? (transition db [:performance/macro-card-size :unknown :first :large])) "only a saved macro")))
 
-(deftest saving-a-macro-in-compose-keeps-its-saved-cards
-  (let [db (assoc-in (events/initial-db "card-grid-test") [:server-projection :view :compositions] [macro])
-        edited {:id "opening-look" :mode "macro" :name "Opening look" :layer-id "x" :member-slots ["first"]
-                :cards [{:slot-id "first" :size "large"}]
-                :slots [{:id "first" :cue-id "ember"} {:id "second" :cue-id "ice"}]}]
-    (testing "the show's cards win over a stale editor copy, pruned to the remaining slots"
-      (is (= {:id "opening-look" :mode "macro" :name "Opening look"
-              :cards [{:slot-id :first :size :medium}]
-              :slots [{:id "first" :cue-id "ember"} {:id "second" :cue-id "ice"}]}
-             (events/composition-for-save db edited))))
-    (testing "a sequence never carries cards"
-      (is (not (contains? (events/composition-for-save db (assoc edited :mode "sequence")) :cards))))
-    (is (str/blank? (str (:cards (events/composition-for-save db (assoc edited :slots [{:cue-id "spot"}])))))
-        "no remaining slot keeps no card")))
+(deftest saving-in-compose-leaves-the-cards-to-the-show
+  (let [db (-> (events/initial-db "card-grid-test")
+               (assoc-in [:ui :composition] {:id "m" :mode "macro" :cards [{:slot-id "a" :size "large"}]
+                                             :slots [{:id "a" :cue-id "ember"}]}))]
+    (is (= {:expected-epoch nil :id "m" :mode "macro" :slots [{:id "a" :cue-id "ember"}]}
+           (get-in (transition db [:studio/composition-save false]) [:studio/http :body]))
+        "the show keeps the saved arrangement, so a stale editor copy cannot revert it")))
+
+(deftest small-macro-cards-show-their-leading-controls
+  (let [control (fn [id schema] {:parameter id :schema schema})
+        knob {:type :number :bounds [0 1]}
+        pad {:type :vector :size 2 :bounds [0 1]}]
+    (is (= [:a :b :c :d] (mapv :parameter (performance/small-controls (mapv #(control % knob) [:a :b :c :d :e]) nil))))
+    (is (= [:p] (mapv :parameter (performance/small-controls [(control :p pad) (control :a knob)] nil))))
+    (is (= [:a] (mapv :parameter (performance/small-controls [(control :a knob) (control :p pad)] nil))))
+    (is (= [:p :q] (mapv :parameter (take 2 (performance/small-controls [(control :p {:type :range :bounds [0 1]})
+                                                                          (control :q {:type :range :bounds [0 1]})] nil)))))))
+
+(deftest macro-sizes-are-fractions-of-the-board
+  (is (= [[2 1] [3 1] [6 1]] (mapv #(performance/macro-span 6 %) [:small :medium :large])))
+  (is (= [[1 1] [1 1] [2 1]] (mapv #(performance/macro-span 2 %) [:small :medium :large])))
+  (is (= [[1 1] [1 1] [1 1]] (mapv #(performance/macro-span 1 %) [:small :medium :large]))))

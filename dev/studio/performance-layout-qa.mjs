@@ -17,6 +17,8 @@ const profiles = [
   ['phone', 390, 844, true, 'iPhone 15'],
   ['ipad', 1024, 768, true, 'iPad Pro 11 landscape'],
   ['desktop', 1440, 900, false, 'Desktop Safari'],
+  // A wide display gives the macro board six tracks (#795).
+  ['wide', 2560, 1440, false, 'Desktop Safari'],
 ];
 const measurements = {};
 
@@ -192,23 +194,25 @@ async function verifyControls(page,touch,profile) {
   await scope.locator('.parameter-space').waitFor();
   await activate(card.getByRole('button',{name:'Expand Orbital wash controls'}));
   const aim=card.locator('[data-param=aim]');
+  // A driven parameter's plot sits below the Detail grid (#795), so a card never grows.
+  const plot=card.locator('[data-plot=aim]');
   await activate(aim.getByRole('button',{name:'Edit Orbit aim components'}));
   const dialog=aim.getByRole('dialog');
   const axis=dialog.getByRole('spinbutton',{name:'Orbit aim X value'});
   await axis.fill(Number(await axis.inputValue())>0 ? '-0.42' : '0.42');
   await activate(dialog.getByRole('button',{name:'Done'}));
-  await aim.getByRole('button',{name:'History'}).waitFor({state:'detached'});
+  await plot.getByRole('button',{name:'History'}).waitFor({state:'detached'});
   const overridden=await open('Orbit aim',true);
   await activate(overridden.getByRole('button',{name:'Resume LFO',exact:true}));
   await overridden.getByRole('button',{name:'Use base value',exact:true}).waitFor();
   await close(overridden);
-  await activate(aim.getByRole('button',{name:'History'}));
-  await aim.getByLabel('Parameter history beat window').selectOption('8');
-  // The scope samples only while visible; the XYZ pad (#655) makes the row taller.
-  await aim.locator('.parameter-visualizer').scrollIntoViewIfNeeded();
-  await aim.getByRole('img',{name:'Last 8 beats'}).waitFor();
-  await activate(aim.getByRole('button',{name:'3D'}));
-  assert.equal(await card.locator('[data-param=glow] .parameter-visualizer').count(),0);
+  await activate(plot.getByRole('button',{name:'History'}));
+  await plot.getByLabel('Parameter history beat window').selectOption('8');
+  // The scope samples only while visible.
+  await plot.locator('.parameter-visualizer').scrollIntoViewIfNeeded();
+  await plot.getByRole('img',{name:'Last 8 beats'}).waitFor();
+  await activate(plot.getByRole('button',{name:'3D'}));
+  assert.equal(await card.locator('[data-plot=glow]').count(),0);
   await activate(card.getByRole('button',{name:'Collapse Orbital wash controls'}));
   await detach('Orbit aim');
   await detach('Intensity');
@@ -360,7 +364,7 @@ try {
       await curve.scrollIntoViewIfNeeded();
       await curve.waitFor();
       assert.ok((await curve.getAttribute('points')).split(' ').length>16,'Authored waveform shape remains visible');
-      assert.equal(await selector.locator('[data-param=wave] .parameter-visualizer').count(),0);
+      assert.equal(await selector.locator('[data-plot=wave]').count(),0);
       const scope=selector.locator('.strip-monitor');
       await scope.scrollIntoViewIfNeeded();
       await scope.getByText('Fixture · Beam 6').waitFor();

@@ -2,7 +2,6 @@
   "The studio application is data + re-frame transitions. I/O lives in effects."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
-            [tolglow.authoring.card-layout :as card-layout]
             [tolglow.studio.checkpoints :as checkpoints]
             [tolglow.studio.fog-fields :as fog]
             [tolglow.studio.frame-stream :as frame-stream]
@@ -1143,21 +1142,10 @@
       (assoc-in db [:ui :composition] (assoc (dissoc composition :running? :playback :layer-id :member-slots) :slots slots)))))
 (rf/reg-event-db :studio/composition-new [(rf/inject-cofx :studio/unique)]
   (fn [db _] (assoc-in db [:ui :composition] {:id "new-composition" :name "New composition" :mode "sequence" :loop "once" :slots []})))
-(defn composition-for-save
-  "The edited composition to save. Its macro card arrangement (#795) belongs
-  to the :composition-cards command, so the saved show's current cards are
-  kept, pruned to the slots the edit still has; a sequence has none."
-  [db composition]
-  (let [saved (some #(when (= (wire-id (:id %)) (wire-id (:id composition))) %)
-                    (get-in db [:server-projection :view :compositions]))
-        cards (when (= "macro" (some-> (:mode composition) name))
-                (not-empty (card-layout/prune (:slots composition) (:cards saved))))]
-    (cond-> (dissoc composition :cards :layer-id :member-slots)
-      cards (assoc :cards cards))))
-
 (rf/reg-event-fx :studio/composition-save
   (fn [{:keys [db]} [_ run?]]
-    (let [composition (composition-for-save db (get-in db [:ui :composition]))]
+    ;; The show keeps a macro's card arrangement when a save omits it (#795).
+    (let [composition (dissoc (get-in db [:ui :composition]) :cards)]
       (if (seq (:slots composition))
         {:studio/http {:path "/api/composition" :body composition :on-success [:studio/composition-saved (:id composition) run?]}}
         {:dispatch [:studio/failure "Add at least one cue to the composition."]}))))

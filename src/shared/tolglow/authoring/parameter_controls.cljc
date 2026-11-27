@@ -145,31 +145,28 @@
 
 (def slot-sizes
   "The standard slots a parameter card occupies on a surface's card grid
-  (#795), as [columns rows] of one shared slot unit. A surface lays out every
-  card on one grid with a fixed column unit, one row unit and dense packing;
+  (#795), as [columns rows] of one shared slot unit. A surface places the
+  cards with `tolglow.authoring.slot-grid/pack` on one column and row unit;
   it changes its column count with its width, never a card's geometry."
   {:compact [1 1] :wide [2 1] :large [2 2]})
 
 (defn slot-size
   "The standard slot a control description (from `control`) occupies:
   :compact for a knob, fader, toggle, choice, colour swatch, plain field or
-  closed rings; :wide for a waveform or shape picker, a gradient, a range and
-  a vector of component readouts; :large for an XY pad and an XY pad with a Z
-  fader. With :expanded? (rings opened into sub-knobs, or a Detail card whose
-  parameter a source drives and so shows its plot) a card takes :large, the
-  next standard size that holds it. Every card of one widget type gets the
-  same slot."
-  ([description] (slot-size description nil))
-  ([{:keys [type widget]} {:keys [expanded?]}]
-   (cond
-     expanded? :large
-     (#{:xy :xyz} widget) :large
-     (= :axes widget) :wide
-     ;; A vector drawn without a compound widget (a colour vector) shows its
-     ;; component readouts.
-     (and (= :vector type) (nil? widget)) :wide
-     (#{:waveform :shape :gradient :range} type) :wide
-     :else :compact)))
+  rings; :wide for a waveform or shape picker, a gradient, a range and a
+  vector of component readouts; :large for an XY pad and an XY pad with a Z
+  fader. Every card of one widget type gets the same slot. A card never
+  changes slot while it is used: opened rings and plots are drawn over or
+  beside the grid, so nothing repacks under the operator's hand."
+  [{:keys [type widget]}]
+  (cond
+    (#{:xy :xyz} widget) :large
+    (= :axes widget) :wide
+    ;; A vector drawn without a compound widget (a colour vector) shows its
+    ;; component readouts.
+    (and (= :vector type) (nil? widget)) :wide
+    (#{:waveform :shape :gradient :range} type) :wide
+    :else :compact))
 
 (defn slot-span
   "[columns rows] of a slot size, defaulting to :compact."

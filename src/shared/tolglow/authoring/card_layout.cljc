@@ -105,6 +105,26 @@
             without (into (subvec arranged 0 from) (subvec arranged (inc from)))]
         (into (conj (subvec without 0 to) card) (subvec without to))))))
 
+(defn size
+  "A card size from wire data (a keyword or its name), or nil."
+  [value]
+  (some #{(tag value)} sizes))
+
+(defn carry
+  "The saved cards that still describe a member of the re-saved macro: the
+  slot keeps its ID and still names the same cue. Unnamed slots get positional
+  IDs (\"slot-N\"), so a card is carried only when its slot's cue matches;
+  otherwise it is dropped rather than attached to a different cue."
+  [saved-slots cards slots]
+  (let [cue-of (fn [slots] (into {} (map (juxt (comp slot-key :id) :cue-id)) slots))
+        before (cue-of saved-slots)
+        after (cue-of slots)]
+    (when (sequential? cards)
+      (filterv (fn [{:keys [slot-id]}]
+                 (let [k (slot-key slot-id)]
+                   (and (contains? after k) (= (get before k) (get after k)))))
+               (filter map? cards)))))
+
 (defn prune
   "Cards whose slot is still in `slots`, for an editor that removed a slot."
   [slots cards]

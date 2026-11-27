@@ -93,10 +93,6 @@
     (testing "pads are large"
       (is (= #{:large} (set (map slot [{:type :vector :size 2 :bounds [-1 1]}
                                        {:type :vector :size 3 :bounds [0 1]}])))))
-    (testing "an expanded card takes the large standard size, never an arbitrary one"
-      (is (= :large (controls/slot-size {:type :vector :widget :rings} {:expanded? true})))
-      (is (= :large (controls/slot-size {:type :number :widget :rotary} {:expanded? true})))
-      (is (= :compact (controls/slot-size {:type :vector :widget :rings} {:expanded? false}))))
     (testing "spans are whole slots of one unit"
       (is (= {:compact [1 1] :wide [2 1] :large [2 2]} controls/slot-sizes))
       (is (= [1 1] (controls/slot-span :unknown))))))

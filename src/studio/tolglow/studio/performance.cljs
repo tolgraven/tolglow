@@ -9,6 +9,7 @@
             [tolglow.authoring.card-layout :as card-layout]
             [tolglow.authoring.parameter-controls :as controls]
             [tolglow.authoring.parameter-layout :as layout]
+            [tolglow.authoring.slot-grid :as slot-grid]
             [tolglow.studio.events :as events]
             [tolglow.studio.cue-variations :as variations]
             [tolglow.studio.effect-selection :as selection]
@@ -480,7 +481,7 @@
                           [authored (wire parameter)])]
     (if description (str axis " · " description) axis)))
 
-(defn- xyz-editor [show instance {:keys [components] :as control} compact?]
+(defn- xyz-editor [show instance {:keys [components] :as control} compact? & [slot-style]]
   (let [{:keys [base effective]} (xyz-readings show instance components)
         title (control-title control)
         axes (mapv (fn [[id schema] axis] (assoc schema :axis-label (xyz-axis-label axis id schema)))
@@ -496,10 +497,11 @@
         key! (fn [index schema key]
                (rf/dispatch-sync [:studio/param-key (:id instance) (first (nth components index)) schema key]))
         widget (controls/compound-widget (xyz-schema control))
-        visual? (and (not compact?) (some #(sources/driven? instance (first %)) components))]
+        visual? (and (not slot-style) (not compact?) (some #(sources/driven? instance (first %)) components))]
     [:div.param-row {:data-group (control-id control) :class (when compact? "strip-control")
                      :data-control (name widget)
-                     :data-slot (name (controls/slot-size {:type :vector :widget widget} {:expanded? visual?}))}
+                     :data-slot (name (controls/slot-size {:type :vector :widget widget}))
+                     :style slot-style}
      [:label title]
      (if (#{:xyz :rings} widget)
        [widgets/compound-control {:title title :widget widget :components (mapv second components)
@@ -513,28 +515,119 @@
      (when visual?
        [sources/axes-visual visualization/studio instance components (xyz-schema control)])]))
 
-(defn- parameter-bank
-  "One effect's parameter cards on the shared slot grid (#795): every card
-  fills a standard slot (`controls/slot-sizes`) of one column and row unit,
-  packed densely. The grid changes its column count with its width."
-  [show instance controls compact? parameter-control]
-  [:div.live-effect-parameters {:class (if compact? "control-strip" "control-detail")
-                                :data-slot-grid (if compact? "strip" "detail")
-                                :role "group" :aria-label (if compact? "Parameter strip" "Detailed parameter controls")}
-   (for [{:keys [parameter schema components] :as control} controls]
-     ^{:key (control-id control)}
-     (if components
-       [xyz-editor show instance control compact?]
-       [parameter-control instance parameter schema nil {:compact? compact? :strip? compact?}]))])
+(defonce ^:private packings (atom {}))
 
-(defn- viewable? [{:keys [schema components]}]
-  (or (seq components)
-      (#{:integer :number :range :vector :color} (widgets/parameter-kind schema))))
+(defn- pack
+  "slot-grid/pack, remembered per spans and column limit: a bank re-renders
+  on every value change, its layout only when its cards or width change."
+  [spans columns]
+  (let [key [spans columns]]
+    (or (get @packings key)
+        (let [packed (slot-grid/pack spans columns)]
+          (swap! packings #(assoc (if (< 256 (count %)) {} %) key packed))
+          packed))))
+
+(defn- css-px [style property]
+  (let [n (js/parseFloat (.getPropertyValue style property))] (when (js/Number.isFinite n) n)))
+
+(defn slot-columns
+  "How many slot columns of the element's own --slot-col and --slot-gap fit
+  its width."
+  [node]
+  (let [style (js/getComputedStyle node)
+        unit (or (css-px style "--slot-col") 92)
+        gap (or (css-px style "--slot-gap") 6)]
+    (max 1 (js/Math.floor (/ (+ (.-clientWidth node) gap) (+ unit gap))))))
+
+(defn packed-grid
+  "A grid whose cards `slot-grid/pack` places. `measure` turns the element
+  into its column limit (a ResizeObserver owned by this component re-measures
+  it), `spans` turns that limit into each card's [columns rows], and `render`
+  draws card `i` with its grid-area style. Cards are drawn in reading order,
+  so DOM and tab order follow the screen; they are keyed, so moving one never
+  remounts it."
+  [{:keys [attrs measure spans render keys]}]
+  (r/with-let [limit (r/atom nil)
+               node (atom nil)
+               observer (atom nil)
+               attach! (fn [element]
+                         (some-> @observer .disconnect)
+                         (reset! observer nil)
+                         (reset! node element)
+                         (when element
+                           (reset! limit (measure element))
+                           (when (exists? js/ResizeObserver)
+                             (let [o (js/ResizeObserver. #(when-let [n @node] (reset! limit (measure n))))]
+                               (.observe o element)
+                               (reset! observer o)))))]
+    (let [span-list (spans (or @limit 4))
+          {:keys [columns rows cells]} (pack span-list (or @limit 4))]
+      (into [:div (merge attrs {:ref attach! :data-columns columns :data-rows rows
+                                :style (merge (:style attrs) {"--slot-columns" columns})})]
+            (for [{:keys [index col row w h]} cells]
+              ;; `render` returns hiccup: called as a function, not mounted as
+              ;; a component, so a parent re-render never remounts a card.
+              (with-meta
+                (render index (cond-> {:grid-column (str (inc col) " / span " w) :grid-row (str (inc row) " / span " h)}
+                                ;; Opened rings overlay their slot, anchored away
+                                ;; from the edge they would cross.
+                                (> (+ col 2) columns) (assoc "--overlay-left" "auto" "--overlay-right" "0")
+                                (and (> rows 1) (> (+ row 2) rows)) (assoc "--overlay-top" "auto" "--overlay-bottom" "0")))
+                {:key (nth keys index)}))))
+    (finally (some-> @observer .disconnect))))
+
+(defn control-slot
+  "The standard slot of one bank control: its shared description's :slot,
+  or the compound widget of a grouped X/Y/Z."
+  [{:keys [parameter schema components] :as control} catalog]
+  (if components
+    (controls/slot-size {:type :vector :widget (controls/compound-widget (xyz-schema control))})
+    (:slot (controls/control parameter schema catalog))))
+
+(defn- parameter-bank
+  "One effect's parameter cards on the shared slot grid (#795). Every card
+  fills a standard slot of one column and row unit; `slot-grid/pack` places
+  them with the fewest empty cells, in authored order where it can, on as
+  many columns as fit and the content fills."
+  [show instance controls compact? parameter-control]
+  (let [catalog @(rf/subscribe [:waveform/catalog])
+        spans (mapv #(controls/slot-span (control-slot % catalog)) controls)]
+    [packed-grid
+     {:attrs {:class (str "live-effect-parameters " (if compact? "control-strip" "control-detail"))
+              :data-slot-grid (if compact? "strip" "detail")
+              :role "group" :aria-label (if compact? "Parameter strip" "Detailed parameter controls")}
+      :measure slot-columns
+      :spans (constantly spans)
+      :keys (mapv control-id controls)
+      :render (fn [index style]
+                (let [{:keys [parameter schema components] :as control} (nth controls index)]
+                  (if components
+                    [xyz-editor show instance control compact? style]
+                    [parameter-control instance parameter schema nil
+                     {:compact? compact? :strip? compact? :slot-grid? true :slot-style style}])))}]))
 
 (defn driven-controls [instance controls]
   (filter (fn [{:keys [parameter components]}]
             (if components (some #(sources/driven? instance (first %)) components) (sources/driven? instance parameter)))
           controls))
+
+(defn- detail-plots
+  "Plots of the driven parameters, below the Detail grid. A plot appearing
+  when a source starts never moves a card."
+  [instance controls]
+  (when-let [driven (seq (driven-controls instance controls))]
+    [:div.detail-plots
+     (for [{:keys [parameter schema components] :as control} driven]
+       ^{:key (control-id control)}
+       [:figure.detail-plot {:data-plot (if components (control-id control) (wire parameter))}
+        [:figcaption (control-title control)]
+        (if components
+          [sources/axes-visual visualization/studio instance components (xyz-schema control)]
+          [sources/result-visual visualization/studio instance parameter schema])])]))
+
+(defn- viewable? [{:keys [schema components]}]
+  (or (seq components)
+      (#{:integer :number :range :vector :color} (widgets/parameter-kind schema))))
 
 (defn resolve-monitor [controls requested preferred]
   (let [choices (filterv viewable? controls)
@@ -616,20 +709,59 @@
 (defn macro-cards
   "Running macros with their member cards on the board (#795), in each
   macro's card order: [{:macro definition :cards [{:slot-id :member :size
-  :instance}]}]. A member instance carries the macro run's layer ID and its
-  slot index; members that are not running have no card. `compositions` are
+  :instance :position :total}]}]. A member instance carries the macro run's
+  layer ID and its slot index; members that are not running have no card.
+  :position and :total count the macro's whole arrangement, the slots the
+  move command counts, so ‹ › stop where a move would. `compositions` are
   the typed composition projections."
   [compositions instances]
-  (vec (for [{:keys [layer-id member-slots mode] :as macro} compositions
-             :when (and layer-id (= "macro" (some-> mode name)))
+  (vec (for [{:keys [layer-id member-slots mode running?] :as macro} compositions
+             :when (and running? layer-id (= "macro" (some-> mode name)))
              :let [members (into {} (keep (fn [instance]
                                             (let [{:keys [id member]} (get-in instance [:source :native-layer])]
                                               (when (= layer-id id) [member instance]))))
                                  instances)
-                   cards (keep (fn [card] (when-let [instance (members (:member card))] (assoc card :instance instance)))
+                   arranged (mapv (comp card-layout/slot-key :slot-id) (card-layout/arrange (:slots macro) (:cards macro)))
+                   position #(first (keep-indexed (fn [i k] (when (= k (card-layout/slot-key %)) i)) arranged))
+                   cards (keep (fn [card]
+                                 (when-let [instance (members (:member card))]
+                                   (assoc card :instance instance :position (position (:slot-id card)) :total (count arranged))))
                                (card-layout/arrange (mapv #(hash-map :id %) member-slots) (:cards macro)))]
              :when (seq cards)]
          {:macro macro :cards (vec cards)})))
+
+(def small-cells
+  "How many slot cells a small macro card shows: its leading controls in
+  layout order, so the macro's author chooses them with :ui/order."
+  4)
+
+(defn small-controls
+  "The leading controls whose slots fit in `small-cells` cells, at least one."
+  [controls catalog]
+  (let [areas (map #(apply * (controls/slot-span (control-slot % catalog))) controls)
+        taken (count (take-while #(<= % small-cells) (reductions + areas)))]
+    (vec (take (max 1 taken) controls))))
+
+(defn macro-columns
+  "Board tracks for macro cards: six on a board at least 960 px wide, so a
+  small card is a third of the row, a medium half and a large all of it; two
+  from 640 px, where small and medium are half; one below that, where every
+  size takes the full width and differs by its content."
+  [node]
+  (let [width (.-clientWidth node)]
+    (cond (>= width 960) 6 (>= width 640) 2 :else 1)))
+
+(defn macro-span
+  "[columns 1] of a macro card of `size` on `columns` board tracks."
+  [columns size]
+  [(case columns
+     6 (case size :large 6 :medium 3 2)
+     2 (if (= :large size) 2 1)
+     1)
+   1])
+
+(rf/reg-sub :performance/macro-arrange
+  (fn [db [_ id]] (boolean (get-in db [:ui :macro-arrange id]))))
 
 (defn- typed-macro [db macro-id]
   (some #(when (= macro-id (:id %)) %) (get-in db [:server-projection :view :compositions])))
@@ -650,28 +782,33 @@
   (fn [{:keys [db]} [_ macro-id slot-id offset]]
     (send-macro-cards db macro-id {:move {:slot-id slot-id :offset offset}})))
 
-(defn- card-size-picker [{:keys [macro-id slot-id size index count]} title]
+(defn- card-size-picker [{:keys [macro-id slot-id size position total]} title]
   [:div.card-size-picker {:role "group" :aria-label (str title " card")}
-   [:span "Card"]
+   [:span "Card size"]
    (for [option card-layout/sizes
          :let [label (str (str/capitalize (name option)) " card")]]
      ^{:key option}
      [:button {:type "button" :aria-pressed (= option size) :title label :aria-label (str label " for " title)
                :on-click #(rf/dispatch [:performance/macro-card-size macro-id slot-id option])}
       (card-layout/size-labels option)])
-   [:button {:type "button" :disabled (zero? index) :aria-label (str "Move " title " card earlier")
+   [:button {:type "button" :disabled (not (pos? position)) :aria-label (str "Move " title " card earlier")
              :on-click #(rf/dispatch [:performance/macro-card-move macro-id slot-id -1])} "‹"]
-   [:button {:type "button" :disabled (= index (dec count)) :aria-label (str "Move " title " card later")
+   [:button {:type "button" :disabled (not (< position (dec total))) :aria-label (str "Move " title " card later")
              :on-click #(rf/dispatch [:performance/macro-card-move macro-id slot-id 1])} "›"]])
 
 (defn- instance-card [show instance parameter-control
                       {:keys [duplicate? reorder? source-id selection-view selection-row macro-card] :as options}]
-  (let [id (wire (:id instance)) expanded? @(rf/subscribe [:performance/card-expanded id])
+  (let [id (wire (:id instance))
+        ;; A macro member's size chooses its content (#795): small shows its
+        ;; leading controls, medium the whole strip and large the Detail bank.
+        size (:size macro-card)
+        expanded? (if macro-card (= :large size) @(rf/subscribe [:performance/card-expanded id]))
         definition (card-definition show instance)
         faults @(rf/subscribe [:inspect/faults])
         faulted? (seq (inspect/faults-for faults instance))
         cue (instance-cue show instance)
         {:keys [controls monitor]} @(r/track resolve-controls definition (:ui/layout cue))
+        shown (if (= :small size) (small-controls controls @(rf/subscribe [:waveform/catalog])) controls)
         title (instance-title cue instance)
         paused? (get-in instance [:system :paused?])
         {:keys [state key target instances]} @(rf/subscribe [:performance/instance id])
@@ -714,19 +851,26 @@
        (when selection-row
          (selection/action-buttons selection-view {:instance-ids [(:id selection-row)]}
                                    (selection/instance-flags selection-row)))
-       (if reorder?
-         (when (= "running" (:phase instance)) [reorder-button id title options])
+       (cond
+         reorder? (when (= "running" (:phase instance)) [reorder-button id title options])
+         ;; The large size is a macro member's Detail.
+         macro-card nil
+         :else
          [:button.live-effect-expand {:type "button" :aria-expanded expanded?
                                       :aria-label (str (if expanded? "Collapse " "Expand ") title " controls"
                                                        (when duplicate? (str " for launch " id)))
                                       :on-click #(do (rf/dispatch [:performance/card-toggle id (select-keys show [:runtime-id :epoch])])
                                                      (rf/dispatch [:surfaces/follow [:instance id]]))}
           (if expanded? "Compact" "Detail")])]]
-     (when macro-card [card-size-picker macro-card title])
-     (when (seq controls)
+     (when (:arranging? macro-card) [card-size-picker macro-card title])
+     (when (seq shown)
        [:div.live-effect-body
-        [parameter-bank show instance controls (not expanded?) parameter-control]
-        (when (and (not expanded?) (:selected scope)) [strip-monitor instance scope])])
+        ^{:key (if expanded? "detail" "strip")} [parameter-bank show instance shown (not expanded?) parameter-control]
+        (when (< (count shown) (count controls))
+          [:p.live-effect-more (str (- (count controls) (count shown)) " more in the medium and large sizes")])
+        (if expanded?
+          [detail-plots instance controls]
+          (when (and (not= :small size) (:selected scope)) [strip-monitor instance scope]))])
      (when-let [schema (sources/destination-schema {:definition definition} priority editing)]
        (let [group (some #(when (some (fn [[p _]] (= p editing)) (:components %)) (:components %)) controls)]
          ^{:key [id (or (ffirst group) editing)]} [sources/editor instance editing schema group]))
@@ -806,16 +950,27 @@
           ;; A running macro is a custom setup: its member cards keep the sizes
           ;; and order saved with it. Every other card takes a standard size.
           (for [{:keys [macro cards]} macros
-                :let [title (or (:name macro) (widgets/label (wire (:id macro))))]]
-            ^{:key (wire (:id macro))}
-            [:section.live-macro {:aria-label (str "Macro " title) :data-macro (wire (:id macro))}
-             [:div.live-macro-heading [:h3 title] [:span "Macro · card sizes saved with it"]]
-             [:div.live-effect-grid
-              (for [[index {:keys [instance slot-id size]}] (map-indexed vector cards)]
-                ^{:key (wire (:id instance))}
-                [instance-card show instance parameter-control
-                 (assoc (card-options instance)
-                        :macro-card {:macro-id (:id macro) :slot-id slot-id :size size
-                                     :index index :count (count cards)})])]])])
+                :let [title (or (:name macro) (widgets/label (wire (:id macro))))
+                      macro-key (wire (:id macro))
+                      arranging? @(rf/subscribe [:performance/macro-arrange macro-key])]]
+            ^{:key macro-key}
+            [:section.live-macro {:aria-label (str "Macro " title) :data-macro macro-key}
+             [:div.live-macro-heading [:h3 title] [:span "Macro"]
+              [:button.button.live-macro-arrange
+               {:type "button" :aria-pressed arranging? :aria-label (str (if arranging? "Finish arranging " "Arrange ") title)
+                :on-click #(rf/dispatch [:studio/ui-set [:macro-arrange macro-key] (not arranging?)])}
+               (if arranging? "Done" "Arrange")]]
+             [packed-grid
+              {:attrs {:class "live-effect-grid live-macro-grid"}
+               :measure macro-columns
+               :spans (fn [columns] (mapv #(macro-span columns (:size %)) cards))
+               :keys (mapv (comp wire :id :instance) cards)
+               :render (fn [index style]
+                         (let [{:keys [instance] :as card} (nth cards index)]
+                           [:div.live-macro-slot {:style (select-keys style [:grid-column :grid-row])}
+                            [instance-card show instance parameter-control
+                             (assoc (card-options instance)
+                                    :macro-card (assoc (select-keys card [:slot-id :size :position :total])
+                                                       :macro-id (:id macro) :arranging? arranging?))]]))}]])])
        [:div.live-board-empty [:span "◌"] [:strong "Your running effects appear here"]
         [:p "Launch cues to mix their parameters together."]])]))

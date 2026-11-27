@@ -608,3 +608,40 @@
     (testing "nil returns every card to its default"
       (is (= :accepted (:status (apply-at! r :composition-cards {:id :opening-look :cards nil} 700))))
       (is (not (contains? (saved) :cards)))))))
+
+(deftest re-saving-a-macro-keeps-its-cards-for-the-same-members
+  (with-runtime [r]
+    (let [saved #(some (fn [c] (when (= :m (:id c)) c)) (:compositions (show/snapshot r)))
+          rejection #(get-in % [:details :errors 0 :path])]
+      (apply-at! r :composition {:id :m :mode :macro :slots [{:id :a :cue-id :ember} {:id :b :cue-id :ice}]} 0)
+      (apply-at! r :composition-cards {:id :m :cards [{:slot-id :b :size :large} {:slot-id :a :size :medium}]} 1)
+      (testing "a REPL save that omits :cards keeps them, as a Compose save does"
+        (is (= :accepted (:status (apply-at! r :composition {:id :m :mode :macro :name "Renamed"
+                                                             :slots [{:id :a :cue-id :ember} {:id :b :cue-id :ice}]} 2))))
+        (is (= [{:slot-id :b :size :large} {:slot-id :a :size :medium}] (:cards (saved)))))
+      (testing "removing a member drops its card instead of refusing the save"
+        (is (= :accepted (:status (apply-at! r :composition {:id :m :mode :macro :slots [{:id :a :cue-id :ember}]} 3))))
+        (is (= [{:slot-id :a :size :medium}] (:cards (saved)))))
+      (testing "a card follows its member: a positional slot ID that now names another cue loses it"
+        (apply-at! r :composition {:id :m :mode :macro :slots [{:cue-id :ember} {:cue-id :ice}]} 4)
+        (apply-at! r :composition-cards {:id :m :cards [{:slot-id "slot-1" :size :large}]} 5)
+        (is (= :accepted (:status (apply-at! r :composition {:id :m :mode :macro :slots [{:cue-id :ice} {:cue-id :spot}]} 6))))
+        (is (nil? (:cards (saved)))))
+      (testing "an explicit :cards nil clears them"
+        (apply-at! r :composition-cards {:id :m :cards [{:slot-id "slot-0" :size :large}]} 7)
+        (apply-at! r :composition {:id :m :mode :macro :cards nil :slots [{:cue-id :ice} {:cue-id :spot}]} 8)
+        (is (not (contains? (saved) :cards))))
+      (testing "projection keys read back from a snapshot are not saved"
+        (apply-at! r :composition-run {:id :m} 9)
+        (is (:layer-id (saved)))
+        (is (= :accepted (:status (apply-at! r :composition (assoc (saved) :name "Again") 10))))
+        (apply-at! r :composition-stop {:id :m} 11)
+        (is (= [false nil nil] ((juxt :running? :layer-id :member-slots) (saved))))
+        (is (not-any? #(contains? (get-in @(:state r) [:model :compositions :m]) %)
+                      [:running? :playback :layer-id :member-slots])))
+      (testing "a size that is not a keyword is refused with a path"
+        (is (= [:resize :size] (rejection (apply-at! r :composition-cards {:id :m :resize {:slot-id "slot-0" :size 3}} 12))))
+        (is (= :rejected (:status (apply-at! r :composition-cards {:id :m :resize {:slot-id "slot-0" :size "huge"}} 12)))))
+      (testing "a sequence refuses :cards, even nil"
+        (is (= [:cards] (rejection (apply-at! r :composition {:id :s :mode :sequence :cards nil
+                                                              :slots [{:cue-id :ember :duration-ms 100}]} 13))))))))

@@ -1,16 +1,18 @@
 /* One slot grid for parameter cards (#795).
    Every card in Detail and the running strip fills a standard slot of one
    column unit and one row unit: compact 1x1, wide 2x1 or large 2x2
-   (tolglow.authoring.parameter-controls/slot-sizes). The bank packs them
-   densely and changes its column count with its width; no card chooses its
-   own geometry. Contents scale or reflow inside the slot, and a slot clips
-   what does not fit, so no control can cover a neighbour's hit area. The
-   widget style (Ember or Standard) is untouched here. */
+   (tolglow.authoring.parameter-controls/slot-sizes). tolglow.authoring.slot-grid/pack
+   places the cards and Studio writes each card's grid area and the column
+   count (--slot-columns), so the grid is exactly as wide as its content.
+   Contents scale inside the slot, and a slot clips what does not fit, so no
+   control can cover a neighbour's hit area. Opened rings draw over the grid
+   and plots sit below it, so nothing repacks while it is used. The widget
+   style (Ember or Standard) is untouched here. */
 #view-perform .live-effect-parameters[data-slot-grid] {
   --slot-col: 92px; --slot-row: 144px; --slot-gap: 6px;
   display: grid; min-width: 0; overflow: visible;
-  grid-template-columns: repeat(auto-fill, min(var(--slot-col), calc(50% - var(--slot-gap) / 2)));
-  grid-auto-rows: var(--slot-row); grid-auto-flow: row dense;
+  grid-template-columns: repeat(var(--slot-columns, 1), var(--slot-col));
+  grid-auto-rows: var(--slot-row); grid-auto-flow: row;
   gap: var(--slot-gap); justify-content: center; align-items: stretch;
 }
 #view-perform .live-effect-parameters[data-slot-grid=detail] { --slot-col: 172px; --slot-row: 180px; --slot-gap: 8px; }
@@ -20,8 +22,7 @@
 }
 
 #view-perform [data-slot-grid]>.param-row {
-  grid-column: span 1; grid-row: span 1;
-  display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto;
+  position: relative; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto;
   align-items: center; justify-items: stretch; gap: 2px;
   min-width: 0; min-height: 0; margin: 0; padding: 4px 6px;
   border: 1px solid color-mix(in srgb, var(--line) 75%, transparent); border-radius: 6px;
@@ -29,9 +30,6 @@
      to the slot, never drawn over the next one. */
   overflow: clip;
 }
-#view-perform [data-slot-grid]>.param-row[data-slot=wide] { grid-column: span 2; }
-#view-perform [data-slot-grid]>.param-row[data-slot=large],
-#view-perform [data-slot-grid]>.param-row:has(.parameter-rings.open) { grid-column: span 2; grid-row: span 2; }
 
 /* Title row, the widget filling the slot, then the source. */
 #view-perform [data-slot-grid]>.param-row>label {
@@ -46,11 +44,9 @@
 #view-perform [data-slot-grid=detail]>.param-row>label>output { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #view-perform [data-slot-grid]>.param-row>.param-source-trigger { grid-row: 3; min-height: 30px; justify-self: center; }
 #view-perform [data-slot-grid=detail]>.param-row>.param-source-trigger { justify-self: start; }
-#view-perform [data-slot-grid]>.param-row>:not(label, .param-source-trigger, .parameter-visualizer) {
+#view-perform [data-slot-grid]>.param-row>:not(label, .param-source-trigger) {
   grid-row: 2; align-self: stretch; justify-self: stretch; min-width: 0; min-height: 0; width: auto; height: auto; margin: 0;
 }
-#view-perform [data-slot-grid]>.param-row>.parameter-visualizer { grid-row: 4; min-width: 0; }
-#view-perform [data-slot-grid]>.param-row:has(>.parameter-visualizer) { grid-template-rows: auto minmax(0, 1fr) auto auto; }
 
 /* Knobs and faders: the widget area is a size container, so a dial keeps its
    drawn proportion (100:94, the pointer geometry) at the largest size that fits. */
@@ -89,36 +85,58 @@
 #view-perform [data-slot-grid] .axis-trigger>span { display: inline-flex; gap: 3px; line-height: 16px; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 #view-perform [data-slot-grid] .axis-trigger b { font-size: 10px; }
 
-/* Pads: the pad fills the slot above its readout; a Z fader stands beside it. */
-#view-perform [data-slot-grid] .param-row>.compound-control {
-  display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; gap: 4px;
-  align-items: stretch; justify-items: stretch; width: auto; max-width: none;
+/* Pads stay square, so X and Y move equally per pixel, at the largest size
+   the slot holds up to a cap (220 px in Detail, 176 px in the strip), centred
+   with the Z fader beside the pad and the readout below. */
+#view-perform [data-slot-grid] .param-row>.compound-control:not([data-widget=rings]) {
+  --pad-cap: 176px; --pad-fader: 0px;
+  container-type: size; display: grid; grid-template-columns: auto; grid-template-rows: auto auto;
+  justify-content: center; align-content: center; gap: 4px; width: auto; max-width: none;
 }
-#view-perform [data-slot-grid] .compound-control[data-widget=xyz] { grid-template-columns: minmax(0, 1fr) 44px; }
-#view-perform [data-slot-grid] .compound-control>.parameter-xy { grid-column: 1; grid-row: 1; width: auto; height: auto; min-width: 0; max-width: none; min-height: 0; aspect-ratio: auto; }
-#view-perform [data-slot-grid] .compound-control>.parameter-fader { grid-column: 2; grid-row: 1; width: 44px; height: auto; min-height: 0; padding: 0; }
-#view-perform [data-slot-grid] .compound-control>.axis-control { grid-column: 1 / -1; grid-row: 2; }
+#view-perform [data-slot-grid=detail] .param-row>.compound-control { --pad-cap: 220px; }
+#view-perform [data-slot-grid] .param-row>.compound-control[data-widget=xyz] { --pad-fader: 48px; grid-template-columns: auto 44px; }
+#view-perform [data-slot-grid] .compound-control>.parameter-xy {
+  grid-column: 1; grid-row: 1; width: min(100cqw - var(--pad-fader), 100cqh - 44px, var(--pad-cap));
+  height: auto; aspect-ratio: 1; min-width: 0; max-width: none; min-height: 0;
+}
+#view-perform [data-slot-grid] .compound-control>.parameter-fader {
+  grid-column: 2; grid-row: 1; width: 44px; height: min(100cqw - var(--pad-fader), 100cqh - 44px, var(--pad-cap)); min-height: 0; padding: 0;
+}
+#view-perform [data-slot-grid] .compound-control>.axis-control { grid-column: 1 / -1; grid-row: 2; justify-self: stretch; }
 
-/* Rings: closed, the rings fill a compact slot (Detail adds the legend);
-   open, the card takes the large slot and the component knobs share it. */
-#view-perform [data-slot-grid] .compound-control[data-widget=rings] { grid-template-rows: minmax(0, 1fr); container-type: size; }
-#view-perform [data-slot-grid] .parameter-rings { display: grid; grid-template-rows: minmax(0, 1fr); gap: 4px; height: 100cqh; min-height: 0; }
+/* Rings fill a compact slot (Detail adds the legend). Opened, the component
+   knobs draw over a 2x2 area anchored to the slot, away from the grid edge
+   they would cross, and the cards around them stay where they are. */
+#view-perform [data-slot-grid] .compound-control[data-widget=rings] { display: grid; grid-template-rows: minmax(0, 1fr); }
+#view-perform [data-slot-grid] .parameter-rings { display: grid; grid-template-rows: minmax(0, 1fr); height: 100%; min-height: 0; }
 #view-perform [data-slot-grid] .rings-trigger { grid-template-columns: minmax(0, 1fr); justify-items: center; min-height: 0; height: 100%; padding: 0; }
-#view-perform [data-slot-grid] .rings-trigger>.parameter-rings-glyph { width: min(100cqw, 100cqh * 100 / 94); height: auto; }
+#view-perform [data-slot-grid] .rings-trigger>.parameter-rings-glyph { width: 100%; height: 100%; min-height: 0; }
 #view-perform [data-slot-grid=strip] .rings-trigger>.rings-legend { display: none; }
 #view-perform [data-slot-grid=detail] .rings-trigger { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; }
-#view-perform [data-slot-grid=detail] .rings-trigger>.parameter-rings-glyph { width: min(50cqw - 3px, 100cqh * 100 / 94); }
-#view-perform [data-slot-grid] .parameter-rings.open { grid-template-rows: 40px minmax(0, 1fr); }
-#view-perform [data-slot-grid] .parameter-rings.open .rings-trigger { grid-template-columns: 40px minmax(0, 1fr); justify-items: start; }
-#view-perform [data-slot-grid] .parameter-rings.open .rings-trigger>.parameter-rings-glyph { width: 40px; }
-#view-perform [data-slot-grid] .parameter-rings.open .rings-trigger>.rings-legend { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 8px; font-size: 10px; }
-#view-perform [data-slot-grid] .rings-components {
+#view-perform [data-slot-grid]>.param-row:has(.parameter-rings.open) { overflow: visible; z-index: 6; }
+#view-perform [data-slot-grid] .parameter-rings.open>.rings-components {
+  position: absolute; z-index: 6;
+  left: var(--overlay-left, -1px); right: var(--overlay-right, auto);
+  top: var(--overlay-top, -1px); bottom: var(--overlay-bottom, auto);
+  width: calc(2 * var(--slot-col) + var(--slot-gap)); height: calc(2 * var(--slot-row) + var(--slot-gap));
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr) auto;
-  gap: 2px 6px; min-height: 0; padding: 4px; align-items: stretch;
+  gap: 2px 6px; padding: 6px; box-sizing: border-box; align-items: stretch;
+  box-shadow: 0 10px 28px rgb(0 0 0 / .55);
 }
 #view-perform [data-slot-grid] .rings-component { container-type: size; grid-template-rows: auto minmax(0, 1fr); min-height: 0; gap: 0; }
 #view-perform [data-slot-grid] .rings-component>.parameter-rotary-control { width: min(100cqw, (100cqh - 16px) * 100 / 94); height: auto; aspect-ratio: 100 / 94; }
 #view-perform [data-slot-grid] .rings-components>.text-button { min-height: 32px; }
+
+/* A driven parameter's plot sits below the Detail grid. */
+#view-perform .detail-plots { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 8px; margin: 8px 0 0; }
+#view-perform .detail-plot { margin: 0; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; min-width: 0; }
+#view-perform .detail-plot>figcaption { font-size: 12px; font-weight: 550; margin: 0 0 4px; }
+#view-perform .detail-plot .parameter-visualizer { display: block; }
+#view-perform .detail-plot .parameter-views { flex-direction: row; flex-wrap: wrap; align-items: center; }
+#view-perform .detail-plot .parameter-views label { flex-direction: row; align-items: center; }
+#view-perform .detail-plot .parameter-space { max-width: 300px; }
+#view-perform .detail-plot .parameter-visualizer>div:not(.parameter-views) { min-height: 130px; }
+#view-perform .detail-plot :is(.parameter-space, .parameter-history) svg { height: 105px; }
 
 /* Wide pickers lay their choices in the slot and scroll inside it if needed. */
 #view-perform [data-slot-grid] .param-row>:is(.waveform-picker, .shape-picker, .param-gradient) { overflow: auto; align-self: stretch; }
@@ -126,21 +144,22 @@
 /* Running effect cards keep a few standard sizes on the board: a default
    card takes one column, or the whole row when it holds more than three
    controls or is open in Detail. Only a macro's member cards choose small,
-   medium or large (tolglow.authoring.card-layout). */
+   medium or large (tolglow.authoring.card-layout); the packer places them on
+   six tracks (two below 960 px, one below 640 px). */
 #view-perform .live-effect-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
-  grid-auto-flow: row dense; gap: 9px; align-items: stretch;
+  gap: 9px; align-items: stretch;
 }
 #view-perform .live-effect-grid>.live-effect-card { grid-column: span 1; min-width: 0; }
-#view-perform .live-effect-grid>.live-effect-card:is([data-card-size=large], [data-wide=true]:not([data-card-size])) { grid-column: 1 / -1; }
-#view-perform .live-effect-grid>.live-effect-card[data-card-size=medium] { grid-column: span 2; }
-@container (max-width: 649px) {
-  #view-perform .live-effect-grid>.live-effect-card[data-card-size=medium] { grid-column: 1 / -1; }
-}
+#view-perform .live-effect-grid>.live-effect-card[data-wide=true] { grid-column: 1 / -1; }
+/* A macro card's height follows its size, so cards sharing a row keep their own height. */
+#view-perform .live-effect-grid.live-macro-grid { grid-template-columns: repeat(var(--slot-columns, 1), minmax(0, 1fr)); align-items: start; }
+.live-macro-slot { display: flex; min-width: 0; }
+.live-macro-slot>.live-effect-card { flex: 1 1 auto; min-width: 0; }
 .live-macro { margin: 14px 0 0; }
-/* A macro keeps the order its operator chose, so its cards do not repack. */
-#view-perform .live-macro>.live-effect-grid { grid-auto-flow: row; }
-.live-macro-heading { display: flex; align-items: baseline; gap: 10px; margin: 0 0 6px; }
+.live-effect-more { margin: 4px 0 0; font-size: 11px; color: var(--muted); }
+.live-macro-heading { display: flex; align-items: center; gap: 10px; margin: 0 0 6px; }
+.live-macro-heading>.live-macro-arrange { margin-inline-start: auto; min-height: 36px; }
 .live-macro-heading h3 { margin: 0; font-size: 14px; font-weight: 650; }
 .live-macro-heading span { font-size: 11px; color: var(--muted); }
 .card-size-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 2px 10px 4px; border-bottom: 1px solid var(--line); }
