@@ -122,56 +122,64 @@ cycle (#774).
   - Accepted.
   - Rejected at evaluation: the fallback pass re-evaluates every instance.
   - Rejected by the renderer after the engine accepted it: a second
-    evaluation and a second render, one candidate per frame.
-- **Per-fixture case.** On the mixed rig, one more case revises one effect
-  launched once per moving head with its own `:targets`, as spatial actions
-  launch. That is 64 programs.
+    evaluation and render, one candidate per frame.
+- **Mixed-rig cases.**
+  - One effect launched once per moving head with its own `:targets` (64
+    programs) is revised.
+  - A grid burst publishes a revision of another effect and, in the same
+    owner cycle, schedules 64 per-head launches of it for the next beat, as
+    firing a Live scene of per-fixture clips does. *Launch latency* counts
+    frames from the frame that crosses the scheduled beat to the frame where
+    all 64 first render.
 - **Two modes.** `:inline` compiles in the frame, as before #774.
-  `:background` compiles on the show's worker and adopts once ready.
-- **Rigs.**
-  - The showcase with five cues and their waveforms plus 32 probes: 129
-    fixtures, 37 instances.
-  - The mixed 2,048-pixel/64-head corpus plus 32 probes and the 64-instance
-    effect: 2,112 fixtures, 100 instances.
-- **Run.** Two effect workers, capture sink and a 25 ms cadence held with a
-  spin. 200 warmup ticks, 240 ordinary ticks, and 20 rounds per case.
-- **Environment.** Fresh `lein run` JVM, JDK 25.0.2, Apple M4 Pro, at
-  `b5f56219`. Load average was 2.3 to 8.3, from other agent lanes.
+  `:background` compiles ahead on the show's worker.
+- **Run.**
+  - Two effect workers, a capture sink, and a 25 ms cadence held with a spin.
+  - 200 warmup ticks, 240 ordinary ticks, 20 rounds per case.
+  - A fresh `lein run` JVM on JDK 25.0.2, Apple M4 Pro, at `d9fff18d`.
+  - Load average was 4.8 to 8.0 from other agent lanes.
 - **Report.** [2026-11-27-reload-takeover.edn](2026-11-27-reload-takeover.edn).
 
-Mixed rig, tick p50 / p99 ms, ticks over 25 ms out of 20, adoption latency
-in frames, and programs compiled on the owner during the takeover:
+Mixed 2,048-pixel/64-head rig. Tick p50 / p99 ms, ticks over 25 ms out of 20,
+adoption or launch latency in frames, and programs compiled on the owner:
 
-| Case | Inline: takeover frame | Background: publication frame | Background: adoption frame | Latency | Owner compiles (inline → background) |
+| Case | Inline (as before) | Background: publication frame | Background: adoption or beat frame | Latency | Owner compiles |
 | --- | --- | --- | --- | --- | --- |
-| Ordinary frame | 4.3 / 13.8 | 3.7 / 11.9 | | | |
-| 8 accepted | 11.1 / 18.4, 0 | 6.7 / 18.3, 0 | 6.1 / 13.2, 0 | 1 | 8 → 0 |
-| 32 accepted | 25.4 / 41.8, 14 | 10.3 / 21.4, 0 | 7.2 / 14.1, 0 | 1 | 32 → 0 |
-| 32 rejected at evaluation | 28.9 / 41.2, 20 | 11.2 / 14.0, 0 | 7.9 / 14.9, 0 | 1 | 32 → 0 |
-| 32 rejected by the renderer | 30.2 / 42.3, 20 | 10.6 / 22.0, 0 | 9.0 / 15.9, 0 | 1 | 32 → 0 |
-| One effect on 64 heads | 37.3 / 48.7, 20 | 7.8 / 16.2, 0 | 7.4 / 26.2, 1 | 2 | 64 → 0 |
+| Ordinary frame | 4.1 / 12.7 | 4.3 / 14.3 | | | |
+| 8 accepted | 11.4 / 25.1, 1 | 6.8 / 9.3, 0 | 5.7 / 16.8, 0 | 1 | 8 → 0 |
+| 32 accepted | 29.2 / 61.7, 18 | 11.4 / 28.1, 1 | 7.3 / 16.2, 0 | 1 | 32 → 0 |
+| 32 rejected at evaluation | 31.2 / 51.1, 20 | 11.5 / 14.7, 0 | 7.5 / 9.0, 0 | 1 | 32 → 0 |
+| 32 rejected by the renderer | 32.6 / 88.1, 20 | 12.1 / 21.5, 0 | 8.8 / 18.7, 0 | 1 | 32 → 0 |
+| One effect on 64 heads | 39.2 / 59.8, 20 | 7.6 / 9.5, 0 | 6.8 / 19.4, 0 | 2 | 64 → 0 |
+| Grid burst of 64 launches | beat frame 55.4 / 70.5, 20 | 10.7 / 21.8, 0 | beat frame 27.6 / 36.9, 19 | 0 (launch) | 64 → 0 |
 
-On the showcase, 32 revisions inline took p50 12.6 to 15.0 ms, with 2 of 20
-rounds over 25 ms (rejected at evaluation). In the background mode the
-adoption frame was p50 4.2 to 5.2 ms, with none over 25 ms and a latency of
-1 frame.
+On the showcase, 32 revisions inline took p50 12.9 to 17.0 ms, with up to 3 of
+20 rounds over 25 ms. In the background mode the adoption frame was p50 4.7 to
+5.3 ms, with none over 25 ms and a latency of 1 frame.
 
 Findings:
 
 - **The extra engine pass is not what missed the deadline.** Rejection at
-  evaluation costs about one ordinary evaluation more than acceptance. A
+  evaluation costs about one ordinary evaluation more than acceptance, and a
   renderer rejection adds a second render. The renderer turns down one
   candidate per frame, so 32 renderer-refused revisions take 32 frames of
   about twice the ordinary cost.
 - **Compiling new programs inside the frame did.** That is about 0.45 ms per
   program on the mixed rig, one per revision and launch target set. In the
-  background mode no program is compiled on the owner during a takeover. The
-  revision is adopted one frame after publication (two for 64 programs), by
-  all its instances on the same frame.
+  background mode:
+  - no program is compiled on the owner during a takeover;
+  - a revision is adopted one frame after publication (two for 64 programs),
+    by all its instances on the same frame;
+  - launches land on their beat, and the 64 scheduled programs are warmed
+    before the beat.
+- **A 64-launch burst on one beat still exceeds 25 ms without any compile.**
+  The beat frame's engine time is 3 ms; the remaining roughly 20 ms is
+  admitting and starting 64 launches in one frame. This is outside the compile
+  path and is not changed here.
 - **Publishing still costs time on the owner.** The publication frame still
-  validates each revision, at about 0.1 to 0.4 ms each depending on load (#784).
-- **A full compile cache.** It recompiled every running effect in one frame.
-  It now keeps a retired generation.
+  validates each revision on the owner, at about 0.1 to 0.4 ms each (#784).
+- **A full compile cache recompiled every running effect in one frame.** It
+  now keeps a retired generation, and the warm tier is kept apart from it.
 
 Excluded: physical output and the output scheduler, Studio/browser load, GPU
 compute (a show with GPU expression groups compiles on the owner), auditions,
