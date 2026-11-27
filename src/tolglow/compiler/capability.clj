@@ -41,9 +41,30 @@
                                  (filterv (set authored) targets)
                                  targets))))
 
-(defn- scope [definition fixtures]
-  (let [selected (when (contains? definition :targets) (set (:targets definition)))]
-    (filterv #(or (nil? selected) (contains? selected (:id %))) fixtures)))
+(def ^:private last-rig
+  ;; [fixtures index] of the last rig a lookup used. A pure memo of one
+  ;; immutable value: a burst of launches on one rig indexes it once (#798).
+  (atom nil))
+
+(defn- rig-index
+  "Fixture ID -> [rig position, fixture] for `fixtures`."
+  [fixtures]
+  (let [[cached index] @last-rig]
+    (if (identical? cached fixtures)
+      index
+      (let [index (into {} (map-indexed (fn [i fixture] [(:id fixture) [i fixture]])) fixtures)]
+        (reset! last-rig [fixtures index])
+        index))))
+
+(defn- scope
+  "The heads `definition` addresses, in rig order. Authored targets are looked
+  up instead of filtering the whole rig, since a launch narrowed to one head
+  should not cost a pass over every fixture."
+  [definition fixtures]
+  (if (contains? definition :targets)
+    (let [index (rig-index fixtures)]
+      (mapv second (sort-by first (keep #(get index %) (distinct (:targets definition))))))
+    fixtures))
 
 (defn- addressed [heads {:keys [targets]}]
   (let [targets (when (some? targets) (set targets))]

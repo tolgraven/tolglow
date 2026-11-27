@@ -137,14 +137,16 @@
   only for such paths."
   [model command committed]
   (let [effect (when (#{:cue/launch :effect/launch} (:op command)) (launched-effect model command))
-        {:keys [rig-fingerprint] :as editor} (:editor effect)
-        fixtures (into {} (map (fn [fixture] [(wire-id (:id fixture)) fixture])) (get-in model [:rig :fixtures]))]
+        {:keys [rig-fingerprint] :as editor} (:editor effect)]
+    ;; Index the rig only for a synchronized path: every other launch passes
+    ;; through here too, 64 at once on a busy beat (#798).
     (when (= :synchronized-aim-path (:type editor))
-      (or (when-not (and (map? rig-fingerprint) (seq rig-fingerprint)
-                         (every? (fn [[id digest]] (= digest (some-> (get fixtures (wire-id id)) head-fingerprint)))
-                                 rig-fingerprint))
-            [:stale-calibration "A head's mount or calibration changed after this synchronized path was solved; republish it"])
-          (some (partial wrap-problem fixtures committed) (:outputs effect))))))
+      (let [fixtures (into {} (map (fn [fixture] [(wire-id (:id fixture)) fixture])) (get-in model [:rig :fixtures]))]
+        (or (when-not (and (map? rig-fingerprint) (seq rig-fingerprint)
+                           (every? (fn [[id digest]] (= digest (some-> (get fixtures (wire-id id)) head-fingerprint)))
+                                   rig-fingerprint))
+              [:stale-calibration "A head's mount or calibration changed after this synchronized path was solved; republish it"])
+            (some (partial wrap-problem fixtures committed) (:outputs effect)))))))
 
 (defn launch-stretch
   "Nil unless a synchronized aim path launch has a musical arrival that the
