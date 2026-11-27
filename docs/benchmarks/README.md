@@ -295,14 +295,14 @@ other. Publications now arrive half a frame before the owner cycle, as an
 operator's do between frames. The before run used the earlier harness, which
 submitted them just before the cycle; the owner checked them inline either
 way. The Tolglow-only run used branch code at `5dc882f2`. The final run used
-`85cf52af`, which holds only messages that depend on a waiting publication,
-and for at most one cycle. 32 accepted revisions, publication frame, ms:
+`b65d87a5`, which holds only messages that depend on a waiting publication,
+for at most one cycle, and lets only an explicit allow-list go ahead. 32 accepted revisions, publication frame, ms:
 
 | | Commands p50 / p99 | Tick p50 / p99 | Over 25 ms | Ack latency | Load average |
 | --- | --- | --- | --- | --- | --- |
 | [Before](2026-11-27-publication-before.edn) (master `ed0dad0f`, Afterglow `6f4871fd`) | 5.12 / 9.95 | 11.2 / 25.0 | 1 of 30 | 0 | 3.2 → 4.1 |
 | [Tolglow change only](2026-11-27-publication-tolglow-only.edn) (Afterglow `6f4871fd`) | 4.63 / 7.84 | 9.9 / 22.5 | 0 of 30 | 0 | 4.2 → 5.1 |
-| [Both changes](2026-11-27-publication-after.edn) (`85cf52af`, Afterglow `8d969a15`) | 0.61 / 1.39 | 5.4 / 15.5 | 0 of 30 | 0 | 2.2 → 2.1 |
+| [Both changes](2026-11-27-publication-after.edn) (`b65d87a5`, Afterglow `8d969a15`) | 0.69 / 1.38 | 5.7 / 10.1 | 0 of 30 | 0 | 2.7 → 2.5 |
 
 An earlier before run on the same machine gave commands 5.37 / 10.89 ms and
 ticks 9.9 / 23.2 ms (load 2.8 → 3.9). The same both-changes code before the
@@ -314,7 +314,9 @@ have commands p50 0.65 to 0.90 ms, against 6.3 to 6.7 ms before.
 before an owner cycle, too late for the worker to check them, followed by a
 blackout. In all 30 rounds the blackout applied in that first cycle (latency
 0 frames), and the publications landed one cycle later (latency 1). That
-first frame ran tick p50 / p99 4.3 / 13.8 ms, commands 0.09 / 1.56 ms.
+first frame ran tick p50 / p99 4.1 / 11.3 ms, commands 0.08 / 1.52 ms. (The
+run at `85cf52af`, before the allow-list, gave the same latencies, commands
+0.61 / 1.39 ms for 32 accepted revisions, at load 2.2.)
 Before the selective hold, the review measured such a blackout waiting 2
 cycles with an idle worker, and 9 cycles (332 ms) behind a warm-tier rebuild
 with 500 selector cues. In that probe the blackout now applies in the
