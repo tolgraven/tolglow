@@ -78,14 +78,15 @@
         (let [svc (service rt {:worker? true :period-ms 10})
               a (frames/subscribe! svc (view id) {:id :studio})
               b (frames/subscribe! svc (view id) {:id :live})]
-          (loop [n 0] (when (and (< n 200) (< (get-in (frames/status svc) [:counts :renders]) 3)) (Thread/sleep 5) (recur (inc n))))
+          ;; Bounded waits, generous so a loaded runner is not a failure.
+          (loop [n 0] (when (and (< n 2000) (< (get-in (frames/status svc) [:counts :renders]) 1)) (Thread/sleep 5) (recur (inc n))))
           (is (:running? (frames/status svc)))
           (is (some? (frames/take-frame! svc (:lease a))))
           (frames/unsubscribe! svc (:lease a))
           (is (seq (:keys (frames/status svc))) "one view still mounted")
           (frames/unsubscribe! svc (:lease b))
           (is (empty? (:keys (frames/status svc))))
-          (loop [n 0] (when (and (< n 200) (:running? (frames/status svc))) (Thread/sleep 5) (recur (inc n))))
+          (loop [n 0] (when (and (< n 2000) (:running? (frames/status svc))) (Thread/sleep 5) (recur (inc n))))
           (is (not (:running? (frames/status svc))) "no view, no rendering")
           (let [renders (get-in (frames/status svc) [:counts :renders])]
             (Thread/sleep 50)

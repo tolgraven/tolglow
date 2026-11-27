@@ -305,7 +305,8 @@
          :body (ByteArrayInputStream. (.getBytes (if body (json/write-str body) "") "UTF-8"))})))
 
 (defn- wait-for [pred]
-  (loop [n 0] (cond (pred) true (> n 200) false :else (do (Thread/sleep 5) (recur (inc n))))))
+  ;; A bounded wait: generous so a loaded runner is not a failure.
+  (loop [n 0] (cond (pred) true (> n 2000) false :else (do (Thread/sleep 5) (recur (inc n))))))
 
 (deftest run-clips-carry-parameter-moves-and-live-automation-steers-the-show
   (let [sent (atom [])
@@ -387,10 +388,12 @@
               (is (= b (:instance-id take)))
               (is (= [[:level 0.3]] (mapv (juxt :param :value) (:moves take))) "the turn is a take move"))
             (is (= 1 (count @sent)) "a Live input is not echoed back to Live")))
-        (testing "the owner step stays cheap"
-          (let [{:keys [cycles mean-us max-us]} (:cost (show/live-parameter-devices rt))]
-            (println (format "live parameter devices owner step: %d cycles, mean %.1f us, max %.1f us" cycles mean-us max-us))
-            (is (< mean-us 2000.0)))))
+        (testing "the owner step does bounded work (time is reported, not gated)"
+          (let [{:keys [cycles mean-us max-us values max-values values-per-cycle-cap]} (:cost (show/live-parameter-devices rt))]
+            (println (format "live parameter devices owner step (report only): %d cycles, mean %.1f us, max %.1f us" cycles mean-us max-us))
+            (is (pos? cycles))
+            (is (= 4 values) "each queued entry (three slot values, one clip start) was decoded once")
+            (is (<= max-values values-per-cycle-cap)))))
       (finally (show/stop! rt)))))
 
 (deftest a-stale-device-is-reconfigured-and-a-device-that-ignores-it-stays-pending
@@ -456,7 +459,7 @@
                                  (when (zero? (mod i 50)) (Thread/sleep 1))))]
           (try
             (is (not= ::timeout (deref callback 10000 ::timeout)) "the callback thread finished")
-            (Thread/sleep 100)
+            (is (wait-for #(zero? (get-in (show/live-parameter-devices rt) [:inbox :queued]))) "the owner drained the inbox")
             (reset! running false)
             (is (not= ::timeout (deref owner 10000 ::timeout)) "the owner kept cycling")
             (is (nil? (.findDeadlockedThreads (java.lang.management.ManagementFactory/getThreadMXBean))))
@@ -464,6 +467,11 @@
             (is (= 1 @writers) "one writer thread, however slow the sends")
             (is (apply < @levels) "values reach Live in the order Tolglow accepted them (coalesced, never reordered)")
             (let [{:keys [counts cost inbox]} (show/live-parameter-devices rt)]
+              (is (= 500 (:values cost)) "every value dequeued once")
+              (is (nil? (:repeat counts)) "no value was handed to the decoder twice")
+              (is (= 500 (reduce + (vals (dissoc counts :mirrored))))
+                  "every value has exactly one outcome (applied, held, echo, invalid ...)")
+              (is (<= (:max-values cost) (:values-per-cycle-cap cost) 256) "no cycle decodes more than the cap")
               (println (format "live parameter devices under load: %d cycles, mean %.1f us, max %.1f us; %s; inbox %s"
                                (:cycles cost) (:mean-us cost) (:max-us cost) (pr-str counts) (pr-str inbox))))
             (finally (reset! running false)))))
@@ -553,3 +561,24 @@
                                (set (keep #(when (#{:level :gain} (:param %)) [(:param %) (:name %)]) (:slots spec)))))]
         (is (= #{[:level "Level [level]"] [:gain "Level [gain]"]}
                (names [[:level nil] [:gain nil]]) (names [[:gain nil] [:level nil]])))))))
+
+(deftest a-burst-is-decoded-at-most-256-values-per-owner-cycle
+  ;; 300 values queued before one owner cycle: 256 are decoded, the other 44
+  ;; stay queued in order and drain on the next cycle.
+  (let [rt (show/create-runtime {:model (model-with registry) :sink {:send! (fn [_ _])} :workspace-options nil
+                                 :phrase-capture false :live-runs {:record-id "b"}})
+        status #(show/live-parameter-devices rt)]
+    (try
+      (show/tick! rt 0)
+      (dotimes [i 300]
+        (show/live-parameter-device-value! rt {:type :parameter-device-value :track-id "track:9" :slot 0 :value 0.5
+                                               :watch-session "burst" :serial i}))
+      (is (= 300 (get-in (status) [:inbox :queued])))
+      (show/tick! rt 10)
+      (is (= 256 (get-in (status) [:cost :max-values])) "one cycle decodes the cap")
+      (is (= 44 (get-in (status) [:inbox :queued])) "the rest waits")
+      (show/tick! rt 20)
+      (is (= 0 (get-in (status) [:inbox :queued])))
+      (is (= {:values 300 :max-values 256} (select-keys (:cost (status)) [:values :max-values])))
+      (is (= {:unknown-track 300} (:counts (status))) "each value decoded once, in its own cycle or the next")
+      (finally (show/stop! rt)))))

@@ -501,7 +501,7 @@
        :devices (live-devices/new-state) :device-inbox [] :device-inbox-dropped 0
        :device-outbox {} :device-flush? false :device-send! (:device-send! options) :device-writer (delay (device-writer))
        :device-sends {:requests 0 :executed 0 :failed 0 :not-connected 0}
-       :device-cost {:samples 0 :total-ns 0 :max-ns 0}})))
+       :device-cost {:samples 0 :total-ns 0 :max-ns 0 :max-values 0 :values 0}})))
 
 (defn- configure-runtime
   [compute-owner {:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
@@ -2443,7 +2443,7 @@
   (let [start (System/nanoTime)
         catalog (device-catalog model)
         lock (:player-lock @state)
-        [commands writes]
+        [commands writes decoded]
         (locking lock
           (let [;; At most device-events-per-cycle values are decoded per owner
                 ;; step; the rest stay queued, in order, for the next one.
@@ -2463,7 +2463,7 @@
                      {:state (:devices s) :commands []})
                 out (live-devices/mirror-writes (:state in) ctx)]
             (swap! state assoc :devices (:state out) :device-layout-key (:device-layout-key s))
-            [(:commands in) (:writes out)]))]
+            [(:commands in) (:writes out) (count events)]))]
     (doseq [c commands]
       (submit! runtime (assoc c :expected-epoch (:epoch model))))
     (when (seq writes)
@@ -2482,7 +2482,8 @@
         (when-not (:device-flush? old)
           (.execute ^java.util.concurrent.ExecutorService @(:device-writer old) #(drain-device-writes! runtime state)))))
     (let [ns (- (System/nanoTime) start)]
-      (swap! state update :device-cost #(-> % (update :samples inc) (update :total-ns + ns) (update :max-ns max ns))))))
+      (swap! state update :device-cost #(-> % (update :samples inc) (update :total-ns + ns) (update :max-ns max ns)
+                                            (update :max-values (fnil max 0) decoded) (update :values (fnil + 0) decoded))))))
 
 (defn live-parameter-device-value!
   "Queue one slot value a Tolglow parameters device reported through the
@@ -4548,7 +4549,11 @@
            :sends (:device-sends s)
            :watch (get-in s [:mirror :watch])
            :cost {:cycles (get-in s [:device-cost :samples]) :mean-us (/ (get-in s [:device-cost :total-ns]) n 1000.0)
-                  :max-us (/ (get-in s [:device-cost :max-ns]) 1000.0)})))
+                  :max-us (/ (get-in s [:device-cost :max-ns]) 1000.0)
+                  ;; Work, not time: Live values decoded in all and in the busiest
+                  ;; cycle (never above the per-cycle cap).
+                  :values (get-in s [:device-cost :values] 0) :max-values (get-in s [:device-cost :max-values] 0)
+                  :values-per-cycle-cap device-events-per-cycle})))
 
 (defn- wire-name [x] (if (keyword? x) (subs (str x) 1) (str x)))
 
