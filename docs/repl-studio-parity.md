@@ -580,6 +580,21 @@ From the running REPL, use the IDs from `show/snapshot`, preserving keyword and 
 
 To retry an uncertain reply, resubmit `append-request` unchanged. If it has expired, inspect the committed slots before starting another append. The shared operation saves cue membership and leaves running instances in place.
 
+## Size a macro's cards
+
+A running macro shows its member cards together on the Live board, each with **S**, **M** and **L** buttons and **‹**/**›** to move it ([#795](https://github.com/tolgraven/tolglow/issues/795)). Studio sends `:composition-cards` with a `:resize` or `:move`, which the show applies to the arrangement it holds when the command arrives. The REPL submits the same command, or replaces the whole arrangement with `:cards`. `nil` returns every card to the default small size in slot order. Other running cards keep their standard sizes, and the macro still launches its slots in slot order.
+
+```clojure
+@(show/submit! runtime :composition-cards {:id :opening-look :resize {:slot-id "slot-1" :size :large}})
+@(show/submit! runtime :composition-cards {:id :opening-look :move {:slot-id "slot-1" :offset -1}})
+@(show/submit! runtime :composition-cards {:id :opening-look
+                                           :cards [{:slot-id "slot-1" :size :large} {:slot-id "slot-0" :size :medium}]})
+
+(:cards (some #(when (= :opening-look (:id %)) %) (:compositions (show/snapshot runtime))))
+```
+
+An unknown slot, a size other than `:small`, `:medium` or `:large`, a repeated slot or a sequence is refused with a path, and the saved arrangement stays as it was. A REPL change reaches the open board through the show projection. Saving the macro in **Compose** keeps the show's arrangement, pruned to the slots the edit still has. The arrangement is saved with the show.
+
 ## Audition a scene in the Room
 
 Stage several cue and effect changes as one Room draft, watch them in the
