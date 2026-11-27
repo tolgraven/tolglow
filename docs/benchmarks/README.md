@@ -173,7 +173,7 @@ Findings:
   calls the scalar compiler 8 times. Under the heavy load of pair 2 the 32
   publications took 12 ms of the frame, and the frame still exceeded 25 ms in
   17 of 30 rounds with the fix. That cost does not depend on running instances
-  and is tracked separately.
+  and is tracked in #784.
 
 Excluded: physical output and the output scheduler, Studio/browser load,
 GPU compute, auditions, and frames whose revisions are already compiled.
