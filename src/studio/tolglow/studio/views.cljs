@@ -380,7 +380,10 @@
         overlay (if (and source (some? (:effective-value source))) (:effective-value source)
                   (when-not handlers @(rf/subscribe [:performance/parameter-overlay (:id instance) parameter])))
         bounds (:bounds schema) title (controls/title parameter schema)
-        fader? (and (:strip? options) (#{:fader "fader"} (:ui/widget schema)))]
+        ;; The shared description chooses the widget (#655): a declared fader
+        ;; is vertical in the strip and in detail.
+        fader? (= :fader (controls/widget schema))
+        skin @(rf/subscribe [:ui/knob-skin])]
     [:div.param-row {:data-param (name parameter) :class (when (:strip? options) "strip-control")}
      [:label [:span title] [:output (cond (= "gradient" type) (str (count value) (if (= 1 (count value)) " stop" " stops"))
                                           (vector? value) (str/join ", " (map #(numeric/number-label schema %) value))
@@ -408,7 +411,16 @@
        "color" [:input {:type "color" :aria-label title :value (hex-color (widgets/color-components value))
                          :on-change #(change! (cond-> (color-components (input-value %))
                                                (and (vector? value) (= 4 (count value))) (conj (nth value 3))))}]
-       "vector" [widgets/vector-control title schema value component!]
+       "vector" (if (#{:xy :xyz :rings} (controls/compound-widget schema))
+                  [widgets/vector-compound
+                   {:title title :schema schema :values (if (sequential? overlay) overlay value) :base value :skin skin
+                    :set-component! component!
+                    :set! (if handlers
+                            #(doseq [[index n] %] (component! index n))
+                            #(input! [:studio/param-components (:id instance) parameter % value]))
+                    :key! (when-not handlers
+                            #(input! [:studio/param-component-key (:id instance) parameter %2 %1 %3 value]))}]
+                  [widgets/vector-control title schema value component!])
        "range"
        [:div.param-vector
         (for [index (range (or (:size schema) (count value)))]
@@ -418,20 +430,20 @@
                                  :on-change #(when-let [n (number-value %)]
                                                (component! index n))}])]
        (if (widgets/numeric-range schema)
-         [:div.parameter-number-layout {:data-widget (when (:strip? options) (if fader? "fader" "rotary"))}
-          [widgets/rotary-control schema (or value 0) change!
-           {:name (str title " rotary") :base-value value :effective-value overlay
-            :strip? (:strip? options)
-            :key-change (or (:key-change handlers) #(input! [:studio/param-key (:id instance) parameter schema %]))}]
+         [:div.parameter-number-layout {:data-widget (if fader? "fader" "rotary")}
+          (let [key-change (or (:key-change handlers) #(input! [:studio/param-key (:id instance) parameter schema %]))]
+            (if fader?
+              [widgets/vertical-fader schema (or value 0) change!
+               {:name title :base-value value :effective-value overlay :key-change key-change :skin skin}]
+              [widgets/rotary-control schema (or value 0) change!
+               {:name (str title " rotary") :base-value value :effective-value overlay
+                :strip? (:strip? options) :skin skin :key-change key-change}]))
           [:div.parameter-number-fields
-           [numeric/number-input {:type "range" :aria-label title :value (or value 0)
-                          :min (first bounds) :max (second bounds)
-                          :step (controls/input-step schema)
-                          :on-change #(when-let [n (number-value %)] (change! n))}]
-           (when fader?
-             [:span.strip-fader-bounds
-              [:span (widgets/number-label (first bounds))]
-              [:span (widgets/number-label (second bounds))]])
+           (when-not fader?
+             [numeric/number-input {:type "range" :aria-label title :value (or value 0)
+                            :min (first bounds) :max (second bounds)
+                            :step (controls/input-step schema)
+                            :on-change #(when-let [n (number-value %)] (change! n))}])
            (when-not (:compact? options)
              [numeric/number-input {:class "numeric-exact" :display-schema schema :type "number" :aria-label (str title " exact value") :value (or value 0)
                             :min (first bounds) :max (second bounds) :step (if (= "integer" type) 1 "any")

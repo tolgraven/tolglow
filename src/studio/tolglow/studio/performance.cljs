@@ -6,6 +6,7 @@
             [clojure.set :as set]
             [re-frame.core :as rf]
             [reagent.core :as r]
+            [tolglow.authoring.parameter-controls :as controls]
             [tolglow.authoring.parameter-layout :as layout]
             [tolglow.studio.events :as events]
             [tolglow.studio.cue-variations :as variations]
@@ -15,7 +16,8 @@
             [tolglow.studio.spatial-picker :as spatial]
             [tolglow.studio.parameter-widgets :as widgets]
             [tolglow.studio.parameter-source :as sources]
-            [tolglow.studio.param-visualization :as visualization]))
+            [tolglow.studio.param-visualization :as visualization]
+            [tolglow.visualization.control-geometry :as control-geometry]))
 
 (def defaults {:generation 0 :serial 0 :requests {} :errors {} :opacity {} :envelopes {}
                :group {:scope "categories" :categories [] :match "any" :envelope-open? false}})
@@ -478,15 +480,25 @@
     (if description (str axis " · " description) axis)))
 
 (defn- xyz-editor [show instance {:keys [components] :as control} compact?]
-  (let [{:keys [base]} (xyz-readings show instance components)
+  (let [{:keys [base effective]} (xyz-readings show instance components)
         title (control-title control)
         axes (mapv (fn [[id schema] axis] (assoc schema :axis-label (xyz-axis-label axis id schema)))
                    components ["X" "Y" "Z"])
         update! (fn [index value]
-                  (rf/dispatch-sync [:studio/param-set (:id instance) (first (nth components index)) value]))]
+                  (rf/dispatch-sync [:studio/param-set (:id instance) (first (nth components index)) value]))
+        ;; Each axis is its own parameter, so a pad move sends one param/set
+        ;; per axis it changed, as the REPL would.
+        set! (fn [changes] (doseq [[index value] changes] (update! index value)))
+        key! (fn [index schema key]
+               (rf/dispatch-sync [:studio/param-key (:id instance) (first (nth components index)) schema key]))
+        widget (controls/compound-widget (xyz-schema control))]
     [:div.param-row {:data-group (control-id control) :class (when compact? "strip-control")}
      [:label title]
-     [widgets/axes-control title axes base update!]
+     (if (#{:xyz :rings} widget)
+       [widgets/compound-control {:title title :widget widget :components (mapv second components)
+                                  :labels (mapv :axis-label axes) :values effective :base base
+                                  :set! set! :set-component! update! :key! key! :skin @(rf/subscribe [:ui/knob-skin])}]
+       [widgets/axes-control title axes base update!])
      (let [param (or (some #(when (sources/driven? instance (first %)) (first %)) components)
                      (some #(when (sources/bound? instance (first %)) (first %)) components)
                      (ffirst components))]
@@ -681,6 +693,12 @@
       [:h2 "In the mix"] [:span#active-count.count (str (count instances) " active")]
       [:div.live-board-actions
        (when (:selection selection-view) [selection/toolbar selection-view])
+       (let [skin @(rf/subscribe [:ui/knob-skin])]
+         [:label.knob-skin-choice [:span "Knobs"]
+          [:select {:aria-label "Knob style" :value (name skin)
+                    :on-change #(rf/dispatch [:studio/set-knob-skin (.. % -target -value)])}
+           (for [{:keys [id label]} control-geometry/knob-skins]
+             ^{:key id} [:option {:value (name id)} label])]])
        (when (or (seq running-ids) open?)
          [:button.button.live-reorder-toggle {:type "button" :disabled (boolean pending?)
                                              :on-click #(rf/dispatch [:performance/reorder-toggle])}

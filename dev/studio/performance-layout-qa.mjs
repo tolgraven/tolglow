@@ -125,7 +125,8 @@ async function verifyControls(page,touch,profile) {
   const sweep=page.locator('article',{has:page.getByRole('heading',{name:'Slow sweep',exact:true})});
   const fader=sweep.getByRole('slider',{name:'width',exact:true});
   assert.equal(await fader.isVisible(),true);
-  assert.deepEqual(await sweep.locator('.strip-fader-bounds>span').allTextContents(),['0','0.45']);
+  assert.equal(await fader.getAttribute('aria-orientation'),'vertical');
+  assert.deepEqual(await sweep.locator('.parameter-fader .fader-bound').allTextContents(),['0.45','0']);
   const {card,activate,open,close,attach,detach}=sourceChecks(page,touch);
   const opacity=card.getByRole('slider',{name:'Effect opacity'});
   const initialOpacity=await opacity.inputValue();
@@ -200,6 +201,8 @@ async function verifyControls(page,touch,profile) {
   await close(overridden);
   await activate(aim.getByRole('button',{name:'History'}));
   await aim.getByLabel('Parameter history beat window').selectOption('8');
+  // The scope samples only while visible; the XYZ pad (#655) makes the row taller.
+  await aim.locator('.parameter-visualizer').scrollIntoViewIfNeeded();
   await aim.getByRole('img',{name:'Last 8 beats'}).waitFor();
   await activate(aim.getByRole('button',{name:'3D'}));
   assert.equal(await card.locator('[data-param=glow] .parameter-visualizer').count(),0);

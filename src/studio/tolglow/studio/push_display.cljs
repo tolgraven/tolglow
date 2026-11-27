@@ -312,7 +312,12 @@
                  (when (and touched? (compound-key parameter)) [axis-reading parameter])])])
      (for [{:keys [start width parameter]} areas]
        ^{:key start} [:div.push-compound-area {:style {:grid-column (str (inc start) " / span " width)}}
-                      [visualization/push view parameter true]])]))
+                      ;; Touching a ring knob opens one knob per sub-parameter (#655).
+                      (if-let [axes (widgets/vector-ring-axes (:schema parameter))]
+                        [widgets/ring-components (or (:name parameter) (widgets/label (parameter-id parameter))) axes
+                         (vec (visualization/components (:schema parameter)
+                                                        (if (some? (:effective-value parameter)) (:effective-value parameter) (:value parameter))))]
+                        [visualization/push view parameter true])])]))
 
 (defn- target-choices [{:keys [rows page pages]}]
   [:section.push-targets {:aria-label "Cue launch targets"}
