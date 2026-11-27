@@ -2,53 +2,67 @@
 import {spawn, execFileSync} from 'node:child_process';
 import {createHash, randomUUID} from 'node:crypto';
 import {createWriteStream} from 'node:fs';
-import {mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises';
+import {mkdir, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import {chromium} from 'playwright-core';
 import {measureRoom} from './room-cadence.mjs';
-import {beginPassSample} from './room-pass-analysis.mjs';
+import {beginPassSample, compareBrackets} from './room-pass-analysis.mjs';
 import {readDesktopSession, watchDesktopSession} from './desktop-session.mjs';
 
 const [cdp = 'http://127.0.0.1:9223', output = 'target/room-device'] = process.argv.slice(2);
-const quality = process.env.ROOM_QUALITY || 'auto';
+// An empty variable means the default, the same as an unset one.
+const env = name => process.env[name]?.trim() || undefined;
+const flag = name => {
+  const value = env(name)?.toLowerCase();
+  if (value == null || ['0', 'false', 'no'].includes(value)) return false;
+  if (['1', 'true', 'yes'].includes(value)) return true;
+  throw new Error(name+' must be 1, true, 0 or false.');
+};
+const quality = env('ROOM_QUALITY') || 'auto';
 if (!['auto', 'mobile', 'desktop'].includes(quality)) throw new Error('ROOM_QUALITY must be auto, mobile or desktop.');
-const workLight = Number(process.env.ROOM_WORK_LIGHT ?? .22);
-const lightingMode = process.env.ROOM_LIGHTING_MODE || 'hold';
-const minimumWarmupMs = Number(process.env.ROOM_WARMUP_MS ?? 8000);
+const workLight = Number(env('ROOM_WORK_LIGHT') ?? .22);
+const lightingMode = env('ROOM_LIGHTING_MODE') || 'hold';
+const minimumWarmupMs = Number(env('ROOM_WARMUP_MS') ?? 8000);
 if (!Number.isFinite(workLight) || workLight < 0 || workLight > 1) throw new Error('ROOM_WORK_LIGHT must be between zero and one.');
 if (!['hold', 'interpolate'].includes(lightingMode)) throw new Error('ROOM_LIGHTING_MODE must be hold or interpolate.');
 if (!Number.isInteger(minimumWarmupMs) || minimumWarmupMs < 8000 || minimumWarmupMs > 120000)
   throw new Error('ROOM_WARMUP_MS must be between 8000 and 120000.');
-const passes = process.env.ROOM_PASSES?.split(',').map(s => s.trim());
+const passes = env('ROOM_PASSES')?.split(',').map(s => s.trim());
 const allowedPasses = ['full', 'full-no-timers', 'no-composite-fallback', 'simple-fixed-loop', 'cached-shadows', 'skip-fog-raymarch', 'present-cached-frame'];
 const frozenAuto = quality === 'auto' && Boolean(passes);
-const loopComparison = passes?.includes('simple-fixed-loop');
-const timerComparison = passes?.includes('full-no-timers');
-const compositeComparison = passes?.includes('no-composite-fallback');
-const attributionComparison = frozenAuto && passes.join(',') === 'full,present-cached-frame,skip-fog-raymarch,cached-shadows,full';
-const controlledComparison = loopComparison || timerComparison || compositeComparison || attributionComparison;
+// Auto accepts exactly these sequences. Each is bracketed by full renders;
+// full,full,full is the null control that calibrates the brackets' noise.
+const controlledSequences = {'full,full,full': 'null', 'full,simple-fixed-loop,full': 'loop',
+  'full,full-no-timers,full': 'timer', 'full,no-composite-fallback,full': 'composite',
+  'full,present-cached-frame,skip-fog-raymarch,cached-shadows,full': 'attribution'};
+const comparison = frozenAuto ? controlledSequences[passes.join(',')] : null;
+const nullComparison = comparison === 'null', loopComparison = comparison === 'loop';
+const timerComparison = comparison === 'timer', compositeComparison = comparison === 'composite';
+const attributionComparison = comparison === 'attribution';
+const controlledComparison = Boolean(comparison);
 const requestTimerExtension = !compositeComparison && !attributionComparison;
-if (passes && (passes.some(p => !allowedPasses.includes(p)) ||
-    (frozenAuto && !attributionComparison && passes.some(p => !['full', 'full-no-timers', 'no-composite-fallback', 'simple-fixed-loop'].includes(p))))) {
-  throw new Error('ROOM_PASSES at Auto requires a supported controlled sequence; other pass probes require a fixed quality.');
-}
-const scene = process.env.ROOM_SCENE || 'both';
+if (passes && passes.some(p => !allowedPasses.includes(p))) throw new Error('Unknown ROOM_PASSES entry.');
+if (frozenAuto && !comparison)
+  throw new Error('ROOM_PASSES at Auto requires exactly one of: '+Object.keys(controlledSequences).join(' | ')+'.');
+if (passes && !frozenAuto && passes.some(p => ['simple-fixed-loop', 'full-no-timers', 'no-composite-fallback'].includes(p)))
+  throw new Error('The loop, timer and composite probes require Auto and their controlled sequence.');
+const scene = env('ROOM_SCENE') || 'both';
 if (!['both','dense','fixed'].includes(scene)) throw new Error('ROOM_SCENE must be both, dense or fixed.');
-if (loopComparison && (!frozenAuto || scene !== 'dense' || minimumWarmupMs < 20000 ||
-    passes.join(',') !== 'full,simple-fixed-loop,full'))
-  throw new Error('The loop comparison requires Auto, dense moving scene, ≥20 s warmup and full,simple-fixed-loop,full.');
-if (timerComparison && (!frozenAuto || scene !== 'dense' || minimumWarmupMs < 20000 ||
-    passes.join(',') !== 'full,full-no-timers,full'))
-  throw new Error('The timer comparison requires Auto, dense moving scene, ≥20 s warmup and full,full-no-timers,full.');
-if (compositeComparison && (!frozenAuto || scene !== 'dense' || minimumWarmupMs < 20000 ||
-    passes.join(',') !== 'full,no-composite-fallback,full'))
-  throw new Error('The composite comparison requires Auto, dense moving scene, ≥20 s warmup and full,no-composite-fallback,full.');
-if (attributionComparison && (scene !== 'dense' || minimumWarmupMs < 20000))
-  throw new Error('The stage attribution comparison requires the dense moving scene and ≥20 s warmup.');
-const plumeScene = process.env.ROOM_PLUME_SCENE === '1';
+if (controlledComparison && (scene !== 'dense' || minimumWarmupMs < 20000))
+  throw new Error('Controlled comparisons require the dense moving scene and ≥20 s warmup.');
+const plumeScene = flag('ROOM_PLUME_SCENE');
 if (plumeScene && (scene === 'fixed' || passes)) throw new Error('ROOM_PLUME_SCENE requires the full moving renderer.');
+// The manual preview's fog field decays toward empty air. Pass diagnostics
+// hold it at one captured state so every sample renders the same medium;
+// `decay` reproduces the unheld behaviour, which the bracket check rejects.
+const fogField = env('ROOM_FOG_FIELD') || (passes ? 'hold' : 'decay');
+if (!['hold', 'decay'].includes(fogField)) throw new Error('ROOM_FOG_FIELD must be hold or decay.');
+if (fogField === 'hold' && !passes) throw new Error('ROOM_FOG_FIELD=hold requires the ROOM_PASSES diagnostic worker.');
+// Stated tolerances for the first and last `full` samples of a sequence. A
+// sequence whose brackets differ by more is not attributed to its middle.
+const bracketTolerance = {meanDensity: .01, roomHz: .05, workerFrameP50Ms: .1};
 const plume = {position: [-1, .25, .4], direction: [1, .5, -.25], duration: 1.5, strength: 4};
 const endpoint = new URL(cdp);
 if (endpoint.protocol !== 'http:' || !['127.0.0.1', '[::1]', 'localhost'].includes(endpoint.hostname)) {
@@ -64,6 +78,7 @@ if (desktopPreflight.status !== 'unlocked') {
   console.error(error); process.exit(2);
 }
 const temp = await mkdtemp(join(tmpdir(), 'tolglow-room-device-'));
+const removeTemp = () => rm(temp, {recursive: true, force: true}).catch(() => {});
 const gitHead = dir => execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], {encoding: 'utf8'}).trim();
 const fork = resolve(process.env.AFTERGLOW_ROOT || '../afterglow');
 const ui = await readFile(join(source, 'resources/studio/js/main.js'));
@@ -71,15 +86,19 @@ const shader = await readFile(join(source, 'resources/studio/preview-worker.js')
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const metadata = {tolglow: gitHead(source), afterglow: gitHead(fork), mainJsSha256: hash(ui),
   workerJsSha256: hash(shader), platform: process.platform, architecture: process.arch,
-  output: 'preview only', quality, workLight, lightingMode,
+  output: 'preview only', quality, workLight, lightingMode, fogField, invalid: [],
   desktopSession: {preflight: desktopPreflight, checks: [], samples: [],
     scope: 'macOS root lock flag plus one active console session; other platforms are unverified and rejected',
     polling: 'one asynchronous ioreg read at a time, 750 ms timeout, next read 1000 ms after completion; at most 32 receipts and 25 s parent sample timeout; readMs records cost'},
   warmup: {minimumSeconds: minimumWarmupMs / 1000, minimumDrawnFrames: 4}, scenarios: []};
-if (passes) metadata.diagnostic = {passes, productionCadenceAcceptance: false, frozenAuto,
+if (passes) metadata.diagnostic = {passes, comparison, productionCadenceAcceptance: false, frozenAuto,
+  bracketTolerance, fogField: fogField === 'hold'
+    ? 'held: captured once after warmup (and dispersal in controlled comparisons); restored after every simulation step, before its upload'
+    : 'decaying: the manual field evolves and decays across the sequence',
   timerExtensionRequested: requestTimerExtension,
   readinessTiming: 'readyForFrameMs describes the previous frame through its acknowledgement; rafDeliveryMs and workerFrameMs describe the current frame',
-  scope: loopComparison ? 'adaptive traversal versus fixed loop, both fog materials; all graphics stages retained'
+  scope: nullComparison ? 'null control: three identical full renders; calibrates bracket and middle-sample noise'
+    : loopComparison ? 'adaptive traversal versus fixed loop, both fog materials; all graphics stages retained'
     : timerComparison ? 'timer queries on/off/on; full shaders and all graphics stages retained'
     : compositeComparison ? 'composite depth-edge raymarch omitted only in middle pass; changes affected pixels and is not a production fix'
     : attributionComparison ? 'full controls bracket cached display blit, omitted fog volume/depth composite, and omitted shadow-map refresh; diagnostic only'
@@ -110,7 +129,7 @@ if (passes) {
 try {await checkDesktop('before-server');} catch (error) {
   metadata.error = error.message; metadata.qualified = metadata.cadenceQualified = false;
   await writeFile(join(outputDir, 'room-error.json'), JSON.stringify(metadata, null, 2));
-  console.error(error.message); process.exit(2);
+  console.error(error.message); await removeTemp(); process.exit(2);
 }
 const server = spawn(process.env.LEIN || 'lein', [...leinPrefix, 'run', '-m', 'tolglow.application',
   '--config', config, '--output', 'preview', '--port', '0', '--host', '127.0.0.1'],
@@ -118,7 +137,7 @@ const server = spawn(process.env.LEIN || 'lein', [...leinPrefix, 'run', '-m', 't
 const log = createWriteStream(join(outputDir, 'host.log'));
 server.stderr.pipe(log, {end: false}); server.stdout.pipe(log, {end: false});
 let page, closing, probeWorker, frozenPolicy, comparisonView, completed = false;
-const keepPage = process.env.ROOM_KEEP_PAGE === '1';
+const keepPage = flag('ROOM_KEEP_PAGE');
 function stopServer() {
   if (server.pid && server.exitCode == null) {
     try {process.kill(-server.pid, 'SIGTERM');} catch (error) {if (error.code !== 'ESRCH') throw error;}
@@ -147,8 +166,8 @@ async function shutdown() {
   })();
   return closing;
 }
-process.once('SIGINT', async () => {await shutdown(); process.exit(130);});
-process.once('SIGTERM', async () => {await shutdown(); process.exit(143);});
+process.once('SIGINT', async () => {await shutdown(); await removeTemp(); process.exit(130);});
+process.once('SIGTERM', async () => {await shutdown(); await removeTemp(); process.exit(143);});
 try {
   const origin = await new Promise((ok, fail) => {
     let lines = '';
@@ -164,7 +183,7 @@ try {
   });
   await checkDesktop('before-browser');
   const browser = await chromium.connectOverCDP(endpoint.href);
-  const reuseTitle = process.env.ROOM_PAGE_TITLE;
+  const reuseTitle = env('ROOM_PAGE_TITLE');
   if (reuseTitle) {
     const matches = [];
     for (const candidate of browser.contexts()[0].pages()) if (await candidate.title() === reuseTitle) matches.push(candidate);
@@ -192,7 +211,8 @@ try {
   await page.evaluate(title => {document.title = title;}, attributionComparison ? 'Tolglow graphics stage diagnostic'
     : compositeComparison ? 'Tolglow composite fallback diagnostic'
     : timerComparison ? 'Tolglow timer query diagnostic'
-    : loopComparison ? 'Tolglow adaptive loop diagnostic' : 'Tolglow benchmark — measuring preview');
+    : loopComparison ? 'Tolglow adaptive loop diagnostic'
+    : nullComparison ? 'Tolglow null comparison diagnostic' : 'Tolglow benchmark — measuring preview');
   await page.locator('#preview').scrollIntoViewIfNeeded();
   await page.waitForFunction(() => document.querySelector('#preview')?.tolglowPreview?.ready, null, {timeout: 90000});
   // Use ordinary controls and the actual device viewport and DPR.
@@ -265,6 +285,12 @@ try {
         const telemetry = document.querySelector('#preview').tolglowPreview.getTelemetry(), fog = telemetry.fog;
         return fog.maximumDensity < .24 && fog.activeSources === 0 && !fog.atmosphere && telemetry.passProbe?.detailActive === false;
       }, null, {timeout: 120000});
+    }
+    if (fogField === 'hold' && !metadata.diagnostic.fogHold) {
+      metadata.diagnostic.fogHold = await probeWorker.evaluate(() => self.holdRoomFog());
+      console.log('Fog field held', JSON.stringify(metadata.diagnostic.fogHold));
+    }
+    if (controlledComparison) {
       if (loopComparison && !metadata.diagnostic.pixelComparison) {
         metadata.diagnostic.pixelComparison = await probeWorker.evaluate(() => self.compareRoomPassPixels());
         console.log('Frozen loop pixel comparison', JSON.stringify(metadata.diagnostic.pixelComparison));
@@ -346,10 +372,17 @@ try {
     if (pass) {
       measured.pass = pass;
       if (!measured.passDiagnostic) throw new Error('Browser sample did not return its prepared diagnostic collector');
-      const {timings, accepted, raymarched, traversal, queryFrames} = measured.passDiagnostic;
+      const {timings, accepted, raymarched, traversal, queryFrames, medium} = measured.passDiagnostic;
       delete measured.passDiagnostic;
       measured.passTimingsMs = timings;
-      measured.passEvidence = {accepted, raymarched, traversal};
+      measured.passEvidence = {accepted, raymarched, traversal, medium};
+      if (fogField === 'hold') {
+        const held = metadata.diagnostic.fogHold;
+        if (medium.heldFrames !== accepted || medium.brokenHoldFrames ||
+            [medium.minimum, medium.maximum].some(d => d !== held.meanDensity) ||
+            [medium.minimumTime, medium.maximumTime].some(t => t !== held.time))
+          measured.invalid.push('fog field was not held at its captured state in every frame');
+      }
       measured.queryFrames = queryFrames;
       if (accepted !== measured.presented.frames) measured.invalid.push('diagnostic and cadence frame boundaries differ');
       if (pass !== 'present-cached-frame' && timings.fogSubmitMs?.samples !== accepted)
@@ -383,6 +416,7 @@ try {
       if (!requestTimerExtension && (queryFrames.length !== accepted || queryFrames.some(q =>
           q.extensionRequested !== false || q.enabled || q.supported || q.started !== 0 || q.apiCalls !== 0)))
         measured.invalid.push('controlled comparison enabled diagnostic timer queries');
+      measured.scenario = name;
       name += '-' + String(metadata.scenarios.length+1).padStart(2,'0') + '-' + pass;
     }
     await page.screenshot({path: join(outputDir, name + '.png')});
@@ -392,6 +426,8 @@ try {
     if (quality !== 'auto' && (measured.qualities.some(q => q !== quality) || measured.scales.some(k => k !== 1))) {
       measured.invalid.push('manual tier or resolution scale changed during the sample');
     }
+    if (quality !== 'auto' && measured.sceneSizes.length > 1)
+      measured.invalid.push('internal scene raster changed during a fixed-quality sample');
     measured.head1 = {before, middle, after};
     if (measured.end.fixtureCount !== 8 || measured.end.activeLights < 1) measured.invalid.push('demo heads or emission missing');
     if (moving && new Set([before?.pan, middle?.pan, after?.pan]).size < 2) measured.invalid.push('no pan change observed at sample boundaries');
@@ -406,7 +442,15 @@ try {
     for (const pass of passes || [null]) await scenario('moving-heads-dense-fog', .7, true, pass);
     if (plumeScene) await scenario('moving-heads-active-plumes', .7, true, null, true);
   }
-  metadata.qualified = metadata.scenarios.every(s => !s.invalid.length && !s.end.softwareRenderer);
+  if (passes) {
+    metadata.diagnostic.comparisons = compareBrackets(metadata.scenarios, bracketTolerance);
+    for (const c of metadata.diagnostic.comparisons) {
+      console.log('Bracket comparison', JSON.stringify(c));
+      if (!c.bracketsAgree) metadata.invalid.push('first and last full samples of '+c.scenario+
+        ' disagree beyond the stated tolerance: '+c.disagreements.join(', '));
+    }
+  }
+  metadata.qualified = !metadata.invalid.length && metadata.scenarios.every(s => !s.invalid.length && !s.end.softwareRenderer);
   metadata.cadenceQualified = metadata.qualified && !passes &&
     metadata.scenarios.every(s => s.cadence.withinFivePercentOfConfigured === true);
   await writeFile(join(outputDir, 'room.json'), JSON.stringify(metadata, null, 2));
@@ -430,6 +474,7 @@ try {
   console.error(error, metadata.startupTelemetry || '', metadata.browserStartup || ''); process.exitCode = 1;
 } finally {
   await shutdown();
+  await removeTemp();
   if (metadata.cleanupTimedOut) await writeFile(join(outputDir, 'room-cleanup.json'), JSON.stringify({
     checkedAt: new Date().toISOString(), ownedBrowserCleanupTimedOut: true, ownedHostStopRequested: true}, null, 2));
   // Closing this process disconnects CDP. Never issue Browser.close or close

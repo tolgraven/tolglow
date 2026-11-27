@@ -9,6 +9,11 @@ export async function measureRoom(durationMs) {
     throw new Error('Room must be ready and in the foreground.');
   }
   const initial = engine.getTelemetry();
+  const size = () => {
+    const rect = canvas.getBoundingClientRect();
+    return {backing: [canvas.width, canvas.height], css: [rect.width, rect.height], dpr: devicePixelRatio};
+  };
+  const startSize = size();
   const worker = initial.thread === 'worker' ? engine.worker : null;
   const renderer = engine.fallback || engine;
   const frames = [], display = [], qualities = new Set(), sizes = new Set(), scales = new Set(), samples = [];
@@ -65,14 +70,18 @@ export async function measureRoom(durationMs) {
     passDiagnostic = window.finishRoomPassSample?.();
   }
   const elapsedMs = ended - boundary;
-  const describe = times => {
+  // over25ms is a 60 Hz threshold. overOneAndHalfTargetInterval counts gaps
+  // longer than 1.5 configured frame intervals, so one missed 120 Hz refresh counts.
+  const describe = (times, targetMs = null) => {
     const gaps = times.slice(1).map((time, i) => time - times[i]).sort((a, b) => a - b);
     const quantile = p => gaps.length ? gaps[Math.ceil(gaps.length * p) - 1] : null;
     return {frames: times.length, hz: times.length * 1000 / elapsedMs,
       p50Ms: quantile(.5), p95Ms: quantile(.95), maxMs: gaps.at(-1) ?? null,
-      over25ms: gaps.filter(ms => ms > 25).length};
+      over25ms: gaps.filter(ms => ms > 25).length,
+      overOneAndHalfTargetInterval: targetMs ? gaps.filter(ms => ms > 1.5 * targetMs).length : null};
   };
-  const end = engine.getTelemetry(), rect = canvas.getBoundingClientRect();
+  const end = engine.getTelemetry(), rect = canvas.getBoundingClientRect(), endSize = size();
+  if (JSON.stringify(startSize) !== JSON.stringify(endSize)) invalid.push('canvas size or display scale changed during the sample');
   const fields = ['renderer', 'deviceRenderer', 'softwareRenderer', 'targetRefreshHz', 'quality',
     'frameCPUms', 'gpuTimeMs', 'gpuCompletionWaitMs', 'workerFrameMs', 'sceneSamples', 'edgeFilter',
     'renderScale', 'displayRange', 'fixtureCount', 'visibleFixtures', 'activeLights', 'shadowCount',
@@ -81,9 +90,9 @@ export async function measureRoom(durationMs) {
   if (end.failed || !end.visible || (worker && end.thread !== 'worker')) invalid.push('renderer interrupted');
   if (frames.length < 2) invalid.push('fewer than two completed renderer frames');
   inspect();
-  const presented = describe(frames), windowRaf = describe(display);
   const targets = [...new Set(samples.map(s => s.targetHz))];
   const targetHz = targets.length === 1 ? targets[0] : null;
+  const presented = describe(frames, targetHz ? 1000 / targetHz : null), windowRaf = describe(display);
   const cadence = {configuredHz: targets, roomHz: presented.hz, displayHz: windowRaf.hz,
     roomOverConfigured: targetHz ? presented.hz / targetHz : null,
     roomOverDisplay: windowRaf.hz ? presented.hz / windowRaf.hz : null,
@@ -93,6 +102,9 @@ export async function measureRoom(durationMs) {
     frameMeasurement: worker ? 'accepted DOM bitmap' : 'completed main-thread film pass',
     presented, windowRaf, cadence, policySamples: samples, scales: [...scales], frameOffsetsMs: frames.map(t => t - boundary),
     qualities: [...qualities], sceneSizes: [...sizes].map(s => JSON.parse(s)), backing: [canvas.width, canvas.height],
-    css: [rect.width, rect.height], dpr: devicePixelRatio, displayPixels: end.displayPixels,
+    css: [rect.width, rect.height], dpr: devicePixelRatio, displayPixels: end.displayPixels, startSize,
+    // Geometry of the screen holding the window; browsers expose no display name here.
+    screen: {width: screen.width, height: screen.height, availLeft: screen.availLeft ?? null, availTop: screen.availTop ?? null,
+      colorDepth: screen.colorDepth, isExtended: screen.isExtended ?? null},
     browser: navigator.userAgent, start: project(initial), end: project(end), passDiagnostic};
 }

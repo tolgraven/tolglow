@@ -12,6 +12,7 @@ const bundle = await build({stdin: {
     import {SceneRenderer} from './js/preview/scene-renderer.js';
     import {TIERS} from './js/preview/render-quality.js';
     import {FOG_FRAGMENT, FOG_COMPOSITE_FRAGMENT} from './js/preview/fog.js';
+    import {FogField} from './js/preview/fog-field.js';
     SceneRenderer.prototype.initialize = function () {
       this.softwareRenderer = false;
       this.quality = this.autoQuality(); this.options = TIERS[this.quality];
@@ -22,9 +23,13 @@ const bundle = await build({stdin: {
       this.fog = {amount: .5, width: 4, height: 4, budget: {steps: 32}, scene: {}, camera: {}, quad: {},
         volumeMaterial: {fragmentShader: FOG_FRAGMENT}, compositeMaterial: {fragmentShader: FOG_COMPOSITE_FRAGMENT},
         uniforms: {detailMin: {value: {x: 1, y: 1, z: 1}}, detailMax: {value: {x: -1, y: -1, z: -1}}},
-        field: {stats: () => ({maximumDensity: .07})}, stats: () => ({maximumDensity: .07}),
+        // The real manual field and its update rule; only its texture upload is counted.
+        // A small grid keeps the vm-hosted simulation fast; the rule is unchanged.
+        field: new FogField({grid: [8, 6, 8]}), uploads: 0, uploaded: [],
+        stats() {return this.field.stats();},
+        update(dt) {if (this.field.advance(dt)) this.upload();},
         setAmount(value) {this.amount = value;}, setQuality() {}, setSize() {}, setRoom() {}, setAtmosphere() {},
-        upload() {}, dispose() {},
+        upload() {this.uploads++; this.uploaded.push(this.field.stats().meanDensity);}, dispose() {},
         render() {
           if (this.amount <= 0) return;
           this.quad.material = this.volumeMaterial; renderer.render(this.scene, this.camera);
@@ -36,10 +41,12 @@ const bundle = await build({stdin: {
       this.lightIds = []; this.spots = []; this.diffuserTubes = []; this.fixtureSamples = [];
     };
     SceneRenderer.prototype.draw = function (dt) {
-      graphics.draws++;
+      graphics.draws++; this.fog.update(dt);
       this.renderer.render(this.scene, this.camera); this.fog.render(); this.composer.render(dt); this.draws++;
     };
     SceneRenderer.prototype.resize = function () {};
+    const initialize = SceneRenderer.prototype.initialize;
+    SceneRenderer.prototype.initialize = function (...args) {graphics.engine = this; return initialize.apply(this, args);};
     // The probe wraps whichever draw exists when it loads, as it does in the
     // private worker bundle. Load it after the GPU boundary above.
     import('./dev/preview/room-pass-worker.mjs');`
@@ -86,6 +93,7 @@ async function worker() {
     camera: {position: [0, 2, 8], target: [0, 2, 0], up: [0, 1, 0], fov: 49, name: 'audience'}}});
   healthy();
   return {host, graphics, advance, healthy,
+    engine: () => graphics.engine,
     probes: () => messages.filter(message => message.type === 'frame').map(message => message.telemetry.passProbe),
     set fenceReady(value) {readyThrough = value ? Infinity : 0;},
     acknowledge(frameId) {send({type: 'frame-ack', frameId}); healthy();},
@@ -112,5 +120,49 @@ test('a frame published behind a later draw keeps the probe sample of its own dr
   assert.deepEqual(w.probes().map(describe), [
     [1, 'full', true, true, true],
     [2, 'skip-fog-raymarch', false, true, true]]);
-  assert.deepEqual(w.probes().map(probe => probe.maximumDensity), [.07, .07]);
+  // The real field's uniform initial haze, stored as float32.
+  assert.deepEqual(w.probes().map(probe => probe.maximumDensity), [Math.fround(.07), Math.fround(.07)]);
+});
+
+test('a held fog field renders one captured medium for every later frame while its simulation keeps stepping', async t => {
+  const w = await worker(); t.after(() => w.dispose());
+  let time = 0, frameId = 0;
+  // 10 Hz frames keep the test short; each accepts .1 s, two field steps.
+  const frames = async n => {
+    for (let i = 0; i < n; i++) {
+      time += 100; await w.refresh(time); await w.advance(time + 4); w.acknowledge(++frameId);
+    }
+  };
+  const fog = () => w.engine().fog;
+  await frames(20);
+  const before = fog().field.stats();
+  assert.ok(before.steps >= 30, 'the real field stepped');
+  const held = w.host.holdRoomFog();
+  assert.deepEqual([held.broken, held.meanDensity, held.time], [false, before.meanDensity, before.time]);
+  const uploads = fog().uploads, steps = fog().field.steps;
+  // Thirty seconds of frames: unheld, the 100 s decay would remove about 26%.
+  await frames(300);
+  const probes = w.probes().slice(-300);
+  assert.equal(probes.length, 300);
+  assert.ok(probes.every(p => p.meanDensity === before.meanDensity && p.fieldTime === before.time && p.fogHold && !p.fogHold.broken));
+  const after = fog().field.stats();
+  assert.equal(after.meanDensity, before.meanDensity);
+  assert.ok(after.steps - steps >= 30 * 20 - 2, 'simulation steps continued while held');
+  assert.ok(fog().uploads - uploads >= 295, 'each stepping frame still uploaded its texture');
+  assert.ok(fog().uploaded.slice(uploads).every(d => d === before.meanDensity), 'every upload carried the captured medium');
+  assert.equal(w.host.getRoomPassState().fogHold.restores, fog().uploads - uploads, 'one restore per stepping frame');
+  // A replaced field is reported, not silently held.
+  const Field = fog().field.constructor;
+  fog().field = new Field({grid: [8, 6, 8]});
+  await frames(1);
+  assert.equal(w.probes().at(-1).fogHold.broken, 'fog field replaced while held');
+});
+
+test('without a hold the same field decays across a comparison-length run', async t => {
+  const w = await worker(); t.after(() => w.dispose());
+  let time = 0, frameId = 0;
+  for (let i = 0; i < 320; i++) {time += 100; await w.refresh(time); await w.advance(time + 4); w.acknowledge(++frameId);}
+  const probes = w.probes();
+  assert.ok(probes.at(-1).meanDensity < .8 * probes[0].meanDensity, 'mean density loses over 20% in 32 s');
+  assert.equal(probes.at(-1).fogHold, null);
 });
