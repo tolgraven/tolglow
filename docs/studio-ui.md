@@ -168,7 +168,19 @@ In **Library**, open an effect in the EDN editor and select **Assign blocks**.
 Choose a parameter or output under **Block binding**, pick a material or waveform,
 then select **Add stage**. The catalog includes the effect’s own prefab definitions.
 Choose **Inputs** to change a constant, reference another parameter, or use the
-beat, bar, phrase or time clock. **Coordinates** selects world XYZ or surface UV.
+beat, bar, phrase or time clock. A parameter or private varying input lists only
+what the input can read. A scalar input reads numbers. A colour input reads
+colours and numbers, because a number spreads across all three components.
+A private varying has the type of its base, so a varying whose base reads a
+colour parameter is a colour. A gradient parameter is never a plain parameter
+input, and **Block binding** does not list it. A colour input instead offers **Gradient sample** when the
+definition has a gradient. Choose the gradient (its stops draw as the parameter
+row's ramp), the extension (clamp, repeat or mirror) and the position. The
+position is a scalar input with its own modes: a constant, **Fixture position**
+on an axis, a number parameter, a clock, **Musical period** or a scalar private varying.
+That varying can carry an oscillator block such as **Sine**. **Write stages to EDN** writes
+`{:op :gradient :key k :args [position]}`, adding `:extend` unless it is clamp.
+**Coordinates** selects world XYZ or surface UV.
 The arrow buttons change stage order. Each control addresses its stage by a
 stable ID (metadata on the stage map, never written to the EDN), not by the
 index it was rendered at, so edits that land before the next render, such as two

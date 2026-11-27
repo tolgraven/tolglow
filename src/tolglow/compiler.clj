@@ -6,6 +6,7 @@
             [tolglow.compiler.capability :as capability]
             [tolglow.compiler.gradient :as gradient]
             [tolglow.compiler.video :as video]
+            [tolglow.authoring.parameter-controls :as controls]
             [tolglow.video.shader :as shader]
             [tolglow.effects.reactive :as reactive]
             [afterglow.runtime.keyframes :as keyframes]
@@ -29,14 +30,6 @@
                                             [{:path [] :message (.getMessage cause)}]))}
                          cause)))))
 
-(defn- parameter-type [schema]
-  (case (:type schema)
-    (:number :integer) :number
-    :color :vec3
-    :range :vec2
-    :vector (when (<= 2 (:size schema) 4) (keyword (str "vec" (:size schema))))
-    nil))
-
 (defn- prepare-expression
   ([expression schemas path] (prepare-expression expression schemas nil path))
   ([expression schemas reactive-inputs path]
@@ -52,7 +45,7 @@
        {:op :param :key input :type (:type expression :number)})
      (= :param (:op expression))
      (let [schema (get schemas (:key expression))
-           type (when schema (parameter-type schema))]
+           type (when schema (controls/expression-type schema))]
        (when-not schema (fail! (conj path :key) "Expression references an unknown parameter"))
        (when (= :gradient (:type schema)) (fail! path (gradient/misuse-message (:key expression))))
        (when-not type (fail! path "This parameter type is not supported by the numeric expression IR"))

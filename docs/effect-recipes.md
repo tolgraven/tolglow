@@ -167,6 +167,10 @@ phase or arithmetic on them. The colour nests in arithmetic like any other
 - `fx/parameter` infers `:gradient` from a vector of stops and makes the
   numbers doubles.
 
+A block stage's colour input can hold the same sample. Studio's block builder
+writes one through its **Gradient sample** input mode
+([Studio controls](studio-ui.md#assigning-and-inspecting-effect-blocks)).
+
 Reading the gradient with `{:op :param :key :palette}` is refused when the
 definition is published, and the message names the `:gradient` form. A
 `:gradient` sample of a numeric parameter, a vector position, a missing

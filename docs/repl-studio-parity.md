@@ -157,9 +157,52 @@ stops of 10".
 Gap: Studio and Push have no stop editor. Studio displays a gradient value but
 cannot change its stops, so stops are edited in the REPL, in definition EDN or
 through the scheduler. The Push multi-pad stop editor is tracked in
-[issue #529](https://github.com/tolgraven/tolglow/issues/529). The block
-builder offers no gradient-sample input mode
-([issue #775](https://github.com/tolgraven/tolglow/issues/775)).
+[issue #529](https://github.com/tolgraven/tolglow/issues/529).
+
+### Sample a gradient in a block input
+
+A block stage input of colour type can hold the same sample (#775), for
+example a colour gel whose transmission follows the gradient along x. The common
+data is the stage input in the definition's `:blocks` map:
+
+```clojure
+{:blocks {[:outputs :color]
+          {:stages [{:block :optics/gel
+                     :inputs {:transmission (fx/gradient :palette (fx/position :x) {:extend :mirror})}}]}}}
+```
+
+In Studio, **Library → Assign blocks** offers **Gradient sample** for a colour
+input when the definition has a gradient parameter. It picks the gradient,
+draws its stops with the parameter row's ramp, picks the extension and edits
+the position as a scalar input of its own: a constant, a fixture position axis,
+a scalar parameter, a clock, a musical-period oscillator or a scalar private
+varying whose stages run an oscillator block. **Write stages to EDN** writes the
+form above, and loading a definition that contains it shows the same choices.
+A parameter or varying input lists what the compiler accepts there: a scalar
+input reads numbers, and a colour input reads colours and numbers (the IR
+broadcasts a number). A private varying takes its base's type, parameter reads
+included, so only a scalar varying is offered as a gradient position. A gradient
+is never offered as a plain `{:op :param}` input, and **Block binding** no
+longer lists a gradient. Publishing goes through the same `:definition`
+operation as the REPL, with the same refusals and messages.
+
+From the REPL, read what Studio published and the colours it renders:
+
+```clojure
+(get-in (some #(when (= :tide-gel (:id %)) %) (:effects (show/snapshot runtime)))
+        [:blocks [:outputs :color] :stages 0 :inputs :transmission])
+;; => {:op :gradient, :key :palette, :args [{:op :position, :axis :x}], :extend :mirror}
+
+(update-vals (get-in (show/snapshot runtime) [:output :values]) :emitted-color)
+```
+
+A REPL publication of the same definition shows in Studio's registry list.
+Loading it into the EDN editor and opening **Assign blocks** shows the sample
+for editing. After `npm run studio:build`,
+`CHROMIUM_PATH=… lein with-profile +dev run -m tolglow.qa.block-builder-gradient target/block-builder-gradient-qa`
+authors, publishes, reloads and revises the sample in headless Chromium, and
+reads each published definition and the rendered pixel colours from the show
+in between. Gap: Studio cannot edit the stops themselves, as above.
 
 ## View recent cues
 

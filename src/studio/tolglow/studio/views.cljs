@@ -963,7 +963,7 @@
               (when unit (set-ui! [:builder :release-unit] unit))) true]
            [keyframes/editor (:keyframes builder) [:level] #(set-ui! [:builder :keyframes] %)]
            (when (and (= :library (get-in db [:ui :view])) (= :form (get-in db [:ui :definition :mode])))
-             [block-builder/field {:id (some-> builder :id not-empty keyword) :params {:level {}}
+             [block-builder/field {:id (some-> builder :id not-empty keyword) :params {:level {:type :number}}
                                    :outputs {:color nil :dimmer nil}}
               (or (:blocks builder) {}) (fn [f] (input! [:studio/ui-update [:builder :blocks] #(f (or % {}))]))])])
         [:label.checkbox-label [checkbox/input {:id "builder-cue" :checked (boolean (:cue? builder)) :on-change #(set-ui! [:builder :cue?] (checked? %))}]
