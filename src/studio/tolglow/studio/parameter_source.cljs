@@ -460,12 +460,15 @@
          [:div.source-actions
           [:button.button.primary {:type "submit" :disabled (or (:pending? in-flight) (not wave))}
            (cond destination "Move LFO" lfo "Update LFO" :else "Attach LFO")]
-          (when (and lfo (not destination))
+          ;; Kept mounted (disabled) while a change is pending, so a projection
+          ;; that briefly lacks the LFO during the round trip does not remove
+          ;; the buttons under a press.
+          (when (and (or lfo (:pending? in-flight)) (not destination))
             [:<>
-             [:button.button {:type "button" :disabled (:pending? in-flight)
+             [:button.button {:type "button" :disabled (or (:pending? in-flight) (not lfo))
                               :on-click #(rf/dispatch [(if (:held? lfo) :modulation/resume :modulation/hold) id param])}
               (if (:held? lfo) "Resume LFO" "Use base value")]
-             [:button.button {:type "button" :disabled (:pending? in-flight) :on-click #(rf/dispatch [::unbind id param])} "Detach LFO"]])]]))))
+             [:button.button {:type "button" :disabled (or (:pending? in-flight) (not lfo)) :on-click #(rf/dispatch [::unbind id param])} "Detach LFO"]])]]))))
 
 (defn- source-label [{:keys [type binding controller-id source-id controller lane-note source id]}]
   (case (keyword type)

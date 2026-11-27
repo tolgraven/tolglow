@@ -517,15 +517,18 @@
 
 (defonce ^:private packings (atom {}))
 
-(defn- pack
-  "slot-grid/pack, remembered per spans and column limit: a bank re-renders
-  on every value change, its layout only when its cards or width change."
+(defn- remember! [key packed]
+  (swap! packings #(assoc (if (< 256 (count %)) {} %) key packed))
+  packed)
+
+(defn- exact-pack
+  "The remembered exact slot-grid/pack for these spans and column limit, or
+  nil when it has not been computed yet."
   [spans columns exact?]
-  (let [key [spans columns exact?]]
-    (or (get @packings key)
-        (let [packed (slot-grid/pack spans columns {:exact-columns? exact?})]
-          (swap! packings #(assoc (if (< 256 (count %)) {} %) key packed))
-          packed))))
+  (get @packings [spans columns exact?]))
+
+(defn- compute-pack! [spans columns exact?]
+  (remember! [spans columns exact?] (slot-grid/pack spans columns {:exact-columns? exact?})))
 
 (defn- css-px [style property]
   (let [n (js/parseFloat (.getPropertyValue style property))] (when (js/Number.isFinite n) n)))
@@ -543,6 +546,29 @@
         unit (or (css-px style "--slot-col") 92)
         gap (or (css-px style "--slot-gap") 6)]
     (max 1 (js/Math.floor (/ (+ (.-clientWidth node) gap) (+ unit gap))))))
+
+(def fluid-units
+  "Smallest track and row:track proportion of a macro card's bank, which
+  stretches its tracks to the card's own width (#795). Tracks grow up to
+  `:stretch` times the smallest one, so a bank with few controls grows its
+  knobs and pads rather than its margins."
+  {"strip" {:min 84 :ratio (/ 144 92) :gap 6 :stretch 1.6}
+   "detail" {:min 160 :ratio (/ 180 172) :gap 8 :stretch 1.4}})
+
+(defn fluid-measure
+  "Column limit and width of a stretched bank of `surface` units."
+  [surface]
+  (fn [node]
+    (let [{:keys [min gap]} (fluid-units surface)
+          width (.-clientWidth node)]
+      {:columns (max 1 (js/Math.floor (/ (+ width gap) (+ min gap)))) :width width})))
+
+(defn fluid-style
+  "Track and row size for `columns` stretched tracks across `width`."
+  [surface columns width]
+  (let [{:keys [min ratio gap stretch]} (fluid-units surface)
+        track (js/Math.max min (js/Math.min (* stretch min) (/ (- width (* gap (dec columns))) (max 1 columns))))]
+    {"--slot-col" (str (js/Math.floor track) "px") "--slot-row" (str (js/Math.floor (* ratio track)) "px")}))
 
 (defn overlay-anchor
   "Where an overlay two slots wide and two tall, opened from the card at
@@ -586,8 +612,11 @@
   (fixed-width slot tracks). Cards are drawn in reading order, so DOM and
   tab order follow the screen; they are keyed, so moving one never remounts
   it."
-  [{:keys [attrs measure spans render keys exact?]}]
+  [{:keys [attrs measure spans render keys exact? fluid]}]
   (r/with-let [limit (r/atom nil)
+               ;; Bumped when an exact layout computed while idle arrives.
+               upgraded (r/atom 0)
+               pending (atom #{})
                node (atom nil)
                observer (atom nil)
                resized (atom nil)
@@ -611,10 +640,31 @@
                                (let [o (Observer. remeasure!)]
                                  (.observe o element)
                                  (reset! observer o))))))]
-    (let [span-list (spans (or @limit 4))
-          {:keys [columns rows cells]} (pack span-list (or @limit 4) exact?)]
+    (let [reading @limit
+          measured (if (map? reading) (:columns reading) reading)
+          span-list (spans (or measured 4))
+          _ @upgraded
+          ;; Until the width is measured, and while an exact layout is being
+          ;; computed, draw first fit in authored order at once; the exact
+          ;; result replaces it when the browser is idle.
+          exact (when measured (exact-pack span-list measured exact?))
+          {:keys [columns rows cells]}
+          (or exact (slot-grid/pack span-list (or measured 4) {:exact-columns? exact? :quick? true}))]
+      (when (and measured (not exact) (not (contains? @pending [span-list measured])))
+        (swap! pending conj [span-list measured])
+        (let [win (element-window @node)
+              job (fn [& _]
+                    (compute-pack! span-list measured exact?)
+                    (swap! pending disj [span-list measured])
+                    (swap! upgraded inc))]
+          (if-let [idle (.-requestIdleCallback win)]
+            (.call idle win job #js {:timeout 200})
+            (.setTimeout win job 0))))
       (into [:div (merge attrs {:ref attach! :data-columns columns :data-rows rows
-                                :style (merge (:style attrs) {"--slot-columns" columns})})]
+                                :data-packing (if exact "final" "quick")
+                                :data-slot-scale (when fluid "fluid")
+                                :style (merge (:style attrs) {"--slot-columns" columns}
+                                              (when (and fluid (map? reading)) (fluid-style fluid columns (:width reading))))})]
             (for [{:keys [index col row w h] :as cell} cells
                   :let [{overlay :style covers :covers} (overlay-anchor columns rows cells cell)]]
               ;; `render` returns hiccup: called as a function, not mounted as
@@ -639,14 +689,17 @@
   fills a standard slot of one column and row unit; `slot-grid/pack` places
   them with the fewest empty cells, in authored order where it can, on as
   many columns as fit and the content fills."
-  [show instance controls compact? parameter-control]
+  [show instance controls compact? parameter-control & [fluid?]]
   (let [catalog @(rf/subscribe [:waveform/catalog])
-        spans (mapv #(controls/slot-span (control-slot % catalog)) controls)]
+        spans (mapv #(controls/slot-span (control-slot % catalog)) controls)
+        surface (if compact? "strip" "detail")]
     [packed-grid
      {:attrs {:class (str "live-effect-parameters " (if compact? "control-strip" "control-detail"))
-              :data-slot-grid (if compact? "strip" "detail")
+              :data-slot-grid surface
               :role "group" :aria-label (if compact? "Parameter strip" "Detailed parameter controls")}
-      :measure slot-columns
+      ;; A macro card's bank stretches its tracks to the card (#795).
+      :measure (if fluid? (fluid-measure surface) slot-columns)
+      :fluid (when fluid? surface)
       :spans (constantly spans)
       :keys (mapv control-id controls)
       :render (fn [index style covers]
@@ -809,13 +862,24 @@
     (cond (>= width 960) 6 (>= width 640) 2 :else 1)))
 
 (defn macro-span
-  "[columns 1] of a macro card of `size` on `columns` board tracks."
-  [columns size]
-  [(case columns
-     6 (case size :large 6 :medium 3 2)
-     2 (if (= :large size) 2 1)
-     1)
-   1])
+  "[columns rows] of a macro card of `size` on `columns` board tracks. Its
+  height in board rows follows its size (small 1, medium 2, large 3; a
+  single-control member's large 2), so the packer can stand short cards
+  beside or under tall ones. A small card keeps two of six tracks: its
+  heading needs that width for the title, state and Solo/Mute targets."
+  ([columns size] (macro-span columns size 2))
+  ([columns size control-count]
+   [(case columns
+      6 (case size :large 6 :medium 3 2)
+      2 (if (= :large size) 2 1)
+      1)
+    (case size :small 1 :medium 2 (if (<= control-count 1) 2 3))]))
+
+(defn member-sizes
+  "The sizes a macro member offers: small and large for a single control,
+  where medium would show the same control, else small, medium and large."
+  [control-count]
+  (if (<= control-count 1) [:small :large] card-layout/sizes))
 
 (rf/reg-sub :performance/macro-arrange
   (fn [db [_ id]] (boolean (get-in db [:ui :macro-arrange id]))))
@@ -839,10 +903,10 @@
   (fn [{:keys [db]} [_ macro-id slot-id offset]]
     (send-macro-cards db macro-id {:move {:slot-id slot-id :offset offset}})))
 
-(defn- card-size-picker [{:keys [macro-id slot-id size position total]} title]
+(defn- card-size-picker [{:keys [macro-id slot-id size position total]} title control-count]
   [:div.card-size-picker {:role "group" :aria-label (str title " card")}
    [:span "Card size"]
-   (for [option card-layout/sizes
+   (for [option (member-sizes control-count)
          :let [label (str (str/capitalize (name option)) " card")]]
      ^{:key option}
      [:button {:type "button" :aria-pressed (= option size) :title label :aria-label (str label " for " title)
@@ -919,10 +983,10 @@
                                       :on-click #(do (rf/dispatch [:performance/card-toggle id (select-keys show [:runtime-id :epoch])])
                                                      (rf/dispatch [:surfaces/follow [:instance id]]))}
           (if expanded? "Compact" "Detail")])]]
-     (when (:arranging? macro-card) [card-size-picker macro-card title])
+     (when (:arranging? macro-card) [card-size-picker macro-card title (count controls)])
      (when (seq shown)
        [:div.live-effect-body
-        ^{:key (if expanded? "detail" "strip")} [parameter-bank show instance shown (not expanded?) parameter-control]
+        ^{:key (if expanded? "detail" "strip")} [parameter-bank show instance shown (not expanded?) parameter-control (some? macro-card)]
         (when (< (count shown) (count controls))
           [:p.live-effect-more (str (- (count controls) (count shown)) " more in the medium and large sizes")])
         (if expanded?
@@ -1027,7 +1091,8 @@
              [packed-grid
               {:attrs {:class "live-effect-grid live-macro-grid"}
                :measure macro-columns :exact? true
-               :spans (fn [columns] (mapv #(macro-span columns (:size %)) cards))
+               :spans (fn [columns]
+                        (mapv #(macro-span columns (:size %) (count (:params (card-definition show (:instance %))))) cards))
                :keys (mapv (comp wire :id :instance) cards)
                :render (fn [index style _]
                          (let [{:keys [instance] :as card} (nth cards index)]

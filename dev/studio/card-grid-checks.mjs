@@ -89,6 +89,7 @@ function measure(surface) {
     });
     return {
       effect: effect?.querySelector('h3')?.textContent, effectBox: effect && box(effect),
+      fluid: bank.dataset.slotScale === 'fluid',
       columns: px(style.gridTemplateColumns), rows: px(style.gridTemplateRows),
       declaredColumns: Number(bank.dataset.columns), declaredRows: Number(bank.dataset.rows),
       maxColumns: Math.max(1, Math.floor((bank.clientWidth + gap) / (unit + gap))),
@@ -148,7 +149,9 @@ export function checkBanks(banks, where) {
         occupied.add(cell);
       }
       area += card.span[0] * card.span[1];
-      (sizes[card.control] ||= []).push([card.box.w, card.box.h, id]);
+      // A macro card's bank stretches its tracks to the card: one size per
+      // widget type within that bank; every other bank shares one size.
+      (sizes[bank.fluid ? `${card.control} in ${name}` : card.control] ||= []).push([card.box.w, card.box.h, id]);
       for (const control of card.controls) {
         const b = control.box, c = card.box;
         assert.ok(b.x >= c.x - 1 && b.y >= c.y - 1 && b.x + b.w <= c.x + c.w + 1 && b.y + b.h <= c.y + c.h + 1,
@@ -185,10 +188,14 @@ export function checkBanks(banks, where) {
   for (const [type, list] of Object.entries(sizes))
     for (const [w, h, id] of list)
       assert.ok(near(w, list[0][0]) && near(h, list[0][1]), `${where}: every ${type} card has one slot size (${id} ${w}x${h} vs ${list[0][2]} ${list[0][0]}x${list[0][1]})`);
-  return Object.fromEntries(Object.entries(sizes).map(([type, list]) => [type, list[0].slice(0, 2).map(Math.round)]));
+  return Object.fromEntries(Object.entries(sizes).filter(([type]) => !type.includes(' in ')).map(([type, list]) => [type, list[0].slice(0, 2).map(Math.round)]));
 }
 
-async function banks(page, surface) { return page.evaluate(measure, surface); }
+async function banks(page, surface) {
+  // Grids draw first fit at once and the exact layout when the browser is idle.
+  await page.waitForFunction(() => !document.querySelector('[data-slot-grid][data-packing=quick]'), null, {timeout: 5000});
+  return page.evaluate(measure, surface);
+}
 
 const cardBoxes = page => page.evaluate(() => [...document.querySelectorAll('[data-slot-grid]>.param-row')]
   .map(el => { const r = el.getBoundingClientRect(); return [el.dataset.param || el.dataset.group, Math.round(r.x + scrollX), Math.round(r.y + scrollY), Math.round(r.width), Math.round(r.height)].join(' '); }));
@@ -339,6 +346,10 @@ export async function checkCardGrid(page, profile, directory, measurement) {
     await page.waitForFunction(() => [...document.querySelectorAll('.live-macro [data-live-instance]')].some(c => c.dataset.cardSize === 'large'));
   }
   await macro.getByRole('button', {name: 'Arrange Card set'}).click();
+  const solitaryCard = members.filter({has: page.getByRole('heading', {name: 'Solitary', exact: true})});
+  await solitaryCard.getByRole('button', {name: 'Large card for Solitary'}).waitFor();
+  assert.equal(await solitaryCard.getByRole('button', {name: 'Medium card for Solitary'}).count(), 0,
+    `${profile}: a single-control member offers only small and large`);
   const studyCard = members.filter({has: page.getByRole('heading', {name: 'Study set', exact: true})});
   await studyCard.getByRole('button', {name: 'Small card for Study set'}).click();
   await page.waitForFunction(() => document.querySelector('.live-macro [data-live-instance]')?.dataset.cardSize === 'small');
@@ -375,6 +386,16 @@ export async function checkCardGrid(page, profile, directory, measurement) {
 // owns them (#795). The window keeps one size tier, so nothing remounts and
 // only the observers can re-pack.
 export async function checkDetachedRepack(page, directory) {
+  // Count ResizeObserver constructions in Studio's window and the pop-out's.
+  await page.context().addInitScript(() => {
+    const Native = window.ResizeObserver;
+    window.__resizeObservers = 0;
+    if (Native) window.ResizeObserver = class extends Native {
+      constructor(callback) { super(callback); window.__resizeObservers++; }
+    };
+  });
+  await page.reload();
+  await page.locator('[data-live-instance]').first().waitFor({state: 'attached'});
   const popup = page.waitForEvent('popup');
   await page.locator('#edit-layout').click();
   await page.locator('#view-perform [data-panel="live"] .layout-detach').click();
@@ -408,6 +429,19 @@ export async function checkDetachedRepack(page, directory) {
     }, null, {timeout: 5000, polling: 100}).catch(() => null);
     return {...await orbital(), tier: await tier()};
   };
+  // A bank mounted inside the pop-out observes it from the pop-out's own
+  // window: toggling Detail remounts Slot study's bank, and only the
+  // pop-out's counter moves.
+  const counts = async () => [await page.evaluate(() => window.__resizeObservers), await live.evaluate(() => window.__resizeObservers)];
+  const [mainBefore, popBefore] = await counts();
+  const slot = live.locator('[data-live-instance]', {has: live.getByRole('heading', {name: 'Slot study', exact: true})});
+  await slot.getByRole('button', {name: 'Expand Slot study controls'}).click();
+  await slot.locator('[data-slot-grid=detail]').waitFor();
+  await slot.getByRole('button', {name: 'Collapse Slot study controls'}).click();
+  await slot.locator('[data-slot-grid=strip]').waitFor();
+  const [mainAfter, popAfter] = await counts();
+  assert.equal(mainAfter, mainBefore, 'no observer for a pop-out bank is built in Studio\'s window');
+  assert.ok(popAfter >= popBefore + 2, `the pop-out builds the observers for its own banks (${popBefore} -> ${popAfter})`);
   const wide = await settle(1400);
   const narrow = await settle(680);
   assert.equal(narrow.tier, wide.tier, 'the pop-out keeps its size tier, so nothing remounts');

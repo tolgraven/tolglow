@@ -110,9 +110,20 @@
                                                                           (control :q {:type :range :bounds [0 1]})] nil)))))))
 
 (deftest macro-sizes-are-fractions-of-the-board
-  (is (= [[2 1] [3 1] [6 1]] (mapv #(performance/macro-span 6 %) [:small :medium :large])))
-  (is (= [[1 1] [1 1] [2 1]] (mapv #(performance/macro-span 2 %) [:small :medium :large])))
-  (is (= [[1 1] [1 1] [1 1]] (mapv #(performance/macro-span 1 %) [:small :medium :large]))))
+  (is (= [[2 1] [3 2] [6 3]] (mapv #(performance/macro-span 6 % 5) [:small :medium :large])))
+  (is (= [[1 1] [1 2] [2 3]] (mapv #(performance/macro-span 2 % 5) [:small :medium :large])))
+  (is (= [[1 1] [1 2] [1 3]] (mapv #(performance/macro-span 1 % 5) [:small :medium :large])))
+  (testing "a single-control member is short when large, and offers no medium"
+    (is (= [6 2] (performance/macro-span 6 :large 1)))
+    (is (= [:small :large] (performance/member-sizes 1)))
+    (is (= [:small :medium :large] (performance/member-sizes 3)))))
+
+(deftest a-macro-bank-stretches-its-tracks-to-the-card
+  (let [measure (performance/fluid-measure "strip")]
+    (is (= 4 (:columns (measure #js {:clientWidth 378}))) "four 84 px tracks fit 378 px")
+    (is (= {"--slot-col" "93px" "--slot-row" "145px"} (performance/fluid-style "strip" 4 390)))
+    (is (= {"--slot-col" "134px" "--slot-row" "210px"} (performance/fluid-style "strip" 1 390))
+        "one knob grows to at most 1.6 times the smallest track")))
 
 (deftest opened-rings-cover-the-fewest-cards-beside-their-slot
   (testing "a free 2x2 area beside the rings is used before any card"
