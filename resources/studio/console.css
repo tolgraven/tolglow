@@ -138,7 +138,6 @@
 #view-perform .control-strip [data-widget=fader] .parameter-rotary-control { display:none; }
 #view-perform .control-strip .parameter-number-fields { display:grid; gap:0; width:100%; min-width:0; }
 #view-perform .control-strip input[type=range] { display:block; width:100%; height:30px; min-height:30px; margin:0; }
-#view-perform .control-strip .strip-fader-bounds { display:flex; justify-content:space-between; font-size:10px; line-height:14px; color:var(--muted); font-variant-numeric:tabular-nums; }
 #view-perform .control-strip .dial-number { font-size:19px; }
 #view-perform .control-strip .dial-bound { fill:var(--muted); font-size:14px; }
 #view-perform .control-strip .dial-unit { font-size:13px; }

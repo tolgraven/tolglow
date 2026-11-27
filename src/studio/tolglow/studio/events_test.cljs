@@ -1311,7 +1311,7 @@
     (is (= 7 (:epoch (first-command flushed))))))
 
 (deftest saved-preferences-restore-only-supported-portable-fields
-  (let [settings {:ui {:view "rig" :page-id "second" :launch-mode "held"
+  (let [settings {:ui {:view "rig" :page-id "second" :launch-mode "held" :knob-skin "ember"
                        :provider-form {:credential "must-not-restore"} :definition {:source "replace"}}}
         restored (events/apply-ui-preferences base settings)
         save (transition restored [:studio/persist-ui])]
@@ -1320,8 +1320,16 @@
     (is (= "held" (get-in restored [:ui :launch-mode])))
     (is (nil? (get-in restored [:ui :provider-form])))
     (is (= events/initial-source (get-in restored [:ui :definition :source])))
-    (is (= {:view "rig" :page-id "second" :launch-mode "held"} (get-in save [:studio/http :body :values])))
-    (is (= :perform (get-in (events/apply-ui-preferences base {:ui {:view 42}}) [:ui :view])))))
+    (is (= :ember (get-in restored [:ui :knob-skin])))
+    (is (= {:view "rig" :page-id "second" :launch-mode "held" :knob-skin "ember"} (get-in save [:studio/http :body :values])))
+    (is (= :perform (get-in (events/apply-ui-preferences base {:ui {:view 42}}) [:ui :view])))
+    (testing "Ember is the default style; an unknown saved style restores it, a saved Standard is kept"
+      (is (= :ember (get-in (events/apply-ui-preferences base {:ui {:knob-skin "chrome"}}) [:ui :knob-skin])))
+      (is (= :standard (get-in (events/apply-ui-preferences base {:ui {:knob-skin "standard"}}) [:ui :knob-skin]))))
+    (testing "choosing a knob skin persists it with the other portable preferences"
+      (let [chosen (transition restored [:studio/set-knob-skin "standard"])]
+        (is (= :standard (get-in chosen [:db :ui :knob-skin])))
+        (is (some #{[:dispatch [:studio/persist-ui]]} (:fx chosen)))))))
 
 (deftest restored-chat-is-server-owned-and-stale-history-cannot-replace-a-new-draft
   (let [db (assoc base :chat {:history-request "request-a"})

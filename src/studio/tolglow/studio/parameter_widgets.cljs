@@ -4,6 +4,7 @@
             [reagent.core :as r]
             [tolglow.authoring.parameter-controls :as controls]
             [tolglow.studio.numeric-display :as numeric]
+            [tolglow.visualization.control-geometry :as geometry]
             [tolglow.visualization.musical-grid :as musical-grid]
             [tolglow.visualization.parameter-views :as views]
             [tolglow.visualization.waveform-shapes :as shapes]
@@ -116,13 +117,6 @@
                      "Home" low "End" high nil)]
       (when (some? next) (max low (min high next))))))
 
-(defn pointer-proportion
-  "A 270-degree dial with its inactive gap at the bottom. No clock or state."
-  [x y]
-  (let [degrees (mod (+ 360 (* (/ 180 js/Math.PI) (js/Math.atan2 y x))) 360)
-        angle (if (< degrees 90) (+ degrees 360) degrees)]
-    (max 0 (min 1 (/ (- angle 135) 270)))))
-
 (defn dial-point [amount radius]
   (let [angle (* (/ js/Math.PI 180) (+ 135 (* 270 amount)))]
     [(+ 50 (* radius (js/Math.cos angle))) (+ 44 (* radius (js/Math.sin angle)))]))
@@ -141,65 +135,388 @@
          :bipolar? (< low 0 high) :bounds [low high]
          :ticks (mapv #(/ % (max 1 (dec count))) (range count))}))))
 
+(defn- ember-dial
+  "The tolglow-web knob face: a rust pie wedge from the origin to the value on
+  a dark surface, the bottom gap in slate, coloured limit lines, a glowing bar
+  pointer and a dark centre bullet."
+  [id schema shown model base base-value unit]
+  (let [{:keys [amount origin]} model
+        url #(str "url(#" id "-" % ")")]
+    [:<>
+     [:defs
+      [:linearGradient {:id (str id "-fill") :x1 "0%" :y1 "30%" :x2 "50%" :y2 "100%"}
+       ;; Rust by default; a ring's sub-knob fills in its ring colour.
+       [:stop {:offset "0%" :style {:stop-color "var(--ember-from, rgb(160 75 65 / .85))"}}]
+       [:stop {:offset "100%" :style {:stop-color "var(--ember-to, rgb(190 45 40 / .7))"}}]]
+      [:linearGradient {:id (str id "-surface") :x1 "0" :y1 "0" :x2 "0" :y2 "1"}
+       [:stop {:offset "0%" :stop-color "rgb(50,56,61)"}]
+       [:stop {:offset "100%" :stop-color "rgb(29,32,36)"}]]
+      ;; Depth and glow are gradients, not filters: a value change only
+      ;; rotates the pointer shapes.
+      [:radialGradient {:id (str id "-shadow") :cx "50%" :cy "50%" :r "50%"}
+       [:stop {:offset "82%" :stop-color "rgb(0,0,0)" :stop-opacity 0.35}]
+       [:stop {:offset "100%" :stop-color "rgb(0,0,0)" :stop-opacity 0}]]
+      [:linearGradient {:id (str id "-glow") :x1 "0" :y1 "0" :x2 "1" :y2 "0"}
+       [:stop {:offset "0%" :stop-color "rgb(150,70,45)" :stop-opacity 0}]
+       [:stop {:offset "35%" :stop-color "rgb(150,70,45)" :stop-opacity 0.55}]
+       [:stop {:offset "65%" :stop-color "rgb(150,70,45)" :stop-opacity 0.25}]
+       [:stop {:offset "100%" :stop-color "rgb(150,70,45)" :stop-opacity 0}]]]
+     [:circle.ember-shadow {:cx 50 :cy 45.5 :r 44 :fill (url "shadow")}]
+     [:circle.ember-surface {:cx 50 :cy 44 :r 40 :fill (url "surface")}]
+     [:path.ember-gap {:d (arc-path 1 (+ 1 (/ 90 geometry/sweep)) 20)}]
+     (when (not= origin amount)
+       [:path.ember-fill {:d (arc-path origin amount 20) :stroke (url "fill")}])
+     (let [[x y] (dial-point 0 40)] [:line.ember-limit.low {:x1 50 :y1 44 :x2 x :y2 y}])
+     (let [[x y] (dial-point 1 40)] [:line.ember-limit.high {:x1 50 :y1 44 :x2 x :y2 y}])
+     (when (and base (not= base amount))
+       (let [[x y] (dial-point base 30) [a b] (dial-point base 40)]
+         [:line.dial-baseline {:x1 x :y1 y :x2 a :y2 b}
+          [:title (str "Base " (number-label schema base-value))]]))
+     [:g {:transform (str "translate(50 44) rotate(" (geometry/pointer-rotation amount) ")")}
+      [:rect.ember-pointer-glow {:x -9 :y -40 :width 14 :height 34 :rx 7 :fill (url "glow")}]
+      [:rect.ember-pointer {:x -3 :y -39 :width 6 :height 32 :rx 3}]]
+     [:circle.ember-halo {:cx 50 :cy 44 :r 11}]
+     [:circle.ember-bullet {:cx 50 :cy 44 :r 7.5}]
+     [:text.ember-number {:x 50 :y 80 :text-anchor "middle"} (number-label schema shown)]
+     (when unit [:text.ember-unit {:x 50 :y 90 :text-anchor "middle"} unit])
+     [:text.dial-bound {:x 5 :y 90 :text-anchor "start"} (number-label (first (:bounds model)))]
+     [:text.dial-bound {:x 95 :y 90 :text-anchor "end"} (number-label (second (:bounds model)))]]))
+
+(defn- standard-dial [schema shown model base base-value unit strip?]
+  [:<>
+   (when model
+     [:<>
+      (for [[index position] (map-indexed vector (:ticks model))
+            :let [[x y] (dial-point position 38) [a b] (dial-point position 40)]]
+        ^{:key index} [:line.dial-tick {:x1 x :y1 y :x2 a :y2 b}])
+      [:path.dial-track {:d (arc-path 0 1 32)}]
+      (when (not= (:origin model) (:amount model))
+        [:path.dial-value {:d (arc-path (:origin model) (:amount model) 32)}])
+      (when (:bipolar? model)
+        (let [[x y] (dial-point (:origin model) 27) [a b] (dial-point (:origin model) 37)]
+          [:line.dial-zero {:x1 x :y1 y :x2 a :y2 b}]))
+      (when (and base (not= base (:amount model)))
+        (let [[x y] (dial-point base 27) [a b] (dial-point base 37)]
+          [:line.dial-baseline {:x1 x :y1 y :x2 a :y2 b}
+           [:title (str "Base " (number-label schema base-value))]]))
+      (let [[x y] (dial-point (:amount model) 32)]
+        [:circle.dial-position {:cx x :cy y :r 3}])
+      [:text.dial-bound {:x 5 :y 90 :text-anchor "start"} (number-label (first (:bounds model)))]
+      [:text.dial-bound {:x 95 :y 90 :text-anchor "end"} (number-label (second (:bounds model)))]])
+   [:text.dial-number {:x 50 :y (if (and strip? (nil? unit)) 54 48) :text-anchor "middle"} (number-label schema shown)]
+   (when (or unit (not strip?))
+     [:text.dial-unit {:x 50 :y 63 :text-anchor "middle"} (or unit (if (= :integer (parameter-kind schema)) "steps" "value"))])])
+
 (defn rotary
   "Shared numeric geometry. Base/effective markers require supplied values;
-  the component never generates modulation or samples an effect."
-  [schema value {:keys [base-value effective-value strip?]}]
-  (let [shown (if (finite? effective-value) effective-value value)
-        model (dial-model schema shown) base (proportion schema base-value)
-        unit (unit-label schema)]
-    [:svg.parameter-dial {:view-box "0 0 100 94" :role "img"
-                          :aria-label (str (value-label schema shown) (when unit (str " " unit))
-                                           (when-let [[low high] (:bounds model)] (str ", range " low " to " high)))}
-     (when model
-       [:<>
-        (for [[index position] (map-indexed vector (:ticks model))
-              :let [[x y] (dial-point position 38) [a b] (dial-point position 40)]]
-          ^{:key index} [:line.dial-tick {:x1 x :y1 y :x2 a :y2 b}])
-        [:path.dial-track {:d (arc-path 0 1 32)}]
-        (when (not= (:origin model) (:amount model))
-          [:path.dial-value {:d (arc-path (:origin model) (:amount model) 32)}])
-        (when (:bipolar? model)
-          (let [[x y] (dial-point (:origin model) 27) [a b] (dial-point (:origin model) 37)]
-            [:line.dial-zero {:x1 x :y1 y :x2 a :y2 b}]))
-        (when (and base (not= base (:amount model)))
-          (let [[x y] (dial-point base 27) [a b] (dial-point base 37)]
-            [:line.dial-baseline {:x1 x :y1 y :x2 a :y2 b}
-             [:title (str "Base " (number-label schema base-value))]]))
-        (let [[x y] (dial-point (:amount model) 32)]
-          [:circle.dial-position {:cx x :cy y :r 3}])
-        [:text.dial-bound {:x 5 :y 90 :text-anchor "start"} (number-label (first (:bounds model)))]
-        [:text.dial-bound {:x 95 :y 90 :text-anchor "end"} (number-label (second (:bounds model)))]])
-     [:text.dial-number {:x 50 :y (if (and strip? (nil? unit)) 54 48) :text-anchor "middle"} (number-label schema shown)]
-     (when (or unit (not strip?))
-       [:text.dial-unit {:x 50 :y 63 :text-anchor "middle"} (or unit (if (= :integer (parameter-kind schema)) "steps" "value"))])]))
+  the component never generates modulation or samples an effect. `:skin`
+  :ember draws the tolglow-web knob face over the same 270-degree geometry."
+  [schema value {:keys [base-value effective-value strip? skin]}]
+  (r/with-let [id (str "knob-" (random-uuid))]
+    (let [shown (if (finite? effective-value) effective-value value)
+          model (dial-model schema shown) base (proportion schema base-value)
+          unit (unit-label schema)
+          ember? (and model (= :ember skin))]
+      [:svg.parameter-dial {:view-box "0 0 100 94" :role "img" :data-skin (when ember? "ember")
+                            :aria-label (str (value-label schema shown) (when unit (str " " unit))
+                                             (when-let [[low high] (:bounds model)] (str ", range " low " to " high)))}
+       (if ember?
+         [ember-dial id schema shown model base base-value unit]
+         [standard-dial schema shown model base base-value unit strip?])])))
 
-(defn rotary-control [schema value change! options]
-  (let [[low high] (numeric-range schema)
+(defn- capture! [event]
+  (when (or (= "touch" (.-pointerType event)) (= 0 (.-button event)))
+    (.preventDefault event)
+    (.focus (.-currentTarget event))
+    (.setPointerCapture (.-currentTarget event) (.-pointerId event))
+    true))
+
+(defn- captured? [event] (.hasPointerCapture (.-currentTarget event) (.-pointerId event)))
+
+(defn- release! [event]
+  (when (captured? event) (.releasePointerCapture (.-currentTarget event) (.-pointerId event))))
+
+(defn wheel-value
+  "One wheel event on an Ember knob, as {:value :remainder}, or nil when it
+  does not turn the knob. The turn is proportional to vertical scroll
+  distance; an integer carries the distance remainder until it makes a whole
+  step."
+  [schema value pixels remainder]
+  (when-let [[low high] (numeric-range schema)]
+    (when (and (finite? value) (finite? pixels))
+      (if (= :integer (parameter-kind schema))
+        (let [[steps remainder] (geometry/wheel-steps (or remainder 0) pixels)]
+          {:value (max low (min high (+ value steps))) :remainder remainder})
+        (some->> (proportion schema value) (#(geometry/wheel-amount % pixels)) (normalized-value schema)
+                 (hash-map :remainder 0 :value))))))
+
+(defn focused?
+  "Whether a node has focus in its own document, which for a detached panel
+  is the pop-out window's, not the main window's."
+  [node]
+  (boolean (and node (identical? node (some-> node .-ownerDocument .-activeElement)))))
+
+(defn rotary-control
+  "A rotary that edits. Dragging sets the absolute angle and a drag past
+  either end lands on its bound. With the :ember skin a fresh press in the
+  bottom gap holds the value, and the wheel turns a focused knob in proportion
+  to vertical scroll distance. Unfocused knobs, horizontal and Shift+wheel
+  scrolling leave the page to scroll. Keys step like a native slider."
+  [schema value change! options]
+  (r/with-let [latest (atom nil)
+               node (atom nil)
+               ;; The value this knob last sent and the value it was turned
+               ;; from, so several wheel events inside one frame accumulate.
+               sent (atom nil)
+               remainder (atom 0)
+               ;; React registers wheel listeners as passive; the ember knob
+               ;; must cancel page scrolling, so it owns a non-passive one.
+               on-wheel (fn [event]
+                          (let [{:keys [schema value change! options]} @latest
+                                pixels (geometry/wheel-pixels (.-deltaX event) (.-deltaY event) (.-deltaMode event))]
+                            (when (and (= :ember (:skin options)) pixels
+                                       (focused? @node))
+                              (.preventDefault event)
+                              (let [from (if (= value (:from @sent)) (:to @sent) value)]
+                                (when-let [{next :value carried :remainder} (wheel-value schema from pixels @remainder)]
+                                  (reset! remainder carried)
+                                  (when (not= next from)
+                                    (reset! sent {:from value :to next})
+                                    (change! next)))))))
+               attach! (fn [element]
+                         (some-> @node (.removeEventListener "wheel" on-wheel))
+                         (reset! node element)
+                         (some-> element (.addEventListener "wheel" on-wheel #js {:passive false})))]
+    (reset! latest {:schema schema :value value :change! change! :options options})
+    (let [[low high] (numeric-range schema)
+          ember? (= :ember (:skin options))
+          change-pointer! (fn [event mode]
+                            (let [bounds (.getBoundingClientRect (.-currentTarget event))
+                                  x (- (.-clientX event) (.-left bounds) (/ (.-width bounds) 2))
+                                  y (- (.-clientY event) (.-top bounds) (* (.-height bounds) (/ 44 94)))
+                                  ;; Scale to view-box units so the dead zone has one size.
+                                  scale (/ 100 (max 1 (.-width bounds)))]
+                              (when-let [amount (geometry/dial-amount (* scale x) (* scale y) (when ember? mode))]
+                                (when-let [next (normalized-value schema amount)] (change! next)))))]
+      [:div.parameter-rotary-control
+       {:role "slider" :tab-index 0 :aria-label (or (:name options) (:name schema) "Parameter")
+        :ref attach! :data-skin (when ember? "ember")
+        :aria-valuemin low :aria-valuemax high :aria-valuenow value
+        :aria-valuetext (str (number-label schema value) (when-let [unit (unit-label schema)] (str " " unit)))
+        :on-key-down (fn [event] (when-let [next (keyboard-value schema value (.-key event))]
+                                  (.preventDefault event)
+                                  (if-let [key-change! (:key-change options)] (key-change! (.-key event)) (change! next))))
+        :on-pointer-down (fn [event] (when (capture! event) (change-pointer! event :press)))
+        :on-pointer-move (fn [event] (when (captured? event) (change-pointer! event :drag)))
+        :on-pointer-up release!
+        :on-lost-pointer-capture release!}
+       [rotary schema value options]])
+    (finally (some-> @node (.removeEventListener "wheel" on-wheel)))))
+
+(defn vertical-fader
+  "A vertical fader for a bounded number: a rust fill from the low end (or
+  zero on a bipolar range), a glowing thumb carrying its value and, on an
+  integer span of sixteen or fewer, one tick per step with every fourth
+  heavier. Pressing anywhere on the track jumps there; keys step like a
+  native slider. Base and effective values are supplied, never sampled."
+  [schema value change! {:keys [name base-value effective-value key-change skin]}]
+  (when-let [axis (geometry/axis nil schema)]
+    (let [[low high] (:bounds axis)
+          shown (if (finite? effective-value) effective-value value)
+          amount (or (geometry/amount axis shown) 0)
+          origin (geometry/origin axis)
+          base (geometry/amount axis base-value)
+          pct #(str (* 100 %) "%")
+          change-pointer! (fn [event]
+                            (let [track (.querySelector (.-currentTarget event) ".fader-track")
+                                  bounds (.getBoundingClientRect track)]
+                              (when-let [a (geometry/fader-amount (- (.-clientY event) (.-top bounds)) (.-height bounds))]
+                                (change! (geometry/value axis a)))))]
+      [:div.parameter-fader
+       {:role "slider" :tab-index 0 :aria-orientation "vertical" :aria-label (or name (:name schema) "Parameter")
+        :data-skin (some-> skin clojure.core/name)
+        :aria-valuemin low :aria-valuemax high :aria-valuenow value
+        :aria-valuetext (str (number-label schema value) (when-let [unit (unit-label schema)] (str " " unit)))
+        :on-key-down (fn [event] (when-let [next (keyboard-value schema value (.-key event))]
+                                  (.preventDefault event)
+                                  (if key-change (key-change (.-key event)) (change! next))))
+        :on-pointer-down (fn [event] (when (capture! event) (change-pointer! event)))
+        :on-pointer-move (fn [event] (when (captured? event) (change-pointer! event)))
+        :on-pointer-up release!
+        :on-lost-pointer-capture release!}
+       [:span.fader-bound.high (number-label high)]
+       [:div.fader-track
+        (for [{:keys [value major?] tick :amount} (geometry/ticks axis)]
+          ^{:key value} [:i.fader-tick {:class (when major? "major") :style {:bottom (pct tick)}}])
+        (when (< low 0 high) [:i.fader-zero {:style {:bottom (pct origin)}}])
+        [:i.fader-fill {:style {:bottom (pct (min origin amount)) :height (pct (js/Math.abs (- amount origin)))}}]
+        (when (and base (not= base amount))
+          [:i.fader-base {:style {:bottom (pct base)} :title (str "Base " (number-label schema base-value))}])
+        [:span.fader-thumb {:style {:bottom (pct amount)}}
+         [:output (number-label schema shown)]]]
+       [:span.fader-bound.low (number-label low)]])))
+
+(defn- axis-schema
+  "A number schema for one axis, so a component fader or knob keeps its unit."
+  [{:keys [bounds integer?]} component]
+  (assoc (select-keys component [:unit :units :dmx-bits :name]) :type (if integer? :integer :number) :bounds bounds))
+
+(defn- pad-text [axes values]
+  (str/join ", " (map (fn [axis v] (str (:label axis) " " (number-label (axis-schema axis {}) v))) axes values)))
+
+(defn xy-pad
+  "An XY pad editing the first two components of a vector. Up is high. The
+  pointer marks the shown (effective) value and a ghost marks the base the
+  pad edits when a source drives it. Pressing anywhere jumps there; dragging
+  follows the pointer, clamped to the bounds; arrow keys move one axis at a
+  time, Shift ten steps. change! receives {index value} for the components
+  a gesture sets; key! receives an index and a slider key, so the caller
+  steps the component's current value and repeated presses accumulate."
+  [{:keys [title axes values base change! key! skin]}]
+  ;; One pointer owns the pad; a second finger on it is ignored until the
+  ;; first lifts. A Z fader is a separate element with its own pointer.
+  (r/with-let [owner (atom nil)]
+  (let [[x-axis y-axis] axes
+        edit (vec (or base values))
+        shown (vec (or values base))
+        position (geometry/pad-position axes shown)
+        base-position (when base (geometry/pad-position axes base))
+        pct #(str (* 100 %) "%")
         change-pointer! (fn [event]
-                          (let [bounds (.getBoundingClientRect (.-currentTarget event))
-                                x (- (.-clientX event) (.-left bounds) (/ (.-width bounds) 2))
-                                y (- (.-clientY event) (.-top bounds) (* (.-height bounds) (/ 44 94)))]
-                            (when-let [next (normalized-value schema (pointer-proportion x y))] (change! next))))]
-    [:div.parameter-rotary-control
-     {:role "slider" :tab-index 0 :aria-label (or (:name options) (:name schema) "Parameter")
-      :aria-valuemin low :aria-valuemax high :aria-valuenow value
-      :aria-valuetext (str (number-label schema value) (when-let [unit (unit-label schema)] (str " " unit)))
-      :on-key-down (fn [event] (when-let [next (keyboard-value schema value (.-key event))]
-                                (.preventDefault event)
-                                (if-let [key-change! (:key-change options)] (key-change! (.-key event)) (change! next))))
+                          (let [bounds (.getBoundingClientRect (.-currentTarget event))]
+                            (when-let [amounts (geometry/pad-amounts (- (.-clientX event) (.-left bounds))
+                                                                     (- (.-clientY event) (.-top bounds))
+                                                                     (.-width bounds) (.-height bounds))]
+                              (change! (geometry/pad-changes axes amounts)))))]
+    [:div.parameter-xy
+     {:role "slider" :tab-index 0 :aria-roledescription "XY pad" :data-skin (some-> skin name)
+      :aria-label (str title " pad")
+      :aria-valuemin (first (:bounds x-axis)) :aria-valuemax (second (:bounds x-axis))
+      :aria-valuenow (first edit)
+      :aria-valuetext (pad-text (take 2 axes) edit)
+      :on-key-down (fn [event]
+                     (when-let [[index key] (geometry/pad-key (.-key event) (.-shiftKey event))]
+                       (.preventDefault event)
+                       (key! index key)))
       :on-pointer-down (fn [event]
-                         (when (or (= "touch" (.-pointerType event)) (= 0 (.-button event)))
-                           (.preventDefault event) (.focus (.-currentTarget event))
-                           (.setPointerCapture (.-currentTarget event) (.-pointerId event))
+                         (when (and (nil? @owner) (capture! event))
+                           (reset! owner (.-pointerId event))
                            (change-pointer! event)))
       :on-pointer-move (fn [event]
-                         (when (.hasPointerCapture (.-currentTarget event) (.-pointerId event))
-                           (change-pointer! event)))
-      :on-pointer-up (fn [event]
-                       (when (.hasPointerCapture (.-currentTarget event) (.-pointerId event))
-                         (.releasePointerCapture (.-currentTarget event) (.-pointerId event))))}
-     [rotary schema value options]]))
+                         (when (and (= @owner (.-pointerId event)) (captured? event)) (change-pointer! event)))
+      :on-pointer-up (fn [event] (when (= @owner (.-pointerId event)) (reset! owner nil) (release! event)))
+      :on-lost-pointer-capture (fn [event] (when (= @owner (.-pointerId event)) (reset! owner nil)))}
+     [:i.xy-grid]
+     (when (< (first (:bounds x-axis)) 0 (second (:bounds x-axis)))
+       [:i.xy-zero.vertical {:style {:left (pct (geometry/origin x-axis))}}])
+     (when (< (first (:bounds y-axis)) 0 (second (:bounds y-axis)))
+       [:i.xy-zero.horizontal {:style {:bottom (pct (geometry/origin y-axis))}}])
+     (when-let [[px py] position]
+       [:<>
+        [:i.xy-cross.vertical {:style {:left (pct px)}}]
+        [:i.xy-cross.horizontal {:style {:bottom (pct py)}}]])
+     (when (and base-position (not= base-position position))
+       (let [[bx by] base-position]
+         [:i.xy-base {:style {:left (pct bx) :bottom (pct by)} :title (str "Base " (pad-text (take 2 axes) base))}]))
+     (when-let [[px py] position]
+       [:i.xy-pointer {:style {:left (pct px) :bottom (pct py)}}])
+     [:span.xy-label.x (:label x-axis)]
+     [:span.xy-label.y (:label y-axis)]])))
+
+(defn rings-glyph
+  "Nested rings, one per sub-parameter, outermost first, each a 270-degree
+  arc filled from its origin to its value. The :ember skin sets them on a
+  dark disc and shades each arc along its sweep in its own ring colour."
+  [title axes values & [skin]]
+  (r/with-let [id (str "rings-" (random-uuid))]
+    (let [ember? (= :ember skin)
+          url #(str "url(#" id "-" % ")")]
+      [:svg.parameter-rings-glyph {:view-box "0 0 100 94" :role "img" :data-skin (when ember? "ember")
+                                   :aria-label (str title ": " (pad-text axes values))}
+       (when ember?
+         [:<>
+          [:defs
+           [:radialGradient {:id (str id "-disc") :cx "45%" :cy "38%" :r "60%"}
+            [:stop {:offset "0%" :stop-color "rgb(52,58,63)"}]
+            [:stop {:offset "100%" :stop-color "rgb(22,25,28)"}]]
+           [:radialGradient {:id (str id "-dot") :cx "35%" :cy "30%" :r "70%"}
+            [:stop {:offset "0%" :stop-color "#fbfaf0"}]
+            [:stop {:offset "100%" :stop-color "#a9ab9c"}]]]
+          [:circle.rings-disc {:cx 50 :cy 44 :r 43 :fill (url "disc")}]])
+       (for [{:keys [index radius width amount origin]} (geometry/rings axes values)]
+         ^{:key index}
+         [:g {:class (str "ring ring-" index)}
+          (when ember?
+            ;; Inside the ring group, so the stops read its --ring colour.
+            [:defs
+             [:linearGradient {:id (str id "-sweep-" index) :gradientUnits "userSpaceOnUse" :x1 8 :y1 80 :x2 92 :y2 80}
+              [:stop {:offset "0%" :style {:stop-color "color-mix(in srgb, var(--ring) 45%, #101214)"}}]
+              [:stop {:offset "60%" :style {:stop-color "var(--ring)"}}]
+              [:stop {:offset "100%" :style {:stop-color "color-mix(in srgb, var(--ring) 70%, #ffffff)"}}]]])
+          [:path.ring-track {:d (arc-path 0 1 radius) :stroke-width width}]
+          (when (and amount (not= amount origin))
+            [:path.ring-value {:d (arc-path origin amount radius) :stroke-width width
+                               :stroke (when ember? (url (str "sweep-" index)))}])
+          (when amount
+            (let [[x y] (dial-point amount radius)]
+              [:circle.ring-position {:cx x :cy y :r (/ width 2) :fill (when ember? (url "dot"))}]))])])))
+
+(defn- ring-legend [axes values]
+  [:span.rings-legend
+   (for [[i axis] (map-indexed vector axes)]
+     ^{:key i} [:span {:class (str "ring-" i)} [:b (:label axis)] (number-label (axis-schema axis {}) (get values i))])])
+
+(defn vector-ring-axes
+  "The ring axes of a vector the shared description draws as nested rings,
+  else nil."
+  [schema]
+  (when (= :rings (controls/compound-widget schema))
+    (let [labels (views/component-labels schema)
+          axes (mapv (fn [i c] (geometry/axis (get labels i (str (inc i))) c)) (range) (controls/component-schemas schema))]
+      (when (every? some? axes) axes))))
+
+(defn ring-knob
+  "Several sub-parameters of one parameter in one knob of nested rings.
+  Pressing it opens one knob per sub-parameter; Done or Escape closes them
+  and returns focus to the rings."
+  [{:keys [title axes components values base change-component! key! skin]}]
+  (r/with-let [open? (r/atom false)
+               panel-id (str "rings-" (random-uuid))
+               trigger (atom nil)
+               close! (fn [] (reset! open? false) (some-> @trigger .focus))]
+    (let [edit (vec (or base values)) shown (vec (or values base))]
+      [:div.parameter-rings {:class (when @open? "open")}
+       [:button.rings-trigger {:type "button" :ref #(reset! trigger %)
+                               :aria-expanded @open? :aria-controls panel-id
+                               :aria-label (str "Edit " title " components")
+                               :on-click #(swap! open? not)
+                               :on-key-down #(when (and @open? (= "Escape" (.-key %))) (.preventDefault %) (close!))}
+        [rings-glyph title axes shown skin]
+        [ring-legend axes shown]]
+       (when @open?
+         [:div.rings-components {:id panel-id :role "group" :aria-label (str title " components")
+                                 :on-key-down #(when (= "Escape" (.-key %)) (.stopPropagation %) (close!))}
+          (for [[i axis] (map-indexed vector axes)
+                :let [schema (axis-schema axis (get components i))
+                      text (str title " " (:label axis))]]
+            ^{:key i}
+            [:div.rings-component {:class (str "ring-" i)}
+             [:label (:label axis)]
+             [rotary-control schema (get edit i) #(change-component! i %)
+              {:name (str text " rotary") :skin skin :base-value (get edit i) :effective-value (get shown i)
+               :key-change #(key! i schema %)}]])
+          [:button.text-button {:type "button" :on-click close!} "Done"]])])))
+
+(defn ring-components
+  "A touched ring knob on a device display: one rotary per sub-parameter, as
+  the encoders under it edit them."
+  [title axes values]
+  [:div.ring-components {:role "group" :aria-label (str title " components")}
+   (for [[i axis] (map-indexed vector axes)]
+     ^{:key i}
+     [:div.ring-component {:class (str "ring-" i)}
+      [:small (:label axis)]
+      [rotary (axis-schema axis {}) (get values i) {}]])])
 
 (defn axes-control [title schemas values change!]
   (r/with-let [popover-id (str "axes-" (random-uuid))]
@@ -230,6 +547,48 @@
         axes (mapv (fn [i] (assoc schema :type "number" :axis-label (get labels i (str (inc i)))))
                    (range (or (:size schema) (count values))))]
     [axes-control title axes values change!]))
+
+(defn compound-control
+  "The widget the shared description names for a numeric vector
+  (`controls/compound-widget`): an XY pad, an XY pad with a Z fader, or
+  nested rings. Each keeps the component popover with exact entries beside
+  it. `components` are the component schemas and `labels` their names;
+  `values` are shown (effective) and `base` the values being edited.
+  `set!` takes {index value}, `set-component!` an index and a value, and
+  `key!` an index, the component's schema and a slider key; without `key!`
+  keys step the rendered value. The caller sends the same `param/set`
+  commands as any other control."
+  [{:keys [title widget components labels values base set! set-component! key! skin]}]
+  (let [axes (mapv (fn [i c] (geometry/axis (get labels i (str (inc i))) c)) (range) components)
+        edit (vec (or base values)) shown (vec (or values base))
+        axis-schemas (mapv (fn [axis c] (when axis (axis-schema axis c))) axes components)
+        key! (or key! (fn [i schema key]
+                        (when-let [next (keyboard-value schema (get edit i) key)] (set-component! i next))))
+        exact [axes-control title (mapv (fn [i c] (assoc c :type (or (:type c) :number) :axis-label (get labels i (str (inc i)))))
+                                        (range) components)
+               edit set-component!]]
+    (if (or (some nil? axes) (not (#{:xy :xyz :rings} widget)))
+      exact
+      (case widget
+        :rings [:div.compound-control {:data-widget "rings"}
+                [ring-knob {:title title :axes axes :components components :values shown :base edit
+                            :change-component! set-component! :key! key! :skin skin}]]
+        [:div.compound-control {:data-widget (name widget)}
+         [xy-pad {:title title :axes (subvec axes 0 2) :values shown :base edit :change! set! :skin skin
+                  :key! #(key! %1 (nth axis-schemas %1) %2)}]
+         (when (= :xyz widget)
+           (let [z (nth axes 2) schema (nth axis-schemas 2)]
+             [vertical-fader schema (get edit 2) #(set-component! 2 %)
+              {:name (str title " " (:label z)) :base-value (get edit 2) :effective-value (get shown 2) :skin skin
+               :key-change #(key! 2 schema %)}]))
+         exact]))))
+
+(defn vector-compound
+  "compound-control for a :vector parameter's own schema."
+  [{:keys [schema] :as props}]
+  [compound-control (assoc props :widget (controls/compound-widget schema)
+                           :components (controls/component-schemas schema)
+                           :labels (views/component-labels schema))])
 
 (defn- component-track [title schema value color]
   [:div.typed-component {:style (when color {"--widget-accent" color})}
@@ -442,12 +801,16 @@
                  [:div.typed-range-bounds [:span (number-label (first (:bounds schema)))]
                   [:span (number-label (second (:bounds schema)))]]
                  [:span.typed-range-unit (or (unit-label schema) "range")]])
-       :vector [:div.typed-vector
-                (for [[index component] (map-indexed vector (take 4 shown))]
-                  ^{:key index} [component-track (get (views/component-labels schema) index)
-                                 schema component nil])
-                [:div.typed-range-bounds [:span (number-label (first (:bounds schema)))]
-                 [:span (number-label (second (:bounds schema)))]]]
+       :vector (if-let [axes (vector-ring-axes schema)]
+                 [:div.typed-rings
+                  [rings-glyph (or (:name schema) "Components") axes (vec shown)]
+                  [ring-legend axes (vec shown)]]
+                 [:div.typed-vector
+                  (for [[index component] (map-indexed vector (take 4 shown))]
+                    ^{:key index} [component-track (get (views/component-labels schema) index)
+                                   schema component nil])
+                  [:div.typed-range-bounds [:span (number-label (first (:bounds schema)))]
+                   [:span (number-label (second (:bounds schema)))]]])
        [:div.typed-choice-value (value-label schema shown)])
      (when (seq preview-samples) [sparkline preview-samples])]))
 
