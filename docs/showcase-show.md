@@ -1,18 +1,19 @@
 # Showcase show
 
 The showcase show is a complete venue in one namespace. It has a rig, a page of
-20 cues, two macros and a sequence restated from the operator's saved compound
-cues, and a 32-bar timeline at 128 BPM that plays on the
-[beat-clock scheduler](scheduler.md). The timeline replays the same way every
+24 cues, two macros and a sequence restated from the operator's saved compound
+cues, a 32-bar timeline at 128 BPM that plays on the
+[beat-clock scheduler](scheduler.md), and a 16-bar second timeline for the cues
+mined from the operator's 2020 `tolglow-web` frontend. The timeline replays the same way every
 time from a seed. It was built for
 [issue #656](https://github.com/tolgraven/tolglow/issues/656).
 
 | Source | Contents |
 | --- | --- |
 | `src/tolglow/showcase/rig.clj` | Room, fixture types, patch, pixel layouts and ID groups |
-| `src/tolglow/showcase/looks.clj` | The effects, the `:heartbeat` waveform, attached sources per cue and the grid catalogue |
+| `src/tolglow/showcase/looks.clj` | The effects, the `:heartbeat` waveform, the bass audio LFO, attached sources per cue and the grid catalogue |
 | `src/tolglow/showcase/timeline.clj` | Pure timeline functions: validate, route, post and advance |
-| `src/tolglow/showcase.clj` | `model`, macros, subscriber, `timeline`, `play!`, `status`, `stop!`, `replay` and `config` |
+| `src/tolglow/showcase.clj` | `model`, macros, subscriber, `timeline`, `after-hours`, `play!`, `status`, `stop!`, `replay` and `config` |
 | `dev/tolglow/qa/showcase_capture.clj` | Writes the frames the Room preview receives during a replay |
 | `dev/preview/showcase-capture.mjs` | Renders those frames with the released Room bundle in headless Chrome |
 
@@ -32,7 +33,8 @@ the timeline's upcoming events and running ramps.
 
 Start options are the ordinary ones in [Starting a show](application-startup.md).
 To load the show without autoplay, set `[:showcase-timeline :autoplay]` to
-`false` in a copy of the config.
+`false` in a copy of the config. To autoplay the second timeline, set
+`[:showcase-timeline :timeline]` to `:after-hours`.
 
 ## Play it from the REPL
 
@@ -44,6 +46,8 @@ To load the show without autoplay, set `[:showcase-timeline :autoplay]` to
 (showcase/status player)
 ;; => {:timeline :first-light :pass 0 :bar … :rejected [] :missed [] :outcomes #{} …}
 (showcase/stop! runtime player)
+(def late (showcase/play! runtime {:timeline showcase/after-hours}))
+(showcase/stop! runtime late)
 (show/stop! runtime)
 ```
 
@@ -76,7 +80,7 @@ process. Options are `:seed` (0 to 9999, default 656), `:from-bar`, `:to-bar`,
 frame's snapshot.
 
 The seed feeds every seeded draw: the sparkle and confetti patterns, the
-colour drift, the strobe chase order and the subscriber's random picks.
+searchlight wander, the colour drift, the strobe chase order and the subscriber's random picks.
 `tolglow.showcase-test` replays all 2402 frames twice from one seed and
 compares the captured DMX byte for byte. It also checks that another seed
 changes the output and that every scheduled event fired or completed.
@@ -120,7 +124,7 @@ rig has 16 conventional lights and 112 pixels.
 
 ## The cues
 
-All 20 cues are on page `:showcase`. Every effect is stateless numeric IR with
+All 24 cues are on page `:showcase`. Every effect is stateless numeric IR with
 explicit `:targets`. A legacy random draw became a hash of the head position,
 the musical step and a `:seed` parameter.
 
@@ -160,6 +164,62 @@ The legacy sources are in the operator's 2019–2024 checkout and
 The attached sources are in `looks/sources`. A launch that carries `:sources`
 binds them to the new instance with ordinary `:modulation-bind` commands, so
 Studio shows and edits them like any other attached waveform.
+
+### From tolglow-web
+
+Four cues restate ideas from the operator's 2020 `tolglow-web` frontend
+(public, reference only), listed on #656. Each reads only the transport beat,
+head positions, its parameters and a seed. A stopped transport therefore holds
+every frame, and play resumes on the frame it stopped on. Every parameter has
+a label, hard bounds and a unit, so Studio and the Push display open the
+widget of its type: the searchlight centre in the 3D space, tints and the
+matrix palette as colour and gradient widgets, the rest as typed controls.
+
+| Cue | Category | Source and behaviour |
+| --- | --- | --- |
+| `:searchlight-drift` | movement | `three.cljs` searchlight wander. Each beam lunges with quadratic-out easing to a seeded point in `:center` ± `:extent` (metres), settles for `:hold` of its move, then picks the next. Moves last `:move-beats` on average; each head's are 0.6 to 1.4 times that, by seed, with its own phase. These heads have no zoom, so brightness wanders between `:level-min` and `:level` in place of the original beam angle |
+| `:twin-cones` | intensity | `crazy-spotlight-shader.glsl` two-spot cones. The floor heads circle above the stage, the stage-left pair one way and the stage-right pair the other. Their tints sway in opposite phase. Brightness mixes a kick that decays from every beat with `:energy` by `:follow` |
+| `:run` | intensity | The grid's "Run" concept as a macro cue. One `:drive` control takes the beams and washes from a dim colour to a white strobe: level, hue fan, whitening and, past `:strobe-from`, a beat-locked strobe that doubles up to 2^`:rate-steps` flashes a beat. `:rate-steps` stops at 2: four flashes a beat is 12 Hz at 180 BPM, and each flash at full drive lasts 0.35 of its slot (29 ms), so the show's 40 Hz frames draw every one; eight a beat would alias. It writes no aim |
+| `:matrix-chase` | pixel | New, after the grid's matrix ideas. The tube wall as eight columns of ten cells: bands every `:spacing` cells (a whole number) step one cell per `:step` beats at `:angle` degrees (0 columns, 90 rows, diagonals between) and fade over `:tail` cells. Rows take their colour from the editable `:palette` gradient parameter |
+
+The cones' `:energy` is bound to the registered waveform `:audio/showcase-bass`,
+an [audio-shaped LFO](audio-shaped-lfo.md) the model configures
+(`looks/bass-lfo`): the RMS envelope of each whole bar of the bass band, played
+back over the next bar and morphing over two beats. Without a capture it rests
+on a sine, so the cones still breathe once a bar, and the replay stays
+deterministic. With an audio input running, each bar of bass sets the shape.
+`tolglow.showcase-cues-test` feeds it the deterministic `:delay-synth` passage
+from `tolglow.audio.fixtures` through the real capture path and checks the
+cones' brightness against the committed shape.
+
+The `after-hours` timeline (`showcase/after-hours`, 16 bars at 128 BPM) plays
+them: bars 0–3 haze, a low wash, the searchlights and a column chase, with the
+cones joining on bar 2; bars 4–11 the chase turns to rows while `:drive` ramps
+the run from 0 to 1 over eight bars and the searchlight box narrows (a ramp of
+a vector parameter); bar 12 the run lets go into a blinder hit and the chase
+runs diagonals; everything ends by bar 15. The chase's step halves on bar 8
+with `:param/set`, and the bands double speed from where they are.
+
+```clojure
+(def run (showcase/replay {:timeline showcase/after-hours}))
+(count (:dmx run))   ;; => 1202
+```
+
+**Editing timing parameters.** The searchlight moves, the cones' turn and
+sway, and the chase's bands run on
+[phase accumulators](effect-recipes.md#phase-accumulators): each frame adds
+the beats since the last frame divided by the period now set. The searchlight
+counts from its launch. The cones and the chase start from the transport beat,
+so a pad launched off the beat still turns on the bar and steps on the beat. Turning
+`:move-beats`, `:bars`, `:sway-bars`, `:step` or `:spacing` therefore changes
+the pace from where the pattern is, at any point in a show. A drag at
+transport beat 2000 moves no head further per frame than ordinary motion
+(`timing-edits-late-in-a-show-change-the-pace-without-jumps`). The phases live
+in the instance's state, so a stopped transport holds them and play resumes
+without catch-up. What still changes at once: `:seed` and `:hold` pick other
+points or another spot along the current move (inside the box), `:spacing`
+regroups the bands from the current band phase, and the run's strobe rate
+steps by powers of two on the beat grid.
 
 ### Compound cues
 
@@ -225,7 +285,8 @@ its instance ends is recorded as cancelled.
 - **A different timeline.** Pass `:timeline` to `play!` or `replay`.
 
 `tolglow.showcase-test` pins counts such as the 67 scheduled events and the
-cues running at given bars. Update them with intentional changes.
+cues running at given bars, and `tolglow.showcase-cues-test` pins the
+after-hours timeline. Update them with intentional changes.
 
 ## Capture the Room
 
@@ -237,7 +298,9 @@ CHROMIUM_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
 ```
 
 The first command replays the timeline with the capture sink and writes
-`rig.json`, `frames.ndjson` and `meta.json`. Each frame holds the bounded
+`rig.json`, `frames.ndjson` and `meta.json`. Its optional fourth and fifth
+arguments are the seed and a timeline from `showcase/timelines`, for example
+`target/after-hours-clip 2 12.5 656 after-hours`. Each frame holds the bounded
 `[:output :values]` rows and atmosphere that Studio sends the Room. The second
 loads the released `resources/studio/preview.js` in headless Chrome with the
 machine's GPU (`--use-angle=metal` on a Mac). It replays every frame in order

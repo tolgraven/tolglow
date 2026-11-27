@@ -756,6 +756,9 @@ REPL with `(showcase/play! runtime {:loop? true})`. Studio's cue panel lists
 the timeline's upcoming events, labelled **Launch …**, **End …** or with the
 ramp's parameter, and shows each running ramp with **Stop**. Cancelling one
 there records `:operator-cancel` in `(:outcomes (showcase/status player))`.
+The second timeline, `showcase/after-hours`, plays the same way with
+`(showcase/play! runtime {:timeline showcase/after-hours})`, or from the config
+with `[:showcase-timeline :timeline]` set to `:after-hours`.
 
 **Tracked gap.** Studio cannot start, stop or loop the timeline, and its
 waveform binds and spatial-volume launches are direct commands that never
