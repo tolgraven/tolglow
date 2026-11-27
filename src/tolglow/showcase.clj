@@ -1,7 +1,8 @@
 (ns tolglow.showcase
   "The Tolglow showcase show: a venue rig, a cue grid of ported and new looks,
-  two macros and a sequence from the operator's saved compound cues, and a
-  recorded 32-bar timeline at 128 BPM that plays on the beat-clock scheduler.
+  two macros and a sequence from the operator's saved compound cues, a
+  recorded 32-bar timeline at 128 BPM that plays on the beat-clock scheduler,
+  and the 16-bar `after-hours` timeline for the cues mined from tolglow-web.
 
   Run it with `lein run --config tolglow.showcase/config`. Output stays in the
   preview unless the command line selects a physical sink. Loading this
@@ -18,6 +19,7 @@
   (:require [afterglow.control.model :as control-model]
             [clojure.java.io :as io]
             [tolglow.aim-paths :as aim-paths]
+            [tolglow.audio-lfo :as audio-lfo]
             [tolglow.composition :as composition]
             [tolglow.data :as data]
             [tolglow.registry :as registry]
@@ -128,14 +130,17 @@
 (defn- seeded [seed effect]
   (cond-> effect (get-in effect [:params :seed]) (assoc-in [:params :seed :default] (double seed))))
 
-(defn- page [cue-ids]
+(defn- page
+  "Six columns in grid order. The rolling volume's own cell stays free for it."
+  [cue-ids]
   {:id :showcase :name "Showcase"
-   :cells (into {} (map-indexed (fn [i id] [[(mod i 6) (quot i 6)] id])) cue-ids)})
+   :cells (zipmap (remove #{(:cell rolling-volume)} (for [row (range) column (range 6)] [column row]))
+                  cue-ids)})
 
 (defn model
   "The complete show model. `:seed` changes every seeded pattern together:
-  sparkle and confetti draws, the colour drift, the strobe chase order and the
-  subscriber's random picks."
+  sparkle and confetti draws, the searchlight wander, the colour drift, the
+  strobe chase order and the subscriber's random picks."
   ([] (model {}))
   ([{:keys [seed] :or {seed default-seed}}]
    (when-not (and (integer? seed) (<= 0 seed 9999))
@@ -152,7 +157,8 @@
                 :waveforms (signals/publish (signals/new-registry) looks/heartbeat)
                 :settings {:hdr hdr-settings :spatial spatial-settings}
                 :event-subscribers {:subscribers [] :runs [] :next-run 0 :seed seed :dropped 0}})
-         typed (reduce #(publish %1 :fixtures %2) base (vals rig/fixture-types))
+         heard (audio-lfo/configure base (select-keys looks/bass-lfo [:lfo-id :name :config]))
+         typed (reduce #(publish %1 :fixtures %2) heard (vals rig/fixture-types))
          lit (reduce #(publish %1 :cues %2) (reduce #(publish %1 :effects %2) typed effects) cues)
          path (aim-paths/definition lit gather-path)
          moving (-> (publish lit :effects path)
@@ -262,6 +268,44 @@
       (ramp 28 :aurora :wavelength 14.0 {:bars 2} :ease-in-out)
       (end 30 :beam-shafts :bloom-halo)
       (end 31 :aurora :wash-tide :haze)]))})
+
+(def after-hours
+  "Four phrases for the cues mined from tolglow-web: searchlights wander over
+  a matrix chase, the floor cones pick up the bass, and one control drives the
+  beams and washes from a dim wash to a white strobe while the beams keep
+  wandering, before the blinders take the hit."
+  {:id :after-hours :name "After hours" :bpm bpm :meter meter :length {:bar 16}
+   :events
+   (vec
+    (flatten
+     [;; Phrase 1, bars 0-3: a hazed room, beams searching, columns ticking by.
+      (launch 0 :haze {:sources? true})
+      (launch 0 :wash-tide {:params {:level 0.3}})
+      (launch 0 :searchlight-drift)
+      (launch 0 :matrix-chase {:params {:step 0.5 :tail 3.0}})
+      (launch 2 :twin-cones {:sources? true})
+      ;; Phrase 2, bars 4-7: the chase turns from columns through diagonals to
+      ;; rows, and the run starts its build under everything.
+      (ramp 4 :matrix-chase :angle 90.0 {:bars 4} :ease-in-out)
+      (launch 4 :run {:params {:drive 0.0}})
+      (ramp 4 :run :drive 1.0 {:bars 8} :ease-in)
+      ;; Phrase 3, bars 8-11: tighter steps, the searchlights narrow their box.
+      (end 8 :wash-tide)
+      ;; Set on the bar line: both step counts are whole multiples of the
+      ;; spacing there, so the bands double their speed without a jump.
+      {:at {:bar 8} :op :param/set :cue-id :matrix-chase :param :step :value 0.25}
+      (ramp 8 :searchlight-drift :extent [2.0 0.4 1.0] {:bars 4} :ease-in)
+      ;; Phrase 4, bars 12-15: the hit. The run lets go, the blinders fire
+      ;; past full scale and the chase runs diagonals on its own.
+      (end 12 :run)
+      (launch 12 :blinder-hit {:params {:drive 2.5 :decay 1.0} :mode :one-shot :duration {:beats 3}})
+      {:at {:bar 12} :op :param/set :cue-id :matrix-chase :param :angle :value 45.0}
+      (end 14 :twin-cones :searchlight-drift)
+      (end 15 :matrix-chase :haze)]))})
+
+(def timelines
+  "Timelines by ID, for the `:showcase-timeline` module's `:timeline` option."
+  {:first-light timeline :after-hours after-hours})
 
 ;; --------------------------------------------------------------------- player
 
@@ -427,11 +471,14 @@
 
 (defn showcase-timeline
   "Application module. With `:autoplay` it starts the timeline when the show
-  starts, and `:loop` keeps it cycling."
-  [context {:keys [autoplay loop] :or {autoplay true loop true}}]
+  starts, and `:loop` keeps it cycling. `:timeline` names one of `timelines`
+  (default `:first-light`)."
+  [context {:keys [autoplay loop timeline] :or {autoplay true loop true timeline :first-light}}]
   (let [runtime (or (get-in context [:modules :show])
                     (throw (ex-info "Place :show before :showcase-timeline" {})))
-        player (when autoplay (play! runtime {:loop? loop}))]
+        source (or (get timelines timeline)
+                   (throw (ex-info "Unknown showcase timeline" {:timeline timeline :known (set (keys timelines))})))
+        player (when autoplay (play! runtime {:timeline source :loop? loop}))]
     {:value {:player player}
      :stop! (fn [] (show/detach-observer! runtime ::timeline))}))
 

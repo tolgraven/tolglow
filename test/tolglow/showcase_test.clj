@@ -58,10 +58,10 @@
   (let [model (showcase/model)
         cues (get-in model [:registry :cues])
         new-with-sources (filter #(and (= :new (:origin %)) (contains? looks/sources (:id %))) looks/catalogue)]
-    (is (= 20 (count cues)))
+    (is (= 24 (count cues)))
     (is (>= (count looks/catalogue) 12))
     (is (= #{:atmosphere :colour :intensity :movement :pixel} (set (map :category looks/catalogue))))
-    (is (= 9 (count (filter #(= :ported (:origin %)) looks/catalogue))))
+    (is (= 12 (count (filter #(= :ported (:origin %)) looks/catalogue))))
     (is (every? :legacy (filter #(= :ported (:origin %)) looks/catalogue)))
     (is (= #{:haze :wash-tide :wash-ember :beam-shafts :mover-orbit :riser-chase :aurora}
            (set (map :id new-with-sources))))
@@ -76,6 +76,7 @@
             (str cue-id " " param))))
     (is (= #{:mixed-movement :heavy-colour :strobe-chase} (set (keys (:compositions model)))))
     (is (contains? (get-in model [:waveforms :waveforms]) :heartbeat))
+    (is (contains? (get-in model [:waveforms :waveforms]) looks/bass-waveform) "the cones' audio LFO is configured")
     (is (empty? (:instances model)) "Loading the show launches nothing")))
 
 (deftest timeline-positions-are-zero-based-and-validated-against-the-show
@@ -191,9 +192,9 @@
         (is (= #{[:rate 8.0] [:level 1.0] [:saturation 0.95]} (:ramps (bar-frame 18.5))))
         (is (empty? (:ramps (bar-frame 23)))))
       (is (empty? (distinct (mapcat :faults probes))) "No cue faulted on any frame"))
-    (testing "every cue on the grid plays at some point"
+    (testing "every cue on the grid plays at some point, the tolglow-web cues in after-hours"
       (is (= (set (keys (get-in (showcase/model) [:registry :cues])))
-             (reduce into #{} (map :running probes)))))
+             (reduce into looks/after-hours-cues (map :running probes)))))
     (testing "the recorded moments are in the output"
       (is (= #{:haze :aurora :wash-tide} (:running (bar-frame 1))))
       (is (contains? (:running (bar-frame 13)) :can-can))
