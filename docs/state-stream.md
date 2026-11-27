@@ -51,6 +51,48 @@ backpressure, coalescing across missed frames, reconnect, epoch changes and the
 cadence bound. A blocked projection test checks that a frame publisher can
 continue while the delivery worker is busy.
 
+## Browser frame lanes
+
+Studio splits high-rate subtrees from each accepted view into frame lanes
+outside re-frame app-db (`src/studio/tolglow/studio/frame_stream.cljs`). The
+`:room` lane owns `[:output :values]`, the emitted fixture values only the Room
+renders, and `[:draft-output :values]`, a staged scene draft's audition values.
+The stream event joins the lane values back into the projection to apply a
+patch and installs the remaining view in `:server-projection`. Its `:fx` then
+install one whole lane frame, send the ACK and notify lane consumers, in that
+order: consumer work never delays the next server frame. A lane frame is an
+immutable map with the token, show identity, revision, frame number, show time,
+master, blackout, cut intents, atmosphere and the typed parts present. The
+clock and gating fields also stay in app-db. If a lane does not hold the
+projection's exact token and identity, the next patch requests a full view.
+
+A Room attaches to the lane with its owner (`:perform` or `:rig`) when its
+engine starts and releases it on unmount. Delivery is coalesced to one frame
+per animation frame of the window showing the Room, newest first. It runs only
+while the engine reports the Room active: visible, in the viewport and focused,
+or shown in another window. Resuming delivers the newest frame, never a
+backlog. Only the Perform Room shows an audition, from the same lane frame, so
+each frame reaches the engine once. The Room component's Reagent arguments hold
+only structure (rig, editor, identity, revision, instances). A show frame
+therefore updates the engine without rendering the Room component. The engine
+receives a lane frame only when its identity and revision match that
+structure. A frame that arrives ahead of a rig or cue change waits for the
+render that delivers it. The engine-facing `update(frame)` data is unchanged.
+A consumer that throws is logged once per failure and then counted.
+
+Known gap: when Studio is hidden, its animation frames stop. A popped-out Room
+window flushes Studio renders from its own frames. A picture-in-picture Room
+has no such window: its lane frames stop with Studio's frames, as before lanes.
+
+Measured in headless Chrome 155 with the Metal GPU on the M4 Pro (96 moving
+heads, three running cues, about 29 frames a second, 44 KB patches), main-thread
+task time per received frame fell by 0.4–0.7 ms, from 7.5–7.8 ms to 6.8–7.4 ms
+in two interleaved runs (`dev/studio/room-frame-cost.mjs`). Most of the
+remainder is the whole-application render that per-frame clock and status
+fields still cause through app-db. Headless results are not foreground or iPad
+evidence. `dev/studio/room-frame-lane-qa.mjs` checks delivery, the offscreen
+pause, the resume frame and the rig editor's Room against a capture-only host.
+
 ## Connections status
 
 The visible Connections page sends `{:op :connections :enabled? true}` on the

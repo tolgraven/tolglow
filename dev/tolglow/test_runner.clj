@@ -63,11 +63,11 @@
     tolglow.show.scene-draft-test
     tolglow.controllers.content-browser-test tolglow.controllers.content-browser-host-test
     tolglow.controllers.content-browser-display-test tolglow.surface.link-host-test tolglow.surface.descriptor-test
-    tolglow.surface.x-touch-host-test
+    tolglow.surface.x-touch-host-test tolglow.surface.push-3-cue-grid-test
     tolglow.timeline-test
     tolglow.preview.airplay-test
     tolglow.personalities-test tolglow.personalities.icon-test tolglow.personalities-host-test
-    tolglow.showcase-test tolglow.venues.gig-2023-test
+    tolglow.showcase-test tolglow.showcase-cues-test tolglow.venues.gig-2023-test
     tolglow.video-strips-test tolglow.studio.video-strips-host-test
     tolglow.video-surfaces-test tolglow.studio.video-surfaces-host-test tolglow.video-shader-test])
 

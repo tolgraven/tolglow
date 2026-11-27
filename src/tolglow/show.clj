@@ -35,6 +35,7 @@
             [tolglow.controllers.push-knobs :as push-knobs]
             [tolglow.controllers.push-variations :as push-variations]
             [tolglow.surface.link :as surface]
+            [tolglow.surface.push-3 :as push-3-surface]
             [tolglow.surface.x-touch :as x-touch]
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
@@ -3927,6 +3928,13 @@
   Set :cue-variation-pads? true on Push 3 with captured pads and a dedicated
   :variation/cycle button in :button-bindings. The display must support
   presentation receipts. This option also enables exact beat-ratio edits.
+  Push 3 accepts :cue-grid {:buttons {id action}} with captured, unbound
+  User Mode buttons for :cue-grid/select, :cue-grid/reorder,
+  :cue-grid/page-up and :cue-grid/page-down (tolglow.surface.push-3). It
+  registers a control surface under its session ID whose :grid shows the
+  running launches; Select commits that surface's :selected and Reorder
+  sends :instance/move-after, as Studio does. :columns (8) widens the
+  content for a Push extended to the right.
   X-Touch accepts :effect-group-view :manual or :overlay. Group faders occupy
   the first strips, followed by any configured cue channels. Each X-Touch or
   extender registers a control surface under its session ID; its window is
@@ -3958,10 +3966,14 @@
             knob-page (when (and (= :push-2 kind) (contains? options :knob-page))
                         (push-knobs/push-2-encoder-overlay (:knob-page options) options))
             options (cond-> options (= :push-3 kind) push-knobs/push-3-options)
+            ;; The Push 3 Select/Reorder pad grid (#545), validated before any port opens.
+            push-3-grid? (and (= :push-3 kind) (some? (:cue-grid options)))
+            _ (when push-3-grid? (push-3-surface/validate-options! options))
             push-source (when (#{:push-2 :push-3} kind)
                           {:adapter kind :session-id id})
             operator-id (when push-source (str (name kind) "/" id "/" (UUID/randomUUID)))
-            open! (case kind :push-2 devices/open-push-2! :push-3 devices/open-push-3!
+            open! (case kind :push-2 devices/open-push-2!
+                         :push-3 (if push-3-grid? push-3-surface/connect! devices/open-push-3!)
                          :push-3-midi devices/open-push-3-midi! :seaboard devices/open-seaboard! :x-touch x-touch/connect!
                          :midi devices/open-midi! :osc devices/open-osc! :sensor devices/open-sensor!
                          (throw (ex-info "Unknown device kind" {:kind kind})))
@@ -3979,6 +3991,8 @@
                                :cue-strips (vec (:channels options []))})
             options (cond-> (dissoc options ::restore-lease ::reconnect-lease :knob-page)
                       knob-page (assoc :encoder-overlay knob-page)
+                      ;; A selection the Push picks itself is published without waiting on the owner.
+                      push-3-grid? (assoc :surface-id id :publish! #(surface-command! runtime epoch id %))
                       x-touch?
                       ;; The Tolglow mixer layout (#706 slice 2) reads strips, window and
                       ;; layout state from the committed surface link.
@@ -4020,7 +4034,7 @@
                                                                 (cond-> {:status :pending :command-id (:command-id command)}
                                                                   gesture? (assoc :completion reply)))))}))
             device (cond-> device
-                     x-touch? (assoc ::surface-id id)
+                     (or x-touch? push-3-grid?) (assoc ::surface-id id)
                      push-3-variation-pads? (assoc ::ratio-pad-operator operator-id)
                      restore-lease (assoc ::restore-lease restore-lease))]
         (if (locking (:lock runtime)
@@ -4036,6 +4050,10 @@
                                    :descriptor (if (:extender? options) :behringer/x-touch-ext :behringer/x-touch)
                                    :role (if (:extender? options) :extender :main)
                                    :viewports {:strips surface-content}}))
+              (when push-3-grid?
+                (surface-command! runtime epoch id
+                                  {:op :control-surface/attach :surface-id id :descriptor :ableton/push-3
+                                   :role :main :viewports {:grid (push-3-surface/content options)}}))
               device)
           (do (devices/close! device)
               (throw (ex-info "Show stopped or changed while connecting device" {}))))))))

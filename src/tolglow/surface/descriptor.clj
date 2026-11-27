@@ -103,10 +103,26 @@
      :viewport-groups (cond-> {} (seq pads) (assoc :grid #{:pads}) (seq encoders) (assoc :encoders #{:encoders}))
      :verification {:protocol :official-manual :addresses :caller-capture}}))
 
+(def push-3-grid
+  "The registered Push 3 surface: its physical 8x8 pad grid as one :grid
+  viewport on the :cue-grid axis (#545). Pad addresses still come from a
+  caller capture (push-3 describes one); pads a capture lacks stay dark.
+  Pad [x y] IDs count from the bottom-left pad, as in Afterglow's Push cue
+  grids; tolglow.surface.push-3 turns them into top-down viewport rows."
+  {:id :ableton/push-3 :name "Push 3 (User Mode pad grid)"
+   :groups {:pads {:kind :pads :geometry [8 8]
+                   :capabilities {:velocity true :pressure :poly :origin :bottom-left
+                                  :addresses :caller-capture :leds :unverified}}}
+   :viewports {:grid [8 8]}
+   :viewport-axes {:grid :cue-grid}
+   :viewport-groups {:grid #{:pads}}
+   :verification {:protocol :official-manual :addresses :caller-capture
+                  :leds "Push 2 interface palette and animation channels; unverified on Push 3 (#545)"}})
+
 (defmulti descriptor
   "A registered descriptor by ID; nil when unknown. Add a method to register
-  another device. Push 3 descriptors depend on a captured layout (push-3) and
-  are registered with their surface in a later #706 slice."
+  another device. :ableton/push-3 registers the physical pad grid
+  (push-3-grid); push-3 describes a particular captured layout."
   identity)
 
 (defmethod descriptor :default [_] nil)
@@ -116,6 +132,8 @@
 (defmethod descriptor :behringer/x-touch-ext [_] x-touch-ext)
 
 (defmethod descriptor :ableton/push-2 [_] push-2)
+
+(defmethod descriptor :ableton/push-3 [_] push-3-grid)
 
 (defmethod descriptor :tolglow/studio-grid [_] studio-grid)
 

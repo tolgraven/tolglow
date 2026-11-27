@@ -376,7 +376,9 @@ try {
 
   // Hidden Studio (emulated): Reagent's frames stop, so the Room window
   // flushes renders from its own frames and keeps following the show: its
-  // committed frame advances and a cue played from Studio reaches it.
+  // committed frame advances and a cue played from Studio reaches it. Show
+  // frames reach the engine on the :room frame lane without a Reagent render
+  // (#783), so only the cue's structural revision depends on that flush.
   const roomShow = () => room5.evaluate(() => {
     const s = document.querySelector('#preview').tolglowPreview.snapshot;
     return {revision: s?.revision, frame: s?.['frame-number']};
@@ -387,17 +389,26 @@ try {
   const heldStart = await roomShow();
   await room5.waitForTimeout(1500);
   const heldEnd = await roomShow();
-  await page.evaluate(() => { window.__emulateHidden = true; });
-  await room5.waitForTimeout(300);
-  const hiddenStart = await roomShow();
+  // Control: the cue's revision waits for a render while Studio is visible
+  // with its renders held, then the hidden Studio's Room window flushes it.
   await cueButton.click({force: true});
+  await room5.waitForTimeout(1500);
+  const heldCue = await roomShow();
+  await room5.waitForTimeout(1000);
+  const heldCueLater = await roomShow();
+  await page.evaluate(() => { window.__emulateHidden = true; });
+  const hiddenStart = heldCue;
   const cueReached = await room5.waitForFunction(previous => document.querySelector('#preview').tolglowPreview.snapshot?.revision !== previous,
     hiddenStart.revision, {timeout: 10000}).then(() => true, () => false);
+  await room5.waitForTimeout(500);
   const hiddenEnd = await roomShow();
   await page.evaluate(() => { window.__emulateHidden = false; window.__releaseFrames(); });
-  results.hiddenStudio = {heldVisible: {start: heldStart, end: heldEnd}, hidden: {start: hiddenStart, end: hiddenEnd}, cueReached};
+  results.hiddenStudio = {heldVisible: {start: heldStart, end: heldEnd, afterCue: heldCue, afterCueLater: heldCueLater},
+    hidden: {start: hiddenStart, end: hiddenEnd}, cueReached};
   console.log('hidden-studio', JSON.stringify(results.hiddenStudio));
-  assert.equal(heldEnd.frame, heldStart.frame, 'control: with Studio frames held and Studio visible, the Room does not advance');
+  assert.ok(heldEnd.frame > heldStart.frame, 'show frames reach the Room on its frame lane while Studio renders are held');
+  assert.equal(heldCue.revision, heldStart.revision, 'control: with Studio renders held and Studio visible, a cue revision does not reach the Room');
+  assert.equal(heldCueLater.frame, heldCue.frame, 'control: frames of the new revision wait at the fence until a render');
   assert.ok(hiddenEnd.frame > hiddenStart.frame, 'the Room keeps advancing while Studio is hidden');
   assert.ok(cueReached, 'a cue played in Studio reaches the Room while Studio is hidden');
 

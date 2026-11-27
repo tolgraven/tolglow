@@ -232,7 +232,7 @@
                (if exact? (scalar-step context)
                    (-> context
                        (blocks/observed block-plan env frame fixture-index)
-                       (assoc :state state :done? done?)
+                       (assoc :state (if done? state (blocks/with-phases state env)) :done? done?)
                        (runtime/append-contributions blocks)
                        (update :intents #(or % []))))))
            (blocks/step-info {:backend (if prepare-group :deferred :batch)

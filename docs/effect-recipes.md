@@ -262,6 +262,46 @@ and its exceptions.
         (fx/sine {:period {:bars 4}}))
 ```
 
+### Phase accumulators
+
+A phase from `cycles` is elapsed beats divided by the period, so changing a
+period parameter while the cue runs moves the phase by an amount that grows
+with the cue's age. `phase-accumulator` keeps the phase instead: each frame it
+adds the cue's elapsed beats since the last frame divided by the period now
+set, and keeps the result in the instance's state under its ID.
+
+```clojure
+;; Cycles of a turn every :bars bars; turning :bars changes the speed from here.
+(let [turns (fx/phase-accumulator :turn (fx/param :bars) {:unit :bars})]
+  (fx/aim (fx/xyz (fx/multiply 1.5 {:op :cos :args [(fx/multiply (* 2 Math/PI) turns)]})
+                  3.0
+                  (fx/multiply 1.5 {:op :sin :args [(fx/multiply (* 2 Math/PI) turns)]}))))
+```
+
+The period is any scalar expression without position, in beats, bars or
+phrases (`:unit`). With `:phase-reference :launch` (the default) the phase
+starts at zero on launch and follows the cue's elapsed beats. With
+`:phase-reference :transport` it starts at transport beat / period and follows
+the transport beat, so a cue launched off the beat still steps on the beat and
+bar grid; bars and phrases then use the current meter. Either way it adds
+nothing while the transport is stopped and resumes from the held value. While
+the period is zero, negative or not a number the phase holds instead of
+faulting, and it advances again when the period is positive.
+
+An effect that reads one is never forecast between keyframes, since its state
+advances once per committed frame. Global variable chains refuse it, since
+they have no cue state to keep it in. The IR node is
+`{:op :phase-accumulator :id k :period expr :unit u :phase-reference r}`; IDs
+are unique within an effect and keep the phase across a `:preserve-state`
+reload.
+
+The phase depends on the path the beat took. With a constant period it is the
+plain reference beat / period. A backward seek or loop jump rewinds it by the
+jump over the current period, so after an edit it does not return to where a
+stateless phase would be. Under a changing period the result depends on frame
+timing; it is the same for the same tick schedule, so a replay is
+byte-identical.
+
 For spatial motion, `position-wave` adds position divided by wavelength to the
 phase. Coordinates and wavelength use metres. A positive wavelength moves the
 pattern toward the negative axis as time advances; a negative wavelength
