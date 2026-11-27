@@ -363,6 +363,13 @@
                            (str (count launches) " scheduled launches missed"))
                          (when cause (str " because " cause)) ".")))))
 
+(defn prune-plot-views
+  "Plot view choices (`:plot-views`, keyed [launch-id control]) for launches
+  still in the show; a launch that left takes its choices with it."
+  [views instances]
+  (let [ids (into #{} (map (comp wire-id :id)) instances)]
+    (into {} (filter (fn [[[id] _]] (contains? ids id))) views)))
+
 (defn- install-show [db server]
   (let [presentation (projection/presentation (:view server)
                                               (get-in db [:server-projection :view]) (:server-presentation db))
@@ -386,6 +393,7 @@
                     (assoc-in [:ui :page-id] (if (some #(= page-id (:id %)) (:pages show)) page-id (:id (first (:pages show))))))
         updated (settle-connection-drafts updated (:server-presentation db) (get-in db [:server-projection :view]))
         updated (cond-> updated
+                  (seq (:plot-views updated)) (update :plot-views prune-plot-views (:instances show))
                   (checkpoints/replaces-rig-draft? db (:view server)) (assoc-in [:ui :rig-dirty?] false)
                   epoch-changed? (dissoc :ending-holds :section-pattern-request)
                   epoch-changed? (update-in [:ui :definition] dissoc :publishing? :publication)

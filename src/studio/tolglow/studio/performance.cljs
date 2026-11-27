@@ -575,12 +575,21 @@
       stretch)))
 
 (defn fluid-style
-  "Track and row size for `columns` stretched tracks across `width`."
+  "Track and smallest row size for `columns` stretched tracks across
+  `width`, each at most the stretch limit (so a lone strip knob stays near
+  twice its usual size; the grid centres in the card). The grid's rows then
+  share any further height the card gives the bank (a card grown beside a
+  taller one), and every widget sizes to the smaller side of its slot, so
+  pads stay square."
   [surface columns width & [control-count]]
   (let [{:keys [min ratio gap]} (fluid-units surface)
         stretch (fluid-stretch surface control-count)
-        track (js/Math.max min (js/Math.min (* stretch min) (/ (- width (* gap (dec columns))) (max 1 columns))))]
-    {"--slot-col" (str (js/Math.floor track) "px") "--slot-row" (str (js/Math.floor (* ratio track)) "px")}))
+        track (js/Math.max min (js/Math.min (* stretch min) (/ (- width (* gap (dec columns))) (max 1 columns))))
+        ;; Rows keep the surface's usual stretch, so one or two controls widen
+        ;; their slot without making it needlessly tall; extra card height
+        ;; still reaches them through the grid's 1fr rows.
+        row-track (js/Math.min track (* (:stretch (fluid-units surface)) min))]
+    {"--slot-col" (str (js/Math.floor track) "px") "--slot-row" (str (js/Math.floor (* ratio row-track)) "px")}))
 
 (defn overlay-anchor
   "Where an overlay two slots wide and two tall, opened from the card at
@@ -685,7 +694,7 @@
       (into [:div (merge attrs {:ref attach! :data-columns columns :data-rows rows
                                 :data-packing (if exact "final" "quick")
                                 :data-slot-scale (when fluid "fluid")
-                                :style (merge (:style attrs) {"--slot-columns" columns}
+                                :style (merge (:style attrs) {"--slot-columns" columns "--slot-rows" (max 1 rows)}
                                               (when (and fluid (map? reading)) (fluid-style fluid columns (:width reading) control-count)))})]
             (for [{:keys [index col row w h] :as cell} cells
                   :let [{overlay :style covers :covers} (overlay-anchor columns rows cells cell)]]
@@ -748,9 +757,13 @@
        ^{:key (control-id control)}
        [:figure.detail-plot {:data-plot (if components (control-id control) (wire parameter))}
         [:figcaption (control-title control)]
-        (if components
-          [sources/axes-visual visualization/studio instance components (xyz-schema control)]
-          [sources/result-visual visualization/studio instance parameter schema])])]))
+        ;; The view and beat window live in app-db, so a plot that unmounts
+        ;; while its source briefly stops driving (after Resume LFO, say)
+        ;; returns as the operator left it.
+        (let [options {:view-key [(wire (:id instance)) (control-id control)]}]
+          (if components
+            [sources/axes-visual visualization/studio instance components (xyz-schema control) options]
+            [sources/result-visual visualization/studio instance parameter schema options]))])]))
 
 (defn- viewable? [{:keys [schema components]}]
   (or (seq components)
@@ -1015,7 +1028,11 @@
      (when (:arranging? macro-card) [card-size-picker macro-card title (count controls)])
      (when (seq shown)
        [:div.live-effect-body
-        ^{:key (if expanded? "detail" "strip")} [parameter-bank show instance shown (not expanded?) parameter-control (some? macro-card)]
+        ;; One or two controls in a macro card use their Detail form (knob,
+        ;; slider and exact entry): the card's room holds useful controls
+        ;; rather than one enlarged knob.
+        (let [detail? (or expanded? (and macro-card (<= (count shown) 2)))]
+          ^{:key (if detail? "detail" "strip")} [parameter-bank show instance shown (not detail?) parameter-control (some? macro-card)])
         (when (< (count shown) (count controls))
           [:p.live-effect-more (str (- (count controls) (count shown)) " more in the medium and large sizes")])
         (if expanded?
