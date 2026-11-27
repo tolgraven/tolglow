@@ -266,7 +266,12 @@ otherwise unbound buttons under `:cue-grid` when connecting. The grid shows
 one pad per running launch in the committed order, top-left first, in the
 launch's pad colour. Select commits that surface's selection,
 `:control-surface/layout {:selected [:instance id]}`, and never launches or
-ends anything. The Push encoders and display then edit that launch. Reorder
+ends anything. There is one selection: the Push encoders and display always
+edit the committed launch. When the Push moves its own target, for example
+by launching from a pad with the grid closed, that launch becomes the
+committed selection. Pressing the selected pad in Select points the encoders
+back at it. A selected launch that ends reads as no selection, and a restore
+moves the selection to the restored launch. Reorder
 takes a first pad, which blinks, and a second pad as the target. It sends
 the same `:instance/move-after` with `:expected-revision` as **Place after**.
 A press on a pad whose launch moved since the last refresh does nothing.
@@ -301,6 +306,13 @@ round trip with a virtual Push 3 in headless Chrome.
 channels. Push 3 pad addresses come from a capture. Neither has been checked
 on a physical Push 3 yet; the #545 hardware checklist is still open. Studio
 selection opens **Detail** but the Push selection only adds a badge in Studio.
+Because the selection is shared, **Follow selection** in Studio also moves the
+Push encoders to the card a Studio user opens, even while someone else is
+playing the Push. A Push launch likewise changes the selection Studio shows.
+There is no per-operator selection yet. `:cue-variation-pads?` is refused
+together with `:cue-grid`, because both own the pads. Push 2 keeps Afterglow's
+own Select and Reorder grids, which use a private page rather than the
+surface window.
 Pushes extended to the right need `:columns 16`. A Studio grid cannot mirror
 the Push yet (#706 slice 5), and the Push has no shuffle button.
 

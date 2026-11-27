@@ -654,7 +654,10 @@
                                     (distinct (concat (map :owner-id (vals (:composition-runs saved)))
                                                       (keep #(get-in % [:source :native-layer :id]) ordered)
                                                       (when-let [owner (get-in saved [:auto :state :owner-id])] [owner])))))
-        model (assoc (spatial/restore (lighting-scenes/restore saved ids) ids epoch) :epoch epoch :revision (inc (max (:revision current-model) (:revision saved))))
+        model (-> (spatial/restore (lighting-scenes/restore saved ids) ids epoch)
+                  ;; Cue grid selections name launches (#545).
+                  (surface/remap-instances ids)
+                  (assoc :epoch epoch :revision (inc (max (:revision current-model) (:revision saved)))))
         instances (into {} (for [instance ordered
                                  :let [id (ids (:id instance))
                                        owner (get-in instance [:source :session-id])

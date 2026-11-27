@@ -6,8 +6,8 @@
   (:require [afterglow.control.devices.session :as device-session]
             [afterglow.control.model :as control]
             [clojure.test :refer [deftest is testing]]
+            [tolglow.persistence :as persistence]
             [tolglow.show :as show]
-            [tolglow.surface.cue-grid :as cue-grid]
             [tolglow.surface.link :as surface]
             [tolglow.surface.push-3 :as push-3]))
 
@@ -338,6 +338,8 @@
       (is (= :invalid-cue-grid (bad {:buttons {:select :cue-grid/launch}})))
       (is (= :invalid-cue-grid (bad grid-options {:button-bindings {:select :page-up}})) "A bound button stays bound")
       (is (= :invalid-cue-grid (bad (assoc grid-options :columns 0))))
+      (is (= :invalid-cue-grid (bad grid-options {:cue-variation-pads? true}))
+          "The cue variation pad overlay also owns the pads")
       (is (nil? (get @(:sent h) "bad")) "Nothing was opened")
       (finally (show/stop! runtime)))))
 
@@ -346,5 +348,103 @@
     (is (= :cue-grid (surface/content-axis {:type :active-cues})))
     (is (true? (surface/content-valid? {:type :active-cues :columns 16})))
     (is (false? (surface/content-valid? {:type :active-cues :columns 65})))
-    (is (= [] (cue-grid/cells m {:type :active-cues})))
+    (is (= [] (surface/content-cells m {:type :active-cues})))
     (is (= {:columns 0 :rows 0} (surface/content-size m {:type :active-cues})))))
+
+(deftest one-selection-the-push-edits-what-studio-shows-selected
+  ;; The review scenario for #788: the Afterglow profile moves its own edit
+  ;; target from a closed-grid launch pad, and Select must bring both back.
+  (let [{:keys [runtime owner!] :as h} (harness 3)]
+    (try
+      (let [[a b c] (launch-all! h 3)
+            _ (accepted! h {:op :page/put :page {:id :main :cells {[1 7] :c1}}})
+            device (connect! h "push-a" {:page-id :main})
+            edited #(get-in (device-session/snapshot device) [:local :selected-instance])]
+        (refresh! h device)
+        (is (= :accepted (:status (owner! #(deref (show/surface-layout! runtime "push-a" {:selected [:instance a]})
+                                                  1000 ::missing)))))
+        (refresh! h device)
+        (is (= a (edited)))
+        (testing "a closed-grid launch pad moves the encoders, and the shared selection follows them"
+          (tap! h "push-a" (pad [1 0]))
+          (refresh! h device)
+          (tap! h "push-a" (pad [1 0]))
+          (refresh! h device)
+          (let [relaunched (edited)]
+            (is (not (contains? #{a b c nil} relaunched)) "The relaunch of c1 is a new launch")
+            (is (= [a c relaunched] (order h)))
+            (is (= [:instance relaunched] (selected h "push-a")) "Studio and the REPL see what the Push edits")))
+        (testing "Select on A's pad brings the shared selection and the encoders back together"
+          (tap! h "push-a" (button :select))
+          (refresh! h device)
+          (tap! h "push-a" (pad [0 0]))
+          (refresh! h device)
+          (is (= [:instance a] (selected h "push-a")))
+          (is (= a (edited)))
+          (is (= [0x99 (note [0 0]) 127] (shown device [0 0]))))
+        (testing "Select on the already-selected pad re-points the encoders without a command"
+          (let [revision (:revision (model-of h))]
+            (tap! h "push-a" (pad [0 0]))
+            (is (= revision (:revision (model-of h))))
+            (is (= a (edited)))))
+        (is (empty? (:errors (device-session/snapshot device)))))
+      (finally (show/stop! runtime)))))
+
+(deftest a-restore-rekeys-the-grid-selection-and-an-ended-launch-reads-as-none
+  (let [{:keys [runtime owner!] :as h} (harness 3)]
+    (try
+      (let [[a b c] (launch-all! h 3)
+            device (connect! h "push-a")]
+        (is (= :accepted (:status (owner! #(deref (show/surface-layout! runtime "push-a" {:selected [:instance b]})
+                                                  1000 ::missing)))))
+        (testing "freeze and thaw: the selection names the restored launch of the same cue"
+          (let [m (model-of h)
+                thawed (persistence/thaw m (persistence/freeze m))
+                restored (some #(when (= :c1 (:cue-id %)) (:id %)) (vals (:instances thawed)))]
+            (is (not= b restored))
+            (is (= [:instance restored] (get-in (surface/window thawed "push-a" :grid) [:layout :selected])))
+            (is (nil? (get-in (surface/window (surface/remap-instances m {a "9:1"}) "push-a" :grid) [:layout :selected]))
+                "A launch that did not survive leaves no selection")))
+        (testing "the selected launch ends: Studio, the REPL and the Push read no selection"
+          (tap! h "push-a" (button :select))
+          (refresh! h device)
+          (is (= [0x99 (note [1 0]) 126] (shown device [1 0])))
+          (accepted! h {:op :instance/end :instance-id b})
+          (is (nil? (selected h "push-a")))
+          (refresh! h device)
+          (is (= [[0x90 (note [0 0]) 127] [0x90 (note [1 0]) 125]] [(shown device [0 0]) (shown device [1 0])])
+              "No pad pulses")
+          (is (= :accepted (:status (owner! #(deref (show/surface-layout! runtime "push-a" {:page 0}) 1000 ::missing)))))
+          (is (nil? (get-in (surface/window (model-of h) "push-a" :grid) [:layout :selected]))
+              "The next layout write stores no stale selection")))
+      (finally (show/stop! runtime)))))
+
+(deftest a-dim-or-black-launch-colour-still-lights-its-pad
+  (let [leds push-3/default-leds]
+    (doseq [color [[0.3 0 0] [0 0 0.3] [0 0 0]]]
+      (is (= [0x99 36 124] (push-3/pad-message leds 36 {:color color :selected? true})) (pr-str color))
+      (is (= [0x9e 36 124] (push-3/pad-message leds 36 {:color color :source? true})))
+      (is (= [0x90 36 124] (push-3/pad-message leds 36 {:color color}))))
+    (is (= [0x90 36 127] (push-3/pad-message leds 36 {:color [0.9 0.1 0]})))
+    (is (= [0x80 36 0] (push-3/pad-message leds 36 nil)) "Only an empty pad is dark")))
+
+(deftest persistence-accepts-a-saved-cue-grid-without-the-show-or-device-namespaces
+  ;; A fresh JVM that loads tolglow.persistence alone (no tolglow.show, no
+  ;; tolglow.surface.cue-grid) validates a saved Push grid surface.
+  (let [script (str "(require 'tolglow.persistence)"
+                    "(tolglow.surface.link/validate-state!"
+                    " {:extensions {:tolglow.surface.link/state"
+                    "  {:surfaces {\"push-a\" {:id \"push-a\" :descriptor :ableton/push-3 :role :main :attached? false"
+                    "   :viewports {:grid {:geometry [8 8] :content {:type :active-cues} :window {:x 0 :y 8}"
+                    "                      :layout {:selected [:instance \"3:1\"]}}}}} :links {}}}})"
+                    "(prn [:validated (contains? (loaded-libs) 'tolglow.show)"
+                    "      (contains? (loaded-libs) 'tolglow.surface.cue-grid)])")
+        process (.start (doto (ProcessBuilder. [(str (System/getProperty "java.home") "/bin/java")
+                                                "-cp" (System/getProperty "java.class.path")
+                                                "clojure.main" "-e" script])
+                          (.redirectErrorStream true)))
+        out (future (slurp (.getInputStream process)))]
+    (try
+      (is (.waitFor process 180 java.util.concurrent.TimeUnit/SECONDS))
+      (is (re-find #"\[:validated false false\]" (deref out 5000 "")) (deref out 5000 ""))
+      (finally (.destroyForcibly process)))))

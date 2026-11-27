@@ -36,7 +36,9 @@
   window (on the link, or on an unlinked surface viewport) and moves with it,
   so every linked member shows the same mode and selection. Layouts such as
   tolglow.surface.mixer read it; :control-surface/layout changes it."
-  (:require [tolglow.effects.group-channels :as group-channels]
+  (:require [afterglow.control.instance-order :as instance-order]
+            [afterglow.control.views :as views]
+            [tolglow.effects.group-channels :as group-channels]
             [tolglow.surface.descriptor :as descriptor]))
 
 (def ^:private state-path [:extensions ::state])
@@ -174,6 +176,53 @@
 
 (defmethod content-axis :mixer-strips [_] :channels)
 
+;; Running launches (#545): the content of a cue grid such as a Push pad
+;; grid (tolglow.surface.cue-grid). Registered here, beside the validators
+;; that read saved surfaces, so any loader of this namespace accepts it.
+
+(def default-cue-columns 8)
+
+(defn running-instances
+  "Running launches in committed render input order (:active-instance-order)."
+  [model]
+  (filterv #(= :running (:phase %)) (instance-order/ordered model)))
+
+(defn- rgb? [c] (and (vector? c) (= 3 (count c)) (every? #(and (number? %) (<= 0 % 1)) c)))
+
+(defn- launch-color
+  "The launch's pad colour, as the cue pads show it (afterglow views/pad-view),
+  then its definition's colour or swatch."
+  [model {:keys [cue-id params definition] :as instance}]
+  (let [pad (when cue-id (views/pad-view model cue-id {cue-id [instance]}))]
+    (or (some #(when (rgb? %) %) [(:color pad) (:color params) (:color definition)
+                                  (views/swatch-rgb (:swatch definition))])
+        [0.35 0.35 0.35])))
+
+(defn- cue-columns [content] (:columns content default-cue-columns))
+
+(defmethod content-cells :active-cues [model content]
+  ;; One cell per running launch, :columns to a row, top-left first, keyed [:instance id].
+  (let [columns (cue-columns content)]
+    (vec (map-indexed
+          (fn [index {:keys [id cue-id effect-id definition] :as instance}]
+            {:x (mod index columns) :y (quot index columns) :index index
+             :key [:instance id] :instance-id id :cue-id cue-id
+             :label (or (get-in model [:registry :cues cue-id :name]) (:name definition)
+                        (some-> (or cue-id effect-id) name) "")
+             :color (launch-color model instance)
+             :priority (instance-order/effective-priority instance)})
+          (running-instances model)))))
+
+(defmethod content-size :active-cues [model content]
+  ;; The same extent cells-size computes, without colours or labels.
+  (let [n (count (running-instances model)) columns (cue-columns content)]
+    {:columns (min n columns) :rows (quot (+ n (dec columns)) columns)}))
+
+(defmethod content-axis :active-cues [_] :cue-grid)
+
+(defmethod content-valid? :active-cues [{:keys [columns]}]
+  (or (nil? columns) (and (pos-int? columns) (<= columns 64))))
+
 ;; Logical surfaces
 
 (defn- default-viewport [state surface-id]
@@ -254,15 +303,24 @@
   (let [{:keys [x y]} (limits view size)]
     {:x (max 0 (min x (:x window 0))) :y (max 0 (min y (:y window 0)))}))
 
+(defn live-layout
+  "A layout as readers see it: a selected launch ([:instance id]) that has
+  ended, so is no longer in the model, reads as no selection (#545)."
+  [model {[kind id] :selected :as layout}]
+  (if (and (= :instance kind) (not (contains? (:instances model) id)))
+    (assoc layout :selected nil)
+    layout))
+
 (defn- resolved
-  "Logical surface with its content size, clamped window and, unless
-  cells? is false, its cells."
+  "Logical surface with its content size, clamped window, live layout and,
+  unless cells? is false, its cells."
   ([model target viewport] (resolved model target viewport true))
   ([model target viewport cells?]
    (when-let [view (logical (state model) target viewport)]
      (let [cells (when cells? (content-cells model (:content view)))
            size (if cells? (cells-size cells) (content-size model (:content view)))]
-       (assoc view :cells cells :size size :window (clamp-window view size (:window view)))))))
+       (assoc view :cells cells :size size :window (clamp-window view size (:window view))
+              :layout (live-layout model (:layout view)))))))
 
 (defn- member-window
   "Window of one member, or nil when an extend link leaves it unpacked."
@@ -652,7 +710,7 @@
           (reject! :invalid-value error {:set patch}))
         (let [path (if (:link? view) [:links (:id view) :layout]
                        [:surfaces (:id view) :viewports (:viewport view) :layout])
-              layout (merge (:layout view) patch)
+              layout (merge (live-layout model (:layout view)) patch)
               stored (into {} (remove (fn [[k v]] (= v (get layout-defaults k)))) layout)]
           (transition model (update-state model (fn [current]
                                                   (if (seq stored) (assoc-in current path stored)
@@ -685,6 +743,26 @@
   (if (seq (:surfaces (state model)))
     (update-state model update :surfaces #(update-vals % (fn [s] (assoc s :attached? false))))
     model))
+
+(defn remap-instances
+  "Rekey selected launches ([:instance id]) in every stored layout through
+  ids (old -> new instance ID), as a restore does; a launch that did not
+  survive leaves no selection."
+  [model ids]
+  (let [remap (fn [{[kind id] :selected :as layout}]
+                (if (= :instance kind)
+                  (let [layout (if-let [new-id (get ids id)] (assoc layout :selected [:instance new-id]) (dissoc layout :selected))]
+                    (when (seq layout) layout))
+                  layout))
+        fix (fn [holder] (if-let [layout (some-> (:layout holder) remap)]
+                           (assoc holder :layout layout)
+                           (dissoc holder :layout)))]
+    (if (seq (:surfaces (state model)))
+      (update-state model #(-> %
+                               (update :surfaces update-vals
+                                       (fn [s] (update s :viewports update-vals (fn [v] (if (:layout v) (fix v) v)))))
+                               (update :links update-vals (fn [l] (if (:layout l) (fix l) l)))))
+      model)))
 
 (defn- saved-surface? [id {:keys [viewports role attached?] :as s}]
   ;; Geometry and viewport names must match the registered descriptor: the

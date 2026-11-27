@@ -1,7 +1,9 @@
 (ns tolglow.surface.cue-grid
   "Running launches on a pad grid: Select and Reorder modes (#545).
 
-  Content: :active-cues is a link content space on the :cue-grid axis. Its
+  Content: :active-cues is a link content space on the :cue-grid axis
+  (registered in tolglow.surface.link, beside the validators that read
+  saved surfaces). Its
   cells are the running launches in committed render input order (the order
   Studio's Reorder shows, :active-instance-order), filled left to right and
   top to bottom, :columns (8) to a row, one cell per launch, keyed
@@ -16,7 +18,8 @@
   - Select: a pad commits :control-surface/layout {:selected [:instance id]}
     on the logical surface, the same command and field the REPL
     (show/surface-layout!) and Studio's Follow selection use. It never
-    launches or stops a cue.
+    launches or stops a cue. A selected launch that ends reads as no
+    selection (link/live-layout), and a restore rekeys it.
   - Reorder: the first pad chooses a launch (its pad blinks); a second pad
     sends :instance/move-after {:instance-id chosen :after-instance-id
     target}, Studio's Place after, with :expected-revision. The same pad
@@ -30,75 +33,13 @@
   This namespace knows nothing about MIDI. Devices give it member-local
   viewport positions ([column row], row 0 at the top) and gesture identities,
   and turn its pad intents into their own addresses (tolglow.surface.push-3)."
-  (:require [afterglow.control.instance-order :as instance-order]
-            [afterglow.control.views :as views]
-            [tolglow.surface.link :as link]))
-
-(def default-columns 8)
+  (:require [tolglow.surface.link :as link]))
 
 (def modes #{:select :reorder})
 
 (def actions
   "Device-independent grid actions a device maps its buttons to."
   #{:cue-grid/select :cue-grid/reorder :cue-grid/page-up :cue-grid/page-down})
-
-;; ---------------------------------------------------------------------------
-;; Content
-
-(defn running
-  "Running launches in committed render input order."
-  [model]
-  (filterv #(= :running (:phase %)) (instance-order/ordered model)))
-
-(defn- rgb? [c] (and (vector? c) (= 3 (count c)) (every? #(and (number? %) (<= 0 % 1)) c)))
-
-(defn- launch-color
-  "The launch's pad colour, as the cue pads show it (afterglow views/pad-view),
-  then its definition's colour or swatch."
-  [model {:keys [cue-id params definition] :as instance}]
-  (let [pad (when cue-id (views/pad-view model cue-id {cue-id [instance]}))]
-    (or (some #(when (rgb? %) %) [(:color pad) (:color params) (:color definition)
-                                  (views/swatch-rgb (:swatch definition))])
-        [0.35 0.35 0.35])))
-
-(def ^:private cells-cache
-  "Last [instances registry pad-colours columns] -> cells. A Push refreshes
-  every 10 ms; cells change only with committed instances or definitions."
-  (atom nil))
-
-(defn- columns-of [content] (:columns content default-columns))
-
-(defn cells
-  "Cells of an :active-cues content space for a model."
-  [model content]
-  (let [columns (columns-of content)
-        k [(:instances model) (:registry model) (get model :afterglow.control.views/pad-colors) columns]
-        [seen cached] @cells-cache]
-    (if (and seen (every? true? (map identical? (pop seen) (pop k))) (= (peek seen) columns))
-      cached
-      (let [result (vec (map-indexed
-                         (fn [index {:keys [id cue-id effect-id definition] :as instance}]
-                           {:x (mod index columns) :y (quot index columns) :index index
-                            :key [:instance id] :instance-id id :cue-id cue-id
-                            :label (or (get-in model [:registry :cues cue-id :name]) (:name definition)
-                                       (some-> (or cue-id effect-id) name) "")
-                            :color (launch-color model instance)
-                            :priority (instance-order/effective-priority instance)})
-                         (running model)))]
-        (reset! cells-cache [k result])
-        result))))
-
-(defmethod link/content-cells :active-cues [model content] (cells model content))
-
-(defmethod link/content-size :active-cues [model content]
-  ;; The same extent link/cells-size would compute, without colours or labels.
-  (let [n (count (running model)) columns (columns-of content)]
-    {:columns (min n columns) :rows (quot (+ n (dec columns)) columns)}))
-
-(defmethod link/content-axis :active-cues [_] :cue-grid)
-
-(defmethod link/content-valid? :active-cues [{:keys [columns]}]
-  (or (nil? columns) (and (pos-int? columns) (<= columns 64))))
 
 ;; ---------------------------------------------------------------------------
 ;; What one member shows
@@ -168,7 +109,9 @@
 (defn press
   "A pad down at a member-local position with a gesture identity.
   Returns {:state :commands :handled?}; :handled? false leaves the press to
-  the device's normal pad mode. Commands are owner command templates the
+  the device's normal pad mode. A Select press also returns :selection, the
+  cell key, even when it is already the committed selection, so a device can
+  point its own editing back at it. Commands are owner command templates the
   device fences with its show identity."
   [state model view surface-id viewport {:keys [at identity]}]
   (cond
@@ -184,10 +127,10 @@
         consumed
         (case (:mode state)
           :select
-          (if (= (:key cell) (:selected view))
-            consumed
-            (assoc consumed :commands [{:op :control-surface/layout :target surface-id :viewport viewport
-                                        :set {:selected (:key cell)}}]))
+          (cond-> (assoc consumed :selection (:key cell))
+            (not= (:key cell) (:selected view))
+            (assoc :commands [{:op :control-surface/layout :target surface-id :viewport viewport
+                               :set {:selected (:key cell)}}]))
 
           :reorder
           (let [source (:source state)]

@@ -12,9 +12,13 @@
   encoders edit). Buttons bound under :cue-grid {:buttons {id action}} open
   Select or Reorder and page the grid; while a mode is open the grid owns
   new pad presses, and each pad's release goes to whoever owned its press.
-  The committed selection of this surface ([:instance id]) also becomes the
-  launch the Push encoders and display edit when it changes, whether a pad,
-  Studio or the REPL changed it.
+  There is one selection: the surface's committed :selected ([:instance id])
+  and the launch the Push encoders and display edit are kept equal. A
+  committed change (a pad, Studio, the REPL, a linked member) moves the
+  encoders; a change the Afterglow profile makes itself (a launch pad, its
+  ack, the display falling back to the latest launch) is committed as the
+  shared selection. Select on the selected pad points the encoders back at
+  it. :cue-variation-pads? is refused alongside :cue-grid: both own the pads.
 
   LEDs: Afterglow sends no Push 3 pad LEDs, so the grid lights only the pads
   it shows and turns them off when it closes. The default bytes follow the
@@ -53,15 +57,18 @@
   [x (- (dec (second geometry)) y)])
 
 (defn palette-index
-  "The palette velocity nearest an [r g b] colour."
+  "The lit palette velocity nearest an [r g b] colour. Black entries are
+  never chosen: an occupied pad stays visible however dim its launch's
+  colour, and so do its pulse and blink."
   [palette color]
-  (key (apply min-key (fn [[_ rgb]] (reduce + (map #(let [d (- (double %1) (double %2))] (* d d)) rgb color)))
-              (sort-by key palette))))
+  (let [lit (or (seq (remove (fn [[_ rgb]] (every? zero? rgb)) palette)) (seq palette))]
+    (key (apply min-key (fn [[_ rgb]] (reduce + (map #(let [d (- (double %1) (double %2))] (* d d)) rgb color)))
+                (sort-by key lit)))))
 
 (defn pad-message
-  "LED bytes for one pad note and intent (nil: dark)."
+  "LED bytes for one pad note and intent (nil: dark, note-off)."
   [{:keys [palette animations]} note {:keys [color selected? source?] :as intent}]
-  (if (or (nil? intent) (= 0 (palette-index palette color)))
+  (if (nil? intent)
     [0x80 note 0]
     [(bit-or 0x90 (get animations (cond source? :blink selected? :pulse :else :static) 0))
      note (palette-index palette color)]))
@@ -79,8 +86,9 @@
 (defn validate-options!
   "Check :cue-grid before any port opens: buttons are captured, unbound
   User Mode buttons mapped to cue-grid/actions, including a mode; the
-  Afterglow profile runs in an aftertouch mode with captured pads."
-  [{:keys [layout button-bindings temporary-encoder-modifier expression-mode cue-grid]}]
+  Afterglow profile runs in an aftertouch mode with captured pads and
+  without the cue variation pad overlay, which also owns the pads."
+  [{:keys [layout button-bindings temporary-encoder-modifier expression-mode cue-grid cue-variation-pads?]}]
   (let [{:keys [buttons columns leds]} cue-grid
         captured (:buttons layout)]
     (when-not (and (map? cue-grid) (every? #{:buttons :columns :leds} (keys cue-grid))
@@ -94,11 +102,12 @@
                            (keys buttons))
                    (seq (:pads layout))
                    (not= :mpe expression-mode)
+                   (not (true? cue-variation-pads?))
                    (or (nil? columns) (and (pos-int? columns) (<= columns 64)))
                    (or (nil? leds) (and (map? leds) (every? #{:palette :animations :button-on :button-off} (keys leds)))))
       (throw (ex-info (str "A Push 3 cue grid needs :buttons mapping captured, unbound User Mode buttons to "
                            "cue-grid actions (including :cue-grid/select or :cue-grid/reorder), captured pads "
-                           "and an aftertouch expression mode")
+                           "and an aftertouch expression mode, without :cue-variation-pads?")
                       {:push-3/error :invalid-cue-grid :cue-grid cue-grid})))
     cue-grid))
 
@@ -125,17 +134,50 @@
 (defn- fence [model commands]
   (mapv #(merge % (select-keys model [:show-id :epoch])) commands))
 
+(defn- running? [model id] (= :running (get-in model [:instances id :phase])))
+
+(defn- point-at
+  "Make a running launch what the Push encoders and display edit."
+  [state model id]
+  (-> state
+      (assoc :selected-instance id :selected-cue (get-in model [:instances id :cue-id]))
+      (assoc-in [::grid :edited] id)))
+
+;; One selection. The surface's committed :selected and the launch the
+;; Afterglow profile edits (:selected-instance) are kept equal both ways:
+;; ::grid :adopted is the committed value last applied, :edited the profile
+;; target last seen.
+
 (defn- adopt-selection
-  "Point the Push's encoders and display at this surface's committed
-  selection when it changes to a running launch."
+  "A committed selection change (a pad, Studio, the REPL or a linked member)
+  points the encoders at that launch."
   [state model v]
   (let [[kind id :as selected] (:selected v)]
-    (if (and (= :instance kind) (not= selected (get-in state [::grid :adopted]))
-             (= :running (get-in model [:instances id :phase])))
-      (-> state
-          (assoc :selected-instance id :selected-cue (get-in model [:instances id :cue-id]))
-          (assoc-in [::grid :adopted] selected))
-      state)))
+    (if (= selected (get-in state [::grid :adopted]))
+      state
+      (cond-> (assoc-in state [::grid :adopted] selected)
+        (and (= :instance kind) (running? model id)) (point-at model id)))))
+
+(defn- publish-selection
+  "A change the profile made itself (a launch pad and its ack, a cue gesture,
+  the display falling back to the latest launch) is committed as the shared
+  selection, so Studio and the REPL see what the Push edits. Returns
+  {:state :commands}."
+  [{:keys [surface-id]} state model v]
+  (let [current (:selected-instance state)]
+    (cond
+      (= current (get-in state [::grid :edited])) {:state state :commands []}
+      (and (some? current) (running? model current) (not= [:instance current] (:selected v)))
+      {:state (update state ::grid assoc :edited current :adopted [:instance current])
+       :commands (fence model [{:op :control-surface/layout :target surface-id :viewport viewport
+                                :set {:selected [:instance current]}}])}
+      :else {:state (assoc-in state [::grid :edited] current) :commands []})))
+
+(defn- with-published [options model v result]
+  (if-let [state (:state result)]
+    (let [{state :state commands :commands} (publish-selection options state model v)]
+      (cond-> (assoc result :state state) (seq commands) (update :commands (fnil into []) commands)))
+    result))
 
 (defn- grid-input [{:keys [surface-id buttons] :as options} underlying state event model envelope]
   (let [{:keys [type control-id pressed?] :as decoded} event
@@ -145,9 +187,15 @@
         normalized (when (#{:pad :poly-pressure} type)
                      (some-> (descriptor/push-3-event surface-id decoded) (update :at viewport-position)))
         identity (:identity normalized)
-        apply-grid (fn [{g :state commands :commands}]
-                     {:state (assoc state ::grid g) :commands (fence model commands)})]
-    (cond
+        apply-grid (fn [{g :state commands :commands selection :selection}]
+                     (let [[kind id] selection]
+                       ;; Select re-applies even the committed launch: the encoders
+                       ;; return to it after any local drift.
+                       {:state (cond-> (assoc state ::grid g)
+                                 (and (= :instance kind) (running? model id))
+                                 (-> (point-at model id) (assoc-in [::grid :adopted] selection)))
+                        :commands (fence model commands)}))
+        result (cond
       (and (= :button type) (contains? buttons control-id))
       (if pressed?
         (apply-grid (cue-grid/action grid surface-id viewport (get buttons control-id)))
@@ -162,12 +210,14 @@
       (and (= :poly-pressure type) (cue-grid/owns? grid identity))
       {:state state}
 
-      :else (lift state underlying event model envelope))))
+      :else (or (lift state underlying event model envelope) {:state state}))]
+    (with-published options model v result)))
 
 (defn- grid-feedback [{:keys [layout buttons leds] :as options} underlying state model envelope]
   (let [v (view options model)
         state (adopt-selection state model v)
-        base (if underlying (or (lift state underlying model envelope) {:state state}) {:state state})
+        base (with-published options model v
+               (if underlying (or (lift state underlying model envelope) {:state state}) {:state state}))
         state (:state base state)
         grid (::grid state)
         {projected :state pads :pads} (cue-grid/project grid model v)
