@@ -357,6 +357,14 @@
   (let [{:keys [model variable-observation]} @(:state runtime)]
     (:variables (variable-blocks/resolved model variable-observation))))
 
+(defn parameter-sample
+  "The latest committed frame's resolved parameters: its identity and each
+  running instance's effective parameters and response values. Reads the
+  sample Studio and Push share for that frame, so it never resolves an
+  instance a second time. (show/parameter-sample rt)"
+  [runtime]
+  (waveforms/frame-parameters @(:state runtime)))
+
 (declare prepare-output prepare-safety-output present-output! heartbeat! submit!)
 
 (defn attach-observer!
@@ -3356,7 +3364,11 @@
                (swap! (:fog-deadlines runtime) fog-deadline/remember
                       (or (:frame-id presentation-token) (get-in next-state [:model :frame-number] 0))
                       (when-not restored? (get-in next-state [:output :fog-demands]))))
-             (reset! (:state runtime) (dissoc next-state :autopilot-author-request :pending-reactive-faults))
+             ;; Every consumer of this committed state shares one parameter
+             ;; sample, held beside it rather than inside it (#533).
+             (reset! (:state runtime) (waveforms/remember-frame!
+                                        (:state runtime)
+                                        (dissoc next-state :autopilot-author-request :pending-reactive-faults)))
              (commit-draft-view! runtime draft-initial @draft-view)
              (vreset! author-request (:autopilot-author-request next-state))
              (event-callbacks/publish! (:event-callbacks runtime) (:model next-state) @inline-registrations)
@@ -3647,6 +3659,7 @@
       (doseq [cleanup (concat (map :close! (vals (first (swap-vals! (:observers runtime) (constantly {})))))
                              (map #(fn [] (connections/abort-prepared! %)) @candidates)
                              [#(some-> (:recovery runtime) deref recovery/close!)
+                              #(waveforms/forget-frames! (:state runtime))
                               #(when (realized? (:parameter-frames runtime)) (parameter-frames/stop! @(:parameter-frames runtime)))
                               #(when-let [writer (some-> (:live-runs runtime) deref :device-writer)]
                                  (when (realized? writer) (.shutdownNow ^java.util.concurrent.ExecutorService @writer)))
@@ -3789,16 +3802,18 @@
            (precision/push-view precision-cache (:model snapshot))))))
 
 (defn- leasing-response-samples
-  "Retain exact response inputs on committed frames only while this display is open."
-  [runtime transport]
-  (assoc transport
-         :open! (fn []
-                  (let [release (lease-response-samples! runtime)]
-                    (try (assoc ((:open! transport)) ::release-response-samples release)
-                         (catch Throwable error (release) (throw error)))))
-         :close! (fn [handle]
-                   (try ((:close! transport) handle)
-                        (finally (when-let [release (::release-response-samples handle)] (release)))))))
+  "Retain exact response inputs on committed frames only while this display is
+  open and, with demanded?, only while it shows parameter readings."
+  ([runtime transport] (leasing-response-samples runtime (constantly true) transport))
+  ([runtime demanded? transport]
+   (assoc transport
+          :open! (fn []
+                   (let [release (lease-response-samples! runtime demanded?)]
+                     (try (assoc ((:open! transport)) ::release-response-samples release)
+                          (catch Throwable error (release) (throw error)))))
+          :close! (fn [handle]
+                    (try ((:close! transport) handle)
+                         (finally (when-let [release (::release-response-samples handle)] (release))))))))
 
 (defn push-browser-display
   "Build a Push display transport using Studio's shared reactive components.
@@ -3808,8 +3823,12 @@
   [runtime options]
   (let [project-parameters (push-parameter-projector)
         pages (volatile! nil)
-        scene-cache (push-scene/create-cache)]
-    (leasing-response-samples runtime
+        scene-cache (push-scene/create-cache)
+        ;; Whether the last projected view read parameter values. Scene,
+        ;; block-trace and pad-overlay views do not, so the owner keeps no
+        ;; response samples for them.
+        reading? (atom true)]
+    (leasing-response-samples runtime #(deref reading?)
      (display/browser-display
      (assoc options :project!
             (fn [view]
@@ -3818,6 +3837,7 @@
                     view (push-knobs/project-display model view)
                     mode (if (:pad-overlay view) :parameters
                              (or (:display-mode view) (get-in model [:settings :controllers :push-display :mode]) :parameters))
+                    _ (reset! reading? (and (not (:pad-overlay view)) (contains? #{:parameters :audio} mode)))
                     view (cond-> (assoc view :display-mode mode)
                            (#{:parameters :audio} mode)
                            (assoc-in [:visualization-clock :sample-period-ms]
