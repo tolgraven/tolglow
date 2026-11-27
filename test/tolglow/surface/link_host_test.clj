@@ -120,6 +120,7 @@
           (tick!)
           (refresh!)
           (is (= {:id "desk" :link? true :viewport :strips :mode :extend :direction :right :window {:x 0 :y 0} :span {:columns 16 :rows 1}
+                  :content-type :mixer-strips :count 20
                   :size {:columns 20 :rows 1} :limit {:x 16 :y 0} :layout surface/layout-defaults}
                  (dissoc (logical runtime "desk") :members)))
           (is (= [[0 [0 7]] [8 [8 15]]] [(shown runtime "xt-main") (shown runtime "xt-ext")]))

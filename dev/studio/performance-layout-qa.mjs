@@ -279,6 +279,41 @@ async function verifyCueActions(page, name) {
   await actions.waitFor({state:'hidden'});
 }
 
+// Every control in a compact strip slot stays inside that slot, slots do not
+// overlap, and the board's header actions do not overlap each other (#655),
+// so no press lands on a neighbour's control.
+async function checkStripContainment(page,name) {
+  const problems=await page.evaluate(()=>{
+    const out=[];
+    const box=e=>e.getBoundingClientRect();
+    const sized=r=>r.width>0&&r.height>0;
+    const inside=(r,o)=>r.left>=o.left-1&&r.right<=o.right+1&&r.top>=o.top-1&&r.bottom<=o.bottom+1;
+    const overlap=(a,b)=>Math.min(a.right,b.right)-Math.max(a.left,b.left)>1&&Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top)>1;
+    for(const strip of document.querySelectorAll('.control-strip')) {
+      const rows=[...strip.children].filter(e=>e.matches('.param-row')&&sized(box(e)));
+      rows.forEach((row,i)=>{
+        const r=box(row);
+        for(const e of row.querySelectorAll('[role=slider],button,input,select,.compound-control,.axis-control,.fader-track,.fader-thumb')) {
+          const b=box(e);
+          if(sized(b)&&!inside(b,r)) out.push((row.dataset.param||row.dataset.group)+' '+(e.getAttribute('aria-label')||e.className)+' leaves its slot');
+        }
+        rows.slice(i+1).forEach(other=>{ if(overlap(r,box(other))) out.push((row.dataset.param||row.dataset.group)+' overlaps '+(other.dataset.param||other.dataset.group)); });
+      });
+    }
+    for(const actions of document.querySelectorAll('.live-board-actions')) {
+      const items=[...actions.children].filter(e=>sized(box(e)));
+      // A squeezed group can paint its buttons over the next item while the
+      // group boxes themselves do not overlap, so compare every part.
+      const parts=a=>[a,...a.querySelectorAll('.button,label,select,summary,span')].filter(e=>sized(box(e)));
+      items.forEach(a=>items.forEach(b=>{
+        if(a!==b) for(const e of parts(a)) if(overlap(box(e),box(b))) out.push('header actions overlap: '+e.textContent.trim()+' / '+b.textContent.trim());
+      }));
+    }
+    return out;
+  });
+  assert.deepEqual(problems,[],'Strip containment at '+name);
+}
+
 try {
   for(const [name,width,height,touch,device] of profiles) {
     const descriptor = webkitRun ? devices[device] : {};
@@ -296,6 +331,7 @@ try {
     measurements[name]=await measureCards(page);
     assert.equal(measurements[name].horizontalOverflow,0,'Document overflow at '+name);
     await checkCardAlignment(page, name, directory, measurements[name]);
+    await checkStripContainment(page, name);
     await checkCardGrid(page, name, directory, measurements[name]);
     await positionBoard(page);
     if(process.env.STUDIO_CARD_LAYOUT_ONLY==='1') {

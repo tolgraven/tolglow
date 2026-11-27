@@ -504,7 +504,8 @@
     (available video! "Video mapping unavailable"
                #(await-acknowledgement (video! :save-glsl (:json-params %))))}
    (post-actions "/api/fixtures/" fixture! acknowledgement
-                 {"search" :search "refresh" :refresh "fetch" :fetch "import" :import "publish" :publish "patch" :patch})
+                 {"search" :search "refresh" :refresh "fetch" :fetch "import" :import "publish" :publish "patch" :patch
+                  "aim-check" :aim-check "aim-fit" :aim-fit})
    (post-actions "/api/rdm/" rdm! acknowledgement
                  {"connect" :connect "disconnect" :disconnect "discover" :discover "read" :read "command" :command
                   "cancel" :cancel "associate" :associate "unassociate" :unassociate "adopt" :adopt} "RDM service unavailable")

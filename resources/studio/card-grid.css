@@ -90,7 +90,8 @@
 
 /* Pads: the pad fills the slot above its readout; a Z fader stands beside it. */
 #view-perform [data-slot-grid] .param-row>.compound-control {
-  display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; gap: 4px; align-items: stretch;
+  display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; gap: 4px;
+  align-items: stretch; justify-items: stretch; width: auto; max-width: none;
 }
 #view-perform [data-slot-grid] .compound-control[data-widget=xyz] { grid-template-columns: minmax(0, 1fr) 44px; }
 #view-perform [data-slot-grid] .compound-control>.parameter-xy { grid-column: 1; grid-row: 1; width: auto; height: auto; min-width: 0; max-width: none; min-height: 0; aspect-ratio: auto; }

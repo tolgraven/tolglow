@@ -28,7 +28,7 @@
                                                (registrar/get-handler :event (first event))))))
 
 (deftest the-outline-names-the-surface-strip-of-each-group-and-cue-instance
-  (is (= {:groups {[:manual :g16] "xt-main 1"} :instances {"3:7" "xt-main 4"}}
+  (is (= {:groups {[:manual :g16] "xt-main 1"} :instances {"3:7" "xt-main 4"} :selected {}}
          (surfaces/on-surface projected)))
   (is (= "Strips 17–20 of 20" (surfaces/range-label (first (:logical projected)))))
   (is (= "No strips" (surfaces/range-label {:window {:x 0} :span {:columns 8} :size {:columns 0}}))))
@@ -82,3 +82,30 @@
   (is (= "Plug-in · page 2 · cue ember · flipped"
          (surfaces/layout-label {:encoder-mode :plug-in :page 1 :selected [:cue :ember] :flip? true})))
   (is (= "Pan · group mix" (surfaces/layout-label {:encoder-mode :pan :page 0 :selected [:group [:manual :mix]]}))))
+
+(def grid-projection
+  {:settings {:follow-selection? true}
+   :surfaces [{:id "push-a" :attached? true}]
+   :logical [{:id "push-a" :link? false :viewport :grid :mode :single :content-type :active-cues :count 70
+              :window {:x 0 :y 8} :span {:columns 8 :rows 8} :size {:columns 8 :rows 9} :limit {:x 0 :y 8}
+              :layout {:selected [:instance "3:70"]}
+              :members [{:surface-id "push-a" :viewport :grid :attached? true :window {:x 0 :y 8}
+                         :cells [{:key [:instance "3:65"] :instance-id "3:65" :position {:x 0 :y 0}}
+                                 {:key [:instance "3:70"] :instance-id "3:70" :position {:x 5 :y 0}}]}]}]})
+
+(deftest a-cue-grid-names-row-and-pad-and-its-selected-launch
+  (is (= {:groups {} :instances {"3:65" "push-a 1·1" "3:70" "push-a 1·6"} :selected {"3:70" "push-a"}}
+         (surfaces/on-surface grid-projection)))
+  (is (= "Cues 65–70 of 70" (surfaces/range-label (first (:logical grid-projection)))))
+  (is (= "Cues 1–64 of 70" (surfaces/range-label (assoc (first (:logical grid-projection)) :window {:x 0 :y 0}))))
+  (is (= "No running cues" (surfaces/range-label {:content-type :active-cues :count 0 :window {:x 0 :y 0}
+                                                  :span {:columns 8 :rows 8} :size {:columns 0 :rows 0}}))))
+
+(deftest following-a-studio-card-selects-the-launch-on-a-cue-grid
+  (let [db (-> base
+               (assoc-in [:server-projection :view :control-surfaces] grid-projection)
+               (assoc-in [:server-projection :view :instances] [{:id "3:65" :cue-id :c1}]))]
+    (is (= [[:dispatch [:surfaces/reveal "push-a" :grid [:instance "3:65"]]]
+            [:dispatch [:surfaces/layout "push-a" :grid {:selected [:instance "3:65"]}]]]
+           (:fx (transition db [:surfaces/follow [:instance "3:65"]]))))
+    (is (nil? (transition db [:surfaces/follow [:group [:manual :g2]]])) "A group is not on a cue grid")))

@@ -5,6 +5,7 @@
             [tolglow.authoring.card-layout :as card-layout]
             [tolglow.studio.checkpoints :as checkpoints]
             [tolglow.studio.fog-fields :as fog]
+            [tolglow.studio.frame-stream :as frame-stream]
             [tolglow.studio.operator-history :as history]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.page-routes :as pages]
@@ -441,10 +442,19 @@
 (defn- current-stream? [db session id]
   (and (= session (:session db)) (some? id) (= id (:stream-id db))))
 
+(defn- lane-installs
+  "Split an accepted projection into the app-db projection and one whole frame
+  per high-rate lane, all at the accepted token."
+  [{:keys [token view] :as state}]
+  (let [[app-view lanes] (frame-stream/split-view view)]
+    [(assoc state :view app-view)
+     (into {} (map (fn [[lane part]] [lane (frame-stream/frame token view part)])) lanes)]))
+
 (rf/reg-event-fx :studio/stream-frame
-  (fn [{:keys [db]} [_ session id envelope]]
+  [(rf/inject-cofx :studio/frame-baselines)]
+  (fn [{:keys [db frame-baselines]} [_ session id envelope]]
     (when (current-stream? db session id)
-      (let [current (:server-projection db)
+      (let [current (frame-stream/join-view (:server-projection db) frame-baselines)
             received (if (and (:awaiting-full? db) (not= :full (:kind envelope)))
                        {:status :resync}
                        (projection/receive current envelope))]
@@ -454,9 +464,16 @@
           ;; Another show answered on this window's address: never install or acknowledge it.
           :foreign {:db (assoc db :awaiting-full? true
                                :connection {:connected? false :error (show-window/refusal-message db)})}
-          :accepted (-> (install-show db (:state received))
-                        (update :db dissoc :awaiting-full?)
-                        (assoc :studio/stream-reply [id {:op :ack :token (:token envelope)}]))
+          ;; High-rate lanes install outside app-db at the same token. The ACK
+          ;; follows both installations; lane consumers hear of the frame only
+          ;; after it, so their work never holds back the next server frame.
+          :accepted (let [[state installs] (lane-installs (:state received))]
+                      (-> (install-show db state)
+                          (update :db dissoc :awaiting-full?)
+                          (update :fx (fnil into [])
+                                  [[:studio/frame-install installs]
+                                   [:studio/stream-reply [id {:op :ack :token (:token envelope)}]]
+                                   [:studio/frame-notify (vec (keys installs))]])))
           :duplicate (cond-> {:db (-> db (dissoc :awaiting-full?) (assoc :connection {:connected? true}))
                               :studio/stream-reply [id {:op :ack :token (:token envelope)}]}
                        (and (:awaiting-full? db) (:recover-held? db))
@@ -664,13 +681,11 @@
                 (when-let [why (reason (:code missed))] (str ": " why)))))))
 
 (defn room-show
-  "The show the Room preview renders. A staged draft's audition frame replaces
-  only the Room's fixture values; every other preview keeps the live frame."
+  "The show the Perform Room renders. Live fixture values and a staged draft's
+  audition values both arrive on the :room frame lane; only this Room shows
+  the audition, so every other preview keeps the live frame."
   [db]
-  (let [show (or (:server-presentation db) (:show db))]
-    (if-let [values (get-in show [:draft-output :values])]
-      (assoc-in show [:output :values] values)
-      show)))
+  (or (:server-presentation db) (:show db)))
 
 (defn- scene-draft-fx [db unique op fields]
   (let [{:keys [id revision]} (scene-draft-control db)]
@@ -894,6 +909,15 @@
       ;; a gesture that changes nothing sends nothing.
       (when (and next (not= next current))
         (set-param-fx cofx [:studio/param-set instance-id param next])))))
+(rf/reg-event-fx :studio/param-set-if-changed
+  ;; Grouped X/Y/Z axes are separate parameters. A pad gesture sends an axis
+  ;; only when it differs from the latest value in app-db, so two pointer
+  ;; events inside one frame cannot suppress a real change.
+  (fn [{:keys [db] :as cofx} [_ instance-id param value fallback]]
+    (let [params (:params (some #(when (= (:id %) instance-id) %) (get-in db [:show :instances])))
+          current (some #(when (contains? params %) (get params %)) [param (keyword (wire-id param)) (wire-id param)])]
+      (when (not= value (if (some? current) current fallback))
+        (set-param-fx cofx [:studio/param-set instance-id param value])))))
 (rf/reg-event-fx :studio/param-component-key
   (fn [{:keys [db] :as cofx} [_ instance-id param schema index key fallback]]
     (let [current (vector-value db instance-id param fallback)]
