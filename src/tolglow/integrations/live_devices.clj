@@ -34,6 +34,7 @@
             [afterglow.control.params :as params]
             [tolglow.authoring.parameter-controls :as controls]
             [tolglow.authoring.parameter-layout :as parameter-layout]
+            [tolglow.registry :as registry]
             [tolglow.studio.parameter-precision :as precision]
             [tolglow.visualization.parameter-views :as views]))
 
@@ -142,15 +143,43 @@
       (fail! "An effect channel holds at most 256 Live parameter slots" {:slots (:next layout)}))
     layout))
 
+(defn- assign [layout k slot]
+  (-> layout (assoc-in [:slots k] slot) (update :order conj k) (update :next max (inc slot))))
+
+(defn seed-layout
+  "A layout rebuilt from what a Set's parameter devices show, so a restarted
+  show keeps every parameter on the slot its automation was recorded for.
+  names->key maps a slot name the current spec would show to its
+  [param component]; read-back is the inspected devices
+  [{:ordinal o :parameters [{:index i :name n}]}]. A slot whose name the
+  current revision no longer produces (an Unused slot, a removed parameter)
+  stays reserved; a slot that was never configured (\"slot n\") is free.
+  Keys without a slot are then allocated after the highest one."
+  [names->key read-back keys]
+  (allocate
+   (reduce (fn [layout {:keys [ordinal parameters]}]
+             (reduce (fn [layout {:keys [index name]}]
+                       (let [slot (+ (* slots-per-device (or ordinal 0)) index)
+                             k (get names->key name)]
+                         (cond (some #{slot} (vals (:slots layout))) layout
+                               (and k (not (contains? (:slots layout) k))) (assign layout k slot)
+                               (or (not (string? name)) (re-matches #"slot \d+" name)) layout
+                               :else (assign layout [::reserved slot] slot))))
+                     layout (sort-by :index parameters)))
+           (new-layout) (sort-by :ordinal read-back))
+   keys))
+
 (defn devices-needed [layout] (max 1 (long (Math/ceil (/ (:next layout 0) (double slots-per-device))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Device spec
 
-(defn- definition-of [model cue-id]
-  (let [registry (:registry model)
-        cue (get-in registry [:cues cue-id])]
-    (when cue [cue (get-in registry [:effects (:effect-id cue)])])))
+(defn- definition-of
+  "The cue and the effect revision it launches, honouring an :effect-version pin."
+  [model cue-id]
+  (let [reg (:registry model)
+        cue (get-in reg [:cues cue-id])]
+    (when cue (when-let [effect (registry/cue-effect reg cue)] [cue effect]))))
 
 (defn- annotate
   "The definition with :dmx-bits on parameters that reach a patched channel,
@@ -233,12 +262,21 @@
 (defn- schema-of [model cue-id param]
   (when-let [[_ definition] (definition-of model cue-id)] (get-in definition [:params param])))
 
-(defn- choice-index [listed value]
+(defn- instance-schema
+  "The schema a running instance actually uses: its own (pinned) definition,
+  else the cue's current one."
+  [model cue-id instance-id param]
+  (or (get-in model [:instances instance-id :definition :params param])
+      (schema-of model cue-id param)))
+
+(defn- choice-index
+  "The index of a choice holding value; for numeric choices the nearest one.
+  nil for a value no choice holds, so Live never shows a wrong choice."
+  [listed value]
   (let [numeric (every? (comp number? :value) listed)]
     (or (first (keep-indexed (fn [i c] (when (= value (:value c)) i)) listed))
         (when (and numeric (finite? value))
-          (first (apply min-key (fn [[_ c]] (Math/abs (- (double value) (double (:value c))))) (map-indexed vector listed))))
-        0)))
+          (first (apply min-key (fn [[_ c]] (Math/abs (- (double value) (double (:value c))))) (map-indexed vector listed)))))))
 
 (defn native-value
   "A typed parameter value as the slot's native Live value, or nil when the
@@ -321,10 +359,21 @@
         (when (and take-id (= take-id (get-in record [:open instance-id]))) instance-id))))
 
 (defn new-state
-  "Owner state: layouts per cue channel, echoes, holds and counters."
+  "Owner state: layouts per cue channel, outstanding writes (expected echoes),
+  holds, values waiting for a replay's launch and counters."
   []
-  {:state/version 1 :layouts {} :echo {} :holds #{} :automation {} :serials #{} :serial-order []
-   :seen #{} :seen-order [] :counts {}})
+  {:state/version 1 :layouts {} :echo {} :write-seq 0 :holds #{} :automation {} :serials #{} :serial-order []
+   :seen #{} :seen-order [] :counts {} :hsv {} :waiting {}})
+
+(defn current-key?
+  "Is [param component] a slot of this schema now? A slot whose parameter was
+  removed or reshaped (a number become a colour, a vector shortened) is not."
+  [schema component catalog]
+  (when schema
+    (let [{:keys [kind components]} (slot-kind schema catalog)]
+      (cond (nil? kind) false
+            (#{:color :vector :range} kind) (and (integer? component) (< -1 component components))
+            :else (nil? component)))))
 
 (defn ensure-layouts
   "Allocate slots for every channel of the run record whose cue has an
@@ -338,6 +387,33 @@
                      (update s :problems (fnil conj []) {:code :too-many-slots :cue-id cue-id :message (.getMessage e)})))
               s))
           (dissoc state :problems) (:channel-order record)))
+
+(defn seed-from-set
+  "Rebuild the layout of every channel not yet seeded from the parameter
+  devices its run tracks show in an inspected Set (tracks named by
+  track-name-fn [cue-id lane]), then mark every layout seeded. Before its
+  first sync a layout has written nothing to Live, so replacing it is safe."
+  [state model set-snapshot track-name-fn lanes-by-cue catalog]
+  (reduce-kv
+   (fn [s cue-id layout]
+     (if (:seeded? layout)
+       s
+       (let [devices (vec (for [lane (range (get lanes-by-cue cue-id 1))
+                                track (:tracks set-snapshot)
+                                :when (= (track-name-fn cue-id lane) (:name track))
+                                d (:parameter-devices track)]
+                            d))
+             [cue definition] (definition-of model cue-id)
+             keys (when definition (:keys (slot-keys definition cue catalog)))
+             names->key (when definition
+                          (into {} (map (juxt :name (juxt :param :component)))
+                                (remove :retired? (:slots (device-spec model cue-id (allocate nil keys) catalog)))))
+             layout (if (and (seq devices) definition)
+                      (try (seed-layout names->key (vals (into {} (map (juxt :ordinal identity)) devices)) keys)
+                           (catch clojure.lang.ExceptionInfo _ layout))
+                      layout)]
+         (assoc-in s [:layouts cue-id] (assoc layout :seeded? true)))))
+   state (:layouts state)))
 
 (defn specs
   "{cue-id spec} for every channel with a layout."
@@ -354,9 +430,39 @@
       (assoc state :serials (conj (:serials state) k) :serial-order order))))
 
 (def echo-tolerance
-  "Fraction of a slot's range within which a value Live reports back equals
-  the one Tolglow wrote (Live keeps 32-bit floats)."
+  "Fraction of a continuous slot's range within which a value Live reports
+  back equals the one Tolglow wrote (Live keeps 32-bit floats). Integer,
+  choice and toggle slots match within half a step."
   1e-5)
+
+(def echo-timeout-ms
+  "An outstanding write whose echo has not come back within this long is
+  forgotten."
+  3000)
+
+(def max-outstanding
+  "Writes per slot that may wait for their echo at once."
+  16)
+
+(defn- echo-match
+  "The index of the outstanding write a reported value echoes, or nil."
+  [entries value schema catalog]
+  (let [{:keys [kind]} (slot-kind schema catalog)
+        [lo hi] (live-bounds schema)
+        tolerance (if (#{:enum :toggle :integer} kind)
+                    0.5
+                    (* echo-tolerance (max 1e-9 (if (and lo hi (not= :color kind)) (- hi lo) 1.0))))]
+    (first (keep-indexed (fn [i {v :value}] (when (<= (Math/abs (- (double value) (double v))) tolerance) i)) entries))))
+
+(defn forget-writes
+  "Forget the outstanding writes with these sequence numbers (a send that did
+  not execute), leaving newer writes' echoes in place."
+  [state track-id seqs-by-slot]
+  (reduce-kv (fn [s slot seqs]
+               (let [k [track-id slot] gone (set seqs)
+                     left (filterv #(not (gone (:seq %))) (get-in s [:echo k]))]
+                 (if (seq left) (assoc-in s [:echo k] left) (update s :echo dissoc k))))
+             state seqs-by-slot))
 
 (defn- slot-of [layout param component] (get-in layout [:slots [param component]]))
 
@@ -367,18 +473,61 @@
   [state track-id]
   (update state :holds #(into #{} (remove (fn [[t]] (= t track-id))) %)))
 
+(defn- playing-entry [player track-id] (get-in player [:playing track-id]))
+
+(defn- valid-for? [schema value]
+  (try (or (not (#{:number :integer :boolean :enum :color :gradient :vector :range} (tag (:type schema))))
+           (params/valid-value? (update schema :type tag) value))
+       (catch Exception _ false)))
+
+(defn- colour-base
+  "The hue, saturation and brightness a colour slot edits: the cached
+  components while they still describe the instance's value (so a hue
+  survives passing through grey), else read from the value itself."
+  [state instance-id param schema current]
+  (let [cached (get-in state [:hsv [instance-id param]])
+        current (if (some? current) current (default-value schema))]
+    (or (when (and cached (vector? current)
+                   (every? true? (map #(< (Math/abs (- (double %1) (double %2))) 1e-6) (color-value schema cached) current)))
+          cached)
+        (try (color-components schema current) (catch Exception _ nil)))))
+
 (defn ingest
   "Decode parameter-device values reported by the companion into commands.
-  ctx: {:model :record :mirror :player :envelope-fn :catalog}. An event:
+  ctx: {:model :record :mirror :player :envelope-fn :catalog :now-ms}. An event:
     {:type :parameter-device-value :track-id t :slot n :value v
-     :automation-state 0|1|2 :watch-session w :serial k}
+     :automation-state 0|1|2 :value-changed? bool :watch-session w :serial k}
   automation-state is Live's DeviceParameter.automation_state: 1 means the
-  value is automation playing back. {:type :clip-started :track-id t} (queued
-  by the host when a run clip starts) hands that track's slots back to Live
-  playback. Returns {:state :commands :dropped}, at most one :param/set per
-  instance parameter (the last value wins)."
-  [state {:keys [model mirror envelope-fn catalog] :as ctx} events]
+  value is automation playing back. :value-changed? false reports a change of
+  automation state alone (an override, a re-enable): it updates ownership and
+  moves nothing. {:type :clip-started :track-id t} (queued by the host when a
+  run clip starts) hands that track's slots back to Live playback.
+  - A value that matches any outstanding Tolglow write of its slot is that
+    write's echo: it and every older outstanding write are dropped.
+  - A slot whose parameter the instance's definition no longer has in that
+    shape (retired) is dropped before decoding.
+  - Values for a track whose replayed clip has not had its launch
+    acknowledged wait (up to 64 per track) and apply to that replay once it
+    exists; they are dropped if the clip stops first.
+  Returns {:state :commands :dropped}, at most one :param/set per instance
+  parameter (the last value wins). A value that cannot be applied is counted
+  and dropped; nothing here throws on Live's data."
+  [state {:keys [model mirror player envelope-fn catalog now-ms] :as ctx} events]
   (let [lanes (track-lanes mirror)
+        now (or now-ms 0)
+        state (-> state
+                  (update :hsv #(into {} (filter (fn [[[id] _]] (contains? (:instances model) id))) %))
+                  ;; Outstanding writes whose echo never came back expire.
+                  (update :echo #(into {} (keep (fn [[k es]] (let [es (filterv (fn [e] (< (- now (:at e 0)) echo-timeout-ms)) es)]
+                                                               (when (seq es) [k es])))) %)))
+        ;; Values that waited for a replay's launch, now bound or abandoned.
+        [state released]
+        (reduce-kv (fn [[s out] track-id waiting]
+                     (let [entry (playing-entry player track-id)]
+                       (cond (:instance-id entry) [(update s :waiting dissoc track-id) (into out waiting)]
+                             entry [s out]
+                             :else [(-> s (update :waiting dissoc track-id) (update-in [:counts :waiting-dropped] (fnil + 0) (count waiting))) out])))
+                   [state []] (:waiting state))
         step
         (fn [{:keys [state] :as acc} {:keys [track-id slot value watch-session serial] :as event}]
           (let [automation (get event :automation-state 0)
@@ -394,48 +543,59 @@
                 [cue-id lane] (get lanes track-id)
                 layout (get-in state [:layouts cue-id])
                 [param component] (when layout (key-of layout slot))
-                schema (when param (schema-of model cue-id param))
-                echo (get-in state [:echo k])
-                span (let [[lo hi] (when schema (live-bounds schema))] (if (and lo hi) (- hi lo) 1.0))]
+                entry (playing-entry player track-id)
+                instance-id (when cue-id (target-instance ctx track-id cue-id lane))
+                schema (when param (if instance-id (instance-schema model cue-id instance-id param) (schema-of model cue-id param)))
+                outstanding (get-in state [:echo k])
+                echo (when (and schema (seq outstanding) (finite? value)) (echo-match outstanding value schema catalog))]
             (cond
               (not (finite? value)) (drop! state :invalid)
               (nil? cue-id) (drop! state :unknown-track)
-              (nil? schema) (drop! state :unknown-slot)
-              (and echo (<= (Math/abs (- (double value) (double echo))) (* echo-tolerance (max span 1e-9))))
-              (drop! (update state :echo dissoc k) :echo)
+              (nil? param) (drop! state :unknown-slot)
+              (not (current-key? schema component catalog)) (drop! state :retired)
+              echo (drop! (let [left (subvec outstanding (inc echo))]
+                            (if (seq left) (assoc-in state [:echo k] left) (update state :echo dissoc k)))
+                          :echo)
+              (false? (:value-changed? event)) (-> acc (assoc :state (count! state :state-only)))
               (and (= 1 automation) (contains? (:holds state) k)) (drop! state :held)
+              (and entry (nil? (:instance-id entry)))
+              (if (< (count (get-in state [:waiting track-id])) 64)
+                (assoc acc :state (-> state (update-in [:waiting track-id] (fnil conj []) event) (count! :waiting)))
+                (drop! state :waiting-full))
+              (not (and instance-id (get-in model [:instances instance-id]))) (drop! state :no-instance)
               :else
-              (let [instance-id (target-instance ctx track-id cue-id lane)]
-                (if-not (and instance-id (get-in model [:instances instance-id]))
-                  (drop! state :no-instance)
-                  (let [current (get-in acc [:pending [instance-id param]] (get-in model [:instances instance-id :params param]))
-                        color? (= :color (:kind (slot-kind schema catalog)))
-                        hsv (when color?
-                              (let [base (or (get-in state [:hsv [instance-id param]])
-                                             (try (color-components schema (if (some? current) current (default-value schema)))
-                                                  (catch Exception _ nil)))]
-                                (when base (assoc base component (clamp (double value) 0.0 1.0)))))
-                        typed (if color?
-                                (when hsv (color-value schema hsv))
-                                (typed-value schema current component value catalog))]
-                    (if (nil? typed)
-                      (drop! state :invalid)
-                      (-> acc
-                          (assoc :state (cond-> (-> state (count! :applied) (update :echo dissoc k))
-                                          hsv (assoc-in [:hsv [instance-id param]] hsv)))
-                          (assoc-in [:pending [instance-id param]] typed)
-                          (assoc-in [:meta [instance-id param]]
-                                    {:origin (if (= 1 automation) :live-playback :live-input)
-                                     :track-id track-id :slot slot})))))))))
+              (let [current (get-in acc [:pending [instance-id param]] (get-in model [:instances instance-id :params param]))
+                    color? (= :color (:kind (slot-kind schema catalog)))
+                    hsv (when color?
+                          (when-let [base (colour-base state instance-id param schema current)]
+                            (assoc base component (clamp (double value) 0.0 1.0))))
+                    typed (try (if color?
+                                 (when hsv (color-value schema hsv))
+                                 (typed-value schema current component value catalog))
+                               (catch Exception _ nil))]
+                (if (or (nil? typed) (not (valid-for? schema typed)))
+                  (drop! state :invalid)
+                  (-> acc
+                      (assoc :state (cond-> (count! state :applied)
+                                      hsv (assoc-in [:hsv [instance-id param]] hsv)))
+                      (assoc-in [:pending [instance-id param]] typed)
+                      (assoc-in [:meta [instance-id param]]
+                                {:origin (if (= 1 automation) :live-playback :live-input)
+                                 :track-id track-id :slot slot})))))))
+        safe-step (fn [acc event]
+                    (try (step acc event)
+                         (catch Exception _
+                           (-> acc (update :state count! :invalid)
+                               (update :dropped conj (assoc (select-keys event [:track-id :slot :serial]) :reason :invalid))))))
         result (reduce (fn [acc {:keys [type watch-session serial] :as event}]
                          (cond
                            (= :clip-started type) (update acc :state clip-started (:track-id event))
                            (not= :parameter-device-value type) (update acc :state count! :unknown-event)
-                           (and serial (contains? (:serials (:state acc)) [watch-session serial]))
+                           (and serial (not (::released event)) (contains? (:serials (:state acc)) [watch-session serial]))
                            (update acc :state count! :repeat)
-                           :else (step acc event)))
+                           :else (safe-step acc (dissoc event ::released))))
                        {:state state :pending {} :meta {} :dropped []}
-                       events)]
+                       (concat (map #(assoc % ::released true) released) events))]
     {:state (:state result)
      :dropped (:dropped result)
      :commands (vec (for [[[instance-id param] value] (sort-by (comp str key) (:pending result))
@@ -444,6 +604,12 @@
                              {:op :param/set :instance-id instance-id :param param :value value
                               :source {:type :ableton :adapter :live-device :origin origin
                                        :live/track-id track-id :live/slot slot}})))}))
+
+(defn waiting?
+  "Do values wait for a replay's launch? The host then runs ingest even in a
+  cycle without new events."
+  [state]
+  (boolean (seq (:waiting state))))
 
 ;; ---------------------------------------------------------------------------
 ;; Tolglow writes mirrored into Live
@@ -472,11 +638,15 @@
 (defn mirror-writes
   "Values to write into Live for parameter changes the show accepted since the
   last call: every :param/set whose origin is not Live itself, on an instance
-  shown on a bound run track. Each written slot expects its echo once and is
-  held against Live automation. Returns {:state :writes} with writes
-    [{:track-id t :expected-name n :values [{:slot :device :index :value} ..]} ..]
-  coalesced per track (the last value of a slot wins)."
-  [state {:keys [model mirror catalog] :as ctx}]
+  shown on a bound run track whose device is present (ctx :present?, a
+  (fn [cue-id lane device]); every bound track when absent). Each write joins
+  its slot's outstanding writes (bounded, expiring), whose echoes ingest
+  drops, and holds the slot against Live automation. Returns {:state :writes}
+  with writes
+    [{:track-id t :cue-id :lane :values [{:slot :device :index :value :seq} ..]} ..]
+  coalesced per track (the last value of a slot wins). A write that is not
+  sent should be forgotten with forget-writes."
+  [state {:keys [model mirror catalog now-ms present?] :as ctx}]
   (let [history (get-in model [:control :history])
         ids (fresh-ids state model)
         [state values]
@@ -492,30 +662,41 @@
                       (let [[cue-id lane] (instance-lane ctx instance-id)
                             track-id (when cue-id (lane-track mirror cue-id lane))
                             layout (get-in state [:layouts cue-id])
-                            schema (when cue-id (schema-of model cue-id param))
-                            {:keys [kind components]} (when schema (slot-kind schema catalog))]
+                            schema (when cue-id (instance-schema model cue-id instance-id param))
+                            {:keys [kind components]} (when schema (slot-kind schema catalog))
+                            ;; Tolglow changed this colour: Live's cached components no longer describe it.
+                            state (update state :hsv dissoc [instance-id param])]
                         (if (or (nil? track-id) (nil? layout) (nil? kind))
                           [state values]
                           (reduce (fn [[state values] i]
                                     (let [component (second (component-key param kind i))
                                           slot (slot-of layout param component)
-                                          native (when slot (native-value schema (:value command) component catalog))]
+                                          device (when slot (quot slot slots-per-device))
+                                          native (when (and slot (or (nil? present?) (present? cue-id lane device)))
+                                                   (native-value schema (:value command) component catalog))]
                                       (if (nil? native)
                                         [state values]
-                                        [(-> state
-                                             (assoc-in [:echo [track-id slot]] native)
-                                             (update :holds conj [track-id slot])
-                                             (count! :mirrored))
-                                         (assoc values [track-id slot] {:cue-id cue-id :lane lane :value native})])))
+                                        (let [seq-no (inc (:write-seq state))
+                                              ;; A value replaced in this same batch is never sent.
+                                              replaced (get-in values [[track-id slot] :seq])
+                                              state (cond-> state replaced (forget-writes track-id {slot [replaced]}))]
+                                          [(-> state
+                                               (assoc :write-seq seq-no)
+                                               (update-in [:echo [track-id slot]]
+                                                          (fn [es] (let [es (conj (vec es) {:value native :seq seq-no :at (or now-ms 0)})]
+                                                                     (if (> (count es) max-outstanding) (subvec es (- (count es) max-outstanding)) es))))
+                                               (update :holds conj [track-id slot])
+                                               (count! :mirrored))
+                                           (assoc values [track-id slot] {:cue-id cue-id :lane lane :value native :seq seq-no})]))))
                                   [state values] (range components)))))))
                 [state {}] ids)]
     {:state state
      :writes (vec (for [[track-id entries] (group-by (comp first key) (sort-by (comp str key) values))
                         :let [{:keys [cue-id lane]} (val (first entries))]]
                     {:track-id track-id :cue-id cue-id :lane lane
-                     :values (mapv (fn [[[_ slot] {:keys [value]}]]
+                     :values (mapv (fn [[[_ slot] {:keys [value seq]}]]
                                      {:slot slot :device (quot slot slots-per-device) :index (mod slot slots-per-device)
-                                      :value value})
+                                      :value value :seq seq})
                                    entries)}))}))
 
 ;; ---------------------------------------------------------------------------

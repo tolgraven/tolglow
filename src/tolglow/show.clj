@@ -470,6 +470,8 @@
   once unless :max-video-waiters says otherwise; more get 503."
   8)
 
+(declare device-writer)
+
 (defn- new-live-runs
   "Owner state for the run record (#683). options is false to disable, or
   live-runs/new-record options; each runtime gets its own record ID so its
@@ -487,7 +489,7 @@
        ;; values reported by the companion and Tolglow writes waiting to be
        ;; sent. :device-send! replaces the bridge sender (tests capture it).
        :devices (live-devices/new-state) :device-inbox [] :device-inbox-dropped 0
-       :device-outbox {} :device-flush? false :device-send! (:device-send! options)
+       :device-outbox {} :device-flush? false :device-send! (:device-send! options) :device-writer (delay (device-writer))
        :device-sends {:requests 0 :executed 0 :failed 0 :not-connected 0}
        :device-cost {:samples 0 :total-ns 0 :max-ns 0}})))
 
@@ -2187,38 +2189,63 @@
 
 (declare live-bridge-connection)
 
-(defn- flush-device-writes!
-  "Off the owner: send the waiting Tolglow writes, one request per run track.
-  A write that did not execute forgets the echo it expected, so a later Live
-  value equal to it is not mistaken for an echo."
-  [runtime state]
-  (let [[old _] (swap-vals! state assoc :device-outbox {} :device-flush? false)
-        outbox (:device-outbox old)
-        send! (or (:device-send! old)
+(defn- device-writer
+  "The runtime's one writer to Live parameter devices: a single daemon thread,
+  so sends leave in the order the owner accepted them and never pile up."
+  []
+  (java.util.concurrent.Executors/newSingleThreadExecutor
+   (reify java.util.concurrent.ThreadFactory
+     (newThread [_ r] (doto (Thread. ^Runnable r "tolglow-live-parameter-devices") (.setDaemon true))))))
+
+(defn- send-device-writes!
+  "Send one batch, one request per run track in track order. A write that did
+  not execute forgets only its own expected echo (by sequence number)."
+  [runtime state outbox]
+  (let [send! (or (:device-send! @state)
                   (fn [payload]
                     (if (live-sync/bridge-connected? (connections/sync (:connections runtime)))
                       (live-connection/request! (live-bridge-connection runtime) :set-parameter-values payload)
                       {:status :rejected :code :not-connected})))]
     (doseq [[track-id {:keys [cue-id lane values]}] (sort-by key outbox)]
-      (let [payload {:track-id track-id :expected-name (live-runs/lane-track-name cue-id lane)
-                     :values (mapv (fn [[_ v]] (dissoc v :slot)) (sort-by key values))}
+      (let [ordered (map val (sort-by key values))
+            payload {:track-id track-id :expected-name (live-runs/lane-track-name cue-id lane)
+                     :values (mapv #(dissoc % :slot :seq) ordered)}
             receipt (try (send! payload) (catch Exception error {:status :indeterminate :message (.getMessage error)}))
             status (:status receipt)]
         (locking (:player-lock @state)
           (swap! state (fn [s]
-                         (cond-> (update-in s [:device-sends :requests] inc)
+                         (cond-> (-> (update-in s [:device-sends :requests] inc)
+                                     (update-in [:device-sends :last-seq] (fnil max 0) (reduce max 0 (keep :seq ordered))))
                            (= :executed status) (update-in [:device-sends :executed] inc)
                            (= :not-connected (:code receipt)) (update-in [:device-sends :not-connected] inc)
                            (not= :executed status)
                            (-> (update-in [:device-sends :failed] inc)
                                (assoc-in [:device-sends :last-failure] (select-keys receipt [:status :code :message]))
-                               (update-in [:devices :echo] #(apply dissoc % (map (fn [slot] [track-id slot]) (keys values)))))))))))))
+                               (update :devices live-devices/forget-writes track-id
+                                       (into {} (keep (fn [{:keys [slot seq]}] (when seq [slot [seq]]))) ordered)))))))))))
+
+(defn- drain-device-writes!
+  "On the writer thread: send what waits, then look again, until the outbox
+  is empty; only then may the owner schedule another drain."
+  [runtime state]
+  (loop []
+    (let [[old _] (swap-vals! state assoc :device-outbox {})]
+      (when (seq (:device-outbox old))
+        (send-device-writes! runtime state (:device-outbox old))))
+    (let [[old _] (swap-vals! state (fn [s] (if (empty? (:device-outbox s)) (assoc s :device-flush? false) s)))]
+      (when (seq (:device-outbox old)) (recur)))))
+
+(defn- device-present?
+  "From the last sync: does this run track hold parameter device d?"
+  [mirror]
+  (let [status (:parameter-devices mirror)]
+    (fn [cue-id lane device] (boolean (some #{device} (get-in status [[cue-id lane] :present]))))))
 
 (defn- advance-live-devices!
   "Owner-thread step for parameter devices (#625): decode slot values Live
   reported into commands, and collect Tolglow's accepted writes for Live. Only
-  pure work happens here; requests to the companion leave on a separate
-  thread and commands go through submit!, so the owner never waits."
+  pure work happens here; requests to the companion leave on the runtime's
+  one writer thread and commands go through submit!, so the owner never waits."
   [runtime state model]
   (let [start (System/nanoTime)
         catalog (device-catalog model)
@@ -2229,8 +2256,16 @@
                 events (:device-inbox old)
                 s (device-layouts @state model)
                 ctx {:model model :record (:record s) :mirror (:mirror s) :player (:player s) :catalog catalog
+                     :now-ms (now-ms runtime) :present? (device-present? (:mirror s))
                      :envelope-fn #(run-clip-envelope runtime model)}
-                in (if (seq events) (live-devices/ingest (:devices s) ctx events) {:state (:devices s) :commands []})
+                in (if (or (seq events) (live-devices/waiting? (:devices s)))
+                     ;; Live's data never costs the cycle its Tolglow writes.
+                     (try (live-devices/ingest (:devices s) ctx events)
+                          (catch Exception error
+                            {:state (-> (:devices s) (update-in [:counts :ingest-errors] (fnil inc 0))
+                                        (assoc :last-error (.getMessage error)))
+                             :commands []}))
+                     {:state (:devices s) :commands []})
                 out (live-devices/mirror-writes (:state in) ctx)]
             (swap! state assoc :devices (:state out) :device-layout-key (:device-layout-key s))
             [(:commands in) (:writes out)]))]
@@ -2239,15 +2274,18 @@
     (when (seq writes)
       (let [[old _] (swap-vals! state (fn [s]
                                         (-> (reduce (fn [s {:keys [track-id cue-id lane values]}]
-                                                      (-> s
-                                                          (update-in [:device-outbox track-id] merge {:cue-id cue-id :lane lane})
-                                                          (update-in [:device-outbox track-id :values]
-                                                                     (fnil into {}) (map (juxt :slot identity)) values)))
+                                                      (let [replaced (keep (fn [{:keys [slot]}] (when-let [q (get-in s [:device-outbox track-id :values slot :seq])] [slot [q]]))
+                                                                           values)]
+                                                        (-> s
+                                                            ;; A queued value replaced before it was sent is never echoed.
+                                                            (update :devices live-devices/forget-writes track-id (into {} replaced))
+                                                            (update-in [:device-outbox track-id] merge {:cue-id cue-id :lane lane})
+                                                            (update-in [:device-outbox track-id :values]
+                                                                       (fnil into {}) (map (juxt :slot identity)) values))))
                                                     s writes)
                                             (assoc :device-flush? true))))]
         (when-not (:device-flush? old)
-          (.start (doto (Thread. #(flush-device-writes! runtime state) "tolglow-live-parameter-devices")
-                    (.setDaemon true))))))
+          (.execute ^java.util.concurrent.ExecutorService @(:device-writer old) #(drain-device-writes! runtime state)))))
     (let [ns (- (System/nanoTime) start)]
       (swap! state update :device-cost #(-> % (update :samples inc) (update :total-ns + ns) (update :max-ns max ns))))))
 
@@ -2315,7 +2353,9 @@
                                                 (update s :inbox-dropped (fnil inc 0)))))]
         ;; A clip start hands its track's slots back to Live playback (#625).
         (when (= :clip-started (:type event))
-          (swap! state update :device-inbox conj {:type :clip-started :track-id (:track-id event)}))
+          (swap! state (fn [s] (if (< (count (:device-inbox s)) device-inbox-limit)
+                                 (update s :device-inbox conj {:type :clip-started :track-id (:track-id event)})
+                                 (update s :device-inbox-dropped inc)))))
         (if (< (count (:inbox old [])) run-clip-inbox-limit)
           {:status :queued}
           {:status :dropped :reason :inbox-full})))))
@@ -3348,6 +3388,8 @@
                              (map #(fn [] (connections/abort-prepared! %)) @candidates)
                              [#(some-> (:recovery runtime) deref recovery/close!)
                               #(when (realized? (:parameter-frames runtime)) (parameter-frames/stop! @(:parameter-frames runtime)))
+                              #(when-let [writer (some-> (:live-runs runtime) deref :device-writer)]
+                                 (when (realized? writer) (.shutdownNow ^java.util.concurrent.ExecutorService @writer)))
                               #(event-callbacks/close! (:event-callbacks runtime))
                               #(rdm/close! (:rdm runtime))
                               #(output-scheduler/close! (:publisher runtime))
@@ -4153,9 +4195,20 @@
    (let [state (live-runs-state runtime :sync)
          model (:model @(:state runtime))
          catalog (device-catalog model)
-         ;; Parameter devices (#625): each channel's slot layout and spec.
+         ;; Parameter devices (#625): each channel's slot layout, seeded on its
+         ;; first sync from the slot names its devices show in Live, so a
+         ;; restarted show keeps recorded automation on its parameter.
+         unseeded? (some (complement :seeded?) (vals (get-in (device-layouts @state model) [:devices :layouts])))
+         before (when unseeded?
+                  (let [r (live-connection/request! conn :inspect-set {})]
+                    (when (= :executed (:status r)) (:result r))))
          devices (locking (:player-lock @state)
-                   (let [s (device-layouts @state model)]
+                   (let [s (device-layouts @state model)
+                         record (:record s)
+                         s (cond-> s
+                             before (update :devices live-devices/seed-from-set model before live-runs/lane-track-name
+                                            (into {} (map (fn [[cue-id ch]] [cue-id (:lanes ch)])) (:channels record))
+                                            catalog))]
                      (swap! state assoc :devices (:devices s) :device-layout-key (:device-layout-key s))
                      (:devices s)))
          specs (live-devices/specs devices model catalog)
@@ -4194,6 +4247,7 @@
       :subscribe (parameter-frames/subscribe! service (dissoc payload :consumer :queue)
                                               {:id (or (:consumer payload) "view") :queue (or (:queue payload) 1)})
       :frame (parameter-frames/take-frame! service (:lease payload))
+      :lease? (parameter-frames/lease? service (:lease payload))
       :latest (parameter-frames/latest-frame service (:lease payload))
       :unsubscribe (parameter-frames/unsubscribe! service (:lease payload))
       :status (parameter-frames/status service)

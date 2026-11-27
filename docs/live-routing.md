@@ -725,7 +725,15 @@ of a cue channel a stable slot:
 Slots follow Studio's parameter order. A parameter added by a later revision
 takes the next free slot, a removed one keeps its slot (shown as unused) and a
 re-added one gets its old slot back, so automation recorded in Live stays on
-its parameter. A device holds 32 slots; a channel can use up to eight devices
+its parameter. Layouts live in memory. On a channel's first sync after a
+start, the layout is rebuilt from the slot names its devices show in the Set
+(`seed-from-set`): a name the current revision still produces keeps its slot,
+any other configured name (an Unused slot, a removed parameter) stays
+reserved, and only new parameters get new slots. So a restart with a revision
+that dropped a parameter does not move automation onto another one. A device
+removed from the Set, or a Set opened without its devices, loses that memory.
+The spec follows the revision a cue launches (an `:effect-version` pin), and
+values decode through the running instance's own definition. A device holds 32 slots; a channel can use up to eight devices
 (`Tolglow parameters`, `Tolglow parameters 2`, ...). Banks of eight follow
 Studio's order, as on Push's encoders.
 
@@ -768,20 +776,44 @@ owner decodes the queue at its next cycle:
   no take is made. Anything else is `:live-input`: a performance, kept as a
   take move;
 - one `:param/set` per instance parameter per cycle, the last value winning;
-  repeated serials are dropped.
+  repeated serials are dropped;
+- a slot whose parameter the instance's definition no longer has in that
+  shape (removed, a number become a colour, a vector shortened) is dropped as
+  `:retired` before decoding, and a value that cannot be applied is dropped as
+  `:invalid`; nothing from Live can throw in the owner step;
+- a report that only changes `automation_state` (an override, a re-enable)
+  updates ownership and moves nothing;
+- while a replayed run clip waits for its launch acknowledgement, its track's
+  values wait too (up to 64) and apply to that replay once it exists; they
+  are dropped if the clip stops first.
+
+The slot watch reads each slot's value and state when it starts, so LiveAPI's
+first callback is not taken for a performer's move.
 
 **Tolglow's writes in Live.** Every accepted `:param/set` from Studio, Push,
 the REPL or an agent on an instance shown on a run track is sent to its slot
-(`set-parameter-values`) from a separate thread, coalesced per track. The
-slot then expects its echo once (within 1e-5 of its range) and holds Live
-automation until Live reports the automation playing again after an
-override, or a run clip starts on that track. Nothing from Live
-(`:live-playback`, `:live-input`) or `:tolglow-feedback` is written back. A
-write that did not execute forgets its echo. Without a connected bridge the
-writes are counted as not sent.
+(`set-parameter-values`) by the runtime's one writer thread: sends leave in
+the order the owner accepted them, coalesced per track, and a slow Live never
+adds threads. Only tracks whose device the last sync found are written. Each
+write joins its slot's outstanding writes (up to 16, forgotten after 3 s); a
+value Live reports that matches any of them (within 1e-5 of a continuous
+range, half a step otherwise) is that write's echo and retires it and every
+older one, so a drag's echoes never come back as performer moves. The
+companion also remembers the values it set and does not report them, and it
+skips a slot already showing the value. The slot holds Live automation until
+Live reports the automation playing again after an override, or a run clip
+starts on that track. Nothing from Live (`:live-playback`, `:live-input`) or
+`:tolglow-feedback` is written back. A send that did not execute forgets only
+its own writes. Without a connected bridge the writes are counted as not
+sent. A ramp's committed values are `:param/set` commands and are mirrored;
+its per-frame values, like modulation, are not. A Tolglow colour write drops
+the hue a previous Live turn cached.
 
-**Cost.** Over the integration test the owner step averaged well under 2 ms
-per cycle (asserted); the projection reports `:cost` from the running show.
+**Cost.** Decoding a batch of 50 slot values takes about 250 µs and 5 values
+about 30 µs in the pooled REPL; collecting three writes about 12 µs. In the
+two-thread load test the owner step averaged under 100 µs with single spikes
+of several ms (JIT, GC and other lanes' load on this Mac). The projection
+reports `:cost` from the running show.
 Sending, rendering and every Live request stay off the owner thread.
 
 **Shared parameter frames.** `tolglow.visualization.parameter-frames` renders a
@@ -790,12 +822,15 @@ parameter's recent history once for every compatible view:
   views of the same instance, parameter, window, style and pixel ratio within
   10% of a size share one render key;
 - one worker samples each shown parameter once per cycle (100 ms) from the
-  committed snapshot, renders each key once with Java2D into a PNG and puts it
-  in each view's mailbox (one frame by default; a full mailbox drops its
+  committed snapshot, renders each key once with Java2D into a PNG (skipped
+  when neither the beat nor the value moved) and puts it in each view's
+  mailbox (one frame by default; a full mailbox drops its
   oldest frame and counts it). A lease not read for 5 s expires; the last view
   leaving ends the worker;
 - Studio and the REPL use `show/parameter-frames-action!` and
   `/api/parameter-frames` (`/subscribe`, `/frame?lease=`, `/unsubscribe`).
+  Leases are random UUIDs; an expired or ended lease answers 410 and Studio
+  subscribes again.
 
 Measured on this Mac under other lanes' load (headless JVM, Java2D, no GPU):
 a 960x192 frame takes about 3.4 ms, 2.7 ms of it PNG encoding; a 320x64

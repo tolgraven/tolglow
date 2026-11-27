@@ -155,7 +155,7 @@
   {:snapshot! snapshot! :period-ms period-ms :lease-ms lease-ms :render (or render render-png) :worker? worker?
    :lock (Object.)
    :state (atom {:keys {} :leases {} :samples {} :serial 0 :worker nil
-                 :counts {:renders 0 :presentations 0 :drops 0 :expired 0 :cycles 0}
+                 :counts {:renders 0 :presentations 0 :drops 0 :expired 0 :cycles 0 :unchanged 0}
                  :cost {:sample-ns 0 :render-ns 0 :max-render-ns 0}})})
 
 (declare ensure-worker!)
@@ -175,7 +175,8 @@
                   _ (when (and (nil? joined) (>= (count keys) max-keys)) (fail! "Too many frame renders" {}))
                   serial (:serial (swap! (:state service) update :serial inc))
                   render-key (or joined (str "k" serial))
-                  lease (str "l" serial)]
+                  ;; Unguessable, so one local client cannot read or end another's view.
+                  lease (str (java.util.UUID/randomUUID))]
               (swap! (:state service)
                      (fn [s]
                        (cond-> (assoc-in s [:leases lease] {:key render-key :consumer id :queue queue :mailbox []
@@ -199,6 +200,12 @@
   (locking (:lock service)
     (swap! (:state service) drop-lease lease))
   nil)
+
+(defn lease?
+  "Is this lease mounted? An expired or ended lease is not; its view should
+  subscribe again."
+  [service lease]
+  (contains? (:leases @(:state service)) lease))
 
 (defn take-frame!
   "The oldest waiting frame of a lease, removed from its mailbox, or nil.
@@ -241,7 +248,11 @@
                       ;; A backwards seek starts the stream again.
                       previous (if (and (seq previous) (< beat (first (peek previous)))) [] previous)
                       kept (into [] (drop-while #(< (first %) (- beat window 1))) previous)]]
-            [k (cond-> kept (and instance (some? value)) (conj [beat value]))]))))
+            [k (cond
+                 (not (and instance (some? value))) kept
+                 ;; A stopped transport: one sample per beat, the latest value.
+                 (and (seq kept) (== beat (first (peek kept)))) (conj (pop kept) [beat value])
+                 :else (conj kept [beat value]))]))))
 
 (defn- cycle!
   "One worker cycle: sample once per shown parameter, render each key once,
@@ -259,29 +270,32 @@
         samples (history-input (:samples @(:state service)) snapshot wanted)
         t1 (System/nanoTime)
         frames (into {}
-                     (for [[k {:keys [request]}] keys-now
+                     (for [[k {:keys [request input]}] keys-now
                            :let [{:keys [instance-id param]} request
                                  instance (get-in model [:instances instance-id])
                                  schema (get-in instance [:definition :params param])
-                                 start (System/nanoTime)
-                                 png (render request {:samples (get samples [instance-id param] []) :beat beat
-                                                      :schema schema :param param})
+                                 stream (get samples [instance-id param] [])
+                                 ;; Nothing moved (a stopped transport, a held value): no new frame.
+                                 fingerprint [beat (peek stream) (count stream) schema]]
+                           :when (not= input fingerprint)
+                           :let [start (System/nanoTime)
+                                 png (render request {:samples stream :beat beat :schema schema :param param})
                                  ns (- (System/nanoTime) start)]]
-                       [k {:png (.asReadOnlyBuffer (ByteBuffer/wrap png)) :ns ns :bytes (count png)
+                       [k {:input fingerprint :png (.asReadOnlyBuffer (ByteBuffer/wrap png)) :ns ns :bytes (count png)
                            :width (long (Math/round (* (:width request) (:dpr request))))
                            :height (long (Math/round (* (:height request) (:dpr request)))) :dpr (:dpr request)}]))
         stamp (now)]
     (locking (:lock service)
       (swap! (:state service)
              (fn [s]
-               (let [s (reduce (fn [s [k {:keys [png width height dpr ns bytes]}]]
+               (let [s (reduce (fn [s [k {:keys [png width height dpr ns bytes input]}]]
                                  (if-not (get-in s [:keys k])
                                    s
                                    (let [sequence (inc (get-in s [:keys k :sequence]))
                                          frame {:key k :sequence sequence :width width :height height :dpr dpr
                                                 :rendered-at stamp :beat beat :png png :bytes bytes}]
                                      (-> s
-                                         (update-in [:keys k] assoc :sequence sequence :frame frame)
+                                         (update-in [:keys k] assoc :sequence sequence :frame frame :input input)
                                          (update-in [:keys k :renders] inc)
                                          (update-in [:counts :renders] inc)
                                          (update-in [:cost :render-ns] + ns)
@@ -306,6 +320,7 @@
                                                                          (assoc m [instance-id param] true))
                                                                        {} (:keys s)))))
                      (update-in [:counts :expired] + (count expired))
+                     (update-in [:counts :unchanged] + (- (count keys-now) (count frames)))
                      (update-in [:counts :cycles] inc)
                      (update-in [:cost :sample-ns] + (- t1 t0)))))))))
 

@@ -145,3 +145,29 @@ test("the parameter device patcher declares 32 automatable slot dials behind its
   assert.ok(boxes.some(b => b.text === "js parameter_device.js"));
   assert.ok(boxes.some(b => b.maxclass === "live.thisdevice" || b.text === "live.thisdevice"));
 });
+
+test("a slot watch starts from the current value: LiveAPI's first callback is not a performer move", () => {
+  const live = liveSet({ tracks: [{ name: "Tolglow run a", parameterDevices: 1 }], initialCallback: true });
+  const track = live.song.tracks[0], [device] = live.parameterDevicesOf(0);
+  device.params[1].props.value = 0.42;
+  live.request("watch-run-tracks", { "track-ids": ["track:" + track.id] });
+  assert.deepEqual(live.emitted, [], "nothing is reported for values already on the dials");
+  live.automate(device.params[1].id, 0.5);
+  live.turn(device.params[1].id, 0.5);
+  assert.deepEqual(live.emitted.map(e => [e.value, e["automation-state"], e["value-changed?"]]), [[0.5, 1, true], [0.5, 2, false]],
+    "an override alone is reported as a state change, not a move");
+});
+
+test("values the companion wrote for Tolglow are not reported back, and unchanged slots are not rewritten", () => {
+  const live = liveSet({ tracks: [{ name: "Tolglow run a", parameterDevices: 1 }] });
+  const track = live.song.tracks[0], [device] = live.parameterDevicesOf(0);
+  live.request("configure-parameter-device", { "track-id": "track:" + track.id, "device-id": "device:" + device.id, ordinal: 0, slots: [level] });
+  live.request("watch-run-tracks", { "track-ids": ["track:" + track.id] });
+  const write = (v) => live.request("set-parameter-values", { "track-id": "track:" + track.id, values: [{ device: 0, index: 0, value: v }] });
+  assert.deepEqual(write(0.3).result, { written: 1, skipped: 0 });
+  assert.deepEqual(write(0.4).result, { written: 1, skipped: 0 });
+  assert.deepEqual(live.emitted, [], "the companion's own writes are not echoed");
+  assert.deepEqual(write(0.4).result, { written: 0, skipped: 1 }, "a slot already showing the value is skipped");
+  live.turn(device.params[1].id, 0.25);
+  assert.deepEqual(live.emitted.map(e => e.value), [0.25], "a performer's turn is still reported");
+});

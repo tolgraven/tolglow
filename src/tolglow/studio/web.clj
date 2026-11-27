@@ -375,20 +375,25 @@
     ;; Parameter devices on run tracks (#625): the same projection as show/live-parameter-devices.
     "/api/live-parameter-devices" (read-action live-runs! :parameter-devices "Run record unavailable")
     ;; Shared parameter-visualization frames (#625): status, and the next frame
-    ;; of a lease as PNG (204 when none is waiting; the lease is renewed).
+    ;; of a lease as PNG (204 when none is waiting; the lease is renewed; 410 when
+    ;; the lease expired or ended, so the view subscribes again).
     "/api/parameter-frames" (read-action parameter-frames! :status "Parameter frames unavailable")
     "/api/parameter-frames/frame"
     (available parameter-frames! "Parameter frames unavailable"
                (fn [{:keys [query-params]}]
                  (let [lease (get query-params "lease")
-                       frame (or (parameter-frames! :frame {:lease lease})
-                                 (when (= "true" (get query-params "latest")) (parameter-frames! :latest {:lease lease})))]
-                   (if frame
+                       frame (when (parameter-frames! :lease? {:lease lease})
+                               (or (parameter-frames! :frame {:lease lease})
+                                   (when (= "true" (get query-params "latest")) (parameter-frames! :latest {:lease lease}))
+                                   ::none))]
+                   (cond
+                     (nil? frame) {:status 410 :headers {"Cache-Control" "no-store"} :body ""}
+                     (not= ::none frame)
                      {:status 200 :body (java.io.ByteArrayInputStream. (parameter-frames/png-bytes frame))
                       :headers {"Content-Type" "image/png" "Cache-Control" "no-store"
                                 "X-Frame-Key" (:key frame) "X-Frame-Sequence" (str (:sequence frame))
                                 "X-Frame-Size" (str (:width frame) "x" (:height frame))}}
-                     {:status 204 :headers {"Cache-Control" "no-store"} :body ""}))))
+                     :else {:status 204 :headers {"Cache-Control" "no-store"} :body ""}))))
     ;; The cue launcher's 64 pads (#228): the same projection as show/live-launcher.
     "/api/live-launcher" (read-action live-launcher! :status "Cue launcher unavailable" #(query-fields % {:page-id nil}))
     "/api/capture/last.mid" (available capture! "Phrase capture unavailable"

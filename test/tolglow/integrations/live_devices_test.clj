@@ -156,7 +156,7 @@
                                      :ack {:status :accepted}}}
                      :history-order ["s1" "s2"]}
             {:keys [state writes]} (devices/mirror-writes state (assoc-in ctx [:model :control] history))]
-        (is (= [{:track-id "track:1" :cue-id :a :lane 0 :values [{:slot slot :device 0 :index slot :value 0.25}]}] writes)
+        (is (= [{:track-id "track:1" :cue-id :a :lane 0 :values [{:slot slot :device 0 :index slot :value 0.25 :seq 1}]}] writes)
             "only the Studio write; the value from Live is not written back")
         (is (empty? (:writes (devices/mirror-writes state (assoc-in ctx [:model :control] history)))) "each write is sent once")
         (let [r (step state [(value 0.25 2 1)])]
@@ -174,6 +174,126 @@
         (is (empty? (:commands r)))
         (is (= {:unknown-track 1 :unknown-slot 1} (select-keys (get-in r [:state :counts]) [:unknown-track :unknown-slot]))))
       (is (= 1 (get-in (devices/ingest state (assoc ctx :record {}) [(value 0.1 0 1)]) [:state :counts :no-instance]))))))
+
+;; Review of #769: fixtures shared by the regressions below.
+(defn- owned [& {:keys [effect-def instance-def player record] :or {effect-def effect}}]
+  (let [model (model-with (assoc-in registry [:effects :beam] effect-def))
+        layout (devices/allocate nil (:keys (devices/slot-keys effect {} nil)))
+        model (assoc-in model [:instances "i1"] (cond-> {:id "i1" :cue-id :a :params {:level 0.5 :aim [0.0 0.0 1.0] :tint [1.0 0.0 0.0]}}
+                                                   instance-def (assoc :definition instance-def)))]
+    {:layout layout
+     :ctx {:model model :mirror {:tracks {[:lane :a 0] "track:1"}} :player (or player {:playing {}})
+           :record (or record {:lanes {[:a 0] "r.1"} :open {"i1" "r.1"} :takes {"r.1" {:instance-id "i1" :cue-id :a :lane 0}}})
+           :envelope-fn (fn [] {:command-id "c"}) :catalog nil :now-ms 1000}
+     :state (assoc-in (devices/new-state) [:layouts :a] layout)}))
+
+(defn- writes-of [state ctx values]
+  (let [history (into {} (map-indexed (fn [i v] [(str "w" i) {:command {:op :param/set :instance-id "i1" :param :level :value v
+                                                                       :source {:adapter :studio}}
+                                                             :ack {:status :accepted}}])
+                                      values))]
+    (devices/mirror-writes state (assoc-in ctx [:model :control] {:history history :history-order (vec (sort (keys history)))}))))
+
+(deftest every-outstanding-write-is-recognised-as-its-echo
+  (let [{:keys [layout ctx state]} (owned)
+        slot (get-in layout [:slots [:level nil]])
+        value (fn [v serial] {:type :parameter-device-value :track-id "track:1" :slot slot :value v
+                              :automation-state 0 :watch-session "w" :serial serial})
+        ;; A drag: two owner cycles write 0.3 and 0.4 before Live echoes either.
+        state (:state (writes-of state ctx [0.3]))
+        state (:state (writes-of state ctx [0.3 0.4]))]
+    (is (= [0.3 0.4] (mapv :value (get-in state [:echo ["track:1" slot]]))))
+    (testing "two writes, then both echoes in order"
+      (let [r (devices/ingest state ctx [(value 0.3 1) (value 0.4 2)])]
+        (is (empty? (:commands r)) "neither echo is a performer move")
+        (is (= 2 (get-in r [:state :counts :echo])))
+        (is (empty? (get-in r [:state :echo])))))
+    (testing "three writes, echoes out of order: a newer echo also retires the older writes"
+      (let [state (:state (writes-of state ctx [0.3 0.4 0.5]))
+            r (devices/ingest state ctx [(value 0.5 1) (value 0.3 2)])]
+        (is (= [0.3 0.4 0.5] (mapv :value (get-in state [:echo ["track:1" slot]]))))
+        (is (= 1 (get-in r [:state :counts :echo])))
+        (is (= [0.3] (mapv :value (:commands r))) "a value after every write was echoed is Live's own")))
+    (testing "an echo that never comes back expires; a failed send forgets only its own write"
+      (let [later (devices/ingest state (assoc ctx :now-ms (+ 1000 devices/echo-timeout-ms 1)) [(value 0.3 1)])]
+        (is (= [0.3] (mapv :value (:commands later)))))
+      (let [[a b] (get-in state [:echo ["track:1" slot]])
+            forgotten (devices/forget-writes state "track:1" {slot [(:seq a)]})]
+        (is (= [b] (get-in forgotten [:echo ["track:1" slot]])))))
+    (testing "an automation-state change alone moves nothing"
+      (let [r (devices/ingest state ctx [(assoc (value 0.9 1) :value-changed? false :automation-state 2)])]
+        (is (empty? (:commands r)))
+        (is (= 1 (get-in r [:state :counts :state-only])))))))
+
+(deftest retired-slots-never-reach-a-reshaped-parameter
+  (testing "Level became a colour: old Level automation is dropped, and the batch survives"
+    (let [colour-level (assoc-in effect [:params :level] {:type :color :default [1.0 1.0 1.0]})
+          {:keys [layout ctx state]} (owned :effect-def (assoc colour-level :version 2))
+          level (get-in layout [:slots [:level nil]])
+          tint (get-in layout [:slots [:tint 0]])
+          ctx (assoc-in ctx [:model :instances "i1" :params :level] [1.0 1.0 1.0])
+          r (devices/ingest state ctx [{:type :parameter-device-value :track-id "track:1" :slot level :value 0.7 :automation-state 1}
+                                       {:type :parameter-device-value :track-id "track:1" :slot tint :value 0.5 :automation-state 1}])]
+      (is (= 1 (get-in r [:state :counts :retired])))
+      (is (= [:tint] (mapv :param (:commands r))) "the other slot's value still applies")))
+  (testing "aim shrank to two components: its third slot is retired"
+    (let [two (assoc-in effect [:params :aim] {:type :vector :size 2 :default [0.0 0.0] :bounds [-1.0 1.0]})
+          {:keys [layout ctx state]} (owned :effect-def (assoc two :version 2))
+          z (get-in layout [:slots [:aim 2]])
+          ctx (assoc-in ctx [:model :instances "i1" :params :aim] [0.0 0.0])
+          r (devices/ingest state ctx [{:type :parameter-device-value :track-id "track:1" :slot z :value 0.9}])]
+      (is (empty? (:commands r)))
+      (is (= 1 (get-in r [:state :counts :retired])))))
+  (testing "a running instance pinned to its own definition decodes through it"
+    (let [{:keys [layout ctx state]} (owned :instance-def (assoc-in effect [:params :level :bounds] [0.0 0.5]))
+          r (devices/ingest state ctx [{:type :parameter-device-value :track-id "track:1"
+                                        :slot (get-in layout [:slots [:level nil]]) :value 0.9}])]
+      (is (= [0.5] (mapv :value (:commands r))) "clamped to the instance's own bounds"))))
+
+(deftest a-pinned-cue-gets-the-spec-of-the-revision-it-launches
+  (let [v2 (-> effect (assoc :version 2) (assoc-in [:params :level :bounds] [0.0 100.0]))
+        reg (-> registry (assoc-in [:effects :beam] v2) (assoc-in [:versions [:effects :beam 1]] effect)
+                (assoc-in [:cues :a :effect-version] 1))
+        model (model-with reg)
+        layout (devices/allocate nil (:keys (devices/slot-keys effect {} nil)))
+        spec (devices/device-spec model :a layout nil)]
+    (is (= 1 (:effect-version spec)))
+    (is (= [0.0 1.0] ((juxt :min :max) (slot-of spec :level nil))))))
+
+(deftest values-wait-for-the-replay-they-belong-to
+  (let [{:keys [layout ctx state]} (owned :player {:playing {"track:1" {:take-id "r.0" :command-id "launch-1"}}})
+        slot (get-in layout [:slots [:level nil]])
+        early (devices/ingest state ctx [{:type :parameter-device-value :track-id "track:1" :slot slot :value 0.8
+                                          :automation-state 1 :watch-session "w" :serial 1}])]
+    (is (empty? (:commands early)) "not the lane's open run: the replay has not launched yet")
+    (is (devices/waiting? (:state early)))
+    (let [model (assoc-in (:model ctx) [:instances "i2"] {:id "i2" :cue-id :a :params {:level 0.1}})
+          bound (devices/ingest (:state early) (assoc ctx :model model :player {:playing {"track:1" {:instance-id "i2"}}}) [])]
+      (is (= [["i2" 0.8 :live-playback]] (mapv (juxt :instance-id :value (comp :origin :source)) (:commands bound)))
+          "the held envelope value applies to the replay once it exists")
+      (is (not (devices/waiting? (:state bound)))))
+    (let [stopped (devices/ingest (:state early) (assoc ctx :player {:playing {}}) [])]
+      (is (empty? (:commands stopped)))
+      (is (= 1 (get-in stopped [:state :counts :waiting-dropped])) "a clip stopped before its launch drops its values"))))
+
+(deftest a-colour-changed-in-tolglow-is-not-overwritten-by-a-stale-live-hue
+  (let [{:keys [layout ctx state]} (owned)
+        hue (get-in layout [:slots [:tint 0]])
+        turn (fn [state ctx v] (devices/ingest state ctx [{:type :parameter-device-value :track-id "track:1" :slot hue :value v}]))
+        first-turn (turn state ctx 0.3)
+        studio {:history {"c1" {:command {:op :param/set :instance-id "i1" :param :tint :value [0.0 0.0 0.25] :source {:adapter :studio}}
+                                :ack {:status :accepted}}}
+                :history-order ["c1"]}
+        after-studio (:state (devices/mirror-writes (:state first-turn) (assoc-in ctx [:model :control] studio)))
+        ctx2 (assoc-in ctx [:model :instances "i1" :params :tint] [0.0 0.0 0.25])
+        r (turn after-studio ctx2 0.6)]
+    (is (nil? (get-in after-studio [:hsv ["i1" :tint]])) "a Tolglow colour write drops the cached components")
+    (is (< (Math/abs (- 0.25 (reduce max (:value (first (:commands r)))))) 1e-9) "Studio's brightness is kept")
+    (is (empty? (:hsv (:state (turn (:state first-turn) (update ctx :model update :instances dissoc "i1") 0.4)))))
+    "ended instances leave no cached colour"))
+
+(deftest an-unknown-choice-is-not-shown-as-the-first
+  (is (nil? (devices/native-value (get-in effect [:params :mode]) :nonexistent nil nil))))
 
 ;; ---------------------------------------------------------------------------
 ;; A real runtime against the simulated Set
@@ -248,7 +368,8 @@
               (submit! 12.25 {:op :param/set :instance-id (:id instance) :param :level :value 0.2 :source {:adapter :studio :session-id "b"}})
               (tick! 12.5)
               (is (wait-for #(seq @sent)))
-              (is (= [{:track-id track-id :expected-name "Tolglow run a" :values [{:device 0 :index (:index level) :value 0.2}]}] @sent))
+              (is (= [{:track-id track-id :expected-name "Tolglow run a" :values [{:device 0 :index (:index level) :value 0.2}]}] @sent)
+                  "the payload names the device slot; sequence numbers stay on the host")
               (show/live-parameter-device-value! rt {:type :parameter-device-value :track-id track-id :slot (:slot level)
                                                      :value 0.2 :automation-state 2 :watch-session "w" :serial 3})
               (tick! 12.6) (tick! 12.7)
@@ -294,8 +415,18 @@
 
 (deftest slot-values-from-another-thread-never-hold-the-owner
   (let [sent (atom 0)
+        levels (atom [])
+        writers (atom 0)
+        writer-count #(count (filter (fn [^Thread t] (= "tolglow-live-parameter-devices" (.getName t))) (keys (Thread/getAllStackTraces))))
         rt (show/create-runtime {:model (model-with registry) :sink {:send! (fn [_ _])} :workspace-options nil :phrase-capture false
-                                 :live-runs {:record-id "c" :device-send! (fn [_] (swap! sent inc) (Thread/sleep 5) {:status :executed})}})
+                                 :live-runs {:record-id "c"
+                                             :device-send! (fn [payload]
+                                                             (swap! sent inc)
+                                                             (swap! writers max (writer-count))
+                                                             (swap! levels into (map :value (:values payload)))
+                                                             ;; A slow Live: sends take longer than owner cycles.
+                                                             (Thread/sleep (+ 20 (rand-int 60)))
+                                                             {:status :executed})}})
         tick! (fn [beat] (show/tick! rt (long (* 500 beat))))]
     (try
       (tick! 0)
@@ -315,7 +446,7 @@
               owner (future (loop [beat 4.0 i 0]
                               (when @running
                                 (when (even? i)
-                                  (show/submit! rt :command {:op :param/set :instance-id a :param :level :value (mod (* i 0.01) 1.0)}))
+                                  (show/submit! rt :command {:op :param/set :instance-id a :param :level :value (min 1.0 (* i 0.001))}))
                                 (show/tick! rt (long (* 500 beat)))
                                 (recur (+ beat 0.05) (inc i)))))
               callback (future (dotimes [i 500]
@@ -330,8 +461,39 @@
             (is (not= ::timeout (deref owner 10000 ::timeout)) "the owner kept cycling")
             (is (nil? (.findDeadlockedThreads (java.lang.management.ManagementFactory/getThreadMXBean))))
             (is (pos? @sent) "Tolglow writes left on their own thread")
+            (is (= 1 @writers) "one writer thread, however slow the sends")
+            (is (apply < @levels) "values reach Live in the order Tolglow accepted them (coalesced, never reordered)")
             (let [{:keys [counts cost inbox]} (show/live-parameter-devices rt)]
               (println (format "live parameter devices under load: %d cycles, mean %.1f us, max %.1f us; %s; inbox %s"
                                (:cycles cost) (:mean-us cost) (:max-us cost) (pr-str counts) (pr-str inbox))))
             (finally (reset! running false)))))
       (finally (show/stop! rt)))))
+
+(deftest a-restarted-show-keeps-automation-on-its-parameter
+  ;; Session one syncs Beam with all its parameters. The show restarts with a
+  ;; revision that dropped `band`, which came before `level` in Studio's order.
+  ;; The new session reads the slot names from the Set's device and keeps
+  ;; Level on its old slot instead of shifting it.
+  (let [ls (fake/create {:companion? false :tracks [{:name "Tolglow run a"}]})
+        _ (fake/add-parameter-device! ls "Tolglow run a")
+        session (fn [registry]
+                  (let [rt (show/create-runtime {:model (model-with registry) :sink {:send! (fn [_ _])} :workspace-options nil
+                                                 :phrase-capture false :live-runs {:record-id (str (gensym "r"))}})
+                        tick! (fn [beat] (show/tick! rt (long (* 500 beat))))]
+                    (try
+                      (tick! 0)
+                      (let [reply (show/submit! rt :command {:op :cue/launch :cue-id :a :launch {:mode :persistent}})]
+                        (tick! 1)
+                        (show/submit! rt :command {:op :instance/end :instance-id (:instance-id @reply) :force? true})
+                        (tick! 2) (tick! 3))
+                      (show/sync-live-runs! rt (live/open (fake/transport ls) {}) {:watch? false})
+                      (into {} (map (juxt (juxt :param :component) (juxt :slot :name :retired?)))
+                            (get-in (show/live-parameter-devices rt) [:channels 0 :slots]))
+                      (finally (show/stop! rt)))))
+        first-run (session registry)
+        second-run (session (assoc-in registry [:effects :beam] (-> effect (assoc :version 2) (update :params dissoc :band))))]
+    (is (= (first (first-run [:level nil])) (first (second-run [:level nil]))) "Level keeps its slot")
+    (is (= (first (first-run [:tint 2])) (first (second-run [:tint 2]))))
+    (is (not-any? #(and (= (first (first-run [:band 0])) (first %)) (not (last %))) (vals second-run))
+        "band's old slots stay unused, not given to another parameter")
+    (is (= "Level" (:name (nth (:parameters (fake/parameter-device ls "Tolglow run a" 0)) (first (second-run [:level nil]))))))))

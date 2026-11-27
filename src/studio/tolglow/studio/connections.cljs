@@ -1017,14 +1017,16 @@
   [instance-id param]
   (let [tick (r/atom 0)
         timer (atom nil)
-        mounted-lease (atom nil)]
+        mounted-lease (atom nil)
+        resubscribed (atom 0)
+        request {:instance-id instance-id :param param :window-beats 4 :style "history" :width 320 :height 64
+                 :dpr (min 2 (max 1 (or js/window.devicePixelRatio 1)))}]
     (r/create-class
      {:display-name "Shared parameter frame"
       :component-did-mount
       (fn [_]
-        (rf/dispatch [:connections/frame-subscribe {:instance-id instance-id :param param :window-beats 4
-                                                    :style "history" :width 320 :height 64
-                                                    :dpr (min 2 (max 1 (or js/window.devicePixelRatio 1)))}])
+        (reset! resubscribed (js/Date.now))
+        (rf/dispatch [:connections/frame-subscribe request])
         (reset! timer (js/setInterval #(swap! tick inc) 250)))
       :component-will-unmount
       (fn [_]
@@ -1037,6 +1039,13 @@
           [:figure.parameter-frame
            (when lease
              [:img {:width 320 :height 64 :alt (str "Shared frame of " (id-text param))
+                    ;; 410: the lease expired (the tab was hidden or asleep). Subscribe
+                    ;; again, at most every two seconds.
+                    :on-error (fn [_]
+                                (when (> (- (js/Date.now) @resubscribed) 2000)
+                                  (reset! resubscribed (js/Date.now))
+                                  (rf/dispatch [:connections/frame-unsubscribe lease])
+                                  (rf/dispatch [:connections/frame-subscribe request])))
                     :src (str "/api/parameter-frames/frame?latest=true&lease=" (js/encodeURIComponent lease) "&n=" @tick)}])
            [:figcaption.small.muted (str (id-text param) " · 4 beats" (when shared? " · shared with another view"))]]))})))
 

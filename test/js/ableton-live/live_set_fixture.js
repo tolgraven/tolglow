@@ -35,7 +35,7 @@ const CHANNELS = [{ display_name: "All Channels", identifier: 100 }].concat(
 // Setting a slot's value notifies "value" observers; automate(param, v)
 // models automation playback (automation_state 1).
 function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGroup = true, notify = "sync", now,
-  launcher = false, version = [12, 4, 5], palette = null, relay = true } = {}) {
+  launcher = false, version = [12, 4, 5], palette = null, relay = true, initialCallback = false } = {}) {
   const entities = {}, writes = [], calls = [], observers = [], emitted = []; let next = 10;
   const add = (o) => { o.id = o.id || ++next; entities[o.id] = o; return o; };
   function makeClip(length) {
@@ -215,9 +215,16 @@ function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGro
   };
   // Like max_adapter.js: `immediate` runs inside the notification, `changed`
   // in a task scheduled from it.
+  // initialCallback: true models LiveAPI calling an observer once with the
+  // current value when its property is assigned (to confirm in licensed Live).
   const observe = (id, property, changed, immediate) => {
     const entry = { id, property, changed, immediate, open: true };
     observers.push(entry);
+    if (initialCallback && entities[id]) {
+      const value = entities[id].props[property];
+      if (immediate) immediate([value]);
+      if (changed) changed([value]);
+    }
     return () => { entry.open = false; };
   };
   const notifyAll = (id, property, value) => {

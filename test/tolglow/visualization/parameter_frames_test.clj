@@ -106,6 +106,21 @@
           (is (= [(:key b)] (mapv :key (:keys (frames/status svc)))))))
       (finally (show/stop! rt)))))
 
+(deftest nothing-moved-means-no-new-frame
+  (let [rt (runtime) id (launch! rt) svc (service rt)
+        a (frames/subscribe! svc (view id) {:id :studio})]
+    (try
+      (frames/step! svc)
+      (frames/step! svc)
+      (frames/step! svc)
+      (is (= 1 (get-in (frames/status svc) [:counts :renders])) "the transport and the value stood still")
+      (is (= 2 (get-in (frames/status svc) [:counts :unchanged])))
+      (show/tick! rt 600)
+      (frames/step! svc)
+      (is (= 2 (get-in (frames/status svc) [:counts :renders])))
+      (is (re-matches #"[0-9a-f-]{36}" (:lease a)) "leases are unguessable")
+      (finally (show/stop! rt)))))
+
 (deftest an-edit-reaches-every-view-at-the-next-frame
   (let [rt (runtime) id (launch! rt) svc (service rt)
         a (frames/subscribe! svc (view id) {:id :studio})
@@ -134,7 +149,10 @@
         (doseq [n [2 4]]
           (let [svc (service rt)
                 leases (mapv #(frames/subscribe! svc (view id :width 480 :height 96 :dpr 2) {:id %}) (range n))]
-            (dotimes [_ 10] (frames/step! svc) (doseq [l leases] (frames/take-frame! svc (:lease l))))
+            (dotimes [i 10]
+              (show/tick! rt (+ (* n 10000) (* 100 i)))
+              (frames/step! svc)
+              (doseq [l leases] (frames/take-frame! svc (:lease l))))
             (is (= 10 (get-in (frames/status svc) [:counts :renders])) "one render per cycle, however many views")
             (is (= (* 10 n) (get-in (frames/status svc) [:counts :presentations])))
             (println (format "parameter frames, %d views at 960x192: shared %.0f us per cycle (1 render), separate %.0f us (%d renders), PNG %d bytes"
@@ -169,6 +187,8 @@
           (is (= 1 (count (:keys status))))
           (is (= ["live-device" "studio-widget"] (sort (map :consumer (:views (first (:keys status))))))))
         (request app :post "/api/parameter-frames/unsubscribe" {:lease lease})
+        (is (= 410 (:status (request app :get (str "/api/parameter-frames/frame?lease=" lease) nil)))
+            "an ended or expired lease tells the view to subscribe again")
         (request app :post "/api/parameter-frames/unsubscribe" {:lease (:lease again)})
         (is (empty? (:keys (show/parameter-frames-action! rt :status {})))))
       (finally (show/stop! rt)))))
