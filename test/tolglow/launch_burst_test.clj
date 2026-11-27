@@ -130,6 +130,16 @@
         (show/tick! a 25)
         (is (= 8 (count (fan-instances a))))
         (is (= 1 (count @indexed)) "Eight launches index the rig once")
+        (testing "a rig rebuilt equal, as restoring the same show does, keeps the index"
+          (let [before (get-in @(:state a) [:model :rig :fixtures])
+                reply (show/submit! a :rig (update (get-in @(:state a) [:model :rig]) :fixtures #(into [] %)))]
+            (show/tick! a 30)
+            (is (= :accepted (:status (deref reply 2000 {:status :timeout}))))
+            (is (not (identical? before (get-in @(:state a) [:model :rig :fixtures]))) "The model holds a new, equal rig vector")
+            (doseq [round (range 3)]
+              (doseq [command (launches (str "equal" round) {})] (show/submit! a command))
+              (show/tick! a (+ 35 round)))
+            (is (= 1 (count @indexed)) "No burst on the equal rig builds the index again")))
         (doseq [round (range 3)]
           (doseq [[rt prefix] [[a "a"] [b "b"]]]
             (doseq [command (launches (str prefix round) {})] (show/submit! rt command))

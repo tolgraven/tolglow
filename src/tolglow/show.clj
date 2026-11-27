@@ -1736,9 +1736,21 @@
        :candidate (:candidate payload) :ack {:status :accepted :epoch (get-in payload [:model :epoch])}})
     (throw (ex-info "Unknown studio operation" {:type type}))))
 
+(defn- adopt-equal-rig!
+  "Store `fixtures` as the patched rig when it equals the stored one, so later
+  identity checks against the model's vector hit again: a restore of the same
+  show, or an edit that rewrites the rig to equal content, keeps the compiled
+  patch and its capability index (#798)."
+  [runtime fixtures]
+  (swap! (:patch runtime) #(if (and (not (identical? fixtures (:fixtures %))) (= fixtures (:fixtures %)))
+                             (assoc % :fixtures fixtures)
+                             %)))
+
 (defn- patch! [runtime fixtures]
   (let [cached @(:patch runtime)]
-    (if (= fixtures (:fixtures cached)) (:compiled cached)
+    (if (= fixtures (:fixtures cached))
+      (do (when-not (identical? fixtures (:fixtures cached)) (adopt-equal-rig! runtime fixtures))
+          (:compiled cached))
         (let [patch (render/compile-patch fixtures)]
           (reset! (:patch runtime) {:fixtures fixtures :compiled patch :brightness-gains (preview/brightness-gains fixtures)
                                   :retirement (retirement/plan (:retirement cached) (:compiled cached) patch)})
@@ -1747,11 +1759,15 @@
 (defn- rig-indexer
   "The capability rig index for launches admitted in one owner cycle (#798),
   kept with this runtime's compiled patch: built on first use for the
-  patched rig and dropped when a rig edit replaces the patch. A rig that is
-  not the patched one is indexed for that call alone."
+  patched rig and dropped when a rig edit replaces the patch. A rig equal to
+  the patched one, such as a restored copy, adopts it and keeps the index; a
+  different rig is indexed for that call alone."
   [runtime]
   (fn [fixtures]
-    (let [cached @(:patch runtime)]
+    (let [cached @(:patch runtime)
+          cached (if (or (identical? fixtures (:fixtures cached)) (not= fixtures (:fixtures cached)))
+                   cached
+                   (adopt-equal-rig! runtime fixtures))]
       (if (identical? fixtures (:fixtures cached))
         (or (:capability-index cached)
             (let [index (capability/rig-index fixtures)]
