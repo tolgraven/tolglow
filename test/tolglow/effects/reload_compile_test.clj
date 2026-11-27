@@ -840,3 +840,45 @@
     (is (= 2 @attempts))
     (is (not (programs/ready? context program))
         "A superseded program's earlier cancellation does not count against a later request")))
+
+(deftest a-launch-on-a-head-only-the-new-revision-targets-keeps-that-revision
+  ;; Version 2 widens the effect from head-1 to head-1 and head-2. A launch on
+  ;; head-2 while version 2 compiles would reach no fixture on version 1, so
+  ;; it keeps version 2 and lights head-2 on its first frame.
+  (let [s (show 1)]
+    (try
+      (let [t (launch-all! s 1 nil)]
+        (publish! s [(assoc (probe 0 2) :targets [(head 0) (head 1)])] t)
+        (show/submit! (:rt s) :command {:op :cue/launch :cue-id :probe-0
+                                        :launch {:reload-policy :preserve-state :targets [(head 1)]}})
+        (tick! s (+ t 25))
+        (is (= [1 2] (map first (rendered s :probe-0))) "The launch keeps the revision that reaches its head")
+        (is (= 128 (nth (peek @(:output s)) (head-dimmer 1))) "Head-2 renders the launch's level on its first frame"))
+      (finally (stop! s)))))
+
+(deftest a-program-that-keeps-failing-is-reported-and-retried
+  ;; Six out-of-memory failures in a row, then the compiler recovers. After
+  ;; five, the frame status names the program; once it compiles, the revision
+  ;; is adopted and the report clears.
+  (let [s (show 1)
+        failures (atom 6)
+        reported (atom nil)]
+    (try
+      (let [t (launch-all! s 1 nil)]
+        (swap! (:compiler-context (:rt s)) update :compiler
+               (fn [compiler] (fn [program]
+                                (when (and (= [:probe-0 2] [(:id program) (:version program)]) (pos? @failures))
+                                  (swap! failures dec)
+                                  (throw (OutOfMemoryError. "test")))
+                                (compiler program))))
+        (publish! s [(probe 0 2 {:outputs {:dimmer {:op :const :value 1.0}}})] t)
+        (dotimes [k 24]
+          (work! s)
+          (try (tick! s (+ t (* 25 (inc k)))) (catch OutOfMemoryError _ nil))
+          (when-let [report (get-in @(:state (:rt s)) [:status :compile-failures [:probe-0 2]])]
+            (reset! reported report)))
+        (is (<= 5 (:failures @reported)) "The repeated failure was reported")
+        (is (= "java.lang.OutOfMemoryError" (:error @reported)))
+        (is (= [2] (versions s 1)) "It kept retrying and adopted the revision once it compiled")
+        (is (nil? (get-in @(:state (:rt s)) [:status :compile-failures])) "The report clears"))
+      (finally (stop! s)))))

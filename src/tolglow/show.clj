@@ -3102,7 +3102,10 @@
      :resolved-param-overrides input-overrides
      :reload-waits (:waits programs)
      :modulation-view (select-keys modulation-result [:overrides :diagnostics])
-     :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}})))
+     :status (let [failures (programs/repeated-failures @(:compiler-context runtime))]
+               (cond-> {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}
+                 ;; A program that keeps failing transiently is still retried; this says so.
+                 (seq failures) (assoc :compile-failures failures)))})))
 
 (defn- fire-scene-draft
   "Apply a quantized draft once the transport reaches its boundary. The owner

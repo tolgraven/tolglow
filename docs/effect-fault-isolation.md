@@ -114,8 +114,9 @@ revisions, or one revision launched on 64 heads, made that frame miss the
   adopts the new revision with them, so no frame runs two revisions of one
   effect. It does so only when nothing is lost: every value the older revision
   has must resolve there unchanged, and every value only the newer revision
-  has, from the launch or the cue's saved values, must be its default. A
-  launch that would lose a value, and a pinned launch, start on the revision
+  has, from the launch or the cue's saved values, must be its default, and
+  its targets must reach the same fixtures on both revisions. A launch that
+  would lose a value or a fixture, and a pinned launch, start on the revision
   they captured.
 - **Order and supersession.** The worker runs first in first out. It skips a
   compile that no frame still needs, such as a superseded revision.
@@ -128,6 +129,8 @@ revisions, or one revision launched on 64 heads, made that frame miss the
     owner once and then forgotten, so that frame fails as an inline compile
     would and the next request compiles again.
   - A CancellationException is retried once, then treated like a VM error.
+  - A program that fails transiently 5 times in a row is still retried, and
+    the frame status names it under `:compile-failures` until it compiles.
 - **Events.** Each `:effect/reloaded` event carries `:pending-since-frame` and
   `:adopted-frame`.
 - **Where compiles stay on the owner.**

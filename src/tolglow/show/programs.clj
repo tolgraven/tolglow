@@ -33,6 +33,8 @@
    :cache (atom {}) :retired (atom {})
    ;; Written by the worker, read and drained by the owner.
    :ready (atom {}) :warm (atom {}) :queued (atom #{}) :cancelled (atom #{})
+   ;; Consecutive transient failures per program: {program {:failures n :error class}}.
+   :transient-failures (atom {})
    :wanted (atom #{}) :warm-wanted (atom #{}) :live (atom true)
    ;; Owner only: what the warm tier was last built from.
    :warm-key (atom ::none) :scheduled-seen (atom #{}) :scheduled-added (atom 0)
@@ -107,9 +109,10 @@
   - a CancellationException is retried once, then kept as transient;
   - an interrupt is rethrown on the owner, and on the worker leaves the
     program uncompiled."
-  [{:keys [compiler cancelled]} program owner?]
+  [{:keys [compiler cancelled transient-failures]} program owner?]
   (try (let [step (compiler program)]
          (swap! cancelled disj program)
+         (swap! transient-failures dissoc program)
          step)
        (catch Throwable error
          (cond
@@ -123,7 +126,10 @@
                          (when-let [message (.getMessage error)] (str ": " message)))
                     {:compile-failure "java.lang.StackOverflowError"})
            (runtime-faults/recoverable? error) error
-           :else (do (swap! cancelled disj program) {::transient error})))))
+           :else (do (swap! cancelled disj program)
+                     (swap! transient-failures update program
+                            (fn [entry] {:failures (inc (:failures entry 0)) :error (.getName (class error))}))
+                     {::transient error})))))
 
 (defn- enqueue! [{:keys [submit queued live] :as context} program store!]
   (when-not (contains? @queued program)
@@ -148,8 +154,11 @@
         asked (set programs)]
     (reset! wanted (set needed))
     (swap! ready select-keys programs)
-    ;; A cancellation is forgotten once no frame or warm entry wants it.
+    ;; A cancellation or failure count is forgotten once no frame or warm
+    ;; entry wants the program.
     (swap! cancelled (fn [c] (into #{} (filter #(or (contains? asked %) (contains? @warm-wanted %))) c)))
+    (swap! (:transient-failures context)
+           (fn [m] (into {} (filter #(or (contains? asked (key %)) (contains? @warm-wanted (key %)))) m)))
     (doseq [program needed]
       (enqueue! context program
                 (fn [compile]
@@ -219,6 +228,21 @@
       (let [result (resolve)]
         (swap! resolutions assoc cue-id {:cue cue :basis basis :result result})
         result))))
+
+(def repeated-failure-limit
+  "Consecutive transient failures of one program before it is reported."
+  5)
+
+(defn repeated-failures
+  "Programs whose compile has failed transiently at least
+  `repeated-failure-limit` times in a row, still retried every request:
+  {[effect-id version] {:failures n :error class-name :targets targets}}."
+  [{:keys [transient-failures]}]
+  (into (sorted-map-by #(compare (pr-str %1) (pr-str %2)))
+        (keep (fn [[program {:keys [failures] :as entry}]]
+                (when (>= failures repeated-failure-limit)
+                  [[(:id program) (:version program)] (assoc entry :targets (:targets program))])))
+        @transient-failures))
 
 (defn worker
   "An owned single-thread compile worker, first in first out. :submit takes a
@@ -300,9 +324,10 @@
   its values. The launch resolved its values (launch and cue overrides, saved
   values, defaults) against the revision it captured. It may start on the
   older revision only if every value the older revision has resolves there
-  unchanged, and every value only the newer revision has is that revision's
-  default, which adoption adds back. Otherwise, and for a pinned launch, it
-  keeps the revision it captured."
+  unchanged, every value only the newer revision has is that revision's
+  default, which adoption adds back, and its targets narrow to the same
+  fixtures on both revisions. Otherwise, and for a pinned launch, it keeps the
+  revision it captured."
   [launch sibling]
   (when (not= :pinned (:reload-policy launch :pinned))
     (let [old (:params (:definition sibling) {})
@@ -311,7 +336,10 @@
           kept (try (params/resolve-values old (select-keys values (keys old))) (catch Exception _ nil))
           defaults (try (params/resolve-values new {}) (catch Exception _ nil))
           lossless? (and kept defaults
-                         (every? (fn [[k v]] (if (contains? old k) (= v (get kept k)) (= v (get defaults k)))) values))]
+                         (every? (fn [[k v]] (if (contains? old k) (= v (get kept k)) (= v (get defaults k)))) values)
+                         ;; The launch must reach the same fixtures on both revisions.
+                         (= (:targets (program (:definition sibling) launch))
+                            (:targets (program (:definition launch) launch))))]
       (when lossless?
         (assoc launch :definition (:definition sibling) :effect-version (:effect-version sibling) :params kept :state {})))))
 
