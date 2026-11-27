@@ -96,6 +96,12 @@
   "The axis a content space spreads over, matched against viewport axes."
   :type)
 
+(defmulti content-valid?
+  "Type-specific checks on a content map beyond the shared ones; true by default."
+  :type)
+
+(defmethod content-valid? :default [_] true)
+
 (defn content-type? [type] (contains? (dissoc (methods content-cells) :default) type))
 
 (defn- cells-size [cells]
@@ -342,12 +348,14 @@
 
 (defn window
   "Project one logical surface (a link, or one surface viewport): mode,
-  window, span, content size, last window, and per member its viewport,
-  offset, window and the cells it shows with member-local :position."
+  content type, window, span, content size and cell count, last window, and
+  per member its viewport, offset, window and the cells it shows with
+  member-local :position."
   [model target viewport]
   (when-let [{:keys [link? members cells] :as view} (resolved model target viewport)]
     {:id (:id view) :link? link? :mode (:mode view) :direction (when (= :extend (:mode view)) (:direction view))
-     :viewport (:viewport view) :window (:window view) :span (span view) :size (:size view)
+     :viewport (:viewport view) :content-type (get-in view [:content :type]) :count (count cells)
+     :window (:window view) :span (span view) :size (:size view)
      :limit (limits view (:size view)) :layout (:layout view)
      :members (mapv (fn [{:keys [surface-id attached? shape] :as member}]
                       (let [{:keys [x y] :as origin} (member-window view surface-id)]
@@ -406,7 +414,8 @@
   (and (map? content) (content-type? (:type content))
        (contains? #{nil :manual :overlay} (:effect-group-view content))
        (vector? (:cue-strips content []))
-       (every? #(and (map? %) (id? (:cue-id %))) (:cue-strips content []))))
+       (every? #(and (map? %) (id? (:cue-id %))) (:cue-strips content []))
+       (content-valid? content)))
 
 (defn- update-state [model f & args]
   (assoc-in model state-path (apply f (state model) args)))
