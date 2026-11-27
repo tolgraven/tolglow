@@ -134,6 +134,62 @@ Use `output` directly for an existing output-level tween expression. A tween
 is sampled by the existing tween compiler and is not an arbitrary numeric node
 that can be nested inside other arithmetic.
 
+### Sample a gradient parameter
+
+A `:gradient` parameter holds ordered `{:position p :color [r g b]}` stops. An
+output reads it with `{:op :gradient :key k :args [position]}`, or
+`fx/gradient`, which gives a linear RGB colour. The position is any scalar
+expression: a constant, a fixture coordinate, another parameter, an oscillator
+phase or arithmetic on them. The colour nests in arithmetic like any other
+`vec3` (#689).
+
+```clojure
+(def tide
+  (fx/effect :user/tide
+    {:params {:palette (fx/parameter [{:position 0.0 :color [0.02 0.05 0.55]}
+                                      {:position 0.5 :color [0.28 0.03 0.75]}
+                                      {:position 1.0 :color [0.75 0.02 0.42]}])
+              :shift [0.0 -1.0 1.0]
+              :level [0.8 0.0 1.0]}}
+    (fx/color (fx/multiply (fx/gradient :palette (fx/add (fx/divide (fx/position :x) 8.0) (fx/param :shift))
+                                        {:extend :mirror})
+                           (fx/param :level)))))
+```
+
+- Colours interpolate component by component between neighbouring stops, on
+  the stored linear values. Studio's gradient swatch draws the same stops with
+  a CSS ramp, which interpolates the same numbers the same way.
+- Before the first stop and after the last, the end colours hold. That is the
+  default `:extend :clamp`, which matches the swatch. `:extend :repeat` wraps the
+  position into [0,1), so 1.0 shows the first stop again. `:extend :mirror`
+  reflects the position back over [1,2].
+- One stop is a solid colour.
+- `fx/parameter` infers `:gradient` from a vector of stops and makes the
+  numbers doubles.
+
+Reading the gradient with `{:op :param :key :palette}` is refused when the
+definition is published, and the message names the `:gradient` form. A
+`:gradient` sample of a numeric parameter, a vector position, a missing
+position or an unknown `:extend` is refused at the expression's path.
+Reactive outputs cannot sample a gradient, because they read only their declared
+signal inputs.
+
+The compiler lowers each sample to ordinary numeric IR: one clamped mix for each
+segment between stops. Each frame expands the gradient's resolved stops once
+into private inputs, and the fixtures only do arithmetic. The scalar, batch and
+GLSL backends therefore all run it, and the batch compiler keeps its typed path
+with no fallback reason. Live edits (`:param/set`, ramps) and definition
+revisions take effect on the next frame without recompiling the effect.
+
+The schema's `:max-stops` sets how many segments the IR contains, from 1 to 16.
+The default is 8. Each fixture pays for every segment, so a smaller capacity
+is cheaper. On 2,048 pixels on this M4 Pro, a sample cost about 1.0 ms per frame
+in the batch compiler and 31 ms in the scalar fallback at the default capacity.
+At capacity 3 it cost 0.4 ms and 11 ms, and at 16 it cost 1.8 ms and 62 ms.
+A default with more stops than the capacity is refused when an output samples
+it. A live value with more stops stays valid. Sampling then drops the interior
+stops that change its ramp least, keeping the end stops, until it fits.
+
 ## Musical oscillators
 
 All oscillators default to one elapsed bar per cycle. They accept `:period`,

@@ -121,6 +121,36 @@ result). Printing stops at the character bound, and a map or set longer than
 64 items shows the first 64 that `pr` would show, sorted, so a huge result costs
 no more than the text shown. Strings and other values print as `pr` prints them.
 
+## Sample a gradient parameter
+
+An effect output can read a `:gradient` parameter with
+`{:op :gradient :key :palette :args [position]}` (#689). It is ordinary
+definition data. The REPL builds it with `fx/gradient`, and Studio's
+**Definitions** editor accepts the same EDN. Both publish through the shared
+`:definition` operation. Both surfaces get the same refusal for
+`{:op :param :key :palette}`, with a message that names the `:gradient` form.
+[Gradient samples](effect-recipes.md#sample-a-gradient-parameter)
+
+```clojure
+(require '[tolglow.effects :as fx])
+@(show/submit! runtime :definition
+   {:kind :effects
+    :definition (fx/effect :user/ramp
+                  {:params {:palette (fx/parameter [{:position 0.0 :color [1.0 0.0 0.0]}
+                                                    {:position 1.0 :color [0.0 0.0 1.0]}])}}
+                  (fx/color (fx/gradient :palette (fx/position :x))))}})
+```
+
+A running instance's gradient changes through `:param/set` or a `:param/ramp`
+with a vector of stops. The running card draws the committed stops as one
+ramp, and the rig output shows the sampled colours on the next frame.
+
+Gap: Studio and Push have no stop editor. Studio displays a gradient value but
+cannot change its stops, so stops are edited in the REPL, in definition EDN or
+through the scheduler. The Push multi-pad stop editor is tracked in
+[issue #529](https://github.com/tolgraven/tolglow/issues/529). The rendered
+card has not had a browser review with a sampled gradient.
+
 ## View recent cues
 
 In **Perform**, the **Recent cues** tab puts the latest successful launch in

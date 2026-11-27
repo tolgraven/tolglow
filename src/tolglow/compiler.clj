@@ -4,6 +4,7 @@
   (:require [afterglow.render.ir :as ir]
             [tolglow.compiler.blocks :as blocks]
             [tolglow.compiler.capability :as capability]
+            [tolglow.compiler.gradient :as gradient]
             [tolglow.compiler.video :as video]
             [tolglow.video.shader :as shader]
             [tolglow.effects.reactive :as reactive]
@@ -53,10 +54,19 @@
      (let [schema (get schemas (:key expression))
            type (when schema (parameter-type schema))]
        (when-not schema (fail! (conj path :key) "Expression references an unknown parameter"))
+       (when (= :gradient (:type schema)) (fail! path (gradient/misuse-message (:key expression))))
        (when-not type (fail! path "This parameter type is not supported by the numeric expression IR"))
        (when (and (:type expression) (not= type (:type expression)))
          (fail! (conj path :type) "Expression parameter type disagrees with its schema"))
        (assoc expression :type type))
+     (gradient/gradient-node? expression)
+     (do (when reactive-inputs
+           (fail! path "Reactive outputs read only declared signal values and constants"))
+         (gradient/lower schemas
+                         (cond-> expression
+                           (vector? (:args expression))
+                           (update :args #(mapv (fn [i arg] (prepare-expression arg schemas reactive-inputs (conj path :args i))) (range) %)))
+                         path))
      (contains? expression :args)
      (if (vector? (:args expression))
        (update expression :args #(mapv (fn [i arg] (prepare-expression arg schemas reactive-inputs (conj path :args i))) (range) %))
@@ -130,6 +140,7 @@
       (when (seq errors)
         (throw (ex-info "Invalid modulation definition"
                         {:errors (mapv #(update % :path (partial into [:modulation])) errors)})))))
+  (gradient/validate-schemas (:params definition {}))
   (let [schemas (:params definition {})
         defaults (registry/resolve-params schemas {})
         entries (registry/output-entries (:outputs definition))
@@ -155,7 +166,8 @@
                           (every? (into registry/emitter-attributes [:dimmer :color :strobe :fog])
                                   envelope-attributes))))
       (fail! [:envelope :attributes] "Envelope targets must be intensity/color attributes"))
-    {:schemas schemas :defaults defaults :outputs outputs :block-plan block-plan :selected selected
+    {:schemas schemas :defaults defaults :gradients (gradient/gradients schemas)
+     :outputs outputs :block-plan block-plan :selected selected
      :envelope-fn envelope-fn :envelope-attributes envelope-attributes :shader shader-plan})))
 
 (defn- validate-frame-fixtures! [fixtures]
@@ -213,7 +225,7 @@
   ([definition bind-pure] (compile-effect definition bind-pure nil))
   ([definition bind-pure match-plan] (compile-effect definition bind-pure match-plan nil))
   ([definition bind-pure match-plan rig]
-  (let [{:keys [schemas defaults outputs selected block-plan envelope-fn envelope-attributes]
+  (let [{:keys [schemas defaults gradients outputs selected block-plan envelope-fn envelope-attributes]
          shader-plan :shader}
         (compile-plan definition bind-pure)
         fixture-index (when block-plan (blocks/fixture-index rig))
@@ -224,6 +236,8 @@
             _ (when-not (and (registry/finite-number? now) (registry/finite-number? start))
                 (fail! [:frame :time-ms] "Effect frame/start time must be finite milliseconds"))
             params (registry/resolve-params schemas (merge defaults (:params instance)))
+            ;; Expand each gradient's stops once per frame, never per fixture.
+            params (gradient/with-stops gradients params)
             params (if block-plan (blocks/with-variables block-plan params frame) params)
             releasing? (= :releasing (:phase instance))
             clock (time/frame-clock frame)
