@@ -1,9 +1,12 @@
 (ns tolglow.studio.rig-editor
   "Re-frame authoring drafts; the shared scene owns only picking and drawing."
-  (:require [re-frame.core :as rf]
+  (:require [clojure.string :as str]
+            [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.pixel-editor :as pixels]
+            [tolglow.rig.placement :as placement]
+            [tolglow.studio.rig-placement :as rp]
             [tolglow.studio.rig-fields :as fields]
             [tolglow.studio.camera-controls :as camera]
             [tolglow.studio.spatial-preview :as spatial-preview]
@@ -14,6 +17,7 @@
 
 (def defaults {:tool "navigate" :plane "xz" :plane-value 0 :snap 0.1 :points [] :targets [] :undo []
                :aim-mode "together" :along "u" :surface-id "floor" :aim-point [0 0 0]
+               :place-clearance 0.25 :calibration {:samples []}
                :path {:id "drawn-path" :name "Drawn path" :duration-value 4 :duration-unit "bars" :mode "loop" :curve "linear" :closed? false
                       :sync-arrival? false}})
 
@@ -64,6 +68,40 @@
       (-> db (assoc-in [:ui :rig-draft (keyword (:kind selection)) index field] value)
           (assoc-in [:ui :rig-dirty?] true)) db) db))
 
+(defn selected-fixture [db state]
+  (when (= "fixtures" (get-in state [:selection :kind]))
+    (when-let [index (item-index db (:selection state))]
+      (get-in db [:ui :rig-draft :fixtures index]))))
+
+(defn edit-selected
+  "Apply f to the selected draft fixture as one undoable edit."
+  [db f]
+  (let [state (editor db) index (when (= "fixtures" (get-in state [:selection :kind])) (item-index db (:selection state)))]
+    (if-let [fixture (when index (get-in db [:ui :rig-draft :fixtures index]))]
+      (let [changed (f fixture)]
+        (if (= changed fixture) db
+          (-> db (put-editor (remember db state))
+              (assoc-in [:ui :rig-draft :fixtures index] changed)
+              (assoc-in [:ui :rig-dirty?] true))))
+      db)))
+
+(defn place-fixture
+  "Place the chosen library type at a picked mount as one undoable draft edit."
+  [db hit]
+  (let [state (editor db)
+        result (rp/place (get-in db [:ui :rig-draft]) (rp/find-type db (:place-type state)) hit (:place-clearance state 0.25))]
+    (if-let [error (:error result)]
+      (put-editor db (assoc state :message error))
+      (let [fixture (:fixture result)]
+        (-> db (assoc-in [:ui :rig-draft] (:rig result)) (assoc-in [:ui :rig-dirty?] true)
+            (put-editor (assoc (remember db state)
+                               :selection {:kind "fixtures" :id (:id fixture)}
+                               :message (str "Placed " (:id fixture) " on the " (rp/surface-label hit)
+                                             " at universe " (:universe fixture) ", address " (:address fixture) ". "
+                                             (if-let [axes (rp/missing-calibration fixture)]
+                                               (str "Enter its " (str/join " and " axes) " range, then save the rig.")
+                                               "Save the rig to patch it.")))))))))
+
 (defn- pixel-edit [db state command checkpoint?]
   (let [rig (get-in db [:ui :rig-draft])
         [next-rig next-state] (pixels/edit rig state command)]
@@ -111,14 +149,19 @@
                    "rotate" (let [index (item-index db (:selection gesture))
                                   base (get-in gesture [:before :rig (keyword (get-in gesture [:selection :kind])) index :rotation-deg] [0 0 0])
                                   axis (get {"xz" 1 "xy" 2 "yz" 0} (:plane state) 1)]
-                              (if (js/Number.isFinite angle) (set-pose db (:selection gesture) :rotation-deg (update base axis + angle)) db)) db) db)
+                              (if (js/Number.isFinite angle) (set-pose db (:selection gesture) :rotation-deg (update base axis + angle)) db))
+                   "mount" (let [selection (:selection gesture) index (item-index db selection)
+                                 base (get-in gesture [:before :rig :fixtures index :rotation-deg] [0 0 0])
+                                 position (get-in db [:ui :rig-draft :fixtures index :position])
+                                 rotation (when (= "fixtures" (:kind selection)) (placement/face base position point))]
+                             (if rotation (set-pose db selection :rotation-deg rotation) db)) db) db)
         "end" (if (= token (:token gesture)) (put-editor db (dissoc state :gesture)) db)
         "cancel" (if (and gesture (= token (:token gesture)))
                    (restore-checkpoint db (-> state (dissoc :gesture) (update :undo pop)) (:before gesture)) db)
         db))))
 (rf/reg-event-db :rig-editor/open (fn [db _] (put-editor db (editor db))))
-(defn surface-command [db mode point surface-id]
-  (let [state (editor db) targets (:targets state)
+(defn surface-command [db mode point surface-id & [targets]]
+  (let [state (editor db) targets (or targets (:targets state))
         request (str (random-uuid))
         error (cond
                 (get-in db [:ui :rig-dirty?]) "Save or discard your rig edits before aiming."
@@ -143,7 +186,13 @@
       (#{"sculpt-begin" "sculpt-move" "sculpt-end" "sculpt-cancel"} type) {:dispatch [::sculpt/gesture detail]}
       (= type "throw") {:dispatch [:tolglow.studio.spatial/throw identity point (:velocity detail)]}
       (= type "select-volume") {:dispatch [:tolglow.studio.spatial/select-preview (:volume-id detail)]}
-      (= type "surface") (if (= "aim" (:tool (editor db))) (surface-command db (:aim-mode (editor db)) point surface-id) {})
+      (= type "surface") (case (:tool (editor db))
+                           "aim" (surface-command db (:aim-mode (editor db)) point surface-id)
+                           "calibrate" {:db (put-editor db (-> (editor db) (assoc-in [:calibration :target] point)
+                                                               (update :calibration dissoc :check)))}
+                           {})
+      (= type "place") (if (= "place" (:tool (editor db))) {:db (place-fixture db detail)} {})
+      (= type "missed-place") {:db (put-editor db (assoc (editor db) :message "Tap the floor, a wall, the ceiling or a truss inside the room."))}
       (= type "missed-surface") {:db (put-editor db (assoc (editor db) :message "Tap a receiving surface within the room."))}
       :else {:db (interaction db detail)})))
 (rf/reg-event-fx :rig-editor/aim
@@ -161,6 +210,100 @@
                                                         "Surface aim applied.") result)))) db))))
 (rf/reg-event-db :rig-editor/set
   (fn [db [_ path value]] (put-editor db (assoc-in (editor db) path value))))
+
+(rf/reg-event-db :rig-editor/mount
+  (fn [db [_ key]] (edit-selected db #(rp/mount % key))))
+
+(rf/reg-event-db :rig-editor/axis-range
+  (fn [db [_ axis bound value]]
+    (let [db (edit-selected db #(rp/set-range % axis bound value))]
+      (put-editor db (assoc (editor db) :message (some-> (selected-fixture db (editor db)) rp/range-error))))))
+
+(rf/reg-event-db :rig-editor/reverse-axis
+  (fn [db [_ axis on?]] (edit-selected db #(rp/reverse-axis % axis on?))))
+
+(rf/reg-event-db :rig-editor/calibration-target
+  (fn [db [_ axis value]]
+    (let [state (editor db) target (or (get-in state [:calibration :target]) [0 0 0])]
+      (put-editor db (-> state (assoc-in [:calibration :target] (assoc target axis value)) (update :calibration dissoc :check))))))
+
+(defn calibration-request
+  "Read-only aim check or fit for the selected head, with its draft mounting
+  and travel as overrides of the committed fixture."
+  [db operation request extra]
+  (let [state (editor db) fixture (selected-fixture db state)]
+    {:path (str "/api/fixtures/" operation)
+     :body (merge {:fixture-id (rp/wire (:id fixture))}
+                  (select-keys fixture [:position :rotation-deg :calibration]) extra)
+     :on-success [:rig-editor/calibration-result (identity-key db) request true]
+     :on-failure [:rig-editor/calibration-result (identity-key db) request false]}))
+
+(rf/reg-event-fx :rig-editor/aim-check
+  (fn [{:keys [db]} _]
+    (let [state (editor db) target (get-in state [:calibration :target]) request (str (random-uuid))]
+      (if (and (selected-fixture db state) (finite-point? target))
+        {:db (put-editor db (-> state (assoc-in [:calibration :checking] request) (assoc :message nil)))
+         :studio/http (calibration-request db "aim-check" request {:point target})}
+        {:db (put-editor db (assoc state :message "Select a moving head and enter a finite target."))}))))
+
+(rf/reg-event-fx :rig-editor/aim-fit
+  (fn [{:keys [db]} _]
+    (let [state (editor db) {:keys [samples verified?]} (:calibration state) request (str (random-uuid))]
+      (if (and (selected-fixture db state) (<= 3 (count samples)))
+        {:db (put-editor db (-> state (assoc-in [:calibration :fitting] request) (assoc :message nil)))
+         :studio/http (calibration-request db "aim-fit" request {:samples samples :axis-verified? (true? verified?)})}
+        {:db (put-editor db (assoc state :message "Record at least three observations first."))}))))
+
+(rf/reg-event-db :rig-editor/calibration-result
+  (fn [db [_ identity request success? result]]
+    (let [state (editor db) {:keys [checking fitting]} (:calibration state)
+          kind (cond (= request checking) :check (= request fitting) :fit)]
+      (if (and kind (= identity (identity-key db)))
+        (put-editor db (cond-> (update state :calibration dissoc :checking :fitting)
+                         success? (assoc-in [:calibration kind] result)
+                         (not success?) (assoc :message result)))
+        db))))
+
+(rf/reg-event-db :rig-editor/record-sample
+  (fn [db _]
+    (let [state (editor db) fixture (selected-fixture db state) target (get-in state [:calibration :target])]
+      (cond
+        (not (and fixture (finite-point? target))) (put-editor db (assoc state :message "Select a moving head and set its target first."))
+        (>= (count (get-in state [:calibration :samples])) 64) (put-editor db (assoc state :message "Use at most 64 observations."))
+        :else
+        (let [observed (rp/output-sample db (:id fixture))]
+          (put-editor db (-> state
+                             (update-in [:calibration :samples] (fnil conj []) (merge {:target target :pan 0.5 :tilt 0.5} observed))
+                             (update :calibration dissoc :fit)
+                             (assoc :message (if observed "Recorded the head's current pan and tilt."
+                                               "This head has no pan/tilt output yet; enter the DMX values you jogged it to.")))))))))
+
+(rf/reg-event-db :rig-editor/sample-value
+  (fn [db [_ index axis dmx]]
+    (let [state (editor db)]
+      (if (and (get-in state [:calibration :samples index]) (<= 0 dmx 255))
+        (put-editor db (-> state (assoc-in [:calibration :samples index axis] (/ dmx 255)) (update :calibration dissoc :fit))) db))))
+
+(rf/reg-event-db :rig-editor/delete-sample
+  (fn [db [_ index]]
+    (let [state (editor db) samples (get-in state [:calibration :samples])]
+      (if (get samples index)
+        (put-editor db (-> state (assoc-in [:calibration :samples] (into (subvec samples 0 index) (subvec samples (inc index))))
+                           (update :calibration dissoc :fit))) db))))
+
+(rf/reg-event-db :rig-editor/apply-fit
+  (fn [db _]
+    (let [rotation (get-in (editor db) [:calibration :fit :rotation-deg])]
+      (if (finite-point? rotation)
+        (let [db (edit-selected db #(assoc % :rotation-deg rotation))]
+          (put-editor db (assoc (editor db) :message "Fitted rotation applied to the draft. Save the rig to use it."))) db))))
+
+(rf/reg-event-fx :rig-editor/test-aim
+  (fn [{:keys [db]} _]
+    (let [state (editor db) fixture (selected-fixture db state)]
+      (if fixture
+        (surface-command db "together" (get-in state [:calibration :target]) "" [(:id fixture)])
+        {:db (put-editor db (assoc state :message "Select a moving head first."))}))))
 (defn set-sync-arrival
   "Toggle synchronized arrival. An ordinary path needs a positive duration, so
   leaving sync with a zero minimum restores the default musical length."
@@ -400,14 +543,17 @@
                      (:geometry (vreset! cached {:spec spec :index index :geometry (pixels/geometry spec index)})))
           tool-data (if (= "pixels" (:tool state))
                       (pixels/projection state spec geometry)
-                      (assoc (select-keys state [:selection :points :selected-point]) :closed? (get-in state [:path :closed?])))
+                      (assoc (select-keys state [:selection :points :selected-point]) :closed? (get-in state [:path :closed?])
+                             :calibration-target (get-in state [:calibration :target])
+                             :calibration-points (mapv :target (get-in state [:calibration :samples]))))
           projection (merge (select-keys state [:tool :plane :plane-value :snap]) tool-data)
           show (assoc (or (:server-presentation db) (:show db)) :rig rig :editor projection)]
     [:section.panel.rig-editor {:aria-label "Three dimensional rig and movement editor" :data-tool (:tool state)}
      [:div.panel-top [:span.section-label "Rig editor"] [:span.small.muted (if (get-in db [:ui :rig-dirty?]) "Unsaved rig draft" "Rig saved")]]
      [:div.rig-editor-toolbar
       [:div.rig-editor-tools {:role "group" :aria-label "3D editor tool"}
-       (for [[tool label] [["navigate" "Explore"] ["move" "Move"] ["rotate" "Rotate"] ["draw" "Draw path"] ["pixels" "Pixel layouts"] ["aim" "Aim at surface"] ["volume-select" "Select volume"] ["sculpt-volume" "Sculpt volume"]]]
+       (for [[tool label] [["navigate" "Explore"] ["place" "Place fixture"] ["move" "Move"] ["rotate" "Rotate"] ["mount" "Aim home"]
+                           ["calibrate" "Calibrate aim"] ["draw" "Draw path"] ["pixels" "Pixel layouts"] ["aim" "Aim at surface"] ["volume-select" "Select volume"] ["sculpt-volume" "Sculpt volume"]]]
          ^{:key tool} [:button.button {:aria-pressed (= tool (:tool state)) :on-click #(dispatch! [:rig-editor/set [:tool] tool])} label])]
       [:div.rig-editor-actions
        [:button.button {:disabled (empty? (:undo state)) :on-click #(dispatch! [:rig-editor/undo])} "Undo"]
@@ -430,6 +576,11 @@
        [:p.small.muted "Move keeps an object's depth in the chosen plane. Rotate turns around the plane normal. Choose Explore to move the camera; Escape cancels a drag."]
        (when (not= "pixels" (:tool state)) [pose-fields db state])]
       (case (:tool state) "aim" [aim-fields db state]
+        "place" [:div [rp/place-panel db state] (when-let [fixture (selected-fixture db state)] [rp/mount-panel fixture])]
+        "mount" (if-let [fixture (selected-fixture db state)] [rp/mount-panel fixture]
+                  [:p.small "Select a fixture, then drag in the scene to point its home beam. Its mount stays the same."])
+        "calibrate" [:div [rp/calibrate-panel db state (selected-fixture db state)]
+                     (when-let [fixture (selected-fixture db state)] [rp/mount-panel fixture])]
         "pixels" [pixels/panel rig state spec geometry]
         "throw" [:p.small "Drag from the launch point in the selected plane. Release to throw; Escape cancels."]
         "sculpt-volume" [sculpt/panel]
