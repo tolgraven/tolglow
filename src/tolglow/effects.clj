@@ -157,6 +157,22 @@
   (when-not (and (map? options) (every? allowed (keys options)))
     (fail! [] (str "Unknown or invalid options; expected " (pr-str (sort allowed))))) options)
 
+(defn phase-accumulator
+  "Cycles of a cue-local phase that advances each frame by the cue's elapsed
+  beats since the last frame divided by `period`. Unlike `cycles`, `period`
+  may be an expression of parameters: an edit changes the rate from the phase
+  already reached instead of jumping to elapsed / new period. The phase starts
+  at zero on launch, holds while the transport is stopped and is kept in the
+  instance's state under `id`, a keyword unique within the effect. Options:
+  :unit :beats (default), :bars or :phrases for the period."
+  ([id period] (phase-accumulator id period {}))
+  ([id period {:keys [unit] :as options}]
+   (options! options #{:unit})
+   (when-not (keyword? id) (fail! [:id] "A phase accumulator needs a keyword ID"))
+   (when-not (or (nil? unit) (#{:beats :bars :phrases} unit)) (fail! [:unit] "Unit must be :beats, :bars or :phrases"))
+   (cond-> {:op :phase-accumulator :id id :period (expression period)}
+     unit (assoc :unit unit))))
+
 (defn- wave-range [options value] (mix (:low options 0.0) (:high options 1.0) value))
 
 (defn- cycle-expression [options] (cycles (:period options {:bars 1}) options))

@@ -177,10 +177,10 @@ matrix palette as colour and gradient widgets, the rest as typed controls.
 
 | Cue | Category | Source and behaviour |
 | --- | --- | --- |
-| `:searchlight-drift` | movement | `three.cljs` searchlight wander. Each beam lunges with quadratic-out easing to a seeded point in `:center` ± `:extent` (metres), settles for `:hold` of its move, then picks the next. Each head has its own move length between `:min-beats` and `:max-beats` and its own phase. These heads have no zoom, so brightness wanders between `:level-min` and `:level` in place of the original beam angle |
+| `:searchlight-drift` | movement | `three.cljs` searchlight wander. Each beam lunges with quadratic-out easing to a seeded point in `:center` ± `:extent` (metres), settles for `:hold` of its move, then picks the next. Moves last `:move-beats` on average; each head's are 0.6 to 1.4 times that, by seed, with its own phase. These heads have no zoom, so brightness wanders between `:level-min` and `:level` in place of the original beam angle |
 | `:twin-cones` | intensity | `crazy-spotlight-shader.glsl` two-spot cones. The floor heads circle above the stage, the stage-left pair one way and the stage-right pair the other. Their tints sway in opposite phase. Brightness mixes a kick that decays from every beat with `:energy` by `:follow` |
-| `:run` | intensity | The grid's "Run" concept as a macro cue. One `:drive` control takes the beams and washes from a dim colour to a white strobe: level, hue fan, whitening and, past `:strobe-from`, a beat-locked strobe that doubles up to 2^`:rate-steps` flashes a beat. It writes no aim |
-| `:matrix-chase` | pixel | New, after the grid's matrix ideas. The tube wall as eight columns of ten cells: bands every `:spacing` cells step one cell per `:step` beats at `:angle` degrees (0 columns, 90 rows, diagonals between) and fade over `:tail` cells. Rows take their colour from the editable `:palette` gradient parameter |
+| `:run` | intensity | The grid's "Run" concept as a macro cue. One `:drive` control takes the beams and washes from a dim colour to a white strobe: level, hue fan, whitening and, past `:strobe-from`, a beat-locked strobe that doubles up to 2^`:rate-steps` flashes a beat. `:rate-steps` stops at 2: four flashes a beat is 12 Hz at 180 BPM, and each flash at full drive lasts 0.35 of its slot (29 ms), so the show's 40 Hz frames draw every one; eight a beat would alias. It writes no aim |
+| `:matrix-chase` | pixel | New, after the grid's matrix ideas. The tube wall as eight columns of ten cells: bands every `:spacing` cells (a whole number) step one cell per `:step` beats at `:angle` degrees (0 columns, 90 rows, diagonals between) and fade over `:tail` cells. Rows take their colour from the editable `:palette` gradient parameter |
 
 The cones' `:energy` is bound to the registered waveform `:audio/showcase-bass`,
 an [audio-shaped LFO](audio-shaped-lfo.md) the model configures
@@ -197,18 +197,27 @@ them: bars 0–3 haze, a low wash, the searchlights and a column chase, with the
 cones joining on bar 2; bars 4–11 the chase turns to rows while `:drive` ramps
 the run from 0 to 1 over eight bars and the searchlight box narrows (a ramp of
 a vector parameter); bar 12 the run lets go into a blinder hit and the chase
-runs diagonals; everything ends by bar 15. The chase's step halves on the bar
-8 line with `:param/set`, where both step counts are whole multiples of the
-spacing, so the bands double speed without jumping.
+runs diagonals; everything ends by bar 15. The chase's step halves on bar 8
+with `:param/set`, and the bands double speed from where they are.
 
 ```clojure
 (def run (showcase/replay {:timeline showcase/after-hours}))
 (count (:dmx run))   ;; => 1202
 ```
 
-Known limits: changing `:min-beats`, `:max-beats` or the chase `:step`
-continuously re-times the pattern from the current beat, so ramp them only
-where a jump is wanted. Edit them with a set on a bar line instead.
+**Editing timing parameters.** The searchlight moves, the cones' turn and
+sway, and the chase's bands count from the cue's launch in
+[phase accumulators](effect-recipes.md#phase-accumulators): each frame adds
+the elapsed beats since the last frame divided by the period now set. Turning
+`:move-beats`, `:bars`, `:sway-bars`, `:step` or `:spacing` therefore changes
+the pace from where the pattern is, at any point in a show. A drag at
+transport beat 2000 moves no head further per frame than ordinary motion
+(`timing-edits-late-in-a-show-change-the-pace-without-jumps`). The phases live
+in the instance's state, so a stopped transport holds them and play resumes
+without catch-up. What still changes at once: `:seed` and `:hold` pick other
+points or another spot along the current move (inside the box), `:spacing`
+regroups the bands from the current band phase, and the run's strobe rate
+steps by powers of two on the beat grid.
 
 ### Compound cues
 

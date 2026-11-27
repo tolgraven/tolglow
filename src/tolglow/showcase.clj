@@ -166,7 +166,11 @@
                                     :swatch "#3fb8c4" :tags [:movement] :params {} :priority 14
                                     :reload-policy :preserve-state}))
          paged (assoc-in moving [:pages :showcase]
-                         (page (conj (mapv :id looks/catalogue) :gather-path :colour-drift)))
+                         ;; The tolglow-web cues follow every earlier cue, so those
+                         ;; keep the cells they had before the after-hours cues.
+                         (page (let [ids (mapv :id looks/catalogue)]
+                                 (concat (remove looks/after-hours-cues ids) [:gather-path :colour-drift]
+                                         (filter looks/after-hours-cues ids)))))
          composed (reduce (fn [m definition]
                             (composition/save m (cond-> (dissoc definition :legacy)
                                                   (= :sequence (:mode definition)) (assoc :seed seed))))
@@ -291,8 +295,7 @@
       (ramp 4 :run :drive 1.0 {:bars 8} :ease-in)
       ;; Phrase 3, bars 8-11: tighter steps, the searchlights narrow their box.
       (end 8 :wash-tide)
-      ;; Set on the bar line: both step counts are whole multiples of the
-      ;; spacing there, so the bands double their speed without a jump.
+      ;; The bands keep their phase through the edit and double their speed.
       {:at {:bar 8} :op :param/set :cue-id :matrix-chase :param :step :value 0.25}
       (ramp 8 :searchlight-drift :extent [2.0 0.4 1.0] {:bars 4} :ease-in)
       ;; Phrase 4, bars 12-15: the hit. The run lets go, the blinders fire

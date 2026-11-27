@@ -414,16 +414,19 @@
   "Port of the tolglow-web searchlight wander (`three.cljs`, random tweens of
   each spot's aim over 2-7 s with quadratic-out easing). Each beam lunges to a
   new seeded point in the box `:center` +/- `:extent`, settles there for the
-  `:hold` fraction of its move and picks the next. Every head keeps its own
-  move length between `:min-beats` and `:max-beats` and its own phase, so the
-  six beams never move in step. A move is a stretch of transport beats, so the
-  drift follows tempo and freezes with the transport. Nothing limits how fast
-  a head is asked to travel. The original also tweened beam angle and
-  penumbra; these heads have no zoom, so the brightness wanders instead,
-  between `:level-min` and `:level`."
+  `:hold` fraction of its move and picks the next. Moves last `:move-beats`
+  on average; every head's are 0.6 to 1.4 times that, by seed, with its own
+  phase, so the six beams never move in step. The moves count from the launch
+  in a phase accumulator, so turning `:move-beats` changes the pace from the
+  move each beam is in rather than sending it to another one. A move is a
+  stretch of beats, so the drift follows tempo and freezes with the
+  transport. Nothing limits how fast a head is asked to travel. The original
+  also tweened beam angle and penumbra; these heads have no zoom, so the
+  brightness wanders instead, between `:level-min` and `:level`."
   (let [salt (fx/multiply (p :seed) 0.618)
-        beats (fx/mix (p :min-beats) (p :max-beats) (noise head-hash salt 0.37))
-        clock (fx/add (fx/divide beat beats) (noise (fx/multiply head-hash 1.91) salt 5.3))
+        pace (fx/add 0.6 (fx/multiply 0.8 (noise head-hash salt 0.37)))
+        moves (fx/phase-accumulator :moves (p :move-beats))
+        clock (fx/add (fx/divide moves pace) (noise (fx/multiply head-hash 1.91) salt 5.3))
         move (floor clock)
         eased (ease-out-quad (fx/clamp (fx/divide (fract clock) (fx/subtract 1.0 (p :hold)))))
         draw (fn [index salt-2] (noise head-hash (fx/multiply index 3.17) salt salt-2))
@@ -439,8 +442,7 @@
                                                          :semantic/type :position :unit :m :name "Centre"})
                     :extent (fx/parameter [4.2 0.8 2.2] {:type :vector :size 3 :bounds [0.0 6.0]
                                                          :unit :m :name "Extent"})
-                    :min-beats (fx/parameter 4.0 {:bounds [1.0 32.0] :unit :beats :name "Shortest move"})
-                    :max-beats (fx/parameter 14.0 {:bounds [1.0 32.0] :unit :beats :name "Longest move"})
+                    :move-beats (fx/parameter 8.0 {:bounds [1.0 32.0] :unit :beats :name "Move length"})
                     :hold (fx/parameter 0.3 {:bounds [0.0 0.9] :unit :fraction :name "Settle"})
                     :level (fx/parameter 0.9 {:bounds [0.0 1.0] :name "Brightest"})
                     :level-min (fx/parameter 0.45 {:bounds [0.0 1.0] :name "Dimmest"})
@@ -455,7 +457,9 @@
   "Port of the tolglow-web twin audio cones (`crazy-spotlight-shader.glsl`).
   The floor heads trace circles above the stage, the stage-left pair turning
   one way and the stage-right pair the other. Their tints sway between
-  `:tint-a` and `:tint-b` in opposite phase. Brightness follows a mix of a
+  `:tint-a` and `:tint-b` in opposite phase. The turn and the sway count from
+  the launch in phase accumulators, so turning `:bars` or `:sway-bars` changes
+  the speed from where the cones are. Brightness follows a mix of a
   kick that decays from every beat and `:energy`. The show binds `:energy` to
   an audio-shaped LFO on the bass band, so with a capture running each bar of
   bass sets the next bar's brightness. Without audio that LFO rests on a sine
@@ -463,8 +467,9 @@
   (let [side (signed (at-least x 0.0))
         kick (op :exp (fx/multiply -1.0 (p :punch) (fract beat)))
         drive (fx/mix kick (fx/clamp (p :energy)) (p :follow))
-        angle (fx/multiply tau (fx/add (fx/multiply side (fx/divide bar (p :bars))) (fx/divide x 4.8)))
-        sway (sine (fx/add (fx/divide bar (p :sway-bars)) (fx/multiply 0.25 side)))]
+        turns (fx/phase-accumulator :turn (p :bars) {:unit :bars})
+        angle (fx/multiply tau (fx/add (fx/multiply side turns) (fx/divide x 4.8)))
+        sway (sine (fx/add (fx/phase-accumulator :sway (p :sway-bars) {:unit :bars}) (fx/multiply 0.25 side)))]
     (look :twin-cones
           {:name "Twin cones" :targets rig/movers :envelope soft
            :params {:energy (fx/parameter 0.5 {:bounds [0.0 1.0] :unit :fraction :name "Energy"
@@ -496,12 +501,17 @@
   climbs from `:floor`, the hue fans out across the room by up to
   `:hue-spread` turns, the colour whitens by up to `:whiten`, and past
   `:strobe-from` a beat-locked strobe starts and doubles its rate in steps,
-  up to 2^`:rate-steps` flashes per beat, while its duty shortens. The other
+  up to 2^`:rate-steps` flashes per beat, while its duty shortens. Two
+  doublings, four flashes a beat, is 12 Hz at 180 BPM, the most the show's
+  40 Hz frames draw as distinct flashes; eight a beat would alias. At full
+  drive each flash lasts 0.35 of its slot, long enough for a 25 ms frame. The other
   parameters shape the ramp; a performer only needs the one control."
   (let [drive (fx/clamp (p :drive))
         strobing (at-least drive (p :strobe-from))
         rate (op :pow 2.0 (floor (fx/multiply drive (fx/add (p :rate-steps) 0.999))))
-        flash (at-least (fx/mix 0.6 0.25 drive) (fract (fx/multiply beat rate)))
+        ;; At full drive a flash lasts 0.35 of its slot: 29 ms at four a beat
+        ;; and 180 BPM, so a 25 ms frame always lands in it.
+        flash (at-least (fx/mix 0.6 0.35 drive) (fract (fx/multiply beat rate)))
         gate (fx/mix 1.0 flash strobing)
         hue (fx/add (p :hue) (fx/multiply drive (p :hue-spread) (fx/divide x 10.0)))
         colour (fx/mix (hue->rgb hue) [1.0 1.0 1.0] (fx/multiply (p :whiten) drive drive))]
@@ -514,7 +524,7 @@
                     :hue-spread (fx/parameter 0.35 {:bounds [0.0 1.0] :unit :turns :name "Hue spread"})
                     :whiten (fx/parameter 0.8 {:bounds [0.0 1.0] :unit :fraction :name "Whiten"})
                     :strobe-from (fx/parameter 0.55 {:bounds [0.0 1.0] :unit :fraction :name "Strobe from"})
-                    :rate-steps (fx/parameter 2.0 {:bounds [0.0 3.0] :unit :doublings :name "Strobe doublings"})}}
+                    :rate-steps (fx/parameter 2 {:type :integer :bounds [0 2] :unit :doublings :name "Strobe doublings"})}}
           (fx/color (fx/multiply colour gate))
           (fx/intensity (fx/mix (p :floor) 1.0 (op :sqrt drive)))
           shutter-open)))
@@ -529,12 +539,16 @@
   light every `:spacing` cells step one cell per `:step` beats across the grid
   at `:angle` degrees: 0 sweeps the columns left to right, 90 climbs the rows,
   anything between runs diagonals. Each band fades over `:tail` cells behind
-  it. Rows take their colour from the `:palette` gradient, bottom to top."
+  it. Rows take their colour from the `:palette` gradient, bottom to top. The
+  bands count from the launch in a phase accumulator, one band cycle per
+  `:step` x `:spacing` beats, so editing either changes the pace or the gaps
+  from where the bands are."
   (let [column (floor (fx/add 0.5 (fx/divide (fx/subtract x (first rig/tube-xs)) 1.2)))
         row (floor (fx/multiply 10.0 (fx/clamp (fx/divide (fx/subtract y rig/tube-base) rig/tube-length) 0.0 0.999)))
         angle (degrees (p :angle))
         along (fx/add (fx/multiply column (op :cos angle)) (fx/multiply row (op :sin angle)))
-        head (floor (fx/divide beat (p :step)))
+        cycle (fx/phase-accumulator :bands (fx/multiply (p :step) (p :spacing)))
+        head (floor (fx/multiply (fract cycle) (p :spacing)))
         ;; The nudge keeps a cell exactly on a band from rounding to the far
         ;; end of the gap when cos or sin of the angle is not exactly zero.
         behind (fx/multiply (p :spacing) (fract (fx/add (fx/divide (fx/subtract head along) (p :spacing)) 1.0e-6)))
@@ -544,7 +558,7 @@
            :params {:angle (fx/parameter 0.0 {:bounds [-180.0 180.0] :unit :deg :name "Angle"})
                     :step (fx/parameter 0.5 {:bounds [0.125 4.0] :unit :beats :semantic/type :beat-ratio
                                              :name "Step"})
-                    :spacing (fx/parameter 4.0 {:bounds [1.0 12.0] :unit :cells :name "Spacing"})
+                    :spacing (fx/parameter 4 {:type :integer :bounds [1 12] :unit :cells :name "Spacing"})
                     :tail (fx/parameter 2.0 {:bounds [0.5 8.0] :unit :cells :name "Tail"})
                     :level (fx/parameter 0.6 {:bounds [0.0 1.0] :name "Level"})
                     :palette (fx/parameter matrix-stops {:name "Palette"})}}

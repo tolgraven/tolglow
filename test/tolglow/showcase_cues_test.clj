@@ -26,23 +26,30 @@
    :close! (fn [])})
 
 (defn- session
-  "Launch `cue` with `params` on tick 0 of a showcase show and tick every
-  `frame-ms` until `end-ms`. `commands` maps a tick time to payloads submitted
-  just before that tick. Returns one captured DMX frame and one row per tick:
-  {:t :beat :values}, where values are the committed output rows."
-  [{:keys [cue params seed frame-ms end-ms commands] :or {params {} seed showcase/default-seed frame-ms 25}}]
+  "Launch `cue` with `params` on tick 0 of a showcase show whose transport
+  starts at `start-beat`, and tick every `frame-ms` until `end-ms`. `commands`
+  maps a tick time to payloads submitted just before that tick; a payload may
+  be a function of the launched instance ID. Returns one captured DMX frame
+  and one row per tick: {:t :beat :values :state}, with the committed output
+  rows and the instance's private state."
+  [{:keys [cue params seed frame-ms end-ms commands start-beat]
+    :or {params {} seed showcase/default-seed frame-ms 25 start-beat 0.0}}]
   (let [frames (atom [])
-        runtime (show/create-runtime {:model (showcase/model {:seed seed}) :workspace-options nil
+        model (assoc-in (showcase/model {:seed seed}) [:transport :beat] (double start-beat))
+        runtime (show/create-runtime {:model model :workspace-options nil
                                       :worker-timeout-ms 60000 :sink (capture-sink frames)})]
     (try
       (show/submit! runtime {:op :cue/launch :cue-id cue :launch {:params params}})
       (let [rows (mapv (fn [t]
-                         (doseq [payload (get commands t)] (show/submit! runtime payload))
+                         (let [instance-id (ffirst (get-in @(:state runtime) [:model :instances]))]
+                           (doseq [payload (get commands t)]
+                             (show/submit! runtime (if (fn? payload) (payload instance-id) payload))))
                          (show/tick! runtime t)
                          (let [snapshot (show/snapshot runtime)]
                            (when-let [fault (some :fault (:instances snapshot))]
                              (throw (ex-info "A showcase cue faulted" {:fault fault})))
-                           {:t t :beat (get-in snapshot [:transport :beat]) :values (get-in snapshot [:output :values])}))
+                           {:t t :beat (get-in snapshot [:transport :beat]) :values (get-in snapshot [:output :values])
+                            :state (:state (val (first (get-in @(:state runtime) [:model :instances]))))}))
                        (range 0 end-ms frame-ms))]
         {:frames @frames :rows rows})
       (finally (show/stop! runtime)))))
@@ -75,7 +82,9 @@
         (when (#{:number :integer :vector} type)
           (is (vector? bounds) "every numeric parameter has hard bounds"))))
     (testing "musical lengths are beats and bars, distances metres, angles degrees"
-      (is (= :beats (:unit (schema :searchlight-drift :min-beats)) (:unit (schema :matrix-chase :step))))
+      (is (= :beats (:unit (schema :searchlight-drift :move-beats)) (:unit (schema :matrix-chase :step))))
+      (is (= :integer (:type (schema :matrix-chase :spacing)) (:type (schema :run :rate-steps))))
+      (is (= [0 2] (:bounds (schema :run :rate-steps))) "four flashes a beat is the most 40 Hz frames draw")
       (is (= :beat-ratio (:semantic/type (schema :matrix-chase :step))))
       (is (= :bars (:unit (schema :twin-cones :bars)) (:unit (schema :twin-cones :sway-bars))))
       (is (= :m (:unit (schema :searchlight-drift :center)) (:unit (schema :twin-cones :radius))))
@@ -143,8 +152,10 @@
 (defn- lit? [row id] (some #(> % 1.0e-6) (get-in row [:values id :emitted-color])))
 
 (deftest run-drives-level-hue-whiteness-and-a-beat-locked-strobe-from-one-control
-  (let [play (fn [drive] (vec (after-beat (:rows (session {:cue :run :params {:drive drive} :frame-ms 5 :end-ms 4000}))
-                                          3.9)))
+  (let [play (fn [drive & [bpm]]
+               (vec (after-beat (:rows (session {:cue :run :params {:drive drive} :end-ms 4000
+                                                 :commands {0 (if bpm [{:op :transport/set :transport {:bpm bpm}}] [])}}))
+                                3.9)))
         dim (play 0.0) middle (play 0.5) full (play 1.0)
         intensity (fn [rows] (get-in (first rows) [:values :wash-1 :intensity]))
         colour (fn [rows id] (get-in (first (filter #(lit? % id) rows)) [:values id :emitted-color]))
@@ -161,10 +172,11 @@
     (testing "the colour whitens"
       (is (< (whiteness (colour dim :wash-3)) 0.01))
       (is (< 0.7 (whiteness (colour full :wash-3)))))
-    (testing "below the strobe threshold nothing flashes; at full drive four flashes a beat"
+    (testing "below the strobe threshold nothing flashes; at full drive four flashes a beat, every one drawn by the show's 25 ms frames"
       (is (every? #(lit? % :wash-1) dim))
       (is (every? #(lit? % :wash-1) middle))
-      (is (= 16 (rising (four-beats full)))))))
+      (is (= 16 (rising (four-beats full))))
+      (is (= 16 (rising (four-beats (play 1.0 180.0)))) "at 180 BPM too"))))
 
 (defn- column-levels [row]
   (mapv (fn [tube] (mapv #(reduce max (get-in row [:values (keyword (str "tube-" tube "-head-" %)) :emitted-color] [0.0]))
@@ -175,7 +187,7 @@
   (let [steps (fn [rows] (->> rows (partition-by #(Math/floor (/ (:beat %) 0.5))) (map first) (drop 1) (take 8)))
         lit-columns (fn [row] (set (keep-indexed (fn [i column] (when (pos? (reduce max column)) i)) (column-levels row))))]
     (testing "at 0 degrees whole columns light, one column further each step"
-      (let [chase (steps (:rows (session {:cue :matrix-chase :params {:tail 1.0 :spacing 4.0} :end-ms 3000})))]
+      (let [chase (steps (:rows (session {:cue :matrix-chase :params {:tail 1.0 :spacing 4} :end-ms 3000})))]
         (doseq [row chase]
           (is (every? #(apply = (map pos? %)) (column-levels row)) "a column is all on or all off")
           (is (= 2 (count (lit-columns row))) "one column in every four of eight"))
@@ -188,10 +200,49 @@
         (is (every? #{4} (let [lit (keep-indexed #(when (pos? (first %2)) %1) rows-lit)] (map - (rest lit) lit)))
             "lit rows are four apart")))
     (testing "the palette colours the rows bottom to top"
-      (let [row (first (steps (:rows (session {:cue :matrix-chase :params {:angle 90.0 :spacing 1.0 :tail 1.0} :end-ms 1500}))))
+      (let [row (first (steps (:rows (session {:cue :matrix-chase :params {:angle 90.0 :spacing 1 :tail 1.0} :end-ms 1500}))))
             [bottom top] (map #(get-in row [:values (keyword (str "tube-1-head-" %)) :emitted-color]) [1 10])]
         (is (> (first bottom) (* 5 (first top))) "red at the bottom")
         (is (> (second top) (* 5 (second bottom))) "cyan at the top")))))
+
+;; ------------------------------------------------- edits late in a show
+
+(defn- stream
+  "A drag: one :param/set per 25 ms frame from 1000 ms to 2000 ms, moving
+  `param` linearly from `from` to `to`."
+  [param from to & [round]]
+  (into {} (map (fn [i] (let [value (+ from (* (- to from) (/ i 39.0)))]
+                          [(+ 1000 (* 25 i))
+                           [(fn [id] {:op :param/set :instance-id id :param param :value ((or round double) value)})]])))
+        (range 40)))
+
+(defn- largest-step [rows id attribute]
+  (reduce max (map #(distance (get-in %1 [:values id attribute]) (get-in %2 [:values id attribute])) rows (rest rows))))
+
+(deftest timing-edits-late-in-a-show-change-the-pace-without-jumps
+  (testing "searchlight move length dragged at transport beat 2000"
+    (let [{:keys [rows]} (session {:cue :searchlight-drift :start-beat 2000.0 :end-ms 3000
+                                   :commands (stream :move-beats 8.0 12.0)})
+          rows (vec (after-beat rows 2000.5))]
+      (doseq [beam rig/beams]
+        (is (< (largest-step rows beam :aim) 0.6) (str (name beam) " never jumps to another move")))))
+  (testing "cone turn and sway periods dragged at transport beat 2000"
+    (let [{:keys [rows]} (session {:cue :twin-cones :start-beat 2000.0 :end-ms 3000 :params {:follow 1.0 :energy 1.0}
+                                   :commands (merge-with into (stream :bars 2.0 2.5) (stream :sway-bars 4.0 6.0))})
+          rows (vec (after-beat rows 2001.0))]
+      (doseq [mover rig/movers]
+        (is (< (largest-step rows mover :aim) 0.1) (str (name mover) " keeps circling where it was"))
+        (is (< (largest-step rows mover :emitted-color) 0.05) (str (name mover) " keeps its sway phase")))))
+  (testing "matrix step and spacing edited at transport beat 2000"
+    (let [{:keys [rows]} (session {:cue :matrix-chase :start-beat 2000.0 :end-ms 3000
+                                   :commands (merge-with into (stream :step 0.5 0.25)
+                                                         {1300 [(fn [id] {:op :param/set :instance-id id :param :spacing :value 5})]
+                                                          1650 [(fn [id] {:op :param/set :instance-id id :param :spacing :value 6})]})})
+          phases (mapv #(get-in % [:state :tolglow.compiler.blocks/phases :bands]) rows)]
+      (is (zero? (:phase (first phases))) "the bands count from the launch, not from transport beat 0")
+      (is (every? (fn [[a b]] (<= 0.0 (- (:phase b) (:phase a)) (+ 1.0e-9 (/ (- (:beat b) (:beat a)) (* 0.25 4.0)))))
+                  (partition 2 1 phases))
+          "every frame advances the band phase by its elapsed beats over the current period, never more"))))
 
 ;; --------------------------------------------------------- transport stop
 

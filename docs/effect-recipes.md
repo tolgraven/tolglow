@@ -262,6 +262,31 @@ and its exceptions.
         (fx/sine {:period {:bars 4}}))
 ```
 
+### Phase accumulators
+
+A phase from `cycles` is elapsed beats divided by the period, so changing a
+period parameter while the cue runs moves the phase by an amount that grows
+with the cue's age. `phase-accumulator` keeps the phase instead: each frame it
+adds the cue's elapsed beats since the last frame divided by the period now
+set, and keeps the result in the instance's state under its ID.
+
+```clojure
+;; Cycles of a turn every :bars bars; turning :bars changes the speed from here.
+(let [turns (fx/phase-accumulator :turn (fx/param :bars) {:unit :bars})]
+  (fx/aim (fx/xyz (fx/multiply 1.5 {:op :cos :args [(fx/multiply (* 2 Math/PI) turns)]})
+                  3.0
+                  (fx/multiply 1.5 {:op :sin :args [(fx/multiply (* 2 Math/PI) turns)]}))))
+```
+
+The period is any scalar expression without position, in beats, bars or
+phrases (`:unit`). The phase starts at zero on launch, adds nothing while the
+transport is stopped, and resumes from the held value. An effect that reads one
+is never forecast between keyframes, since its state advances once per
+committed frame. It runs only inside a launched cue, not in a global variable
+chain. The IR node is `{:op :phase-accumulator :id k :period expr :unit u}`;
+IDs are unique within an effect and keep the phase across a `:preserve-state`
+reload.
+
 For spatial motion, `position-wave` adds position divided by wavelength to the
 phase. Coordinates and wavelength use metres. A positive wavelength moves the
 pattern toward the negative axis as time advances; a negative wavelength

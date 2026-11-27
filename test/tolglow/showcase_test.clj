@@ -65,6 +65,15 @@
     (is (every? :legacy (filter #(= :ported (:origin %)) looks/catalogue)))
     (is (= #{:haze :wash-tide :wash-ember :beam-shafts :mover-orbit :riser-chase :aurora}
            (set (map :id new-with-sources))))
+    (testing "the cues from before the after-hours slice keep master's cells, and the new four follow"
+      (let [cells (into {} (map (fn [[cell id]] [id cell])) (get-in model [:pages :showcase :cells]))]
+        (is (= {:haze [0 0] :wash-tide [1 0] :wash-ember [2 0] :beam-shafts [3 0] :pinstripes [4 0] :bloom-halo [5 0]
+                :bloom-keyhole [0 1] :dimmer-sweep [1 1] :strobe [2 1] :blinder-hit [3 1] :aim-lfo [4 1] :can-can [5 1]
+                :mover-orbit [0 2] :tube-sparkle [1 2] :confetti [2 2] :riser-chase [3 2] :aurora [4 2]
+                :gather-path [5 2] :colour-drift [0 3] :rolling-volume [1 3]}
+               (apply dissoc cells looks/after-hours-cues)))
+        (is (= {:searchlight-drift [2 3] :twin-cones [3 3] :run [4 3] :matrix-chase [5 3]}
+               (select-keys cells looks/after-hours-cues)))))
     (testing "every cue is on the grid and compiles against the rig"
       (is (= (set (keys cues)) (set (vals (get-in model [:pages :showcase :cells])))))
       (doseq [[id effect] (get-in model [:registry :effects])]

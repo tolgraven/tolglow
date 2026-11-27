@@ -178,12 +178,14 @@
         (select (validate-frame-fixtures! fixtures))))))
 
 (defn predictable-outputs?
-  "Video outputs follow received frames, never an interpolated forecast, and
-  a shader cue evaluates its uniforms on every frame."
+  "Video outputs follow received frames, never an interpolated forecast, a
+  shader cue evaluates its uniforms on every frame, and a phase accumulator
+  advances its instance state once per committed frame."
   [definition]
   (let [outputs (registry/output-entries (:outputs definition))]
     (and (seq outputs) (every? (comp keyframe-values/continuous :attribute) outputs)
          (not (shader/shader? definition))
+         (not (blocks/accumulates? definition))
          (not-any? (comp video/video-output? :value) outputs))))
 
 (defn- compile-reactive-effect [definition outputs rig]
@@ -311,6 +313,7 @@
             ;; cue's uniforms are evaluated once here and committed with the
             ;; instance; its producer renders from them (#673).
             (assoc :state (cond-> state
+                            (not done?) (blocks/with-phases env)
                             (not done?) (video/observe outputs)
                             (and shader-plan (not done?))
                             (shader/with-uniforms (with-path [:shader] #((:evaluate shader-plan) env))))
