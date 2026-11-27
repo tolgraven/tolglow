@@ -620,7 +620,8 @@
 (defn- output-panel [db s]
   (let [form (merge {:mode "direct" :fade-ms 100 :latency-ms 25}
                     (get-in db [:show :settings :output :presentation]) (:output-form s))
-        state (get-in db [:show :status :output-scheduler])
+        ;; Scheduler counters change every frame: only this panel follows them.
+        state @(rf/subscribe [:studio/clock-part :output-scheduler])
         pending? (contains? (:pending s) :output)
         mode (:mode form)]
     [:section.panel.output-connection
@@ -701,8 +702,9 @@
                                             :on-click #(rf/dispatch [:connections/action :reference-reconnect])}
         (if pending? "Reconnecting…" "Reconnect mpv")]]]]))
 
-(defn- clock-panel [s transport]
-  (let [status (:sync s) clock-projection (:clock status)
+(defn- clock-panel [s]
+  (let [transport @(rf/subscribe [:studio/transport])
+        status (:sync s) clock-projection (:clock status)
         clock (or (:clock clock-projection) (when (= "manual" (get-in status [:config :selected-source] "manual")) transport))
         source (or (:selected-source clock-projection) (get-in status [:config :selected-source]) "manual")]
     [:section.panel.clock-panel
@@ -1127,7 +1129,7 @@
        ^{:key key} [:p.connection-error {:role "status"} message])
      [audience/panel]
      [invitation/panel]
-     [clock-panel s (get-in db [:show :transport])]
+     [clock-panel s]
      (when-let [error (get-in s [:sync :last-error])]
        [:p.connection-error {:role "status"} (or (:message error) (str error))])
      [:div.connection-actions.panel

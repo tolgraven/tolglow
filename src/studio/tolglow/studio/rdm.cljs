@@ -1,6 +1,7 @@
 (ns tolglow.studio.rdm
   "RDM fixture management through guarded re-frame actions and owned host jobs."
   (:require [clojure.string :as str] [re-frame.core :as rf]
+            [tolglow.studio.state-socket]
             [tolglow.studio.show-window :as show-window]
             [tolglow.studio.events]
             [tolglow.studio.pretty :as pretty]))
@@ -54,8 +55,11 @@
            {:snapshot snapshot :transport transport
             :inventory (when (and snapshot universe) (discovery-inventory snapshot universe))})))
 
-(defn state [db]
-  (view (ui db) (get-in db [:server-projection :view :subscriptions query :value])))
+(defn state
+  "The RDM form over the pushed status. remote maps queries to results, as the
+  :studio/remote coeffect supplies them."
+  [db remote]
+  (view (ui db) (get-in remote [query :value])))
 
 (defn current-request? [db token]
   (= token [(:identity (ui db)) (:generation (ui db))]))
@@ -86,11 +90,11 @@
       (throw (js/Error. "Use up to 231 hex bytes, separated by spaces: 00 ff")))
     (mapv hex-number parts)))
 
-(defn request-fx [db operation payload]
+(defn request-fx [db remote operation payload]
   (let [local (-> (ui db) (update :generation inc) (assoc :busy? true :error nil))
         token [(:identity local) (:generation local)]
         body (merge {:runtime-id (get-in db [:show :runtime-id]) :expected-epoch (get-in db [:show :epoch])
-                     :session-id (get-in (state db) [:snapshot :session-id])} payload)]
+                     :session-id (get-in (state db remote) [:snapshot :session-id])} payload)]
     {:db (assoc-in db [:ui :rdm] local)
      :studio/http {:path (str "/api/rdm/" (name operation)) :body body :typed? true
                    :on-success [:rdm/reply token operation] :on-failure [:rdm/failed token]}}))
@@ -104,8 +108,9 @@
                     (connection-fields k) (assoc-in (ui db) [:form k] v)
                     :else (assoc (ui db) k v)))))
 (rf/reg-event-fx :rdm/action
-  (fn [{:keys [db]} [_ operation payload]]
-    (when-not (:busy? (ui db)) (request-fx db operation payload))))
+  [(rf/inject-cofx :studio/remote)]
+  (fn [{:keys [db remote]} [_ operation payload]]
+    (when-not (:busy? (ui db)) (request-fx db remote operation payload))))
 (defn- notice [operation result]
   (case operation
     :connect "RDM session enabled. Discovery and device requests are explicit."
@@ -123,12 +128,13 @@
   (fn [db [_ token error]]
     (if (current-request? db token) (assoc-in db [:ui :rdm] (assoc (ui db) :busy? false :error (str error))) db)))
 (rf/reg-event-db :rdm/error (fn [db [_ error]] (assoc-in db [:ui :rdm] (assoc (ui db) :error error))))
-(rf/reg-event-db :rdm/select-fixture
-  (fn [db [_ fixture]]
-    (let [binding (get-in (state db) [:snapshot :bindings (:id fixture)])]
-      (assoc-in db [:ui :rdm] (merge (ui db) {:fixture-id (:id fixture) :universe (str (:universe fixture))
-                                               :uid (:uid binding "") :sub-device (str (:sub-device binding 0))
-                                               :address nil :personality nil :label nil})))))
+(rf/reg-event-fx :rdm/select-fixture
+  [(rf/inject-cofx :studio/remote)]
+  (fn [{:keys [db remote]} [_ fixture]]
+    (let [binding (get-in (state db remote) [:snapshot :bindings (:id fixture)])]
+      {:db (assoc-in db [:ui :rdm] (merge (ui db) {:fixture-id (:id fixture) :universe (str (:universe fixture))
+                                                    :uid (:uid binding "") :sub-device (str (:sub-device binding 0))
+                                                    :address nil :personality nil :label nil}))})))
 
 (defn- input! [key event] (rf/dispatch-sync [:rdm/set key (.. event -target -value)]))
 
