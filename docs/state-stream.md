@@ -75,12 +75,13 @@ component's structural input. A frame that arrives ahead of a rig or cue change
 waits one render for it. The engine-facing `update(frame)` data is unchanged.
 
 Measured in headless Chrome 155 with the Metal GPU on the M4 Pro (96 moving
-heads, three running cues, about 29 frames a second, 44 KB patches): main-thread
-task time per received frame fell from 7.5 ms to 6.8 ms. Most of the remainder
-is the whole-application render that per-frame clock and status fields still
-cause through app-db. Headless results are not foreground or iPad evidence.
-`dev/studio/room-frame-lane-qa.mjs` checks delivery, the offscreen pause, the
-resume frame and the rig editor's Room against a capture-only host.
+heads, three running cues, about 29 frames a second, 44 KB patches), main-thread
+task time per received frame fell by 0.4–0.7 ms, from 7.5–7.8 ms to 6.8–7.4 ms
+in two interleaved runs (`dev/studio/room-frame-cost.mjs`). Most of the
+remainder is the whole-application render that per-frame clock and status
+fields still cause through app-db. Headless results are not foreground or iPad
+evidence. `dev/studio/room-frame-lane-qa.mjs` checks delivery, the offscreen
+pause, the resume frame and the rig editor's Room against a capture-only host.
 
 ## Connections status
 

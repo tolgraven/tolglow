@@ -46,6 +46,8 @@ try {
   };
   const increasing = updates => updates.every((u, i) => i === 0 || u.frame > updates[i - 1].frame);
 
+  // Saved UI preferences may reopen another view; the Room lives on Perform.
+  await page.locator('a[data-view=perform]').click();
   await page.locator('#preview').scrollIntoViewIfNeeded();
   await watch('#preview');
   const live = await sample(3000);
