@@ -54,6 +54,22 @@ Replacing or renaming the paired track/clip requires pairing again. Numeric Live
 object IDs are session-scoped: durable connection settings should retain indices,
 expected names and bridge ID, then establish a fresh pairing after Set reload.
 
+## Parameter device for run tracks (#625)
+
+`tolglow-parameters.maxpat` with `parameter_device.js` is a second device:
+one per Tolglow run track, holding 32 automatable slot dials. Build it like
+the bridge: paste the patcher into a blank Max Audio or MIDI Effect, keep
+`parameter_device.js` beside it and save it as **Tolglow parameters** (a second
+one on the same track for an effect with more than 32 slots as **Tolglow
+parameters 2**, and so on). Drop it on a `Tolglow run <cue>` track. A sync
+from Studio (**Sync to Live**) or the REPL (`show/sync-live-runs!`) names and
+ranges the slots through the bridge, writes each take's moves into its run
+clip as envelopes of those slots and watches them. The device itself never
+talks to Tolglow; the bridge reads and observes its parameters through the
+Live Object Model. Which run-time parameter attributes Live accepts, and how
+recorded automation behaves when a range changes, are listed on the pull
+request's host checklist. [Live routing](../../../docs/live-routing.md#edit-an-effects-parameters-from-live)
+
 ## What the adapter executes
 
 - MIDI note/CC input in Lighting mode is forwarded to the studio's common

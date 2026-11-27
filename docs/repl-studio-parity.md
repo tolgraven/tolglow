@@ -1037,9 +1037,9 @@ REPL:
 (show/live-runs-record runtime)   ; exact beats, launch values and moves
 ```
 
-Mirroring the record into Live needs a companion connection. Only the REPL
-can run it today. With the Live bridge connected, use the bridge's own
-connection, so the mirror does not take the companion from the bridge (a
+Mirroring the record into Live needs a companion connection. With the Live
+bridge connected, Studio's **Sync to Live** and the REPL both use the bridge's
+own connection, so the mirror does not take the companion from the bridge (a
 connection with its own session loses it at the bridge's next poll):
 
 ```clojure
@@ -1057,14 +1057,67 @@ the same event to `show/live-run-clip!`. The panel and
 `/api/live-runs?limit=n` list the newest 256 takes by default.
 
 Gaps:
-- Studio cannot start a sync, because the runtime does not own a companion
-  connection.
 - The panel refreshes on request, not from the state stream.
 - Push has no run view.
 - The panel was checked through server-rendered markup and event tests and
   in headless Chrome against Ring. It was not checked on an iPad.
 
 [Run tracks in Live](live-routing.md#mirror-what-ran-as-run-tracks-clips-and-group-tracks) · [Issue #683](https://github.com/tolgraven/tolglow/issues/683)
+
+## Edit an effect's parameters from Live
+
+Each run channel can hold a **Tolglow parameters** Max for Live device
+(#625). Its slots carry the effect's parameters with Studio's labels, units,
+ranges, decimals and control shapes, because both read one control
+projection (`tolglow.authoring.parameter-controls`). The command and data
+both surfaces share:
+
+- the projection: `show/live-parameter-devices` and
+  `GET /api/live-parameter-devices` (Studio: **Connections → Live runs →
+  Show parameter devices**). It lists each channel's slots, Push-style banks,
+  unsupported parameters, where the devices are on the run tracks and the
+  ownership counters;
+- the sync: `show/sync-live-runs!` and `POST /api/live-runs/sync` (Studio:
+  **Sync to Live**). It configures each device and writes a take's launch
+  values and moves into its run clip as slot envelopes;
+- Live's values: `show/live-parameter-device-value!`, which the bridge calls
+  for every `parameter-device` callback. They become ordinary `:param/set`
+  commands with origin `:live-playback` (automation) or `:live-input` (a
+  performer's turn).
+
+```clojure
+(show/live-parameter-devices runtime)    ; the panel's data
+(show/sync-live-runs! runtime)           ; configure devices, write clips, watch the tracks
+(show/live-parameter-device-value! runtime
+  {:type :parameter-device-value :track-id "track:3" :slot 5 :value 0.75
+   :automation-state 1 :watch-session "repl" :serial 1})
+```
+
+Feedback in each direction: a Level move from Studio or Push reaches the Live
+device once (`set-parameter-values`) and holds Live automation on that slot;
+Live's echo of it is dropped. A turn of the dial in Live moves Studio's
+control and is kept as a take move. Automation playback moves Studio's
+control without making a take. The automated checks drive one runtime from
+Push, Studio and simulated Live values and compare the Ring projection with
+the REPL's ([test](../test/tolglow/integrations/live_devices_test.clj),
+[browser check](../dev/studio/live-parameter-devices-browser-qa.mjs)).
+
+The same panel mounts a shared parameter frame of the first running channel
+(`show/parameter-frames-action!`, `/api/parameter-frames`). A Live device or
+the Push display asking for the same instance, parameter, window and style at
+a size within 10% gets the same render.
+
+Gaps:
+- Push does not mount shared frames yet; its display draws its own.
+- The Live side (device creation, parameter attributes at run time,
+  automation recording) has not run in a licensed Live; see the checklist on
+  the pull request.
+- Studio has no per-slot editor in this panel; edit values on the instance
+  card as usual.
+- Checked through event tests, server-rendered markup and headless Chrome,
+  not on an iPad.
+
+[Live routing](live-routing.md#edit-an-effects-parameters-from-live) · [Issue #625](https://github.com/tolgraven/tolglow/issues/625)
 
 ## Play a cue page from the launcher pads
 

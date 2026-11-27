@@ -2029,6 +2029,38 @@
     (is (str/includes? html "not-in-group · Tolglow run b"))
     (is (not (str/includes? (renderToStaticMarkup (r/as-element [connections/connection-view base (connections/state base)])) "Amber sweep")))))
 
+(deftest the-live-runs-panel-shows-parameter-devices-and-syncs-through-the-bridge
+  ;; #625: the projection show/live-parameter-devices returns, as Ring serves it.
+  (let [requested (transition base [:connections/parameter-devices-refresh])
+        [effect request] (first (:fx requested))
+        token (connections/token (:db requested))
+        projection {:channels [{:cue-id "a" :effect-id "beam" :devices 1
+                                :slots [{:slot 0 :name "Level" :type "float" :min 0 :max 1 :places 5}
+                                        {:slot 1 :name "period" :type "float" :min 0.5 :max 32 :places 3 :unit "beats"}
+                                        {:slot 2 :name "mode" :type "enum" :min 0 :max 2 :choices ["soft" "hard" "strobe"]}
+                                        {:slot 3 :name "Unused 4" :retired? true}]
+                                :banks [[[0 1 2]]] :unsupported [{:param "fade" :reason "gradient"}]
+                                :tracks [{:lane 0 :track-name "Tolglow run a" :present [0] :missing [] :stale []}
+                                         {:lane 1 :track-name "Tolglow run a · 2" :present [] :missing [0] :stale []}]}]
+                    :counts {:applied 3 :echo 1 :held 2} :sends {:executed 4 :failed 0}}
+        done (transition (:db requested) [:connections/parameter-devices-loaded token :parameter-devices projection])
+        html (renderToStaticMarkup (r/as-element [connections/connection-view (:db done) (connections/state (:db done))]))
+        sync (transition (:db done) [:connections/live-runs-sync])
+        [sync-effect sync-request] (first (:fx sync))]
+    (is (= :studio/http effect))
+    (is (= ["/api/live-parameter-devices" nil] [(:path request) (:body request)]))
+    (is (= projection (get-in done [:db :connections :parameter-devices])))
+    (is (= "a · 3 slots on 1 device · 1 not in Live · Tolglow run a: ready, Tolglow run a · 2: drop 1 Tolglow parameters device here"
+           (connections/parameter-devices-text (first (:channels projection)))))
+    (is (= ["Level · 0.00000 – 1.00000" "period · 0.500 – 32.000 beats" "mode · soft / hard / strobe" "Unused 4 (unused)"]
+           (mapv connections/slot-text (get-in projection [:channels 0 :slots])))
+        "Studio's decimals and units")
+    (is (str/includes? html "Values from Live: 3 applied · 1 echoes dropped · 2 held by Tolglow · Tolglow writes sent: 4"))
+    (is (str/includes? html "Banks: 1 2 3"))
+    (is (= :studio/http sync-effect))
+    (is (= ["/api/live-runs/sync" {}] [(:path sync-request) (:body sync-request)]))
+    (is (contains? (get-in sync [:db :connections :pending]) :live-runs-sync))))
+
 (deftest the-cue-launcher-panel-reads-the-launcher-projection
   (let [db (assoc-in base [:ui :page-id] "pads")
         requested (transition db [:connections/launcher-refresh])

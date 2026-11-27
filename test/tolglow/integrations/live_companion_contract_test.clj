@@ -8,6 +8,7 @@
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [tolglow.integrations.live-connection :as live]
+            [tolglow.integrations.live-devices :as devices]
             [tolglow.integrations.live-launcher :as launcher]
             [tolglow.integrations.live-sync :as live-sync]
             [afterglow.sync :as sync]
@@ -187,8 +188,42 @@
         (testing "the companion accepts the run-track watch"
           (let [r (live/request! conn :watch-run-tracks {:track-ids (vec (vals (:tracks result)))})]
             (is (= :executed (:status r)) (pr-str r))
-            (is (= {:watching 2} (:result r)))))))
+            (is (= {:watching 2 :watching-slots 0} (:result r)))))))
     "http://127.0.0.1:9/api/live" "groups"))
+
+(deftest the-companion-configures-a-parameter-device-and-writes-run-clip-envelopes-over-http
+  ;; #625: the run track for cue :a holds one Tolglow parameters device; the
+  ;; track for :b has none. The take's launch value and its move travel as
+  ;; envelope steps of the device's Level slot.
+  (with-companion
+    (fn [port]
+      (let [t (transport/transport {:endpoint (str "http://127.0.0.1:" port "/live") :bridge-id "tolglow-m4l"
+                                    :sync-session-id "contract-devices" :timeout-ms 3000})
+            handle ((:open! t) {})
+            _ ((:request! t) handle "handshake-1" :inspect {})
+            conn (live/open (assoc t :open! (constantly handle)) {:session-id "devices"})
+            record (-> (run-record) (update-in [:takes "contract.1" :moves] conj {:beat 2 :at 1 :param :level :value 0.75}))
+            model {:registry {:effects {:wash (get-in registry [:effects :wash])}
+                              :cues {:a {:id :a :effect-id :wash :version 1 :name "Amber"}}}
+                   :rig {:fixtures []}}
+            layout (devices/allocate nil (:keys (devices/slot-keys (get-in registry [:effects :wash]) {} nil)))
+            spec (devices/device-spec model :a layout nil)
+            options {:groups? false
+                     :parameter-devices {:specs {:a spec}
+                                         :envelopes (fn [take spec] (devices/take-envelopes model spec layout take (runs/held-beats take) nil))}}
+            result (runs/sync! conn record options)
+            run-a (first (filter #(= "Tolglow run a" (:name %)) (get-in result [:set :tracks])))
+            [device] (:parameter-devices run-a)]
+        (is (:complete? result) (pr-str (:problems result) (:applied result)))
+        (is (= {:present [0] :missing [] :stale []} (dissoc (get-in result [:parameter-devices [:a 0]]) :devices)))
+        (testing "the device shows the spec's names and ranges in the read-back"
+          (is (= [["level" 0 1 false] ["mode" 0 2 true]]
+                 (mapv (juxt :name :min :max :quantized?) (take 2 (:parameters device))))))
+        (testing "the first take's clip carries envelopes; the second, without moves or launch values, does not"
+          (is (= [true false] (mapv :envelopes? (:clips run-a)))))
+        (testing "a rerun writes nothing"
+          (is (empty? (:applied (runs/sync! conn record options)))))))
+    "http://127.0.0.1:9/api/live" "parameters"))
 
 (defn- bridge-manager
   "Studio's Live bridge against the companion: its own sync session, polling

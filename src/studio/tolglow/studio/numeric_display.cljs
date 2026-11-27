@@ -1,13 +1,11 @@
 (ns tolglow.studio.numeric-display
-  (:require [afterglow.control.resolution :as resolution]
-            [re-frame.core :as rf]
-            [reagent.core :as r]))
+  (:require [re-frame.core :as rf]
+            [reagent.core :as r]
+            [tolglow.authoring.parameter-controls :as controls]))
 
-(defn finite? [v] (and (number? v) (js/Number.isFinite v)))
+(def finite? controls/finite?)
 
-(defn channel-step [{:keys [dmx-bits bounds]}]
-  (let [[lo hi] bounds]
-    (resolution/fine-step dmx-bits (if (and (finite? lo) (finite? hi) (< lo hi)) bounds [0 1]))))
+(def channel-step controls/channel-step)
 
 (defn number-label
   "Format an operator readout without changing the control value. A normalized
@@ -17,9 +15,7 @@
    (if-not (finite? value)
      "—"
      (let [bits (:dmx-bits schema)
-           places (if-let [step (channel-step schema)]
-                    (max 0 (min 15 (js/Math.ceil (- (js/Math.log10 step)))))
-                    3)
+           places (controls/decimal-places schema)
            rounded (js/Number (.toFixed value places))]
        (if (and (zero? rounded) (not (zero? value)) (nil? bits))
          (let [[mantissa exponent] (.split (.toExponential value 2) "e")]

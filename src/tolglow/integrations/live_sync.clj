@@ -40,7 +40,7 @@
                     (:live @(:resources run)) (= (:bridge-id config) (:bridge-id payload))
                     (= (:id run) (:sync-session-id payload))
                     (string? (:event-id payload)) (<= 1 (count (:event-id payload)) 256)
-                    (case kind :status (map? (:status payload)) (:midi :run-clip) (map? (:event payload))
+                    (case kind :status (map? (:status payload)) (:midi :run-clip :parameter-device) (map? (:event payload))
                           (:parameter :parameter-error) (map? (:sample payload))
                           :handoff (#{:live :lighting "live" "lighting"} (:mode payload)) false))]
     (if-not valid? false
@@ -52,6 +52,10 @@
                     ;; Run-track playback (#683): decoded by the show's run-clip player.
                     :run-clip {:type :live/run-clip :time-ms ((get-in manager [:options :now-ms]))
                                :event (update (:event payload) :watch-session #(or % (:sync-session-id payload)))}
+                    ;; Parameter-device slot values (#625): decoded by the show's
+                    ;; live-devices owner step.
+                    :parameter-device {:type :live/parameter-device :time-ms ((get-in manager [:options :now-ms]))
+                                       :event (update (:event payload) :watch-session #(or % (:sync-session-id payload)))}
                     (:parameter :parameter-error) {:type (if (= kind :parameter) :live/parameter :live/parameter-error)
                                 :sample (:sample payload) :event-id (:event-id payload)
                                 :time-ms ((get-in manager [:options :now-ms]))}
@@ -364,6 +368,7 @@
                    (midi/observe-midi! manager run message :live :live-playback at))
                  (midi-control! manager run message))
     :live/run-clip (when-let [run-clip! (:run-clip! (run-callbacks run))] (run-clip! (:event event)))
+    :live/parameter-device (when-let [device! (:parameter-device! (run-callbacks run))] (device! (:event event)))
     :live/acknowledgement (receive-ack! manager (:note event) (:ack event) (:envelope event))
     :live/handoff (receive-handoff! manager run event)
     :record/command (receive-recording! manager run event at)
@@ -402,7 +407,7 @@
    :transport (fn [settings _ run-id] (factory (assoc settings :sync-session-id run-id)))
    :prepare-state prepare-state :run-state run-state :lifecycle! lifecycle! :tick! tick!
    :status #(select-keys % [:recording :last-execution :parameter-watch])
-   :events #{:live/parameter :live/parameter-error :live/forget-parameter :midi/control :live/status :live/midi :live/run-clip :live/acknowledgement :live/handoff
+   :events #{:live/parameter :live/parameter-error :live/forget-parameter :midi/control :live/status :live/midi :live/run-clip :live/parameter-device :live/acknowledgement :live/handoff
              :record/command :live/executed :live/response}
    :receive! receive!})
 

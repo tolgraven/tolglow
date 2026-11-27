@@ -26,11 +26,22 @@
 (defn- glyph? [glyph]
   (and (sequential? glyph) (<= 2 (count glyph)) (every? finite? glyph)))
 
+(def ^:private last-index
+  "The index of the last catalog seen. Every parameter row, display slot and
+  Live device slot asks about the same catalog value, so it is built once per
+  catalog change instead of once per question."
+  (atom nil))
+
 (defn catalog-index
   "Catalog entries `{:id :name :glyph}` with a drawable glyph, by waveform ID."
   [catalog]
-  (into {} (keep (fn [entry] (when-let [id (tag (:id entry))] (when (glyph? (:glyph entry)) [id entry]))))
-        catalog))
+  (let [[seen index] @last-index]
+    (if (and (some? seen) (identical? seen catalog))
+      index
+      (let [index (into {} (keep (fn [entry] (when-let [id (tag (:id entry))] (when (glyph? (:glyph entry)) [id entry]))))
+                        catalog)]
+        (reset! last-index [catalog index])
+        index))))
 
 (defn waveform-id
   "The catalog waveform a choice value names, directly or by a legacy alias."

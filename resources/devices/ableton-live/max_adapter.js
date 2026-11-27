@@ -82,7 +82,14 @@ function init() {
         handle.property = property;
         return function () { open = false; handle.property = ""; handle.id = 0; };
       },
-      emit: function (event) { outlet(0, "event", JSON.stringify({kind: "run-clip", event: event})); }
+      // Run-clip starts and stops, and parameter-device slot values (#625).
+      emit: function (event) {
+        outlet(0, "event", JSON.stringify({kind: event.type === "parameter-device-value" ? "parameter-device" : "run-clip", event: event}));
+      },
+      // A slot layout for one "Tolglow parameters" device (#625). messnamed
+      // reaches every device's [receive tolglow-parameter-device]; only the
+      // device whose Live id matches applies it (parameter_device.js).
+      relay: function (deviceId, spec) { messnamed("tolglow-parameter-device", "configure", deviceId, JSON.stringify(spec)); }
     }),
     // Live's note methods take a dictionary. Keep the host-specific serialization
     // isolated; do not retry a mutating method with a different encoding.
