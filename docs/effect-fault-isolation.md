@@ -175,21 +175,24 @@ owner. Its pure checks are now in `tolglow.show.publication`:
   it inline, at about 0.1 to 0.4 ms. A publication submitted between frames
   is normally checked before the next one, since a small effect checks in
   under 0.1 ms.
-- **Only what depends on it waits.** These wait with a held publication, in
-  submission order:
-  - later publications;
-  - registry and page edits (`:cue/put`, `:cue/delete`, saved cue
-    parameters, `:page/put`, `:page/delete`), `:instance/retry` and
-    `:show/restart`;
-  - messages that publish or restore (agent cues, aim paths, spatial cues,
-    compositions, imports);
-  - launches, immediate or quantized, of the held effect or cue, or of a cue
-    the show does not know yet.
+- **Only what depends on it waits, safe by default.** An explicit allow-list
+  of messages that neither read nor write the registry goes ahead in the
+  same cycle, in order:
+  - blackout, master, transport, parameters and ramps;
+  - gestures and their ends, and edit history;
+  - instance, group and selection controls;
+  - knobs, knob looks, audio LFOs and control-surface links;
+  - device and sensor input, parameter sources and surface aim.
 
-  Everything else is applied in the same cycle, in order: blackout, master,
-  transport, parameters, gestures and their ends, other controller input, and
-  launches of other cues. Revision numbers, the order of dependent messages
-  and their acks are unchanged.
+  Launches, immediate or quantized, wait only when they launch the held
+  effect or cue, or a cue the show does not know yet. A launch cancel waits
+  only behind a held launch. Every other message waits with the publication,
+  in submission order. That includes publications and registry, page and
+  settings edits, lighting scenes, surface cues, compositions and imports,
+  and any message type added later until it is classified. A test reads
+  every message type in `apply-message` and every command op, and fails on
+  one it has not classified. Revision numbers, the order of dependent
+  messages and their acks are unchanged.
 - **Queue capacity.** Held messages count against the queue's 256 slots, so
   a stalled check pushes back on submitters instead of growing a list.
 - **Time.** A held message is applied at the time of the cycle that applies

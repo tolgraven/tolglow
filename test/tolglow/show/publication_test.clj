@@ -4,12 +4,22 @@
   check is not ready, and every message after it, for a later cycle. The
   worker is stepped by hand: assertions count validations, compiles and
   owner cycles, never clocks."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [afterglow.control.model :as control]
+            [clojure.java.io :as io]
+            [clojure.test :refer [deftest is testing]]
+            [tolglow.audio-lfo :as audio-lfo]
+            [tolglow.authoring.variation-control :as variations]
             [tolglow.compiler :as compiler]
             [tolglow.demo :as demo]
+            [tolglow.event-subscribers :as subscribers]
+            [tolglow.knob-candidates :as knob-candidates]
+            [tolglow.knob-presets :as knob-presets]
+            [tolglow.knobs :as knobs]
             [tolglow.registry :as registry]
             [tolglow.show :as show]
-            [tolglow.show.programs :as programs])
+            [tolglow.show.programs :as programs]
+            [tolglow.show.scene-draft :as scene-draft]
+            [tolglow.surface.link :as surface])
   (:import [java.util.concurrent CountDownLatch TimeUnit]))
 
 (defn- probe
@@ -169,6 +179,113 @@
                   "A check the worker has not run by the next cycle runs once on the owner")
               (is (empty? @(:held-messages (:rt s))))))
           (finally (show/stop! (:rt s))))))))
+
+(deftest registry-readers-without-a-listed-type-wait-behind-a-publication
+  ;; A lighting-scene vary copies a registry effect into a scene effect, and a
+  ;; surface cue publishes an effect and cue: in submission order both see the
+  ;; held revision, so both wait for it (review of #809).
+  (let [s (show true)
+        submit (partial show/submit! (:rt s))]
+    (try
+      (let [published (submit :definition {:kind :effects :definition (probe 2)})
+            scene (submit :lighting-scene {:op :vary :group-id :front :target 0.72 :effect-ids [:probe]})
+            surface-cue (submit :video-mapping {:op :surface-cue :surface :wall :priority 10})
+            blackout (submit {:op :blackout/set :value true})]
+        (tick! s 25)
+        (is (= [nil nil nil :accepted] (mapv #(:status (ack %)) [published scene surface-cue blackout])))
+        (is (= [:definition :lighting-scene :video-mapping] (mapv :type @(:held-messages (:rt s)))))
+        (tick! s 50)
+        (is (= :accepted (:status (ack published))))
+        (is (every? #(some? (ack %)) [scene surface-cue]) "Both are answered on the next cycle, after the publication")
+        (is (empty? @(:held-messages (:rt s)))))
+      (finally (show/stop! (:rt s))))))
+
+(defn- source-forms
+  "The top-level forms of a source file on the classpath, read as data in
+  `ns-name` so its auto-resolved keywords resolve."
+  [path ns-name]
+  (binding [*ns* (the-ns ns-name) *read-eval* false]
+    (with-open [reader (java.io.PushbackReader. (io/reader (io/resource path)))]
+      (doall (take-while #(not= ::eof %) (repeatedly #(read {:eof ::eof :read-cond :allow} reader)))))))
+
+(defn- case-keys
+  "The keyword test constants of the first `(case dispatch …)` in `defn-name`."
+  [path ns-name defn-name dispatch]
+  (let [form (some #(when (and (seq? %) (= defn-name (second %))) %) (source-forms path ns-name))
+        case-form (some #(when (and (seq? %) (= 'case (first %)) (= dispatch (second %))) %) (tree-seq coll? seq form))]
+    (into #{} (comp (map first) (mapcat #(if (seq? %) % [%])) (filter keyword?))
+          (partition 2 (drop 2 case-form)))))
+
+(defn- set-in-defn
+  "The keywords of the set literal in `defn-name`'s body."
+  [path ns-name defn-name]
+  (let [form (some #(when (and (seq? %) (= defn-name (second %))) %) (source-forms path ns-name))]
+    (into #{} (comp (filter set?) (mapcat seq) (filter keyword?)) (tree-seq coll? seq form))))
+
+(def ^:private classified-types
+  "Every message type and how it relates to a held publication. A new type
+  must be added here, and so classified (review of #809)."
+  {:command :per-op :cue-schedule :launch :cue-cancel :cancel
+   :rdm-update :independent :sensor-audience-zone :independent :sensor-configure :independent
+   :sensor-arm :independent :sensor-calibrate :independent :surface-aim :independent
+   :modulation-bind :independent :modulation-unbind :independent :modulation-hold :independent
+   :modulation-resume :independent
+   :spatial-cue :dependent :autopilot-authored :dependent :lighting-scene :dependent :video-mapping :dependent
+   :personality :dependent :event-subscriber :dependent :venue-surface :dependent :fog-calibration :dependent
+   :photometry :dependent :calibration :dependent :patch-save :dependent :patch-enabled :dependent
+   :definition :dependent :material-edit :dependent :agent-cue :dependent :rig :dependent :fixture-patch :dependent
+   :composition :dependent :composition-append :dependent :composition-cards :dependent :composition-run :dependent
+   :composition-stop :dependent :response :dependent :response-release :dependent :response-delete :dependent
+   :page-generate :dependent :modulation-start :dependent :waveform :dependent :modulation-stop :dependent
+   :aim-path :dependent :modulation-cue :dependent :variable-block :dependent :audio-return-configure :dependent
+   :settings :dependent :auto :dependent :import :dependent})
+
+(def ^:private independent-ops
+  #{:blackout/set :master/set :transport/set :param/set :param/ramp :variable/set
+    :gesture/begin :gesture/sample :gesture/end :gesture/cancel :history/undo :history/redo :history/select
+    :instance/end :instance/remove :instance/set-priority :instance/move-after :instances/shuffle
+    :instance/pause :instance/resume :instance/opacity-set :instance/gain-set :instance/opacity-toggle
+    :instance/envelope-set :group/apply :effect-selection/configure :effect-selection/toggle
+    :effect-groups/configure :effect-groups/overlay-set :effect-groups/level-set :effect-groups/assign-instance
+    :knob/create :knob/link :knob/nudge :knob/remove :knob/rename :knob/set :knob/unlink
+    :knob-preset/capture :knob-preset/clear :knob-preset/recall :audio-lfo/configure :audio-lfo/remove
+    :control-surface/attach :control-surface/bank :control-surface/detach :control-surface/layout
+    :control-surface/link :control-surface/remove :control-surface/unlink})
+
+(def ^:private dependent-ops
+  #{:registry/publish :cue/put :cue/save-params :cue/clear-saved-params :cue/delete :instance/retry
+    :page/put :page/delete :show/restart :schedule/post :schedule/cancel :schedule/move :macro/run :macro/stop
+    :cue-variation/append :cue-variation/apply :cue-variation/overwrite :cue-variation/ratio-mode
+    :cue-variation/ratio-set :scene-draft/apply :scene-draft/discard :scene-draft/stage
+    :knob-candidate/discard :knob-candidate/generate :knob-candidate/keep :knob-candidate/link
+    :knob-candidate/reroll :knob-candidate/unlink :knob-candidate/audition})
+
+(def ^:private classified-ops
+  "Every command op and how it relates to a held publication. A new op must
+  be added here, and so classified."
+  (merge (zipmap independent-ops (repeat :independent)) (zipmap dependent-ops (repeat :dependent))
+         {:cue/launch :launch :effect/launch :launch :cue/cancel-launch :cancel}))
+
+(deftest every-message-is-classified-against-a-held-publication
+  (let [message-class @#'show/message-class
+        types (case-keys "tolglow/show.clj" 'tolglow.show 'apply-message 'type)
+        ops (into #{:cue/cancel-launch :param/ramp :history/undo :history/redo :history/select}
+                  cat [(case-keys "afterglow/control/model.clj" 'afterglow.control.model 'apply-operation 'op)
+                       @#'control/gesture-operations
+                       (set-in-defn "tolglow/effects/group_channels.clj" 'tolglow.effects.group-channels 'operation?)
+                       variations/operations surface/operations subscribers/operations knobs/operations
+                       audio-lfo/operations knob-candidates/operations knob-candidates/audition-operations
+                       knob-presets/operations scene-draft/operations])]
+    (is (< 40 (count types)) "The message types were read from apply-message")
+    (is (< 80 (count ops)) "The command ops were collected")
+    (is (= types (set (keys classified-types))) "Classify each new message type here, and drop removed ones")
+    (is (= #{} (reduce disj ops (keys classified-ops))) "Classify each new command op here")
+    (doseq [[type expected] classified-types :when (not= :per-op expected)]
+      (is (= expected (message-class type nil)) (str type)))
+    (doseq [[op expected] classified-ops]
+      (is (= expected (message-class :command op)) (str op)))
+    (is (= :dependent (message-class :some-future-type nil)) "Unknown messages wait")
+    (is (= :dependent (message-class :command :some/future-op)))))
 
 (deftest held-messages-count-against-the-queue
   (let [s (show true)

@@ -3371,25 +3371,63 @@
             (> (System/currentTimeMillis) deadline) false
             :else (do (Thread/sleep 1) (recur))))))
 
-(def ^:private registry-message-types
-  "Message types that read or write the registry, pages or the show session,
-  so they wait behind a held publication (#784)."
-  #{:definition :agent-cue :aim-path :modulation-cue :page-generate :import :spatial-cue
-    :autopilot-authored :composition :composition-append :composition-run})
+(def ^:private independent-commands
+  "Commands that neither read nor write the registry or pages, so they never
+  wait behind a held publication (#784): blackout, master, transport,
+  parameters and ramps, gestures and edit history, instance controls, group
+  and selection controls, knobs, audio LFOs and control-surface links. Any
+  command not listed here waits, so a new command is safe until classified."
+  #{:blackout/set :master/set :transport/set
+    :param/set :param/ramp :variable/set
+    :gesture/begin :gesture/sample :gesture/end :gesture/cancel
+    :history/undo :history/redo :history/select
+    :instance/end :instance/remove :instance/set-priority :instance/move-after :instances/shuffle
+    :instance/pause :instance/resume :instance/opacity-set :instance/gain-set :instance/opacity-toggle
+    :instance/envelope-set
+    :group/apply :effect-selection/configure :effect-selection/toggle
+    :effect-groups/configure :effect-groups/overlay-set :effect-groups/level-set :effect-groups/assign-instance
+    :knob/create :knob/link :knob/nudge :knob/remove :knob/rename :knob/set :knob/unlink
+    :knob-preset/capture :knob-preset/clear :knob-preset/recall
+    :audio-lfo/configure :audio-lfo/remove
+    :control-surface/attach :control-surface/bank :control-surface/detach :control-surface/layout
+    :control-surface/link :control-surface/remove :control-surface/unlink})
 
-(def ^:private registry-commands
-  "Commands that write the registry or pages, retry a revision or restart the
-  show: they wait behind a held publication."
-  #{:registry/publish :cue/put :cue/delete :cue/save-params :cue/clear-saved-params
-    :page/put :page/delete :instance/retry :show/restart})
+(def ^:private launch-commands
+  "Commands that wait only when they launch a held effect or cue, or a cue
+  the show does not know yet."
+  #{:cue/launch :effect/launch})
+
+(def ^:private independent-message-types
+  "Message types that neither read nor write the registry or pages: device
+  and sensor input, parameter sources and surface aim. Every other type
+  waits behind a held publication unless `waits-behind?` says otherwise."
+  #{:rdm-update :sensor-audience-zone :sensor-configure :sensor-arm :sensor-calibrate
+    :modulation-bind :modulation-unbind :modulation-hold :modulation-resume :surface-aim})
+
+(defn- message-class
+  "How a message of `type` (and command `op`) relates to a held publication:
+  :independent never waits; :launch waits when it launches what is held;
+  :cancel waits when a held message is a launch it could cancel; :dependent
+  always waits. Unknown messages are :dependent."
+  [type op]
+  (cond
+    (= :command type) (cond
+                        (contains? independent-commands op) :independent
+                        (contains? launch-commands op) :launch
+                        (= :cue/cancel-launch op) :cancel
+                        :else :dependent)
+    (contains? independent-message-types type) :independent
+    (= :cue-schedule type) :launch
+    (= :cue-cancel type) :cancel
+    :else :dependent))
 
 (defn- waits-behind?
   "True when `message` must wait behind the `held` messages, a publication
-  waiting for its check and what waits with it (#784): a message that reads
-  or writes the registry, and a launch of a held effect or cue, or of a cue
-  this model does not know yet. Blackout, master, transport, parameters,
-  gestures and other controller input never wait, and neither do launches of
-  other cues and effects."
+  waiting for its check and what waits with it (#784). Safe by default: only
+  messages `message-class` lists as independent go ahead (blackout, master,
+  transport, parameters, gestures, instance and controller input), and
+  launches of cues and effects nothing held touches. Everything else, any
+  message that may read or write the registry included, waits in order."
   [model held {:keys [type payload]}]
   (let [held-ids (fn [kind]
                    (into #{} (keep (fn [{held-type :type held-payload :payload}]
@@ -3405,16 +3443,15 @@
                           (or (and (some? cue-id) (nil? cue))
                               (nil? effect-id)
                               (contains? (held-ids :cues) cue-id)
-                              (contains? (held-ids :effects) effect-id))))]
-    (cond
-      (contains? registry-message-types type) true
-      (= :cue-schedule type) (launch-waits? (:command payload))
-      (= :command type) (let [op (:op payload)]
-                          (cond
-                            (contains? registry-commands op) true
-                            (#{:cue/launch :effect/launch} op) (launch-waits? payload)
-                            :else false))
-      :else false)))
+                              (contains? (held-ids :effects) effect-id))))
+        held-launch? (fn [{held-type :type held-payload :payload}]
+                       (or (= :cue-schedule held-type)
+                           (and (= :command held-type) (contains? launch-commands (:op held-payload)))))]
+    (case (message-class type (:op payload))
+      :independent false
+      :launch (launch-waits? (if (= :cue-schedule type) (:command payload) payload))
+      :cancel (boolean (some held-launch? held))
+      :dependent true)))
 
 (def ^:private ingress-order
   (reify java.util.Comparator
