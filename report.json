@@ -1,0 +1,77 @@
+{
+  "origin": "http://127.0.0.1:18980",
+  "startedAt": "2026-11-27T00:01:24.725Z",
+  "checks": {
+    "the REPL projection served at /api/live-parameter-devices": {
+      "slots": 1,
+      "tracks": [
+        {
+          "lane": 0,
+          "track-id": "track:2",
+          "track-name": "Tolglow run ember",
+          "present": [
+            0
+          ],
+          "missing": [],
+          "stale": []
+        }
+      ]
+    },
+    "Studio lists the device slots the REPL returns": {
+      "channel": "ember · 1 slot on 1 device · Tolglow run ember: ready",
+      "slots": [
+        "level · 0.000 – 1.000"
+      ],
+      "overflow": 0
+    },
+    "Studio mounts the shared frame": {
+      "natural": [
+        320,
+        64
+      ]
+    },
+    "a Live-device view joins Studio's render: one render, two presentations": {
+      "rendersPerSecond": 10,
+      "views": {
+        "studio-connections": 11,
+        "live-device": 10
+      },
+      "cost": {
+        "sample-us": 76.61443939393939,
+        "render-us": 3242.5724258555133,
+        "max-render-us": 12219.416
+      }
+    },
+    "closing Studio's page expires its view; the Live view keeps rendering": {
+      "views": [
+        {
+          "lease": "l9",
+          "consumer": "live-device",
+          "presented": 74,
+          "dropped": 48,
+          "size": [
+            333,
+            64
+          ]
+        }
+      ],
+      "expired": 7
+    },
+    "the last view leaving stops rendering": {
+      "running": false,
+      "counts": {
+        "renders": 327,
+        "presentations": 536,
+        "drops": 450,
+        "expired": 7,
+        "cycles": 329
+      }
+    },
+    "phone width": {
+      "overflow": 0,
+      "dpr": 3
+    },
+    "no page errors": true
+  },
+  "ok": true
+}
