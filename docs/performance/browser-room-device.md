@@ -81,13 +81,58 @@ The browser sample prepares the pass collector first and starts it on the same s
 
 | Variable | Effect |
 | --- | --- |
-| `ROOM_WORK_LIGHT` (0–1, default 0.22), `ROOM_LIGHTING_MODE` (`hold` or `interpolate`) | Preview controls applied through the ordinary Studio inputs. They are checked before and after each sample. |
+| `ROOM_WORK_LIGHT` (0–1, default 0.22), `ROOM_LIGHTING_MODE` (`hold` or `interpolate`) | Preview controls applied through the ordinary Studio inputs. They are checked before and after each sample. An empty variable means its default. |
 | `ROOM_WARMUP_MS` (8000–120000) | Minimum warmup before each scenario. Controlled comparisons require at least 20000. |
-| `ROOM_PLUME_SCENE=1` | Adds a moving dense-fog scenario that emits a local plume every four seconds. Warmup plumes are reported separately from those counted during the sample. |
-| `ROOM_PASSES` at Auto quality | Freezes the Auto policy after warmup, then runs exactly one of `full,simple-fixed-loop,full`, `full,full-no-timers,full`, `full,no-composite-fallback,full` or `full,present-cached-frame,skip-fog-raymarch,cached-shadows,full`, in the dense scene. |
+| `ROOM_PLUME_SCENE=1` (or `true`) | Adds a moving dense-fog scenario that emits a local plume every four seconds. Warmup plumes are reported separately from those counted during the sample. |
+| `ROOM_PASSES` at Auto quality | Freezes the Auto policy after warmup, then runs exactly one of `full,full,full` (the null control), `full,simple-fixed-loop,full`, `full,full-no-timers,full`, `full,no-composite-fallback,full` or `full,present-cached-frame,skip-fog-raymarch,cached-shadows,full`, in the dense scene. Any other sequence at Auto is refused. |
+| `ROOM_FOG_FIELD` (`hold` or `decay`) | With `ROOM_PASSES`, defaults to `hold`: the fog field is held at one captured state for the whole sequence. `decay` lets it decay as in the ordinary preview; the bracket check then rejects the run. Without `ROOM_PASSES` only `decay` exists. |
 | `ROOM_PAGE_TITLE` | Reuses exactly one already-open benchmark tab with this title instead of opening a new one. |
-| `ROOM_KEEP_PAGE=1` | Leaves the benchmark tab open after the run. |
+| `ROOM_KEEP_PAGE=1` (or `true`) | Leaves the benchmark tab open after the run. |
 
 `simple-fixed-loop` removes the adaptive plume subdivision from the production fog integrator and nothing else. `no-composite-fallback` removes the composite's empty-gather fallback raymarch. `full-no-timers` keeps the timer extension enabled and issues no queries. The composite and attribution comparisons don't request the timer extension at all. The probes rewrite exact fog shader source, and `test/js/preview/room-pass-browser.test.mjs` fails if those rewrites stop matching `js/preview/fog.js`.
 
-The manual preview's local fog field decays toward empty air with a 100-second time constant (`js/preview/fog-field.js`). The comparisons were first run on the superseded #489 branch, which retained a constant background haze. On master each later sample in a sequence renders a thinner medium than the one before it. `policySamples` records the mean and maximum density every second. Check that the two `full` samples agree before attributing a difference to the sample between them.
+## Hold the fog field during a comparison
+
+The manual preview's local fog field decays toward empty air with a 100-second time constant (`js/preview/fog-field.js`). The comparisons were first run on the superseded #489 branch, which retained a constant background haze. On master, without a hold, each later sample in a sequence renders a thinner medium than the one before it (#685).
+
+Every `ROOM_PASSES` run now holds the field. After the first scenario's warmup, and in a controlled comparison after the startup burst has dispersed, the private diagnostic worker copies the field's density, temperature, sources and fog time once. Each later simulation step still runs, and the field is restored to that copy before its texture upload. The step and the upload therefore keep their production cost, and every frame of every sample renders the same density and fog time. The restore copies two float arrays (147 KB at the desktop fog grid). `fogHold.restores` and `fogHold.restoreMs` in `getRoomPassState()` report its count and total time, and it falls inside the worker frame time of every sample alike. The hold lives only in the private worker bundle. The Room's fog in Studio is unchanged.
+
+Each pass sample records the medium its accepted frames rendered (`passEvidence.medium`: first, last, minimum and maximum field mean density and fog time). A held sample is invalid unless every frame rendered exactly the captured mean density and fog time. A replaced field (a tier change) or a show atmosphere taking over the field also invalidates it.
+
+The harness then compares the first and last `full` samples of each sequence (`diagnostic.comparisons`). Mean fog density may differ by at most 1%, accepted Room frames per second by at most 5% and the median worker frame time by at most 10%. A sequence whose brackets differ by more is added to the top-level `invalid` list and the run exits 2. Each middle sample is reported relative to the mean of the two brackets, with the bracket difference alongside as the noise estimate. `full,full,full` is the null control: its middle sample should differ from the bracket mean by no more than the brackets differ from each other.
+
+The frame-cost brackets still move under concurrent GPU work, clock changes and the Slow sweep's beam positions, none of which the hold controls. A run that fails only on frame cost has a stationary medium but is not attributable.
+
+### Headless check on the M4 Pro (tooling, not performance evidence)
+
+On 2026-11-27 each controlled sequence ran at Auto in the dense scene with a 20-second warmup, on master `d1770294` and with the hold (`b5b05280`), in headless Chrome 155 with ANGLE Metal on the Apple M4 Pro. Auto froze at desktop scale 1 (1235 × 528 scene, 617 × 264 fog, 48 ray steps) and the callback clock was a synthetic 60 Hz, so every sample presented 60 frames/s and only the worker frame time (submission through GPU fence) varies. Headless has no display, so every run exits 2. The console was locked, so the OS session read was answered by a synthetic unlocked record from outside the repository. A dozen other agents were loading the machine (1-minute load average 2.1 to 14.1). The values are medians of 1,200 accepted frames per sample.
+
+Every held sample rendered exactly the same medium, mean density 0.07036 and fog time 31.7 s, in every accepted frame of every sample and in every run, because each run starts a fresh field and holds it after the same number of fixed steps. The restore took 5 µs per step. Without the hold the mean density fell from 0.069 to 0.021 over one three-sample sequence and to 0.011 over the five-sample attribution sequence.
+
+| Sequence | Fog field | Bracket density | Bracket worker frame | Middle worker frame vs bracket mean | Bracket check |
+| --- | --- | ---: | ---: | --- | --- |
+| `full,full,full` | decaying, master | −62.2% | +8.0% | full +11.1% | no check on master |
+| `full,full,full` | decaying, `ROOM_FOG_FIELD=decay` | −64.2% | −18.2% | full −9.1% | rejected (density, cost) |
+| `full,full,full` | held, run 1 | 0 | −18.1% | full −8.3% | rejected (cost) |
+| `full,full,full` | held, run 2 | 0 | +4.9% | full −1.5% | agrees |
+| `full,full,full` | held, run 3 | 0 | −17.8% | full −0.6% | rejected (cost) |
+| `full,simple-fixed-loop,full` | decaying, master | −64.3% | +0.6% | loop −0.3% | no check on master |
+| `full,simple-fixed-loop,full` | held | 0 | +15.0% | loop −6.4% | rejected (cost) |
+| `full,full-no-timers,full` | decaying, master | −64.2% | −18.9% | no timers −5.3% | no check on master |
+| `full,full-no-timers,full` | held | 0 | +8.7% | no timers −1.3% | agrees |
+| `full,no-composite-fallback,full` | decaying, master | −64.2% | +17.3% | no fallback −6.7% | no check on master |
+| `full,no-composite-fallback,full` | held | 0 | −11.4% | no fallback −6.4% | rejected (cost) |
+| attribution | decaying, master | −81.5% | −8.0% | cached frame −72.6%, skip fog −30.9%, cached shadows −10.0% | no check on master |
+| attribution | held | 0 | −0.7% | cached frame −68.2%, skip fog −21.2%, cached shadows +9.3% | agrees |
+
+With the medium held, the null control's middle sample stayed within the spread of its own brackets in all three runs (−8.3%, −1.5% and −0.6%). The bracket check rejected four of the seven held runs on frame cost alone. In those runs one bracket's median worker frame was about 13.4 ms and the other about 11.0 ms, with the fog pass's GPU timer at about 8.1 and 6.1 ms on the same medium, so the cost moved between two levels independently of the fog. Concurrent GPU work or a GPU clock change is consistent with that; the cause was not isolated.
+
+Only the attribution sequence changes its reading. On the decaying field the later samples rendered half the medium or less, and cached shadow maps appeared to save 10% and skipping the fog raymarch 31%. On the held field, with brackets 0.7% apart, cached shadows saved nothing measurable and skipping the raymarch saved 21%. No measurement recorded on master used these comparisons. The #307 and #489 results came from the superseded branch, which kept a constant haze. A foreground run on a physical display with both brackets agreeing is still needed (#685).
+
+## Other sample checks
+
+- A canvas backing, CSS size or device-pixel-ratio change between the start and end of a sample invalidates it. At a fixed quality, more than one internal scene raster in a sample also invalidates it.
+- `presented.overOneAndHalfTargetInterval` counts presentation gaps longer than 1.5 configured frame intervals, so a single missed refresh at 120 Hz is counted. `over25ms` remains the 60 Hz threshold.
+- Each sample records the geometry of the screen holding the window (`screen`). Browsers expose no display name to the page, so note which display held the window by hand.
+- The harness removes its `tolglow-room-device-*` temporary directory when it finishes, fails or is interrupted.
+- The lock flags still do not cover display sleep (see above).
