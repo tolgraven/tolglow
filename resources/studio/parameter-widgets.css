@@ -95,7 +95,6 @@
 .ring-component{display:grid;justify-items:center;--widget-accent:var(--ring);min-width:0}
 .ring-component>small{font-size:10px;font-weight:600;color:var(--ring)}
 .ring-component .parameter-dial{max-height:84px}
-.parameter-dial[data-skin=ember]{filter:drop-shadow(0 1px 2px rgb(0 0 0/.35))}
 .ember-surface{stroke:rgb(30 30 30/.45);stroke-width:1}
 .ember-gap{fill:none;stroke:rgb(30 40 50/.6);stroke-width:40}
 .ember-fill{fill:none;stroke-width:40}
@@ -108,15 +107,18 @@
 .knob-skin-choice{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted,#a6b4a0)}
 .knob-skin-choice select{min-height:34px}
 .control-strip .parameter-fader{height:96px;width:44px}
-.control-strip .compound-control{grid-template-columns:minmax(84px,1fr) auto;gap:4px}
-.control-strip .compound-control[data-widget=xy]{grid-template-columns:minmax(84px,1fr)}
-.control-strip .parameter-xy{max-width:132px;min-width:84px}
-.control-strip .compound-control>.parameter-fader{min-height:84px}
+/* A strip slot is one column: the Z fader stacks under the pad and nothing
+   is wider than the slot, so no control reaches a neighbour's hit area. */
+.control-strip .compound-control,.control-strip .compound-control[data-widget=xy]{grid-template-columns:minmax(0,1fr);justify-items:center;gap:4px;width:100%;max-width:100%}
+.control-strip .compound-control>*{min-width:0;max-width:100%}
+.control-strip .parameter-xy{width:100%;max-width:132px;min-width:0}
+.control-strip .compound-control>.parameter-fader{height:84px;min-height:0}
+.control-strip .compound-control>.axis-control{width:100%}
 .control-strip .rings-trigger{grid-template-columns:64px minmax(0,1fr);gap:4px}
 @media (forced-colors:active){.xy-pointer,.fader-thumb{forced-color-adjust:none;background:CanvasText}}
 /* Ember widget style (#655): the default. Nothing is flat: faces, tracks and
-   handles carry gentle gradients and light inner shading, without filters
-   on moving parts. Rust marks a value fill (the amount from the low end or
+   handles carry gentle gradients and light inner shading. No filters: depth
+   and glow are baked into gradients, so a value change only moves shapes. Rust marks a value fill (the amount from the low end or
    zero); it never signals an edited or overridden state, which the dashed
    amber base marker shows. Standard, above, is the flat alternative. */
 .parameter-xy:is([data-skin=ember],[data-skin=ember] *){background:radial-gradient(120% 120% at 30% 22%,rgb(58 64 70/.95),rgb(30 33 37/.92) 62%,rgb(22 24 27/.95));box-shadow:0 0 0 1px rgb(20 20 20/.5),inset 0 1px 0 rgb(255 255 255/.04),inset 0 2px 10px rgb(0 0 0/.35)}
@@ -140,3 +142,6 @@
 .live-board[data-skin=ember] input[type=range]::-moz-range-track{height:6px;border-radius:3px;background:linear-gradient(rgb(26 29 32),rgb(48 53 58));box-shadow:inset 0 1px 2px rgb(0 0 0/.55)}
 .live-board[data-skin=ember] input[type=range]::-moz-range-progress{height:6px;border-radius:3px;background:linear-gradient(rgb(178 84 70/.92),rgb(140 40 36/.8))}
 .live-board[data-skin=ember] input[type=range]::-moz-range-thumb{width:18px;height:18px;border-radius:4px;background:linear-gradient(rgb(58 58 58),rgb(22 22 22));box-shadow:0 0 6px 1px rgb(150 70 55/.55)}
+.live-board-actions{flex-wrap:wrap;justify-content:flex-end;row-gap:4px}
+.live-board-actions>*{flex:none}
+@media (max-width:600px){.knob-skin-choice>span{display:none}}

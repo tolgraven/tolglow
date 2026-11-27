@@ -151,8 +151,17 @@
       [:linearGradient {:id (str id "-surface") :x1 "0" :y1 "0" :x2 "0" :y2 "1"}
        [:stop {:offset "0%" :stop-color "rgb(50,56,61)"}]
        [:stop {:offset "100%" :stop-color "rgb(29,32,36)"}]]
-      [:filter {:id (str id "-glow") :x "-60%" :y "-30%" :width "220%" :height "160%"}
-       [:feDropShadow {:dx -2.5 :dy 0 :stdDeviation 2.6 :flood-color "rgb(150,70,45)" :flood-opacity 0.75}]]]
+      ;; Depth and glow are gradients, not filters: a value change only
+      ;; rotates the pointer shapes.
+      [:radialGradient {:id (str id "-shadow") :cx "50%" :cy "50%" :r "50%"}
+       [:stop {:offset "82%" :stop-color "rgb(0,0,0)" :stop-opacity 0.35}]
+       [:stop {:offset "100%" :stop-color "rgb(0,0,0)" :stop-opacity 0}]]
+      [:linearGradient {:id (str id "-glow") :x1 "0" :y1 "0" :x2 "1" :y2 "0"}
+       [:stop {:offset "0%" :stop-color "rgb(150,70,45)" :stop-opacity 0}]
+       [:stop {:offset "35%" :stop-color "rgb(150,70,45)" :stop-opacity 0.55}]
+       [:stop {:offset "65%" :stop-color "rgb(150,70,45)" :stop-opacity 0.25}]
+       [:stop {:offset "100%" :stop-color "rgb(150,70,45)" :stop-opacity 0}]]]
+     [:circle.ember-shadow {:cx 50 :cy 45.5 :r 44 :fill (url "shadow")}]
      [:circle.ember-surface {:cx 50 :cy 44 :r 40 :fill (url "surface")}]
      [:path.ember-gap {:d (arc-path 1 (+ 1 (/ 90 geometry/sweep)) 20)}]
      (when (not= origin amount)
@@ -163,8 +172,9 @@
        (let [[x y] (dial-point base 30) [a b] (dial-point base 40)]
          [:line.dial-baseline {:x1 x :y1 y :x2 a :y2 b}
           [:title (str "Base " (number-label schema base-value))]]))
-     [:rect.ember-pointer {:x -3 :y -39 :width 6 :height 32 :rx 3 :filter (url "glow")
-                           :transform (str "translate(50 44) rotate(" (geometry/pointer-rotation amount) ")")}]
+     [:g {:transform (str "translate(50 44) rotate(" (geometry/pointer-rotation amount) ")")}
+      [:rect.ember-pointer-glow {:x -9 :y -40 :width 14 :height 34 :rx 7 :fill (url "glow")}]
+      [:rect.ember-pointer {:x -3 :y -39 :width 6 :height 32 :rx 3}]]
      [:circle.ember-halo {:cx 50 :cy 44 :r 11}]
      [:circle.ember-bullet {:cx 50 :cy 44 :r 7.5}]
      [:text.ember-number {:x 50 :y 80 :text-anchor "middle"} (number-label schema shown)]
@@ -240,6 +250,12 @@
         (some->> (proportion schema value) (#(geometry/wheel-amount % pixels)) (normalized-value schema)
                  (hash-map :remainder 0 :value))))))
 
+(defn focused?
+  "Whether a node has focus in its own document, which for a detached panel
+  is the pop-out window's, not the main window's."
+  [node]
+  (boolean (and node (identical? node (some-> node .-ownerDocument .-activeElement)))))
+
 (defn rotary-control
   "A rotary that edits. Dragging sets the absolute angle and a drag past
   either end lands on its bound. With the :ember skin a fresh press in the
@@ -259,7 +275,7 @@
                           (let [{:keys [schema value change! options]} @latest
                                 pixels (geometry/wheel-pixels (.-deltaX event) (.-deltaY event) (.-deltaMode event))]
                             (when (and (= :ember (:skin options)) pixels
-                                       (identical? @node (.-activeElement js/document)))
+                                       (focused? @node))
                               (.preventDefault event)
                               (let [from (if (= value (:from @sent)) (:to @sent) value)]
                                 (when-let [{next :value carried :remainder} (wheel-value schema from pixels @remainder)]

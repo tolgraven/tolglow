@@ -893,6 +893,15 @@
       ;; a gesture that changes nothing sends nothing.
       (when (and next (not= next current))
         (set-param-fx cofx [:studio/param-set instance-id param next])))))
+(rf/reg-event-fx :studio/param-set-if-changed
+  ;; Grouped X/Y/Z axes are separate parameters. A pad gesture sends an axis
+  ;; only when it differs from the latest value in app-db, so two pointer
+  ;; events inside one frame cannot suppress a real change.
+  (fn [{:keys [db] :as cofx} [_ instance-id param value fallback]]
+    (let [params (:params (some #(when (= (:id %) instance-id) %) (get-in db [:show :instances])))
+          current (some #(when (contains? params %) (get params %)) [param (keyword (wire-id param)) (wire-id param)])]
+      (when (not= value (if (some? current) current fallback))
+        (set-param-fx cofx [:studio/param-set instance-id param value])))))
 (rf/reg-event-fx :studio/param-component-key
   (fn [{:keys [db] :as cofx} [_ instance-id param schema index key fallback]]
     (let [current (vector-value db instance-id param fallback)]

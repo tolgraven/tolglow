@@ -104,6 +104,7 @@
     (is (str/includes? ember "data-skin=\"ember\""))
     (is (str/includes? ember "class=\"ember-fill\""))
     (is (str/includes? ember "class=\"ember-pointer\""))
+    (is (not (str/includes? ember "<filter")) "no SVG filter re-rasterises on a value change")
     (is (str/includes? ember "rotate(-67.5)") "the bar pointer turns with the value")
     (is (not (str/includes? standard "ember")))
     (is (str/includes? standard "class=\"dial-value\""))))
@@ -160,3 +161,24 @@
     (is (str/includes? ember "var(--ring)") "each sweep reads its ring colour")
     (is (= 4 (count-of #"stroke=\"url\(#rings-" ember)))
     (is (not (str/includes? standard "rings-disc")) "Standard stays flat")))
+
+(deftest the-wheel-reads-focus-from-the-knobs-own-document
+  ;; A detached Perform panel renders into a pop-out window's document; the
+  ;; main window's document.activeElement is never the knob there.
+  (let [popout #js {}
+        knob #js {:ownerDocument popout}]
+    (set! (.-activeElement popout) knob)
+    (is (true? (widgets/focused? knob)))
+    (set! (.-activeElement popout) #js {})
+    (is (false? (widgets/focused? knob)))
+    (is (false? (widgets/focused? nil)))))
+
+(deftest grouped-axes-send-only-changes-against-the-latest-app-db-value
+  (let [db (with-instance {:pan 0.5 :tilt 0})
+        unchanged (transition db [:studio/param-set-if-changed "i1" :pan 0.5 0])
+        back (transition db [:studio/param-set-if-changed "i1" :pan 0 0])]
+    (is (nil? unchanged) "the latest value already holds")
+    (is (= 0 (get-in back [:db :show :instances 0 :params :pan]))
+        "a move back to the render-time base is still sent, because app-db holds 0.5")
+    (is (= 2 (get-in (transition db [:studio/param-set-if-changed "i1" :focus 2 0]) [:db :show :instances 0 :params :focus]))
+        "a parameter still at its default compares against the default")))
