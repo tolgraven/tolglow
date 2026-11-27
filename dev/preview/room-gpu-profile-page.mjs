@@ -6,11 +6,13 @@ import {SceneRenderer} from '../../js/preview/scene-renderer.js';
 import {TIERS} from '../../js/preview/render-quality.js';
 import {FOG_QUALITY} from '../../js/preview/fog-field.js';
 
-// Compare every tier at exactly the requested raster: the profiler sets the
-// viewport to that size at device scale 1, and lifts the tier pixel caps and
-// mesh caps so the fixture-count axis reaches the renderer.
-for (const tier of Object.values(TIERS)) {
-  tier.maxPixels = 3840 * 2160; tier.dpr = Math.max(1, tier.dpr); tier.fixtures = 128;
+// Production tier settings by default. `forceRaster` (driver --force-raster)
+// lifts every tier's pixel and mesh caps so passes compare at the requested
+// raster and fixture count; results then are not production behaviour.
+const productionTiers = structuredClone(TIERS);
+function forceRaster(force) {
+  for (const [name, tier] of Object.entries(TIERS)) Object.assign(tier, force
+    ? {maxPixels: 3840 * 2160, dpr: Math.max(1, productionTiers[name].dpr), fixtures: 128} : productionTiers[name]);
 }
 
 const ROOM = {width: 12, height: 5, depth: 10};
@@ -64,7 +66,8 @@ function snapshot(time, moving) {
     output: {values: denseOutput(rig, time, moving)}};
 }
 
-window.setupRoom = async ({width, height, fixtures}) => {
+window.setupRoom = async ({width, height, fixtures, force = false}) => {
+  forceRaster(force);
   // The production worker path: an OffscreenCanvas renderer whose frames are
   // transferred as ImageBitmaps to a bitmaprenderer canvas.
   canvas = new OffscreenCanvas(width, height);
@@ -100,13 +103,17 @@ function prepare(config, frame) {
 }
 
 function applyConfig(config) {
+  // Quality and the light budget can rebuild the scene; apply them before the
+  // toggles below so those act on the rebuilt lights.
   engine.setQuality(config.tier || 'desktop');
+  if (engine.setLightBudget) engine.setLightBudget(config.fullLights ?? null);
   if (engine.edges) engine.edges.enabled = config.fxaa !== false;
   const samples = config.samples ?? sceneSamplesDefault;
   if (engine.sceneTarget.samples !== samples) { engine.sceneTarget.dispose(); engine.sceneTarget.samples = samples; }
   const fogScale = config.fogScale ?? FOG_QUALITY[engine.fog.quality]?.scale;
-  if (fogScale && engine.fog.budget.scale !== fogScale) {
-    engine.fog.budget = {...engine.fog.budget, scale: fogScale}; engine.fog.setSize(engine.width, engine.height);
+  const fogPixels = config.fogPixels ?? FOG_QUALITY[engine.fog.quality]?.pixels;
+  if ((fogScale && engine.fog.budget.scale !== fogScale) || engine.fog.budget.pixels !== fogPixels) {
+    engine.fog.budget = {...engine.fog.budget, scale: fogScale, pixels: fogPixels}; engine.fog.setSize(engine.width, engine.height);
   }
   if (config.raySteps) engine.fog.uniforms.raySteps.value = config.raySteps;
   else if (engine.fog.uniforms.raySteps) engine.fog.uniforms.raySteps.value = engine.fog.budget.steps;
@@ -119,14 +126,13 @@ function applyConfig(config) {
     const cast = i < shadows;
     if (light.castShadow !== cast) { light.castShadow = cast; light.shadow.needsUpdate = true; }
   });
-  if (engine.setLightBudget) engine.setLightBudget(config.fullLights ?? null);
   if (engine.beams) engine.beams.mesh.visible = config.fakedBeams !== false;
   if (engine.fog.hazeMaterial) {
     const mode = config.fogMode ?? FOG_QUALITY[engine.fog.quality].mode;
     if (engine.fog.mode !== mode) { engine.fog.mode = mode; engine.applyLighting(engine.displayedValues); }
   }
   if (engine.footprints) engine.footprints.disabled = config.footprints === false;
-  else {
+  if (!engine.setLightBudget) {
     // Before the LOD change the fog takes at most 16 entries in fixture order.
     engine.fogLightLimit = config.fullLights ?? 16;
     if (!engine.fogLimited) {
@@ -170,7 +176,7 @@ window.profileRoom = async config => {
   renderer.info.autoReset = true;
   await gpuIdle(gl);
   const t = engine.getTelemetry();
-  return {config, frameMs: median(batches), batches, cpuDrawMs: median(cpu), drawCalls, triangles, quality: t.quality,
+  return {config, meshes: engine.fixtures.length, fakedBeams: engine.beams?.count ?? 0, frameMs: median(batches), batches, cpuDrawMs: median(cpu), drawCalls, triangles, quality: t.quality,
     scene: t.pixels, display: t.displayPixels, samples: engine.sceneTarget.samples,
     fog: {target: t.fog.targetSize, steps: engine.fog.uniforms.raySteps?.value, mode: t.fog.mode || 'raymarch',
       lights: t.fog.lightCount, shadows: t.fog.shadowCount, meanDensity: t.fog.meanDensity},

@@ -104,13 +104,19 @@ reduced-raster fog target before compositing. The scene owner draws faked beams
 and their cost does not grow with the display. In haze mode the target is
 cleared and holds only the beams. Each faked beam is one instance of a shared
 open cone. Its radiance is `colour × intensity / distance² × (1/4π) × .92 ×
-extinction × density × chord`, the raymarch's single-scattering estimate for a
-thin chord through the cone, with the chord taken as `radius × |n·v|^3.5`. That
-gives soft silhouettes. The beam fades over its last 28 %, near the camera and
-where it meets opaque depth. Two scrolling samples of a tiling noise texture and
-a four-octave world-space fbm add drifting structure. It reads local density from
-the field, so at zero fog it draws nothing. Faked beams are a deliberate
-approximation without shadows or incident-path extinction.
+(1 − T(density, chord)) × spot profile × T_incident × T_view`, the raymarch's
+single-scattering estimate. The chord is `radius × |n·v|` per face; the profile is
+the spot smoothstep at the chord's closest radius (from `|n·v|` and penumbra),
+which softens the silhouette. `T_incident` uses one density tap halfway along
+the path from the lens, as the raymarch does, and `T_view` three taps along the
+eye path clipped to the room. The beam fades over its last 28 %, near the camera
+and where it meets opaque depth. Two scrolling samples of a tiling noise texture
+(addressed by the cylinder's seam-duplicated u) and a four-octave world-space
+fbm add drifting structure. It reads local density from the field, so at zero
+fog it draws nothing. With uniform densities .03, .10 and .35 on 16 heads, the
+mean luma of all-faked and all-full frames differs by 2.7, 3.3 and 1.5 /255
+(headless ANGLE Metal; numbers in #793). Faked beams cast no shadows and have no
+forward-scatter halo.
 
 A light span that covers a whole march interval reuses that interval's density
 sample. The jittered sample point is identical, so this saves detail-noise

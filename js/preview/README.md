@@ -125,18 +125,29 @@ proof of real-device frame rate; worker isolation is the control-responsiveness
 boundary.
 
 Desktop allocates up to 6 million scene pixels at DPR 2 (a 14-inch MacBook Pro's
-native fullscreen), four 1024px shadow maps and 64 fixture meshes. Mobile permits 1.5 million at DPR 2, two 512px maps and 32 meshes.
-High permits 3840×2160 at up to DPR 4, four 2048px maps and 128 meshes. Every tier
+native fullscreen), four 1024px shadow maps and 128 fixture meshes. Mobile permits 1.5 million at DPR 2, two 512px maps and 64 meshes.
+Low keeps 32 meshes. High permits 3840×2160 at up to DPR 4, four 2048px maps and 128 meshes.
+A lit fixture beyond the mesh budget has no head or lens glow but still gets a
+faked beam and footprint. MSAA steps from 4 to 2 samples before switching off at
+16 million samples, so 6 MP fullscreen keeps 2×. Every tier
 presents at the panel's physical resolution up to UHD and the device's texture limit.
 `getTelemetry()` reports `pixels` (scene), `fog.targetSize`, `displayPixels`,
 `sceneSamples` and `displayRange`. A persistent pool of full-light slots (4 low, 8
 mobile and desktop, 16 high; `setLightBudget(n)` overrides) holds real
 SpotLights; `light-lod.js` ranks lit fixtures by emission × screen coverage ×
-facing the viewer, with a hold time and a margin a challenger must beat, and
+facing the viewer, with a 0.6 s hold time and a 1.35× margin a challenger must
+beat. The shadow-mapped slots apply the same hold and margin among the full
+lights. A slot handover cross-fades over 0.3 s: the outgoing light's SpotLight,
+shadow and raymarched beam ramp down while its faked beam and footprint ramp up,
+then the newcomer does the reverse. A light that stops emitting releases its
+slot at once, and a light that just turned on takes a free slot at full weight.
 `getTelemetry().lightLod` reports the split. Every other lit fixture is a faked
-beam cone (`beams.js`) drawn into the fog's reduced raster, and its floor and wall
-footprint is accumulated into a 512² irradiance atlas (`footprints.js`) that the
-room materials sample. Faked lights cast no shadows. The host projects up to 128
+beam cone (`beams.js`) drawn into the fog's reduced raster, and its footprint on
+the floor, walls, stage top and stage front is accumulated into an irradiance
+atlas (`footprints.js`, 256-texel tiles, 512 above 12.8 m) that the room
+materials sample. The atlas redraws only when its float32 light table changes or
+the context is restored. Faked lights cast no shadows. Camera tours visit the
+brightest lit fixtures, independent of the view-ranked slots. The host projects up to 128
 emitting targets across universes, ranked by moving-head channels, peak
 emitted RGB, then stable ID hash. Up to 16 fixed emitters retain coverage when moving
 heads saturate the projection. The scene likewise includes an emitting fixed

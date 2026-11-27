@@ -31,8 +31,9 @@ const label = arg('label', 'profile');
 const sizes = arg('sizes', '960x540,1440x900,1920x1080,2560x1440').split(',').map(s => s.split('x').map(Number));
 const fixtureCounts = arg('fixtures', '16,32,64,128').split(',').map(Number);
 const out = path.resolve(root, arg('out', 'target/room-gpu'));
-const port = Number(arg('port', 19180));
-if (!(port >= 19180 && port <= 19199)) throw new Error('Use a port in 19180-19199');
+// Bind 127.0.0.1 only; pick a port your lane owns (ROOM_GPU_PORT or --port).
+const port = Number(arg('port', process.env.ROOM_GPU_PORT || 19180));
+if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Use --port with an unprivileged port');
 const frames = Number(arg('frames', 40)), repeats = Number(arg('repeats', 2)), rounds = Number(arg('rounds', 3));
 
 // Named configurations, each applied to an otherwise identical scene. A
@@ -49,6 +50,8 @@ export const CONFIGS = {
   msaa0: {samples: 0, delta: 'MSAA'},
   'fog-steps-24': {raySteps: 24, delta: 'fog steps 48 to 24'},
   'fog-scale-25': {fogScale: .25, delta: 'fog raster .5 to .25'},
+  'fog-1mp': {fogPixels: 1000000},
+  'fog-2mp': {fogPixels: 2000000},
   'lights-0': {fullLights: 0},
   'no-faked-beams': {fakedBeams: false, delta: 'faked beam cones'},
   'no-footprints': {footprints: false, delta: 'footprint atlas + material sampling'},
@@ -98,7 +101,7 @@ await mkdir(out, {recursive: true});
 let context;
 const results = {label, source: source ? path.resolve(source) : root,
   method: 'wall-clock cost of back-to-back presented frames ending in one GPU fence (median of batches); pass cost = full minus the run with that pass toggled off',
-  conditions: 'headless Chrome (--headless=new), ANGLE Metal, OffscreenCanvas + bitmaprenderer on the page thread, device scale 1, every tier forced to the requested raster, synthetic rig, audience camera, fog .7 after an 80-step manual burst',
+  conditions: (flag('force-raster') ? 'every tier forced to the requested raster and 128 meshes; ' : 'production tier rasters and mesh caps; ') + 'headless Chrome (--headless=new), ANGLE Metal, OffscreenCanvas + bitmaprenderer on the page thread, device scale 1, synthetic rig, audience camera, fog .7 after an 80-step manual burst',
   startedAt: new Date().toISOString(), runs: []};
 try {
   context = await chromium.launchPersistentContext(userDataDir, {executablePath, headless: true,
@@ -130,7 +133,7 @@ try {
     }
     await page.evaluate(() => window.disposeRoom());
   } else for (const [width, height] of sizes) for (const fixtures of fixtureCounts) {
-    const setup = await page.evaluate(options => window.setupRoom(options), {width, height, fixtures});
+    const setup = await page.evaluate(options => window.setupRoom(options), {width, height, fixtures, force: flag('force-raster')});
     if (!results.renderer) { results.renderer = setup.renderer; results.userAgent = setup.userAgent; }
     const inventory = await page.evaluate(() => window.inventory());
     // Interleave configurations across rounds so slow drift (thermal state,
