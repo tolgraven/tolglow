@@ -41,6 +41,8 @@ test('private Room diagnostics keep real worker presentations through each pass 
     // Hold the real manual field: every later sample must render this medium.
     const held = await peer.evaluate(() => self.holdRoomFog());
     assert.equal(held.broken, false); assert.ok(held.meanDensity > 0);
+    // Two frames can be in flight: wait until a published frame was drawn after the hold.
+    await page.waitForFunction(() => document.querySelector('#preview').tolglowPreview.getTelemetry().passProbe?.fogHold != null);
     const media = [];
     // The loop and composite-fallback probes rewrite the production fog shader source.
     for (const mode of ['full','cached-shadows','skip-fog-raymarch','present-cached-frame','simple-fixed-loop','no-composite-fallback','full']) {

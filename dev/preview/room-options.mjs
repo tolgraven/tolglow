@@ -54,12 +54,13 @@ export function parseRoomOptions(environment) {
   if (fogField === 'hold' && !passes) throw new Error('ROOM_FOG_FIELD=hold requires the ROOM_PASSES diagnostic worker.');
   // Stated tolerances. Every pass sample must be stationary: the medians of
   // its ten 2-second blocks of worker frame time may spread by at most
-  // `stationarity` of their median. The first and last `full` samples of a
-  // sequence may then differ by at most `bracket` in frame cost and 1% in density.
+  // `stationarity` of their median or 0.25 ms, whichever is larger. The
+  // first and last `full` samples of a sequence may then differ by at most
+  // `bracket` in frame cost and 1% in density.
   const bracket = fraction('ROOM_BRACKET_TOLERANCE', .02);
   const stationarity = fraction('ROOM_STATIONARITY_TOLERANCE', .05);
   return {quality, workLight, lightingMode, minimumWarmupMs, passes, frozenAuto, comparison, scene,
     plumeScene, fogField, keepPage: flag('ROOM_KEEP_PAGE'), pageTitle: env('ROOM_PAGE_TITLE') ?? null,
     bracketTolerance: {meanDensity: .01, roomHz: bracket, workerFrameP50Ms: bracket},
-    stationarity: {blocks: 10, tolerance: stationarity}};
+    stationarity: {blocks: 10, tolerance: stationarity, floorMs: .25}};
 }

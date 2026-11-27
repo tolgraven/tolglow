@@ -118,6 +118,7 @@ const recorded = {
   quietNull2First: [11.19, 11.13, 11.08, 11.26, 11.27, 11.23, 11.29, 11.32, 11.41, 11.35],
   contendedNull1First: [13.70, 13.35, 11.22, 14.11, 12.88, 13.49, 13.96, 14.08, 13.44, 12.56],
   timerLastFull: [12.59, 11.39, 12.43, 11.11, 13.45, 11.74, 12.78, 10.57, 13.27, 11.56],
+  attributionCachedFrame: [3.63, 3.59, 3.63, 3.62, 3.57, 3.64, 3.65, 3.60, 3.37, 3.29],
   attributionFirst: [11.18, 11.23, 11.36, 11.29, 11.27, 11.38, 11.16, 11.37, 11.49, 11.40],
   attributionSkipFog: [8.95, 8.87, 8.84, 8.72, 8.88, 8.96, 8.85, 8.84, 8.91, 8.86],
   attributionCachedShadows: [14.26, 11.67, 12.27, 11.56, 13.01, 10.36, 12.91, 11.13, 12.21, 11.88],
@@ -127,7 +128,7 @@ const frames = blocks => {
   const values = blocks.flatMap(ms => Array(120).fill(ms));
   return {values, offsets: values.map((_, i) => (i + .5) * 20000 / values.length)};
 };
-const stationarity = {blocks: 10, tolerance: .05};
+const stationarity = {blocks: 10, tolerance: .05, floorMs: .25};
 
 test('a sample is stationary only when its 2-second block medians stay within the stated spread', () => {
   const quiet = frames(recorded.quietNull2First), contended = frames(recorded.contendedNull1First);
@@ -135,10 +136,18 @@ test('a sample is stationary only when its 2-second block medians stay within th
   assert.equal(q.stationary, true); assert.deepEqual(q.blockMediansMs, recorded.quietNull2First);
   assert.ok(q.spread < .03);
   const c = stationarityOf(contended.values, contended.offsets, 20000, stationarity);
-  assert.equal(c.stationary, false); assert.match(c.reason, /^block medians spread 21\.5% \(limit 5%\)$/);
+  assert.equal(c.stationary, false); assert.match(c.reason, /^block medians spread 21\.5% \/ 2\.89 ms \(limit 5% or 0\.25 ms\)$/);
   // A whole-sample median can look ordinary while its blocks switch levels.
   const t = frames(recorded.timerLastFull);
   assert.equal(stationarityOf(t.values, t.offsets, 20000, stationarity).stationary, false);
+  // Sub-millisecond jitter on a short pass stays under the 0.25 ms floor; the
+  // recorded cached-frame blocks (0.36 ms) do not.
+  const short = frames([3.6, 3.65, 3.55, 3.62, 3.58, 3.6, 3.64, 3.56, 3.61, 3.59]);
+  const s = stationarityOf(short.values, short.offsets, 20000, stationarity);
+  assert.ok(s.spread > .025 && s.spreadMs <= .25); assert.equal(s.stationary, true);
+  assert.equal(stationarityOf(short.values, short.offsets, 20000, {blocks: 10, tolerance: .02}).stationary, false);
+  const cached = frames(recorded.attributionCachedFrame);
+  assert.equal(stationarityOf(cached.values, cached.offsets, 20000, stationarity).stationary, false);
   // Equal-count blocks when frame offsets are unavailable; missing or sparse data fails closed.
   assert.equal(stationarityOf(quiet.values, null, null, stationarity).stationary, true);
   assert.equal(stationarityOf([...quiet.values.slice(1), NaN], quiet.offsets, 20000, stationarity).reason, 'frame times missing');
@@ -180,6 +189,20 @@ test('a held null comparison agrees at its brackets and its middle is not resolv
   assert.equal(c.brackets.meanDensity.relative, 0);
   assert.deepEqual(c.middles.map(m => [m.pass, m.relativeToBracketMean.meanDensity, m.relativeToBracketMean.workerFrameP50Ms, m.reading]),
     [['full', 0, 0, 'not resolved']]);
+  // Nearly identical brackets must not let noise resolve: the threshold is at
+  // least the bracket tolerance and the middle's own block spread.
+  const [close] = compareBrackets([11.20, 11.26, 11.21].map(ms => sample('dense', 'full', {density: .069, blocks: flat(ms)})), tolerance);
+  assert.equal(close.bracketsAgree, true);
+  assert.ok(close.middles[0].relativeToBracketMean.workerFrameP50Ms > Math.abs(close.brackets.workerFrameP50Ms.relative));
+  assert.equal(close.middles[0].resolutionThreshold, .02);
+  assert.equal(close.middles[0].reading, 'not resolved');
+  const spreadMiddle = compareBrackets([sample('dense', 'full', {density: .069, blocks: flat(11.2)}),
+    sample('dense', 'full', {density: .069, blocks: [11.0, 11.5, 11.0, 11.5, 11.0, 11.5, 11.0, 11.5, 11.0, 11.5].map(ms => ms * 1.0)}),
+    sample('dense', 'full', {density: .069, blocks: flat(11.2)})], tolerance)[0];
+  assert.ok(spreadMiddle.middles[0].resolutionThreshold > .04);
+  // Missing stationarity evidence is not stationary.
+  const bare = ['full', 'full', 'full'].map(p => {const s = sample('dense', p, {density: .069, blocks: flat(11.2)}); delete s.stationarity; return s;});
+  assert.equal(compareBrackets(bare, tolerance)[0].bracketsAgree, false);
 });
 
 test('a decaying medium, a frame-cost drift or a contended bracket attributes nothing', () => {

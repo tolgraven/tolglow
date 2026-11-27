@@ -40,7 +40,7 @@ test('the fog field and tolerances are explicit options', () => {
   assert.throws(() => parseRoomOptions({ROOM_FOG_FIELD: 'frozen'}), /hold or decay/);
   const options = parseRoomOptions({ROOM_BRACKET_TOLERANCE: '.03', ROOM_STATIONARITY_TOLERANCE: '.04'});
   assert.deepEqual(options.bracketTolerance, {meanDensity: .01, roomHz: .03, workerFrameP50Ms: .03});
-  assert.deepEqual(options.stationarity, {blocks: 10, tolerance: .04});
+  assert.deepEqual(options.stationarity, {blocks: 10, tolerance: .04, floorMs: .25});
   assert.deepEqual(parseRoomOptions({}).bracketTolerance, {meanDensity: .01, roomHz: .02, workerFrameP50Ms: .02});
   assert.throws(() => parseRoomOptions({ROOM_BRACKET_TOLERANCE: '2'}), /fraction/);
   assert.throws(() => parseRoomOptions({ROOM_PLUME_SCENE: '1', ROOM_SCENE: 'fixed'}), /full moving renderer/);
