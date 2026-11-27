@@ -145,6 +145,12 @@
 (defn needed? [model]
   (or (get-in model run-path) (some #(spatial-candidate? model %) (vals (:instances model)))))
 
+(defn reload-candidates
+  "The IDs among `candidates`, the instances whose pending hot reload the
+  engine attempts this frame, that run a volume or would run one after it."
+  [model candidates]
+  (into #{} (filter #(some->> (get-in model [:instances %]) (spatial-candidate? model))) candidates))
+
 (defn- sample-source [model opts default spec]
   (let [scalar #(signal/value model % opts)]
     (cond
@@ -185,10 +191,19 @@
         (cond-> (#{:ball :cylinder} (:shape template)) (assoc :radius (:radius values)))
         (update :falloff merge (select-keys values [:inner-m :outer-m])))))
 
-(defn- live-instance [model clock instance]
-  (when (spatial-candidate? model instance)
-    (let [{:keys [instance expired?]} (engine/instance-lifecycle model clock instance)]
-      (when (and (not expired?) (controls? instance)) instance))))
+(defn- live-instance
+  "The instance as it renders this frame, or nil. Only the IDs in `candidates`
+  read their pending registry revision; every other instance reads the
+  definition it runs, as the engine evaluates it when it keeps that one."
+  [model clock candidates instance]
+  (let [candidate? (contains? candidates (:id instance))
+        effect-id (:effect-id instance)]
+    (when (if candidate? (spatial-candidate? model instance) (controls? instance))
+      (let [model (if (or candidate? (= (:effect-version instance) (get-in model [:registry :effects effect-id :version])))
+                    model
+                    (update-in model [:registry :effects] dissoc effect-id))
+            {:keys [instance expired?]} (engine/instance-lifecycle model clock instance)]
+        (when (and (not expired?) (controls? instance)) instance)))))
 
 (defn- personality-form
   "The form the active personality picks for a cue that declared this input.
@@ -235,20 +250,25 @@
       (assoc-in state [:entries key] {:instance (:instance entry) :error error})
       {:entries (assoc entries key entry) :volumes (inc volumes) :balls (if ball? (inc balls) balls)})))
 
-(defn volumes [model modulation previous]
-  (let [settings (get-in model [:settings :spatial])
-        static (when (:enabled? settings) (:volumes settings))
-        clock (time/frame-clock model)
-        live (keep #(live-instance model clock %) (vals (:instances model)))
-        prepare (fn [instance]
-                  (let [key (key-for instance)]
-                    [key (live-volume model modulation previous settings key instance)]))
-        occupancy {:entries {} :volumes (count static) :balls (count (filter #(= :ball (:shape %)) (vals static)))}]
-    (->> live
-         (sort-by :order)
-         (map prepare)
-         (reduce (partial admit-volume static) occupancy)
-         :entries)))
+(defn volumes
+  "The live volume of every spatial cue, keyed by `key-for`. Each instance
+  reads the definition it runs; those in `candidates` read their pending
+  hot reload revision instead (see `live-instance`)."
+  ([model modulation previous] (volumes model modulation previous #{}))
+  ([model modulation previous candidates]
+   (let [settings (get-in model [:settings :spatial])
+         static (when (:enabled? settings) (:volumes settings))
+         clock (time/frame-clock model)
+         live (keep #(live-instance model clock candidates %) (vals (:instances model)))
+         prepare (fn [instance]
+                   (let [key (key-for instance)]
+                     [key (live-volume model modulation previous settings key instance)]))
+         occupancy {:entries {} :volumes (count static) :balls (count (filter #(= :ball (:shape %)) (vals static)))}]
+     (->> live
+          (sort-by :order)
+          (map prepare)
+          (reduce (partial admit-volume static) occupancy)
+          :entries))))
 
 (defn- member-source [key index]
   {:adapter :spatial-cue :volume-id key :member index})
@@ -320,10 +340,12 @@
         (if (seq leases) (assoc-in model run-path leases) (update model :extensions dissoc ::members))))))
 
 (defn- group-rows [model key active weights]
-  (let [{:keys [instance members]} active
+  (let [{:keys [instance]} active
         opacity (* (get-in instance [:system :opacity] 1.0) (system/gain instance (system/private-clock instance model)))
         descriptor {:id key :target-weights weights :opacity opacity}
-        leases (get-in model (into run-path [key :ids]))]
+        ;; Slots come from the lease that launched the running members. A
+        ;; pending revision's members wait for the engine to accept it.
+        {leases :ids members :members} (get-in model (into run-path [key]))]
     (into {(:id instance) (assoc descriptor :member 0 :member-opacity 1.0)}
           (for [[index id] leases
                 :let [slot (get members index)]]

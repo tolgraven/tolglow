@@ -2648,20 +2648,33 @@
   "Sample modulation for the frame that rejects a pending hot reload, from the
   same prior controller state as the candidate samples. Return the engine's
   reload fallback and the state behind it, or nil when both outcomes read the
-  same inputs. An outcome whose own controllers cannot advance has no fallback.
-  Ramp overlays do not follow a candidate, so both outcomes rest on the same ones."
-  [model candidate candidate-samples samples ramp-params spatial-overrides time-ms]
-  (when-let [result (try (modulation/advance (:modulation model) (modulation/last-good-view model)
-                                             {:time-ms time-ms :transport (:transport model)})
-                         (catch clojure.lang.ExceptionInfo _ nil))]
-    (let [sampled #(select-keys % [:overrides :priorities :priority-overrides])]
-      (when (or (not= (:state result) (:state candidate)) (not= (:overrides result) (:overrides candidate))
-                (not= (sampled samples) (sampled candidate-samples)))
-        (let [overrides (merge-with merge ramp-params (:overrides result) (:overrides samples) spatial-overrides)]
-          {:modulation result :parameter-samples samples :overrides overrides
-           :frame (assoc modulation/last-good-frame
-                         :keyframe-params overrides
-                         ::engine/priority-overrides (:priority-overrides samples {}))})))))
+  same inputs. Modulation whose own controllers cannot advance for that
+  outcome keeps the candidate's samples. Ramp overlays do not follow a
+  candidate, so both outcomes rest on the same ones. `spatial-overrides` are
+  the spatial cues' committed parameter fields; `spatial-differs?` says a
+  candidate changes the spatial inputs, which always needs a fallback."
+  [model candidate candidate-samples samples ramp-params spatial-overrides spatial-differs? time-ms]
+  (let [result (try (modulation/advance (:modulation model) (modulation/last-good-view model)
+                                        {:time-ms time-ms :transport (:transport model)})
+                    (catch clojure.lang.ExceptionInfo _ nil))
+        sampled #(select-keys % [:overrides :priorities :priority-overrides])
+        modulation-differs? (and result
+                                 (or (not= (:state result) (:state candidate)) (not= (:overrides result) (:overrides candidate))
+                                     (not= (sampled samples) (sampled candidate-samples))))]
+    (when (or modulation-differs? spatial-differs?)
+      (let [[result samples] (if modulation-differs? [result samples] [candidate candidate-samples])
+            overrides (merge-with merge ramp-params (:overrides result) (:overrides samples) spatial-overrides)]
+        {:modulation result :parameter-samples samples :overrides overrides
+         :frame (assoc modulation/last-good-frame
+                       :keyframe-params overrides
+                       ::engine/priority-overrides (:priority-overrides samples {}))}))))
+
+(defn- spatial-levels
+  "Split the frame's group levels into those the spatial native-member mix
+  applies to `groups` and those the engine applies itself."
+  [group-levels groups]
+  (let [spatial (when (and group-levels groups) (not-empty (select-keys group-levels (keys groups))))]
+    {:spatial spatial :engine (if spatial (not-empty (apply dissoc group-levels (keys spatial))) group-levels)}))
 
 (defn- render-frame
   "Render one lighting frame from a model whose inputs this cycle already owns.
@@ -2681,23 +2694,39 @@
         reading #(modulation/with-frame-params % (:params ramp-frame) (:param-targets ramp-frame))
         parameter-samples (parameter-sources/sample (reading model) {:time-ms time-ms :transport (:transport model)}
                                                    (:parameter-samples before))
+        pending-reloads (let [view (reading model)]
+                          (into #{} (keep #(when (modulation/reload-candidate view %) (:id %))) (vals (:instances model))))
         ;; This frame's engine pass may reject a pending hot reload. Sample the
         ;; waveforms for that outcome too, from the same prior state.
-        last-good-samples (when (modulation/reload-pending? (reading model))
+        last-good-samples (when (seq pending-reloads)
                             (parameter-sources/sample (modulation/last-good-view model)
                                                       {:time-ms time-ms :transport (:transport model)}
                                                       (:parameter-samples before)))
-        control-view (if (seq (:overrides parameter-samples))
-                       (update (:modulation-view before) :overrides
-                               #(merge-with merge % (:overrides parameter-samples)))
-                       (:modulation-view before))
+        control-view (fn [samples]
+                       (if (seq (:overrides samples))
+                         (update (:modulation-view before) :overrides #(merge-with merge % (:overrides samples)))
+                         (:modulation-view before)))
+        ;; Spatial, autopilot and HDR read sampled parameters before the
+        ;; engine decides a pending reload, and the first two commit what
+        ;; they decide. They read the revisions that run (#770).
+        candidate-view (control-view parameter-samples)
+        control-view (if last-good-samples (control-view last-good-samples) candidate-view)
         patch (patch! runtime (get-in model [:rig :fixtures]))
         space (when (or (get-in model [:settings :spatial :enabled?]) (get-in model spatial/state-path) (spatial-cues/needed? model))
                 ;; Spatial cues read opacity and parameters from the model: give them the frame overlay.
                 ;; The audition samples spatial fields serially, off the live worker pool.
                 (spatial/advance (subscribers/with-frame-overlays model ramp-frame)
                                  (assoc before :modulation-view control-view) time-ms (reactions runtime) command
-                                 (when-not audition? (:spatial-sampling runtime))))
+                                 (when-not audition? (:spatial-sampling runtime))
+                                 (when last-good-samples
+                                   {:candidates (spatial-cues/reload-candidates model pending-reloads)
+                                    :candidate-view candidate-view})))
+        ;; The committed fields serve a frame that keeps the running
+        ;; revisions; candidate fields, when a pending reload changes them,
+        ;; serve the frame that accepts it. The engine's decision picks one.
+        committed-fields (:fields space)
+        candidate-fields (:candidate-fields space)
+        spatial-fields (or candidate-fields committed-fields)
         model (if (:model space) (subscribers/without-frame-overlays (:model space) model ramp-frame) model)
         conductor? (autopilot-config/enabled? model)
         calibrating? (or photo-session (calibration/current model) (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
@@ -2725,14 +2754,14 @@
                                                {:time-ms time-ms :transport (:transport model)})
         last-good (when last-good-samples
                     (last-good-inputs model modulation-result parameter-samples last-good-samples
-                                      (:params ramp-frame) (get-in space [:fields :overrides]) time-ms))
+                                      (:params ramp-frame) (:overrides committed-fields) (some? candidate-fields) time-ms))
         model (assoc model :modulation (:state modulation-result))
         ;; Active modulation and waveform bindings take precedence over a ramp overlay.
         ;; A ramp does not follow a pending reload: its candidate reads only
         ;; the ramped parameters its schemas still accept.
         input-overrides (merge-with merge (modulation/candidate-overrides (reading model) (:params ramp-frame))
                                     (:overrides modulation-result) (:overrides parameter-samples)
-                                    (get-in space [:fields :overrides]))
+                                    (:overrides spatial-fields))
         modulation-middleware (if last-good
                                 (modulation/reload-middleware input-overrides (:overrides last-good))
                                 (modulation/middleware input-overrides))
@@ -2757,19 +2786,21 @@
         frame-input (merge {:time-ms time-ms :epoch (:epoch model) :show-id (:show-id model)
                             video-output/input-key video-latch
                             :keyframes (:keyframes before) :keyframe-params input-overrides
-                            :keyframe-generation (:responses model) :spatial-aims (get-in space [:fields :aims])
+                            :keyframe-generation (:responses model) :spatial-aims (:aims spatial-fields)
                             :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
                            (connections/effect-frame-inputs (:connections runtime) (:epoch model))
                            (:inputs sampling))
         group-levels (group-channels/frame-levels model)
         ;; Spatial membership is attached after the engine runs. Keep
         ;; those contributions intact until their native member mix.
-        spatial-groups (get-in space [:fields :groups])
-        spatial-levels (when (and group-levels spatial-groups)
-                         (not-empty (select-keys group-levels (keys spatial-groups))))
-        engine-levels (if spatial-levels
-                        (not-empty (apply dissoc group-levels (keys spatial-levels)))
-                        group-levels)
+        levels (spatial-levels group-levels (:groups spatial-fields))
+        committed-levels (if candidate-fields (spatial-levels group-levels (:groups committed-fields)) levels)
+        engine-levels (:engine levels)
+        ;; The spatial masks and their group levels for the inputs the engine read.
+        masks (fn [result]
+                (if (= :fallback (:reload-inputs result))
+                  [(:groups committed-fields) (:spatial committed-levels)]
+                  [(:groups spatial-fields) (:spatial levels)]))
         frame-input (cond-> frame-input
                       variables (assoc :resolved-variables variable-inputs)
                       (seq (:variables ramp-frame))
@@ -2782,7 +2813,10 @@
                       engine-levels (assoc ::engine/opacity-factors engine-levels)
                       ;; The engine reads these instead, for the whole frame,
                       ;; if it rejects any pending reload.
-                      last-good (assoc ::engine/reload-fallback (:frame last-good)))
+                      last-good (assoc ::engine/reload-fallback
+                                       (cond-> (:frame last-good)
+                                         candidate-fields (assoc :spatial-aims (:aims committed-fields)
+                                                                 ::engine/opacity-factors (or (:engine committed-levels) {})))))
         response (response-middleware! runtime (:responses model []))
         inputs (if response-frame
                  (fn [context]
@@ -2837,10 +2871,11 @@
                                    (:reference-rms meter-opts (:reference-rms capacity/defaults))))
         ;; Fog arbitration checks whether a manual source is visible.
         ;; Spatial member levels apply later, so omit muted sources here.
+        fog-levels (second (masks result))
         fog-blocks (cond->> (:contributions result)
-                     (some #(if (map? %) (some zero? (vals %)) (zero? %)) (vals spatial-levels))
+                     (some #(if (map? %) (some zero? (vals %)) (zero? %)) (vals fog-levels))
                      (filterv (fn [{{:keys [instance-id effect-version]} :source}]
-                                (pos? (engine/opacity-factor spatial-levels instance-id effect-version)))))
+                                (pos? (engine/opacity-factor fog-levels instance-id effect-version)))))
         ;; An audition never plans fog: its private frame has no fog leases.
         setpoint (when-not audition?
                    (fog-control/frame model patch observation previous-control
@@ -2866,8 +2901,9 @@
                    #(resolve-frame patch (position-hold/with-hold patch (:output before)
                                            (lighting/contributions standby % extra-blocks) followers)
                                    render-options)
-                   (if spatial-groups
-                     #(spatial-cues/mask-contributions % spatial-groups spatial-levels) identity))
+                   (fn [result]
+                     (let [[groups levels] (masks result)]
+                       (if (seq groups) (spatial-cues/mask-contributions result groups levels) result))))
         ;; A renderer rejection rebuilds the result from the engine's frame
         ;; model, which carries the ramp overlay: take it out of that one too.
         result (update (:result resolved) :model subscribers/without-frame-overlays model engine-ramps)
@@ -2877,6 +2913,7 @@
         modulation-result (if last-good? (:modulation last-good) modulation-result)
         parameter-samples (if last-good? (:parameter-samples last-good) parameter-samples)
         input-overrides (if last-good? (:overrides last-good) input-overrides)
+        spatial-fields (if last-good? committed-fields spatial-fields)
         result (cond-> result
                  last-good? (assoc-in [:model :modulation] (:state modulation-result)))
         finished (when (or (get-in model [:settings :output-response :enabled?])
@@ -2913,7 +2950,7 @@
      :preview-hdr (when (:hdr? frame-input) (or hdr-opts {}))
      :keyframes (:keyframes result) :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
      :lighting-history (:state finished) :fault-events (:fault-events result)
-     :parameter-samples (assoc parameter-samples :spatial-overrides (get-in space [:fields :overrides])
+     :parameter-samples (assoc parameter-samples :spatial-overrides (:overrides spatial-fields)
                                :live-routing (when-not audition? (live-sync/parameter-routing (connections/sync (:connections runtime)))))
      :resolved-param-overrides input-overrides
      :modulation-view (select-keys modulation-result [:overrides :diagnostics])

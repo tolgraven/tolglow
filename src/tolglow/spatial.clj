@@ -243,11 +243,35 @@
         (assoc view :linked-overrides (reduce-kv retain (:overrides view {}) fields)))
       view)))
 
+(defn- candidate-fields
+  "The fields of the spatial cues if the engine accepts this frame's pending
+  hot reloads, or nil when they would read as the committed fields do. A cue
+  differs when its own revision is pending or when its sources read samples
+  that follow another cue's revision. They reuse this frame's bodies, members
+  and leases, which follow the revisions the cues run, and commit nothing."
+  [model before now candidates candidate-view old-cache fields physical sample]
+  (when (or (seq candidates) (and candidate-view (not= candidate-view (:modulation-view before))))
+    (let [view (linked-controls model (assoc before :modulation-view candidate-view))
+          active (cues/volumes (assoc model :time-ms now) view (:settings old-cache) candidates)
+          candidate (cues/frame-fields (assoc model :time-ms now) active physical sample)
+          inputs #(into {} (remove (comp empty? val)) (select-keys % [:groups :overrides :aims]))]
+      (when (not= (inputs candidate) (inputs fields)) candidate))))
+
 (defn advance
   "Advance the show's volumes for one frame. The optional field sampler from
   tolglow.spatial.sampling splits a large patch across its workers and returns
-  the fields of the serial path."
-  [model before now graph command & [sampler]]
+  the fields of the serial path.
+
+  Every cue reads the definition it runs, so the model this commits is the
+  one a show without pending hot reloads commits. `candidates` names the
+  instances whose pending revision the engine attempts this frame, and
+  `candidate-view`, given only while some reload is pending, is the
+  modulation view of the frame that accepts every one. `:candidate-fields`
+  are the frame inputs and masks for that outcome, or nil when they equal the
+  committed `:fields`, which serve the frame that keeps the running
+  revisions. Member leases, bodies, contacts and events follow an accepted
+  revision from the next frame."
+  [model before now graph command & [sampler {:keys [candidates candidate-view]}]]
   (let [original (get-in model [:settings :spatial])
         old-cache (:spatial-cache before)
         active (cues/volumes (assoc model :time-ms now) (linked-controls model before) (:settings old-cache))
@@ -299,6 +323,8 @@
                        (optical-volume? volume) (@optical-sample volume)
                        :else (field/positions volume rig)))
             fields (when (seq active) (cues/frame-fields (assoc model :time-ms now) active result sample))
+            candidate (candidate-fields model before now candidates candidate-view old-cache
+                                        fields result sample)
             events (into (:events result) (volume-errors model fields now))
             view (cond-> (assoc (select-keys result [:members :signals :dropped-ms]) :events events)
                    fields (update :signals #(merge-with merge % (:views fields)))
@@ -307,6 +333,7 @@
                       (assoc-in [:variables :spatial] view) (stage events))]
         {:model (actions/apply-frame model result (:bindings s {}) now command)
          :fields fields
+         :candidate-fields candidate
          :cache (cond-> {:fixtures fixtures :rig rig :settings s :dynamic? dynamic? :scene scene}
                   (realized? observations) (assoc :optics (:cache @observations))
                   (or kept (realized? slices)) (assoc :slices @slices))

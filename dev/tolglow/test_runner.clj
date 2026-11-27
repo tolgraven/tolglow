@@ -15,7 +15,7 @@
     tolglow.compiler.gradient-test
     tolglow.predictive-keyframes-test
     tolglow.perf.effect-samples-test
-    tolglow.spatial.actions-test tolglow.spatial.sampling-test tolglow.spatial-cues-test tolglow.spatial-host-test tolglow.authoring.output-patch-test
+    tolglow.spatial.actions-test tolglow.spatial.sampling-test tolglow.spatial-cues-test tolglow.spatial-host-test tolglow.spatial-reload-test tolglow.authoring.output-patch-test
     tolglow.authoring.cue-variations-test tolglow.authoring.variation-control-test
     tolglow.composition.tween-test tolglow.composition.envelope-test
     tolglow.composition.sequence-test tolglow.composition.macro-test
