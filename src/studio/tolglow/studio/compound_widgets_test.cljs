@@ -108,10 +108,14 @@
     (is (not (str/includes? standard "ember")))
     (is (str/includes? standard "class=\"dial-value\""))))
 
-(deftest the-wheel-turns-an-ember-knob
-  (is (= 4 (widgets/wheel-value {:type :integer :bounds [0 8]} 3 -10)) "an integer moves one step")
-  (is (= 2 (widgets/wheel-value {:type :integer :bounds [0 8]} 3 10)))
-  (is (< 0.5 (widgets/wheel-value {:type :number :bounds [0 1]} 0.5 -40)))
+(deftest the-wheel-turns-an-ember-knob-by-distance
+  (let [steps {:type :integer :bounds [0 8]}]
+    (is (= {:value 3 :remainder 20} (widgets/wheel-value steps 3 20 0)) "a small scroll carries its distance")
+    (is (= {:value 4 :remainder 10} (widgets/wheel-value steps 3 50 20)) "and steps once it adds up")
+    (is (= {:value 2 :remainder -40} (widgets/wheel-value steps 3 -100 0)))
+    (is (= 8 (:value (widgets/wheel-value steps 8 600 0))) "the wheel stops at the bound"))
+  (is (= 0.6 (:value (widgets/wheel-value {:type :number :bounds [0 1]} 0.5 100 0))))
+  (is (nil? (widgets/wheel-value {:type :number} 0.5 100 0)) "an unbounded number does not turn")
   (is (= (geometry/knob-skin :ember) :ember)))
 
 (defn- transition [db event]
@@ -133,5 +137,16 @@
           twice (transition (:db once) [:studio/param-component-key "i1" :offset schema 0 "ArrowUp" [0 0]])]
       (is (= [0.02 0] (get-in once [:db :show :instances 0 :params :offset])))
       (is (= [0.04 0] (get-in twice [:db :show :instances 0 :params :offset])))))
+  (testing "a gesture that changes no component sends nothing"
+    (is (nil? (transition (with-instance {:offset [0.5 0]}) [:studio/param-components "i1" :offset {0 0.5} [0 0]]))))
+  (testing "the composition slot editor steps a component against app-db, so presses accumulate"
+    (let [schema {:type :number :bounds [-1 1]}
+          db (-> (with-instance {})
+                 (assoc-in [:show :effects] [{:id "fx" :params {:offset {:type :vector :size 2 :bounds [-1 1] :default [0 0]}}}])
+                 (assoc-in [:show :cues] [{:id "cue" :effect-id "fx"}])
+                 (assoc-in [:ui :composition :slots] [{:cue-id "cue"}]))
+          once (transition db [:studio/slot-param-component-key 0 :offset schema 1 "ArrowUp"])
+          twice (transition (:db once) [:studio/slot-param-component-key 0 :offset schema 1 "ArrowUp"])]
+      (is (= [0 0.04] (get-in twice [:db :ui :composition :slots 0 :params :offset])))))
   (testing "an index outside the vector changes nothing"
     (is (nil? (transition (with-instance {:offset [0 0]}) [:studio/param-components "i1" :offset {3 1} [0 0]])))))

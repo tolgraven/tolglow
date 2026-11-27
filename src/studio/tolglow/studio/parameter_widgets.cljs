@@ -117,13 +117,6 @@
                      "Home" low "End" high nil)]
       (when (some? next) (max low (min high next))))))
 
-(defn pointer-proportion
-  "A 270-degree dial with its inactive gap at the bottom. No clock or state."
-  [x y]
-  (let [degrees (mod (+ 360 (* (/ 180 js/Math.PI) (js/Math.atan2 y x))) 360)
-        angle (if (< degrees 90) (+ degrees 360) degrees)]
-    (max 0 (min 1 (/ (- angle 135) 270)))))
-
 (defn dial-point [amount radius]
   (let [angle (* (/ js/Math.PI 180) (+ 135 (* 270 amount)))]
     [(+ 50 (* radius (js/Math.cos angle))) (+ 44 (* radius (js/Math.sin angle)))]))
@@ -233,28 +226,46 @@
   (when (captured? event) (.releasePointerCapture (.-currentTarget event) (.-pointerId event))))
 
 (defn wheel-value
-  "The value after one wheel event on an ember knob: an integer moves one
-  step, a continuous value turns with acceleration. nil leaves it."
-  [schema value delta-y]
-  (if (= :integer (parameter-kind schema))
-    (keyboard-value schema value (if (neg? delta-y) "ArrowUp" "ArrowDown"))
-    (some->> (proportion schema value) (#(geometry/wheel-amount % delta-y)) (normalized-value schema))))
+  "One wheel event on an Ember knob, as {:value :remainder}, or nil when it
+  does not turn the knob. The turn is proportional to vertical scroll
+  distance; an integer carries the distance remainder until it makes a whole
+  step."
+  [schema value pixels remainder]
+  (when-let [[low high] (numeric-range schema)]
+    (when (and (finite? value) (finite? pixels))
+      (if (= :integer (parameter-kind schema))
+        (let [[steps remainder] (geometry/wheel-steps (or remainder 0) pixels)]
+          {:value (max low (min high (+ value steps))) :remainder remainder})
+        (some->> (proportion schema value) (#(geometry/wheel-amount % pixels)) (normalized-value schema)
+                 (hash-map :remainder 0 :value))))))
 
 (defn rotary-control
-  "A rotary that edits. Dragging sets the absolute angle; the :ember skin
-  holds its value while the pointer is in the bottom gap and turns with the
-  wheel. Keys step like a native slider."
+  "A rotary that edits. Dragging sets the absolute angle and a drag past
+  either end lands on its bound. With the :ember skin a fresh press in the
+  bottom gap holds the value, and the wheel turns a focused knob in proportion
+  to vertical scroll distance. Unfocused knobs, horizontal and Shift+wheel
+  scrolling leave the page to scroll. Keys step like a native slider."
   [schema value change! options]
   (r/with-let [latest (atom nil)
                node (atom nil)
+               ;; The value this knob last sent and the value it was turned
+               ;; from, so several wheel events inside one frame accumulate.
+               sent (atom nil)
+               remainder (atom 0)
                ;; React registers wheel listeners as passive; the ember knob
                ;; must cancel page scrolling, so it owns a non-passive one.
                on-wheel (fn [event]
-                          (let [{:keys [schema value change! options]} @latest]
-                            (when (= :ember (:skin options))
-                              (when-let [next (wheel-value schema value (.-deltaY event))]
-                                (.preventDefault event)
-                                (when (not= next value) (change! next))))))
+                          (let [{:keys [schema value change! options]} @latest
+                                pixels (geometry/wheel-pixels (.-deltaX event) (.-deltaY event) (.-deltaMode event))]
+                            (when (and (= :ember (:skin options)) pixels
+                                       (identical? @node (.-activeElement js/document)))
+                              (.preventDefault event)
+                              (let [from (if (= value (:from @sent)) (:to @sent) value)]
+                                (when-let [{next :value carried :remainder} (wheel-value schema from pixels @remainder)]
+                                  (reset! remainder carried)
+                                  (when (not= next from)
+                                    (reset! sent {:from value :to next})
+                                    (change! next)))))))
                attach! (fn [element]
                          (some-> @node (.removeEventListener "wheel" on-wheel))
                          (reset! node element)
@@ -262,13 +273,13 @@
     (reset! latest {:schema schema :value value :change! change! :options options})
     (let [[low high] (numeric-range schema)
           ember? (= :ember (:skin options))
-          change-pointer! (fn [event]
+          change-pointer! (fn [event mode]
                             (let [bounds (.getBoundingClientRect (.-currentTarget event))
                                   x (- (.-clientX event) (.-left bounds) (/ (.-width bounds) 2))
                                   y (- (.-clientY event) (.-top bounds) (* (.-height bounds) (/ 44 94)))
                                   ;; Scale to view-box units so the dead zone has one size.
                                   scale (/ 100 (max 1 (.-width bounds)))]
-                              (when-let [amount (geometry/dial-amount (* scale x) (* scale y) ember?)]
+                              (when-let [amount (geometry/dial-amount (* scale x) (* scale y) (when ember? mode))]
                                 (when-let [next (normalized-value schema amount)] (change! next)))))]
       [:div.parameter-rotary-control
        {:role "slider" :tab-index 0 :aria-label (or (:name options) (:name schema) "Parameter")
@@ -278,8 +289,8 @@
         :on-key-down (fn [event] (when-let [next (keyboard-value schema value (.-key event))]
                                   (.preventDefault event)
                                   (if-let [key-change! (:key-change options)] (key-change! (.-key event)) (change! next))))
-        :on-pointer-down (fn [event] (when (capture! event) (change-pointer! event)))
-        :on-pointer-move (fn [event] (when (captured? event) (change-pointer! event)))
+        :on-pointer-down (fn [event] (when (capture! event) (change-pointer! event :press)))
+        :on-pointer-move (fn [event] (when (captured? event) (change-pointer! event :drag)))
         :on-pointer-up release!
         :on-lost-pointer-capture release!}
        [rotary schema value options]])
@@ -345,6 +356,9 @@
   a gesture sets; key! receives an index and a slider key, so the caller
   steps the component's current value and repeated presses accumulate."
   [{:keys [title axes values base change! key! skin]}]
+  ;; One pointer owns the pad; a second finger on it is ignored until the
+  ;; first lifts. A Z fader is a separate element with its own pointer.
+  (r/with-let [owner (atom nil)]
   (let [[x-axis y-axis] axes
         edit (vec (or base values))
         shown (vec (or values base))
@@ -367,10 +381,14 @@
                      (when-let [[index key] (geometry/pad-key (.-key event) (.-shiftKey event))]
                        (.preventDefault event)
                        (key! index key)))
-      :on-pointer-down (fn [event] (when (capture! event) (change-pointer! event)))
-      :on-pointer-move (fn [event] (when (captured? event) (change-pointer! event)))
-      :on-pointer-up release!
-      :on-lost-pointer-capture release!}
+      :on-pointer-down (fn [event]
+                         (when (and (nil? @owner) (capture! event))
+                           (reset! owner (.-pointerId event))
+                           (change-pointer! event)))
+      :on-pointer-move (fn [event]
+                         (when (and (= @owner (.-pointerId event)) (captured? event)) (change-pointer! event)))
+      :on-pointer-up (fn [event] (when (= @owner (.-pointerId event)) (reset! owner nil) (release! event)))
+      :on-lost-pointer-capture (fn [event] (when (= @owner (.-pointerId event)) (reset! owner nil)))}
      [:i.xy-grid]
      (when (< (first (:bounds x-axis)) 0 (second (:bounds x-axis)))
        [:i.xy-zero.vertical {:style {:left (pct (geometry/origin x-axis))}}])
@@ -386,7 +404,7 @@
      (when-let [[px py] position]
        [:i.xy-pointer {:style {:left (pct px) :bottom (pct py)}}])
      [:span.xy-label.x (:label x-axis)]
-     [:span.xy-label.y (:label y-axis)]]))
+     [:span.xy-label.y (:label y-axis)]])))
 
 (defn rings-glyph
   "Nested rings, one per sub-parameter, outermost first, each a 270-degree
@@ -432,7 +450,8 @@
        [:button.rings-trigger {:type "button" :ref #(reset! trigger %)
                                :aria-expanded @open? :aria-controls panel-id
                                :aria-label (str "Edit " title " components")
-                               :on-click #(swap! open? not)}
+                               :on-click #(swap! open? not)
+                               :on-key-down #(when (and @open? (= "Escape" (.-key %))) (.preventDefault %) (close!))}
         [rings-glyph title axes shown]
         [ring-legend axes shown]]
        (when @open?

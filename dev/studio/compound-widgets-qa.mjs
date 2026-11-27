@@ -149,28 +149,60 @@ async function studioPhase(browser) {
   assert.equal(await rings.getAttribute('aria-expanded'), 'false');
   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Edit Tone components');
 
-  // Ember skin: a portable UI preference; the knob turns with the wheel.
+  // Ember skin: a portable UI preference.
   await page.getByLabel('Knob style', {exact: true}).selectOption('ember');
   await card.locator('.parameter-dial[data-skin=ember]').first().waitFor();
   const level = card.getByRole('slider', {name: 'Level rotary', exact: true});
-  const before = params(await state(page)).level;
-  const box = await level.boundingBox();
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  for (let i = 0; i < 5; i++) await page.mouse.wheel(0, -60);
-  p = await until(page, q => q.level > before + 0.01, 'the ember wheel turn');
-  // Let the queued wheel edits settle, then a press in the bottom dead zone holds the value.
-  await page.waitForTimeout(600);
-  const held = params(await state(page)).level;
-  report.wheel = [before, held];
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height * 0.92);
-  await page.waitForTimeout(400);
-  assert.equal(params(await state(page)).level, held, 'the bottom gap is a dead zone');
+  let box = await level.boundingBox();
+  const at = (fx, fy) => [box.x + fx * box.width, box.y + fy * box.height];
+  const refresh = async () => { await level.scrollIntoViewIfNeeded(); box = await level.boundingBox(); };
+  const settle = async () => { await page.waitForTimeout(500); return params(await state(page)).level; };
+  // The wheel turns only a focused knob, in proportion to vertical distance:
+  // three 100 px events are 300 px of a 1000 px sweep.
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.mouse.move(...at(0.5, 0.3));
+  const unfocused = await settle();
+  await page.mouse.wheel(0, -100);
+  assert.equal(await settle(), unfocused, 'an unfocused knob lets the page scroll');
+  await refresh();
+  await page.mouse.move(...at(0.5, 0.3));
+  await level.focus();
+  // Chromium scales synthetic wheel deltas by the device pixel ratio, so the
+  // check reads the CSS-pixel distance the page actually received.
+  await page.evaluate(() => { window.__wheelPixels = 0;
+    window.addEventListener('wheel', e => { window.__wheelPixels -= e.deltaY * (e.deltaMode === 1 ? 20 : e.deltaMode === 2 ? 400 : 1); }, {capture: true, passive: true}); });
+  await page.mouse.wheel(0, -100); await page.mouse.wheel(0, -100); await page.mouse.wheel(0, -100);
+  await page.waitForTimeout(200);
+  const scrolled = await page.evaluate(() => window.__wheelPixels);
+  assert.ok(scrolled > 0, 'the wheel events reached the page');
+  p = await until(page, q => near(q.level, Math.min(1, unfocused + scrolled / 1000), 0.005), 'the ember wheel turn');
+  const turned = await settle();
+  await page.mouse.wheel(120, 0);
+  assert.equal(await settle(), turned, 'a horizontal wheel does not turn the knob');
+  report.wheel = {from: unfocused, to: turned, pixels: scrolled};
+  await refresh();
+  // A fresh press in the bottom gap holds the value...
+  await page.mouse.click(...at(0.5, 0.92));
+  assert.equal(await settle(), turned, 'a press in the bottom gap is a dead zone');
+  // ...but a drag through the gap lands exactly on the nearer bound.
+  const dragPath = async points => {
+    await page.mouse.move(...at(...points[0])); await page.mouse.down();
+    for (const point of points.slice(1)) await page.mouse.move(...at(...point), {steps: 6});
+    await page.mouse.up();
+  };
+  await dragPath([[0.5, 0.12], [0.95, 0.47], [0.6, 0.95]]);
+  await until(page, q => q.level === 1, 'a drag through the high end');
+  await dragPath([[0.5, 0.12], [0.05, 0.47], [0.4, 0.95]]);
+  await until(page, q => q.level === 0, 'a drag through the low end');
+  report.dragThroughGap = [1, 0];
   const settings = await (await page.request.get(origin + '/api/settings', {headers: {accept: 'application/json'}})).json();
   assert.equal(settings.ui['knob-skin'], 'ember');
-  await shot(card, 'detail-ember');
+  await page.keyboard.press('PageUp'); await page.keyboard.press('PageUp');
+  await until(page, q => near(q.level, 0.2, 1e-9), 'Level keys');
   await shot(row('level'), 'ember-knob');
 
   report.repl = await replRoundTrip(page, card);
+  report.comparison = await skinComparison(page, card, row, shot);
 
   // Strip layout with the Ember skin.
   await card.getByRole('button', {name: /^Collapse /}).click();
@@ -179,6 +211,38 @@ async function studioPhase(browser) {
   assert.deepEqual(errors, []);
   await context.close();
   return report;
+}
+
+// Standard and Ember with identical parameter values and no focus or hover,
+// then each knob skin at 0, 0.5 and 1 (set with Home and PageUp, which send
+// param/set like any other key).
+async function skinComparison(page, card, row, shot) {
+  const skin = async name => {
+    await page.getByLabel('Knob style', {exact: true}).selectOption(name);
+    await card.locator(name === 'ember' ? '.parameter-dial[data-skin=ember]' : '.parameter-dial:not([data-skin])').first().waitFor();
+  };
+  const rest = async () => {
+    await page.evaluate(() => document.activeElement?.blur());
+    await page.mouse.move(2, 2);
+    await page.waitForTimeout(400);
+  };
+  const values = params(await state(page));
+  for (const name of ['standard', 'ember']) {
+    await skin(name); await rest();
+    await shot(card, 'ab-' + name);
+  }
+  assert.deepEqual(params(await state(page)), values, 'the A/B pair shows identical values');
+  const level = card.getByRole('slider', {name: 'Level rotary', exact: true});
+  for (const [label, keys, value] of [['0', ['Home'], 0], ['0.5', ['Home', 'PageUp', 'PageUp', 'PageUp', 'PageUp', 'PageUp'], 0.5], ['1', ['End'], 1]]) {
+    await level.focus();
+    for (const key of keys) await page.keyboard.press(key);
+    await until(page, q => near(q.level, value, 1e-9), 'Level at ' + label);
+    for (const name of ['standard', 'ember']) {
+      await skin(name); await rest();
+      await shot(level, 'knob-' + name + '-' + label);
+    }
+  }
+  return values;
 }
 
 async function touchPhase(browser) {
@@ -195,13 +259,25 @@ async function touchPhase(browser) {
   await pad.scrollIntoViewIfNeeded();
   await touchDrag(page, pad, [0.5, 0.5], [0.1, 0.9]);
   const p = await until(page, q => near(q.offset[0], -0.8) && near(q.offset[1], -0.8), 'the touch drag on the XY pad');
+  // A second finger on the same pad is ignored while the first holds it.
+  const box = await pad.boundingBox();
+  const point = (fx, fy, id) => ({x: box.x + fx * box.width, y: box.y + fy * box.height, id});
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent', {type: 'touchStart', touchPoints: [point(0.75, 0.25, 0)]});
+  await cdp.send('Input.dispatchTouchEvent', {type: 'touchStart', touchPoints: [point(0.75, 0.25, 0), point(0.2, 0.8, 1)]});
+  for (let i = 1; i <= 6; i++)
+    await cdp.send('Input.dispatchTouchEvent', {type: 'touchMove', touchPoints: [point(0.75, 0.25, 0), point(0.2 - i * 0.02, 0.8 + i * 0.02, 1)]});
+  await cdp.send('Input.dispatchTouchEvent', {type: 'touchEnd', touchPoints: []});
+  await cdp.detach();
+  await page.waitForTimeout(500);
+  const twoFingers = await until(page, q => near(q.offset[0], 0.5) && near(q.offset[1], 0.5), 'the first finger keeping the pad');
   const depth = card.getByRole('slider', {name: 'Aim Depth', exact: true}).locator('.fader-track');
   await touchDrag(page, depth, [0.5, 0.5], [0.5, 0.95]);
   const q = await until(page, r => near(r.aim[2], 1, 0.6), 'the touch drag on the Z fader');
   await card.screenshot({path: join(directory, 'studio-touch-ipad-width.png')});
   assert.deepEqual(errors, []);
   await context.close();
-  return {xyTouch: p.offset, depthTouch: q.aim[2]};
+  return {xyTouch: p.offset, twoFingers: twoFingers.offset, depthTouch: q.aim[2]};
 }
 
 async function waitForFile(path, ms) {

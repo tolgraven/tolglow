@@ -418,7 +418,8 @@
                     :set! (if handlers
                             #(doseq [[index n] %] (component! index n))
                             #(input! [:studio/param-components (:id instance) parameter % value]))
-                    :key! (when-not handlers
+                    :key! (if handlers
+                            (:component-key handlers)
                             #(input! [:studio/param-component-key (:id instance) parameter %2 %1 %3 value]))}]
                   [widgets/vector-control title schema value component!])
        "range"
@@ -708,7 +709,9 @@
           [parameter-control instance parameter (assoc schema :name (str "Step " (inc index) " · " (or (:name schema) (label parameter))))
            {:change #(input! [:studio/slot-param index parameter %])
             :key-change #(input! [:studio/slot-param-key index parameter schema %])
-            :component #(input! [:studio/slot-param-component index parameter %1 %2])}])
+            :component #(input! [:studio/slot-param-component index parameter %1 %2])
+            ;; Compound widgets step a component against app-db, so presses accumulate.
+            :component-key #(input! [:studio/slot-param-component-key index parameter %2 %1 %3])}])
         [button nil "Reset to cue defaults" [:studio/slot-params-reset index] "text-button"]]
        [:p.small.muted "This cue has no adjustable parameters."])]))
 

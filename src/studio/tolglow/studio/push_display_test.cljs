@@ -168,7 +168,6 @@
     (is (:bipolar? model))
     (is (= "degrees" (widgets/unit-label bipolar)))
     (is (= [-180 180] (:bounds model)))
-    (is (= 0.5 (widgets/pointer-proportion 0 -1)))
     (is (= -180 (widgets/keyboard-value bipolar 90 "Home")))
     (is (= 180 (widgets/keyboard-value bipolar 90 "End")))
     (is (= 180 (widgets/keyboard-value bipolar 179 "ArrowUp")))

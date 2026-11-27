@@ -486,9 +486,9 @@
                    components ["X" "Y" "Z"])
         update! (fn [index value]
                   (rf/dispatch-sync [:studio/param-set (:id instance) (first (nth components index)) value]))
-        ;; Each axis is its own parameter, so a pad move sends one param/set
-        ;; per axis it changed, as the REPL would.
-        set! (fn [changes] (doseq [[index value] changes] (update! index value)))
+        ;; Each axis is its own parameter: a pad move sends param/set only for
+        ;; the axes whose value it changes, so a horizontal drag leaves Y alone.
+        set! (fn [changes] (doseq [[index value] changes :when (not= value (get base index))] (update! index value)))
         key! (fn [index schema key]
                (rf/dispatch-sync [:studio/param-key (:id instance) (first (nth components index)) schema key]))
         widget (controls/compound-widget (xyz-schema control))]

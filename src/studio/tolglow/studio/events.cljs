@@ -887,9 +887,12 @@
 ;; presses inside one frame, never overwrite each other with a stale vector.
 (rf/reg-event-fx :studio/param-components
   (fn [{:keys [db] :as cofx} [_ instance-id param changes fallback]]
-    (let [current (vector-value db instance-id param fallback)]
-      (when (every? #(< -1 % (count current)) (keys changes))
-        (set-param-fx cofx [:studio/param-set instance-id param (reduce-kv assoc current changes)])))))
+    (let [current (vector-value db instance-id param fallback)
+          next (when (every? #(< -1 % (count current)) (keys changes)) (reduce-kv assoc current changes))]
+      ;; param/set carries the whole vector (docs/repl-studio-parity.md), so
+      ;; a gesture that changes nothing sends nothing.
+      (when (and next (not= next current))
+        (set-param-fx cofx [:studio/param-set instance-id param next])))))
 (rf/reg-event-fx :studio/param-component-key
   (fn [{:keys [db] :as cofx} [_ instance-id param schema index key fallback]]
     (let [current (vector-value db instance-id param fallback)]
@@ -1085,6 +1088,13 @@
   (fn [db [_ index parameter component value]]
     (assoc-in db [:ui :composition :slots index :params parameter]
               (assoc (vec (get (slot-parameters db index) parameter)) component value))))
+(rf/reg-event-db :studio/slot-param-component-key
+  (fn [db [_ index parameter schema component key]]
+    (let [current (vec (get (slot-parameters db index) parameter))]
+      (if-let [next (and (< -1 component (count current)) (number? (get current component))
+                         (widgets/keyboard-value schema (get current component) key))]
+        (assoc-in db [:ui :composition :slots index :params parameter] (assoc current component next))
+        db))))
 (rf/reg-event-db :studio/slot-params-reset
   (fn [db [_ index]] (assoc-in db [:ui :composition :slots index :params] {})))
 (rf/reg-event-db :studio/composition-remove

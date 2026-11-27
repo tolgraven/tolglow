@@ -12,8 +12,6 @@
 
 (defn- round [x] #?(:clj (Math/round (double x)) :cljs (js/Math.round x)))
 
-(defn- pow [x y] #?(:clj (Math/pow (double x) (double y)) :cljs (js/Math.pow x y)))
-
 (defn- atan2 [y x] #?(:clj (Math/atan2 (double y) (double x)) :cljs (js/Math.atan2 y x)))
 
 (def ^:private pi #?(:clj Math/PI :cljs js/Math.PI))
@@ -73,15 +71,19 @@
   (when (and (finite? y) (finite? height) (pos? height))
     (clamp01 (- 1 (/ y height)))))
 
+(defn- floor [x] #?(:clj (Math/floor (double x)) :cljs (js/Math.floor x)))
+
+(defn- ceil [x] #?(:clj (Math/ceil (double x)) :cljs (js/Math.ceil x)))
+
 (defn ticks
   "Tick marks of an integer axis spanning at most sixteen steps: one per whole
-  number, every fourth one heavier, as on the tolglow-web slider. nil
-  otherwise."
+  number inside the bounds, and every fourth tick counted from the low end
+  heavier, as on the tolglow-web slider. nil otherwise."
   [{[low high] :bounds integer? :integer? :as axis}]
   (when (and axis integer? (<= (- high low) 16))
-    (let [first-tick (long #?(:clj (Math/ceil (double low)) :cljs (js/Math.ceil low)))]
-      (mapv (fn [n] {:value n :amount (amount axis n) :major? (zero? (mod n 4))})
-            (range first-tick (inc (long high)))))))
+    (let [first-tick (long (ceil low)) last-tick (long (floor high))]
+      (mapv (fn [n] {:value n :amount (amount axis n) :major? (zero? (mod (- n first-tick) 4))})
+            (range first-tick (inc last-tick))))))
 
 (defn pad-key
   "The component and slider key one pad key press moves, as [index key]:
@@ -102,27 +104,66 @@
 (def sweep 270)
 
 (defn dial-amount
-  "The amount at a pointer offset (x, y) from the dial centre, y down. With
-  dead-zone? a pointer in the bottom gap or on the centre returns nil, so the
-  value holds; without it the gap clamps to the nearer end."
-  [x y dead-zone?]
-  (when (and (finite? x) (finite? y))
-    (let [degrees (mod (+ 360 (* (/ 180 pi) (atan2 y x))) 360)
-          angle (if (< degrees 90) (+ degrees 360) degrees)
-          raw (/ (- angle 135) sweep)]
-      (cond
-        (not dead-zone?) (clamp01 raw)
-        (< (+ (* x x) (* y y)) 16) nil
-        (<= 0 raw 1) raw))))
+  "The amount at a pointer offset (x, y) from the dial centre, y down.
+  Without a mode, or with :drag, a pointer in the bottom gap clamps to the
+  nearer end, so a drag past either end lands exactly on its bound. :drag
+  and :press hold the value (nil) on the centre, where there is no angle;
+  :press, a fresh press, also holds in the gap: the Ember dead zone."
+  ([x y] (dial-amount x y nil))
+  ([x y mode]
+   (when (and (finite? x) (finite? y))
+     (let [degrees (mod (+ 360 (* (/ 180 pi) (atan2 y x))) 360)
+           angle (if (< degrees 90) (+ degrees 360) degrees)
+           raw (/ (- angle 135) sweep)]
+       (cond
+         (nil? mode) (clamp01 raw)
+         (< (+ (* x x) (* y y)) 16) nil
+         (<= 0 raw 1) raw
+         (= :drag mode) (clamp01 raw))))))
+
+(def wheel-line-px
+  "CSS pixels of one wheel line (WheelEvent deltaMode 1)."
+  20)
+
+(def wheel-page-px
+  "CSS pixels of one wheel page (WheelEvent deltaMode 2)."
+  400)
+
+(def wheel-sweep-px
+  "Vertical scroll distance that turns a continuous knob across its range."
+  1000)
+
+(def wheel-step-px
+  "Vertical scroll distance of one step of an integer knob: a three-line
+  mouse notch."
+  60)
+
+(defn wheel-pixels
+  "The vertical distance of one wheel event in CSS pixels, positive when
+  scrolling up (which raises a knob). nil when the event has no vertical part
+  or is mostly horizontal, so strip scrolling and Shift+wheel pass through."
+  [delta-x delta-y delta-mode]
+  (when (and (finite? delta-y) (not (zero? delta-y))
+             (or (not (finite? delta-x)) (<= (Math/abs (double delta-x)) (Math/abs (double delta-y)))))
+    (* -1 delta-y (case delta-mode 1 wheel-line-px 2 wheel-page-px 1))))
 
 (defn wheel-amount
-  "The amount after one wheel event of deltaY pixels. Small movements turn by a
-  fraction of a degree and fast flicks accelerate, as on the tolglow-web knob;
-  scrolling up raises."
-  [current delta-y]
-  (when (and (finite? delta-y) (not (zero? delta-y)))
-    (let [degrees (* 1.5 (pow (Math/abs (double delta-y)) 0.25))]
-      (clamp01 (+ (clamp01 current) (* (if (neg? delta-y) 1 -1) (/ degrees sweep)))))))
+  "The amount of a continuous knob after `pixels` of wheel distance: the turn
+  is proportional to distance, so many small trackpad events turn it as far
+  as one large mouse event of the same total."
+  [current pixels]
+  (when (and (finite? pixels) (not (zero? pixels)))
+    (clamp01 (+ (clamp01 current) (/ pixels wheel-sweep-px)))))
+
+(defn wheel-steps
+  "[steps remainder] of an integer knob: the whole steps in the carried
+  remainder plus this event's pixels. Reversing direction drops the carried
+  remainder."
+  [remainder pixels]
+  (let [carried (if (neg? (* remainder pixels)) 0 remainder)
+        total (+ carried pixels)
+        steps (long (quot total wheel-step-px))]
+    [steps (- total (* steps wheel-step-px))]))
 
 (defn pointer-rotation
   "Rotation in degrees of a pointer bar drawn pointing up from the centre."

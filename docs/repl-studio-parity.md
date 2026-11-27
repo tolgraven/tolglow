@@ -1124,6 +1124,14 @@ The remaining gaps are tracked in issue #481. Studio has no editor for `:calibra
 
 Retrospective Capture has a shared operation. The runtime owns the capture buffer. `show/capture-phrase!` at the REPL and **Connections → Capture** in Studio both call `show/capture-action!` with `:capture`. The REPL receives the phrase; Studio receives its summary and a MIDI clip download of the same capture (`:smf`). `(show/capture-action! rt :status {})` reads the buffer and the last capture that both surfaces show. Two gaps remain. Writing the capture into Live from Studio (`live-connection/capture!` over the configured bridge) is REPL-only, and Push has no Capture button: the uniform surface layer lives with the Push controllers, outside this change. Close them when Studio and Push both send the last capture to Live and the REPL can read the resulting clip identities. [Capture into Live](live-routing.md#capture-the-last-phrase-into-live) · [Issue #671](https://github.com/tolgraven/tolglow/issues/671) · [Issue #680](https://github.com/tolgraven/tolglow/issues/680)
 
+Vector widgets send the whole vector. Studio's XY pad, Z fader and ring knobs (#655) edit a `:vector` parameter through the same `param/set` the REPL submits. That command has no component form:
+
+```clojure
+@(show/submit! runtime {:op :param/set :instance-id id :param :aim :value [45.0 30.0 10.0]})
+```
+
+Studio applies a gesture's changed components to its current copy of the vector and sends nothing when no component changes. That copy can lag a REPL or Push edit to another component that has not reached the page yet, and in that window a pad drag sends the old component back. The edit is lost without a message. Grouped X, Y and Z parameters (aim and gimbal) are separate parameters, so the pad sends `param/set` only for the axes it changes. Close the gap when `param/set` accepts a validated component path, the runtime merges it into the committed vector, Studio sends only the changed components, and a REPL edit to Z survives a concurrent Studio pad drag. [Issue #655](https://github.com/tolgraven/tolglow/issues/655)
+
 ## See what ran as Live runs
 
 The runtime keeps a run record (#683). It has one channel per launched cue,

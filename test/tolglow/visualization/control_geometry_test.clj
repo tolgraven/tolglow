@@ -57,35 +57,59 @@
     (is (= [0 4 8] (mapv :value (filter :major? (geometry/ticks steps)))))
     (is (== 0.5 (:amount (nth (geometry/ticks steps) 4))))
     (is (nil? (geometry/ticks (geometry/axis "Wide" {:bounds [0 32] :type :integer}))))
-    (is (nil? (geometry/ticks y)) "continuous axes have no ticks")))
+    (is (nil? (geometry/ticks y)) "continuous axes have no ticks")
+    (is (= [-6 -5 -4 -3] (mapv :value (geometry/ticks (geometry/axis "Neg" {:bounds [-6.5 -2.5] :type :integer}))))
+        "ticks stay inside fractional negative bounds")
+    (is (= [-6 -2] (mapv :value (filter :major? (geometry/ticks (geometry/axis "Neg" {:bounds [-6 -1] :type :integer})))))
+        "every fourth tick from the low end is heavier")))
 
 (deftest the-dial-reads-an-absolute-angle-with-a-dead-zone
   (testing "the 270 degree sweep starts bottom left and ends bottom right"
-    (is (near? 0 (geometry/dial-amount -10 10 true)))
-    (is (near? 0.5 (geometry/dial-amount 0 -10 true)))
-    (is (near? 1 (geometry/dial-amount 10 10 true))))
-  (testing "in the bottom gap the ember skin holds its value; the standard skin clamps"
-    (is (nil? (geometry/dial-amount 0 30 true)))
-    (is (nil? (geometry/dial-amount 10 15 true)))
-    (is (= 0 (geometry/dial-amount -1 30 false)))
-    (is (= 1 (geometry/dial-amount 1 30 false))))
-  (testing "a pointer on the centre has no angle"
-    (is (nil? (geometry/dial-amount 1 -1 true))
-        "radius √2 is inside the centre dead zone")
-    (is (some? (geometry/dial-amount 10 -10 true))))
+    (is (near? 0 (geometry/dial-amount -10 10 :press)))
+    (is (near? 0.5 (geometry/dial-amount 0 -10 :press)))
+    (is (near? 1 (geometry/dial-amount 10 10 :press))))
+  (testing "a fresh Ember press in the bottom gap holds its value"
+    (is (nil? (geometry/dial-amount 0 30 :press)))
+    (is (nil? (geometry/dial-amount 30 31 :press))))
+  (testing "a drag past either end lands exactly on the bound, on both skins"
+    (is (< 0.99 (geometry/dial-amount 30 29 :drag) 1) "just inside the arc")
+    (is (= 1 (geometry/dial-amount 30 31 :drag)) "just past the high end")
+    (is (= 1 (geometry/dial-amount 0.5 30 :drag)) "right of the bottom centre is the high end")
+    (is (= 0 (geometry/dial-amount -30 31 :drag)) "just past the low end")
+    (is (= 0 (geometry/dial-amount -0.5 30 :drag)))
+    (is (= 0 (geometry/dial-amount -1 30)))
+    (is (= 1 (geometry/dial-amount 1 30))))
+  (testing "a pointer on the centre has no angle while dragging or pressing"
+    (is (nil? (geometry/dial-amount 1 -1 :drag)))
+    (is (nil? (geometry/dial-amount 1 -1 :press)))
+    (is (some? (geometry/dial-amount 10 -10 :press))))
   (testing "the pointer bar turns with the amount"
     (is (= -135 (geometry/pointer-rotation 0)))
     (is (= 0 (geometry/pointer-rotation 1/2)))
     (is (= 135 (geometry/pointer-rotation 1)))))
 
-(deftest the-wheel-accelerates-and-scrolling-up-raises
-  (let [small (- (geometry/wheel-amount 0.5 -1) 0.5)
-        flick (- (geometry/wheel-amount 0.5 -256) 0.5)]
-    (is (near? (/ 1.5 270) small) "one pixel turns one and a half degrees")
-    (is (near? (/ 6.0 270) flick) "256 pixels turn four times as far, not 256 times")
-    (is (< (geometry/wheel-amount 0.5 40) 0.5) "scrolling down lowers"))
-  (is (= 1 (geometry/wheel-amount 0.999 -100)) "the wheel stops at the bounds")
-  (is (nil? (geometry/wheel-amount 0.5 0))))
+(deftest the-wheel-turns-in-proportion-to-vertical-distance
+  (testing "only vertical scrolling turns a knob; horizontal and zero deltas pass through"
+    (is (nil? (geometry/wheel-pixels 40 0 0)) "a horizontal swipe or Shift+wheel")
+    (is (nil? (geometry/wheel-pixels 30 -10 0)) "a mostly horizontal swipe")
+    (is (nil? (geometry/wheel-pixels 0 ##NaN 0)))
+    (is (== 100 (geometry/wheel-pixels 0 -100 0)) "scrolling up raises")
+    (is (== -60 (geometry/wheel-pixels 0 3 1)) "three lines are one integer step")
+    (is (== 400 (geometry/wheel-pixels 0 -1 2))))
+  (testing "a continuous knob turns by distance, however the distance is split"
+    (let [one (geometry/wheel-amount 0.2 300)
+          many (reduce geometry/wheel-amount 0.2 (repeat 100 3))]
+      (is (near? 0.5 one))
+      (is (near? one many) "a hundred 3 px trackpad events turn as far as one 300 px event"))
+    (is (= 1 (geometry/wheel-amount 0.9 5000)) "the wheel stops at the bounds")
+    (is (nil? (geometry/wheel-amount 0.5 0))))
+  (testing "an integer knob accumulates distance into whole steps"
+    (is (= [0 4] (geometry/wheel-steps 0 4)) "a small trackpad event alone is no step")
+    (is (= [1 4] (reduce (fn [[steps r] px] (let [[s r] (geometry/wheel-steps r px)] [(+ steps s) r]))
+                         [0 0] (repeat 16 4)))
+        "sixteen 4 px events make one 60 px step")
+    (is (= [1 40] (geometry/wheel-steps 0 100)) "a 100 px mouse notch is one step")
+    (is (= [-1 -10] (geometry/wheel-steps 50 -70)) "reversing drops the carried remainder")))
 
 (deftest rings-nest-one-sub-parameter-each
   (let [axes [x y steps (geometry/axis "W" {:bounds [0 1]})]
