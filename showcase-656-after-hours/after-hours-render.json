@@ -1,0 +1,245 @@
+{
+  "browser": "155.0.8059.40",
+  "renderer": "Three.js r187",
+  "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Pro, Unspecified Version)",
+  "software": false,
+  "film": {
+    "bloom": 0.28,
+    "exposure": 0.85,
+    "grain": 0.0015
+  },
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36",
+  "size": [
+    1920,
+    1080
+  ],
+  "fps": 40,
+  "frames": 789,
+  "drift": 0,
+  "workLight": 0.04,
+  "bundleSha256": "1e5c30ebe7e98bd8384e12f7f36293a0ee667d27cb3923b009fdef6eb1be4c4d",
+  "imagesSha256": "728953863e3e3fbfda09d1ea741d0d9bdc47f87b7fa6321908d7e74cee4012a5",
+  "video": "room.mp4",
+  "stills": [
+    {
+      "still": "still-bar-2_6.png",
+      "bar": 2.613333333333332,
+      "beat": 10.453333333333328,
+      "running": [
+        "haze",
+        "wash-tide",
+        "searchlight-drift",
+        "matrix-chase",
+        "twin-cones"
+      ],
+      "lights": 14,
+      "scene": [
+        1920,
+        1080
+      ],
+      "display": [
+        1920,
+        1080
+      ],
+      "tier": "high",
+      "fog": {
+        "sampleTimeMs": 911.5985,
+        "mixedDensity": 0.14057462600268006,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.16114573002253701,
+        "mixedVolumeM3": 61.85283544117923,
+        "roomVolumeM3": 440,
+        "localVolumeM3": 0.42193959922208274,
+        "foggerCount": 1
+      },
+      "frameNumber": 197
+    },
+    {
+      "still": "still-bar-5.png",
+      "bar": 5.000000000000007,
+      "beat": 20.00000000000003,
+      "running": [
+        "haze",
+        "wash-tide",
+        "searchlight-drift",
+        "matrix-chase",
+        "twin-cones",
+        "run"
+      ],
+      "lights": 14,
+      "scene": [
+        1920,
+        1080
+      ],
+      "display": [
+        1920,
+        1080
+      ],
+      "tier": "high",
+      "fog": {
+        "sampleTimeMs": 1693.466667,
+        "mixedDensity": 0.14037799309336568,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.16093952173699513,
+        "mixedVolumeM3": 61.766316961080896,
+        "roomVolumeM3": 440,
+        "localVolumeM3": 0.5284762777786144,
+        "foggerCount": 1
+      },
+      "frameNumber": 376
+    },
+    {
+      "still": "still-bar-8_5.png",
+      "bar": 8.506666666666755,
+      "beat": 34.02666666666702,
+      "running": [
+        "haze",
+        "searchlight-drift",
+        "matrix-chase",
+        "twin-cones",
+        "run"
+      ],
+      "lights": 14,
+      "scene": [
+        1920,
+        1080
+      ],
+      "display": [
+        1920,
+        1080
+      ],
+      "tier": "high",
+      "fog": {
+        "sampleTimeMs": 2564.229125,
+        "mixedDensity": 0.1402124182046464,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.160765844583109,
+        "mixedVolumeM3": 61.693464010044416,
+        "roomVolumeM3": 440,
+        "localVolumeM3": 0.622567604143615,
+        "foggerCount": 1
+      },
+      "frameNumber": 639
+    },
+    {
+      "still": "still-bar-11_6.png",
+      "bar": 11.60000000000016,
+      "beat": 46.40000000000064,
+      "running": [
+        "haze",
+        "searchlight-drift",
+        "matrix-chase",
+        "twin-cones",
+        "run"
+      ],
+      "lights": 4,
+      "scene": [
+        1920,
+        1080
+      ],
+      "display": [
+        1920,
+        1080
+      ],
+      "tier": "high",
+      "fog": {
+        "sampleTimeMs": 3375.9745,
+        "mixedDensity": 0.1401073860125246,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.16065565409599086,
+        "mixedVolumeM3": 61.64724984551082,
+        "roomVolumeM3": 440,
+        "localVolumeM3": 0.6404809195233224,
+        "foggerCount": 1
+      },
+      "frameNumber": 871
+    },
+    {
+      "still": "still-bar-12_1.png",
+      "bar": 12.106666666666838,
+      "beat": 48.42666666666735,
+      "running": [
+        "haze",
+        "searchlight-drift",
+        "matrix-chase",
+        "twin-cones",
+        "run",
+        "blinder-hit"
+      ],
+      "lights": 6,
+      "scene": [
+        1920,
+        1080
+      ],
+      "display": [
+        1920,
+        1080
+      ],
+      "tier": "high",
+      "fog": {
+        "sampleTimeMs": 3516.808167,
+        "mixedDensity": 0.1400891101073767,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.1606364791549019,
+        "mixedVolumeM3": 61.63920844724576,
+        "roomVolumeM3": 440,
+        "localVolumeM3": 0.6442587093813075,
+        "foggerCount": 1
+      },
+      "frameNumber": 909
+    }
+  ],
+  "capture": {
+    "faults": [],
+    "to-bar": 12.5,
+    "missed": 0,
+    "rejected": 0,
+    "frames": 789,
+    "output": "capture sink only",
+    "seed": 656,
+    "from-bar": 2,
+    "meter": {
+      "beats-per-bar": 4,
+      "bars-per-phrase": 4
+    },
+    "frame-ms": 25,
+    "timeline": "after-hours",
+    "bpm": 128,
+    "dmx-frames": 789,
+    "universes": [
+      1,
+      2,
+      3
+    ]
+  },
+  "last": {
+    "bar": 12.506666666666847,
+    "lights": 12,
+    "scene": [
+      1920,
+      1080
+    ],
+    "display": [
+      1920,
+      1080
+    ],
+    "tier": "high",
+    "fog": {
+      "sampleTimeMs": 3624.876167,
+      "mixedDensity": 0.1400787488942036,
+      "extinctionPerM": 1.25,
+      "referencePathM": 1,
+      "fogLevel": 0.1606256080540419,
+      "mixedVolumeM3": 61.63464951344958,
+      "roomVolumeM3": 440,
+      "localVolumeM3": 0.7215005910014026,
+      "foggerCount": 1
+    },
+    "frameNumber": 939
+  }
+}
