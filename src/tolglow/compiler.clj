@@ -138,7 +138,7 @@
   (when (contains? definition :modulation)
     (let [errors (modulation/validate-config (:modulation definition))]
       (when (seq errors)
-        (throw (ex-info "Invalid modulation definition"
+        (throw (ex-info (str "Invalid modulation definition: " (:message (first errors)))
                         {:errors (mapv #(update % :path (partial into [:modulation])) errors)})))))
   (gradient/validate-schemas (:params definition {}))
   (let [schemas (:params definition {})

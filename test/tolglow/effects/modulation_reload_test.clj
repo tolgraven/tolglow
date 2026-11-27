@@ -640,3 +640,86 @@
         (is (= [:cancelled :commit-refused] [(:status entry) (:reason entry)]))
         (is (string? (:message entry))))
       (finally (show/stop! rt)))))
+
+(def two-to-the-40 1099511627776)
+
+(def eight-beat-bars
+  "A meter in which an accepted bar period of 2^38 bars is 2^41 beats."
+  {:beats-per-bar 8 :bars-per-phrase 4})
+
+(defn- with-period [effect version every]
+  (-> effect (assoc :version version) (assoc-in [:modulation :every] every)))
+
+(defn- refusals [runtime]
+  (filterv #(= :modulation/refused (:type %)) (get-in (show/snapshot runtime) [:modulation :diagnostics])))
+
+(deftest a-modulation-period-that-cannot-start-is-refused-at-publish
+  (let [unstartable (with-period owner 2 {:bars 1.0e308})]
+    (testing "the revision is refused with the field and the show runs as if it was never published"
+      (let [{:keys [control broken owner]} (twin-run (model {} [wash owner]) [:wash :modulator] {300 [unstartable]} {})]
+        (is (= [:rejected] (some :acks broken)))
+        (is (= 1 (:effect-version owner)))
+        (frames-match control broken)))
+    (testing "the publication and the global start say which period and why"
+      (let [output (atom []) rt (runtime output (model {} [wash owner]))]
+        (try
+          (let [published (apply! rt {:kind :effects :definition unstartable} 0)
+                started (let [reply (show/submit! rt :modulation-start
+                                                  {:id :global :every {:beats 1/4096} :params [:level]})]
+                          (show/tick! rt 50)
+                          (deref reply 2000 ::timeout))]
+            (is (= :rejected (:status published)))
+            (is (re-find #"Modulation period :every \{:bars 1\.0E308\} is beyond the finite beat range" (:message published)))
+            (is (= [[:modulation :every :bars]] (mapv :path (get-in published [:details :errors]))))
+            (is (= :rejected (:status started)))
+            (is (re-find #"Modulation period :every \{:beats 1/4096\} is 2\.44140625E-4 beats" (:message started)))
+            (is (nil? (get-in @(:state rt) [:status :error]))))
+          (finally (show/stop! rt)))))))
+
+(deftest borderline-modulation-periods-launch-and-run
+  (doseq [every [{:beats 1/1024} {:beats two-to-the-40}]]
+    (testing (pr-str every)
+      (let [output (atom []) rt (runtime output (model {} [wash (with-period owner 1 every)]))]
+        (try
+          (let [frames (capture! rt output [:wash :modulator] {} times)]
+            (is (every? nil? (map :error frames)))
+            (is (= [[:cue (instance-id rt :modulator)]] (mapv :id (:controllers (peek frames)))))
+            (is (= [] (refusals rt)))
+            (if (= every {:beats 1/1024})
+              (is (< 4 (count (distinct (map #(nth (:dmx %) head-2-dimmer) frames)))) "The fast glide moves the wash")
+              (is (= 1 (:ticks (first (:controllers (peek frames))))) "The slow controller sampled once at launch")))
+          (finally (show/stop! rt)))))))
+
+(defn- eight-beat-model [effects]
+  (assoc-in (model {} effects) [:transport :meter] eight-beat-bars))
+
+(deftest a-period-outside-the-range-in-the-captured-meter-never-halts-a-frame
+  (let [wide {:bars (/ two-to-the-40 4)}]
+    (testing "on launch the owner renders without its controller and the refusal is projected"
+      (let [output (atom []) rt (runtime output (eight-beat-model [wash (with-period owner 1 wide)]))]
+        (try
+          (let [frames (capture! rt output [:wash :modulator] {} times)
+                [refusal :as all] (refusals rt)]
+            (is (every? nil? (map :error frames)) "No frame fails")
+            (is (every? empty? (map :controllers frames)))
+            (is (= #{128} (set (map #(nth (:dmx %) head-2-dimmer) frames))) "The wash keeps its canonical level")
+            (is (= 1 (count all)))
+            (is (= {:controller-id [:cue (instance-id rt :modulator)] :effect-id :modulator :path [:every :bars]
+                    :meter eight-beat-bars}
+                   (select-keys refusal [:controller-id :effect-id :path :meter])))
+            (is (re-find #"captured meter \(8 beats per bar" (:message refusal))))
+          (finally (show/stop! rt)))))
+    (testing "on reload the revision is adopted, its controller is refused and frames go on"
+      (let [output (atom []) rt (runtime output (eight-beat-model [wash owner]))]
+        (try
+          (let [frames (capture! rt output [:wash :modulator] {300 [(with-period owner 2 wide)]} times)
+                before (filter #(< (:time-ms %) 300) frames)
+                after (filter #(> (:time-ms %) 300) frames)]
+            (is (= [:accepted] (some :acks frames)) "The default meter accepts the period")
+            (is (every? nil? (map :error frames)) "No frame fails")
+            (is (every? seq (map :controllers before)))
+            (is (every? empty? (map :controllers after)))
+            (is (= #{128} (set (map #(nth (:dmx %) head-2-dimmer) after))))
+            (is (= 2 (:effect-version (instance rt :modulator))))
+            (is (= [:modulation/refused] (mapv :type (refusals rt)))))
+          (finally (show/stop! rt)))))))

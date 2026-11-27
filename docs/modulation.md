@@ -35,7 +35,7 @@ can omit it because cue reconciliation derives an activation ID.
 
 | Setting | Contract |
 | --- | --- |
-| `:every` | One positive `:beats`, `:bars` or `:phrases` value; ratios and decimals are accepted. Milliseconds are not a modulation period. |
+| `:every` | One positive `:beats`, `:bars` or `:phrases` value between 1/1024 and 2^40 beats; ratios and decimals are accepted. Milliseconds are not a modulation period. See [period range](#period-range). |
 | `:select` | Optional vectors `:instance-ids`, `:effect-ids`, `:cue-ids`, `:categories`. Supplied selectors intersect; values within one vector are alternatives. An empty vector matches nothing. |
 | `:params` | `:all` or distinct parameter keywords. Explicit keys absent from an effect are skipped, allowing heterogeneous selections. |
 | `:mode` | `:sample-hold` changes at each boundary. `:glide` transitions from the prior value to the new random destination over that period. |
@@ -57,6 +57,49 @@ is 3.5 beats; two bars per phrase therefore make a seven-beat phrase. Later mete
 or BPM changes do not reinterpret an existing controller's period. A paused
 transport with unchanged beat does not consume RNG or advance interpolation,
 even if wall time advances.
+
+### Period range
+
+A period must be between `min-period-beats` (1/1024 beat) and
+`max-period-beats` (2^40 = 1,099,511,627,776 beats).
+
+- **Shortest.** 1/1024 beat is 0.33 ms at 180 BPM and 0.84 ms at 70 BPM, which
+  is shorter than any lighting frame. A faster period would spend the catch-up
+  budget on samples that no output can show. With the default budget of 1024,
+  a frame may span just under one beat at this period.
+- **Longest.** The schedule adds a period to a beat coordinate. With an anchor
+  and a period both at most 2^40 beats, the next boundary stays below 2^41
+  beats. A double still resolves 2^-11 beat there, half the shortest period,
+  so every period in the range advances its schedule. A longer period, such as
+  `{:bars 1e308}`, overflows the boundary or rounds it back onto its anchor. It
+  cannot start or schedule. 2^40 beats is about 11,600 years at 180 BPM.
+
+`validate-config`, and therefore effect publication, `:modulation-cue` and
+`:modulation-start`, refuses a period outside the range in the default meter
+(four beats per bar, four bars per phrase). The error has the path
+`[:every <unit>]`, or `[:modulation :every <unit>]` in an effect, and a message
+that names the period, its length in beats and the range:
+
+```clojure
+(modulation/validate-config {:every {:bars 1e308}})
+;; => [{:path [:every :bars]
+;;      :message "Modulation period :every {:bars 1.0E308} is beyond the finite beat range in the default meter (4 beats per bar, 4 bars per phrase); a period must be between 1/1024 and 2^40 (1099511627776) beats"}]
+```
+
+A bar or phrase period is checked again against the meter that the controller
+captures when it starts. If a cue owner's period falls outside the range in
+that meter, its controller is refused alone, and the same applies to a
+controller whose schedule stops advancing at a very large beat coordinate.
+The owner effect still renders, and every other controller and effect keeps
+its frame. Each frame reports a `:modulation/refused` diagnostic with the
+controller ID, owner instance, path, captured meter and message. The diagnostic
+appears in the `[:modulation :diagnostics]` projection, which the Studio
+modulation panel lists. A new waveform binding (`:modulation-bind`) uses the
+same range for its `:period`.
+
+Saved states and saved bindings with a period outside the range still load,
+because backups keep their contents. Their frames are refused alone as above
+if they cannot schedule.
 
 ## Parameter domains and interpolation
 
