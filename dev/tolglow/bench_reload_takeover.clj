@@ -224,6 +224,28 @@
      :settle-frames (count frames) :frame-compiles (reduce + (keep :frame-compiles frames))
      :others (into [] (keep-indexed (fn [i f] (when-not (or (zero? i) (= i adoption)) f))) frames)}))
 
+(defn- blackout-behind!
+  "Publish 32 accepted revisions just before an owner cycle, with no time for
+  the worker to check them, and send a blackout (to its current value, so the
+  output does not change) right behind them. Ticks until every reply landed;
+  frame counts start at 0 for the first cycle after submission (#784)."
+  [{:keys [rt] :as recorder} clock revisions]
+  (let [replies (mapv #(show/submit! rt :definition {:kind :effects :definition %}) revisions)
+        blackout (show/submit! rt {:op :blackout/set :value (boolean (get-in @(:state rt) [:model :blackout?]))})
+        frames (loop [frames []]
+                 (let [frames (conj frames (assoc (measured-tick! recorder clock)
+                                                  :blackout? (realized? blackout)
+                                                  :published? (every? realized? replies)))]
+                   (if (or (and (:blackout? (peek frames)) (:published? (peek frames))) (> (count frames) 20))
+                     frames
+                     (recur frames))))]
+    (when-not (and (= :accepted (:status (deref blackout 0 nil)))
+                   (every? #(= :accepted (:status (deref % 0 nil))) replies))
+      (throw (ex-info "Blackout or publication behind it was not accepted" {})))
+    {:blackout-frames (first (keep-indexed #(when (:blackout? %2) %1) frames))
+     :publication-frames (first (keep-indexed #(when (:published? %2) %1) frames))
+     :first-frame (first frames)}))
+
 (defn- probe-revisions [rt heads k outcome]
   (let [model (:model @(:state rt))]
     (mapv (fn [i]
@@ -345,6 +367,10 @@
                                 (let [observed (burst! recorder clock fan-heads)]
                                   (dotimes [_ 30] (measured-tick! recorder clock))
                                   observed))))
+                behind (vec (for [_ (range rounds)]
+                              (let [observed (blackout-behind! recorder clock (probe-revisions rt heads 32 :accepted))]
+                                (dotimes [_ 8] (measured-tick! recorder clock))
+                                observed)))
                 gc-after (bench/gc-snapshot)
                 status (:status @(:state rt))]
             (when (:error status) (throw (ex-info "Show error during the benchmark" {:error (:error status)})))
@@ -368,6 +394,11 @@
                             :publication-frame (summary (map :publication bursts))
                             :beat-frame (summary (map :beat-frame bursts))
                             :compiles-in-frames-per-burst (bench/distribution (map :frame-compiles bursts))})
+             ;; 32 publications sent just before a cycle, a blackout behind them.
+             :blackout-behind-publication
+             {:blackout-latency-frames (bench/distribution (map :blackout-frames behind))
+              :publication-latency-frames (bench/distribution (map :publication-frames behind))
+              :first-frame (summary (map :first-frame behind))}
              :gc {:before gc-before :after gc-after} :load-average-after (load-average)})))
       (finally (show/stop! rt)))))
 

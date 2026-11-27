@@ -145,9 +145,11 @@ Studio's **Definitions** editor, agents' `publish_effect` and the REPL all
 publish through `submit! :definition` (#784). In a scheduled show the
 revision is validated and compiled once on the compile worker before the
 frame owner commits it. A publication submitted just before an owner cycle
-can therefore be acknowledged one cycle later, together with any messages
-submitted after it. Acks, refusals and revision numbers are the same on both
-surfaces and with or without the worker. There is no new command or
+can therefore be acknowledged one cycle later. Messages that depend on it,
+such as a cue pinning the new revision or a launch of that effect, wait with
+it. Blackout, master, transport and other controller input do not. Acks,
+refusals and revision numbers are the same on both surfaces and with or
+without the worker. There is no new command or
 projection, and no gap. [Effect fault isolation](effect-fault-isolation.md)
 
 ```clojure

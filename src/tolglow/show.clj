@@ -1528,19 +1528,23 @@
           prepared (::prepared message)
           ;; A worker checked this revision before the owner saw it (#784).
           ;; Until its verdict is ready, or when it checked another revision
-          ;; than the current registry now derives, the owner holds this and
-          ;; every later message for a later cycle; it checks a message
-          ;; itself only when its second preparation is still stale.
+          ;; than the current registry now derives, the owner holds it, and
+          ;; the messages that depend on it, for one cycle. A publication
+          ;; already held once, or whose second preparation is stale too, is
+          ;; checked on the owner instead: a short inline check costs less
+          ;; than holding input any longer.
           checked (cond
                     (nil? prepared) (publication/check kind definition captured)
-                    (not (realized? prepared)) ::pending
+                    (not (realized? prepared)) (if (::held? message)
+                                                 (publication/check kind definition captured)
+                                                 ::pending)
                     :else (or (publication/verdict-for @prepared definition captured)
                               (if (::reprepared? message)
                                 (publication/check kind definition captured)
                                 ::stale)))]
       (case checked
-        ::pending {::hold message}
-        ::stale {::hold (prepare-publication! runtime (assoc message ::reprepared? true) model)}
+        ::pending {::hold (assoc message ::held? true)}
+        ::stale {::hold (prepare-publication! runtime (assoc message ::reprepared? true ::held? true) model)}
         (do
           (some-> (:failure checked) throw)
           ;; A shader cue that alone exceeds the show's pixel budget could never render (#673).
@@ -3367,6 +3371,51 @@
             (> (System/currentTimeMillis) deadline) false
             :else (do (Thread/sleep 1) (recur))))))
 
+(def ^:private registry-message-types
+  "Message types that read or write the registry, pages or the show session,
+  so they wait behind a held publication (#784)."
+  #{:definition :agent-cue :aim-path :modulation-cue :page-generate :import :spatial-cue
+    :autopilot-authored :composition :composition-append :composition-run})
+
+(def ^:private registry-commands
+  "Commands that write the registry or pages, retry a revision or restart the
+  show: they wait behind a held publication."
+  #{:registry/publish :cue/put :cue/delete :cue/save-params :cue/clear-saved-params
+    :page/put :page/delete :instance/retry :show/restart})
+
+(defn- waits-behind?
+  "True when `message` must wait behind the `held` messages, a publication
+  waiting for its check and what waits with it (#784): a message that reads
+  or writes the registry, and a launch of a held effect or cue, or of a cue
+  this model does not know yet. Blackout, master, transport, parameters,
+  gestures and other controller input never wait, and neither do launches of
+  other cues and effects."
+  [model held {:keys [type payload]}]
+  (let [held-ids (fn [kind]
+                   (into #{} (keep (fn [{held-type :type held-payload :payload}]
+                                     (case held-type
+                                       :definition (when (= kind (:kind held-payload)) (get-in held-payload [:definition :id]))
+                                       :command (when (= :cues kind)
+                                                  (or (get-in held-payload [:cue :id]) (:cue-id held-payload)))
+                                       nil)))
+                         held))
+        launch-waits? (fn [{:keys [cue-id effect-id]}]
+                        (let [cue (when (some? cue-id) (get-in model [:registry :cues cue-id]))
+                              effect-id (or effect-id (:effect-id cue))]
+                          (or (and (some? cue-id) (nil? cue))
+                              (nil? effect-id)
+                              (contains? (held-ids :cues) cue-id)
+                              (contains? (held-ids :effects) effect-id))))]
+    (cond
+      (contains? registry-message-types type) true
+      (= :cue-schedule type) (launch-waits? (:command payload))
+      (= :command type) (let [op (:op payload)]
+                          (cond
+                            (contains? registry-commands op) true
+                            (#{:cue/launch :effect/launch} op) (launch-waits? payload)
+                            :else false))
+      :else false)))
+
 (def ^:private ingress-order
   (reify java.util.Comparator
     (compare [_ left right]
@@ -3436,14 +3485,17 @@
                  (reduce
                   (fn [[model receipts restored? restored-output processed held :as acc] {:keys [reply authority] :as message}]
                     (cond
-                      ;; Once a publication waits for its check, every later
-                      ;; message waits behind it, so the order holds (#784).
-                      held (assoc acc 5 (conj held message))
+                      ;; A message that depends on a publication waiting for
+                      ;; its check waits with it, in order; everything else,
+                      ;; blackout, master, transport and controller input
+                      ;; included, goes ahead (#784).
+                      (and held (waits-behind? model held message))
+                      (assoc acc 5 (conj held (cond-> message (= :definition (:type message)) (assoc ::held? true))))
                       :else
                     (try
                       (let [result (apply-message model message (if restored? (:time-ms model) time-ms) owner-runtime)]
                        (if-let [waiting (::hold result)]
-                        (assoc acc 5 [waiting])
+                        (assoc acc 5 (conj (or held []) waiting))
                       (let [command (when (= :command (:type message)) (:payload message))
                             ;; The reducer supplies the committed sample or rollback value.
                             gesture-write (when (#{:gesture/sample :gesture/cancel} (:op command))
@@ -3465,10 +3517,10 @@
                         [(:model result) (conj receipts [reply (:ack result) command (:replayed? result) gesture-write])
                          (or restored? (:restore? result))
                          (if (:restore? result) (:restored-output result) restored-output)
-                         (conj processed message) nil])))
+                         (conj processed message) held])))
                       (catch Exception error
                         [model (conj receipts [reply (merge {:status :rejected} (error-data error)) (when (= :command (:type message)) (:payload message))])
-                         restored? restored-output (conj processed message) nil]))))
+                         restored? restored-output (conj processed message) held]))))
                   [(-> (consume-sync! runtime (consume-audio! runtime (staging/collect (staging/begin clock-model)
                                                        :reactive {:kind :runtime :id :reactive} (:pending-reactive-faults before)) time-ms))
                        (calibration/advance physical-receipts physical-now)
@@ -3745,8 +3797,11 @@
                                                 checkpoint-request (assoc ::checkpoint-request checkpoint-request))]
                                   (if (and (= :command type) (push-gesture-terminal? payload authority))
                                     (do (enqueue-push-gesture-end! runtime message) true)
-                                    (.offer ^LinkedBlockingQueue queue
-                                            (if (= :definition type) (prepare-publication! runtime message nil) message))))))]
+                                    ;; Messages a cycle held back still count against the
+                                    ;; queue's 256 slots (#784).
+                                    (and (< (+ (.size ^LinkedBlockingQueue queue) (count @(:held-messages runtime))) 256)
+                                         (.offer ^LinkedBlockingQueue queue
+                                                 (if (= :definition type) (prepare-publication! runtime message nil) message)))))))]
            (when-not accepted? (throw (ex-info "Show changed or command queue is full" {})))))
        (catch Exception error
          (when @candidate (connections/abort-prepared! @candidate))

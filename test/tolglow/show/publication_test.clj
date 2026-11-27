@@ -25,15 +25,22 @@
       (assoc-in [:registry :effects :probe] (probe 1))
       (assoc-in [:registry :cues :probe] {:id :probe :version 1 :effect-id :probe})))
 
+(def ^:private ^:dynamic *program*
+  "True while the rig compiler builds a launch's program, which is not part
+  of checking a publication."
+  false)
+
 (defn- show
-  "A runtime with no running instances, so no frame compiles a program. With
-  `worker?` its compile worker is a queue stepped by `work!`. :calls records
-  each validation and effect compile plan as [where kind], where is :owner on
-  the thread that ticks and :worker elsewhere or inside `work!`."
+  "A runtime with no running instances. With `worker?` its compile worker is
+  a queue stepped by `work!`. :calls records each validation and effect
+  compile plan outside the rig's program compiles as [where kind], where is
+  :owner on the thread that ticks and :worker inside `work!`."
   [worker?]
   (let [tasks (atom []) calls (atom []) phase (atom :owner)
         rt (show/create-runtime (cond-> {:model (show-model) :workspace-options nil :effect-log! (fn [_]) :workers 1}
                                   worker? (assoc :background-compile (fn [task] (swap! tasks conj task)))))]
+    (swap! (:compiler-context rt) update :compiler
+           (fn [compiler] (fn [program] (binding [*program* true] (compiler program)))))
     {:rt rt :tasks tasks :calls calls :phase phase}))
 
 (defmacro ^:private counting
@@ -44,10 +51,11 @@
          validate# registry/validate-definition
          plan# compiler/compile-plan]
      (with-redefs [registry/validate-definition (fn [kind# definition#]
-                                                  (when (= :effects kind#) (swap! calls# conj [@phase# :validate]))
+                                                  (when (and (= :effects kind#) (not *program*))
+                                                    (swap! calls# conj [@phase# :validate]))
                                                   (validate# kind# definition#))
                    compiler/compile-plan (fn [& args#]
-                                           (swap! calls# conj [@phase# :compile])
+                                           (when-not *program* (swap! calls# conj [@phase# :compile]))
                                            (apply plan# args#))]
        ~@body)))
 
@@ -112,27 +120,71 @@
       (is (= [] (compiler/definition-errors :effects (probe 2) {:publication? true})))
       (is (= 101 @calls) "One validation and one compile plan"))))
 
-(deftest a-publication-waits-for-its-check-and-keeps-its-order
-  (let [s (show true)]
+(defn- behind-publication!
+  "Submit a publication of probe v2, then a cue pinning v2 and a launch of
+  the probe's cue, which depend on it, and a launch of an unrelated cue, a
+  blackout and a master change, which do not."
+  [s]
+  (let [submit (partial show/submit! (:rt s))]
+    {:published (submit :definition {:kind :effects :definition (probe 2)})
+     :pinned (submit {:op :cue/put :cue {:id :pinned :effect-id :probe :effect-version 2}})
+     :probe-launch (submit {:op :cue/launch :cue-id :probe})
+     :other-launch (submit {:op :cue/launch :cue-id :moon})
+     :blackout (submit {:op :blackout/set :value true})
+     :master (submit {:op :master/set :value 0.25})}))
+
+(defn- statuses [replies] (update-vals replies #(:status (ack %))))
+
+(deftest only-what-depends-on-a-waiting-publication-waits-with-it
+  (doseq [worker-runs? [false true]]
+    (testing (if worker-runs? "the worker checks it before the next cycle" "the worker is stalled")
+      (let [s (show true)]
+        (try
+          (counting s
+            (let [replies (behind-publication! s)]
+              (tick! s 25)
+              (is (= {:published nil :pinned nil :probe-launch nil
+                      :other-launch :accepted :blackout :accepted :master :accepted}
+                     (statuses replies))
+                  "Blackout, master and other launches apply in the publication's cycle")
+              (is (true? (:blackout? (model s))))
+              (is (= 0.25 (:master (model s))))
+              (is (= 3 (count @(:held-messages (:rt s)))))
+              (is (= {} (calls-since! s)))
+              (when worker-runs? (work! s))
+              (tick! s 50)
+              (is (= {:published :accepted :pinned :accepted :probe-launch :accepted
+                      :other-launch :accepted :blackout :accepted :master :accepted}
+                     (statuses replies))
+                  "The publication and what depends on it land on the next cycle")
+              (is (apply < (map #(:revision (receipt (get replies %))) [:published :pinned :probe-launch]))
+                  "in submission order")
+              (is (= 2 (get-in (model s) [:registry :cues :pinned :effect-version])))
+              (is (= 2 (some #(when (= :probe (:cue-id %)) (:effect-version %)) (vals (:instances (model s)))))
+                  "The waiting launch starts on the new revision")
+              (is (= (if worker-runs?
+                       {[:worker :validate] 1 [:worker :compile] 1}
+                       {[:owner :validate] 1 [:owner :compile] 1})
+                     (calls-since! s))
+                  "A check the worker has not run by the next cycle runs once on the owner")
+              (is (empty? @(:held-messages (:rt s))))))
+          (finally (show/stop! (:rt s))))))))
+
+(deftest held-messages-count-against-the-queue
+  (let [s (show true)
+        submit (partial show/submit! (:rt s))
+        cue-put (fn [i] (submit {:op :cue/put :cue {:id (keyword (str "c" i)) :effect-id :probe}}))]
     (try
-      (counting s
-        (let [published (show/submit! (:rt s) :definition {:kind :effects :definition (probe 2)})
-              ;; Depends on the publication ahead of it.
-              cue (show/submit! (:rt s) {:op :cue/put :cue {:id :pinned :effect-id :probe :effect-version 2}})
-              revision (:revision (model s))]
-          (tick! s 25)
-          (is (nil? (ack published)) "The owner holds the publication until its check is ready")
-          (is (nil? (ack cue)) "and every message after it")
-          (is (= revision (:revision (model s))))
-          (is (= {} (calls-since! s)))
+      (submit :definition {:kind :effects :definition (probe 2)})
+      (let [first-wave (mapv cue-put (range 200))]
+        (tick! s 25)
+        (is (= 201 (count @(:held-messages (:rt s)))) "The cue edits wait behind the publication")
+        (let [second-wave (mapv cue-put (range 200 300))
+              refused (filterv #(= :rejected (:status (ack %))) second-wave)]
+          (is (= 45 (count refused)) "Only the 55 slots the held messages leave are taken")
+          (is (every? #(re-find #"queue is full" (:message (ack %) "")) refused))
           (tick! s 50)
-          (is (nil? (ack published)) "Still waiting while the worker has not run")
-          (work! s)
-          (tick! s 75)
-          (is (= [:accepted :accepted] [(:status (ack published)) (:status (ack cue))]))
-          (is (< (:revision (receipt published) 0) (:revision (receipt cue) -1)) "Committed in submission order")
-          (is (= 2 (get-in (model s) [:registry :cues :pinned :effect-version])))
-          (is (= {[:worker :validate] 1 [:worker :compile] 1} (calls-since! s)))))
+          (is (every? #(= :accepted (:status (ack %))) first-wave))))
       (finally (show/stop! (:rt s))))))
 
 (deftest a-stale-check-is-prepared-again-against-the-owner-model
@@ -156,6 +208,30 @@
           (is (= {[:worker :validate] 3 [:worker :compile] 3} (calls-since! s))
               "Nothing is validated or compiled on the owner")))
       (finally (show/stop! (:rt s))))))
+
+(deftest a-publication-stale-twice-is-checked-on-the-owner
+  (let [s (show true)
+        rt (:rt s)]
+    (try
+      (counting s
+        (let [first-reply (show/submit! rt :definition {:kind :effects :definition (dissoc (probe 1) :version)})
+              second-reply (show/submit! rt :definition {:kind :effects :definition (dissoc (probe 1 {:name "Again"}) :version)})]
+          (work! s)
+          (tick! s 25)
+          (is (= [:accepted nil] [(:status (ack first-reply)) (:status (ack second-reply))]))
+          (work! s)
+          (is (= {[:worker :validate] 3 [:worker :compile] 3} (calls-since! s))
+              "Both checks, then the second again as version 3")
+          ;; Another writer commits version 3 before the next cycle, so the
+          ;; second check is stale too.
+          (swap! (:state rt) update :model
+                 #(-> % (assoc-in [:registry :effects :probe] (probe 3))
+                      (assoc-in [:registry :versions [:effects :probe 3]] (probe 3))))
+          (tick! s 50)
+          (is (= :accepted (:status (ack second-reply))) "It lands in this cycle instead of waiting again")
+          (is (= 4 (:version (receipt second-reply))))
+          (is (= {[:owner :validate] 1 [:owner :compile] 1} (calls-since! s)) "checked once on the owner")))
+      (finally (show/stop! rt)))))
 
 (def ^:private refusals
   "Publications refused at each check, in the owner's order."

@@ -169,11 +169,32 @@ owner. Its pure checks are now in `tolglow.show.publication`:
   same cycle changed what the revision derives to, such as two unversioned
   publications of one effect, the owner checks it again on the worker. The
   owner checks a message itself only if that second check is stale too.
-- **Order.** The owner holds a publication whose check is not ready, together
-  with every later message, until a later owner cycle. Submission order and
-  revision numbers are therefore unchanged. Holding a cycle keeps the frame
-  rendering. A publication submitted between frames is normally checked
-  before the next one, since a small effect checks in under 0.1 ms.
+- **At most one cycle.** The owner holds a publication whose check is not
+  ready for one owner cycle. If the worker has not checked it by then
+  (stalled, or busy with a long compile or warm-tier build), the owner checks
+  it inline, at about 0.1 to 0.4 ms. A publication submitted between frames
+  is normally checked before the next one, since a small effect checks in
+  under 0.1 ms.
+- **Only what depends on it waits.** These wait with a held publication, in
+  submission order:
+  - later publications;
+  - registry and page edits (`:cue/put`, `:cue/delete`, saved cue
+    parameters, `:page/put`, `:page/delete`), `:instance/retry` and
+    `:show/restart`;
+  - messages that publish or restore (agent cues, aim paths, spatial cues,
+    compositions, imports);
+  - launches, immediate or quantized, of the held effect or cue, or of a cue
+    the show does not know yet.
+
+  Everything else is applied in the same cycle, in order: blackout, master,
+  transport, parameters, gestures and their ends, other controller input, and
+  launches of other cues. Revision numbers, the order of dependent messages
+  and their acks are unchanged.
+- **Queue capacity.** Held messages count against the queue's 256 slots, so
+  a stalled check pushes back on submitters instead of growing a list.
+- **Time.** A held message is applied at the time of the cycle that applies
+  it, at most one cycle (25 ms at 40 Hz) after it would have been. Quantized
+  launches keep their scheduled beat.
 - **Unchanged.** The acks, refusal messages and codes, and the error order
   are the same with and without a worker. An invalid revision leaves the last
   valid definition running. `stop!` answers a held publication with "Show
