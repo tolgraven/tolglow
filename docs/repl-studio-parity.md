@@ -1113,13 +1113,13 @@ Studio and Push read one committed response sample instead of evaluating the res
 
 Studio does not display these lease faults yet. Close the gap when Studio shows the same fault records as the REPL. [Issue #533](https://github.com/tolgraven/tolglow/issues/533) · [PR #624](https://github.com/tolgraven/tolglow/pull/624)
 
-Each committed frame carries one shared parameter sample. The Studio stream, the Push parameter display, waveform previews, cue pad prediction and the REPL resolve an instance's effective parameters from it at most once per frame, whether or not a lease retained the owner's response inputs. A Push display leases those inputs only while it shows parameters or audio, not scene, block-trace or pad-overlay views. The REPL reads the same frame:
+Each committed frame has one shared parameter sample, held beside the committed state. The Studio stream, the Push parameter display, waveform previews, cue pad prediction and the REPL resolve an instance's effective parameters from it at most once per frame, whether or not a lease retained the owner's response inputs. A Push display leases those inputs only while it shows parameters or audio, not scene, block-trace or pad-overlay views. The REPL reads the same frame:
 
 ```clojure
 (show/parameter-sample runtime)
 ;; => {:identity {:show-id :main :epoch 0 :frame-number 6 :time-ms 375 :transport-generation 0}
-;;     :instances {"0:1" {:definition-version 1 :params {:level 0.5625 ...}
-;;                        :response-values [{:id :gain :value 0.75 ...}]}}}
+;;     :instances [{:instance-id "0:1" :definition-version 1 :params {:level 0.5625 ...}
+;;                  :response-values [{:id :gain :value 0.75 ...}]}]}
 ```
 
 Studio shows the same values as `:parameter-sources` effective values on each instance, identified by the stream's `:epoch`, `:frame-number` and `:transport-generation`. Studio has no view of the whole-frame sample itself. [Waveform projections](waveform-projections.md#shared-parameter-sample) · [Issue #533](https://github.com/tolgraven/tolglow/issues/533)

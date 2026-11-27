@@ -3364,8 +3364,10 @@
                (swap! (:fog-deadlines runtime) fog-deadline/remember
                       (or (:frame-id presentation-token) (get-in next-state [:model :frame-number] 0))
                       (when-not restored? (get-in next-state [:output :fog-demands]))))
-             ;; Every consumer of this committed state shares one parameter sample (#533).
-             (reset! (:state runtime) (waveforms/with-frame-sample
+             ;; Every consumer of this committed state shares one parameter
+             ;; sample, held beside it rather than inside it (#533).
+             (reset! (:state runtime) (waveforms/remember-frame!
+                                        (:state runtime)
                                         (dissoc next-state :autopilot-author-request :pending-reactive-faults)))
              (commit-draft-view! runtime draft-initial @draft-view)
              (vreset! author-request (:autopilot-author-request next-state))
@@ -3657,6 +3659,7 @@
       (doseq [cleanup (concat (map :close! (vals (first (swap-vals! (:observers runtime) (constantly {})))))
                              (map #(fn [] (connections/abort-prepared! %)) @candidates)
                              [#(some-> (:recovery runtime) deref recovery/close!)
+                              #(waveforms/forget-frames! (:state runtime))
                               #(when (realized? (:parameter-frames runtime)) (parameter-frames/stop! @(:parameter-frames runtime)))
                               #(when-let [writer (some-> (:live-runs runtime) deref :device-writer)]
                                  (when (realized? writer) (.shutdownNow ^java.util.concurrent.ExecutorService @writer)))
