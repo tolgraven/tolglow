@@ -4,7 +4,7 @@
             [afterglow.runtime :as runtime]
             [afterglow.runtime.engine :as engine]
             [afterglow.runtime.events :as events]
-            [clojure.test :refer [deftest is]]
+            [clojure.test :refer [deftest is testing]]
             [tolglow.clock :as clock]
             [tolglow.compiler :as compiler]
             [tolglow.effects.parameter-sources :as sources]
@@ -298,7 +298,7 @@
 
 (deftest a-phase-accumulator-keeps-its-phase-when-its-period-changes
   (let [effect {:id :spin :version 1
-                :params {:beats {:type :number :default 2.0 :bounds [0.5 8.0]}}
+                :params {:beats {:type :number :default 2.0 :bounds [-1.0 8.0]}}
                 :outputs {:dimmer {:op :fract :args [{:op :phase-accumulator :id :spin
                                                       :period {:op :param :key :beats}}]}}}
         frame (fn [beat] {:time-ms (* 500.0 beat) :transport {:beat beat :playing? true} :fixtures rig})
@@ -320,6 +320,23 @@
             "it starts at the launch, keeps its phase across a new period, adds nothing on a held beat, then runs at the new rate")
         (is (= {:spin {:beat 2.0 :phase 0.75}} (:tolglow.compiler.blocks/phases s4)))
         (when values? (is (= [0.0 0.5 0.5 0.5 0.75] [v0 v1 v2 v3 v4])))))
+    (testing "a period that is not positive holds the phase rather than faulting"
+      (let [step (compiler/compile-effect effect)
+            run (fn [state beat beats] (:state (step {:frame (frame beat) :instance (instance beats) :state state :assignments []})))
+            held (-> nil (run 1000.0 2.0) (run 1001.0 2.0) (run 1002.0 -1.0) (run 1003.0 0.5))]
+        (is (= 2.5 (phase held)) "half a cycle, nothing while the period is negative, then two cycles in the last beat")))
+    (testing "a transport phase reference starts on the beat grid wherever the cue launched"
+      (let [effect (assoc-in effect [:outputs :dimmer :args 0 :phase-reference] :transport)
+            step (compiler/compile-effect effect)
+            run (fn [state beat] (:state (step {:frame (frame beat) :instance (assoc (instance 0.5) :started-at-beat 1.28)
+                                                :state state :assignments []})))
+            s0 (run nil 1.28)
+            s1 (run s0 1.5)]
+        (is (< (Math/abs (- 2.56 (phase s0))) 1.0e-12) "transport beat 1.28 over a half-beat period")
+        (is (< (Math/abs (- 3.0 (phase s1))) 1.0e-12) "a whole cycle on the half beat")))
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"one scalar for the whole frame"
                           (compiler/compile-plan (assoc-in effect [:outputs :dimmer :args 0 :period]
-                                                           {:op :position :axis :x}))))))
+                                                           {:op :position :axis :x}))))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"cannot hold a phase accumulator"
+                          (variable-blocks/compile-settings
+                           {:bindings {[:variables :spin] {:base {:op :phase-accumulator :id :spin :period 4.0} :stages []}}})))))

@@ -279,13 +279,28 @@ set, and keeps the result in the instance's state under its ID.
 ```
 
 The period is any scalar expression without position, in beats, bars or
-phrases (`:unit`). The phase starts at zero on launch, adds nothing while the
-transport is stopped, and resumes from the held value. An effect that reads one
-is never forecast between keyframes, since its state advances once per
-committed frame. It runs only inside a launched cue, not in a global variable
-chain. The IR node is `{:op :phase-accumulator :id k :period expr :unit u}`;
-IDs are unique within an effect and keep the phase across a `:preserve-state`
+phrases (`:unit`). With `:phase-reference :launch` (the default) the phase
+starts at zero on launch and follows the cue's elapsed beats. With
+`:phase-reference :transport` it starts at transport beat / period and follows
+the transport beat, so a cue launched off the beat still steps on the beat and
+bar grid; bars and phrases then use the current meter. Either way it adds
+nothing while the transport is stopped and resumes from the held value. While
+the period is zero, negative or not a number the phase holds instead of
+faulting, and it advances again when the period is positive.
+
+An effect that reads one is never forecast between keyframes, since its state
+advances once per committed frame. Global variable chains refuse it, since
+they have no cue state to keep it in. The IR node is
+`{:op :phase-accumulator :id k :period expr :unit u :phase-reference r}`; IDs
+are unique within an effect and keep the phase across a `:preserve-state`
 reload.
+
+The phase depends on the path the beat took. With a constant period it is the
+plain reference beat / period. A backward seek or loop jump rewinds it by the
+jump over the current period, so after an edit it does not return to where a
+stateless phase would be. Under a changing period the result depends on frame
+timing; it is the same for the same tick schedule, so a replay is
+byte-identical.
 
 For spatial motion, `position-wave` adds position divided by wavelength to the
 phase. Coordinates and wavelength use metres. A positive wavelength moves the

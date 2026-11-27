@@ -161,17 +161,23 @@
   "Cycles of a cue-local phase that advances each frame by the cue's elapsed
   beats since the last frame divided by `period`. Unlike `cycles`, `period`
   may be an expression of parameters: an edit changes the rate from the phase
-  already reached instead of jumping to elapsed / new period. The phase starts
-  at zero on launch, holds while the transport is stopped and is kept in the
+  already reached instead of jumping to elapsed / new period. It holds while
+  the transport is stopped or the period is not positive, and is kept in the
   instance's state under `id`, a keyword unique within the effect. Options:
-  :unit :beats (default), :bars or :phrases for the period."
+  :unit :beats (default), :bars or :phrases for the period, and
+  :phase-reference :launch (default, starts at zero on launch) or :transport
+  (starts at transport beat / period, so a cue launched off the beat still
+  steps on it)."
   ([id period] (phase-accumulator id period {}))
   ([id period {:keys [unit] :as options}]
-   (options! options #{:unit})
+   (options! options #{:unit :phase-reference})
    (when-not (keyword? id) (fail! [:id] "A phase accumulator needs a keyword ID"))
    (when-not (or (nil? unit) (#{:beats :bars :phrases} unit)) (fail! [:unit] "Unit must be :beats, :bars or :phrases"))
+   (when-not (or (nil? (:phase-reference options)) (#{:launch :transport} (:phase-reference options)))
+     (fail! [:phase-reference] "Choose :launch or :transport"))
    (cond-> {:op :phase-accumulator :id id :period (expression period)}
-     unit (assoc :unit unit))))
+     unit (assoc :unit unit)
+     (:phase-reference options) (assoc :phase-reference (:phase-reference options)))))
 
 (defn- wave-range [options value] (mix (:low options 0.0) (:high options 1.0) value))
 

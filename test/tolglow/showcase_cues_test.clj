@@ -239,10 +239,29 @@
                                                          {1300 [(fn [id] {:op :param/set :instance-id id :param :spacing :value 5})]
                                                           1650 [(fn [id] {:op :param/set :instance-id id :param :spacing :value 6})]})})
           phases (mapv #(get-in % [:state :tolglow.compiler.blocks/phases :bands]) rows)]
-      (is (zero? (:phase (first phases))) "the bands count from the launch, not from transport beat 0")
+      (is (= 1000.0 (:phase (first phases))) "the bands start on the transport's grid: beat 2000 over a two-beat cycle")
       (is (every? (fn [[a b]] (<= 0.0 (- (:phase b) (:phase a)) (+ 1.0e-9 (/ (- (:beat b) (:beat a)) (* 0.25 4.0)))))
                   (partition 2 1 phases))
           "every frame advances the band phase by its elapsed beats over the current period, never more"))))
+
+;; ------------------------------------------------------ launch off the beat
+
+(deftest a-cue-launched-off-the-beat-still-steps-on-the-beat-and-bar
+  (testing "the matrix launched at transport beat 1.28 steps at 2.0, 2.5 and so on once its quarter-beat fade-in is done"
+    (let [{:keys [rows]} (session {:cue :matrix-chase :start-beat 1.28 :frame-ms 5 :end-ms 2500
+                                   :params {:tail 1.0}})
+          changes (keep (fn [[a b]] (when (not= (column-levels a) (column-levels b)) (:beat b)))
+                        (partition 2 1 (after-beat rows 1.56)))
+          frame-beats (/ 5.0 beat-ms)]
+      (is (<= 6 (count changes)))
+      (is (every? #(< (- % (* 0.5 (Math/floor (/ % 0.5)))) (+ frame-beats 1.0e-9)) changes)
+          "each change lands in the first frame after a half beat")
+      (is (< (Math/abs (- 2.0 (first changes))) (+ frame-beats 1.0e-9)))))
+  (testing "the cones launched at transport beat 1.28 turn and sway on the transport's bars"
+    (let [{:keys [rows]} (session {:cue :twin-cones :start-beat 1.28 :end-ms 1500})]
+      (doseq [{:keys [beat state]} rows]
+        (is (< (Math/abs (- (/ beat 8.0) (get-in state [:tolglow.compiler.blocks/phases :turn :phase]))) 1.0e-9))
+        (is (< (Math/abs (- (/ beat 16.0) (get-in state [:tolglow.compiler.blocks/phases :sway :phase]))) 1.0e-9))))))
 
 ;; --------------------------------------------------------- transport stop
 

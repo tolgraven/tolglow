@@ -457,9 +457,10 @@
   "Port of the tolglow-web twin audio cones (`crazy-spotlight-shader.glsl`).
   The floor heads trace circles above the stage, the stage-left pair turning
   one way and the stage-right pair the other. Their tints sway between
-  `:tint-a` and `:tint-b` in opposite phase. The turn and the sway count from
-  the launch in phase accumulators, so turning `:bars` or `:sway-bars` changes
-  the speed from where the cones are. Brightness follows a mix of a
+  `:tint-a` and `:tint-b` in opposite phase. The turn and the sway count from the
+  transport beat in phase accumulators, so they stay on the bar wherever the
+  cue was launched, and turning `:bars` or `:sway-bars` changes the speed from
+  where the cones are. Brightness follows a mix of a
   kick that decays from every beat and `:energy`. The show binds `:energy` to
   an audio-shaped LFO on the bass band, so with a capture running each bar of
   bass sets the next bar's brightness. Without audio that LFO rests on a sine
@@ -467,9 +468,9 @@
   (let [side (signed (at-least x 0.0))
         kick (op :exp (fx/multiply -1.0 (p :punch) (fract beat)))
         drive (fx/mix kick (fx/clamp (p :energy)) (p :follow))
-        turns (fx/phase-accumulator :turn (p :bars) {:unit :bars})
+        turns (fx/phase-accumulator :turn (p :bars) {:unit :bars :phase-reference :transport})
         angle (fx/multiply tau (fx/add (fx/multiply side turns) (fx/divide x 4.8)))
-        sway (sine (fx/add (fx/phase-accumulator :sway (p :sway-bars) {:unit :bars}) (fx/multiply 0.25 side)))]
+        sway (sine (fx/add (fx/phase-accumulator :sway (p :sway-bars) {:unit :bars :phase-reference :transport}) (fx/multiply 0.25 side)))]
     (look :twin-cones
           {:name "Twin cones" :targets rig/movers :envelope soft
            :params {:energy (fx/parameter 0.5 {:bounds [0.0 1.0] :unit :fraction :name "Energy"
@@ -540,14 +541,15 @@
   at `:angle` degrees: 0 sweeps the columns left to right, 90 climbs the rows,
   anything between runs diagonals. Each band fades over `:tail` cells behind
   it. Rows take their colour from the `:palette` gradient, bottom to top. The
-  bands count from the launch in a phase accumulator, one band cycle per
+  bands count from the transport beat in a phase accumulator, so they step on
+  the beat grid wherever the cue was launched, one band cycle per
   `:step` x `:spacing` beats, so editing either changes the pace or the gaps
   from where the bands are."
   (let [column (floor (fx/add 0.5 (fx/divide (fx/subtract x (first rig/tube-xs)) 1.2)))
         row (floor (fx/multiply 10.0 (fx/clamp (fx/divide (fx/subtract y rig/tube-base) rig/tube-length) 0.0 0.999)))
         angle (degrees (p :angle))
         along (fx/add (fx/multiply column (op :cos angle)) (fx/multiply row (op :sin angle)))
-        cycle (fx/phase-accumulator :bands (fx/multiply (p :step) (p :spacing)))
+        cycle (fx/phase-accumulator :bands (fx/multiply (p :step) (p :spacing)) {:phase-reference :transport})
         head (floor (fx/multiply (fract cycle) (p :spacing)))
         ;; The nudge keeps a cell exactly on a band from rounding to the far
         ;; end of the gap when cos or sin of the angle is not exactly zero.

@@ -206,9 +206,11 @@ with `:param/set`, and the bands double speed from where they are.
 ```
 
 **Editing timing parameters.** The searchlight moves, the cones' turn and
-sway, and the chase's bands count from the cue's launch in
+sway, and the chase's bands run on
 [phase accumulators](effect-recipes.md#phase-accumulators): each frame adds
-the elapsed beats since the last frame divided by the period now set. Turning
+the beats since the last frame divided by the period now set. The searchlight
+counts from its launch. The cones and the chase start from the transport beat,
+so a pad launched off the beat still turns on the bar and steps on the beat. Turning
 `:move-beats`, `:bars`, `:sway-bars`, `:step` or `:spacing` therefore changes
 the pace from where the pattern is, at any point in a show. A drag at
 transport beat 2000 moves no head further per frame than ordinary motion
