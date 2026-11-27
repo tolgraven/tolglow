@@ -132,3 +132,19 @@
     (is (false? exact?))
     (is (= (range 5) (sort (map :index cells))))
     (is (= 0 (:index (first cells))))))
+
+(deftest an-arranged-board-reads-in-stored-order
+  (testing "M, L, S on two tracks: nothing backfills past an earlier card"
+    (let [{:keys [cells]} (grid/pack [[1 2] [2 3] [1 1]] 2 {:exact-columns? true :in-order? true})]
+      (is (= [0 1 2] (map :index cells)))
+      (is (= [[0 0] [0 2] [0 5]] (map (juxt :col :row) cells)))))
+  (testing "M, S beside it: the short card grows down into the band it would leave empty"
+    (let [packed (grid/pack [[1 2] [1 1] [2 3]] 2 {:exact-columns? true :in-order? true})
+          grown (grid/grow-down packed)]
+      (is (= [[0 0 1 2] [1 0 1 1] [0 2 2 3]] (map (juxt :col :row :w :h) (:cells packed))))
+      (is (= [[0 0 1 2] [1 0 1 2] [0 2 2 3]] (map (juxt :col :row :w :h) (:cells grown))))
+      (is (every? #(= 1 %) (vals (occupancy grown))))))
+  (testing "growing never widens a card"
+    (let [grown (grid/grow-down (grid/pack [[3 2] [2 1]] 6 {:exact-columns? true :in-order? true}))]
+      (is (= [3 2] (map :w (:cells grown))))
+      (is (= [2 2] (map :h (:cells grown)))))))

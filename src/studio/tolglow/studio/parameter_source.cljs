@@ -377,8 +377,11 @@
                  vec)
       (and priority (free? (:param priority))) (conj [(:param priority) (:schema priority)]))))
 
-(defn- lfo-editor [id param schema base source catalog instance]
-  (let [lfo (source-of source :lfo)]
+(defn- lfo-editor [id param schema base source catalog instance & [{:keys [known forget!]}]]
+  ;; `known` is the LFO last seen bound here; it keeps the actions mounted
+  ;; (disabled) while the projection briefly lacks the LFO (#795).
+  (let [current (source-of source :lfo)
+        lfo (or current known)]
     (r/with-let [form (r/atom (editor-draft schema base (:binding lfo) catalog))
                  move (r/atom nil) error (r/atom nil)]
       (let [{:keys [waveform period unit phase-reference phase inputs band dwell dwell-unit]} @form
@@ -465,10 +468,25 @@
           ;; the buttons under a press.
           (when (and (or lfo (:pending? in-flight)) (not destination))
             [:<>
-             [:button.button {:type "button" :disabled (or (:pending? in-flight) (not lfo))
+             [:button.button {:type "button" :disabled (or (:pending? in-flight) (not current))
                               :on-click #(rf/dispatch [(if (:held? lfo) :modulation/resume :modulation/hold) id param])}
               (if (:held? lfo) "Resume LFO" "Use base value")]
-             [:button.button {:type "button" :disabled (or (:pending? in-flight) (not lfo)) :on-click #(rf/dispatch [::unbind id param])} "Detach LFO"]])]]))))
+             [:button.button {:type "button" :disabled (or (:pending? in-flight) (not current))
+                              :on-click #(do (when forget! (forget!)) (rf/dispatch [::unbind id param]))} "Detach LFO"]])]]))))
+
+(defn- lfo-panel
+  "The LFO editor, keyed by the LFO binding last seen here. A projection
+  that briefly lacks the LFO during a round trip neither resets the draft
+  nor unmounts the actions under a press; only this panel's own Detach
+  forgets the binding."
+  [id param schema base source catalog instance]
+  (r/with-let [known (atom nil)]
+    (let [current (source-of source :lfo)
+          _ (when current (reset! known current))
+          lfo (or current @known)]
+      (with-meta [lfo-editor id param schema base source catalog instance
+                  {:known @known :forget! #(reset! known nil)}]
+        {:key (pr-str (:binding lfo))}))))
 
 (defn- source-label [{:keys [type binding controller-id source-id controller lane-note source id]}]
   (case (keyword type)
@@ -511,7 +529,7 @@
         (for [[i input] (map-indexed vector (:sources source))]
           ^{:key i} [:span (source-label input)
                      (cond (:held? input) " · using base" (:pending? input) " · awaiting sample") (when-let [error (:error input)] [:span.performance-error {:role "alert"} error])])])
-     ^{:key [id param (:binding (source-of source :lfo))]} [lfo-editor id param typed base source catalog raw]
+     ^{:key [id param]} [lfo-panel id param typed base source catalog raw]
      (when-not priority? [motion/parameter-widget id param schema base])]))
 
 (defn mounted-editor

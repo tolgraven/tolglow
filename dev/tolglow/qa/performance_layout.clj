@@ -88,6 +88,7 @@
                                              :slots [{:id :orbit :cue-id :orbit-set} {:id :study :cue-id :study-set}
                                                      {:id :solitary :cue-id :spot}]}]
                               [:composition-cards {:id :qa/card-set :cards [{:slot-id :study :size :medium}
+                                                                            {:slot-id :solitary :size :small}
                                                                             {:slot-id :orbit :size :large}]}]
                               [:composition-run {:id :qa/card-set}]]]
           (let [ack @(show/submit! host op payload)]

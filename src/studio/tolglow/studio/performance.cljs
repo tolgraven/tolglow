@@ -563,10 +563,22 @@
           width (.-clientWidth node)]
       {:columns (max 1 (js/Math.floor (/ (+ width gap) (+ min gap)))) :width width})))
 
+(defn fluid-stretch
+  "How far a stretched bank's tracks may grow over the smallest: further for
+  one or two controls, so a small card's knob fills the card instead of
+  sitting between wide margins."
+  [surface control-count]
+  (let [{:keys [stretch]} (fluid-units surface)]
+    (case (min 3 (max 1 (or control-count 3)))
+      1 (* stretch 1.6)
+      2 (* stretch 1.25)
+      stretch)))
+
 (defn fluid-style
   "Track and row size for `columns` stretched tracks across `width`."
-  [surface columns width]
-  (let [{:keys [min ratio gap stretch]} (fluid-units surface)
+  [surface columns width & [control-count]]
+  (let [{:keys [min ratio gap]} (fluid-units surface)
+        stretch (fluid-stretch surface control-count)
         track (js/Math.max min (js/Math.min (* stretch min) (/ (- width (* gap (dec columns))) (max 1 columns))))]
     {"--slot-col" (str (js/Math.floor track) "px") "--slot-row" (str (js/Math.floor (* ratio track)) "px")}))
 
@@ -612,11 +624,17 @@
   (fixed-width slot tracks). Cards are drawn in reading order, so DOM and
   tab order follow the screen; they are keyed, so moving one never remounts
   it."
-  [{:keys [attrs measure spans render keys exact? fluid]}]
+  [{:keys [attrs measure spans render keys exact? fluid in-order? grow-down? control-count]}]
   (r/with-let [limit (r/atom nil)
                ;; Bumped when an exact layout computed while idle arrives.
                upgraded (r/atom 0)
-               pending (atom #{})
+               ;; The idle job in flight, [key handle window], cancelled when a
+               ;; newer width supersedes it or the grid unmounts.
+               job (atom nil)
+               cancel-job! (fn []
+                             (when-let [[_ handle win] @job]
+                               (if (.-cancelIdleCallback win) (.cancelIdleCallback win handle) (.clearTimeout win handle)))
+                             (reset! job nil))
                node (atom nil)
                observer (atom nil)
                resized (atom nil)
@@ -647,24 +665,28 @@
           ;; Until the width is measured, and while an exact layout is being
           ;; computed, draw first fit in authored order at once; the exact
           ;; result replaces it when the browser is idle.
-          exact (when measured (exact-pack span-list measured exact?))
-          {:keys [columns rows cells]}
-          (or exact (slot-grid/pack span-list (or measured 4) {:exact-columns? exact? :quick? true}))]
-      (when (and measured (not exact) (not (contains? @pending [span-list measured])))
-        (swap! pending conj [span-list measured])
+          ;; An arranged board places in stored order without searching.
+          exact (cond in-order? (slot-grid/pack span-list (or measured 4) {:exact-columns? exact? :in-order? true})
+                      measured (exact-pack span-list measured exact?))
+          packed (or exact (slot-grid/pack span-list (or measured 4) {:exact-columns? exact? :quick? true}))
+          {:keys [columns rows cells]} (if grow-down? (slot-grid/grow-down packed) packed)
+          wanted [span-list measured]]
+      (when (and measured (not exact) (not= wanted (first @job)))
+        (cancel-job!)
         (let [win (element-window @node)
-              job (fn [& _]
+              run (fn [& _]
+                    (reset! job nil)
                     (compute-pack! span-list measured exact?)
-                    (swap! pending disj [span-list measured])
-                    (swap! upgraded inc))]
-          (if-let [idle (.-requestIdleCallback win)]
-            (.call idle win job #js {:timeout 200})
-            (.setTimeout win job 0))))
+                    (swap! upgraded inc))
+              handle (if-let [idle (.-requestIdleCallback win)]
+                       (.call idle win run #js {:timeout 200})
+                       (.setTimeout win run 0))]
+          (reset! job [wanted handle win])))
       (into [:div (merge attrs {:ref attach! :data-columns columns :data-rows rows
                                 :data-packing (if exact "final" "quick")
                                 :data-slot-scale (when fluid "fluid")
                                 :style (merge (:style attrs) {"--slot-columns" columns}
-                                              (when (and fluid (map? reading)) (fluid-style fluid columns (:width reading))))})]
+                                              (when (and fluid (map? reading)) (fluid-style fluid columns (:width reading) control-count)))})]
             (for [{:keys [index col row w h] :as cell} cells
                   :let [{overlay :style covers :covers} (overlay-anchor columns rows cells cell)]]
               ;; `render` returns hiccup: called as a function, not mounted as
@@ -674,7 +696,7 @@
                                      overlay)
                         (mapv #(nth keys %) (sort covers)))
                 {:key (nth keys index)}))))
-    (finally (detach!))))
+    (finally (cancel-job!) (detach!))))
 
 (defn control-slot
   "The standard slot of one bank control: its shared description's :slot,
@@ -700,6 +722,7 @@
       ;; A macro card's bank stretches its tracks to the card (#795).
       :measure (if fluid? (fluid-measure surface) slot-columns)
       :fluid (when fluid? surface)
+      :control-count (count controls)
       :spans (constantly spans)
       :keys (mapv control-id controls)
       :render (fn [index style covers]
@@ -860,6 +883,12 @@
   [node]
   (let [width (.-clientWidth node)]
     (cond (>= width 960) 6 (>= width 640) 2 :else 1)))
+
+(defn member-control-count
+  "How many controls a macro member's card shows, counted as the size picker
+  counts them (grouped X/Y/Z axes are one control)."
+  [show instance]
+  (count (:controls (resolve-controls (card-definition show instance) (:ui/layout (instance-cue show instance))))))
 
 (defn macro-span
   "[columns rows] of a macro card of `size` on `columns` board tracks. Its
@@ -1090,9 +1119,12 @@
                (if arranging? "Done" "Arrange")]]
              [packed-grid
               {:attrs {:class "live-effect-grid live-macro-grid"}
-               :measure macro-columns :exact? true
+               ;; Stored order is reading order, so Arrange always moves a
+               ;; card the operator sees; a short card grows down into the
+               ;; band it would leave empty beside a taller one.
+               :measure macro-columns :exact? true :in-order? true :grow-down? true
                :spans (fn [columns]
-                        (mapv #(macro-span columns (:size %) (count (:params (card-definition show (:instance %))))) cards))
+                        (mapv #(macro-span columns (:size %) (member-control-count show (:instance %))) cards))
                :keys (mapv (comp wire :id :instance) cards)
                :render (fn [index style _]
                          (let [{:keys [instance] :as card} (nth cards index)]

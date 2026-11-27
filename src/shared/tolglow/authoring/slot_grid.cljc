@@ -71,20 +71,43 @@
         (step 0 #{} (vec cards) 0 [])))))
 
 (defn- first-fit
-  "Authored-order first fit, for banks too large to search."
-  [cols cards]
-  (loop [cards cards occupied #{} placed []]
-    (if-let [{:keys [w h index]} (first cards)]
-      (let [cell (first (filter #(fits? cols #?(:clj Integer/MAX_VALUE :cljs js/Number.MAX_SAFE_INTEGER) occupied % w h) (range)))]
-        (recur (rest cards) (into occupied (cells-of cols cell w h))
-               (conj placed {:index index :col (rem cell cols) :row (quot cell cols) :w w :h h})))
-      placed)))
+  "Authored-order first fit. With `in-order?` no card starts before the card
+  authored ahead of it, so reading order is authored order."
+  ([cols cards] (first-fit cols cards false))
+  ([cols cards in-order?]
+   (loop [cards cards occupied #{} placed [] from 0]
+     (if-let [{:keys [w h index]} (first cards)]
+       (let [cell (first (filter #(fits? cols #?(:clj Integer/MAX_VALUE :cljs js/Number.MAX_SAFE_INTEGER) occupied % w h)
+                                 (iterate inc (if in-order? from 0))))]
+         (recur (rest cards) (into occupied (cells-of cols cell w h))
+                (conj placed {:index index :col (rem cell cols) :row (quot cell cols) :w w :h h})
+                cell))
+       placed))))
+
+(defn grow-down
+  "Cells after letting each card, in reading order, grow down into rows of
+  the grid that are wholly free under it. No card moves or widens, so card
+  widths keep their meaning; a short card beside a tall one takes the height
+  of the row band it would otherwise leave empty."
+  [{:keys [columns rows cells] :as packed}]
+  (let [owner (fn [cells] (set (for [{:keys [col row w h]} cells dr (range h) dc (range w)] [(+ row dr) (+ col dc)])))]
+    (assoc packed :cells
+           (reduce (fn [cells i]
+                     (let [{:keys [col row w] :as cell} (nth cells i)
+                           taken (owner (concat (subvec cells 0 i) (subvec cells (inc i))))
+                           h (loop [h (:h cell)]
+                               (if (and (< (+ row h) rows)
+                                        (not-any? #(contains? taken [(+ row h) (+ col %)]) (range w)))
+                                 (recur (inc h))
+                                 h))]
+                       (assoc cells i (assoc cell :h h))))
+                   (vec cells) (range (count cells))))))
 
 (defn- quick-layout
   "Authored-order first fit in `cols` columns, without searching."
-  [cols cards]
+  [cols cards & [in-order?]]
   (let [area (reduce + (map #(* (:w %) (:h %)) cards))
-        placed (first-fit cols cards)
+        placed (first-fit cols cards in-order?)
         rows (reduce max 0 (map #(+ (:row %) (:h %)) placed))]
     {:columns cols :rows rows :empty (- (* cols rows) area)
      :cells (vec (sort-by (juxt :row :col) placed)) :exact? false}))
@@ -137,9 +160,11 @@
     width never depends on its siblings;
   - `:quick?` places first-fit in authored order without searching, for a
     first render while the exact result is computed later. `:exact?` in the
-    result says whether the search completed."
+    result says whether the search completed;
+  - `:in-order?` never places a card before one authored ahead of it, so
+    reading order is authored order (a macro board the operator arranges)."
   ([spans max-columns] (pack spans max-columns nil))
-  ([spans max-columns {:keys [exact-columns? quick?]}]
+  ([spans max-columns {:keys [exact-columns? quick? in-order?]}]
    (let [cards (vec (map-indexed (fn [i [w h]] {:index i :w (max 1 w) :h (max 1 h)}) spans))
          narrowest (reduce max 1 (map :w cards))
          area (reduce + (map #(* (:w %) (:h %)) cards))
@@ -148,6 +173,7 @@
          steps (volatile! step-budget)]
      (cond
        (empty? cards) {:columns (if exact-columns? (max 1 (or max-columns 1)) 1) :rows 0 :empty 0 :cells [] :exact? true}
+       in-order? (assoc (quick-layout (if exact-columns? widest capped) cards true) :exact? true)
        (and quick? exact-columns?) (quick-layout widest cards)
        quick? (quick-layout capped cards)
        exact-columns? (layout widest cards steps)

@@ -155,8 +155,9 @@
 }
 #view-perform .live-effect-grid>.live-effect-card { grid-column: span 1; min-width: 0; }
 #view-perform .live-effect-grid>.live-effect-card[data-wide=true] { grid-column: 1 / -1; }
-/* A macro card's height follows its size, so cards sharing a row keep their own height. */
-#view-perform .live-effect-grid.live-macro-grid { grid-template-columns: repeat(var(--slot-columns, 1), minmax(0, 1fr)); align-items: start; }
+/* A macro card fills the rows the packer gives it: a short card that grew
+   down beside a taller one takes that band's full height. */
+#view-perform .live-effect-grid.live-macro-grid { grid-template-columns: repeat(var(--slot-columns, 1), minmax(0, 1fr)); align-items: stretch; }
 .live-macro-slot { display: flex; min-width: 0; }
 .live-macro-slot>.live-effect-card { flex: 1 1 auto; min-width: 0; }
 .live-macro { margin: 14px 0 0; }

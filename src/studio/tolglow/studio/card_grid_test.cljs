@@ -123,7 +123,9 @@
     (is (= 4 (:columns (measure #js {:clientWidth 378}))) "four 84 px tracks fit 378 px")
     (is (= {"--slot-col" "93px" "--slot-row" "145px"} (performance/fluid-style "strip" 4 390)))
     (is (= {"--slot-col" "134px" "--slot-row" "210px"} (performance/fluid-style "strip" 1 390))
-        "one knob grows to at most 1.6 times the smallest track")))
+        "with many controls a track grows to at most 1.6 times the smallest")
+    (is (= {"--slot-col" "215px" "--slot-row" "336px"} (performance/fluid-style "strip" 1 390 1))
+        "a single control grows further, so it fills a small card")))
 
 (deftest opened-rings-cover-the-fewest-cards-beside-their-slot
   (testing "a free 2x2 area beside the rings is used before any card"

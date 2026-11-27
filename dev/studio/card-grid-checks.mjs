@@ -299,14 +299,14 @@ export async function checkCardGrid(page, profile, directory, measurement) {
   const grid = macro.locator('.live-macro-grid');
   const tracks = Number(await grid.getAttribute('data-columns'));
   const full = await grid.evaluate(g => Math.round(g.getBoundingClientRect().width));
-  // Saved order is Study set (medium), Orbit set (large), Solitary (small).
-  // With two or more tracks the small card backfills the row beside the
-  // medium one instead of leaving it empty; with one track nothing moves.
-  const expected = tracks > 1 ? ['Study set', 'Solitary', 'Orbit set'] : ['Study set', 'Orbit set', 'Solitary'];
-  assert.deepEqual(await names(), expected, `${profile}: macro cards follow the saved order, backfilled`);
-  const measured = Object.fromEntries((await names()).map((n, i) => [n, i]));
-  const all = await state();
-  const [study2, orbit, solitary] = ['Study set', 'Orbit set', 'Solitary'].map(n => all[measured[n]]);
+  // Saved order is Study set (medium), Solitary (small), Orbit set (large),
+  // and the board reads in saved order at every width: Arrange controls
+  // what is seen.
+  const DEFAULT = '[{:slot-id :study :size :medium} {:slot-id :solitary :size :small} {:slot-id :orbit :size :large}]';
+  assert.deepEqual(await names(), ['Study set', 'Solitary', 'Orbit set'], `${profile}: macro cards read in the saved order`);
+  const named = async () => { const all = await state(); return Object.fromEntries((await names()).map((n, i) => [n, all[i]])); };
+  const first = await named();
+  const [study2, orbit, solitary] = ['Study set', 'Orbit set', 'Solitary'].map(n => first[n]);
   assert.deepEqual([study2.size, orbit.size, solitary.size], ['medium', 'large', 'small'], `${profile}: saved sizes`);
   assert.deepEqual([study2.density, orbit.density], ['strip', 'detail'], `${profile}: medium shows the strip, large the Detail bank`);
   assert.equal(study2.controls, 5, `${profile}: a medium card shows every control`);
@@ -326,7 +326,15 @@ export async function checkCardGrid(page, profile, directory, measurement) {
     assert.ok([study2, solitary].every(c => near(c.width, full)), `${profile}: one track holds every size at full width`);
   }
   assert.ok(orbit.height > study2.height, `${profile}: a large card is taller than a medium one`);
-  assert.ok(study2.height > solitary.height, `${profile}: a medium card is taller than a small one`);
+  if (tracks > 1) {
+    // The small card beside the medium one fills that band: no hole under it.
+    assert.ok(near(solitary.height, study2.height, 2), `${profile}: a small card beside a medium one takes its height (${solitary.height} vs ${study2.height})`);
+  } else {
+    assert.ok(study2.height > solitary.height, `${profile}: on one track a medium card is taller than a small one`);
+  }
+  // A small card's single knob fills the card rather than its margins.
+  const knob = await members.filter({has: page.getByRole('heading', {name: 'Solitary', exact: true})}).locator('.parameter-rotary-control').boundingBox();
+  assert.ok(knob.width >= Math.min(solitary.width - 140, 170), `${profile}: a one-knob small card grows its knob (${Math.round(knob.width)} px in ${solitary.width})`);
   assert.equal(await page.locator('.live-effect-grid>[data-live-instance][data-card-size]').count(), 0,
     `${profile}: default cards never take a custom size`);
 
@@ -335,14 +343,13 @@ export async function checkCardGrid(page, profile, directory, measurement) {
     // keeps M at half the row and each S at a third.
     await repl(page, `@(tolglow.show/submit! runtime :composition-cards {:id :qa/card-set :cards [{:slot-id :study :size :medium} {:slot-id :orbit :size :small} {:slot-id :solitary :size :small}]})`);
     await page.waitForFunction(() => [...document.querySelectorAll('.live-macro [data-live-instance]')].every(c => c.dataset.cardSize !== 'large'));
-    const msS = await state();
-    const named = Object.fromEntries((await names()).map((n, i) => [n, msS[i]]));
-    assert.ok(near(named['Study set'].width, (full - 9) / 2, 2), `${profile}: with M, S, S a medium card is still half the row (${named['Study set'].width} of ${full})`);
+    const mss = await named();
+    assert.ok(near(mss['Study set'].width, (full - 9) / 2, 2), `${profile}: with M, S, S a medium card is still half the row (${mss['Study set'].width} of ${full})`);
     for (const n of ['Orbit set', 'Solitary'])
-      assert.ok(near(named[n].width, (full - 18) / 3, 2), `${profile}: with M, S, S a small card is still a third (${named[n].width} of ${full})`);
+      assert.ok(near(mss[n].width, (full - 18) / 3, 2), `${profile}: with M, S, S a small card is still a third (${mss[n].width} of ${full})`);
     assert.equal(await grid.getAttribute('data-columns'), '6', `${profile}: the macro board keeps its six tracks`);
     await macro.screenshot({path: join(directory, `${profile}-macro-mss.png`)});
-    await repl(page, `@(tolglow.show/submit! runtime :composition-cards {:id :qa/card-set :cards [{:slot-id :study :size :medium} {:slot-id :orbit :size :large}]})`);
+    await repl(page, `@(tolglow.show/submit! runtime :composition-cards {:id :qa/card-set :cards ${DEFAULT}})`);
     await page.waitForFunction(() => [...document.querySelectorAll('.live-macro [data-live-instance]')].some(c => c.dataset.cardSize === 'large'));
   }
   await macro.getByRole('button', {name: 'Arrange Card set'}).click();
@@ -353,23 +360,35 @@ export async function checkCardGrid(page, profile, directory, measurement) {
   const studyCard = members.filter({has: page.getByRole('heading', {name: 'Study set', exact: true})});
   await studyCard.getByRole('button', {name: 'Small card for Study set'}).click();
   await page.waitForFunction(() => document.querySelector('.live-macro [data-live-instance]')?.dataset.cardSize === 'small');
-  const small = (await state())[(await names()).indexOf('Study set')];
+  const small = (await named())['Study set'];
   const smallParams = await studyCard.locator('[data-slot-grid]>.param-row').evaluateAll(rows => rows.map(r => r.dataset.param).sort());
   assert.deepEqual(smallParams, ['level', 'steps', 'tone'], `${profile}: a small card fills its four cells with every control that fits (${small.controls})`);
   await macro.locator('.live-effect-more').first().waitFor();
-  await studyCard.getByRole('button', {name: 'Move Study set card later'}).click();
-  await page.waitForFunction(() => document.querySelectorAll('.live-macro [data-live-instance] h3')[1]?.textContent === 'Study set');
+  // Every Arrange move changes what is seen, and ‹ › stop at the ends.
+  const move = async (title, direction, expected) => {
+    const before = await names();
+    const card = members.filter({has: page.getByRole('heading', {name: title, exact: true})});
+    await card.getByRole('button', {name: `Move ${title} card ${direction}`}).click();
+    await page.waitForFunction(expected => [...document.querySelectorAll('.live-macro [data-live-instance] h3')].map(h => h.textContent).join('|') === expected,
+                               expected.join('|'));
+    assert.notDeepEqual(await names(), before, `${profile}: moving ${title} ${direction} changes the visible order`);
+  };
+  await move('Study set', 'later', ['Solitary', 'Study set', 'Orbit set']);
+  await move('Orbit set', 'earlier', ['Solitary', 'Orbit set', 'Study set']);
+  assert.ok(await members.first().getByRole('button', {name: /card earlier$/}).isDisabled(), `${profile}: the first card cannot move earlier`);
+  assert.ok(await members.last().getByRole('button', {name: /card later$/}).isDisabled(), `${profile}: the last card cannot move later`);
   const committed = await page.evaluate(async () => (await (await fetch('/api/state')).json()).compositions
     .find(c => String(c.id).includes('card-set')).cards);
   assert.deepEqual(committed.map(c => [String(c['slot-id']).replace(/^:/, ''), String(c.size).replace(/^:/, '')]),
-    [['orbit', 'large'], ['study', 'small'], ['solitary', 'small']], `${profile}: the show committed the new arrangement`);
+    [['solitary', 'small'], ['orbit', 'large'], ['study', 'small']], `${profile}: the show committed the new arrangement`);
   await macro.screenshot({path: join(directory, `${profile}-macro-arrange.png`)});
   // A REPL edit through the same command reaches the open board.
-  await repl(page, `@(tolglow.show/submit! runtime :composition-cards {:id :qa/card-set :resize {:slot-id :solitary :size :medium}})`);
+  await repl(page, `@(tolglow.show/submit! runtime :composition-cards {:id :qa/card-set :resize {:slot-id :solitary :size :large}})`);
   await page.waitForFunction(() => [...document.querySelectorAll('.live-macro [data-live-instance]')]
-    .find(c => c.querySelector('h3')?.textContent === 'Solitary')?.dataset.cardSize === 'medium');
-  await repl(page, `@(tolglow.show/submit! runtime :composition-cards {:id :qa/card-set :cards [{:slot-id :study :size :medium} {:slot-id :orbit :size :large}]})`);
-  await page.waitForFunction(() => document.querySelector('.live-macro [data-live-instance]')?.dataset.cardSize === 'medium');
+    .find(c => c.querySelector('h3')?.textContent === 'Solitary')?.dataset.cardSize === 'large');
+  await repl(page, `@(tolglow.show/submit! runtime :composition-cards {:id :qa/card-set :cards ${DEFAULT}})`);
+  await page.waitForFunction(() => document.querySelector('.live-macro [data-live-instance]')?.dataset.cardSize === 'medium'
+                                   && document.querySelectorAll('.live-macro [data-live-instance] h3')[1]?.textContent === 'Solitary');
   await macro.getByRole('button', {name: 'Finish arranging Card set'}).click();
   await macro.locator('.card-size-picker').first().waitFor({state: 'detached'});
   await macro.screenshot({path: join(directory, `${profile}-macro.png`)});
