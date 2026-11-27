@@ -15,7 +15,8 @@
             [tolglow.studio.show-window :as show-window]
             [tolglow.studio.view-tabs :as view-tabs]
             [tolglow.transit :as transit]
-            [tolglow.studio.parameter-widgets :as widgets]))
+            [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.visualization.control-geometry :as control-geometry]))
 
 (def initial-source
   "{:id :after-hours\n :version 1\n :name \"After hours\"\n :swatch \"#b981a3\"\n :duration {:beats 4}\n :envelope {:attack {:beats 0.125} :release {:beats 1}}\n :params {:level {:type :number :default 0.7 :bounds [0.0 1.0]}}\n :outputs {:color {:op :const :value [0.725 0.506 0.639]}\n           :dimmer {:op :param :key :level}}}")
@@ -516,7 +517,8 @@
     (cond-> (assoc db :settings-loaded? true :settings-supported? true)
       (and (contains? #{nil :home} (:route-name db)) (pages/views view)) (assoc-in [:ui :view] view)
       (string? (:page-id prefs)) (assoc-in [:ui :page-id] (:page-id prefs))
-      (contains? #{"toggle" "held" "one-shot"} (:launch-mode prefs)) (assoc-in [:ui :launch-mode] (:launch-mode prefs)))))
+      (contains? #{"toggle" "held" "one-shot"} (:launch-mode prefs)) (assoc-in [:ui :launch-mode] (:launch-mode prefs))
+      (contains? prefs :knob-skin) (assoc-in [:ui :knob-skin] (control-geometry/knob-skin (:knob-skin prefs))))))
 (rf/reg-event-fx :studio/settings-received
   (fn [{:keys [db]} [_ settings]]
     (let [updated (apply-ui-preferences db settings)]
@@ -528,7 +530,14 @@
       {:studio/http {:path "/api/settings"
                      :body {:scope "ui" :values {:view (name (get-in db [:ui :view]))
                                                 :page-id (get-in db [:ui :page-id])
-                                                :launch-mode (get-in db [:ui :launch-mode])}}}})))
+                                                :launch-mode (get-in db [:ui :launch-mode])
+                                                :knob-skin (name (control-geometry/knob-skin (get-in db [:ui :knob-skin])))}}}})))
+
+(rf/reg-sub :ui/knob-skin (fn [db _] (control-geometry/knob-skin (get-in db [:ui :knob-skin]))))
+
+(rf/reg-event-fx :studio/set-knob-skin
+  (fn [{:keys [db]} [_ skin]]
+    {:db (assoc-in db [:ui :knob-skin] (control-geometry/knob-skin skin)) :fx [[:dispatch [:studio/persist-ui]]]}))
 (rf/reg-event-fx :studio/set-view
   (fn [_ [_ view]]
     (when (pages/views view) {:studio/navigate [:push view]})))
@@ -884,6 +893,36 @@
     (let [instance (some #(when (= (:id %) instance-id) %) (get-in db [:show :instances]))
           current (get-in instance [:params param] [])]
       (set-param-fx cofx [:studio/param-set instance-id param (assoc (vec current) index value)]))))
+(defn- vector-value [db instance-id param fallback]
+  (let [instance (some #(when (= (:id %) instance-id) %) (get-in db [:show :instances]))]
+    (vec (or (get-in instance [:params param]) fallback))))
+
+;; A compound widget (#655) sets components against the current value in
+;; app-db, so a pad gesture and a Z fader moved together, or repeated key
+;; presses inside one frame, never overwrite each other with a stale vector.
+(rf/reg-event-fx :studio/param-components
+  (fn [{:keys [db] :as cofx} [_ instance-id param changes fallback]]
+    (let [current (vector-value db instance-id param fallback)
+          next (when (every? #(< -1 % (count current)) (keys changes)) (reduce-kv assoc current changes))]
+      ;; param/set carries the whole vector (docs/repl-studio-parity.md), so
+      ;; a gesture that changes nothing sends nothing.
+      (when (and next (not= next current))
+        (set-param-fx cofx [:studio/param-set instance-id param next])))))
+(rf/reg-event-fx :studio/param-set-if-changed
+  ;; Grouped X/Y/Z axes are separate parameters. A pad gesture sends an axis
+  ;; only when it differs from the latest value in app-db, so two pointer
+  ;; events inside one frame cannot suppress a real change.
+  (fn [{:keys [db] :as cofx} [_ instance-id param value fallback]]
+    (let [params (:params (some #(when (= (:id %) instance-id) %) (get-in db [:show :instances])))
+          current (some #(when (contains? params %) (get params %)) [param (keyword (wire-id param)) (wire-id param)])]
+      (when (not= value (if (some? current) current fallback))
+        (set-param-fx cofx [:studio/param-set instance-id param value])))))
+(rf/reg-event-fx :studio/param-component-key
+  (fn [{:keys [db] :as cofx} [_ instance-id param schema index key fallback]]
+    (let [current (vector-value db instance-id param fallback)]
+      (when-let [next (and (< -1 index (count current)) (number? (get current index))
+                           (widgets/keyboard-value schema (get current index) key))]
+        (set-param-fx cofx [:studio/param-set instance-id param (assoc current index next)])))))
 (rf/reg-event-fx :studio/queue-param
   (fn [{:keys [db]} [_ key op fields]]
     {:db (assoc-in db [:pending-params key] {:op op :fields fields :epoch (get-in db [:show :epoch]) :runtime-id (get-in db [:show :runtime-id])})
@@ -1073,6 +1112,13 @@
   (fn [db [_ index parameter component value]]
     (assoc-in db [:ui :composition :slots index :params parameter]
               (assoc (vec (get (slot-parameters db index) parameter)) component value))))
+(rf/reg-event-db :studio/slot-param-component-key
+  (fn [db [_ index parameter schema component key]]
+    (let [current (vec (get (slot-parameters db index) parameter))]
+      (if-let [next (and (< -1 component (count current)) (number? (get current component))
+                         (widgets/keyboard-value schema (get current component) key))]
+        (assoc-in db [:ui :composition :slots index :params parameter] (assoc current component next))
+        db))))
 (rf/reg-event-db :studio/slot-params-reset
   (fn [db [_ index]] (assoc-in db [:ui :composition :slots index :params] {})))
 (rf/reg-event-db :studio/composition-remove

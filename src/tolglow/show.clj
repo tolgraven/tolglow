@@ -3535,7 +3535,7 @@
            ;; Hand the committed shader uniforms to their producer; it never
            ;; renders here, and a stopped producer ignores them (#673).
            (shader-producer/sync! (:shader-video runtime) (video-shader/requests model))
-           (let [signal (:video-frame-signal runtime)] (locking signal (.notifyAll signal)))))))))
+           (let [^Object signal (:video-frame-signal runtime)] (locking signal (.notifyAll signal)))))))))
 
 (defn- prepare-rig-edit [model proposed]
   (let [basis (:rig model)
@@ -4263,7 +4263,7 @@
           status (recovery/status owner)
           checkpoints (into {} (keep (fn [kind]
                                        (when-let [file (recovery/latest-file owner show-id kind)]
-                                         [kind {:modified-at-ms (.lastModified file)}])))
+                                         [kind {:modified-at-ms (.lastModified ^java.io.File file)}])))
                             (into [:recovery :named :prior] (keys recovery/legacy-kinds)))]
       (cond-> (assoc (merge status identity) :runtime-id (:id runtime)
                      :checkpoints checkpoints :available (set (keys checkpoints)))
@@ -4955,7 +4955,7 @@
           (loop []
             (let [remaining (quot (- deadline (System/nanoTime)) 1000000)]
               (if (pos? remaining)
-                (do (locking signal (.wait signal (long remaining)))
+                (do (locking signal (.wait ^Object signal (long remaining)))
                     (let [[_ f gain] (current)]
                       (if (fresh? f gain)
                         {:status :frame :frame f :gain gain :pixels (video-source/scaled-pixels f gain)}

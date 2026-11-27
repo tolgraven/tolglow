@@ -756,6 +756,9 @@ REPL with `(showcase/play! runtime {:loop? true})`. Studio's cue panel lists
 the timeline's upcoming events, labelled **Launch …**, **End …** or with the
 ramp's parameter, and shows each running ramp with **Stop**. Cancelling one
 there records `:operator-cancel` in `(:outcomes (showcase/status player))`.
+The second timeline, `showcase/after-hours`, plays the same way with
+`(showcase/play! runtime {:timeline showcase/after-hours})`, or from the config
+with `[:showcase-timeline :timeline]` set to `:after-hours`.
 
 **Tracked gap.** Studio cannot start, stop or loop the timeline, and its
 waveform binds and spatial-volume launches are direct commands that never
@@ -1193,6 +1196,14 @@ Calibrated paired aim arrival uses one host operation from both surfaces. In Stu
 The remaining gaps are tracked in issue #481. Studio has no editor for `:calibration :motor-rate-deg-per-sec`, so rates are set through the rig data or the REPL. Studio also cannot display the physical `:minimum-travel-ms` or the fingerprint behind a stale-calibration refusal. Close these gaps when an operator can enter rates in the fixture inspector and see why a launch was refused without the REPL.
 
 Retrospective Capture has a shared operation. The runtime owns the capture buffer. `show/capture-phrase!` at the REPL and **Connections → Capture** in Studio both call `show/capture-action!` with `:capture`. The REPL receives the phrase; Studio receives its summary and a MIDI clip download of the same capture (`:smf`). `(show/capture-action! rt :status {})` reads the buffer and the last capture that both surfaces show. Two gaps remain. Writing the capture into Live from Studio (`live-connection/capture!` over the configured bridge) is REPL-only, and Push has no Capture button: the uniform surface layer lives with the Push controllers, outside this change. Close them when Studio and Push both send the last capture to Live and the REPL can read the resulting clip identities. [Capture into Live](live-routing.md#capture-the-last-phrase-into-live) · [Issue #671](https://github.com/tolgraven/tolglow/issues/671) · [Issue #680](https://github.com/tolgraven/tolglow/issues/680)
+
+Vector widgets send the whole vector. Studio's XY pad, Z fader and ring knobs (#655) edit a `:vector` parameter through the same `param/set` the REPL submits. That command has no component form:
+
+```clojure
+@(show/submit! runtime {:op :param/set :instance-id id :param :aim :value [45.0 30.0 10.0]})
+```
+
+Studio applies a gesture's changed components to its current copy of the vector and sends nothing when no component changes. That copy can lag a REPL or Push edit to another component that has not reached the page yet, and in that window a pad drag sends the old component back. The edit is lost without a message. Grouped X, Y and Z parameters (aim and gimbal) are separate parameters, so the pad sends `param/set` only for the axes it changes. Close the gap when `param/set` accepts a validated component path, the runtime merges it into the committed vector, Studio sends only the changed components, and a REPL edit to Z survives a concurrent Studio pad drag. [Issue #655](https://github.com/tolgraven/tolglow/issues/655)
 
 Rig editor placement and aim calibration use the shared rig and fixture operations from both surfaces. In Studio, **Rig & space → Place fixture** builds the draft instance with `tolglow.rig.placement/place` and **Save rig** sends it through `POST /api/rig`. The REPL builds the same marked entry with the same function, or writes `{:placement? true :fixture-type-id … :id … :universe … :address …}` itself, and calls `(show/submit! runtime :rig rig)`. On both surfaces the host instantiates marked entries from the registry, refuses one without documented movement travel, and leaves every unmarked fixture as submitted. **Calibrate aim** calls `POST /api/fixtures/aim-check` and `aim-fit`, which are `(show/fixture-action! runtime :aim-check …)` and `:aim-fit` at the REPL; **Send test aim** is the ordinary `:surface-aim` operation. A REPL rig edit redraws the open editor through the state stream. Remaining gaps: the fit proposes mounting rotation only, not travel ranges or reversal, and Studio has no pan/tilt jog control, so observations take the committed output or typed DMX values. [Rig editor](rig-editor.md#place-fixtures-from-the-library) · [Issue #226](https://github.com/tolgraven/tolglow/issues/226)
 

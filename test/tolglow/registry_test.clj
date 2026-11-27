@@ -22,6 +22,30 @@
   (is (= [:params :unknown] (:path (first (registry/validate-params (:params effect) {:unknown 3})))))
   (is (thrown? clojure.lang.ExceptionInfo (registry/resolve-params (:params effect) {:level 2}))))
 
+(defn- outcome [resolve]
+  (try (let [values (resolve)] {:values values :order (seq values)})
+       (catch clojure.lang.ExceptionInfo error {:message (ex-message error) :data (ex-data error)})))
+
+(deftest accepted-schemas-resolve-like-a-full-resolution-over-their-defaults
+  (let [red {:position 0 :color [1 0 0]}
+        blue {:position 1 :color [0 0 1]}
+        narrow {:level {:type :number :default 0.5 :bounds [0 1]}
+                :step {:type :integer :default 2 :bounds [1 4]}
+                :mode {:type :enum :default :a :values [:a :b]}}
+        wide (into narrow (for [i (range 9)] [(keyword (str "p" i)) {:type :number :default (/ i 10.0) :bounds [0 1]}]))
+        rich (assoc narrow :tint {:type :color :default [1 0 0]} :span {:type :range :default [0 1] :bounds [0 10]}
+                    :pair {:type :vector :size 2 :default [0 0]} :flag {:type :boolean :default false}
+                    :ramp {:type :gradient :default [red blue]})]
+    (doseq [schemas [{} narrow wide rich]
+            :let [defaults (registry/resolve-params schemas {})]
+            overrides [nil {} {:level 0.9} {:mode :b :level 0.25} {:level 2} {:level ##NaN} {:unknown 3}
+                       {:step 2.5 :unknown 1 :level -1} {:p8 0.3 :p0 0.7 :level 1}
+                       {:tint [0.1 0.2 1] :span [5 2] :pair [1 2 3] :flag 0}
+                       {:ramp [blue red]} {:ramp [red {:position 0.5 :color [0 1 0]} blue]}]]
+      (is (= (outcome #(registry/resolve-params schemas (merge defaults overrides)))
+             (outcome #(registry/resolve-accepted-params schemas defaults overrides)))
+          (pr-str [(keys schemas) overrides])))))
+
 (deftest gradients-publish-and-resolve-with-ordered-typed-stops
   (let [red {:position 0 :color [1 0 0]}
         blue {:position 1 :color [0 0 1]}

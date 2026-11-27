@@ -9,7 +9,8 @@
       lein run -m tolglow.qa.showcase-capture target/showcase 16 26
 
   writes `rig.json`, `frames.ndjson` (one frame per line) and `meta.json` for
-  bars 16 up to 26. `node dev/preview/showcase-capture.mjs target/showcase`
+  bars 16 up to 26. A fifth argument names another timeline in
+  `showcase/timelines`, for example `after-hours`. `node dev/preview/showcase-capture.mjs target/showcase`
   renders them."
   (:require [afterglow.render.photometry :as photometry]
             [clojure.data.json :as json]
@@ -36,15 +37,16 @@
 
 (defn capture!
   "Write the capture for bars `from-bar` up to `to-bar`. Returns the meta map."
-  [directory {:keys [from-bar to-bar seed] :or {seed showcase/default-seed}}]
-  (let [dir (doto (io/file directory) .mkdirs)
+  [directory {:keys [from-bar to-bar seed timeline] :or {seed showcase/default-seed timeline :first-light}}]
+  (let [source (or (get showcase/timelines timeline) (throw (ex-info "Unknown showcase timeline" {:timeline timeline})))
+        dir (doto (io/file directory) .mkdirs)
         rig (atom nil)
         faults (atom #{})
         frames (atom 0)]
     (with-open [out (io/writer (io/file dir "frames.ndjson"))]
       (let [{:keys [status dmx]}
             (showcase/replay
-             {:seed seed :from-bar from-bar :to-bar to-bar
+             {:seed seed :from-bar from-bar :to-bar to-bar :timeline source
               :snapshot! (fn [snapshot]
                            (compare-and-set! rig nil (:rig snapshot))
                            (swap! faults into (keep (fn [instance]
@@ -55,7 +57,7 @@
                            (.write out "\n")
                            (swap! frames inc)
                            nil)})
-            meta {:timeline (:id showcase/timeline) :seed seed :bpm showcase/bpm :meter showcase/meter
+            meta {:timeline (:id source) :seed seed :bpm showcase/bpm :meter showcase/meter
                   :from-bar from-bar :to-bar to-bar :frame-ms 25 :frames @frames :dmx-frames (count dmx)
                   :universes (vec (keys (:universes (first dmx))))
                   :rejected (count (:rejected status)) :missed (count (:missed status))
@@ -64,12 +66,13 @@
         (spit (io/file dir "meta.json") (wire meta))
         meta))))
 
-(defn -main [directory & [from-text to-text seed-text]]
+(defn -main [directory & [from-text to-text seed-text timeline-text]]
   (let [from-bar (if from-text (parse-double from-text) 0.0)
         to-bar (if to-text (parse-double to-text) 32.0)
-        seed (if seed-text (parse-long seed-text) showcase/default-seed)]
+        seed (if seed-text (parse-long seed-text) showcase/default-seed)
+        timeline (keyword (or timeline-text "first-light"))]
     (when-not (and directory from-bar to-bar seed (<= 0 from-bar) (< from-bar to-bar))
-      (throw (ex-info "Usage: showcase-capture <directory> [from-bar] [to-bar] [seed]" {})))
+      (throw (ex-info "Usage: showcase-capture <directory> [from-bar] [to-bar] [seed] [timeline]" {})))
     (try
-      (println (capture! directory {:from-bar from-bar :to-bar to-bar :seed seed}))
+      (println (capture! directory {:from-bar from-bar :to-bar to-bar :seed seed :timeline timeline}))
       (finally (shutdown-agents)))))
