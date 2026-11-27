@@ -47,6 +47,33 @@ the frame counter does not recompile an unchanged shape. Invalid expressions or
 stale instances produce a visible unavailable/stale result rather than an
 invented trace. Show definitions and runtime state remain untouched.
 
+## Shared parameter sample
+
+The show owner attaches one parameter sample to every committed state
+(`tolglow.waveforms/with-frame-sample`). It resolves nothing when committed.
+The first consumer that asks for an instance's effective parameters resolves
+it once, and every other consumer of that committed state reads the result.
+Those consumers are the Studio stream projection, the Push parameter display,
+waveform previews, cue pad prediction and `show/parameter-sample`. Under a
+reader lease the resolution reuses the owner's retained response inputs, so
+nothing is evaluated again. Without a lease, or for a keyframed instance whose
+inputs the owner never retains, the response chain is compiled and run once
+per frame, not once per consumer.
+
+The sample belongs to the exact inputs it was taken from: show, epoch, frame
+number, time, transport generation, responses, transport, resolved overrides,
+frame error and the identical instance. A snapshot or instance edited after
+commit resolves independently, as before. `resolved-inputs` with any
+middleware other than the standard render and monitor chains also resolves
+independently.
+
+`(waveforms/frame-parameters snapshot)` projects the whole sample: its
+identity and, per running instance, `:definition-version`, effective `:params`,
+`:response-values`, or `:error` when the chain fails. Waveform sources and
+random controllers are not part of this resolution: the owner samples them
+once per frame and commits them as `:resolved-param-overrides`, which the
+sample merges before responses.
+
 ## Captured PCM waveform
 
 The existing JavaSound capture worker decodes each signed-16 PCM block once.

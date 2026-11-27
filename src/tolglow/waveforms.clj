@@ -71,30 +71,113 @@
                (Objects/equals (:responses owner) (:responses model)))
       owner)))
 
+(defn- snapshot-overrides [{:keys [resolved-param-overrides modulation-view]}]
+  (or resolved-param-overrides (:overrides modulation-view)))
+
+(defn- independent-inputs
+  "Resolve one snapshot's instances on the caller: the owner's retained response
+  sample when it matches exactly, otherwise the response chain compiled once
+  for this resolver."
+  [{:keys [model] :as snapshot} compile-responses]
+  (let [owner (response-frame snapshot)
+        overrides (snapshot-overrides snapshot)
+        middleware (delay (let [responses (filterv #(not= false (:enabled? %)) (:responses model []))]
+                            (if (seq responses) (compile-responses responses) identity)))]
+    (fn [instance]
+      (let [sample (when owner (runtime/observe instance [::response-inputs nil]))
+            instance (update instance :params merge (get overrides (:id instance)))
+            clock (instance-clock model instance)]
+        (if (and sample (identical? owner (:owner sample))
+                 (= (response-instance instance) (:instance sample))
+                 (Objects/equals clock (:clock sample))
+                 (Objects/equals (:schemas sample) (get-in instance [:definition :params]))
+                 (Objects/equals (:params sample) (:params instance)))
+          {:instance (assoc instance :params (:effective sample)) :frame clock
+           :response-values (:responses sample)}
+          (@middleware {:instance instance :frame clock}))))))
+
+(defn- frame-identity [{:keys [model transport-generation]}]
+  (assoc (select-keys model [:show-id :epoch :frame-number :time-ms])
+         :transport-generation (or transport-generation 0)))
+
+(defn with-frame-sample
+  "Give a committed owner state its one shared parameter sample. Nothing is
+  resolved here: the first consumer that reads an instance resolves it once,
+  from the owner's retained response inputs when they match, and every other
+  consumer of the same committed state reads that result. An unread frame
+  costs one unrealized delay."
+  [state]
+  (let [base (dissoc state ::frame-sample)
+        render (delay (independent-inputs base response/compile-middleware))
+        monitor (delay (independent-inputs base response/monitor-middleware))]
+    (assoc state ::frame-sample
+           {:identity (frame-identity base) :model (:model base) :overrides (snapshot-overrides base)
+            :status-error (get-in base [:status :error])
+            :instances (delay (into {} (map (fn [[id instance]]
+                                              [id {:instance instance
+                                                   :resolved (delay (try {:context (@render instance)}
+                                                                         (catch Exception error {:error error})))
+                                                   ;; A failed chain is diagnosed only when a monitor asks.
+                                                   :diagnosed (delay (@monitor instance))}]))
+                                    (:instances (:model base))))})))
+
+(defn- shared-entry
+  "The shared sample of instance, when this snapshot and instance are the exact
+  inputs it was taken from. Any edited copy resolves independently."
+  [snapshot instance]
+  (when-let [{:keys [model overrides status-error] :as sample} (::frame-sample snapshot)]
+    (let [current (:model snapshot)]
+      (when (and (identical? overrides (snapshot-overrides snapshot))
+                 (identical? status-error (get-in snapshot [:status :error]))
+                 (= (:identity sample) (frame-identity snapshot))
+                 (identical? (:responses model) (:responses current))
+                 (identical? (:transport model) (:transport current)))
+        (when-let [entry (get @(:instances sample) (:id instance))]
+          (when (and (identical? instance (:instance entry))
+                     (identical? instance (get-in current [:instances (:id instance)])))
+            entry))))))
+
 (defn resolved-inputs
-  "Read typed responses from the matching successful owner frame, with an
-  independent resolver for absent, faulted or differently timed samples."
+  "Read typed responses for a snapshot's instances. A committed owner state
+  shares one resolution per instance between every consumer (Studio, Push,
+  previews, cue pads); edited snapshots, other middleware and absent samples
+  resolve independently, from the matching owner frame when there is one."
   ([snapshot] (resolved-inputs snapshot response/compile-middleware))
-  ([{:keys [model resolved-param-overrides modulation-view] :as snapshot} compile-responses]
-   (let [owner (response-frame snapshot)
-         overrides (or resolved-param-overrides (:overrides modulation-view))
-         middleware (delay (let [responses (filterv #(not= false (:enabled? %)) (:responses model []))]
-                             (if (seq responses) (compile-responses responses) identity)))]
+  ([snapshot compile-responses]
+   (let [mode (condp identical? compile-responses
+                response/compile-middleware :render
+                response/monitor-middleware :monitor
+                nil)
+         independent (delay (independent-inputs snapshot compile-responses))]
      (fn [instance]
-       (let [sample (when owner (runtime/observe instance [::response-inputs nil]))
-             instance (update instance :params merge (get overrides (:id instance)))
-             clock (instance-clock model instance)]
-         (if (and sample (identical? owner (:owner sample))
-                  (= (response-instance instance) (:instance sample))
-                  (Objects/equals clock (:clock sample))
-                  (Objects/equals (:schemas sample) (get-in instance [:definition :params]))
-                  (Objects/equals (:params sample) (:params instance)))
-           {:instance (assoc instance :params (:effective sample)) :frame clock
-            :response-values (:responses sample)}
-           (@middleware {:instance instance :frame clock})))))))
+       (if-let [entry (when mode (shared-entry snapshot instance))]
+         (let [{:keys [context error]} @(:resolved entry)]
+           (cond context context
+                 (= :monitor mode) @(:diagnosed entry)
+                 :else (throw error)))
+         (@independent instance))))))
 
 (defn effective-params [snapshot instance]
   (get-in ((resolved-inputs snapshot) instance) [:instance :params]))
+
+(defn frame-parameters
+  "The shared resolved parameter sample of one committed state: its identity
+  (show, epoch, frame number, time and transport generation) and, per running
+  instance, the effective parameters and response values that frame resolved.
+  Reading it resolves each instance at most once per committed state, shared
+  with every other consumer. An instance whose responses fail carries :error."
+  [snapshot]
+  (let [resolve (resolved-inputs snapshot)
+        model (:model snapshot)]
+    {:identity (frame-identity snapshot)
+     :instances (into (sorted-map)
+                      (map (fn [[id instance]]
+                             [id (merge {:definition-version (:effect-version instance)}
+                                        (try (let [{:keys [instance response-values]} (resolve instance)]
+                                               (cond-> {:params (:params instance)}
+                                                 (seq response-values) (assoc :response-values response-values)))
+                                             (catch Exception error {:error (.getMessage error)})))]))
+                      (:instances model))}))
 
 (defn- normalized-selection [waveforms selection]
   (if (map? selection)
