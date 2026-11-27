@@ -203,3 +203,69 @@ window.screenshot = async () => {
 };
 
 window.disposeRoom = () => { engine?.dispose(); engine = null; };
+
+async function pixels() {
+  const bitmap = canvas.transferToImageBitmap();
+  const context = new OffscreenCanvas(bitmap.width, bitmap.height).getContext('2d');
+  context.drawImage(bitmap, 0, 0); bitmap.close();
+  return context.getImageData(0, 0, canvas.width, canvas.height).data;
+}
+
+function holdField(density) {
+  engine.fog.field.data.fill(density); engine.fog.field.sources = []; engine.fog.upload();
+}
+
+// Faked against full beams on the same rig, camera and uniform density: mean
+// luma of each, the largest per-pixel difference and the share of pixels that
+// differ by more than 16/255. Fog at 1, work light off.
+window.matchProbe = async ({densities = [.03, .1, .35]} = {}) => {
+  engine.setQuality('desktop'); engine.setFog(1); engine.setWorkLight(0); engine.setFilm({bloom: .28});
+  const rows = [], images = {};
+  for (const density of densities) {
+    const capture = async budget => {
+      engine.setLightBudget(budget); holdField(density);
+      for (let i = 0; i < 3; i++) engine.draw(0);
+      engine.draw(0); const data = await pixels();
+      engine.draw(0); const blob = await canvas.convertToBlob({type: 'image/png'});
+      images[`${density}-n${budget}`] = await new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.readAsDataURL(blob); });
+      return data;
+    };
+    const full = await capture(16), faked = await capture(0);
+    let lumaFull = 0, lumaFaked = 0, max = 0, over = 0;
+    const luma = (d, i) => .2126 * d[i] + .7152 * d[i + 1] + .0722 * d[i + 2];
+    for (let i = 0; i < full.length; i += 4) {
+      const a = luma(full, i), b = luma(faked, i);
+      lumaFull += a; lumaFaked += b; const diff = Math.abs(a - b);
+      max = Math.max(max, diff); if (diff > 16) over++;
+    }
+    const n = full.length / 4;
+    rows.push({density, lumaFull: lumaFull / n, lumaFaked: lumaFaked / n, maxDiff: max, over16: over / n});
+  }
+  engine.setLightBudget(null); engine.setWorkLight(.22); engine.setFog(.7);
+  return {rows, images};
+};
+
+// Frames across a tier handover: a faked light becomes the brightest, waits
+// out the residents' hold, then cross-fades with the light it replaces.
+window.crossfadeFrames = async ({budget = 4, density = .1, frames = 10, interval = 50} = {}) => {
+  engine.setQuality('desktop'); engine.setFog(1); engine.setLightBudget(budget); holdField(density);
+  engine.update(snapshot(0, false)); engine.draw(0);
+  const target = engine.fixtures.find(entry => entry.beam && !entry.light)?.id;
+  await new Promise(resolve => setTimeout(resolve, 700));
+  const values = denseOutput(rig, 0, false);
+  for (const [id, row] of Object.entries(values)) row['emitted-color'] = id === target ? [1, 1, 1] : row['emitted-color'].map(v => v * .35);
+  engine.update({'show-id': 'gpu-profile', epoch: 1, revision: 1, 'frame-number': ++frameNumber, rig, output: {values}});
+  const out = [];
+  for (let i = 0; i < frames; i++) {
+    engine.draw(0);
+    const slot = engine.slotStates.find(s => s.id === target) || null;
+    const blob = await canvas.convertToBlob({type: 'image/png'});
+    const url = await new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.readAsDataURL(blob); });
+    out.push({url, target, weight: slot?.weight ?? 0, slots: engine.slotStates.map(s => [s.id, +s.weight.toFixed(2)])});
+    await new Promise(resolve => setTimeout(resolve, interval));
+  }
+  engine.setLightBudget(null);
+  return out;
+};
+
+window.__engine = () => engine;

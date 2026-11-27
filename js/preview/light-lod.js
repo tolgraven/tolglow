@@ -58,14 +58,18 @@ export function prominence(candidate, view, options = LOD_DEFAULTS) {
   const facing = distance > 1e-6 ? Math.max(0, dot(candidate.direction, toEye) / distance) : 0;
   const bonus = 1 + (options.facing ?? LOD_DEFAULTS.facing) * facing ** 4;
   // Square root keeps a huge near beam from overwhelming level differences.
-  return level * Math.sqrt(coverage) * bonus;
+  const score = level * Math.sqrt(coverage) * bonus;
+  return Number.isFinite(score) ? score : 0;
 }
 
 /**
  * Choose up to `budget` full lights with hysteresis.
  * candidates: [{id, level, position, direction, angle, length, pinned?}]
  * state: previous result's `state` (or undefined); now: seconds.
- * Returns {full: [ids, highest score first], faked: [ids], scores: Map, state}.
+ * Returns {full: [ids], faked: [ids], scores: Map, state}. `full` lists the
+ * shadow group first (its first `options.shadowSlots` ids), then the rest,
+ * each by score. The shadow group has its own hold and margin, so lights near
+ * the shadow boundary do not trade shadow maps as their scores cross.
  * Pinned candidates (the editor selection) are always full while they emit.
  */
 export function rankLights(candidates, view, budget, state = null, now = 0, options = LOD_DEFAULTS) {
@@ -102,9 +106,22 @@ export function rankLights(candidates, view, budget, state = null, now = 0, opti
   const since = new Map();
   for (const id of full) since.set(id, residents.has(id) ? residents.get(id) : now);
   const faked = emitting.map(c => c.id).filter(id => !chosen.has(id));
-  // Report full lights by actual score so callers see the most prominent first.
-  full.sort((a, b) => scores.get(b) - scores.get(a) || (a < b ? -1 : a > b ? 1 : 0));
-  return {full, faked, scores, state: {since}};
+  // The shadow group: same hysteresis as the full/faked split, among full lights.
+  const shadowResidents = state?.shadowSince || new Map();
+  const shadowCount = Math.min(full.length, Math.max(0, Math.floor(options.shadowSlots ?? 0)));
+  const pinned = new Set(candidates.filter(c => c.pinned).map(c => c.id));
+  const byScore = (a, b) => scores.get(b) - scores.get(a) || (a < b ? -1 : a > b ? 1 : 0);
+  const shadowKey = id => {
+    const score = scores.get(id);
+    if (!shadowResidents.has(id)) return score;
+    return now - shadowResidents.get(id) < hold ? Infinity : score * margin;
+  };
+  const shadowGroup = [...full].sort((a, b) => Number(pinned.has(b)) - Number(pinned.has(a))
+    || shadowKey(b) - shadowKey(a) || byScore(a, b)).slice(0, shadowCount).sort(byScore);
+  const shadowSet = new Set(shadowGroup);
+  const shadowSince = new Map(shadowGroup.map(id => [id, shadowResidents.has(id) ? shadowResidents.get(id) : now]));
+  const ordered2 = [...shadowGroup, ...full.filter(id => !shadowSet.has(id)).sort(byScore)];
+  return {full: ordered2, faked, scores, state: {since, shadowSince}};
 }
 
 /**
@@ -132,6 +149,34 @@ export function assignSlots(previous, full, slotCount, shadowSlots) {
   place(0, Math.min(shadowSlots, slotCount), shadowWanted);
   place(Math.min(shadowSlots, slotCount), slotCount, rest);
   return slots;
+}
+
+/**
+ * Hand persistent slots over without a one-frame pop. Each slot holds
+ * {id, weight}: weight 1 is a fully lit SpotLight/raymarched beam, 0 means the
+ * fixture is still drawn as its faked beam. A slot whose desired occupant
+ * changes first fades its current light out (its faked beam fades in), then
+ * fades the newcomer in. A light that stops emitting releases its slot at once:
+ * committed blackouts are never smoothed. A light entering a slot fades in only
+ * if it was already visible as a faked beam (`wasFaked`); a light that has just
+ * turned on, or the first frame, takes the slot at full weight. `elapsed` and
+ * `fade` are seconds.
+ */
+export function crossfadeSlots(previous, desired, emitting, elapsed, fade = .3, wasFaked = null) {
+  const step = fade > 0 ? Math.max(0, Math.min(1, elapsed / fade)) : 1;
+  const current = desired.map((_, i) => {
+    const slot = previous?.[i];
+    return slot && slot.id != null && emitting.has(slot.id) ? {...slot} : {id: null, weight: 0};
+  });
+  for (let i = 0; i < current.length; i++) {
+    const slot = current[i], want = emitting.has(desired[i]) ? desired[i] : null;
+    if (slot.id === want) { if (want != null) slot.weight = Math.min(1, slot.weight + step); continue; }
+    if (slot.id != null && slot.weight > step) { slot.weight -= step; continue; }
+    // The light still fading out of another slot must finish there first.
+    const elsewhere = want != null && current.some((other, j) => j !== i && other.id === want);
+    current[i] = elsewhere || want == null ? {id: null, weight: 0} : {id: want, weight: wasFaked?.has(want) ? 0 : 1};
+  }
+  return current;
 }
 
 /** Frustum planes and eye from a column-major view-projection matrix. */

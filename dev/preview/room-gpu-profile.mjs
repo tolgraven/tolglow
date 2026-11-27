@@ -111,7 +111,25 @@ try {
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
   await page.goto(`http://127.0.0.1:${port}/`);
   await page.waitForFunction(() => typeof window.setupRoom === 'function');
-  for (const [width, height] of sizes) for (const fixtures of fixtureCounts) {
+  if (flag('match') || flag('crossfade')) {
+    const [width, height] = sizes[0];
+    await page.evaluate(options => window.setupRoom(options), {width, height, fixtures: fixtureCounts[0]});
+    if (flag('match')) {
+      const {rows, images} = await page.evaluate(() => window.matchProbe());
+      results.match = rows;
+      for (const [name, url] of Object.entries(images)) await writeFile(path.join(out, `${label}-match-${name}.png`), Buffer.from(url.split(',')[1], 'base64'));
+      for (const row of results.match) console.log(`density ${row.density}: luma full ${row.lumaFull.toFixed(1)} faked ${row.lumaFaked.toFixed(1)}, max diff ${row.maxDiff.toFixed(0)}, >16: ${(100 * row.over16).toFixed(1)}%`);
+    }
+    if (flag('crossfade')) {
+      const frames = await page.evaluate(() => window.crossfadeFrames());
+      results.crossfade = frames.map(({url, ...rest}, i) => rest);
+      for (const [i, frame] of frames.entries()) {
+        await writeFile(path.join(out, `${label}-crossfade-${String(i).padStart(2, '0')}.png`), Buffer.from(frame.url.split(',')[1], 'base64'));
+        console.log(`frame ${i}: ${frame.target} weight ${frame.weight.toFixed(2)} ${JSON.stringify(frame.slots)}`);
+      }
+    }
+    await page.evaluate(() => window.disposeRoom());
+  } else for (const [width, height] of sizes) for (const fixtures of fixtureCounts) {
     const setup = await page.evaluate(options => window.setupRoom(options), {width, height, fixtures});
     if (!results.renderer) { results.renderer = setup.renderer; results.userAgent = setup.userAgent; }
     const inventory = await page.evaluate(() => window.inventory());

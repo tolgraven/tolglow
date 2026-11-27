@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import {prominence, rankLights, assignSlots, screenCoverage, viewFromMatrix, LOD_DEFAULTS} from '../../../js/preview/light-lod.js';
+import {prominence, rankLights, assignSlots, crossfadeSlots, screenCoverage, viewFromMatrix, LOD_DEFAULTS} from '../../../js/preview/light-lod.js';
 import {TIERS, lightBudget, MAX_FULL_LIGHTS} from '../../../js/preview/render-quality.js';
 import {FOG_QUALITY, fogRasterScale} from '../../../js/preview/fog-field.js';
 import {roomExit} from '../../../js/preview/beams.js';
@@ -146,5 +146,68 @@ test('faked cones end at the first room surface along the beam', () => {
   assert.equal(roomExit([0, 3.5, 0], [0, -1, 0], room), 3.5);
   assert.ok(Math.abs(roomExit([0, 2, 0], [1, 0, 0], room) - 6) < 1e-9);
   assert.ok(Math.abs(roomExit([0, 4, -4], [0, 0, -1], room) - 1) < 1e-9);
-  assert.ok(roomExit([0, 4, 0], [.6, -.8, 0], room) - 5 < 1e-9);
+  assert.ok(Math.abs(roomExit([0, 4, 0], [.6, -.8, 0], room) - 5) < 1e-9);
+});
+
+test('shadow slots keep their lights while near-equal scores cross the shadow boundary', () => {
+  const view = audienceView();
+  let seed = 11;
+  const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 2 ** 32; };
+  const options = {...LOD_DEFAULTS, shadowSlots: 4};
+  for (const [count, budget] of [[12, 8], [24, 16]]) {
+    let state = null, slots = null, shadowChanges = 0, slotChanges = 0, previousShadow = null;
+    for (let frame = 0; frame < 600; frame++) {
+      const lights = Array.from({length: count}, (_, i) => head('h' + i, -5 + i * (10 / count), .6 * (1 + .1 * (random() - .5))));
+      const result = rankLights(lights, view, budget, state, frame / 60, options);
+      state = result.state;
+      const next = assignSlots(slots, result.full, budget, 4);
+      if (slots) slotChanges += next.filter((id, i) => id !== slots[i]).length;
+      const shadow = new Set(next.slice(0, 4));
+      if (previousShadow) shadowChanges += [...shadow].filter(id => !previousShadow.has(id)).length;
+      previousShadow = shadow; slots = next;
+    }
+    assert.equal(shadowChanges, 0, `${count} lights / ${budget}: shadow group changed ${shadowChanges} times`);
+    assert.equal(slotChanges, 0, `${count} lights / ${budget}: slot occupants changed ${slotChanges} times`);
+  }
+  // A clear win still takes a shadow slot once the hold has passed.
+  const a = head('a', -2, 1), b = head('b', 0, .95), c = head('c', 2, .3);
+  let result = rankLights([a, b, c], view, 3, null, 0, {...LOD_DEFAULTS, shadowSlots: 1});
+  assert.equal(result.full[0], 'a');
+  result = rankLights([{...a, level: .9}, b, c], view, 3, result.state, 5, {...LOD_DEFAULTS, shadowSlots: 1});
+  assert.equal(result.full[0], 'a');
+  result = rankLights([{...a, level: .4}, b, {...c, level: 1}], view, 3, result.state, 6, {...LOD_DEFAULTS, shadowSlots: 1});
+  assert.equal(result.full[0], 'c');
+  // NaN geometry scores zero instead of corrupting the order.
+  assert.equal(prominence(head('nan', NaN, 1), view), 0);
+});
+
+test('slot handover cross-fades instead of popping and never smooths a blackout', () => {
+  const lit = new Set(['a', 'b']);
+  // A light that just turned on (not previously drawn faked) is full at once.
+  assert.deepEqual(crossfadeSlots(null, ['a'], lit, .1, .3), [{id: 'a', weight: 1}]);
+  let slots = crossfadeSlots(null, ['a'], lit, .1, .3, new Set(['a']));
+  assert.deepEqual(slots, [{id: 'a', weight: 0}]);
+  slots = crossfadeSlots(slots, ['a'], lit, .15, .3);
+  assert.equal(slots[0].weight, .5);
+  slots = crossfadeSlots(slots, ['a'], lit, 1, .3);
+  assert.equal(slots[0].weight, 1);
+  // b replaces a: a fades out first, keeping the slot, then b fades in.
+  const weights = [];
+  for (let frame = 0; frame < 12; frame++) {
+    slots = crossfadeSlots(slots, ['b'], lit, .05, .3, new Set(['b']));
+    weights.push([slots[0].id, +slots[0].weight.toFixed(3)]);
+  }
+  assert.deepEqual(weights.slice(0, 5).map(w => w[0]), ['a', 'a', 'a', 'a', 'a']);
+  assert.ok(weights[4][1] < weights[0][1]);
+  assert.equal(weights.at(-1)[0], 'b'); assert.ok(weights.at(-1)[1] > .5);
+  for (let i = 1; i < weights.length; i++) {
+    const [id, w] = weights[i], [previousId, previous] = weights[i - 1];
+    if (id === previousId) assert.ok(Math.abs(w - previous) <= .17, 'weights move by at most one step per frame');
+  }
+  // An occupant that stops emitting is released at once.
+  slots = crossfadeSlots([{id: 'a', weight: 1}], ['a'], new Set(['b']), .01, .3);
+  assert.deepEqual(slots, [{id: null, weight: 0}]);
+  // A light moving between slots finishes fading out of the old slot first.
+  slots = crossfadeSlots([{id: 'a', weight: 1}, {id: null, weight: 0}], [null, 'a'], lit, .05, .3);
+  assert.equal(slots[0].id, 'a'); assert.equal(slots[1].id, null);
 });

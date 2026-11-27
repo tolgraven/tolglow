@@ -24,13 +24,15 @@ import {PreviewActivity} from './preview-activity.js';
 import {DisplayClock, DisplayRefresh} from './display-clock.js';
 import {fixtureSlots} from './fixture-selection.js';
 import {LightingSamples} from './lighting-samples.js';
-import {rankLights, assignSlots, viewFromMatrix} from './light-lod.js';
+import {rankLights, assignSlots, crossfadeSlots, viewFromMatrix, LOD_DEFAULTS} from './light-lod.js';
 import {FakedBeams, roomExit} from './beams.js';
 import {FootprintAtlas, footprintMaterial} from './footprints.js';
 
 const DOWN = new THREE.Vector3(0, -1, 0);
 const MAX_LIGHTS = MAX_FULL_LIGHTS;
 const FAKED_CAPACITY = 128;
+// Seconds for a light changing between full and faked to cross-fade.
+const LOD_FADE = .3;
 
 function updateRigPose(root, spec) {
   const position = spec.position || [0, 0, 0];
@@ -81,7 +83,7 @@ export class SceneRenderer {
     }, {signal});
     if (!platform.worker) {
       this.navigation = new CameraNavigator({camera: this.camera, controls: this.controls, canvas,
-        room: () => this.room, snapshot: () => this.snapshot, visibleLights: () => this.lightIds,
+        room: () => this.room, snapshot: () => this.snapshot, visibleLights: () => this.litIds,
         active: () => this.visible && !this.paused && !this.disposed,
         reducedMotion: () => this.reducedMotion.matches});
       this.reducedMotion.addEventListener('change', () => this.navigation.notify(), {signal});
@@ -213,7 +215,9 @@ export class SceneRenderer {
     const next = value == null ? null : Math.max(0, Math.min(MAX_LIGHTS, Math.floor(Number(value) || 0)));
     if (next === this.lightBudgetOverride) return;
     this.lightBudgetOverride = next;
+    // A hidden preview rebuilds its light pool when it resumes.
     if (this.visible && this.renderer && this.snapshot) this.update(this.snapshot, true);
+    else this.lightBudgetPending = true;
   }
   get lightBudget() {return lightBudget(this.options, this.lightBudgetOverride);}
   update(snapshot, force = false, receivedAt = performance.now()) {
@@ -276,11 +280,17 @@ export class SceneRenderer {
     this.applyLighting(this.lighting.values(this.fixtureSamples, receivedAt), castersChanged);
   }
   // Rank emitting fixtures by prominence from the current camera and map the
-  // most prominent onto the persistent SpotLight slots (#782).
+  // most prominent onto the persistent SpotLight slots (#782). Slot handovers
+  // cross-fade: `entry.fullWeight` scales the real light, 1 - weight the faked
+  // beam and footprint, so a tier change never pops in one frame.
   assignLights(lit) {
+    const now = performance.now() / 1000;
+    // A long idle gap (hidden view, first update) advances a fade by at most one slow frame.
+    const elapsed = this.lodTime == null ? 0 : Math.max(0, Math.min(.1, now - this.lodTime));
+    this.lodTime = now;
+    for (const entry of this.fixtures) {entry.light = null; entry.fullWeight = 0;}
     if (!this.spots.length) {
-      for (const entry of this.fixtures) entry.light = null;
-      this.lod = {budget: 0, full: 0, faked: lit.length}; return;
+      this.fading = false; this.lod = {budget: 0, full: 0, faked: lit.length}; return;
     }
     const camera = this.camera;
     camera.updateMatrixWorld();
@@ -290,16 +300,41 @@ export class SceneRenderer {
     const candidates = lit.map(entry => ({id: entry.id, level: entry.beam.level, pinned: entry.id === this.selectedFixture,
       position: entry.beam.optics.optical.toArray(), direction: entry.beam.optics.axis.toArray(),
       angle: entry.beam.angle, length: entry.beam.length}));
-    const ranked = rankLights(candidates, view, this.spots.length, this.lodState, performance.now() / 1000);
-    this.lodState = ranked.state;
     const shadowSlots = this.spots.filter(light => light.castShadow).length;
-    const slots = assignSlots(this.lightIds, ranked.full, this.spots.length, shadowSlots);
-    // Keep the array identity while the assignment holds; camera tours key on it.
-    if (slots.length !== this.lightIds.length || slots.some((id, i) => id !== this.lightIds[i])) this.lightIds = slots;
-    const spotById = new Map();
-    this.lightIds.forEach((id, index) => { if (id != null) spotById.set(id, this.spots[index]); });
-    for (const entry of this.fixtures) entry.light = spotById.get(entry.id) || null;
-    this.lod = {budget: this.spots.length, full: ranked.full.length, faked: ranked.faked.length};
+    const ranked = rankLights(candidates, view, this.spots.length, this.lodState, now, {...LOD_DEFAULTS, shadowSlots});
+    this.lodState = ranked.state;
+    this.desiredSlots = assignSlots(this.desiredSlots, ranked.full, this.spots.length, shadowSlots);
+    const emitting = new Set(lit.map(entry => entry.id));
+    this.slotStates = crossfadeSlots(this.slotStates, this.desiredSlots, emitting, elapsed, LOD_FADE, this.fakedIds);
+    const occupants = this.slotStates.map(slot => slot.id);
+    // Slot-aligned occupants; keep the array identity while they hold.
+    if (occupants.length !== this.lightIds.length || occupants.some((id, i) => id !== this.lightIds[i])) this.lightIds = occupants;
+    const byId = new Map(this.fixtures.map(entry => [entry.id, entry]));
+    this.slotStates.forEach((slot, index) => {
+      const entry = slot.id != null && byId.get(slot.id);
+      if (entry) {entry.light = this.spots[index]; entry.fullWeight = slot.weight;}
+    });
+    this.fading = this.slotStates.some(slot => slot.id != null && slot.weight < 1);
+    this.fakedIds = new Set(lit.filter(entry => !(entry.fullWeight >= 1)).map(entry => entry.id));
+    this.lod = {budget: this.spots.length, full: ranked.full.length, faked: ranked.faked.length, fading: this.fading};
+  }
+  // A lit fixture beyond the mesh budget still shows a faked beam and footprint.
+  meshlessBeams(output, meshed) {
+    const beams = [], latest = this.lighting.latest?.output?.values || {};
+    for (const [id, fixture] of this.beamById || []) {
+      if (meshed.has(id)) continue;
+      const resolved = output[id] || latest[id];
+      if (!resolved) continue;
+      const rgb = emittedColor(resolved), brightness = fixture['relative-brightness'] ?? 1;
+      if (!(brightness > 0 && Math.max(...rgb) > 0)) continue;
+      const direction = fixtureDirection(fixture, resolved), angle = beamAngle(fixture, resolved);
+      const optics = opticalFrustum(fixture.position || [0, 0, 0], direction, angle, apertureRadius(fixture));
+      beams.push({id, fixture, beam: {rgb, brightness, angle, optics, direction, resolved, level: Math.max(...rgb) * brightness,
+        penumbra: clamp(.72 - (Number(resolved.focus) || 0) * .52, .2, .8),
+        length: roomExit(optics.optical.toArray(), optics.axis.toArray(), this.room)}});
+      if (beams.length >= FAKED_CAPACITY) break;
+    }
+    return beams;
   }
   applyLighting(output, castersChanged = false) {
     this.displayedValues = output;
@@ -327,35 +362,40 @@ export class SceneRenderer {
         length: roomExit(optics.optical.toArray(), optics.axis.toArray(), this.room)};
       lit.push(entry);
     }
-    this.activeLights = lit.length;
     this.assignLights(lit);
+    const meshless = this.meshlessBeams(output, new Set(this.fixtures.map(entry => entry.id)));
+    this.activeLights = lit.length + meshless.length;
+    const litIds = [...lit, ...meshless].map(entry => entry.id);
+    if (litIds.length !== this.litIds?.length || litIds.some((id, i) => id !== this.litIds[i])) this.litIds = litIds;
     const haze = this.fog?.mode === 'haze', faked = [], footprints = [];
     for (const light of this.spots) if (!this.fixtures.some(entry => entry.light === light)) {
       if (light.intensity !== 0) { light.intensity = 0; light.color.setRGB(0, 0, 0); }
     }
-    for (const entry of this.fixtures) {
+    for (const entry of [...this.fixtures, ...meshless]) {
       const light = entry.light, beam = entry.beam;
       if (light && !beam) { light.intensity = 0; light.color.setRGB(0, 0, 0); continue; }
       if (!beam) continue;
       const {angle, optics, rgb, brightness} = beam;
       const distance = Math.max(...this.room) * 2.5 + optics.apexDistance;
-      const intensity = 145 * brightness;
-      if (!light || haze) {
+      const intensity = 145 * brightness, weight = light ? entry.fullWeight : 0;
+      const fakedWeight = haze ? 1 : 1 - weight;
+      if (fakedWeight > 0) {
         faked.push({position: optics.optical.toArray(), direction: optics.axis.toArray(),
-          color: rgb.map(v => v * intensity), radius: optics.radius, tangent: Math.tan(angle),
+          color: rgb.map(v => v * intensity * fakedWeight), penumbra: beam.penumbra, radius: optics.radius, tangent: Math.tan(angle),
           length: beam.length, apexDistance: optics.apexDistance});
       }
-      if (!light) {
+      if (weight < 1) {
         footprints.push({virtualPosition: optics.virtual.toArray(), apexDistance: optics.apexDistance,
           direction: optics.axis.toArray(), outerCos: Math.cos(angle), innerCos: Math.cos(angle * (1 - beam.penumbra)),
-          color: rgb.map(v => v * intensity), range: distance});
-        continue;
+          color: rgb.map(v => v * intensity * (1 - weight)), range: distance});
       }
+      if (!light) continue;
       const near = optics.apexDistance + .006;
       const target = axis.fromArray(beam.direction).add(optics.virtual);
       if (light.castShadow && (light.angle !== angle || light.distance !== distance || light.shadow.camera.near !== near ||
           !light.position.equals(optics.virtual) || !light.target.position.equals(target))) light.shadow.needsUpdate = true;
-      light.color.setRGB(...rgb); light.intensity = intensity; light.angle = angle;
+      // The shadow fades with the light: it only darkens this light's share.
+      light.color.setRGB(...rgb); light.intensity = intensity * weight; light.angle = angle;
       light.penumbra = beam.penumbra;
       light.position.copy(optics.virtual);
       light.distance = distance;
@@ -378,7 +418,7 @@ export class SceneRenderer {
     // lit fixtures, full or faked, independent of the full-light budget. A
     // linear sum over a 128-head rig flooded the haze ambient to white.
     const bounce = new THREE.Color(0, 0, 0);
-    const bouncing = lit.filter(entry => !entry.fixture['pseudo-fixture'] && entry.beam.optics.axis.y < 0)
+    const bouncing = [...lit, ...meshless].filter(entry => !entry.fixture['pseudo-fixture'] && entry.beam.optics.axis.y < 0)
       .sort((a, b) => b.beam.level - a.beam.level || (a.id < b.id ? -1 : 1)).slice(0, MAX_LIGHTS);
     for (const entry of bouncing) {
       const beam = entry.beam;
@@ -446,7 +486,8 @@ export class SceneRenderer {
       this.spots.push(light); this.lightIds.push(null);
       this.content.add(light, light.target);
     }
-    this.lodState = null;
+    this.lodState = null; this.desiredSlots = null; this.slotStates = null; this.fakedIds = new Set(); this.lodTime = null;
+    this.lightBudgetPending = false;
     this.footprints?.setRoom(this.room);
     this.fixtureSamples = this.fixtures.concat(this.diffuserTubes.flatMap(tube => tube.rows));
     const optedIn = fixtures.filter(f => f['pseudo-fixture']).length;
@@ -545,7 +586,7 @@ export class SceneRenderer {
       if (!this.renderer) this.initialize();
       if (this.restorePending) this.restoreContext();
       this.setQuality(this.qualityChoice);
-      if (this.snapshot) this.update(this.snapshot);
+      if (this.snapshot) this.update(this.snapshot, Boolean(this.lightBudgetPending));
       this.resize(); this.scheduleFrame(0);
     } catch (error) {this.fail(error);}
   }
@@ -555,6 +596,7 @@ export class SceneRenderer {
     this.gpuTimer?.dispose();
     if (!this.platform.worker) this.gpuTimer = new GpuTimer(this.renderer.getContext());
     this.resize(); this.refreshEnvironment(); this.fog?.upload();
+    if (this.footprints) this.footprints.dirty = true;
     invalidateShadows(this.spots, this.reflections?.lights);
     this.lost = false; this.ready = false; this.lastFrame = 0; this.setStatus('Restoring venue shaders…');
   }
@@ -594,11 +636,10 @@ export class SceneRenderer {
     }
     // Light detail follows the view: re-rank when the camera moved.
     this.camera.updateMatrixWorld();
-    const view = this.camera.matrixWorld.elements, last = this.lodView ||= new Float32Array(16).fill(NaN);
-    if (!view.every((value, i) => value === last[i])) {
-      last.set(view);
-      if (!relit && this.displayedValues) this.applyLighting(this.displayedValues);
-    }
+    const view = this.camera.matrixWorld.elements, last = this.lodView ||= new Float64Array(16).fill(NaN);
+    const moved = !view.every((value, i) => value === last[i]);
+    if (moved) last.set(view);
+    if ((moved || this.fading) && !relit && this.displayedValues) {this.applyLighting(this.displayedValues); this.relights = (this.relights || 0) + 1;}
     const simulate = !this.reducedMotion.matches || this.clock < this.fogAnimationUntil;
     // Both preview worklights illuminate airborne material: the sky hemisphere
     // alone made dense water droplets unnaturally blue/dark against the warm
@@ -655,7 +696,8 @@ export class SceneRenderer {
       programCount: this.renderer?.info.programs?.length || 0, activeLights: this.activeLights || 0,
       reflectedPatches: this.reflections?.patches.map(p => ({fixture:p.id, surface:p.surface, center:p.position.toArray(),
         majorRadius:p.major.length(), minorRadius:p.minor.length()})) || [],
-      lightIds: this.lightIds, fixtureCount: this.totalFixtureCount, visibleFixtures: this.fixtures.length, lightCap: this.spots?.length ?? 0,
+      // Tours visit the brightest lit fixtures, independent of the view-ranked slots.
+      lightIds: this.litIds || [], slotIds: this.lightIds, fixtureCount: this.totalFixtureCount, visibleFixtures: this.fixtures.length, lightCap: this.spots?.length ?? 0,
       lightLod: this.lod ? {...this.lod, fakedBeams: this.beams?.count || 0, footprints: this.footprints?.count || 0} : null,
       shadowCount: this.renderedShadows || 0, workLight: this.workLight, fogAmount: this.fogAmount,
       camera: this.camera?.position.toArray(), target: this.controls?.target.toArray(), fog: this.fog?.stats(),
