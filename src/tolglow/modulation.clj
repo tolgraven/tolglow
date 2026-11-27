@@ -260,23 +260,70 @@
   [model]
   (assoc model ::last-good? true))
 
+(defn with-frame-params
+  "Return `model` as modulation reads it in a frame whose parameter ramps
+  overlay `params` ({instance-id {param value}}) on the committed values and
+  will commit `targets` ({instance-id {param to}}). The view only answers which
+  revision each instance follows; it is never committed."
+  ([model params] (with-frame-params model params nil))
+  ([model params targets]
+   (cond-> model
+     (seq params) (assoc ::frame-params params)
+     (seq targets) (assoc ::ramp-targets targets))))
+
+(defn- attempted-revision
+  "The newer registry definition the engine attempts for this instance on the
+  next frame, or nil. Paused and pinned instances defer hot reload."
+  [model instance]
+  (let [current (get-in model [:registry :effects (:effect-id instance)])]
+    (when (and (not (get-in instance [:system :paused?]))
+               (not= :pinned (:reload-policy instance :pinned)) current
+               (not= (:version current) (get-in instance [:reload-fault :effect-version]))
+               (> (:version current) (:effect-version instance)))
+      current)))
+
+(defn- accepts? [definition values]
+  (try (params/resolve-values (:params definition {}) (select-keys values (keys (:params definition {}))))
+       true
+       (catch Exception _ false)))
+
+(defn- ramp-values
+  "The committed parameters, the frame's ramp values and the ramp targets of an
+  instance: the three parameter sets a revision must accept during a ramp."
+  [committed framed targets]
+  [committed (merge committed framed) (merge committed targets)])
+
+(defn ramp-preparation
+  "The parameter overlay the owner gives the engine for an instance whose
+  attempted revision refuses one of its ramped values, or nil to keep the
+  frame's ramp values. The engine prepares a revision from the parameters it
+  receives, so it refuses the revision at preparation when it receives the
+  refused set: the committed values ({}, no overlay) or the ramp targets. The
+  engine already refuses one that rejects the frame values. The ramp still
+  reaches the captured revision through the parameter overrides."
+  [model instance framed targets]
+  (when-let [current (attempted-revision model instance)]
+    (let [[committed frame target] (ramp-values (:params instance {}) framed targets)]
+      (cond
+        (not (accepts? current committed)) {}
+        (not (accepts? current frame)) nil
+        (not (accepts? current target)) (merge framed targets)))))
+
 (defn reload-candidate
   "Return the newer registry definition the engine attempts for this instance
   on the next frame, or nil. Paused and pinned instances defer hot reload. A
   candidate whose schemas reject a retained parameter is none: the engine
-  refuses it at preparation and keeps the captured definition."
+  refuses it at preparation and keeps the captured definition. During a ramp
+  the retained parameter must fit with its committed value, its frame value
+  and the ramp's target (see `with-frame-params` and `ramp-preparation`)."
   [model instance]
-  (let [current (get-in model [:registry :effects (:effect-id instance)])]
-    (when (and (not (::last-good? model))
-               (not (get-in instance [:system :paused?]))
-               (not= :pinned (:reload-policy instance :pinned)) current
-               (not= (:version current) (get-in instance [:reload-fault :effect-version]))
-               (> (:version current) (:effect-version instance))
-               (try (params/resolve-values (:params current {})
-                                           (select-keys (:params instance {}) (keys (:params current {}))))
-                    true
-                    (catch Exception _ false)))
-      current)))
+  (when-not (::last-good? model)
+    (when-let [current (attempted-revision model instance)]
+      (let [id (:id instance)]
+        (when (every? #(accepts? current %)
+                      (ramp-values (:params instance {}) (get-in model [::frame-params id])
+                                   (get-in model [::ramp-targets id])))
+          current)))))
 
 (defn reload-pending?
   "True when the next frame attempts a hot reload of some running instance."

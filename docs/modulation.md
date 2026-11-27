@@ -143,7 +143,14 @@ that prevent the first reloaded frame from completing.
 for an instance on the next frame, and `owner-definition` is that candidate or
 the captured definition. A pinned or paused instance has no candidate, and
 neither does one whose retained parameters the newer schemas reject, because
-the engine refuses that revision at preparation.
+the engine refuses that revision at preparation. During a parameter ramp the
+show owner reads candidates through `(modulation/with-frame-params model
+ramp-params ramp-targets)`: a retained parameter must then fit with its
+committed value, the ramp's frame value and the ramp's target. Where a revision
+refuses the committed value or the target, `ramp-preparation` gives the engine
+those values for that instance, so the engine also refuses the revision instead
+of adopting one that cannot hold the value the model keeps or the ramp commits.
+See [scheduler](scheduler.md#ramp-semantics).
 
 A controller follows candidates in both roles. Its owner's candidate supplies
 the `:modulation` config, and each target's candidate supplies the parameter

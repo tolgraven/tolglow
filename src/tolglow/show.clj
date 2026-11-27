@@ -2672,11 +2672,14 @@
   (let [;; Ramp values are a frame overlay; committed values move only when a ramp commits.
         ramp-frame (if audition? live-ramps (subscribers/frame-overlays model time-ms))
         frame-master (get ramp-frame :master (:master model))
-        parameter-samples (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)}
+        ;; A pending revision must accept a ramped parameter's committed and
+        ;; frame values alike; modulation reads which revision to follow here.
+        reading #(modulation/with-frame-params % (:params ramp-frame) (:param-targets ramp-frame))
+        parameter-samples (parameter-sources/sample (reading model) {:time-ms time-ms :transport (:transport model)}
                                                    (:parameter-samples before))
         ;; This frame's engine pass may reject a pending hot reload. Sample the
         ;; waveforms for that outcome too, from the same prior state.
-        last-good-samples (when (modulation/reload-pending? model)
+        last-good-samples (when (modulation/reload-pending? (reading model))
                             (parameter-sources/sample (modulation/last-good-view model)
                                                       {:time-ms time-ms :transport (:transport model)}
                                                       (:parameter-samples before)))
@@ -2714,7 +2717,7 @@
         hdr-scope (when hdr? (autopilot/standalone-scope (:hdr-scope before) model patch))
         hdr-opts (when hdr? (or (autopilot/render-options (assoc model :time-ms time-ms) prepared suspended?
                                                            control-view hdr-scope) {}))
-        modulation-result (modulation/advance (:modulation model) model
+        modulation-result (modulation/advance (:modulation model) (reading model)
                                                {:time-ms time-ms :transport (:transport model)})
         last-good (when last-good-samples
                     (last-good-inputs model modulation-result parameter-samples last-good-samples
@@ -2723,7 +2726,7 @@
         ;; Active modulation and waveform bindings take precedence over a ramp overlay.
         ;; A ramp does not follow a pending reload: its candidate reads only
         ;; the ramped parameters its schemas still accept.
-        input-overrides (merge-with merge (modulation/candidate-overrides model (:params ramp-frame))
+        input-overrides (merge-with merge (modulation/candidate-overrides (reading model) (:params ramp-frame))
                                     (:overrides modulation-result) (:overrides parameter-samples)
                                     (get-in space [:fields :overrides]))
         modulation-middleware (if last-good
@@ -2790,10 +2793,22 @@
                          ;; Its compiled form is cached per declaration and version.
                          (state-migration/attach (:state-migrations runtime) definition
                                                  (keyframes/with-inputs step inputs {:preserve-time-invariance? true}))))
-        result (update (engine/advance (subscribers/with-frame-overlays model ramp-frame) frame-input compile-step
+        ;; The engine prepares a revision from the model it receives. Where the
+        ;; revision refuses a ramped parameter's committed value or its target,
+        ;; it receives that value, so it turns the revision down instead of
+        ;; adopting one that cannot hold what the model keeps or the ramp
+        ;; commits. The ramp still reaches evaluation through the overrides.
+        engine-ramps (reduce (fn [frame id]
+                               (if-let [values (modulation/ramp-preparation model (get-in model [:instances id])
+                                                                            (get-in ramp-frame [:params id])
+                                                                            (get-in ramp-frame [:param-targets id]))]
+                                 (if (seq values) (assoc-in frame [:params id] values) (update frame :params dissoc id))
+                                 frame))
+                             ramp-frame (keys (:param-targets ramp-frame)))
+        result (update (engine/advance (subscribers/with-frame-overlays model engine-ramps) frame-input compile-step
                                        ;; An audition evaluates serially, off the live worker pool.
                                        (if audition? mapv (executor/mapper (:executor runtime))))
-                       :model subscribers/without-frame-overlays model ramp-frame)
+                       :model subscribers/without-frame-overlays model engine-ramps)
         manual-aim (surface-aim/contribution model patch)
         pause-layer (pause-layer! runtime model)
         meter-opts (get-in model [:settings :lighting-capacity])
@@ -2851,7 +2866,7 @@
                      #(spatial-cues/mask-contributions % spatial-groups spatial-levels) identity))
         ;; A renderer rejection rebuilds the result from the engine's frame
         ;; model, which carries the ramp overlay: take it out of that one too.
-        result (update (:result resolved) :model subscribers/without-frame-overlays model ramp-frame)
+        result (update (:result resolved) :model subscribers/without-frame-overlays model engine-ramps)
         ;; Commit the controller and waveform state behind the inputs the
         ;; engine read, so a rejected reload leaves no trace in either.
         last-good? (= :fallback (:reload-inputs result))

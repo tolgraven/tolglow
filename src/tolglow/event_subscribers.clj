@@ -656,7 +656,8 @@
 
 (defn- commit-ramp
   "Write a ramp's value to its destination through the shared reducer: the
-  exact target when it completes, or its current frame value when it is held."
+  exact target when it completes, or its current frame value when it is held.
+  Returns the reducer's {:model :ack}."
   ([model ramp now] (commit-ramp model ramp now (:to ramp) nil))
   ([model ramp now value suffix]
    (let [{:keys [target instance-id param variable]} (:destination ramp)
@@ -665,12 +666,12 @@
                :opacity {:op :instance/opacity-set :instance-id instance-id :value value}
                :master {:op :master/set :value value}
                :variable {:op :variable/set :variable variable :value value})]
-     (:model (submit-command
-              model (merge cmd {:show-id (:show-id model) :epoch (:epoch model) :time-ms now
-                                :source (:source ramp)
-                                :command-id (str "ramp/" (:epoch model) "/" (:event-id ramp) "/"
-                                                 (pr-str (destination-key (:destination ramp))) "/" (:start ramp)
-                                                 suffix)}))))))
+     (submit-command
+      model (merge cmd {:show-id (:show-id model) :epoch (:epoch model) :time-ms now
+                        :source (:source ramp)
+                        :command-id (str "ramp/" (:epoch model) "/" (:event-id ramp) "/"
+                                         (pr-str (destination-key (:destination ramp))) "/" (:start ramp)
+                                         suffix)})))))
 
 (defn- writes-destination? [command {:keys [target instance-id param variable]}]
   (let [op (:op command)]
@@ -712,7 +713,7 @@
               (let [value (try (second (sample-ramp m ramp beat now)) (catch Exception _ nil))]
                 (if (or (nil? value) (same-value? value (current-value m (:destination ramp))))
                   m
-                  (commit-ramp m ramp now value "/hold"))))
+                  (:model (commit-ramp m ramp now value "/hold")))))
             model ramps)))
 
 (defn hold
@@ -757,25 +758,35 @@
                   (nil? p)
                   (recur (remember model (ramp-entry model ramp :cancelled {:reason :invalid-endpoints})) more kept)
 
+                  ;; The reducer can refuse the target, e.g. when the destination's
+                  ;; schema changed under the ramp. Say so instead of completing.
                   (>= p 1.0)
-                  (recur (-> (assoc-in model [:event-subscribers :ramps] (into kept more))
-                             (commit-ramp ramp now)
-                             (remember (ramp-entry model ramp :completed {:value value})))
-                         more kept)
+                  (let [settled (assoc-in model [:event-subscribers :ramps] (into kept more))
+                        {committed :model ack :ack} (commit-ramp settled ramp now)]
+                    (recur (if (= :accepted (:status ack))
+                             (remember committed (ramp-entry model ramp :completed {:value value}))
+                             (remember settled (ramp-entry model ramp :cancelled
+                                                           {:reason :commit-refused
+                                                            :message (:message ack "The destination refused the ramp's target")})))
+                           more kept))
 
                   :else (recur model more (conj kept ramp)))))))))))
 
 (defn frame-overlays
   "Sample every active ramp for the frozen frame: {:params {id {k v}}
   :opacity {id v} :master v :variables {k v}}. Overlay values only reach the
-  frame; the committed destination keeps its value until the ramp commits."
+  frame; the committed destination keeps its value until the ramp commits.
+  :param-targets {id {k to}} names the value each parameter ramp will commit,
+  which a pending hot reload must also accept."
   [model now]
   (let [beat (get-in model [:transport :beat] 0)]
     (reduce (fn [out ramp]
               (let [[_ value] (sample-ramp model ramp beat now)
                     {:keys [target instance-id param variable]} (:destination ramp)]
                 (case target
-                  :param (assoc-in out [:params instance-id param] value)
+                  :param (-> out
+                             (assoc-in [:params instance-id param] value)
+                             (assoc-in [:param-targets instance-id param] (:to ramp)))
                   :opacity (assoc-in out [:opacity instance-id] value)
                   :master (assoc out :master value)
                   :variable (assoc-in out [:variables variable] value))))
