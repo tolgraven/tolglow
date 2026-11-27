@@ -26,6 +26,7 @@ one already-evaluated result removed; healthy effect code is never run twice.
 | New candidate fails preparation, compile or evaluation | Store `:reload-fault`; evaluate captured last-good code in the same frame |
 | Renderer rejects a candidate | Drop its attempt this frame; captured code resumes next frame |
 | Candidate that modulation or a spatial cue follows is rejected at any stage | Every instance renders its captured revision with the last-good modulation and spatial fields in the same frame; other reloads of that frame wait one frame |
+| More than 8 effects have a newly published revision pending | The frame attempts the first 8 revisions in launch order; the others keep their captured revisions everywhere and take over on the next frames |
 | New valid version with preserve/restart policy | Adopt using the existing state/time policy and emit recovery |
 | Explicit Retry | Try the same version with current parameters and retained state |
 | Faulted one-shot/release reaches deadline | Finish normally; quarantine does not make instances immortal |
@@ -76,6 +77,22 @@ picks by `:reload-inputs` as it does the masks. Autopilot decisions are the
 exception: they edit the model before the engine runs, so they read the
 running revisions' samples while a reload is pending and reach an accepted
 candidate one frame later. See [spatial cues](spatial-show.md).
+
+A frame attempts at most 8 newly published effect revisions (#774). Every new
+revision is compiled inside the frame that attempts it, at about 0.45 ms each
+on the mixed 2,048-pixel/64-head rig, so 32 revisions published in one owner
+cycle made that frame miss the 25 ms deadline. Further revisions wait, in the
+launch order of the first instance that would attempt them, and keep their
+captured definitions in modulation, waveform sampling, spatial cues and the
+engine alike until a later frame takes them over. A deferral is not a fault and
+records no event. Set the limit with `(show/create-runtime {:reloads-per-frame
+n})`. The extra engine pass of a frame that turns a candidate down costs about
+one ordinary evaluation, plus a second render after a renderer rejection; the
+renderer turns down one candidate per frame, so each further candidate the
+renderer refuses takes another such frame. The runtime's compile cache keeps
+its previous 256 definitions as a retired generation, so filling it with
+published revisions no longer recompiles every running effect in one frame.
+Measurements: [reload takeover benchmark](benchmarks/README.md#hot-reload-takeover-frames).
 
 Full backups preserve faults and event history. Restore remaps active diagnostic
 instance IDs/epochs; historical events remain historical evidence. Restore does

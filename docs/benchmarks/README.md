@@ -108,3 +108,75 @@ engine/scheduling/network costs. No physical fixture output was sent.
 view construction at 48 kHz in 480-sample blocks, with 256 retained columns.
 Median/p99 were 0.080/0.284 ms; the complete capture/analyzer/display pipelines
 were excluded. This establishes only the cost of the new summary stage.
+
+## Hot-reload takeover frames
+
+[`dev/tolglow/bench_reload_takeover.clj`](../../dev/tolglow/bench_reload_takeover.clj)
+measures the owner tick (`show/tick!`) when 1, 8 or 32 effects get a new
+revision in one owner cycle (#774). Every probe cue has a waveform bound to its
+level and each revision changes the level's bounds, so the owner supplies the
+engine's reload fallback (#663) on every takeover frame. Outcomes: accepted;
+rejected at evaluation (the fallback pass re-evaluates every instance); and
+rejected by the renderer after the engine accepted it (a second evaluation and
+a second render). Rigs: the showcase with five cues and their waveforms plus
+32 probes (129 fixtures, 37 instances), and the mixed 2,048-pixel/64-head
+corpus plus 32 probes (2,112 fixtures, 36 instances). Two effect workers,
+logical 25 ms clock, capture sink, 200 warmup ticks, 240 ordinary ticks and 30
+rounds per case. Fresh `lein run` JVMs on JDK 25.0.2, Apple M4 Pro, while about
+a dozen other agent lanes loaded the machine (load average 12 to 18 in the
+second pair). Stage times come from wrapping `engine/advance` (which includes
+compiling), `engine/reject-output` (which includes the fallback re-evaluation
+after a renderer rejection), the runtime's compiler, command handling and
+modulation sampling. The second render after a renderer rejection is inside
+the tick but not separately timed.
+
+Mixed rig, tick p50 / p95 / max ms, and ticks over 25 ms out of 30:
+
+| Case | [Before 1](2026-11-27-reload-takeover-before-1.edn) | [After 1](2026-11-27-reload-takeover-after-1.edn) | [Before 2](2026-11-27-reload-takeover-before-2.edn) | [After 2](2026-11-27-reload-takeover-after-2.edn) |
+| --- | --- | --- | --- | --- |
+| Ordinary frame | 2.2 / 2.8 / 3.2 | 2.7 / 3.5 / 3.8 | 4.5 / 8.8 / 20.3 | 4.9 / 8.1 / 12.7 |
+| 8 accepted | 8.9 / 12.3 / 13.9, 0 | 10.3 / 11.9 / 12.1, 0 | 10.8 / 32.4 / 35.3, 3 | 16.1 / 42.6 / 59.6, 6 |
+| 32 accepted | 25.2 / 35.5 / 42.0, 16 | 15.0 / 19.7 / 21.2, 0 | 30.1 / 67.4 / 69.3, 28 | 25.5 / 62.6 / 108.9, 17 |
+| 32 rejected at evaluation | 28.2 / 39.8 / 44.6, 28 | 17.5 / 35.8 / 58.6, 5 | 31.9 / 66.6 / 75.2, 30 | 27.7 / 83.6 / 99.9, 18 |
+| 32 rejected by the renderer | 28.3 / 37.1 / 45.8, 30 | 17.6 / 23.8 / 23.9, 0 | 32.6 / 68.6 / 69.7, 30 | 29.4 / 51.1 / 52.2, 18 |
+
+Where the time goes on the mixed rig, p50 ms of the takeover frame:
+
+| Stage | 1 accepted | 32 accepted, before | 32 accepted, after |
+| --- | --- | --- | --- |
+| Compiling new revisions (pair 1) | 0.5 | 13.8 | 4.3 |
+| Engine including compiling (pair 1) | 1.4 | 15.1 | 5.5 |
+| Command handling, publishing the revisions (pair 2) | 0.7 | 6.9 | 12.2 |
+| Modulation and waveform sampling, both outcomes (pair 2) | 0.7 | 1.9 | 1.1 |
+
+Findings:
+
+- **The extra engine pass is not what misses the deadline.** Rejection at
+  evaluation adds about 0.2 to 1.6 ms of engine time over accepting the same revisions, which
+  is about one ordinary evaluation of these shows. A renderer rejection adds a
+  second render as well; a frame that follows one costs about twice an
+  ordinary frame (mixed rig p50 4.0 to 4.8 ms against 2.2 ms in pair 1).
+- **Compiling every new revision inside the takeover frame does.** About
+  0.45 ms per revision on the mixed rig (0.1 ms on the showcase), so 32
+  revisions took 14 to 16 ms of compiling. A frame now attempts at most 8 new
+  revisions; 32 take over across 4 frames, each compiling 8.
+- **A full compile cache recompiled every running effect in one frame.** The
+  256-entry cache was emptied when full, which added a spike of about 10 ms once
+  the benchmark had published enough revisions. The cache now keeps a retired
+  generation.
+- **The renderer turns down one candidate per frame.** With a reload fallback,
+  each renderer rejection re-evaluates the frame on the fallback inputs and
+  leaves the other candidates pending, so 32 renderer-refused revisions take 32
+  frames of about twice the ordinary cost. That is within the deadline here.
+- **Publishing still costs about 0.1 to 0.4 ms per revision on the owner**
+  depending on load: each publication validates the definition 4 times and
+  calls the scalar compiler 8 times. Under the heavy load of pair 2 the 32
+  publications took 12 ms of the frame, and the frame still exceeded 25 ms in
+  17 of 30 rounds with the fix. That cost does not depend on running instances
+  and is tracked separately.
+
+Excluded: physical output and the output scheduler, Studio/browser load,
+GPU compute, auditions, and frames whose revisions are already compiled.
+Showcase results are in the same reports; at 32 revisions p50 went from 14.0
+to 11.9 ms (accepted) and from 17.0 to 13.9 ms (rejected at evaluation) in pair
+1, with no 8-revision case over 25 ms in pair 1 before the fix.
