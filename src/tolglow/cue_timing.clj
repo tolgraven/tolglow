@@ -31,6 +31,13 @@
 (defn pending [model]
   (mapv #(update % :due-beat double) (quantization/pending (get-in model state-path))))
 
+(defn scheduled-commands
+  "The launch commands waiting for their grid boundary, in intake order, so
+  the owner can prepare what they will need before they fire."
+  [model]
+  (mapv #(get-in % [:request :command])
+        (sort-by #(get-in % [:receipt :order]) (vals (:pending (get-in model state-path))))))
+
 (defn outcomes [model] (get-in model feedback-path []))
 
 (defn source [model id] (quantization/source (get-in model state-path) id))
