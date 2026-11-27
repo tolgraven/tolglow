@@ -377,8 +377,12 @@
                  vec)
       (and priority (free? (:param priority))) (conj [(:param priority) (:schema priority)]))))
 
-(defn- lfo-editor [id param schema base source catalog instance]
-  (let [lfo (source-of source :lfo)]
+(defn- lfo-editor [id param schema base source catalog instance & [{:keys [shown forget!] :as panel}]]
+  ;; From lfo-panel: `shown` is the LFO to edit, the one last seen bound here,
+  ;; so the actions stay mounted (disabled) while the projection briefly
+  ;; lacks it (#795); `current` is what the projection shows now.
+  (let [current (if panel (:current panel) (source-of source :lfo))
+        lfo (if panel shown current)]
     (r/with-let [form (r/atom (editor-draft schema base (:binding lfo) catalog))
                  move (r/atom nil) error (r/atom nil)]
       (let [{:keys [waveform period unit phase-reference phase inputs band dwell dwell-unit]} @form
@@ -460,12 +464,34 @@
          [:div.source-actions
           [:button.button.primary {:type "submit" :disabled (or (:pending? in-flight) (not wave))}
            (cond destination "Move LFO" lfo "Update LFO" :else "Attach LFO")]
-          (when (and lfo (not destination))
+          ;; Kept mounted (disabled) while a change is pending, so a projection
+          ;; that briefly lacks the LFO during the round trip does not remove
+          ;; the buttons under a press.
+          (when (and (or lfo (:pending? in-flight)) (not destination))
             [:<>
-             [:button.button {:type "button" :disabled (:pending? in-flight)
+             [:button.button {:type "button" :disabled (or (:pending? in-flight) (not current))
                               :on-click #(rf/dispatch [(if (:held? lfo) :modulation/resume :modulation/hold) id param])}
               (if (:held? lfo) "Resume LFO" "Use base value")]
-             [:button.button {:type "button" :disabled (:pending? in-flight) :on-click #(rf/dispatch [::unbind id param])} "Detach LFO"]])]]))))
+             [:button.button {:type "button" :disabled (or (:pending? in-flight) (not current))
+                              :on-click #(do (when forget! (forget!)) (rf/dispatch [::unbind id param]))} "Detach LFO"]])]]))))
+
+(defn- lfo-panel
+  "The LFO editor, keyed by the LFO binding last seen here. A projection
+  that briefly lacks the LFO during a round trip neither resets the draft
+  nor unmounts the actions under a press; only this panel's own Detach
+  forgets the binding."
+  [id param schema base source catalog instance]
+  ;; `detaching` is the binding this panel asked to detach: it is not learned
+  ;; again while the projection still shows it, and is let go once it is gone.
+  (r/with-let [known (atom nil) detaching (atom nil)]
+    (let [current (source-of source :lfo)
+          _ (cond (nil? current) (reset! detaching nil)
+                  (not= (:binding current) @detaching) (reset! known current))
+          lfo (or (when (not= (:binding current) @detaching) current) @known)]
+      (with-meta [lfo-editor id param schema base source catalog instance
+                  {:shown lfo :current (when (not= (:binding current) @detaching) current)
+                   :forget! #(do (reset! detaching (:binding @known)) (reset! known nil))}]
+        {:key (pr-str (:binding lfo))}))))
 
 (defn- source-label [{:keys [type binding controller-id source-id controller lane-note source id]}]
   (case (keyword type)
@@ -508,7 +534,7 @@
         (for [[i input] (map-indexed vector (:sources source))]
           ^{:key i} [:span (source-label input)
                      (cond (:held? input) " · using base" (:pending? input) " · awaiting sample") (when-let [error (:error input)] [:span.performance-error {:role "alert"} error])])])
-     ^{:key [id param (:binding (source-of source :lfo))]} [lfo-editor id param typed base source catalog raw]
+     ^{:key [id param]} [lfo-panel id param typed base source catalog raw]
      (when-not priority? [motion/parameter-widget id param schema base])]))
 
 (defn mounted-editor

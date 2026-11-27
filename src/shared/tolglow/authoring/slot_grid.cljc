@@ -71,65 +71,125 @@
         (step 0 #{} (vec cards) 0 [])))))
 
 (defn- first-fit
-  "Authored-order first fit, for banks too large to search."
-  [cols cards]
-  (loop [cards cards occupied #{} placed []]
-    (if-let [{:keys [w h index]} (first cards)]
-      (let [cell (first (filter #(fits? cols #?(:clj Integer/MAX_VALUE :cljs js/Number.MAX_SAFE_INTEGER) occupied % w h) (range)))]
-        (recur (rest cards) (into occupied (cells-of cols cell w h))
-               (conj placed {:index index :col (rem cell cols) :row (quot cell cols) :w w :h h})))
-      placed)))
+  "Authored-order first fit. With `in-order?` no card starts before the card
+  authored ahead of it, so reading order is authored order."
+  ([cols cards] (first-fit cols cards false))
+  ([cols cards in-order?]
+   (loop [cards cards occupied #{} placed [] from 0]
+     (if-let [{:keys [w h index]} (first cards)]
+       (let [cell (first (filter #(fits? cols #?(:clj Integer/MAX_VALUE :cljs js/Number.MAX_SAFE_INTEGER) occupied % w h)
+                                 (iterate inc (if in-order? from 0))))]
+         (recur (rest cards) (into occupied (cells-of cols cell w h))
+                (conj placed {:index index :col (rem cell cols) :row (quot cell cols) :w w :h h})
+                cell))
+       placed))))
 
-(defn- layout [cols cards steps]
+(defn grow-down
+  "Cells after letting each card, in reading order, grow down into rows of
+  the grid that are wholly free under it. No card moves or widens, so card
+  widths keep their meaning; a short card beside a tall one takes the height
+  of the row band it would otherwise leave empty."
+  [{:keys [columns rows cells] :as packed}]
+  (let [owner (fn [cells] (set (for [{:keys [col row w h]} cells dr (range h) dc (range w)] [(+ row dr) (+ col dc)])))]
+    (assoc packed :cells
+           (reduce (fn [cells i]
+                     (let [{:keys [col row w] :as cell} (nth cells i)
+                           taken (owner (concat (subvec cells 0 i) (subvec cells (inc i))))
+                           h (loop [h (:h cell)]
+                               (if (and (< (+ row h) rows)
+                                        (not-any? #(contains? taken [(+ row h) (+ col %)]) (range w)))
+                                 (recur (inc h))
+                                 h))]
+                       (assoc cells i (assoc cell :h h))))
+                   (vec cells) (range (count cells))))))
+
+(defn- quick-layout
+  "Authored-order first fit in `cols` columns, without searching."
+  [cols cards & [in-order?]]
   (let [area (reduce + (map #(* (:w %) (:h %)) cards))
-        tallest (reduce max 1 (map :h cards))
-        fallback (first-fit cols cards)
-        fallback-rows (reduce max 0 (map #(+ (:row %) (:h %)) fallback))
-        ;; Try each row count from the lower bound up to first-fit's; the
-        ;; first that the budget lets the search complete wins.
-        searched (loop [rows (max tallest (quot (+ area cols -1) cols))]
-                   (when (< rows fallback-rows)
-                     (let [found (solve cols rows cards steps)]
-                       (cond (= ::exhausted found) nil
-                             found found
-                             :else (recur (inc rows))))))
-        placed (or searched fallback)
+        placed (first-fit cols cards in-order?)
         rows (reduce max 0 (map #(+ (:row %) (:h %)) placed))]
     {:columns cols :rows rows :empty (- (* cols rows) area)
-     :cells (vec (sort-by (juxt :row :col) placed))}))
+     :cells (vec (sort-by (juxt :row :col) placed)) :exact? false}))
+
+(defn- layout
+  "The exact layout in `cols` columns with the fewest rows, at most
+  `max-rows` (nil when none fits in that many), or first fit when the budget
+  runs out."
+  ([cols cards steps] (layout cols cards steps nil))
+  ([cols cards steps max-rows]
+   (let [area (reduce + (map #(* (:w %) (:h %)) cards))
+         tallest (reduce max 1 (map :h cards))
+         quick (quick-layout cols cards)
+         ceiling (min (:rows quick) (or max-rows (:rows quick)))
+         searched (loop [rows (max tallest (quot (+ area cols -1) cols)) exhausted? false]
+                    (cond (or exhausted? (> rows ceiling)) (when exhausted? ::exhausted)
+                          (= rows (:rows quick)) nil
+                          :else (let [found (solve cols rows cards steps)]
+                                  (cond (= ::exhausted found) (recur rows true)
+                                        found found
+                                        :else (recur (inc rows) false)))))]
+     (cond
+       (sequential? searched)
+       (let [rows (reduce max 0 (map #(+ (:row %) (:h %)) searched))]
+         {:columns cols :rows rows :empty (- (* cols rows) area)
+          :cells (vec (sort-by (juxt :row :col) searched)) :exact? true})
+       (and max-rows (> (:rows quick) max-rows) (not= ::exhausted searched)) nil
+       :else (assoc quick :exact? (not= ::exhausted searched))))))
 
 (defn optimum
   "The fewest empty cells this search finds for `spans` ([w h] each) in
   exactly `cols` columns, and its row count, ignoring order."
   [spans cols]
-  (select-keys (layout cols (map-indexed (fn [i [w h]] {:index i :w w :h h}) spans) (volatile! step-budget))
+  (select-keys (layout cols (vec (map-indexed (fn [i [w h]] {:index i :w w :h h}) spans)) (volatile! step-budget))
                [:empty :rows]))
 
 (defn pack
   "Grid areas for cards with these spans ([columns rows] each, authored
   order) on a grid of at most `max-columns` columns:
-  {:columns c :rows r :empty n :cells [{:index :col :row :w :h} ...]}, cells
-  in reading order (`:index` is the card's authored position, `:col` and
-  `:row` count from zero). Of the column counts between the widest card and
-  `max-columns`, it takes those giving the fewest rows, and of those the
-  narrowest, which also leaves the fewest empty cells. With
-  `{:exact-columns? true}` it uses exactly `max-columns` (or the widest card
-  if wider): for a board whose tracks are fractions of its width, so a
-  card's width never depends on its siblings."
+  {:columns c :rows r :empty n :exact? bool :cells [{:index :col :row :w :h} ...]},
+  cells in reading order (`:index` is the card's authored position, `:col`
+  and `:row` count from zero). Of the column counts between the widest card
+  and `max-columns`, it takes those giving the fewest rows, and of those the
+  narrowest, which also leaves the fewest empty cells. The widest count is
+  searched first, where the fewest rows usually are, and a narrower count is
+  only tried for the same height, so the step budget goes where it matters.
+  Options:
+  - `:exact-columns?` uses exactly `max-columns` (or the widest card if
+    wider): for a board whose tracks are fractions of its width, so a card's
+    width never depends on its siblings;
+  - `:quick?` places first-fit in authored order without searching, for a
+    first render while the exact result is computed later. `:exact?` in the
+    result says whether the search completed;
+  - `:in-order?` never places a card before one authored ahead of it, so
+    reading order is authored order (a macro board the operator arranges)."
   ([spans max-columns] (pack spans max-columns nil))
-  ([spans max-columns {:keys [exact-columns?]}]
+  ([spans max-columns {:keys [exact-columns? quick? in-order?]}]
    (let [cards (vec (map-indexed (fn [i [w h]] {:index i :w (max 1 w) :h (max 1 h)}) spans))
          narrowest (reduce max 1 (map :w cards))
          area (reduce + (map #(* (:w %) (:h %)) cards))
          widest (max narrowest (or max-columns narrowest))
+         capped (max narrowest (min widest (max area 1)))
          steps (volatile! step-budget)]
      (cond
-       (empty? cards) {:columns (if exact-columns? (max 1 (or max-columns 1)) 1) :rows 0 :empty 0 :cells []}
+       (empty? cards) {:columns (if exact-columns? (max 1 (or max-columns 1)) 1) :rows 0 :empty 0 :cells [] :exact? true}
+       in-order? (assoc (quick-layout (if exact-columns? widest capped) cards true) :exact? true)
+       (and quick? exact-columns?) (quick-layout widest cards)
+       quick? (quick-layout capped cards)
        exact-columns? (layout widest cards steps)
-       :else (->> (range narrowest (inc (max narrowest (min widest (max area 1)))))
-                  (map #(layout % cards steps))
-                  (sort-by (juxt :rows :columns))
-                  first)))))
+       :else
+       (loop [cols capped best nil]
+         (if (< cols narrowest)
+           best
+           (let [floor-rows (max (reduce max 1 (map :h cards)) (quot (+ area cols -1) cols))]
+             (if (and best (> floor-rows (:rows best)))
+               best
+               (let [candidate (layout cols cards steps (some-> best :rows))]
+                 (recur (dec cols)
+                        (cond (nil? candidate) best
+                              (nil? best) candidate
+                              (<= (:rows candidate) (:rows best)) (assoc candidate :exact? (and (:exact? candidate) (:exact? best)))
+                              :else best)))))))))))
 
 #?(:cljs
    (defn ^:export pack-js

@@ -44,7 +44,7 @@
   (is (= [1 1 0] ((juxt :columns :rows :empty) (grid/pack [[1 1]] 9))) "one knob takes one column, not nine")
   (is (= [2 2 0] ((juxt :columns :rows :empty) (grid/pack [[2 2]] 9))))
   (is (= 2 (:columns (grid/pack [[2 1]] 1))) "a wide card still gets two columns")
-  (is (= {:columns 1 :rows 0 :empty 0 :cells []} (grid/pack [] 4))))
+  (is (= {:columns 1 :rows 0 :empty 0 :cells [] :exact? true} (grid/pack [] 4))))
 
 (defn- brute-force-rows
   "The fewest rows any arrangement of `spans` fits in `cols` columns, by
@@ -115,3 +115,36 @@
       (is (< ms 2000) (str ms " ms"))
       (is (= 24 (count (:cells packed))))
       (is (every? #(= 1 %) (vals (occupancy packed)))))))
+
+(deftest the-budget-goes-to-the-widest-counts-first
+  (testing "200 random banks of 13-24 cards match an effectively unlimited search"
+    (let [r (java.util.Random. 795)
+          shapes [[1 1] [1 1] [1 1] [2 1] [2 2]]]
+      (doseq [_ (range 200)
+              :let [spans (vec (repeatedly (+ 13 (.nextInt r 12)) #(nth shapes (.nextInt r 5))))
+                    cols (+ 4 (.nextInt r 5))
+                    packed (grid/pack spans cols)
+                    reference (with-redefs [grid/step-budget 3000000] (grid/pack spans cols))]]
+        (is (= ((juxt :rows :columns) reference) ((juxt :rows :columns) packed)) [spans cols])))))
+
+(deftest a-quick-pack-is-first-fit-in-authored-order
+  (let [{:keys [cells exact?]} (grid/pack widget-study 4 {:quick? true})]
+    (is (false? exact?))
+    (is (= (range 5) (sort (map :index cells))))
+    (is (= 0 (:index (first cells))))))
+
+(deftest an-arranged-board-reads-in-stored-order
+  (testing "M, L, S on two tracks: nothing backfills past an earlier card"
+    (let [{:keys [cells]} (grid/pack [[1 2] [2 3] [1 1]] 2 {:exact-columns? true :in-order? true})]
+      (is (= [0 1 2] (map :index cells)))
+      (is (= [[0 0] [0 2] [0 5]] (map (juxt :col :row) cells)))))
+  (testing "M, S beside it: the short card grows down into the band it would leave empty"
+    (let [packed (grid/pack [[1 2] [1 1] [2 3]] 2 {:exact-columns? true :in-order? true})
+          grown (grid/grow-down packed)]
+      (is (= [[0 0 1 2] [1 0 1 1] [0 2 2 3]] (map (juxt :col :row :w :h) (:cells packed))))
+      (is (= [[0 0 1 2] [1 0 1 2] [0 2 2 3]] (map (juxt :col :row :w :h) (:cells grown))))
+      (is (every? #(= 1 %) (vals (occupancy grown))))))
+  (testing "growing never widens a card"
+    (let [grown (grid/grow-down (grid/pack [[3 2] [2 1]] 6 {:exact-columns? true :in-order? true}))]
+      (is (= [3 2] (map :w (:cells grown))))
+      (is (= [2 2] (map :h (:cells grown)))))))
