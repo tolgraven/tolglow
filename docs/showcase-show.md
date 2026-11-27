@@ -287,7 +287,9 @@ CHROMIUM_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
 ```
 
 The first command replays the timeline with the capture sink and writes
-`rig.json`, `frames.ndjson` and `meta.json`. Each frame holds the bounded
+`rig.json`, `frames.ndjson` and `meta.json`. Its optional fourth and fifth
+arguments are the seed and a timeline from `showcase/timelines`, for example
+`target/after-hours-clip 2 12.5 656 after-hours`. Each frame holds the bounded
 `[:output :values]` rows and atmosphere that Studio sends the Room. The second
 loads the released `resources/studio/preview.js` in headless Chrome with the
 machine's GPU (`--use-angle=metal` on a Mac). It replays every frame in order
