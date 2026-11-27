@@ -40,7 +40,9 @@ accepted baseline. Connection failures request a fresh full view on reconnect.
 
 ## State and concurrency
 
-The frontend stores the authoritative `{token, view}` in `:server-projection`.
+The frontend stores the authoritative `{token, view}` in `:server-projection`,
+apart from high-rate frame lanes held outside app-db at the same token (see
+[browser frame lanes](state-stream.md#browser-frame-lanes)).
 It applies pending human parameter drafts only to `:show`, after patching the
 server baseline. A server delta cannot accidentally include an unacknowledged
 knob value as its base. Drafts retire when their acknowledged revision arrives.

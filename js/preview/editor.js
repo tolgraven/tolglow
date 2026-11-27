@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 import {sculptHandles} from './sculpt.js';
 import {rotateFixture} from './math.js';
+import {pickPlacement} from './placement.js';
+
+/** Tools whose gesture is a single tap: a drag or second finger cancels it. */
+export const tapTools = new Set(['aim', 'place', 'calibrate']);
 
 export const planeAxis = plane => ({xz: 1, xy: 2, yz: 0}[plane] ?? 1);
 export const editorIdentity = snapshot => JSON.stringify([snapshot?.['runtime-id'], snapshot?.['show-id'], snapshot?.epoch]);
@@ -117,11 +121,11 @@ export class RigEditorInput {
       this.engine.setInteractionActive?.(true);
     } else if (!active && this.interacting) this.engine.setInteractionActive?.(this.previousInteraction);
     this.interacting = active;
-    this.canvas.style.cursor = !active ? '' : ['draw', 'pixels', 'aim'].includes(snapshot.editor.tool) ? 'crosshair' : 'grab';
+    this.canvas.style.cursor = !active ? '' : ['draw', 'pixels', ...tapTools].includes(snapshot.editor.tool) ? 'crosshair' : 'grab';
   }
   down(event) {
     const e = this.snapshot?.editor;
-    if (this.gesture?.tool === 'aim' && event.pointerId !== this.gesture.pointer) {
+    if (tapTools.has(this.gesture?.tool) && event.pointerId !== this.gesture.pointer) {
       // Adding a finger turns the gesture into a multi-touch interaction.
       this.gesture.dragged = true;
       event.preventDefault(); event.stopImmediatePropagation();
@@ -129,8 +133,8 @@ export class RigEditorInput {
     }
     if (!e || e.tool === 'navigate' || event.button !== 0 || this.gesture) return;
     event.preventDefault(); event.stopImmediatePropagation(); this.canvas.focus();
-    if (e.tool === 'aim') {
-      this.gesture = {tool: 'aim', token: ++this.sequence, pointer: event.pointerId,
+    if (tapTools.has(e.tool)) {
+      this.gesture = {tool: e.tool, token: ++this.sequence, pointer: event.pointerId,
         x: event.clientX, y: event.clientY, dragged: false};
       this.canvas.setPointerCapture(event.pointerId);
       return;
@@ -186,7 +190,7 @@ export class RigEditorInput {
       }
       return;
     }
-    if (g.tool === 'aim') {
+    if (tapTools.has(g.tool)) {
       if (Math.hypot(event.clientX - g.x, event.clientY - g.y) > 10) g.dragged = true;
       return;
     }
@@ -197,10 +201,16 @@ export class RigEditorInput {
     if (!this.gesture || event.pointerId !== this.gesture.pointer) return;
     event.preventDefault(); event.stopImmediatePropagation();
     const g = this.gesture;
-    if (g.tool === 'aim') {
+    if (tapTools.has(g.tool)) {
       if (!cancelled && !g.dragged && Math.hypot(event.clientX - g.x, event.clientY - g.y) <= 10) {
-        const hit = pickSurface(this.snapshot, this.engine.camera, this.canvas.getBoundingClientRect(), event.clientX, event.clientY);
-        this.emit(hit ? 'surface' : 'missed-surface', hit || {});
+        const bounds = this.canvas.getBoundingClientRect();
+        if (g.tool === 'place') {
+          const hit = pickPlacement(this.snapshot, this.engine.camera, bounds, event.clientX, event.clientY);
+          this.emit(hit ? 'place' : 'missed-place', hit || {});
+        } else {
+          const hit = pickSurface(this.snapshot, this.engine.camera, bounds, event.clientX, event.clientY);
+          this.emit(hit ? 'surface' : 'missed-surface', hit || {});
+        }
       }
     } else if (g.tool === 'throw') {
       if (!cancelled && Math.hypot(event.clientX - g.x, event.clientY - g.y) >= 8) {
