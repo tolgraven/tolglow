@@ -65,6 +65,7 @@
 /* A strip fader gives its whole slot to the track; its value is in the title
    and its bounds in its accessible range. */
 #view-perform [data-slot-grid=strip] .param-row>.parameter-number-layout .fader-bound { display: none; }
+#view-perform [data-slot-grid=strip] .param-row>.parameter-number-layout>.parameter-fader { grid-template-rows: minmax(0, 1fr); padding-block: 8px; }
 /* Detail keeps the slider and exact entry beside the knob or fader. */
 #view-perform [data-slot-grid=detail] .param-row>.parameter-number-layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 #view-perform [data-slot-grid=detail] .parameter-number-layout>.parameter-rotary-control { width: min(50cqw - 2px, 100cqh * 100 / 94); }

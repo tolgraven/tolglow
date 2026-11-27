@@ -22,8 +22,14 @@ function measure(surface) {
         const r = el.getBoundingClientRect();
         return r.width > 0 && r.height > 0 && !el.closest('[popover]');
       });
+      // A control keeps a usable size inside its slot: a fader track at least
+      // 40px long, any other slider at least 32px each way.
+      const cramped = [...card.querySelectorAll('.fader-track')].filter(t => t.getBoundingClientRect().height < 40).length
+        + [...card.querySelectorAll('[role=slider]:not(.parameter-fader)')].filter(el => {
+          const r = el.getBoundingClientRect(); return r.width > 0 && (r.width < 32 || r.height < 32);
+        }).length;
       return {
-        param: card.dataset.param || card.dataset.group, control: card.dataset.control, slot: card.dataset.slot,
+        param: card.dataset.param || card.dataset.group, control: card.dataset.control, slot: card.dataset.slot, cramped,
         expanded: Boolean(card.querySelector('.parameter-rings.open, .parameter-visualizer')),
         box: box(card),
         controls: controls.map(el => {
@@ -81,6 +87,7 @@ export function checkBanks(banks, where) {
       assert.ok(near(card.box.w, expected[0] * unit + (expected[0] - 1) * bank.columnGap), `${id}: whole slot width`);
       assert.ok(near(card.box.h, expected[1] * row + (expected[1] - 1) * bank.rowGap), `${id}: whole slot height`);
       assert.ok(card.col >= 0 && card.col + card.span[0] <= bank.columns.length, `${id}: inside the grid columns`);
+      assert.equal(card.cramped, 0, `${id}: its controls keep a usable size in the slot`);
       for (let r = 0; r < card.span[1]; r++) for (let c = 0; c < card.span[0]; c++) {
         const cell = `${card.row + r}:${card.col + c}`;
         assert.ok(!occupied.has(cell), `${id}: shares no slot`);
