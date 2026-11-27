@@ -285,7 +285,10 @@ and the controller's seed, ticks, anchor and cells are then those of a show
 that never published the rejected revision. An accepted revision still
 switches its controller once, on the takeover frame. The show owner supplies
 the fallback only when the two outcomes differ, so an ordinary hot reload keeps
-the engine's single pass. See Afterglow's
+the engine's single pass. Spatial cue fields are the other input that can
+differ between the outcomes, and readers that commit before the engine
+(spatial cues, autopilot) take the last-good samples while a reload is
+pending ([effect failure isolation](effect-fault-isolation.md)). See Afterglow's
 [effect failure isolation](../../afterglow/doc/architecture/effect-fault-isolation.md#frame-inputs-that-follow-a-candidate).
 
 Beat-clock [ramp overlays](scheduler.md#ramp-semantics) do not follow a

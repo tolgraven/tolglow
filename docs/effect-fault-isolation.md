@@ -25,7 +25,7 @@ one already-evaluated result removed; healthy effect code is never run twice.
 | Current version throws or returns invalid output | Preserve committed state; discard attempt; store `:fault`; suppress version |
 | New candidate fails preparation, compile or evaluation | Store `:reload-fault`; evaluate captured last-good code in the same frame |
 | Renderer rejects a candidate | Drop its attempt this frame; captured code resumes next frame |
-| Candidate that modulation follows is rejected at any stage | Every instance renders its captured revision with the last-good modulation in the same frame; other reloads of that frame wait one frame |
+| Candidate that modulation or a spatial cue follows is rejected at any stage | Every instance renders its captured revision with the last-good modulation and spatial fields in the same frame; other reloads of that frame wait one frame |
 | New valid version with preserve/restart policy | Adopt using the existing state/time policy and emit recovery |
 | Explicit Retry | Try the same version with current parameters and retained state |
 | Faulted one-shot/release reaches deadline | Finish normally; quarantine does not make instances immortal |
@@ -56,6 +56,26 @@ accept. A candidate that refuses a ramped parameter's committed value, its
 frame value or its target is rejected at preparation. See
 [modulation](modulation.md#a-frame-with-a-pending-hot-reload) and
 [scheduler](scheduler.md#ramp-semantics).
+
+Spatial cues have the same shape of problem with more at stake: the spatial
+pass runs before the engine and shapes the model (scene member leases, ball
+bodies, contacts) as well as frame inputs (aim points, sourced parameters)
+and the native-layer masks applied after the engine. It therefore reads the
+revision each cue runs and commits that frame. While a reload is pending it
+also prepares the candidate's fields, from the candidate's definition and the
+candidate's waveform samples, without committing them. When they differ, the
+owner hands the engine the committed aim points, parameter fields and group
+levels as part of its reload fallback and applies the masks of whichever input
+set the engine reports in `:reload-inputs`. A rejected revision then leaves
+DMX, the spatial view and the member leases as a twin show that never
+published it; an accepted one paints its new field on its takeover frame,
+where the owner also publishes the candidate's scene view, and member leases
+and bodies follow it from the next frame. Standalone and managed HDR values
+apply after the engine, so the owner prepares them from both sample sets and
+picks by `:reload-inputs` as it does the masks. Autopilot decisions are the
+exception: they edit the model before the engine runs, so they read the
+running revisions' samples while a reload is pending and reach an accepted
+candidate one frame later. See [spatial cues](spatial-show.md).
 
 Full backups preserve faults and event history. Restore remaps active diagnostic
 instance IDs/epochs; historical events remain historical evidence. Restore does
