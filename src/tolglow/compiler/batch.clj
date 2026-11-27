@@ -80,7 +80,7 @@
             (fail! [:outputs attribute :value]
                    (if geometric? "World coordinates must be finite"
                        "Computed fixture output must be finite and within [0,1]")))
-          (when scale? (aset-double values index value))))))
+          (when scale? (aset values index value))))))
   outputs)
 
 (defn- contribution [{:keys [target-ids evaluate blend prepared expressions]} env envelope-result envelope-attributes hdr?]
@@ -207,7 +207,7 @@
              (let [now (:time-ms frame), start (:started-at-ms instance 0)
                    _ (when-not (and (registry/finite-number? now) (registry/finite-number? start))
                        (fail! [:frame :time-ms] "Effect frame/start time must be finite milliseconds"))
-                   params (expand-gradients (registry/resolve-params schemas (merge defaults (:params instance))))
+                   params (expand-gradients (registry/resolve-accepted-params schemas defaults (:params instance)))
                    params (if block-plan (blocks/with-variables block-plan params frame) params)
                    releasing? (= :releasing (:phase instance))
                    clock (time/frame-clock frame)

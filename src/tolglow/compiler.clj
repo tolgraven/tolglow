@@ -232,7 +232,7 @@
             start (:started-at-ms instance 0)
             _ (when-not (and (registry/finite-number? now) (registry/finite-number? start))
                 (fail! [:frame :time-ms] "Effect frame/start time must be finite milliseconds"))
-            params (registry/resolve-params schemas (merge defaults (:params instance)))
+            params (registry/resolve-accepted-params schemas defaults (:params instance))
             ;; Expand each sampled gradient's stops per changed value, never per fixture.
             params (expand-gradients params)
             params (if block-plan (blocks/with-variables block-plan params frame) params)

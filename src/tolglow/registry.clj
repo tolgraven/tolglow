@@ -204,6 +204,19 @@
       (throw (ex-info "Invalid parameter values" {:errors errors})))
     values))
 
+(defn resolve-accepted-params
+  "Merge overrides over `defaults`, the result of `(resolve-params schemas
+  {})`, and validate the values. Returns what `(resolve-params schemas (merge
+  defaults overrides))` returns and throws the same error. That call already
+  accepted these schemas, so they are not validated again: a compiled effect
+  resolves parameters on every frame for every instance."
+  [schemas defaults overrides]
+  (let [values (merge defaults (or overrides {}))
+        errors (validate-params schemas values)]
+    (when (seq errors)
+      (throw (ex-info "Invalid parameter values" {:errors errors})))
+    values))
+
 (defn cue-effect
   "Resolve the effect version a cue will launch, including an explicit pin."
   [registry cue]
