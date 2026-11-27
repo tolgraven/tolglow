@@ -95,10 +95,11 @@ revisions, or one revision launched on 64 heads, made that frame miss the
     gives 500 ms of lead.
 
   The worker rebuilds that list from the immutable model snapshot whenever
-  the registry, rig, settings or recorded takes change; the owner only
+  the registry, rig, scene groups or recorded takes change; the owner only
   compares identities. Each cue's selection is resolved once per cue value,
-  rig and settings. Scheduled launches are added one by one as they are
-  queued. This warm tier is sized by the registry, about 55 KB per program on
+  rig and scene groups, which is all a selection reads, so unrelated settings
+  writes resolve nothing again. Scheduled launches are added one by one as
+  they are queued; after 256 additions the next frame rebuilds the tier. This warm tier is sized by the registry, about 55 KB per program on
   the mixed rig, and is kept apart from the 256-entry cache: programs leaving
   it are dropped, so they never evict a running instance's program. Volume
   selections follow moving volumes and are not warmed.
@@ -111,8 +112,11 @@ revisions, or one revision launched on 64 heads, made that frame miss the
   on the same frame. A launch of that effect in the meantime starts on the
   revision its running instances use, compiling at most its own program, and
   adopts the new revision with them, so no frame runs two revisions of one
-  effect. A pinned launch never reloads, so it starts on the revision it
-  captured. So does a launch whose values do not fit the older revision.
+  effect. It does so only when nothing is lost: every value the older revision
+  has must resolve there unchanged, and every value only the newer revision
+  has, from the launch or the cue's saved values, must be its default. A
+  launch that would lose a value, and a pinned launch, start on the revision
+  they captured.
 - **Order and supersession.** The worker runs first in first out. It skips a
   compile that no frame still needs, such as a superseded revision.
 - **Compile failures.** Every compile failure is kept and met once, and
@@ -121,8 +125,9 @@ revisions, or one revision launched on 64 heads, made that frame miss the
   - A StackOverflowError is kept as a plain failure naming it, because the
     stack has unwound and the overflow belongs to that definition's nesting.
   - Any other VM error, such as an out-of-memory error, is rethrown on the
-    owner and fails the frame, as an inline compile would.
-  - A CancellationException is retried once.
+    owner once and then forgotten, so that frame fails as an inline compile
+    would and the next request compiles again.
+  - A CancellationException is retried once, then treated like a VM error.
 - **Events.** Each `:effect/reloaded` event carries `:pending-since-frame` and
   `:adopted-frame`.
 - **Where compiles stay on the owner.**

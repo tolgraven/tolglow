@@ -669,21 +669,56 @@
     (is (thrown? java.util.concurrent.CancellationException (programs/compile! context program))
         "A second one is kept and rethrown on the owner")))
 
-(deftest an-out-of-memory-error-while-compiling-fails-the-frame-as-before
-  ;; Not attributed to the revision: the owner meets the original error.
-  (let [s (show 1)]
+(deftest an-out-of-memory-error-while-compiling-fails-one-frame-then-recovers
+  ;; Not attributed to the revision: the owner meets the original error once,
+  ;; as an inline compile would, and the next request compiles again.
+  (doseq [inline? [false true]]
+    (testing (if inline? "inline" "worker")
+      (let [s (show 1 {:inline? inline?})
+            failures (atom 1)]
+        (try
+          (let [t (launch-all! s 1 nil)]
+            (swap! (:compiler-context (:rt s)) update :compiler
+                   (fn [compiler] (fn [program]
+                                    (when (and (= [:probe-0 2] [(:id program) (:version program)]) (pos? @failures))
+                                      (swap! failures dec)
+                                      (throw (OutOfMemoryError. "test")))
+                                    (compiler program))))
+            (show/submit! (:rt s) :definition {:kind :effects :definition (probe 0 2 {:outputs {:dimmer {:op :const :value 1.0}}})})
+            (let [outcomes (mapv (fn [k] (work! s)
+                                   (try (tick! s (+ t (* 25 k))) :ok (catch OutOfMemoryError _ :oom)))
+                                 (range 8))]
+              (is (= 1 (count (filter #{:oom} outcomes))) "One frame fails")
+              (is (every? #{:ok} (drop 3 outcomes)) "Later frames render")
+              ;; Inline, the error escapes the owner cycle that admitted the
+              ;; publication, which is then not committed, as on master.
+              (if inline?
+                (is (= [(get-in (model s) [:registry :effects :probe-0 :version])] (versions s 1)))
+                (do (is (= [2] (versions s 1)) "The revision adopts once it compiles")
+                    (is (= 255 (first (dimmers s 1))))))
+              (is (nil? (get-in (instances s) [:probe-0 :reload-fault])) "No permanent refusal")))
+          (finally (stop! s)))))))
+
+(deftest a-second-cancellation-fails-one-frame-then-recovers
+  (let [s (show 1)
+        cancels (atom 2)]
     (try
       (let [t (launch-all! s 1 nil)]
         (swap! (:compiler-context (:rt s)) update :compiler
-               (fn [compiler] (fn [program] (if (= [:probe-0 2] [(:id program) (:version program)])
-                                              (throw (OutOfMemoryError. "test"))
-                                              (compiler program)))))
-        (publish! s [(probe 0 2)] t)
-        (work! s)
-        (is (thrown? OutOfMemoryError (tick! s (+ t 25))))
-        (is (nil? (get-in (instances s) [:probe-0 :reload-fault])) "No permanent refusal of the revision"))
+               (fn [compiler] (fn [program]
+                                (when (and (= [:probe-0 2] [(:id program) (:version program)]) (pos? @cancels))
+                                  (swap! cancels dec)
+                                  (throw (java.util.concurrent.CancellationException. "test")))
+                                (compiler program))))
+        (publish! s [(probe 0 2 {:outputs {:dimmer {:op :const :value 1.0}}})] t)
+        (let [frames (mapv (fn [k] (work! s) (tick! s (+ t (* 25 (inc k))))
+                             [(get-in (model s) [:frame-number]) (some? (get-in @(:state (:rt s)) [:status :error]))])
+                           (range 10))]
+          (is (= 1 (count (filter second frames))) "One frame fails")
+          (is (apply < (map first (drop 3 frames))) "Later frames advance")
+          (is (= [2] (versions s 1)))
+          (is (= 255 (first (dimmers s 1))))))
       (finally (stop! s)))))
-
 (deftest a-pad-press-resolves-no-cue-selection-on-the-owner
   ;; Twenty selector cues. Scheduling a grid launch must not resolve them on
   ;; the frame owner, and editing one cue re-resolves only that cue.
@@ -714,7 +749,8 @@
                                                                                   (dissoc :version)
                                                                                   (assoc :selector {:fixture-ids [(head 1)]}))}))))
         (work! s)
-        (is (= [[:worker :sel-5]] @resolutions) "Editing one cue re-resolves only that cue")
+        (is (= [[:worker :sel-5] [:worker :sel-3]] @resolutions)
+            "Editing one cue re-resolves only that cue, plus the launch still scheduled")
         (finally (stop! s))))))
 
 (deftest a-running-program-served-from-the-warm-tier-survives-a-rebuild
@@ -737,3 +773,69 @@
       (is (= :evaluate (get-in (instances s) [:probe-0 :reload-fault :stage])))
       (is (= [] (filterv #(= :frame (first %)) @(:compiled s))) "Nothing compiled in a frame")
       (finally (stop! s)))))
+
+(deftest an-unrelated-settings-change-resolves-no-cue-again
+  (let [cues (into {} (for [i (range 20)]
+                        [(keyword (str "sel-" i)) {:id (keyword (str "sel-" i)) :version 1 :effect-id :probe-0
+                                                   :selector {:fixture-ids [(head (mod i 8))]}}]))
+        s (show 1 {:model (-> (show-model 1)
+                              (assoc-in [:registry :effects :probe-0] (assoc (probe 0 1) :targets (mapv head (range 8))))
+                              (update-in [:registry :cues] merge cues))})
+        resolve-command targets/resolve-command
+        resolutions (atom [])]
+    (with-redefs [targets/resolve-command (fn [model command]
+                                            (swap! resolutions conj (:cue-id command))
+                                            (resolve-command model command))]
+      (try
+        (tick! s 0)
+        (work! s)
+        (reset! resolutions [])
+        (is (= :accepted (:status (request! s 25 :settings {:scope :output :values {:presentation {:mode :hold-fade :fade-ms 100}}}))))
+        (work! s)
+        (tick! s 50)
+        (work! s)
+        (is (= [] @resolutions) "No cue selection is resolved again")
+        (finally (stop! s))))))
+
+(deftest a-launch-keeps-values-the-older-revision-cannot-hold
+  ;; Version 2 adds :gain. A launch asking for gain 0.2, or a cue whose saved
+  ;; values set it, cannot start on version 1 without losing it, so it keeps
+  ;; the revision it captured; a launch that only uses the defaults starts on
+  ;; version 1 and adopts with its sibling.
+  (let [v2 (-> (probe 0 2) (assoc-in [:params :gain] {:type :number :default 1.0 :bounds [0.0 1.0]})
+               (assoc :outputs {:dimmer {:op :multiply :args [(param :level) (param :gain)]}}))]
+    (doseq [[label launch cue-update expected] [["launch value" {:params {:gain 0.2}} identity [1 2]]
+                                                ["saved cue value" {} #(assoc % :saved-params {:gain 0.3}) [1 2]]
+                                                ["defaults only" {} identity [1 1]]]]
+      (testing label
+        (let [s (show 1)]
+          (try
+            (let [t (launch-all! s 1 nil)]
+              (publish! s [v2] t)
+              (when-not (= identity cue-update)
+                (is (= :accepted (:status (request! s (+ t 25) :command {:op :cue/put :cue (dissoc (cue-update (get-in (model s) [:registry :cues :probe-0])) :version)})))))
+              (show/submit! (:rt s) :command {:op :cue/launch :cue-id :probe-0 :launch (assoc launch :reload-policy :preserve-state)})
+              (tick! s (+ t 50))
+              (is (= expected (map first (rendered s :probe-0))))
+              (work! s)
+              (tick! s (+ t 75))
+              (is (= [2 2] (map first (rendered s :probe-0))) "Both run version 2 once it is compiled")
+              (let [launched (last (sort-by :order (filter #(= :probe-0 (:effect-id %)) (vals (:instances (model s))))))]
+                (is (= (case label "launch value" 0.2 "saved cue value" 0.3 "defaults only" 1.0)
+                       (get-in launched [:params :gain])) "The launch keeps its value")))
+            (finally (stop! s))))))))
+
+(deftest a-cancellation-is-forgotten-once-no-frame-wants-the-program
+  (let [tasks (atom []) attempts (atom 0)
+        context (programs/context (fn [program] (swap! attempts inc) (throw (java.util.concurrent.CancellationException. "cancelled")))
+                                  (fn [task] (swap! tasks conj task)))
+        run! #(loop [] (when-let [queued (seq @tasks)] (reset! tasks []) (doseq [t queued] (t)) (recur)))
+        program (probe 0 2)]
+    (programs/request! context [program])
+    (run!)
+    (programs/request! context [])
+    (programs/request! context [program])
+    (run!)
+    (is (= 2 @attempts))
+    (is (not (programs/ready? context program))
+        "A superseded program's earlier cancellation does not count against a later request")))

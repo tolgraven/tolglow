@@ -35,7 +35,7 @@
    :ready (atom {}) :warm (atom {}) :queued (atom #{}) :cancelled (atom #{})
    :wanted (atom #{}) :warm-wanted (atom #{}) :live (atom true)
    ;; Owner only: what the warm tier was last built from.
-   :warm-key (atom ::none) :scheduled-seen (atom #{})
+   :warm-key (atom ::none) :scheduled-seen (atom #{}) :scheduled-added (atom 0)
    ;; Worker only: each cue's resolved selection, by cue value and rig.
    :resolutions (atom {})})
 
@@ -59,13 +59,25 @@
     (reset! cache {}))
   (swap! cache assoc program step))
 
+(defn- transient-failure?
+  "A failure kept only until the owner meets it once, such as an
+  out-of-memory error: it is thrown on that frame and then forgotten, so the
+  next request compiles again, as an inline compile would."
+  [step]
+  (and (map? step) (contains? step ::transient)))
+
 (defn compile!
   "The owner's compiler: return the compiled step for `program`. A full cache
   becomes the retired generation, and a program found there or among the
   worker's results or the warm tier is cached without compiling again. A
-  failure the worker met is thrown here, once per
-  use, as an inline compile would throw it, and is never compiled again."
+  failure the worker kept that refuses the revision is thrown on every use and
+  never compiled again; a transient one is thrown once and dropped."
   [{:keys [compiler cache warm retired ready] :as context} program]
+  (when-let [[_ step] (or (find @ready program) (find @warm program))]
+    (when (transient-failure? step)
+      (swap! ready dissoc program)
+      (swap! warm dissoc program)
+      (throw (::transient step))))
   (let [step (if-let [[_ step] (find @cache program)]
                step
                ;; A warm program a frame uses is cached too, so it stays
@@ -89,13 +101,16 @@
   - a recoverable failure refuses the revision at :compile;
   - a StackOverflowError is kept as a plain failure naming it, because the
     stack has unwound and the overflow belongs to this definition's nesting;
-  - any other VM error is kept as it is, so `compile!` rethrows it on the
-    owner and the frame fails as an inline compile would;
-  - a CancellationException is retried once, then kept as it is;
+  - any other VM error is kept as transient: `compile!` rethrows it on the
+    owner once, so that frame fails as an inline compile would, and the next
+    request compiles again;
+  - a CancellationException is retried once, then kept as transient;
   - an interrupt is rethrown on the owner, and on the worker leaves the
     program uncompiled."
   [{:keys [compiler cancelled]} program owner?]
-  (try (compiler program)
+  (try (let [step (compiler program)]
+         (swap! cancelled disj program)
+         step)
        (catch Throwable error
          (cond
            (interrupted? error) (if owner?
@@ -107,7 +122,8 @@
            (ex-info (str "Compiling this revision failed: java.lang.StackOverflowError"
                          (when-let [message (.getMessage error)] (str ": " message)))
                     {:compile-failure "java.lang.StackOverflowError"})
-           :else error))))
+           (runtime-faults/recoverable? error) error
+           :else (do (swap! cancelled disj program) {::transient error})))))
 
 (defn- enqueue! [{:keys [submit queued live] :as context} program store!]
   (when-not (contains? @queued program)
@@ -127,10 +143,13 @@
   first in first out; a worker skips one no frame has asked for since it was
   queued, such as a superseded revision. Without a worker they are compiled
   now. Results no frame needs any more are dropped."
-  [{:keys [ready wanted warm warm-wanted] :as context} programs]
-  (let [needed (into [] (comp (distinct) (remove #(ready? context %))) programs)]
+  [{:keys [ready wanted warm warm-wanted cancelled] :as context} programs]
+  (let [needed (into [] (comp (distinct) (remove #(ready? context %))) programs)
+        asked (set programs)]
     (reset! wanted (set needed))
     (swap! ready select-keys programs)
+    ;; A cancellation is forgotten once no frame or warm entry wants it.
+    (swap! cancelled (fn [c] (into #{} (filter #(or (contains? asked %) (contains? @warm-wanted %))) c)))
     (doseq [program needed]
       (enqueue! context program
                 (fn [compile]
@@ -162,7 +181,8 @@
 (defn warm!
   "Rebuild the warm tier when `key` changes. `build` returns the programs to
   keep warm; it runs on the worker over immutable snapshots, before the
-  compiles it queues, so the owner only compares the key and submits. The
+  compiles it queues, so the owner only compares the key and submits; true
+  when it submitted a rebuild. The
   tier keeps only what `build` returns. Programs leaving it are dropped and
   never touch the cache, so a large rebuild cannot evict the programs running
   instances use. Only a context with a worker warms."
@@ -174,7 +194,8 @@
                   (let [programs (vec (distinct (build)))]
                     (reset! warm-wanted (set programs))
                     (swap! warm select-keys programs)
-                    (warm-each! context programs))))))
+                    (warm-each! context programs))))
+    true))
 
 (defn warm-more!
   "Add programs to the warm tier without rebuilding it, such as launches just
@@ -275,15 +296,24 @@
       (plan-held model framed waits frame (sort-by :order pending) (sort-by :order fresh)))))
 
 (defn- downgrade
-  "`launch` started on `sibling`'s revision, or nil when its values do not fit
-  that revision. A pinned launch keeps the revision it captured."
+  "`launch` started on `sibling`'s revision, or nil when that would lose any of
+  its values. The launch resolved its values (launch and cue overrides, saved
+  values, defaults) against the revision it captured. It may start on the
+  older revision only if every value the older revision has resolves there
+  unchanged, and every value only the newer revision has is that revision's
+  default, which adoption adds back. Otherwise, and for a pinned launch, it
+  keeps the revision it captured."
   [launch sibling]
   (when (not= :pinned (:reload-policy launch :pinned))
-    (let [old (:definition sibling)
-          schemas (:params old {})]
-      (when-let [values (try (params/resolve-values schemas (select-keys (:params launch) (keys schemas)))
-                             (catch Exception _ nil))]
-        (assoc launch :definition old :effect-version (:effect-version sibling) :params values :state {})))))
+    (let [old (:params (:definition sibling) {})
+          new (:params (:definition launch) {})
+          values (:params launch)
+          kept (try (params/resolve-values old (select-keys values (keys old))) (catch Exception _ nil))
+          defaults (try (params/resolve-values new {}) (catch Exception _ nil))
+          lossless? (and kept defaults
+                         (every? (fn [[k v]] (if (contains? old k) (= v (get kept k)) (= v (get defaults k)))) values))]
+      (when lossless?
+        (assoc launch :definition (:definition sibling) :effect-version (:effect-version sibling) :params kept :state {})))))
 
 (defn hold
   "Decide a `plan` after its programs were requested. The instances of an
