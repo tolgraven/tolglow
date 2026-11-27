@@ -1,6 +1,7 @@
 (ns tolglow.studio.waveform
   "A waveform picker and bounded server-sampled preview. No browser oscillator."
-  (:require [clojure.string :as str]
+  (:require [tolglow.studio.clock :as clock]
+            [clojure.string :as str]
             [reagent.core :as r]
             [re-frame.core :as rf]
             [tolglow.studio.events :as events]
@@ -143,16 +144,23 @@
                                                   {:kind (wire kind) :x (+ 256 (* position 246))})))
                                   (take 195 (:ticks timeline))))))))
 
+(rf/reg-sub ::live-show
+  ;; The show with its per-frame clock from the lane: live waveforms follow it.
+  :<- [:tolglow.studio.clock/show]
+  :<- [:studio/clock]
+  (fn [[show clock] _] (clock/with-clock show clock)))
+
 (rf/reg-sub :waveform/live-inputs
-  (fn [db [_ id]]
-    (let [instance (some #(when (= (wire id) (wire (:id %))) %) (get-in db [:show :instances]))
-          overrides (or (get-in db [:show :modulation :overrides id])
-                        (get-in db [:show :modulation :overrides (keyword (wire id))]))]
+  :<- [::live-show]
+  (fn [show [_ id]]
+    (let [instance (some #(when (= (wire id) (wire (:id %))) %) (:instances show))
+          overrides (or (get-in show [:modulation :overrides id])
+                        (get-in show [:modulation :overrides (keyword (wire id))]))]
       {:instance instance :params (merge (:params instance) overrides)
-       :transport (assoc (get-in db [:show :transport]) :generation (get-in db [:show :transport-generation] 0))
+       :transport (assoc (:transport show) :generation (:transport-generation show 0))
        :clock (when (clock-bound? (get-in instance [:definition :params]))
-                [(get-in db [:show :time-ms]) (get-in db [:show :transport]) (:system instance)])
-       :waveform-revision (get-in db [:show :waveform-revision])})))
+                [(:time-ms show) (:transport show) (:system instance)])
+       :waveform-revision (:waveform-revision show)})))
 
 (rf/reg-sub :waveform/catalog (fn [db _] (get-in db [:server-projection :view :parameter-waveforms])))
 

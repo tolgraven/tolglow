@@ -4,6 +4,7 @@
   (:require [re-frame.core :as rf]
             [reagent.core :as reagent]
             [reagent.ratom :as ratom]
+            [tolglow.studio.frame-stream :as frame-stream]
             [tolglow.studio.reactions]
             [tolglow.transit :as transit]))
 
@@ -85,17 +86,26 @@
                     (if (<= n 1) (dissoc refs query) (assoc refs query (dec n))))))
   (update-interest!))
 
+(defn remote-results
+  "Query -> {:value v} of the installed :remote lane frame, for coeffects."
+  []
+  (get-in (frame-stream/baseline :remote) [:value :results]))
+
+(rf/reg-cofx :studio/remote (fn [cofx _] (assoc cofx :remote (remote-results))))
+
 (rf/reg-sub-raw :studio/remote-result
-  (fn [db [_ query]]
+  ;; Results arrive on the :remote frame lane, outside app-db, so a changing
+  ;; result re-renders only its own readers.
+  (fn [_ [_ query]]
     (let [active? (volatile! false)
-          value (reagent/cursor db [:server-projection :view :subscriptions query])]
+          lane (frame-stream/published-ref :remote)]
       (ratom/make-reaction
         (fn []
           (when-not @active?
             (vreset! active? true)
             (swap! demand update query (fnil inc 0))
             (update-interest!))
-          @value)
+          (get-in @lane [:value :results query]))
         :on-dispose (fn [_] (when @active? (release! query)))))))
 
 (rf/reg-sub :studio/remote
