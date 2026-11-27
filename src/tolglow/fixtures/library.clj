@@ -247,25 +247,29 @@
 
 (defn- wire-id [id] (if (keyword? id) (subs (str id) 1) (str id)))
 
+(def ^:private type-derived
+  "Keys a placement always takes from its registry type."
+  (into [:fixture-type-id :fixture-type-version :channels :footprint :placement?] placement/type-properties))
+
 (defn admit-placements
-  "Instantiate fixtures newly placed in a proposed rig from their published type.
-  A new fixture (its ID is not in `existing`) that names a registry
-  `:fixture-type-id` takes its channels, footprint and type data from that type;
-  only `placement/instance-keys` come from the entry. Its channels may differ
-  from the type's only by axis reversal. It must pass `instantiate`'s patch
-  checks, including documented movement calibration. A new fixture without
-  `:channels` must name a registry type. Other entries are returned unchanged."
-  [types existing fixtures]
-  (let [existing (set (map wire-id existing))]
-    (mapv (fn [entry]
+  "Instantiate the entries of a proposed rig marked `:placement? true` from their
+  published `:fixture-type-id`, whatever their ID. Channels, footprint and type
+  data come from the type; `placement/instance-keys` and any other per-instance
+  keys (such as :groups) come from the entry, and the mark is removed. Channels
+  may differ from the type's only by axis reversal (`placement/same-patch?`).
+  The library's patch checks apply, including documented movement calibration.
+  Unmarked entries are returned unchanged, so committed, renamed and restored
+  fixtures keep all of their data."
+  [types fixtures]
+  (mapv (fn [entry]
+          (if-not (and (map? entry) (true? (:placement? entry)))
+            entry
             (let [definition (registry-type types (:fixture-type-id entry))]
               (cond
-                (or (not (map? entry)) (contains? existing (wire-id (:id entry)))) entry
-                (and (nil? definition) (contains? entry :channels)) entry
                 (nil? definition)
                 (throw (ex-info "Fixture type not found" {:id (:fixture-type-id entry) :fixture-id (:id entry)}))
                 (and (contains? entry :channels) (not (placement/same-patch? (:channels definition) (:channels entry))))
-                (throw (ex-info "A placed fixture's channels must match its fixture type"
+                (throw (ex-info "A placed fixture's channels must match its fixture type except for axis reversal"
                                 {:fixture-id (:id entry) :fixture-type-id (:id definition)}))
                 :else
                 (let [result (instantiate definition (select-keys entry placement/instance-keys))]
@@ -273,9 +277,9 @@
                     (throw (ex-info (str "Fixture " (wire-id (:id entry)) " cannot be placed: "
                                          (str/join "; " (keep :message (filter #(= :error (:severity %)) (:diagnostics result)))))
                                     (select-keys result [:diagnostics]))))
-                  (cond-> (:fixture result)
-                    (contains? entry :channels) (assoc :channels (:channels entry)))))))
-          fixtures)))
+                  (cond-> (merge (apply dissoc entry type-derived) (:fixture result))
+                    (contains? entry :channels) (assoc :channels (:channels entry))))))))
+        fixtures))
 
 (defn close! [manager]
   (locking (:lock manager)

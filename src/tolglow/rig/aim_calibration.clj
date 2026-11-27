@@ -27,12 +27,11 @@
       (fail! "Invalid draft position, rotation or calibration" {:fixture-id fixture-id :errors (vec problems)}))
     candidate))
 
-(defn- dmx [value] (when (number? value) (Math/round (* 255.0 (double value)))))
-
 (defn check
   "Solve where the calibrated head must point to hit the world `point` (metres).
-  Returns normalized pan/tilt, mechanical degrees, 8-bit DMX equivalents before
-  any channel reversal, and whether the travel range reaches it."
+  Returns model pan/tilt (normalized, before channel reversal), mechanical
+  degrees, the 8-bit coarse DMX each channel sends after its `:inverted-from`
+  reversal, and whether the travel range reaches it."
   [fixture point]
   (when-not (placement/v3? point) (fail! "Enter a finite world point in metres" {:point point}))
   (if (every? #(< (Math/abs (double %)) 1.0e-6) (map - point (:position fixture)))
@@ -41,13 +40,15 @@
                          [:values (:id fixture)])]
       {:fixture-id (:id fixture) :point point :reachable? (boolean (:aim-reachable? values))
        :pan (:pan values) :tilt (:tilt values) :pan-deg (:pan-deg values) :tilt-deg (:tilt-deg values)
-       :dmx {:pan (dmx (:pan values)) :tilt (dmx (:tilt values))}
+       :dmx (into {} (for [axis [:pan :tilt] :let [v (get values axis)] :when (number? v)]
+                       [axis (placement/dmx-sent (get-in fixture [:channels axis]) v)]))
        :direction (:direction values)})))
 
 (defn fit
   "Fit the head's mounting rotation from at least three observations, each
-  {:target [x y z] :pan p :tilt t} with p and t the normalized values at which
-  the beam centre hit the target. `axis-verified?` states that the pan/tilt
+  {:target [x y z] :pan p :tilt t} with p and t the normalized model values
+  (before channel reversal; see `placement/dmx-model`) at which the beam centre
+  hit the target. `axis-verified?` states that the pan/tilt
   direction and range match the fixture's documentation; without it the result
   is a candidate that cannot be accepted."
   [fixture samples axis-verified?]

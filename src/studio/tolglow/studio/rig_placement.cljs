@@ -21,12 +21,13 @@
   (if (= "truss" kind) (str "truss " (get hit :truss-id)) (str/replace (str (get hit :surface-id "surface")) "-" " ")))
 
 (defn place
-  "Add an instance of the chosen type to the draft rig at a picked mount.
-  Returns {:rig :fixture} or {:error}."
-  [rig definition hit clearance]
+  "Add an instance of the chosen type to the draft rig at a picked mount. Its ID
+  also avoids `taken-ids` (the committed rig), so a fixture removed in the same
+  draft never lends its ID to a placement. Returns {:rig :fixture} or {:error}."
+  [rig definition hit clearance taken-ids]
   (if-not definition
     {:error "Choose a published fixture type to place."}
-    (if-let [fixture (placement/place definition (:fixtures rig) hit {:clearance-m clearance})]
+    (if-let [fixture (placement/place definition (:fixtures rig) hit {:clearance-m clearance :taken-ids taken-ids})]
       ;; Keep the draft in Studio's presentation form; the host re-derives type data on save.
       {:rig (update rig :fixtures (fnil conj []) (update fixture :rgbw-policy wire)) :fixture fixture}
       {:error "That spot has no usable mounting direction."})))
@@ -35,18 +36,25 @@
   "Moving axes that still need a documented range before the rig can be saved."
   [fixture]
   (when (moving? fixture)
-    (seq (for [axis [:pan :tilt] :when (nil? (placement/axis-range (get-in fixture [:calibration axis])))] (name axis)))))
+    (seq (for [axis [:pan :tilt] :let [calibration (get-in fixture [:calibration axis])]
+               :when (not (or (placement/axis-range calibration) (placement/unreverse-legacy calibration nil)))]
+           (name axis)))))
 
 (defn mount [fixture key]
   (if-let [rotation (placement/remount (:rotation-deg fixture [0 0 0]) (get placement/mounts key))]
     (assoc fixture :rotation-deg rotation) fixture))
 
 (defn set-range
-  "Set one end of an axis range, starting from the existing range when present."
+  "Set one end of an axis range, starting from the existing range when present.
+  A reversed legacy calibration becomes a range plus channel reversal first, so
+  the head keeps sending the same DMX for every angle."
   [fixture axis bound value]
-  (let [current (or (placement/axis-range (get-in fixture [:calibration axis]))
+  (let [calibration (get-in fixture [:calibration axis])
+        [legacy channel] (placement/unreverse-legacy calibration (get-in fixture [:channels axis]))
+        current (or legacy (placement/axis-range calibration)
                     (if (= axis :pan) {:min-deg -270 :max-deg 270} {:min-deg -135 :max-deg 135}))]
-    (assoc-in fixture [:calibration axis] (assoc current bound value))))
+    (cond-> (assoc-in fixture [:calibration axis] (assoc current bound value))
+      (and legacy (contains? (:channels fixture) axis)) (assoc-in [:channels axis] channel))))
 
 (defn range-error [fixture]
   (some (fn [axis]
@@ -91,7 +99,9 @@
      (when (:message state) [:p.rig-editor-message {:role "status"} (:message state)])]))
 
 (defn- axis-fields [fixture axis]
-  (let [range (placement/axis-range (get-in fixture [:calibration axis]))
+  (let [calibration (get-in fixture [:calibration axis])
+        legacy (first (placement/unreverse-legacy calibration (get-in fixture [:channels axis])))
+        range (or (placement/axis-range calibration) legacy)
         home (some-> range placement/home-position)]
     [:fieldset.rig-axis {:aria-label (str (str/capitalize (name axis)) " calibration")}
      [:legend (str (str/capitalize (name axis)) " travel")]
@@ -101,6 +111,7 @@
      [:label.rig-checkbox [checkbox/input {:checked (placement/reversed? (get-in fixture [:channels axis]))
                                            :on-change #(dispatch! [:rig-editor/reverse-axis axis (.. % -target -checked)])}]
       (str "Reverse " (name axis) " (DMX runs the other way)")]
+     (when legacy [:p.small.muted "Reversed legacy calibration. Editing the range stores it as this range with Reverse switched, sending the same DMX."])
      [:p.small.muted (cond (nil? range) "Enter the range from the fixture's manual."
                            (<= 0 home 1) (str "Home (0°) is at " (round (* 100 home) 1) " % of travel, DMX " (js/Math.round (* 255 home)) ".")
                            :else "Home (0°) is outside this travel range.")]]))
@@ -120,18 +131,21 @@
      (when-let [axes (missing-calibration fixture)]
        [:p.fixture-invalid (str "Enter the documented " (str/join " and " axes) " range before saving.")])]))
 
-(defn- sample-row [i {:keys [target pan tilt]}]
+(defn- sample-row [fixture i {:keys [target pan tilt]}]
+  ;; Observations hold model values; the fields show the DMX the channel sends,
+  ;; after any reversal, which is what a console shows while jogging.
   [:div.rig-path-point
    [:span.small (str (inc i))]
    [:span.small (str/join ", " (map #(round % 2) target))]
-   [fields/number-field (str "Observation " (inc i) " pan · DMX") (some-> pan (* 255) (round 1) js/Number) [:rig-editor/sample-value i :pan] {:min 0 :max 255 :step 0.5}]
-   [fields/number-field (str "Observation " (inc i) " tilt · DMX") (some-> tilt (* 255) (round 1) js/Number) [:rig-editor/sample-value i :tilt] {:min 0 :max 255 :step 0.5}]
+   [fields/number-field (str "Observation " (inc i) " pan · DMX sent") (some->> pan (placement/dmx-sent (get-in fixture [:channels :pan]))) [:rig-editor/sample-value i :pan] {:min 0 :max 255 :step 1}]
+   [fields/number-field (str "Observation " (inc i) " tilt · DMX sent") (some->> tilt (placement/dmx-sent (get-in fixture [:channels :tilt]))) [:rig-editor/sample-value i :tilt] {:min 0 :max 255 :step 1}]
    [:button.icon-button {:aria-label (str "Delete observation " (inc i)) :on-click #(dispatch! [:rig-editor/delete-sample i])} "×"]])
 
 (defn calibrate-panel
   "Verify and derive a moving head's aim against known points in the room."
   [db state fixture]
   (let [{:keys [target check samples verified? fit checking fitting]} (:calibration state)]
+    ;; The caller passes the selected fixture's own calibration state.
     [:section.rig-path-form {:aria-label "Aim calibration"}
      [:div.panel-top [:span.section-label "AIM CALIBRATION"]]
      (cond
@@ -150,13 +164,13 @@
         (when check
           [:p.small {:role "status" :aria-label "Aim check result"}
            (if (:reachable? check)
-             (str "Pan " (round (:pan-deg check) 1) "° (DMX " (get-in check [:dmx :pan]) "), tilt " (round (:tilt-deg check) 1) "° (DMX " (get-in check [:dmx :tilt]) ").")
+             (str "Pan " (round (:pan-deg check) 1) "° (DMX sent " (get-in check [:dmx :pan]) "), tilt " (round (:tilt-deg check) 1) "° (DMX sent " (get-in check [:dmx :tilt]) ").")
              (str "Out of reach" (when (:pan-deg check) (str ": needs pan " (round (:pan-deg check) 1) "°, tilt " (round (:tilt-deg check) 1) "°")) "."))])
         [:div.panel-top [:span.section-label "DERIVE MOUNTING"] [:span.small.muted (str (count samples) " observations")]]
         [:p.small.muted "Jog the head until its beam centre hits the target, then record it. Three or more targets spread around the head let Studio fit its mounting, including hanging versus standing and the home direction."]
         [:div.rig-editor-actions
          [:button.button {:disabled (not target) :on-click #(dispatch! [:rig-editor/record-sample])} "Record current pan/tilt"]]
-        [:div.rig-path-points (for [[i sample] (map-indexed vector samples)] ^{:key i} [sample-row i sample])]
+        [:div.rig-path-points (for [[i sample] (map-indexed vector samples)] ^{:key i} [sample-row fixture i sample])]
         [:label.rig-checkbox [checkbox/input {:checked (true? verified?) :on-change #(dispatch! [:rig-editor/set [:calibration :verified?] (.. % -target -checked)])}]
          "Pan/tilt direction and travel match the manual"]
         [:div.rig-editor-actions

@@ -3441,10 +3441,10 @@
         proposed (cond-> proposed
                    (map? (:fixtures proposed))
                    (update :fixtures (partial fixture-patch/expand types))
-                   ;; Fixtures placed from the library are instantiated from
-                   ;; their published type, as :fixture-patch does (#226).
+                   ;; Entries marked :placement? are instantiated from their
+                   ;; published type, as :fixture-patch does (#226).
                    (vector? (:fixtures proposed))
-                   (update :fixtures (partial fixture-service/admit-placements types (map :id (:fixtures basis)))))]
+                   (update :fixtures (partial fixture-service/admit-placements types)))]
     {:basis basis :rig (rig/prepare-edit basis proposed)}))
 
 (defn- ingress-queue [runtime type payload]

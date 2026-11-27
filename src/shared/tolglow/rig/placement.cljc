@@ -3,7 +3,8 @@
   World coordinates are metres, right handed, +Y up. A fixture's local +Y is its
   base-to-head (mounting) axis and local +Z is its beam at pan 0, tilt 0.
   :rotation-deg [x y z] is applied X then Y then Z, as Afterglow's renderer does."
-  (:require [afterglow.render.photometry :as photometry]))
+  (:require [clojure.string :as str]
+            [afterglow.render.photometry :as photometry]))
 
 (def type-properties
   "Fixture-type data copied onto every instance."
@@ -36,12 +37,29 @@
             :channels channels :footprint (:footprint definition (reduce max 0 (filter integer? all-offsets)))
             :rgbw-policy policy :calibration (merge (:calibration definition) (:calibration options))})))
 
+(defn- channel-spec
+  "Canonical map form of a channel specification."
+  [channel]
+  (cond (integer? channel) {:offset channel}
+        (vector? channel) (cond-> {:offset (first channel)} (second channel) (assoc :fine-offset (second channel)))
+        (map? channel) channel
+        :else {:invalid channel}))
+
 (defn same-patch?
-  "Do two channel maps address the same attributes at the same offsets? Axis
-  reversal (`:inverted-from`) is a per-instance choice and may differ."
-  [a b]
-  (and (= (set (keys a)) (set (keys b)))
-       (every? #(= (offsets (get a %)) (offsets (get b %))) (keys a))))
+  "Does `instance` patch exactly the type's channels? The only permitted
+  difference is full-range axis reversal: an instance channel may add or drop
+  `:inverted-from 0`, or keep the type's own value. Everything else, including
+  offsets, ranges and functions, must match."
+  [type-channels instance-channels]
+  (and (map? type-channels) (map? instance-channels)
+       (= (set (keys type-channels)) (set (keys instance-channels)))
+       (every? (fn [attribute]
+                 (let [a (channel-spec (get type-channels attribute))
+                       b (channel-spec (get instance-channels attribute))
+                       reversal (:inverted-from b)]
+                   (and (= (dissoc a :inverted-from) (dissoc b :inverted-from))
+                        (or (nil? reversal) (and (number? reversal) (zero? reversal)) (= reversal (:inverted-from a))))))
+               (keys type-channels))))
 
 (defn- footprint [fixture]
   (or (:footprint fixture) (reduce max 1 (mapcat offsets (vals (:channels fixture))))))
@@ -57,10 +75,14 @@
 (defn- wire [id] (if (keyword? id) (subs (str id) 1) (str id)))
 
 (defn next-id
-  "First free `<type>-<n>` instance ID, comparing IDs by their text."
-  [fixtures type-id]
-  (let [taken (set (map (comp wire :id) fixtures))]
-    (first (remove taken (map #(str (wire type-id) "-" %) (iterate inc 1))))))
+  "First free `<type>-<n>` instance ID, comparing IDs by their text. A
+  namespaced type contributes its name only, so IDs never contain a slash.
+  `taken` adds IDs to avoid besides the draft's, such as the committed rig's."
+  ([fixtures type-id] (next-id fixtures type-id nil))
+  ([fixtures type-id taken]
+   (let [taken (into (set (map (comp wire :id) fixtures)) (map wire) taken)
+         stem (-> (if (keyword? type-id) (name type-id) (str type-id)) (str/replace "/" "-"))]
+     (first (remove taken (map #(str stem "-" %) (iterate inc 1)))))))
 
 ;; Vector algebra kept local so the namespace runs on the JVM and in the browser.
 
@@ -158,20 +180,23 @@
       (when-let [f (reject (mapv - target position) up)] (mount-rotation up f)))))
 
 (defn place
-  "Draft instance of `definition` resting on a picked surface. `hit` has a world
+  "Draft placement of `definition` resting on a picked surface. `hit` has a world
   :point and the surface :normal pointing into the room. The fixture stands on the
   surface `clearance-m` away from it, mounted along the normal, takes the next free
-  address and a fresh ID. Options override any instance key."
-  [definition fixtures {:keys [point normal]} & [{:keys [clearance-m] :or {clearance-m 0.25} :as options}]]
+  address and a fresh ID (also avoiding `:taken-ids`). Options override any
+  instance key. The entry is marked `:placement? true`: the host instantiates
+  it from the registry type when the rig is saved and removes the mark."
+  [definition fixtures {:keys [point normal]} & [{:keys [clearance-m taken-ids] :or {clearance-m 0.25} :as options}]]
   (when (and (v3? point) (v3? normal) (unit normal))
     (let [up (unit normal)
           [universe address] (next-address fixtures (footprint definition))]
-      (instance definition
-                (merge {:id (next-id fixtures (:id definition)) :universe universe :address address
-                        ;; Tenth-of-a-millimetre positions read cleanly in numeric fields.
-                        :position (mapv #(/ (Math/round (* 1.0e4 (+ %1 (* clearance-m %2)))) 1.0e4) point up)
-                        :rotation-deg (mount-rotation up)}
-                       (select-keys options instance-keys))))))
+      (assoc (instance definition
+                       (merge {:id (next-id fixtures (:id definition) taken-ids) :universe universe :address address
+                               ;; Tenth-of-a-millimetre positions read cleanly in numeric fields.
+                               :position (mapv #(/ (Math/round (* 1.0e4 (+ %1 (* clearance-m %2)))) 1.0e4) point up)
+                               :rotation-deg (mount-rotation up)}
+                              (select-keys options instance-keys)))
+             :placement? true))))
 
 (defn reversed?
   "Does the channel's DMX run against the model's angle (`:inverted-from 0`)?"
@@ -201,3 +226,26 @@
   [{:keys [min-deg max-deg]}]
   (when (and (finite? min-deg) (finite? max-deg) (< min-deg max-deg))
     (/ (- (double min-deg)) (- max-deg min-deg))))
+
+(defn dmx-sent
+  "8-bit DMX value a channel sends for a normalized model value, after its
+  `:inverted-from` reversal (Afterglow's encoding, coarse byte)."
+  [channel value]
+  (let [v (* 255.0 value) from (when (map? channel) (:inverted-from channel))]
+    (Math/round (double (if (and (number? from) (>= v from)) (- 255.0 (- v from)) v)))))
+
+(defn dmx-model
+  "Normalized model value that makes a channel send the 8-bit DMX value `dmx`;
+  the inverse of `dmx-sent`."
+  [channel dmx]
+  (let [from (when (map? channel) (:inverted-from channel))]
+    (/ (if (and (number? from) (>= dmx from)) (- (+ 255.0 from) dmx) (double dmx)) 255.0)))
+
+(defn unreverse-legacy
+  "Express a reversed legacy [centre -half] axis calibration as an ordinary
+  range plus channel reversal that sends the same DMX for every angle. Returns
+  [range channel], or nil when the calibration is not reversed legacy data."
+  [calibration channel]
+  (when (and (vector? calibration) (number? (second calibration)) (neg? (second calibration)))
+    (let [[centre half] calibration]
+      [(axis-range [(- 255 centre) (- half)]) (reverse-channel channel (not (reversed? channel)))])))

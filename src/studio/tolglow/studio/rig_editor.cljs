@@ -28,9 +28,19 @@
 (defn path-effects [db]
   (filter #(contains? path-types (some-> (get-in % [:editor :type]) name)) (get-in db [:show :effects])))
 
+(defn- own-calibration
+  "Calibration observations, checks and fits belong to one fixture. Selecting
+  another drops them, including requests still in flight; the target point stays."
+  [state]
+  (let [selected (when (= "fixtures" (get-in state [:selection :kind])) (rp/wire (get-in state [:selection :id])))
+        calibration (:calibration state)]
+    (if (= selected (:fixture-id calibration)) state
+      (assoc state :calibration (cond-> {:fixture-id selected :samples []}
+                                  (:target calibration) (assoc :target (:target calibration)))))))
+
 (defn editor [db]
   (let [state (get-in db [:ui :rig-editor])]
-    (if (= (:identity state) (identity-key db)) state (assoc defaults :identity (identity-key db)))))
+    (own-calibration (if (= (:identity state) (identity-key db)) state (assoc defaults :identity (identity-key db))))))
 
 (defn put-editor [db state] (assoc-in db [:ui :rig-editor] state))
 
@@ -89,7 +99,8 @@
   "Place the chosen library type at a picked mount as one undoable draft edit."
   [db hit]
   (let [state (editor db)
-        result (rp/place (get-in db [:ui :rig-draft]) (rp/find-type db (:place-type state)) hit (:place-clearance state 0.25))]
+        result (rp/place (get-in db [:ui :rig-draft]) (rp/find-type db (:place-type state)) hit (:place-clearance state 0.25)
+                   (map :id (get-in db [:show :rig :fixtures])))]
     (if-let [error (:error result)]
       (put-editor db (assoc state :message error))
       (let [fixture (:fixture result)]
@@ -134,7 +145,9 @@
         "select" (put-editor db (assoc state :selection (select-keys selection [:kind :id])))
         "navigate" (put-editor db (assoc state :tool "navigate"))
         "unreachable" (put-editor db (assoc state :message "This plane is edge-on. Change the camera or drawing plane."))
-        "begin" (if (or gesture (not (finite-point? point)) (and (= tool "draw") (nil? selection) (>= (count (:points state)) 256))) db
+        "begin" (if (or gesture (not (finite-point? point)) (and (= tool "draw") (nil? selection) (>= (count (:points state)) 256))
+                        ;; Aim home turns fixtures only; a truss drag would be an empty undo step.
+                        (and (= tool "mount") (not= "fixtures" (:kind selection)))) db
                   (let [before (checkpoint db state) state (remember db state)
                         index (when (= tool "draw") (if (= "points" (:kind selection)) (:index selection) (count (:points state))))
                         state (cond-> (assoc state :gesture {:token token :before before :selection selection :index index})
@@ -279,10 +292,12 @@
                                                "This head has no pan/tilt output yet; enter the DMX values you jogged it to.")))))))))
 
 (rf/reg-event-db :rig-editor/sample-value
+  ;; The field holds the DMX the channel sends; observations keep model values.
   (fn [db [_ index axis dmx]]
-    (let [state (editor db)]
+    (let [state (editor db) channel (get-in (selected-fixture db state) [:channels axis])]
       (if (and (get-in state [:calibration :samples index]) (<= 0 dmx 255))
-        (put-editor db (-> state (assoc-in [:calibration :samples index axis] (/ dmx 255)) (update :calibration dissoc :fit))) db))))
+        (put-editor db (-> state (assoc-in [:calibration :samples index axis] (placement/dmx-model channel dmx))
+                           (update :calibration dissoc :fit))) db))))
 
 (rf/reg-event-db :rig-editor/delete-sample
   (fn [db [_ index]]
@@ -293,8 +308,9 @@
 
 (rf/reg-event-db :rig-editor/apply-fit
   (fn [db _]
-    (let [rotation (get-in (editor db) [:calibration :fit :rotation-deg])]
-      (if (finite-point? rotation)
+    (let [state (editor db) fit (get-in state [:calibration :fit]) rotation (:rotation-deg fit)
+          fixture (selected-fixture db state)]
+      (if (and (finite-point? rotation) fixture (= (rp/wire (:fixture-id fit)) (rp/wire (:id fixture))))
         (let [db (edit-selected db #(assoc % :rotation-deg rotation))]
           (put-editor db (assoc (editor db) :message "Fitted rotation applied to the draft. Save the rig to use it."))) db))))
 

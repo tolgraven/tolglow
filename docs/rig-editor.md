@@ -43,17 +43,22 @@ normal and is mounted along it: it stands on floors and the stage, hangs under
 the ceiling and trusses, and lies flat on walls with its home beam pointing
 down. It takes the next free DMX address after the highest occupied slot (a
 fixture that would cross channel 512 starts the next universe) and a fresh
-`<type>-<n>` ID. A tap that drags, a second finger or a tap outside every mount
+`<type>-<n>` ID that is free in both the draft and the committed rig (a namespaced
+type contributes its name only). A tap that drags, a second finger or a tap outside every mount
 places nothing.
 
 A placement is a draft edit, so **Undo** removes it and **Save rig** patches
-it. On save the host instantiates every new fixture that names a published
-`:fixture-type-id` from that type: channels, footprint and type data come from
-the registry, and only the ID, name, universe, address, position, rotation,
-RGBW policy and calibration come from the draft. Its channels may differ from
-the type's only by axis reversal. The library's patch checks apply, so a moving
-head needs its documented pan and tilt travel before it can be saved. The REPL
-uses the same admission:
+it. The draft entry carries `:placement? true`. On save the host instantiates
+every marked entry from its published `:fixture-type-id`, whatever its ID, and
+removes the mark: channels, footprint and type data come from the registry; the
+ID, name, universe, address, position, rotation, RGBW policy, calibration and any
+other per-instance keys come from the entry. Its channels may differ from the
+type's only by `:inverted-from 0` reversal. The library's patch checks apply, so
+a moving head needs its documented pan and tilt travel before it can be saved.
+Unmarked entries are never re-derived: renaming a fixture or submitting a whole
+saved rig keeps every key, and an untyped fixture without channels still gets
+Afterglow's patch error. The REPL uses the same admission; `placement/place`
+returns a marked entry:
 
 ```clojure
 (show/submit! runtime :rig
@@ -80,22 +85,28 @@ it only about its mounting axis. The rotation fields remain the exact form.
 Moving heads also show **Pan travel** and **Tilt travel**: the documented minimum
 and maximum mechanical angle, where home falls in that travel, and **Reverse**,
 which sets the channel's `:inverted-from 0` for a motor that runs against the
-model. Each of these is one undoable draft edit.
+model. Each of these is one undoable draft edit. A reversed legacy
+`[centre -half]` calibration shows as its equivalent range; editing it stores
+that range with **Reverse** switched, which sends the same DMX for every angle.
 
 ## Calibrate a moving head's aim
 
 **Calibrate aim** works on the selected moving head. Tap a measured floor or wall
 point, or enter it, then **Check aim**. The host solves the pan and tilt with
 Afterglow's renderer from the committed fixture with the draft position, rotation
-and travel substituted, and returns mechanical degrees, 8-bit DMX before any
-channel reversal, and whether the travel reaches the point. The check never
+and travel substituted, and returns mechanical degrees, the 8-bit coarse DMX each channel sends after
+its reversal, and whether the travel reaches the point. The check never
 changes the show. **Send test aim** points the real head at the target through
 the ordinary surface-aim command (`:mode :together` in world coordinates), so
 the rig must be saved first.
 
 To derive the mount, jog the head until its beam centre hits a target and
 **Record current pan/tilt**; the committed output supplies the values, or enter
-the DMX values you jogged to. With three or more spread targets, **Fit mounting**
+the DMX values you jogged to. Observation fields show the DMX the channel sends,
+after reversal, as a console does; Studio converts them to model values for the
+fit. Observations, checks and fits belong to the selected head: selecting another
+head starts afresh (the target point stays), drops answers still in flight, and
+**Apply fitted rotation** only applies a fit to the head it was made for. With three or more spread targets, **Fit mounting**
 runs `tolglow.calibration.geometry/fit-aim`, the fitter the phone calibration
 uses. It reports the rotation, standing/hanging/wall, the angular error and the
 inliers. Without **Pan/tilt direction and travel match the manual** the result

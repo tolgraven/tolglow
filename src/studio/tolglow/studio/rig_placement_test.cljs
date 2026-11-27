@@ -110,7 +110,7 @@
         (is (= "/api/fixtures/aim-fit" (:path http)))
         (is (true? (get-in http [:body :axis-verified?])))
         (is (= 3 (count (get-in http [:body :samples]))))
-        (let [db (editor/put-editor recorded (assoc-in (editor/editor recorded) [:calibration :fit] {:rotation-deg [0 0 180] :accepted? true}))
+        (let [db (editor/put-editor recorded (assoc-in (editor/editor recorded) [:calibration :fit] {:fixture-id "head" :rotation-deg [0 0 180] :accepted? true}))
               applied (run db [:rig-editor/apply-fit])]
           (is (= [0 0 180] (get-in applied [:ui :rig-draft :fixtures 0 :rotation-deg])))
           (is (= rig (get-in (run applied [:rig-editor/undo]) [:ui :rig-draft]))))))
@@ -129,3 +129,47 @@
   (is (= {:pan 0.25 :tilt 0.75} (rp/output-sample base "head")))
   (is (nil? (rp/output-sample base "other")))
   (is (= "room-spot" (:id (rp/find-type base :room-spot)))))
+
+(def two-heads
+  (update rig :fixtures conj {:id "other" :position [2 3 0] :rotation-deg [0 0 0] :universe 1 :address 20
+                              :channels {:pan {:offset 1 :inverted-from 0} :tilt 3}
+                              :calibration {:pan {:min-deg -180 :max-deg 180} :tilt {:min-deg -90 :max-deg 90}}}))
+
+(deftest calibration-state-belongs-to-the-selected-fixture
+  (let [db (-> base (assoc-in [:show :rig] two-heads) (assoc-in [:ui :rig-draft] two-heads)
+               (tool "calibrate" {:selection {:kind "fixtures" :id "head"}}))
+        targeted (-> db (interaction {:type "surface" :point [2 0 1]}) (run [:rig-editor/record-sample]))
+        {in-flight :db} (fx targeted [:rig-editor/aim-check])
+        request (get-in (editor/editor in-flight) [:calibration :checking])
+        fitted (editor/put-editor in-flight (assoc-in (editor/editor in-flight) [:calibration :fit]
+                                                      {:fixture-id "head" :rotation-deg [0 0 180] :accepted? true}))
+        other (run fitted [:rig-editor/set [:selection] {:kind "fixtures" :id "other"}])
+        state (editor/editor other)]
+    (is (= 1 (count (get-in (editor/editor targeted) [:calibration :samples]))))
+    (is (= {:fixture-id "other" :samples [] :target [2 0 1]} (:calibration state))
+        "Another head starts without the first head's observations, check or fit; the target stays")
+    (is (= two-heads (get-in (run other [:rig-editor/apply-fit]) [:ui :rig-draft])) "Nothing to apply to the other head")
+    (is (= state (editor/editor (run other [:rig-editor/calibration-result (editor/identity-key other) request true {:reachable? true}])))
+        "A check that left for the first head is dropped")
+    (testing "A fit for another fixture is never applied"
+      (let [mismatched (editor/put-editor other (assoc-in (editor/editor other) [:calibration :fit] {:fixture-id "head" :rotation-deg [0 0 180]}))]
+        (is (= two-heads (get-in (run mismatched [:rig-editor/apply-fit]) [:ui :rig-draft])))))
+    (testing "Selecting the first head again finds its state only while the selection matches"
+      (is (empty? (get-in (editor/editor (run other [:rig-editor/set [:selection] {:kind "fixtures" :id "head"}])) [:calibration :samples]))))
+    (testing "Observation fields hold DMX sent; a reversed pan converts to the model value"
+      (let [recorded (run other [:rig-editor/record-sample])
+            typed (run recorded [:rig-editor/sample-value 0 :pan 51])]
+        (is (= 0.8 (get-in (editor/editor typed) [:calibration :samples 0 :pan])))
+        (is (= 51 (placement/dmx-sent (get-in two-heads [:fixtures 1 :channels :pan]) 0.8)))))))
+
+(deftest placements-never-reuse-a-committed-id-and-are-marked
+  (let [committed (update rig :fixtures conj {:id "room-spot-1" :universe 2 :address 1 :channels {:dimmer 1}})
+        db (-> base (assoc-in [:show :rig] committed) (tool "place" {:place-type "room-spot"}))
+        placed (last (get-in (interaction db {:type "place" :point [0 0 0] :normal [0 1 0]}) [:ui :rig-draft :fixtures]))]
+    (is (= "room-spot-2" (:id placed)) "room-spot-1 was removed from this draft but is still committed")
+    (is (true? (:placement? placed))))
+  (let [legacy {:channels {:pan 1 :tilt 2} :calibration {:pan [100 -90] :tilt {:min-deg -90 :max-deg 90}}}
+        edited (rp/set-range legacy :pan :max-deg 210)]
+    (is (nil? (rp/missing-calibration legacy)) "A reversed legacy calibration is not missing")
+    (is (= {:min-deg -310 :max-deg 210} (update (get-in edited [:calibration :pan]) :min-deg js/Math.round)))
+    (is (placement/reversed? (get-in edited [:channels :pan])) "Its reversal moves to the channel")))
