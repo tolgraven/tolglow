@@ -1,5 +1,5 @@
 (ns tolglow.studio.events-test
-  (:require [cljs.test :refer-macros [deftest is testing]]
+  (:require [cljs.test :refer-macros [deftest is testing use-fixtures]]
             [cljs.reader :as reader]
             [tolglow.studio.audio-returns :as returns]
             [clojure.string :as str]
@@ -17,6 +17,7 @@
             [tolglow.studio.spatial-drafts :as spatial-drafts]
             [tolglow.studio.fixture-library :as fixtures]
             [tolglow.studio.frame-stream :as frame-stream]
+            [tolglow.studio.interop :as interop]
             [tolglow.studio.connections :as connections]
             [tolglow.studio.views :as views]
             [tolglow.transit :as transit]
@@ -39,6 +40,10 @@
   [effects]
   (or (:studio/stream-reply effects)
       (some (fn [[id value]] (when (= id :studio/stream-reply) value)) (:fx effects))))
+
+;; Lane frames are global installed state. Every test starts and ends without
+;; them, so test order cannot decide whether a later patch finds its baseline.
+(use-fixtures :each {:before frame-stream/reset-all! :after frame-stream/reset-all!})
 
 (def base
   (assoc (events/initial-db "browser-session")
@@ -1241,11 +1246,10 @@
     (is (empty? (transition opened [:studio/stream-closed (:session db) "old-connection" "late close"])))))
 
 (deftest room-values-install-on-their-frame-lane-at-the-acknowledged-token
-  (frame-stream/reset-all!)
   (let [view (assoc (:show base) :runtime-id "runtime" :show-id :main :time-ms 500
                     :output {:values {:head-1 {:intensity 0.2}} :atmosphere {:sources []}})
         installs (fn [effects] (some (fn [[id value]] (when (= id :studio/frame-install) value)) (:fx effects)))
-        replies (fn [effects] (into [] (comp (map first) (filter #{:studio/frame-install :studio/stream-reply})) (:fx effects)))
+        replies (fn [effects] (into [] (comp (map first) (filter #{:studio/frame-install :studio/stream-reply :studio/frame-notify})) (:fx effects)))
         patch (fn [base-token token changes]
                 {:protocol projection/protocol :kind :patch :base-token base-token :token token
                  :identity (projection/identity-of view) :changes changes})
@@ -1256,14 +1260,16 @@
       (is (nil? (get-in full [:db :server-projection :view :output :values])))
       (is (nil? (get-in full [:db :show :output :values])))
       (is (= {:sources []} (get-in full [:db :server-projection :view :output :atmosphere]))))
-    (testing "the whole lane frame installs before the ACK"
-      (is (= [:studio/frame-install :studio/stream-reply] (replies full)))
+    (testing "the whole lane frame installs before the ACK and consumers hear of it after"
+      (is (= [:studio/frame-install :studio/stream-reply :studio/frame-notify] (replies full)))
+      (is (= [:studio/frame-notify [:room]] (last (:fx full))))
       (is (= {:token "full" :identity (projection/identity-of view) :revision 3 :frame-number 12 :time-ms 500
-              :present? true :value {:head-1 {:intensity 0.2}}}
+              :master 0.7 :blackout? nil :cut? nil :last-intents nil :atmosphere {:sources []}
+              :value {:values {:head-1 {:intensity 0.2}}}}
              (:room (installs full)))))
     (testing "a patch addresses lane values at the same token"
       (is (= ["connected" {:op :ack :token "moved"}] (stream-reply moved)))
-      (is (= {:head-1 {:intensity 0.8}} (:value (frame-stream/baseline :room))))
+      (is (= {:values {:head-1 {:intensity 0.8}}} (:value (frame-stream/baseline :room))))
       (is (= [13 "moved"] ((juxt :frame-number :token) (frame-stream/baseline :room))))
       (is (nil? (get-in moved [:db :server-projection :view :output :values])))
       (is (= 13 (get-in moved [:db :show :frame-number]))))
@@ -1277,12 +1283,11 @@
         (is (nil? (installs refused)))
         (is (= 13 (get-in refused [:db :show :frame-number])) "visible state stays until the full view")
         (is (= ["connected" {:op :ack :token "fresh"}] (stream-reply restored)))
-        (is (= ["fresh" {:head-1 {:intensity 0.2}}] ((juxt :token :value) (frame-stream/baseline :room))))))
+        (is (= ["fresh" {:values {:head-1 {:intensity 0.2}}}] ((juxt :token :value) (frame-stream/baseline :room))))))
     (testing "a view without values installs an absent lane frame, not a stale one"
       (let [bare (full-frame base (update view :output dissoc :values))]
-        (is (= [false nil] ((juxt :present? :value) (:room (installs bare)))))
-        (is (= {:sources []} (get-in bare [:db :show :output :atmosphere]))))))
-  (frame-stream/reset-all!))
+        (is (= {} (:value (:room (installs bare)))))
+        (is (= {:sources []} (get-in bare [:db :show :output :atmosphere])))))))
 
 (deftest invalid-delta-requests-a-full-view-without-dropping-visible-state
   (let [view (assoc (:show base) :runtime-id "runtime" :show-id "main")
@@ -1989,10 +1994,15 @@
       (let [live {:head-1 {:emitted-color [1 0 0]}} drafted {:head-1 {:emitted-color [0 0 1]}}
             staged (:db (full-frame base (assoc view :output {:values live}
                                                 :draft-output {:values drafted :draft {:id "scene" :revision 2}})))]
-        (is (= drafted (:audition-values (events/room-show staged))))
-        (is (= live (:value (frame-stream/baseline :room))) "live values stay on the Room frame lane")
+        (is (= {:values live :audition drafted} (:value (frame-stream/baseline :room)))
+            "live and audition values share one lane frame per token")
+        (is (= drafted (interop/room-values :perform (frame-stream/baseline :room))))
+        (is (= live (interop/room-values :rig (frame-stream/baseline :room))))
         (is (nil? (get-in staged [:show :output :values])))
-        (is (nil? (:audition-values (events/room-show (:db (full-frame base (assoc view :output {:values live})))))))))
+        (is (nil? (get-in staged [:show :draft-output :values])))
+        (is (= {:id "scene" :revision 2} (get-in staged [:server-projection :view :draft-output :draft])))
+        (full-frame base (assoc view :output {:values live}))
+        (is (= live (interop/room-values :perform (frame-stream/baseline :room))) "without a draft the Room shows live values")))
     (is (nil? (events/scene-draft-control idle)))
     (is (empty? (transition idle [:studio/scene-draft-discard])))))
 

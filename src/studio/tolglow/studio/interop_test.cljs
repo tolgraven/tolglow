@@ -1,8 +1,11 @@
 (ns tolglow.studio.interop-test
-  (:require [cljs.test :refer-macros [deftest is]]
+  (:require [cljs.test :refer-macros [deftest is testing use-fixtures]]
+            [tolglow.studio.frame-stream :as frame-stream]
             [tolglow.studio.interop :as interop]
             [tolglow.transit :as transit]
             [tolglow.studio.projection :as projection]))
+
+(use-fixtures :each {:before frame-stream/reset-all! :after frame-stream/reset-all!})
 
 (deftest equal-local-names-from-different-fixture-groups-reach-separate-preview-meshes
   (let [typed {:rig {:fixtures [{:id :left/spot} {:id :right/spot}]}
@@ -69,16 +72,16 @@
 (deftest a-show-frame-leaves-the-room-input-unchanged
   (let [show {:runtime-id "r" :show-id "main" :epoch 1 :revision 4 :master 0.8 :blackout? false
               :rig {:fixtures [{:id "head-1"}]} :instances [{:id "1:1"}] :frame-number 10 :time-ms 250
-              :transport {:beat 3.5} :schedule {:entries []}
+              :transport {:beat 3.5} :schedule {:entries []} :draft-output {:time-ms 250}
               :status {:frame-ms 1.2 :output-scheduler {:queued 2} :last-intents [{:type "instance/finished"}]}
               :output {:atmosphere {:sources []} :universes {1 [255]}}}
-        next-frame (-> show (assoc :frame-number 11 :time-ms 275) (assoc-in [:transport :beat] 3.6)
-                       (assoc-in [:status :frame-ms] 1.4) (assoc-in [:status :output-scheduler :queued] 3))
+        next-frame (-> show (assoc :frame-number 11 :time-ms 275 :master 0.6 :blackout? true)
+                       (assoc-in [:transport :beat] 3.6) (assoc-in [:draft-output :time-ms] 275)
+                       (assoc-in [:status :frame-ms] 1.4) (assoc-in [:status :output-scheduler :queued] 3)
+                       (assoc-in [:status :last-intents] []) (assoc-in [:output :atmosphere :sources] [{}]))
         input (interop/room-input show)]
-    (is (= input (interop/room-input next-frame)))
-    (is (= {:sources []} (:atmosphere input)))
-    (is (= [{:type "instance/finished"}] (:last-intents input)))
-    (is (not-any? input [:frame-number :time-ms :status :output :transport]))
+    (is (= input (interop/room-input next-frame)) "lane-carried fields never re-render the Room")
+    (is (= #{:runtime-id :show-id :epoch :revision :rig :instances} (set (keys input))))
     (is (nil? (interop/room-input nil)))))
 
 (deftest a-lane-frame-waits-for-the-room-input-of-its-revision
@@ -107,3 +110,87 @@
       (is (= 0.5 (aget next-js "strip" "intensity")))
       (is (= 0.25 (aget converted "strip" "intensity")) "the previous frame's objects are never mutated"))
     (is (nil? (interop/values->js nil typed converted)))))
+
+(def ^:private show-id {:runtime-id "r" :show-id :main :epoch 1})
+
+(defn- publish! [token revision frame-number parts]
+  (frame-stream/install! :room {:token token :identity show-id :revision revision :frame-number frame-number
+                                :time-ms (* 25 frame-number) :value parts})
+  (frame-stream/notify! :room))
+
+(defn- room [owner]
+  (let [delivered (atom []) queue (atom [])
+        feed (interop/room-feed owner
+                                (fn [input lane-frame]
+                                  (swap! delivered conj [(:revision input) (:frame-number lane-frame)
+                                                         (interop/room-values owner lane-frame)]))
+                                #(swap! queue conj %))]
+    {:feed feed :delivered delivered
+     :frame! #(let [callbacks @queue] (reset! queue []) (doseq [f callbacks] (f)))}))
+
+(def ^:private input-4 {:runtime-id "r" :show-id "main" :epoch 1 :revision 4})
+
+(deftest a-room-feed-follows-the-lane-on-its-own-frames-and-releases-on-stop
+  (publish! "a" 4 1 {:values {:h 1}})
+  (let [{:keys [feed delivered frame!]} (room :perform)]
+    (interop/feed-start! feed input-4)
+    (is (= [[4 1 {:h 1}]] @delivered) "starting delivers the installed frame once")
+    (publish! "b" 4 2 {:values {:h 2}})
+    (frame!)
+    (is (= [[4 1 {:h 1}]] @delivered) "a Room starts paused until its engine reports it active")
+    (interop/feed-activity! feed true)
+    (publish! "c" 4 3 {:values {:h 3}})
+    (publish! "d" 4 4 {:values {:h 4}})
+    (is (= 1 (count @delivered)) "nothing reaches the engine before the Room's animation frame")
+    (frame!)
+    (is (= [4 4 {:h 4}] (last @delivered)) "one delivery per frame, newest frame wins")
+    (testing "pausing on the activity event and resuming with the newest frame"
+      (interop/feed-activity! feed false)
+      (publish! "e" 4 5 {:values {:h 5}})
+      (publish! "f" 4 6 {:values {:h 6}})
+      (frame!)
+      (is (= [4 4 {:h 4}] (last @delivered)))
+      (interop/feed-activity! feed true)
+      (frame!)
+      (is (= [4 6 {:h 6}] (last @delivered))))
+    (testing "remounting the same owner keeps the new Room when the old one stops later"
+      (let [{next-feed :feed next-delivered :delivered next-frame! :frame!} (room :perform)]
+        (interop/feed-activity! next-feed true)
+        (interop/feed-start! next-feed input-4)
+        (interop/feed-stop! feed)
+        (publish! "g" 4 7 {:values {:h 7}})
+        (frame!) (next-frame!)
+        (is (= [4 6 {:h 6}] (last @delivered)) "a stopped Room receives nothing")
+        (is (= [4 7 {:h 7}] (last @next-delivered)))
+        (is (= [:perform] (keys (frame-stream/attached :room))))
+        (interop/feed-stop! next-feed)
+        (is (empty? (frame-stream/attached :room)) "stopping releases the lane")))))
+
+(deftest a-frame-ahead-of-its-revision-waits-for-the-next-render
+  (publish! "a" 4 1 {:values {:h 1}})
+  (let [{:keys [feed delivered frame!]} (room :perform)]
+    (interop/feed-activity! feed true)
+    (interop/feed-start! feed input-4)
+    (publish! "b" 5 2 {:values {:h 2}})
+    (publish! "c" 5 3 {:values {:h 3}})
+    (frame!)
+    (is (= [[4 1 {:h 1}]] @delivered) "a cue's frames wait for the Room input of their revision")
+    (interop/feed-input! feed (assoc input-4 :revision 5))
+    (is (= [4 1 {:h 1}] (first @delivered)))
+    (is (= [5 3 {:h 3}] (last @delivered)) "the render delivers the held newest frame")
+    (interop/feed-input! feed (assoc input-4 :revision 5))
+    (is (= 2 (count @delivered)) "an unchanged input delivers nothing")))
+
+(deftest an-audition-reaches-only-the-perform-room-once-per-frame
+  (publish! "a" 4 1 {:values {:h :live} :audition {:h :draft-1}})
+  (let [perform (room :perform) rig (room :rig)]
+    (doseq [{:keys [feed]} [perform rig]]
+      (interop/feed-activity! feed true)
+      (interop/feed-start! feed input-4))
+    (doseq [n (range 2 6)]
+      (publish! (str n) 4 n {:values {:h :live} :audition {:h (keyword (str "draft-" n))}})
+      ((:frame! perform)) ((:frame! rig)))
+    (is (= [[4 1 {:h :draft-1}] [4 2 {:h :draft-2}] [4 3 {:h :draft-3}] [4 4 {:h :draft-4}] [4 5 {:h :draft-5}]]
+           @(:delivered perform))
+        "each frame reaches the engine once, with its own audition and increasing frame numbers")
+    (is (every? #(= {:h :live} (nth % 2)) @(:delivered rig)) "every other Room keeps the live frame")))

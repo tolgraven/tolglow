@@ -394,6 +394,8 @@ try {
   await cueButton.click({force: true});
   await room5.waitForTimeout(1500);
   const heldCue = await roomShow();
+  await room5.waitForTimeout(1000);
+  const heldCueLater = await roomShow();
   await page.evaluate(() => { window.__emulateHidden = true; });
   const hiddenStart = heldCue;
   const cueReached = await room5.waitForFunction(previous => document.querySelector('#preview').tolglowPreview.snapshot?.revision !== previous,
@@ -401,10 +403,12 @@ try {
   await room5.waitForTimeout(500);
   const hiddenEnd = await roomShow();
   await page.evaluate(() => { window.__emulateHidden = false; window.__releaseFrames(); });
-  results.hiddenStudio = {heldVisible: {start: heldStart, end: heldEnd, afterCue: heldCue}, hidden: {start: hiddenStart, end: hiddenEnd}, cueReached};
+  results.hiddenStudio = {heldVisible: {start: heldStart, end: heldEnd, afterCue: heldCue, afterCueLater: heldCueLater},
+    hidden: {start: hiddenStart, end: hiddenEnd}, cueReached};
   console.log('hidden-studio', JSON.stringify(results.hiddenStudio));
   assert.ok(heldEnd.frame > heldStart.frame, 'show frames reach the Room on its frame lane while Studio renders are held');
   assert.equal(heldCue.revision, heldStart.revision, 'control: with Studio renders held and Studio visible, a cue revision does not reach the Room');
+  assert.equal(heldCueLater.frame, heldCue.frame, 'control: frames of the new revision wait at the fence until a render');
   assert.ok(hiddenEnd.frame > hiddenStart.frame, 'the Room keeps advancing while Studio is hidden');
   assert.ok(cueReached, 'a cue played in Studio reaches the Room while Studio is hidden');
 

@@ -463,14 +463,15 @@
           :foreign {:db (assoc db :awaiting-full? true
                                :connection {:connected? false :error (show-window/refusal-message db)})}
           ;; High-rate lanes install outside app-db at the same token. The ACK
-          ;; follows both installations, in :fx order.
+          ;; follows both installations; lane consumers hear of the frame only
+          ;; after it, so their work never holds back the next server frame.
           :accepted (let [[state installs] (lane-installs (:state received))]
                       (-> (install-show db state)
                           (update :db dissoc :awaiting-full?)
                           (update :fx (fnil into [])
-                                  (cond-> []
-                                    (seq installs) (conj [:studio/frame-install installs])
-                                    :always (conj [:studio/stream-reply [id {:op :ack :token (:token envelope)}]])))))
+                                  [[:studio/frame-install installs]
+                                   [:studio/stream-reply [id {:op :ack :token (:token envelope)}]]
+                                   [:studio/frame-notify (vec (keys installs))]])))
           :duplicate (cond-> {:db (-> db (dissoc :awaiting-full?) (assoc :connection {:connected? true}))
                               :studio/stream-reply [id {:op :ack :token (:token envelope)}]}
                        (and (:awaiting-full? db) (:recover-held? db))
@@ -670,14 +671,11 @@
                 (when-let [why (reason (:code missed))] (str ": " why)))))))
 
 (defn room-show
-  "The show the Room preview renders. Live fixture values arrive on the :room
-  frame lane; a staged draft's audition frame replaces them in this Room only,
-  so every other preview keeps the live frame."
+  "The show the Perform Room renders. Live fixture values and a staged draft's
+  audition values both arrive on the :room frame lane; only this Room shows
+  the audition, so every other preview keeps the live frame."
   [db]
-  (let [show (or (:server-presentation db) (:show db))]
-    (if-let [values (get-in show [:draft-output :values])]
-      (assoc show :audition-values values)
-      show)))
+  (or (:server-presentation db) (:show db)))
 
 (defn- scene-draft-fx [db unique op fields]
   (let [{:keys [id revision]} (scene-draft-control db)]

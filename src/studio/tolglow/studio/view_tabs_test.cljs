@@ -1,11 +1,14 @@
 (ns tolglow.studio.view-tabs-test
-  (:require [cljs.test :refer-macros [deftest is testing]]
+  (:require [cljs.test :refer-macros [deftest is testing use-fixtures]]
             [reagent.core :as r]
             ["react-dom/server" :refer [renderToStaticMarkup]]
             [tolglow.studio.events :as events]
             [tolglow.studio.events-test :as events-test :refer [base transition full-frame]]
+            [tolglow.studio.frame-stream :as frame-stream]
             [tolglow.studio.show-window :as show-window]
             [tolglow.studio.view-tabs :as tabs]))
+
+(use-fixtures :each {:before frame-stream/reset-all! :after frame-stream/reset-all!})
 
 (defn- views [state] (mapv :view (:tabs state)))
 

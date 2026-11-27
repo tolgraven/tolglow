@@ -55,24 +55,34 @@ continue while the delivery worker is busy.
 
 Studio splits high-rate subtrees from each accepted view into frame lanes
 outside re-frame app-db (`src/studio/tolglow/studio/frame_stream.cljs`). The
-`:room` lane owns `[:output :values]`, the emitted fixture values that only
-the Room renders. The stream event joins the lane values back into the
-projection to apply a patch, installs the remaining view in
-`:server-projection`, then installs one whole lane frame and sends the ACK, in
-that order. A lane frame is an immutable map with the token, show identity,
-revision, frame number, show time and typed values. If a lane does not hold the
+`:room` lane owns `[:output :values]`, the emitted fixture values only the Room
+renders, and `[:draft-output :values]`, a staged scene draft's audition values.
+The stream event joins the lane values back into the projection to apply a
+patch and installs the remaining view in `:server-projection`. Its `:fx` then
+install one whole lane frame, send the ACK and notify lane consumers, in that
+order: consumer work never delays the next server frame. A lane frame is an
+immutable map with the token, show identity, revision, frame number, show time,
+master, blackout, cut intents, atmosphere and the typed parts present. The
+clock and gating fields also stay in app-db. If a lane does not hold the
 projection's exact token and identity, the next patch requests a full view.
-A view without the subtree installs an absent lane frame.
 
 A Room attaches to the lane with its owner (`:perform` or `:rig`) when its
-engine starts and releases it on unmount. It receives frames only while its
-engine reports the Room active: visible, in the viewport and focused, or shown
-in another window. Resuming delivers the newest frame, never a backlog. The
-Room component's Reagent arguments omit frame clocks and values. A show frame
+engine starts and releases it on unmount. Delivery is coalesced to one frame
+per animation frame of the window showing the Room, newest first. It runs only
+while the engine reports the Room active: visible, in the viewport and focused,
+or shown in another window. Resuming delivers the newest frame, never a
+backlog. Only the Perform Room shows an audition, from the same lane frame, so
+each frame reaches the engine once. The Room component's Reagent arguments hold
+only structure (rig, editor, identity, revision, instances). A show frame
 therefore updates the engine without rendering the Room component. The engine
-receives a lane frame only when its show identity and revision match the
-component's structural input. A frame that arrives ahead of a rig or cue change
-waits one render for it. The engine-facing `update(frame)` data is unchanged.
+receives a lane frame only when its identity and revision match that
+structure. A frame that arrives ahead of a rig or cue change waits for the
+render that delivers it. The engine-facing `update(frame)` data is unchanged.
+A consumer that throws is logged once per failure and then counted.
+
+Known gap: when Studio is hidden, its animation frames stop. A popped-out Room
+window flushes Studio renders from its own frames. A picture-in-picture Room
+has no such window: its lane frames stop with Studio's frames, as before lanes.
 
 Measured in headless Chrome 155 with the Metal GPU on the M4 Pro (96 moving
 heads, three running cues, about 29 frames a second, 44 KB patches), main-thread

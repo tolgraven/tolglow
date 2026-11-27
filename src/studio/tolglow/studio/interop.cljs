@@ -95,18 +95,15 @@
   (preview-data (select-keys (:output show) [:values :atmosphere])))
 
 (def ^:private room-keys
-  [:runtime-id :show-id :epoch :revision :blackout? :master :receiver-surfaces :editor :rig :instances :cut?
-   :audition-values])
+  [:runtime-id :show-id :epoch :revision :receiver-surfaces :editor :rig :instances])
 
 (defn room-input
-  "The low-rate part of a show that a Room renders. Frame clocks and emitted
-  fixture values arrive on the :room frame lane instead, so a show frame does
-  not change this value or render the Room component."
+  "The structural part of a show that a Room renders. Frame clocks, fixture
+  and audition values, master, blackout, cut intents and atmosphere arrive on
+  the :room frame lane at their exact token instead, so a show frame does not
+  change this value or render the Room component."
   [show]
-  (when show
-    (assoc (select-keys show room-keys)
-           :atmosphere (get-in show [:output :atmosphere])
-           :last-intents (get-in show [:status :last-intents]))))
+  (when show (select-keys show room-keys)))
 
 (defn consistent?
   "Whether a lane frame belongs to the same server show and revision as the
@@ -116,6 +113,57 @@
   (or (nil? frame)
       (and (= (projection/presentation (:identity frame)) (select-keys input [:runtime-id :show-id :epoch]))
            (= (:revision frame) (:revision input)))))
+
+(defn room-values
+  "The typed fixture values owner's Room shows from a lane frame. A staged
+  draft's audition replaces the live values in the Perform Room only."
+  [owner lane-frame]
+  (let [{:keys [values audition]} (:value lane-frame)]
+    (if (and audition (= :perform owner)) audition values)))
+
+(defn room-feed
+  "Own one Room's consumer of the :room frame lane. (deliver! input lane-frame)
+  receives each consistent pair: at most one lane frame per (schedule! f)
+  callback, plus one delivery when the structural input changes. The feed
+  starts paused; start! delivers the installed frame once."
+  [owner deliver! schedule!]
+  {:owner owner :deliver! deliver! :schedule! schedule!
+   :state (volatile! {:input nil :frame nil :active? false :release nil :alive? true})})
+
+(defn- feed-deliver! [{:keys [deliver! state]}]
+  (let [{:keys [input frame alive?]} @state]
+    (when (and alive? input (consistent? input frame))
+      (deliver! input frame))))
+
+(defn feed-start!
+  "Attach to the lane with input, and deliver the installed frame once."
+  [{:keys [owner schedule! state] :as feed} input]
+  (vswap! state assoc :input input :frame (frame-stream/baseline :room))
+  (vswap! state assoc :release
+          (frame-stream/attach! :room owner
+                                (fn [lane-frame]
+                                  (when (:alive? @state)
+                                    (vswap! state assoc :frame lane-frame)
+                                    (feed-deliver! feed)))
+                                :active? (:active? @state) :schedule schedule!))
+  (feed-deliver! feed))
+
+(defn feed-input!
+  "Install a changed structural input and deliver it with the latest frame."
+  [{:keys [state] :as feed} input]
+  (when-not (= input (:input @state))
+    (vswap! state assoc :input input)
+    (feed-deliver! feed)))
+
+(defn feed-activity!
+  "Pause or resume lane delivery with the engine's activity gate."
+  [{:keys [owner state]} active?]
+  (vswap! state assoc :active? (boolean active?))
+  (when (:release @state) (frame-stream/set-active! :room owner active?)))
+
+(defn feed-stop! [{:keys [state]}]
+  (when-let [release (:release @state)] (release))
+  (vswap! state assoc :alive? false :release nil))
 
 (defn preview-rig [rig]
   (preview-data
@@ -165,17 +213,16 @@
       out)))
 
 (defn- lane-values
-  "Convert the typed lane values once per lane frame."
-  [this lane-frame]
-  (let [value (:value lane-frame)]
-    (if (identical? value (aget this "laneValue"))
-      (aget this "laneValues")
-      (let [converted (values->js value (aget this "laneValue") (aget this "laneValues"))]
-        (aset this "laneValue" value)
-        (aset this "laneValues" converted)
-        converted))))
+  "Convert typed lane values once per distinct value."
+  [this value]
+  (if (identical? value (aget this "laneValue"))
+    (aget this "laneValues")
+    (let [converted (values->js value (aget this "laneValue") (aget this "laneValues"))]
+      (aset this "laneValue" value)
+      (aset this "laneValues" converted)
+      converted)))
 
-(defn- update-preview! [this engine show lane-frame]
+(defn- update-preview! [this engine show lane-frame owner]
   ;; Preserve the shared rig across frame updates, including worker transfers.
   (let [rig (:rig show)
         previous-rig (aget this "rig")
@@ -185,10 +232,11 @@
         editor (:editor show)
         js-editor (if (= editor (aget this "editor")) (aget this "jsEditor") (preview-data editor))
         frame (preview-data (merge (select-keys show [:runtime-id :show-id :epoch :revision
-                                                      :blackout? :master :receiver-surfaces :spatial-volumes])
-                                   (select-keys lane-frame [:frame-number :time-ms])))
-        values (if-let [audition (:audition-values show)] (preview-data audition) (lane-values this lane-frame))
-        intents (:last-intents show)]
+                                                      :receiver-surfaces :spatial-volumes])
+                                   (cond-> (select-keys lane-frame [:frame-number :time-ms :blackout? :master])
+                                     (:master lane-frame) (update :master transit/fraction-value))))
+        values (lane-values this (room-values owner lane-frame))
+        intents (:last-intents lane-frame)]
     (aset this "rig" rig)
     (aset this "jsRig" js-rig)
     (doseq [[k js-key cache] [[:sculpt-guide "sculpt-guide" "sculptGuide"] [:volume-guides "volume-guides" "volumeGuides"]
@@ -203,34 +251,13 @@
     (aset this "jsEditor" js-editor)
     (aset frame "editor" js-editor)
     (aset frame "rig" js-rig)
-    (let [output (preview-output {:output (cond-> {} (some? (:atmosphere show)) (assoc :atmosphere (:atmosphere show)))})]
+    (let [output (preview-output {:output (cond-> {} (some? (:atmosphere lane-frame)) (assoc :atmosphere (:atmosphere lane-frame)))})]
       (when values (aset output "values" values))
       (aset frame "output" output))
-    (aset frame "cut?" (boolean (or (:cut? show)
+    (aset frame "cut?" (boolean (or (:cut? lane-frame)
                                     (some #(#{"effect/reloaded" "instance/finished" :effect/reloaded :instance/finished}
                                             (:type %)) intents))))
     (js-invoke engine "update" frame)))
-
-(defn- deliver-preview!
-  "Send the Room input and the latest lane frame to the engine when they
-  describe the same server show and revision."
-  [this]
-  (when-let [engine (aget this "engine")]
-    (let [input (aget this "input") lane-frame (aget this "laneFrame")]
-      (when (and input (consistent? input lane-frame))
-        (update-preview! this engine input lane-frame)))))
-
-(defn- attach-lane!
-  "Own this Room's consumer of the :room frame lane until unmount. Frames are
-  delivered only while the engine reports the Room active."
-  [this owner]
-  (aset this "laneRelease"
-        (frame-stream/attach! :room owner
-                              (fn [lane-frame]
-                                (when (aget this "alive")
-                                  (aset this "laneFrame" lane-frame)
-                                  (deliver-preview! this)))
-                              :active? (boolean (aget this "active")))))
 
 (rf/reg-sub ::frame-ms (fn [db _] (get-in db [:show :status :frame-ms])))
 
@@ -297,6 +324,13 @@
              load-engine (or (aget host "tolglowLoadEngine") (aget js/globalThis "tolglowLoadEngine"))]
          (aset this "alive" true)
          (aset this "foreign" (not (identical? host js/window)))
+         ;; Lane frames reach the engine on this window's animation frames,
+         ;; after the ACK, newest frame first; the feed starts with the engine.
+         (aset this "feed" (room-feed owner
+                                      (fn [input lane-frame]
+                                        (when-let [engine (aget this "engine")]
+                                          (update-preview! this engine input lane-frame owner)))
+                                      #(.requestAnimationFrame host %)))
          (let [rate (canvas-rate this)
                cadence (bitmap-cadence #(.now js/performance) #(reset! rate %))
                changed (get (r/argv this) 3)
@@ -304,8 +338,7 @@
                          (let [active? (boolean (.-detail event))]
                            (when-not active? ((:clear! cadence)))
                            ;; Frames pause on the same gates as the GPU.
-                           (aset this "active" active?)
-                           (when (aget this "laneRelease") (frame-stream/set-active! :room owner active?))
+                           (feed-activity! (aget this "feed") active?)
                            (when changed (changed active?))))]
            (aset this "bitmapCadence" cadence)
            (aset this "activity-handler" handler)
@@ -324,9 +357,6 @@
                                                           #js [(.querySelector root "canvas")
                                                                (.querySelector root ".preview-status")])]
                           (aset this "engine" engine)
-                          (aset this "input" (second (r/argv this)))
-                          (aset this "laneFrame" (frame-stream/baseline :room))
-                          (attach-lane! this owner)
                           (when (aget this "foreign") (external-window! this (.querySelector root "canvas")))
                           (swap! engines assoc-in [:previews owner] engine)
                           (when (fn? (aget engine "onNavigationChange"))
@@ -335,7 +365,7 @@
                                              #(when (identical? engine (preview-engine @engines nil))
                                                 (rf/dispatch [:camera-navigation/observed (js->clj (local-data this %) :keywordize-keys true)])))))
                           (observe-preview! this engine (nth (r/argv this) 4 nil))
-                          (deliver-preview! this)
+                          (feed-start! (aget this "feed") (second (r/argv this)))
                           (rf/dispatch [:studio/preview-ready (every? #(fn? (aget engine %)) ["setWorkLight" "setQuality" "setCamera"]) owner])))))
              (.catch #(rf/dispatch [:studio/toast (message %) true])))))
      :component-did-update
@@ -345,12 +375,11 @@
            (observe-preview! this engine (nth (r/argv this) 4 nil)))
          (let [show (second (r/argv this))]
            (when (and show (not (identical? show (second old-argv))))
-             (aset this "input" show)
-             (deliver-preview! this)))))
+             (feed-input! (aget this "feed") show)))))
      :component-will-unmount
      (fn [this]
        (aset this "alive" false)
-       (when-let [release (aget this "laneRelease")] (release) (aset this "laneRelease" nil))
+       (feed-stop! (aget this "feed"))
        (when-let [unsubscribe (aget this "navigation-unsubscribe")] (unsubscribe))
        (when-let [handler (aget this "fullscreen-handler")]
          (.removeEventListener js/document "fullscreenchange" handler)

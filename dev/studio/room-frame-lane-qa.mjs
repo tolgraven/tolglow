@@ -80,13 +80,18 @@ try {
   assert.ok(rig.length >= 20, 'The rig editor Room receives show frames: ' + rig.length);
   assert.ok(increasing(rig) && rig.at(-1).fixtures > 0);
   await page.locator('.rig-editor-scene').screenshot({path: join(directory, 'rig-room-live.png')});
+  const renderer = await page.evaluate(() => document.querySelector('#rig-preview').tolglowPreview.getTelemetry().deviceRenderer);
+  // The view is a saved show preference: leave the host on Perform for later checks.
+  await page.locator('a[data-view=perform]').click();
+  await page.locator('#preview').waitFor({state: 'visible'});
+  await page.waitForTimeout(1000);
   assert.deepEqual(errors, []);
 
   const report = {fixtures, live: {updates: live.length, perSecond: +(live.length / 3).toFixed(1), fixturesPerFrame: live.at(-1).fixtures},
     paused: {updates: paused.length, lastFrameBefore: lastBefore},
     resumed: {updates: resumed.length, firstFrame: resumed[0].frame, skipped: resumed[0].frame - lastBefore - 1},
     rig: {updates: rig.length, fixturesPerFrame: rig.at(-1).fixtures}, pageErrors: errors.length,
-    renderer: await page.evaluate(() => document.querySelector('#rig-preview').tolglowPreview.getTelemetry().deviceRenderer)};
+    renderer};
   await writeFile(join(directory, 'report.json'), JSON.stringify(report, null, 2));
   console.log(report);
 } finally { await context.close(); }

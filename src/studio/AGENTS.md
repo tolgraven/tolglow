@@ -14,7 +14,8 @@ the exact acknowledged token of the same runtime, show and epoch. Keep the
 decoded data in `:server-projection`, except high-rate frame lanes
 (`frame_stream.cljs`; today the Room's fixture values), which install outside
 app-db at the same token. Lane consumers attach with an owner, pause while
-inactive and receive whole frames. Adapt values for widgets above that
+inactive and receive whole frames, notified after the ACK and coalesced to
+their window's animation frames. Adapt values for widgets above that
 baseline and acknowledge a frame only after installation, lanes included. Request Connections
 status on this socket while the page is visible and release that interest on
 hide or navigation. The waveform shares this subscription. Request a fresh
