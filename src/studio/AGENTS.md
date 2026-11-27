@@ -11,8 +11,11 @@ For a changed Studio show control, identify its REPL equivalent, send the shared
 
 Studio owns one same-origin Transit WebSocket for show state. Apply a patch to
 the exact acknowledged token of the same runtime, show and epoch. Keep the
-decoded data in `:server-projection`. Adapt values for widgets above that
-baseline and acknowledge a frame only after installation. Request Connections
+decoded data in `:server-projection`, except high-rate frame lanes
+(`frame_stream.cljs`; today the Room's fixture values), which install outside
+app-db at the same token. Lane consumers attach with an owner, pause while
+inactive and receive whole frames. Adapt values for widgets above that
+baseline and acknowledge a frame only after installation, lanes included. Request Connections
 status on this socket while the page is visible and release that interest on
 hide or navigation. The waveform shares this subscription. Request a fresh
 snapshot through the socket when the baseline is missing. Preserve drafts until

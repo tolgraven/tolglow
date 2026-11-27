@@ -88,3 +88,22 @@
     (is (interop/consistent? input nil))
     (is (not (interop/consistent? input (assoc lane :revision 5))))
     (is (not (interop/consistent? input (assoc-in lane [:identity :epoch] 2))))))
+
+(deftest lane-values-convert-like-presented-preview-data-and-reuse-unchanged-fixtures
+  (let [typed (transit/decode (transit/encode
+                               {:truss/spot {:emitted-color [1 0.5 0] :mode :gobo/spin :phase (transit/->BeatFraction "1" "4")
+                                             :tags #{:a} :pose {:direction [0 1 0]}}
+                                "strip" {:intensity 0.25 :cells [{:id :cell/a :level 1}]}}))
+        expected (interop/preview-data (projection/presentation typed))
+        converted (interop/values->js typed nil nil)
+        js->data #(js->clj (js/JSON.parse (js/JSON.stringify %)))]
+    (is (= (js->data expected) (js->data converted)))
+    (is (= 0.25 (aget converted "truss/spot" "phase")))
+    (is (= "gobo/spin" (aget converted "truss/spot" "mode")))
+    (let [moved (assoc-in typed ["strip" :intensity] 0.5)
+          next-js (interop/values->js moved typed converted)]
+      (is (identical? (aget converted "truss/spot") (aget next-js "truss/spot")) "an unchanged fixture keeps its object")
+      (is (not (identical? (aget converted "strip") (aget next-js "strip"))))
+      (is (= 0.5 (aget next-js "strip" "intensity")))
+      (is (= 0.25 (aget converted "strip" "intensity")) "the previous frame's objects are never mutated"))
+    (is (nil? (interop/values->js nil typed converted)))))

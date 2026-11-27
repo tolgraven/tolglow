@@ -4,6 +4,7 @@
             [tolglow.studio.frame-stream :as frame-stream]
             [tolglow.studio.observations :as observations]
             [tolglow.studio.projection :as projection]
+            [tolglow.transit :as transit]
             [reagent.core :as r]
             [re-frame.core :as rf]))
 
@@ -126,17 +127,53 @@
                        fixture))
                    fixtures)))))
 
+(defn- js-key [k]
+  (cond (keyword? k) (subs (str k) 1)
+        (string? k) k
+        (or (number? k) (symbol? k)) (str k)
+        :else (pr-str k)))
+
+(defn- typed->js
+  "The JavaScript value preview-data gives the presented form of a typed
+  value, in one pass: fractions become numbers and enums become text."
+  [value]
+  (cond
+    (transit/fraction? value) (transit/fraction-value value)
+    (keyword? value) (subs (str value) 1)
+    (symbol? value) (str value)
+    (map? value) (let [out #js {}]
+                   (reduce-kv (fn [_ k v] (unchecked-set out (js-key k) (typed->js v))) nil value)
+                   out)
+    (coll? value) (let [out #js []]
+                    (doseq [v value] (.push out (typed->js v)))
+                    out)
+    :else value))
+
+(defn values->js
+  "Convert typed lane values to the engine's fixture value object. A fixture
+  whose typed value is identical to the previous frame's reuses that frame's
+  converted object, which is never mutated after creation."
+  [values previous previous-js]
+  (when values
+    (let [out #js {}]
+      (reduce-kv (fn [_ id fixture]
+                   (let [k (js-key id)]
+                     (unchecked-set out k (if (and previous-js (identical? fixture (get previous id)))
+                                            (unchecked-get previous-js k)
+                                            (typed->js fixture)))))
+                 nil values)
+      out)))
+
 (defn- lane-values
-  "Present the typed lane values once per lane frame, reusing unchanged
-  fixture subtrees from the previous presentation."
+  "Convert the typed lane values once per lane frame."
   [this lane-frame]
   (let [value (:value lane-frame)]
     (if (identical? value (aget this "laneValue"))
       (aget this "laneValues")
-      (let [presented (projection/presentation value (aget this "laneValue") (aget this "laneValues"))]
+      (let [converted (values->js value (aget this "laneValue") (aget this "laneValues"))]
         (aset this "laneValue" value)
-        (aset this "laneValues" presented)
-        presented))))
+        (aset this "laneValues" converted)
+        converted))))
 
 (defn- update-preview! [this engine show lane-frame]
   ;; Preserve the shared rig across frame updates, including worker transfers.
@@ -150,7 +187,7 @@
         frame (preview-data (merge (select-keys show [:runtime-id :show-id :epoch :revision
                                                       :blackout? :master :receiver-surfaces :spatial-volumes])
                                    (select-keys lane-frame [:frame-number :time-ms])))
-        values (or (:audition-values show) (lane-values this lane-frame))
+        values (if-let [audition (:audition-values show)] (preview-data audition) (lane-values this lane-frame))
         intents (:last-intents show)]
     (aset this "rig" rig)
     (aset this "jsRig" js-rig)
@@ -166,9 +203,9 @@
     (aset this "jsEditor" js-editor)
     (aset frame "editor" js-editor)
     (aset frame "rig" js-rig)
-    (aset frame "output" (preview-output {:output (cond-> {}
-                                                    values (assoc :values values)
-                                                    (:atmosphere show) (assoc :atmosphere (:atmosphere show)))}))
+    (let [output (preview-output {:output (cond-> {} (some? (:atmosphere show)) (assoc :atmosphere (:atmosphere show)))})]
+      (when values (aset output "values" values))
+      (aset frame "output" output))
     (aset frame "cut?" (boolean (or (:cut? show)
                                     (some #(#{"effect/reloaded" "instance/finished" :effect/reloaded :instance/finished}
                                             (:type %)) intents))))
