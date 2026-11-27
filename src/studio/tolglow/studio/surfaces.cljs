@@ -17,20 +17,35 @@
 
 (defn- wire-id [value] (if (keyword? value) (subs (str value) 1) (str value)))
 
+(defn cue-grid?
+  "A logical surface whose content is the running launches (#545)."
+  [logical]
+  (= :active-cues (:content-type logical)))
+
 (defn on-surface
   "Cells shown by an attached member: {:groups {group-id label}
-  :instances {wire instance-id label}}, labelled with the surface and strip.
-  Instance keys use the text IDs of Studio's presented instances."
+  :instances {wire instance-id label} :selected {wire instance-id surface}},
+  labelled with the surface and strip, or row and pad on a cue grid.
+  :selected names the logical surface whose committed selection is that
+  launch. Instance keys use the text IDs of Studio's presented instances."
   [surfaces]
-  (reduce (fn [found {:keys [surface-id cells]}]
-            (reduce (fn [found {:keys [group-id instance-id position]}]
-                      (let [label (str surface-id " " (inc (:x position)))]
-                        (cond-> found
-                          group-id (assoc-in [:groups group-id] label)
-                          instance-id (assoc-in [:instances (wire-id instance-id)] label))))
-                    found cells))
-          {:groups {} :instances {}}
-          (mapcat :members (:logical surfaces))))
+  (let [found (reduce (fn [found logical]
+                        (reduce (fn [found {:keys [surface-id cells]}]
+                                  (reduce (fn [found {:keys [group-id instance-id position]}]
+                                            (let [label (if (cue-grid? logical)
+                                                          (str surface-id " " (inc (:y position)) "·" (inc (:x position)))
+                                                          (str surface-id " " (inc (:x position))))]
+                                              (cond-> found
+                                                group-id (assoc-in [:groups group-id] label)
+                                                instance-id (assoc-in [:instances (wire-id instance-id)] label))))
+                                          found cells))
+                                found (:members logical)))
+                      {:groups {} :instances {} :selected {}}
+                      (:logical surfaces))]
+    (reduce (fn [found {:keys [id layout]}]
+              (let [[kind selected] (:selected layout)]
+                (cond-> found (= :instance kind) (assoc-in [:selected (wire-id selected)] id))))
+            found (:logical surfaces))))
 
 (rf/reg-sub :surfaces/view (fn [db _] (surfaces-view db)))
 
@@ -101,14 +116,23 @@
   ;; content holds it reveals it; the owner leaves a visible cell where it is.
   (fn [{:keys [db]} [_ selected]]
     (let [surfaces (surfaces-view db)
-          ;; A presented instance ID resolves to the exact typed cue ID.
+          instance (when (= :instance (first selected))
+                     (some #(when (= (second selected) (wire-id (:id %))) %) (:instances (show-view db))))
+          ;; A presented instance ID resolves to the exact typed cue ID on a mixer.
           cell-key (if (= :instance (first selected))
-                     (some (fn [{:keys [id cue-id]}] (when (and cue-id (= (second selected) (wire-id id))) [:cue cue-id]))
-                           (:instances (show-view db)))
-                     selected)]
-      (when (and cell-key (connected? db) (get-in surfaces [:settings :follow-selection?]))
-        {:fx (vec (for [{:keys [id viewport]} (:logical surfaces)]
-                    [:dispatch [:surfaces/reveal id viewport cell-key]]))}))))
+                     (when-let [cue-id (:cue-id instance)] [:cue cue-id])
+                     selected)
+          ;; A cue grid shows the launch itself, and takes it as its selection (#545).
+          launch-key (when instance [:instance (:id instance)])]
+      (when (and (connected? db) (get-in surfaces [:settings :follow-selection?]))
+        (let [fx (vec (mapcat (fn [{:keys [id viewport] :as logical}]
+                                (if (cue-grid? logical)
+                                  (when launch-key
+                                    [[:dispatch [:surfaces/reveal id viewport launch-key]]
+                                     [:dispatch [:surfaces/layout id viewport {:selected launch-key}]]])
+                                  (when cell-key [[:dispatch [:surfaces/reveal id viewport cell-key]]])))
+                              (:logical surfaces)))]
+          (when (seq fx) {:fx fx}))))))
 
 (rf/reg-event-fx :surfaces/reveal
   (fn [{:keys [db]} [_ target viewport cell-key]]
@@ -140,12 +164,18 @@
       db)))
 
 (defn range-label
-  "Human strip range of a logical surface, such as \"Strips 1–16 of 20\"."
-  [{:keys [window span size]}]
-  (let [first-cell (inc (:x window)) last-cell (min (:columns size) (+ (:x window) (:columns span)))]
-    (if (pos? (:columns size))
-      (str "Strips " first-cell "–" (max first-cell last-cell) " of " (:columns size))
-      "No strips")))
+  "Human strip range of a logical surface, such as \"Strips 1–16 of 20\",
+  or the launches a cue grid page shows, such as \"Cues 65–70 of 70\"."
+  [{:keys [window span size] :as logical}]
+  (if (cue-grid? logical)
+    (let [columns (max 1 (:columns size)) total (:count logical 0)
+          first-cell (inc (* columns (:y window)))
+          last-cell (min total (* columns (+ (:y window) (:rows span))))]
+      (if (pos? total) (str "Cues " first-cell "–" (max first-cell last-cell) " of " total) "No running cues"))
+    (let [first-cell (inc (:x window)) last-cell (min (:columns size) (+ (:x window) (:columns span)))]
+      (if (pos? (:columns size))
+        (str "Strips " first-cell "–" (max first-cell last-cell) " of " (:columns size))
+        "No strips"))))
 
 (defn- member-names [mode members]
   (str/join (if (= :mirror mode) " = " " · ")
@@ -154,25 +184,40 @@
 (defn session-box
   "Bank buttons and the strip range for one logical surface."
   [{:keys [id viewport mode window limit members] :as logical} disabled?]
-  (let [bank #(rf/dispatch [:surfaces/bank id viewport %])]
+  (let [bank #(rf/dispatch [:surfaces/bank id viewport %])
+        grid? (cue-grid? logical)
+        ;; A cue grid pages down through rows of launches; a mixer pages across strips.
+        [axis first-move previous-move next-move last-move] (if grid? [:y :top :up :down :bottom]
+                                                              [:x :first :previous :next :last])
+        at-start? (zero? (get window axis 0))
+        at-end? (>= (get window axis 0) (get limit axis 0))
+        unit (if grid? "page" "bank")]
     [:div.surface-box {:data-surface id :data-mode (name mode)}
      [:span.surface-box-name {:title (member-names mode members)}
       (str id (when (not= :single mode) (str " · " (name mode))))]
      [:span.surface-box-range {:role "status"} (range-label logical)]
-     [:label.surface-box-layout {:title (layout-label (:layout logical))}
-      [:select {:value (name (get-in logical [:layout :encoder-mode] :pan)) :disabled disabled?
-                :aria-label (str "Encoder mode on " id)
-                :on-change #(rf/dispatch [:surfaces/layout id viewport {:encoder-mode (keyword (.. % -target -value)) :page 0}])}
-       (for [[k label] encoder-modes] ^{:key k} [:option {:value (name k)} label])]]
+     (if grid?
+       [:span.surface-box-layout {:title "Pads select or reorder running cues on this grid"}
+        (if-let [[_ selected :as cell-key] (get-in logical [:layout :selected])]
+          ;; The cue name when the selected launch is on a shown page.
+          (str "Selected " (if-let [label (some #(when (= cell-key (:key %)) (:label %)) (mapcat :cells members))]
+                             (str label " · " (wire-id selected))
+                             (wire-id selected)))
+          "Nothing selected")]
+       [:label.surface-box-layout {:title (layout-label (:layout logical))}
+        [:select {:value (name (get-in logical [:layout :encoder-mode] :pan)) :disabled disabled?
+                  :aria-label (str "Encoder mode on " id)
+                  :on-change #(rf/dispatch [:surfaces/layout id viewport {:encoder-mode (keyword (.. % -target -value)) :page 0}])}
+         (for [[k label] encoder-modes] ^{:key k} [:option {:value (name k)} label])]])
      [:span.surface-box-buttons
-      [:button.surface-box-button {:type "button" :aria-label (str "First bank on " id)
-                                   :disabled (or disabled? (zero? (:x window))) :on-click #(bank :first)} "⏮"]
-      [:button.surface-box-button {:type "button" :aria-label (str "Previous bank on " id)
-                                   :disabled (or disabled? (zero? (:x window))) :on-click #(bank :previous)} "‹"]
-      [:button.surface-box-button {:type "button" :aria-label (str "Next bank on " id)
-                                   :disabled (or disabled? (>= (:x window) (:x limit))) :on-click #(bank :next)} "›"]
-      [:button.surface-box-button {:type "button" :aria-label (str "Last bank on " id)
-                                   :disabled (or disabled? (>= (:x window) (:x limit))) :on-click #(bank :last)} "⏭"]]]))
+      [:button.surface-box-button {:type "button" :aria-label (str "First " unit " on " id)
+                                   :disabled (or disabled? at-start?) :on-click #(bank first-move)} (if grid? "⏫" "⏮")]
+      [:button.surface-box-button {:type "button" :aria-label (str "Previous " unit " on " id)
+                                   :disabled (or disabled? at-start?) :on-click #(bank previous-move)} (if grid? "⏶" "‹")]
+      [:button.surface-box-button {:type "button" :aria-label (str "Next " unit " on " id)
+                                   :disabled (or disabled? at-end?) :on-click #(bank next-move)} (if grid? "⏷" "›")]
+      [:button.surface-box-button {:type "button" :aria-label (str "Last " unit " on " id)
+                                   :disabled (or disabled? at-end?) :on-click #(bank last-move)} (if grid? "⏬" "⏭")]]]))
 
 (defn- link-form [surfaces disabled?]
   (let [unlinked (keep (fn [{:keys [id link?]}] (when-not link? id)) (:logical surfaces))

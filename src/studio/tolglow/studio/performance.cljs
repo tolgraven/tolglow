@@ -605,7 +605,10 @@
         editing @(rf/subscribe [::sources/selection id])
         priority (sources/priority-destination show)
         scope (resolve-monitor (driven-controls instance controls) (get-in state [:monitor id]) monitor)
-        strip (get (:instances @(rf/subscribe [:surfaces/on-surface])) id)]
+        on-surface @(rf/subscribe [:surfaces/on-surface])
+        strip (get (:instances on-surface) id)
+        ;; A cue grid's committed selection, from a Push pad, the REPL or Follow selection (#545).
+        grid-selection (get (:selected on-surface) id)]
     [:article.live-effect-card {:data-live-instance id :aria-label (str title " · " id)
                                 :data-reorder-source (= id source-id)
                                 :data-density (if expanded? "detail" "strip")
@@ -620,6 +623,10 @@
        [:div.live-effect-meta
         [:span.live-effect-phase (cond faulted? "Fault" paused? "Paused" :else (widgets/label (:phase instance)))]
         (when strip [:span.surface-strip-badge {:title "Shown on this control surface strip"} strip])
+        (when grid-selection
+          [:span.surface-strip-badge {:data-surface-selected grid-selection
+                                      :title "The selected launch on this control surface"}
+           (str "Selected on " grid-selection)])
         (when-let [label (case (:suppressed-by selection-row) :mute "Muted" :solo "Excluded by Solo" nil)]
           [:span.live-selection-state {:data-suppressed-by (name (:suppressed-by selection-row))} label])
         (when duplicate? [:span.live-effect-phase (str "Launch " id)])

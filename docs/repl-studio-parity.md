@@ -258,6 +258,52 @@ submit the same operation. Watch **In the mix** update in Studio.
                             :epoch epoch :runtime-id runtime-id})))
 ```
 
+### Select and reorder from a Push 3 pad grid
+
+A Push 3 in User Mode can open the same two modes on its pads
+([issue #545](https://github.com/tolgraven/tolglow/issues/545)). Bind captured,
+otherwise unbound buttons under `:cue-grid` when connecting. The grid shows
+one pad per running launch in the committed order, top-left first, in the
+launch's pad colour. Select commits that surface's selection,
+`:control-surface/layout {:selected [:instance id]}`, and never launches or
+ends anything. The Push encoders and display then edit that launch. Reorder
+takes a first pad, which blinks, and a second pad as the target. It sends
+the same `:instance/move-after` with `:expected-revision` as **Place after**.
+A press on a pad whose launch moved since the last refresh does nothing.
+Page Up and Page Down move the surface window, so 70 launches take two pages.
+Code lives in `tolglow.surface.cue-grid`, which holds the modes and the
+`:active-cues` content, and `tolglow.surface.push-3`, which holds the pad and
+button addresses and the LED bytes.
+
+```clojure
+(show/connect-device! runtime :push-3
+  {:session-id "push-a" :user-mode? true :expression-mode :poly-aftertouch
+   :input-index 0 :output-index 0 :layout captured-layout
+   :cue-grid {:buttons {:select :cue-grid/select :reorder :cue-grid/reorder
+                        :up :cue-grid/page-up :down :cue-grid/page-down}}})
+(let [grid (some #(when (= "push-a" (:id %)) %) (:logical (:control-surfaces (show/snapshot runtime))))]
+  [(:window grid) (:count grid) (get-in grid [:layout :selected])])
+;; => [{:x 0, :y 0} 70 [:instance "0:12"]]
+@(show/surface-layout! runtime "push-a" {:selected [:instance "0:14"]})   ; the Push encoders follow
+@(show/bank-surface! runtime "push-a" :down)                               ; launches 65–70
+```
+
+In Studio, **Perform → Group mixer → Surfaces** shows the grid's session box as
+"Cues 65–70 of 70", with page buttons and the selected launch. Each **In the
+mix** card on the current page has a row·pad badge such as `push-a 1·3`. The
+selected launch shows **Selected on push-a**. With **Follow selection** on,
+**Detail** on a card pages the grid to that launch and selects it there. Two
+Pushes linked with `{:mode :extend :direction :down}` page as one 128-pad grid.
+`lein with-profile +dev run -m tolglow.qa.push-cue-grid-browser` checks this
+round trip with a virtual Push 3 in headless Chrome.
+
+**Tracked gaps.** The pad LED bytes use the Push 2 palette and animation
+channels. Push 3 pad addresses come from a capture. Neither has been checked
+on a physical Push 3 yet; the #545 hardware checklist is still open. Studio
+selection opens **Detail** but the Push selection only adds a badge in Studio.
+Pushes extended to the right need `:columns 16`. A Studio grid cannot mirror
+the Push yet (#706 slice 5), and the Push has no shuffle button.
+
 ### Set a running layer's priority
 
 In **Reorder**, choose **Move** on a running card, enter a **Layer priority**
