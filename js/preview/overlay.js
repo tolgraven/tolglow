@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import {finitePoint, planeAxis} from './editor.js';
+import {mountAxes} from './placement.js';
 import {SculptGuide} from './sculpt.js';
 import {VolumeOverlay} from './spatial-volumes.js';
 import {VideoSurfaceOverlay} from './video-surfaces.js';
@@ -54,6 +55,20 @@ export class RigOverlay {
       const outline = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({color: 0xffc980, depthTest: false, toneMapped: false}));
       outline.position.fromArray(item.position); outline.rotation.set(...(item['rotation-deg'] || [0, 0, 0]).map(n => n * Math.PI / 180), 'ZYX');
       this.rig.add(outline);
+      if (selection.kind === 'fixtures' && ['mount', 'place', 'calibrate'].includes(editor.tool)) {
+        // Home beam (pan 0, tilt 0) and mounting axis: the handle the Aim home tool drags.
+        const {forward, up} = mountAxes(item['rotation-deg'] || [0, 0, 0]), at = (v, k) => item.position.map((n, i) => n + v[i] * k);
+        line([item.position, at(forward, 1.6)], 0xffc980);
+        dots([at(forward, 1.6)], 0xffc980, 11);
+        line([item.position, at(up, .55)], 0x78b4e5);
+      }
+      if (selection.kind === 'fixtures' && editor.tool === 'calibrate' && finitePoint(editor['calibration-target'])) {
+        line([item.position, editor['calibration-target']], 0x78e5d2, .8);
+      }
+    }
+    if (editor.tool === 'calibrate') {
+      dots((editor['calibration-points'] || []).filter(finitePoint).slice(0, 64), 0xb6c9a9, 9);
+      if (finitePoint(editor['calibration-target'])) dots([editor['calibration-target']], 0x78e5d2, 13);
     }
     if (editor.tool === 'draw' || editor.tool === 'pixels') {
       const axis = planeAxis(editor.plane), other = [0, 1, 2].filter(n => n !== axis), value = Number(editor['plane-value']) || 0;
