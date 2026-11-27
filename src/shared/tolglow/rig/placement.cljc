@@ -168,7 +168,8 @@
           [universe address] (next-address fixtures (footprint definition))]
       (instance definition
                 (merge {:id (next-id fixtures (:id definition)) :universe universe :address address
-                        :position (mapv #(+ %1 (* clearance-m %2)) point up)
+                        ;; Tenth-of-a-millimetre positions read cleanly in numeric fields.
+                        :position (mapv #(/ (Math/round (* 1.0e4 (+ %1 (* clearance-m %2)))) 1.0e4) point up)
                         :rotation-deg (mount-rotation up)}
                        (select-keys options instance-keys))))))
 

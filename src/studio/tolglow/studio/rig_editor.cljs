@@ -188,7 +188,7 @@
       (= type "select-volume") {:dispatch [:tolglow.studio.spatial/select-preview (:volume-id detail)]}
       (= type "surface") (case (:tool (editor db))
                            "aim" (surface-command db (:aim-mode (editor db)) point surface-id)
-                           "calibrate" {:db (put-editor db (-> (editor db) (assoc-in [:calibration :target] point)
+                           "calibrate" {:db (put-editor db (-> (editor db) (assoc-in [:calibration :target] (mapv #(/ (js/Math.round (* 1000 %)) 1000) point))
                                                                (update :calibration dissoc :check)))}
                            {})
       (= type "place") (if (= "place" (:tool (editor db))) {:db (place-fixture db detail)} {})

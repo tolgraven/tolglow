@@ -33,6 +33,84 @@ fixture patch fields and truss creation remain in their existing panels. These
 panels use the same rig draft; their independent edits are not added to the 3D
 editor's undo history.
 
+## Place fixtures from the library
+
+Choose **Place fixture** and a published fixture type, then tap the floor, a
+wall, the ceiling or a truss. A truss is picked along its length within 25 cm;
+anything else uses the show's receiving planes plus a ceiling at the room's
+height. The new fixture sits **Distance from surface** away along the surface
+normal and is mounted along it: it stands on floors and the stage, hangs under
+the ceiling and trusses, and lies flat on walls with its home beam pointing
+down. It takes the next free DMX address after the highest occupied slot (a
+fixture that would cross channel 512 starts the next universe) and a fresh
+`<type>-<n>` ID. A tap that drags, a second finger or a tap outside every mount
+places nothing.
+
+A placement is a draft edit, so **Undo** removes it and **Save rig** patches
+it. On save the host instantiates every new fixture that names a published
+`:fixture-type-id` from that type: channels, footprint and type data come from
+the registry, and only the ID, name, universe, address, position, rotation,
+RGBW policy and calibration come from the draft. Its channels may differ from
+the type's only by axis reversal. The library's patch checks apply, so a moving
+head needs its documented pan and tilt travel before it can be saved. The REPL
+uses the same admission:
+
+```clojure
+(show/submit! runtime :rig
+  (update (:rig (show/snapshot runtime)) :fixtures conj
+          (placement/place (get-in @(:state runtime) [:model :registry :fixtures "robe-spot"])
+                           (get-in @(:state runtime) [:model :rig :fixtures])
+                           {:point [0 4 0] :normal [0 -1 0]})))
+```
+
+`tolglow.rig.placement` is shared CLJC: `place`, `mount-rotation`, `remount`,
+`face`, `mounting`, `reverse-channel` and `axis-range` are the functions Studio
+calls.
+
+## Mount and aim a fixture's home
+
+Selecting a fixture in **Place fixture**, **Aim home** or **Calibrate aim** shows
+**Mounting**. The orange line is the home beam (pan 0°, tilt 0°) and the blue
+line the mounting axis (the fixture's base-to-head direction). **Standing**,
+**Hanging** and the four wall buttons turn the fixture onto that axis and keep its
+home beam as close to the previous direction as the mount allows. **Aim home**
+drags a fixture's home beam towards the pointer on the editing plane and spins
+it only about its mounting axis. The rotation fields remain the exact form.
+
+Moving heads also show **Pan travel** and **Tilt travel**: the documented minimum
+and maximum mechanical angle, where home falls in that travel, and **Reverse**,
+which sets the channel's `:inverted-from 0` for a motor that runs against the
+model. Each of these is one undoable draft edit.
+
+## Calibrate a moving head's aim
+
+**Calibrate aim** works on the selected moving head. Tap a measured floor or wall
+point, or enter it, then **Check aim**. The host solves the pan and tilt with
+Afterglow's renderer from the committed fixture with the draft position, rotation
+and travel substituted, and returns mechanical degrees, 8-bit DMX before any
+channel reversal, and whether the travel reaches the point. The check never
+changes the show. **Send test aim** points the real head at the target through
+the ordinary surface-aim command (`:mode :together` in world coordinates), so
+the rig must be saved first.
+
+To derive the mount, jog the head until its beam centre hits a target and
+**Record current pan/tilt**; the committed output supplies the values, or enter
+the DMX values you jogged to. With three or more spread targets, **Fit mounting**
+runs `tolglow.calibration.geometry/fit-aim`, the fitter the phone calibration
+uses. It reports the rotation, standing/hanging/wall, the angular error and the
+inliers. Without **Pan/tilt direction and travel match the manual** the result
+stays a candidate: axis direction and mounting are ambiguous together. **Apply
+fitted rotation** writes it to the draft.
+
+The Ring paths are `POST /api/fixtures/aim-check` with `{:fixture-id :point}` and
+`POST /api/fixtures/aim-fit` with `{:fixture-id :samples :axis-verified?}`, each
+optionally with `:position`, `:rotation-deg` and `:calibration` overrides. The
+REPL calls `(show/fixture-action! runtime :aim-check {...})` and `:aim-fit`.
+
+The fit solves mounting rotation only. It does not fit travel ranges or
+reversal; set those from the manual, check aim, and adjust. Physical accuracy
+needs a real head and measured targets.
+
 ## Draw a moving-head path
 
 1. Select **Draw path**, choose the plane and its offset, and click the scene to
