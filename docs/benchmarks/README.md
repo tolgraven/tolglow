@@ -133,11 +133,16 @@ cycle (#774).
     all 64 first render.
 - **Two modes.** `:inline` compiles in the frame, as before #774.
   `:background` compiles ahead on the show's worker.
+- **Selector-cue corpus.** The mixed corpus plus 100 or 500 cues, each
+  selecting its own 64-fixture slice. Each round:
+  - publishes one revision, a full warm rebuild;
+  - schedules a grid launch of one selector cue, a pad press;
+  - measures the beat frame it fires on.
 - **Run.**
   - Two effect workers, a capture sink, and a 25 ms cadence held with a spin.
   - 200 warmup ticks, 240 ordinary ticks, 20 rounds per case.
-  - A fresh `lein run` JVM on JDK 25.0.2, Apple M4 Pro, at `d9fff18d`.
-  - Load average was 4.8 to 8.0 from other agent lanes.
+  - A fresh `lein run` JVM on JDK 25.0.2, Apple M4 Pro, at `6aa8e028`.
+  - Load average was 2.4 to 7.6 from other agent lanes.
 - **Report.** [2026-11-27-reload-takeover.edn](2026-11-27-reload-takeover.edn).
 
 Mixed 2,048-pixel/64-head rig. Tick p50 / p99 ms, ticks over 25 ms out of 20,
@@ -145,17 +150,29 @@ adoption or launch latency in frames, and programs compiled on the owner:
 
 | Case | Inline (as before) | Background: publication frame | Background: adoption or beat frame | Latency | Owner compiles |
 | --- | --- | --- | --- | --- | --- |
-| Ordinary frame | 4.1 / 12.7 | 4.3 / 14.3 | | | |
-| 8 accepted | 11.4 / 25.1, 1 | 6.8 / 9.3, 0 | 5.7 / 16.8, 0 | 1 | 8 → 0 |
-| 32 accepted | 29.2 / 61.7, 18 | 11.4 / 28.1, 1 | 7.3 / 16.2, 0 | 1 | 32 → 0 |
-| 32 rejected at evaluation | 31.2 / 51.1, 20 | 11.5 / 14.7, 0 | 7.5 / 9.0, 0 | 1 | 32 → 0 |
-| 32 rejected by the renderer | 32.6 / 88.1, 20 | 12.1 / 21.5, 0 | 8.8 / 18.7, 0 | 1 | 32 → 0 |
-| One effect on 64 heads | 39.2 / 59.8, 20 | 7.6 / 9.5, 0 | 6.8 / 19.4, 0 | 2 | 64 → 0 |
-| Grid burst of 64 launches | beat frame 55.4 / 70.5, 20 | 10.7 / 21.8, 0 | beat frame 27.6 / 36.9, 19 | 0 (launch) | 64 → 0 |
+| Ordinary frame | 3.1 / 4.9 | 3.9 / 4.4 | | | |
+| 8 accepted | 10.2 / 14.6, 0 | 5.0 / 9.5, 0 | 4.3 / 11.7, 0 | 1 | 8 → 0 |
+| 32 accepted | 25.5 / 33.4, 14 | 8.8 / 20.6, 0 | 5.9 / 15.8, 0 | 1 | 32 → 0 |
+| 32 rejected at evaluation | 28.3 / 31.8, 20 | 10.1 / 13.9, 0 | 6.5 / 7.9, 0 | 1 | 32 → 0 |
+| 32 rejected by the renderer | 29.7 / 42.3, 20 | 9.4 / 15.4, 0 | 7.3 / 9.0, 0 | 1 | 32 → 0 |
+| One effect on 64 heads | 36.1 / 47.4, 20 | 4.7 / 7.8, 0 | 5.3 / 17.6, 0 | 2 | 64 → 0 |
+| Grid burst of 64 launches | beat frame 50.1 / 61.7, 20 | 5.3 / 8.5, 0 | beat frame 22.1 / 27.7, 2 | 0 (launch) | 64 → 0 |
 
-On the showcase, 32 revisions inline took p50 12.9 to 17.0 ms, with up to 3 of
-20 rounds over 25 ms. In the background mode the adoption frame was p50 4.7 to
-5.3 ms, with none over 25 ms and a latency of 1 frame.
+Selector-cue corpus, background mode, tick p50 / p99 ms (no frame over 25 ms
+and launch latency 0 in every case):
+
+| Selector cues | Publication frame | Pad-press frame | Beat frame |
+| --- | --- | --- | --- |
+| 100 | 1.7 / 3.3 | 1.4 / 2.2 | 2.6 / 3.8 |
+| 500 | 1.7 / 3.1 | 1.7 / 2.7 | 3.1 / 4.7 |
+
+Before the warm list moved to the worker, the independent review measured
+the owner spending 61 to 82 ms per rebuild with 100 such cues and about
+350 ms with 500, on every publish and twice per pad press.
+
+On the showcase at 32 revisions, inline took p50 13.5 to 16.9 ms. In the
+background mode the adoption frame was p50 4.8 to 5.4 ms, with none over
+25 ms and a latency of 1 frame.
 
 Findings:
 
@@ -172,14 +189,20 @@ Findings:
     by all its instances on the same frame;
   - launches land on their beat, and the 64 scheduled programs are warmed
     before the beat.
-- **A 64-launch burst on one beat still exceeds 25 ms without any compile.**
-  The beat frame's engine time is 3 ms; the remaining roughly 20 ms is
-  admitting and starting 64 launches in one frame. This is outside the compile
-  path and is not changed here.
+- **A 64-launch burst on one beat is close to the deadline without any
+  compile.** p50 22 ms, 2 of 20 over 25 ms. Most of it is admitting and
+  starting 64 launches in one frame, outside the compile path; it is not
+  changed here.
+- **The warm list is built on the worker.** Each cue's selection is resolved
+  once per cue value, rig and settings. The owner only compares identities, so
+  a publish or pad press costs about the same with 500 selector cues as with
+  none.
 - **Publishing still costs time on the owner.** The publication frame still
   validates each revision on the owner, at about 0.1 to 0.4 ms each (#784).
 - **A full compile cache recompiled every running effect in one frame.** It
-  now keeps a retired generation, and the warm tier is kept apart from it.
+  now keeps a retired generation. The warm tier, about 55 KB per program on
+  this rig, is kept apart from it, and programs leaving the tier never evict
+  a running instance's program.
 
 Excluded: physical output and the output scheduler, Studio/browser load, GPU
 compute (a show with GPU expression groups compiles on the owner), auditions,
