@@ -78,7 +78,9 @@
       #(js/clearInterval timer))
     (let [key (random-uuid)
           clock (frame-stream/published-ref :clock)
-          last (volatile! (bucket @db @clock period))
+          ;; Read the starting bucket untracked: the subscription follows
+          ;; the period through its watches, not every app-db or clock change.
+          last (volatile! (binding [ratom/*ratom-context* nil] (bucket @db @clock period)))
           check! (fn [_ _ _ _]
                    (let [current (bucket @db @clock period)]
                      (when (not= current @last) (vreset! last current) (tick!))))]
