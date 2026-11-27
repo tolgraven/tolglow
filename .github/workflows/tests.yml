@@ -105,8 +105,16 @@ jobs:
           path: |
             ~/.m2/repository
             !~/.m2/repository/**/*.lastUpdated
-          key: maven-${{ runner.os }}-${{ hashFiles('tolglow/project.clj', 'afterglow/project.clj') }}
-          restore-keys: maven-${{ runner.os }}-
+          # Its own key: the shared key is usually saved first by a test lane,
+          # which never resolves the +native-gpu (JOGL) jars, so this job
+          # fetched them from Maven Central on every run and hit 429s.
+          key: maven-studio-${{ runner.os }}-${{ hashFiles('tolglow/project.clj', 'afterglow/project.clj') }}
+          restore-keys: |
+            maven-studio-${{ runner.os }}-
+            maven-${{ runner.os }}-
+      - name: Resolve the native GPU profile's dependencies
+        working-directory: tolglow
+        run: lein with-profile +native-gpu deps
       - name: Install pinned browser dependencies
         working-directory: tolglow
         run: npm ci
