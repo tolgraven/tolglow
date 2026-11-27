@@ -122,6 +122,19 @@ export function checkBanks(banks, where) {
 
 async function banks(page, surface) { return page.evaluate(measure, surface); }
 
+// Evaluate in the application's own REPL session, where `runtime` is this show.
+async function repl(page, source) {
+  const ending = await page.evaluate(async source => {
+    const response = await fetch('/api/repl/eval', {
+      method: 'POST', headers: {'Content-Type': 'application/json', Accept: 'application/json'},
+      body: JSON.stringify({source, 'request-id': crypto.randomUUID(), 'session-id': 'card-grid'})});
+    const lines = (await response.text()).split('\n').filter(line => line.startsWith('data: '));
+    return {ok: response.ok, last: lines.length ? JSON.parse(lines.at(-1).slice(6)) : null};
+  }, source);
+  assert.ok(ending.ok && ending.last?.status === 'completed', `REPL ${source}: ${JSON.stringify(ending)}`);
+  return ending.last.result;
+}
+
 async function setExpanded(page, title, open) {
   const card = page.locator('[data-live-instance]', {has: page.getByRole('heading', {name: title, exact: true})}).first();
   const button = card.getByRole('button', {name: `${open ? 'Expand' : 'Collapse'} ${title} controls`});
@@ -184,6 +197,13 @@ export async function checkCardGrid(page, profile, directory, measurement) {
   assert.deepEqual(state.map(c => [String(c['slot-id']).replace(/^:/, ''), String(c.size).replace(/^:/, '')]),
     [['moon', 'large'], ['indigo', 'small'], ['solitary', 'small']], `${profile}: the show committed the new arrangement`);
   await macro.screenshot({path: join(directory, `${profile}-macro.png`)});
+  // A REPL edit through the same command reaches the open board.
+  await repl(page, `@(tolglow.show/submit! runtime :composition-cards {:id :qa/card-set :resize {:slot-id :solitary :size :large}})`);
+  await page.waitForFunction(() => [...document.querySelectorAll('.live-macro [data-live-instance]')]
+    .find(c => c.querySelector('h3')?.textContent === 'Solitary')?.dataset.cardSize === 'large');
+  await repl(page, `@(tolglow.show/submit! runtime :composition-cards {:id :qa/card-set :resize {:slot-id :solitary :size :small}})`);
+  await page.waitForFunction(() => [...document.querySelectorAll('.live-macro [data-live-instance]')]
+    .find(c => c.querySelector('h3')?.textContent === 'Solitary')?.dataset.cardSize === 'small');
   await indigo.getByRole('button', {name: 'Move Indigo card earlier'}).click();
   await page.waitForFunction(() => document.querySelector('.live-macro [data-live-instance] h3')?.textContent === 'Indigo');
   await indigo.getByRole('button', {name: 'Medium card for Indigo'}).click();
