@@ -95,7 +95,15 @@ re-projected every frame, and a running one also carries `:remaining-ms`.
 
 **Sections.** Confirmed changes from the causal section analyzer are kept as a
 bounded history in `[:variables :audio :sections]`. Each runs to the next
-boundary, and the newest is `:open?`. When a section reference is attached and
+boundary, and the newest is `:open?`. A boundary is the start of an analyzer
+window on the transport beat grid, so it lands on the beat the music changed
+on at any tempo, including across a tempo change. The analyzer measures bass
+pitch over a fixed 160 ms window that ends before each 10 ms hop. It places
+that evidence at the window's centre, converted to a beat through the tempo the
+transport had then, not at the hop's end. Without that, the delay covered a
+different share of each half-beat slot at each tempo: after a 120 → 96 BPM
+step a boundary could be confirmed one window late, and at 180 BPM none was
+confirmed ([#805](https://github.com/tolgraven/tolglow/issues/805)). When a section reference is attached and
 its lock holds, the matched recording's sections are placed through the lock's
 position and rate and the transport tempo: `:matched` behind now and
 `:predicted` ahead. `:match` reports the lock status. When the lock breaks, the
@@ -195,3 +203,10 @@ evidence for a foreground display or for iPad Safari.
   them from the REPL, an agent or a reactive action.
 - The zoom, collapsed lanes and selection are not saved with the UI preferences.
 - Push does not draw the timeline. Its pages can read the same projection.
+- **Fast bass lines.** A 160 ms pitch window that straddles a note change
+  yields no confident pitch. At 180 BPM a half-beat slot is 167 ms, so a bass
+  note change on every beat leaves about half of the following slot without
+  pitch. The detector needs 45% per slot, so such a window can fail to qualify
+  and a boundary is then confirmed one window or more late. The section tempo
+  test passes at 70 and 180 BPM with the synthetic show's music; real material
+  at those tempos is not measured.

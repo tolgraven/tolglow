@@ -333,7 +333,10 @@ detection. The detector compares repeated bass-note distributions and
 normalized accent patterns
 over musical windows. It publishes `:audio/section-change` after confirming a
 change. The event carries the earlier boundary beat, confirmation beat,
-confidence and capture run.
+confidence and capture run. Bass pitch counts at the centre of its 160 ms
+analysis window, converted to a beat through the tempo the transport had
+then, so boundaries stay on the beat across tempo changes. A prepared track
+profile places pitch the same way (`:causal-bass-and-accents-v2`).
 
 To turn those observations into show actions, create the show with an explicit
 pattern policy, for example `:section-patterns {:enabled? true :on :bar
