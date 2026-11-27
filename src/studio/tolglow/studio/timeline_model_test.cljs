@@ -26,6 +26,16 @@
     (is (nil? (model/scale 0 window)))
     (is (nil? (model/scale 960 nil)))))
 
+(deftest a-layer-transform-is-written-from-its-own-scale-and-origin
+  (let [scale (model/scale 960 window)]
+    (is (= "translate3d(-120.00px,0,0)" (model/translation scale 60.0 0 100.0)) "480 - 15 × 40")
+    (is (= "translate3d(-600.00px,0,0)" (model/translation scale 60.0 480 100.0)) "a future half starts at the centre")
+    (is (= "translate3d(-120.00px,0,0)" (model/translation scale 60.0 nil 100.0)))
+    (testing "nothing to write without a playhead, scale or origin"
+      (is (nil? (model/translation scale 60.0 0 nil)))
+      (is (nil? (model/translation nil 60.0 0 100.0)))
+      (is (nil? (model/translation scale nil 0 100.0))))))
+
 (deftest layer-origin-is-stable-until-pixels-would-lose-precision
   (let [scale (model/scale 960 window)]
     (is (= 60.0 (model/origin nil window scale)))

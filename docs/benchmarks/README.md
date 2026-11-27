@@ -189,10 +189,9 @@ Findings:
     by all its instances on the same frame;
   - launches land on their beat, and the 64 scheduled programs are warmed
     before the beat.
-- **A 64-launch burst on one beat is close to the deadline without any
-  compile.** p50 22 ms, 2 of 20 over 25 ms. Most of it is admitting and
-  starting 64 launches in one frame, outside the compile path; it is not
-  changed here.
+- **A 64-launch burst on one beat was close to the deadline without any
+  compile.** p50 22 ms, 2 of 20 over 25 ms; see
+  [launch bursts](#launch-bursts) for the fix.
 - **The warm list is built on the worker.** Each cue's selection is resolved
   once per cue value, rig and settings. The owner only compares identities, so
   a publish or pad press costs about the same with 500 selector cues as with
@@ -207,3 +206,47 @@ Findings:
 Excluded: physical output and the output scheduler, Studio/browser load, GPU
 compute (a show with GPU expression groups compiles on the owner), auditions,
 and the worker's CPU time, which runs on its own thread.
+
+## Launch bursts
+
+#798 measured the beat frame of the grid-burst case above: 64 per-head
+launches of one effect scheduled for one beat, right after a publish.
+
+**Where the time went.** Sampling the owner's stack during those frames
+showed two passes over the whole 2,112-fixture rig for every launch:
+- the synchronized-aim-path check indexed every fixture by wire ID before it
+  knew the effect was not an aim path;
+- the capability report filtered the rig to find the one head each launch
+  targets.
+
+The engine took about 3 ms of the frame; these two passes, 64 times over,
+took most of the rest.
+
+**The fix.**
+- The aim-path check now indexes the rig only for a synchronized path.
+- The capability report looks authored targets up in a rig index. The show
+  keeps that index with its compiled patch, so each runtime has its own, a
+  burst on one rig builds it once, and a rig edit replaces it. A caller
+  outside an owner cycle indexes the rig once per launch.
+
+Nothing moved off the owner. Admitting a launch assigns instance IDs and
+orders and reads the beat's clock, so it is not pure ahead of the beat, and
+without the two passes the remaining cost fits the deadline.
+
+**Measurement.** Fresh `lein run` JVMs, JDK 25.0.2, Apple M4 Pro, background
+compile mode, 20 rounds; before at harness `2b5eb1b3` with master's two
+sources, after at `02575c15`. Beat-frame tick in ms:
+
+| | p50 | p95 | p99 | max | over 25 ms | engine p50 | load average |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| [Before](2026-11-27-launch-burst-before.edn) (master `1d7f3a8a` sources) | 25.4 | 29.4 | 30.1 | 30.1 | 16 of 20 | 2.9 | 8.5 → 4.7 |
+| [After](2026-11-27-launch-burst-after.edn) | 11.4 | 13.0 | 17.5 | 17.5 | 0 of 20 | 2.7 | 3.7 → 2.9 |
+
+Both runs launched on the beat (latency 0) and compiled nothing in the frame.
+Ordinary frames were unchanged (p50 3.7 to 4.3 ms).
+
+**Still left in the beat frame, about 9 ms beyond the engine:**
+- picking a free live-run lane, which scans lanes per launch;
+- per-frame history bookkeeping in sync observation;
+- Afterglow's command admission and history;
+- packing the 64 new contributions.

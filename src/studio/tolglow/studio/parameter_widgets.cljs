@@ -478,14 +478,24 @@
 (defn ring-knob
   "Several sub-parameters of one parameter in one knob of nested rings.
   Pressing it opens one knob per sub-parameter; Done or Escape closes them
-  and returns focus to the rings."
+  and returns focus to the rings. A press anywhere outside the rings and
+  their knobs also closes them (light dismiss), through one pointer listener
+  on the rings' own document that this component adds and removes."
   [{:keys [title axes components values base change-component! key! skin]}]
   (r/with-let [open? (r/atom false)
                panel-id (str "rings-" (random-uuid))
                trigger (atom nil)
-               close! (fn [] (reset! open? false) (some-> @trigger .focus))]
+               root (atom nil)
+               close! (fn [] (reset! open? false) (some-> @trigger .focus))
+               outside! (fn [event]
+                          (when (and @open? @root (not (.contains @root (.-target event))))
+                            (reset! open? false)))
+               attach! (fn [element]
+                         (some-> @root .-ownerDocument (.removeEventListener "pointerdown" outside! true))
+                         (reset! root element)
+                         (some-> element .-ownerDocument (.addEventListener "pointerdown" outside! true)))]
     (let [edit (vec (or base values)) shown (vec (or values base))]
-      [:div.parameter-rings {:class (when @open? "open")}
+      [:div.parameter-rings {:class (when @open? "open") :ref attach!}
        [:button.rings-trigger {:type "button" :ref #(reset! trigger %)
                                :aria-expanded @open? :aria-controls panel-id
                                :aria-label (str "Edit " title " components")
@@ -505,7 +515,8 @@
              [rotary-control schema (get edit i) #(change-component! i %)
               {:name (str text " rotary") :skin skin :base-value (get edit i) :effective-value (get shown i)
                :key-change #(key! i schema %)}]])
-          [:button.text-button {:type "button" :on-click close!} "Done"]])])))
+          [:button.text-button {:type "button" :on-click close!} "Done"]])])
+    (finally (some-> @root .-ownerDocument (.removeEventListener "pointerdown" outside! true)))))
 
 (defn ring-components
   "A touched ring knob on a device display: one rotary per sub-parameter, as

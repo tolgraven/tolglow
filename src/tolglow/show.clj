@@ -45,6 +45,7 @@
             [tolglow.agents.venue :as venue-tools]
             [clojure.java.io :as io]
             [tolglow.compiler :as compiler]
+            [tolglow.compiler.capability :as capability]
             [tolglow.compiler.gradient :as gradient]
             [tolglow.compiler.batch :as batch]
             [tolglow.registry :as registry]
@@ -321,8 +322,13 @@
                          :holds (modulation/portable-holds (get-in model [:modulation :holds] {}))
                          :overrides (:overrides modulation-view {})
                          :diagnostics (:diagnostics modulation-view [])}
-            :compositions (mapv #(assoc % :running? (contains? (:composition-runs model) (:id %))
-                                        :playback (get-in model [:composition-runs (:id %) :playback]))
+            :compositions (mapv (fn [definition]
+                                  (let [run (get-in model [:composition-runs (:id definition)])]
+                                    (cond-> (assoc definition :running? (some? run) :playback (:playback run))
+                                      ;; A running member instance carries this layer ID and its
+                                      ;; slot index, so views find its card (#795).
+                                      run (assoc :layer-id (:owner-id run)
+                                                 :member-slots (mapv :id (get-in run [:definition :slots]))))))
                                 (sort-by (comp str :id) (vals (:compositions model))))
             :scene-draft (not-empty (dissoc audition :output))
             :draft-output (when-let [frame (:output audition)]
@@ -1568,6 +1574,8 @@
        :ack {:status :accepted :fixture-id (:id fixture)}})
     :composition {:model (composition/save model payload) :ack {:status :accepted}}
     :composition-append (apply-composition-append model payload)
+    :composition-cards {:model (composition/set-cards model (:id payload) (select-keys payload [:cards :resize :move]))
+                        :ack {:status :accepted :id (:id payload)}}
     :composition-run {:model (composition/start model (:id payload) time-ms) :ack {:status :accepted}}
     :composition-stop {:model (composition/stop model (:id payload) time-ms) :ack {:status :accepted}}
     :response
@@ -1735,13 +1743,44 @@
        :candidate (:candidate payload) :ack {:status :accepted :epoch (get-in payload [:model :epoch])}})
     (throw (ex-info "Unknown studio operation" {:type type}))))
 
+(defn- adopt-equal-rig!
+  "Store `fixtures` as the patched rig when it equals the stored one, so later
+  identity checks against the model's vector hit again: a restore of the same
+  show, or an edit that rewrites the rig to equal content, keeps the compiled
+  patch and its capability index (#798)."
+  [runtime fixtures]
+  (swap! (:patch runtime) #(if (and (not (identical? fixtures (:fixtures %))) (= fixtures (:fixtures %)))
+                             (assoc % :fixtures fixtures)
+                             %)))
+
 (defn- patch! [runtime fixtures]
   (let [cached @(:patch runtime)]
-    (if (= fixtures (:fixtures cached)) (:compiled cached)
+    (if (= fixtures (:fixtures cached))
+      (do (when-not (identical? fixtures (:fixtures cached)) (adopt-equal-rig! runtime fixtures))
+          (:compiled cached))
         (let [patch (render/compile-patch fixtures)]
           (reset! (:patch runtime) {:fixtures fixtures :compiled patch :brightness-gains (preview/brightness-gains fixtures)
                                   :retirement (retirement/plan (:retirement cached) (:compiled cached) patch)})
           patch))))
+
+(defn- rig-indexer
+  "The capability rig index for launches admitted in one owner cycle (#798),
+  kept with this runtime's compiled patch: built on first use for the
+  patched rig and dropped when a rig edit replaces the patch. A rig equal to
+  the patched one, such as a restored copy, adopts it and keeps the index; a
+  different rig is indexed for that call alone."
+  [runtime]
+  (fn [fixtures]
+    (let [cached @(:patch runtime)
+          cached (if (or (identical? fixtures (:fixtures cached)) (not= fixtures (:fixtures cached)))
+                   cached
+                   (adopt-equal-rig! runtime fixtures))]
+      (if (identical? fixtures (:fixtures cached))
+        (or (:capability-index cached)
+            (let [index (capability/rig-index fixtures)]
+              (swap! (:patch runtime) #(if (identical? fixtures (:fixtures %)) (assoc % :capability-index index) %))
+              index))
+        (capability/rig-index fixtures)))))
 
 (defn- capacity-plan! [runtime patch]
   (let [cache (:capacity-plan runtime)]
@@ -3324,7 +3363,8 @@
        (locking (:lock runtime)
          ;; Launch checks read the last committed frame only on this owner
          ;; thread, under the lock and before the next frame is resolved.
-         (push-thread-bindings {#'aim-paths/*committed-values* (committed-values runtime)})
+         (push-thread-bindings {#'aim-paths/*committed-values* (committed-values runtime)
+                                #'capability/*rig-index* (rig-indexer runtime)})
          (vreset! committed-bound? true)
          (when-let [[target output-slot] (when @(:running runtime) (capture-render-time runtime time-ms output-slot))]
            (let [before @(:state runtime)

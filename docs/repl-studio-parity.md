@@ -580,6 +580,21 @@ From the running REPL, use the IDs from `show/snapshot`, preserving keyword and 
 
 To retry an uncertain reply, resubmit `append-request` unchanged. If it has expired, inspect the committed slots before starting another append. The shared operation saves cue membership and leaves running instances in place.
 
+## Size a macro's cards
+
+A running macro shows its member cards together on the Live board. **Arrange** on its heading shows **S**, **M** and **L** and **‹**/**›** on each card ([#795](https://github.com/tolgraven/tolglow/issues/795)). Studio sends `:composition-cards` with a `:resize` or `:move`, which the show applies to the arrangement it holds when the command arrives. The REPL submits the same command, or replaces the whole arrangement with `:cards`. `nil` returns every card to the default small size in slot order. Other running cards keep their standard sizes, and the macro still launches its slots in slot order.
+
+```clojure
+@(show/submit! runtime :composition-cards {:id :opening-look :resize {:slot-id "slot-1" :size :large}})
+@(show/submit! runtime :composition-cards {:id :opening-look :move {:slot-id "slot-1" :offset -1}})
+@(show/submit! runtime :composition-cards {:id :opening-look
+                                           :cards [{:slot-id "slot-1" :size :large} {:slot-id "slot-0" :size :medium}]})
+
+(:cards (some #(when (= :opening-look (:id %)) %) (:compositions (show/snapshot runtime))))
+```
+
+An unknown slot, a size other than `:small`, `:medium` or `:large`, a repeated slot or `:cards` on a sequence (even `nil`) is refused with a path, and the saved arrangement stays as it was. A REPL change reaches the open board through the show projection. A `:composition` save that omits `:cards`, from the REPL or from **Compose**, keeps the saved cards whose slot still has the same ID and cue; an explicit `:cards nil` clears them. Slots without an ID are numbered by position (`"slot-0"`, …), so give macro slots explicit IDs if you reorder them in source. Keys the snapshot adds for views (`:running?`, `:playback`, `:layer-id`, `:member-slots`) are dropped when a definition read from it is saved again. The arrangement is saved with the show.
+
 ## Audition a scene in the Room
 
 Stage several cue and effect changes as one Room draft, watch them in the

@@ -14,10 +14,6 @@
 }
 .live-board { container-type:inline-size; }
 #view-perform .performance-groups { margin-bottom:5px; }
-/* Flexible banks fill the last row before a wide effect. */
-#view-perform .live-effect-grid { display:flex; flex-wrap:wrap; gap:9px; align-items:start; }
-#view-perform .live-effect-grid>.live-effect-card { flex:1 1 260px; }
-#view-perform .live-effect-grid>.live-effect-card[data-wide=true] { flex-basis:100%; }
 /* A running cue has one heading, an instrument bank and a common action rail. */
 #view-perform .live-effect-card {
   --instrument:color-mix(in srgb,var(--cue-color) 56%,#d1d9ca);
@@ -112,18 +108,7 @@
 #view-perform .live-reorder-action { min-height:44px; min-width:44px; white-space:nowrap; }
 
 .live-effect-body { min-width:0; padding:5px 10px 6px; }
-#view-perform .live-effect-parameters.control-strip {
-  display:grid; grid-template-columns:repeat(var(--control-count,1),minmax(0,1fr));
-  align-items:stretch; min-width:0; gap:0; overflow:visible;
-}
-#view-perform .control-strip>.param-row {
-  display:grid; grid-template-rows:minmax(22px,auto) minmax(59px,auto) auto; grid-column:auto;
-  justify-items:stretch; align-content:start; align-items:center; min-width:0; margin:0;
-  padding:3px 7px; border-inline-start:1px solid var(--line);
-}
-#view-perform .control-strip[data-size=bank] { grid-auto-rows:minmax(22px,auto) minmax(60px,auto) auto; }
-#view-perform .control-strip[data-size=bank]>.param-row { grid-row:span 3; grid-template-rows:subgrid; }
-#view-perform .control-strip>.param-row:first-child { border-inline-start:0; }
+/* The strip and Detail banks are slot grids: card-grid.css (#795). */
 #view-perform .control-strip>.param-row>label {
   display:flex; align-items:baseline; justify-content:space-between; gap:4px; align-self:start;
   min-width:0; margin:0; font-size:12px; font-weight:550; line-height:16px; color:var(--text);
@@ -167,8 +152,6 @@
 #view-perform .control-strip input[type=color]::-webkit-color-swatch-wrapper { padding:0; }
 #view-perform .control-strip input[type=color]::-webkit-color-swatch { border:0; border-radius:3px; }
 #view-perform .control-strip input[type=color]::-moz-color-swatch { border:0; border-radius:3px; }
-#view-perform .control-strip .param-row:has(.waveform-picker) { grid-column:span 2; }
-#view-perform .control-strip .param-row:only-child { grid-column:1/-1; }
 
 .live-effect-card .param-source-trigger {
   display:inline-flex; justify-self:start; align-items:center; justify-content:center; gap:4px;
@@ -178,24 +161,6 @@
 .live-effect-card .param-source-trigger>span { font-size:15px; line-height:1; }
 .live-effect-card .param-source-trigger:is(:hover,:focus-visible,[aria-expanded=true]) { color:var(--text); background:var(--raised); }
 .live-effect-card .param-source-trigger.bound { color:var(--instrument); }
-#view-perform .control-strip[data-size=bank]>.param-row>label { justify-content:center; text-align:center; }
-#view-perform .control-strip[data-size=bank]>.param-row>.param-source-trigger { justify-self:center; }
-#view-perform .control-strip[data-size=small]>.param-row:has(.parameter-number-layout) {
-  grid-template-columns:minmax(44px,62px) minmax(42px,84px); grid-template-rows:minmax(22px,auto) auto;
-  align-content:center; justify-content:start; gap:0 3px; min-height:64px; padding:2px 5px;
-}
-#view-perform .control-strip[data-size=small]>.param-row:not(:only-child):has(.parameter-number-layout) {
-  grid-template-columns:minmax(0,48%) minmax(0,1fr); padding-inline:3px;
-}
-#view-perform .control-strip[data-size=small]>.param-row:not(:only-child)>.param-source-trigger { padding-inline:2px; gap:2px; }
-#view-perform .control-strip[data-size=small]>.param-row:has([data-widget=fader]) {
-  grid-template-columns:minmax(55px,1fr) minmax(64px,78px); gap:0 8px;
-}
-#view-perform .control-strip[data-size=small]>.param-row:has(.parameter-number-layout)>label { grid-column:2; grid-row:1; align-self:end; padding-inline:4px; }
-#view-perform .control-strip[data-size=small]>.param-row>.parameter-number-layout { grid-column:1; grid-row:1/span 2; }
-#view-perform .control-strip[data-size=small]>.param-row:has(.parameter-number-layout)>.param-source-trigger { grid-column:2; grid-row:2; align-self:start; justify-self:start; }
-#view-perform .control-strip[data-size=small] [data-widget=fader] { justify-items:stretch; }
-#view-perform .control-strip[data-size=small] .param-row:has(.waveform-picker) { grid-column:1/-1; }
 
 .live-effect-card .strip-monitor {
   --plot-height:70px; min-width:0; margin:5px 0 1px; padding:2px 9px 5px; border:1px solid #374337;
@@ -214,13 +179,6 @@
 .strip-monitor .parameter-history path:only-of-type { stroke:var(--instrument); }
 @container (min-width:650px) {
   .live-effect-card .strip-monitor { --plot-height:90px; }
-}
-@container (max-width:649px) {
-  #view-perform .control-strip[data-size=bank] { grid-template-columns:repeat(auto-fit,minmax(min(100%,80px),1fr)); row-gap:5px; }
-  #view-perform .control-strip[data-size=bank]>.param-row { border:0; border-bottom:1px solid var(--line); }
-}
-@container (max-width:260px) {
-  #view-perform .control-strip[data-size=small]>.param-row:has(.param-source-trigger) { padding-inline:3px; }
 }
 
 #view-perform .live-effect-card .performance-instance.compact {
@@ -243,9 +201,6 @@
   .live-effect-card .performance-opacity>label>span { position:absolute; width:1px; height:1px; clip-path:inset(50%); overflow:hidden; }
 }
 #view-perform .live-effect-card .performance-error { flex-basis:100%; }
-#view-perform .control-detail { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); align-items:start; gap:8px; }
-#view-perform .control-detail>.param-row { display:block; grid-column:auto; min-width:0; margin:0; padding:10px; border:1px solid var(--line); border-radius:6px; }
-#view-perform .control-detail .param-row:has(.waveform-picker) { grid-column:1/-1; }
 #view-perform .control-detail .parameter-visualizer { display:block; }
 #view-perform .control-detail .parameter-views { flex-direction:row; flex-wrap:wrap; align-items:center; }
 #view-perform .control-detail .parameter-views label { flex-direction:row; align-items:center; }
