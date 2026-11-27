@@ -99,6 +99,50 @@
         (= :fader (tag (:ui/widget schema))) :fader
         :else :rotary))
 
+(defn component-count
+  "How many components a :vector holds: its :size, else its component schemas
+  or labels."
+  [schema]
+  (let [size (:size schema)]
+    (cond (integer? size) size
+          (seq (:component-schemas schema)) (count (:component-schemas schema))
+          (seq (:component-labels schema)) (count (:component-labels schema)))))
+
+(defn component-schemas
+  "One numeric schema per component of a :vector: its declared
+  :component-schemas entry, else the vector's own bounds, unit and DMX width."
+  [schema]
+  (let [shared (-> (select-keys schema [:bounds :unit :units :dmx-bits]) (assoc :type :number))]
+    (mapv (fn [i] (merge shared (get (:component-schemas schema) i)))
+          (range (or (component-count schema) 0)))))
+
+(def compound-widgets
+  "Ways a numeric vector is drawn: an XY pad, an XY pad with a Z fader beside
+  it, nested rings that open into one knob per component, or a row of
+  component readouts that opens into rotaries."
+  #{:xy :xyz :rings :axes})
+
+(def ^:private color-vectors #{:color :colour :rgb :rgbw :rgba :hsl :hsla :hsv})
+
+(defn compound-widget
+  "How a :vector parameter is edited, or nil for any other type or a colour
+  vector (drawn as a swatch). Two bounded components are an :xy pad, three an
+  :xyz pad and fader, four nested :rings. `:ui/widget` may ask for :rings or
+  :axes on any size, or :xy/:xyz on the size they fit. A vector with an
+  unbounded component, or of another size, is :axes."
+  [schema]
+  (when (and (= :vector (tag (:type schema)))
+             (not (color-vectors (tag (:semantic/type schema)))))
+    (let [n (component-count schema)
+          bounded? (and n (<= 2 n 4) (every? bounds (component-schemas schema)))
+          asked (tag (:ui/widget schema))]
+      (cond
+        (not bounded?) :axes
+        (#{:rings :axes} asked) asked
+        (and (= :xy asked) (= 2 n)) :xy
+        (and (= :xyz asked) (= 3 n)) :xyz
+        :else (case n 2 :xy 3 :xyz :rings)))))
+
 (defn choices
   "[{:value :label}] for a :choice, :shape, :waveform or :enum control, in
   order, else nil. Values are the schema's own."
@@ -125,5 +169,6 @@
        (bounds schema) (assoc :bounds (bounds schema))
        (input-step schema) (assoc :step (input-step schema))
        (#{:number :integer} type) (assoc :widget (widget schema))
+       (compound-widget schema) (assoc :widget (compound-widget schema))
        (and listed (#{:waveform :shape :choice :enum} type)) (assoc :choices listed)
        (:dmx-bits schema) (assoc :dmx-bits (:dmx-bits schema))))))

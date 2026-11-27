@@ -34,6 +34,7 @@
             [tolglow.studio.fog-fields :as fog-fields]
             [tolglow.studio.rdm :as rdm]
             [tolglow.studio.interop :as interop]
+            [tolglow.studio.clock :as clock]
             [tolglow.studio.rig-editor :as rig-editor]
             [tolglow.studio.spatial :as spatial]
             [tolglow.studio.spatial-preview :as spatial-preview]
@@ -280,7 +281,8 @@
   pending scheduled events and running ramps, each cancellable by event ID."
   [db]
   (let [{:keys [upcoming ramps]} (get-in db [:show :schedule])
-        show (:show db)
+        ;; Ramp progress follows the per-frame clock; only this list re-renders.
+        show (clock/with-clock (:show db) (when (seq ramps) @(rf/subscribe [:studio/clock])))
         ms? (fn [ramp] (= "ms" (events/wire-id (:unit ramp))))
         ;; The projection is stable; live progress comes from the transport clock.
         progress (fn [{:keys [start end] :as ramp}]
@@ -317,6 +319,12 @@
            [:button.text-button {:type "button" :aria-label (str "Stop ramp " title)
                                  :disabled (not connected?) :on-click (cancel! event-id)} "Stop"]])]])))
 
+(defn- live-clock-driver
+  "Feed the pad clock the committed transport with its per-frame beat. Only
+  this invisible component follows each frame."
+  [generation animate?]
+  [pad-breath/clock-driver @(rf/subscribe [:studio/transport]) generation animate?])
+
 (defn- cue-grid [db]
   (let [view (get-in db [:server-projection :view]) ui (:ui db)
         authored-pages (:pages view)
@@ -351,7 +359,7 @@
       [pad-preview/grid (:id page) rows (and (not selected-recent) (= :perform (:view ui))
                                              (get-in db [:connection :connected?]))
        cue-cell db page]
-      [pad-breath/clock-driver (get-in db [:show :transport]) (get-in db [:show :transport-generation])
+      [live-clock-driver (get-in db [:show :transport-generation])
        (and (= :perform (:view ui)) (pad-breath-wanted? db page))]]
      [queued-cues db]
      [scheduled-events db]
@@ -380,7 +388,10 @@
         overlay (if (and source (some? (:effective-value source))) (:effective-value source)
                   (when-not handlers @(rf/subscribe [:performance/parameter-overlay (:id instance) parameter])))
         bounds (:bounds schema) title (controls/title parameter schema)
-        fader? (and (:strip? options) (#{:fader "fader"} (:ui/widget schema)))]
+        ;; The shared description chooses the widget (#655): a declared fader
+        ;; is vertical in the strip and in detail.
+        fader? (= :fader (controls/widget schema))
+        skin @(rf/subscribe [:ui/knob-skin])]
     [:div.param-row {:data-param (name parameter) :class (when (:strip? options) "strip-control")}
      [:label [:span title] [:output (cond (= "gradient" type) (str (count value) (if (= 1 (count value)) " stop" " stops"))
                                           (vector? value) (str/join ", " (map #(numeric/number-label schema %) value))
@@ -408,7 +419,17 @@
        "color" [:input {:type "color" :aria-label title :value (hex-color (widgets/color-components value))
                          :on-change #(change! (cond-> (color-components (input-value %))
                                                (and (vector? value) (= 4 (count value))) (conj (nth value 3))))}]
-       "vector" [widgets/vector-control title schema value component!]
+       "vector" (if (#{:xy :xyz :rings} (controls/compound-widget schema))
+                  [widgets/vector-compound
+                   {:title title :schema schema :values (if (sequential? overlay) overlay value) :base value :skin skin
+                    :set-component! component!
+                    :set! (if handlers
+                            #(doseq [[index n] %] (component! index n))
+                            #(input! [:studio/param-components (:id instance) parameter % value]))
+                    :key! (if handlers
+                            (:component-key handlers)
+                            #(input! [:studio/param-component-key (:id instance) parameter %2 %1 %3 value]))}]
+                  [widgets/vector-control title schema value component!])
        "range"
        [:div.param-vector
         (for [index (range (or (:size schema) (count value)))]
@@ -418,20 +439,20 @@
                                  :on-change #(when-let [n (number-value %)]
                                                (component! index n))}])]
        (if (widgets/numeric-range schema)
-         [:div.parameter-number-layout {:data-widget (when (:strip? options) (if fader? "fader" "rotary"))}
-          [widgets/rotary-control schema (or value 0) change!
-           {:name (str title " rotary") :base-value value :effective-value overlay
-            :strip? (:strip? options)
-            :key-change (or (:key-change handlers) #(input! [:studio/param-key (:id instance) parameter schema %]))}]
+         [:div.parameter-number-layout {:data-widget (if fader? "fader" "rotary")}
+          (let [key-change (or (:key-change handlers) #(input! [:studio/param-key (:id instance) parameter schema %]))]
+            (if fader?
+              [widgets/vertical-fader schema (or value 0) change!
+               {:name title :base-value value :effective-value overlay :key-change key-change :skin skin}]
+              [widgets/rotary-control schema (or value 0) change!
+               {:name (str title " rotary") :base-value value :effective-value overlay
+                :strip? (:strip? options) :skin skin :key-change key-change}]))
           [:div.parameter-number-fields
-           [numeric/number-input {:type "range" :aria-label title :value (or value 0)
-                          :min (first bounds) :max (second bounds)
-                          :step (controls/input-step schema)
-                          :on-change #(when-let [n (number-value %)] (change! n))}]
-           (when fader?
-             [:span.strip-fader-bounds
-              [:span (widgets/number-label (first bounds))]
-              [:span (widgets/number-label (second bounds))]])
+           (when-not fader?
+             [numeric/number-input {:type "range" :aria-label title :value (or value 0)
+                            :min (first bounds) :max (second bounds)
+                            :step (controls/input-step schema)
+                            :on-change #(when-let [n (number-value %)] (change! n))}])
            (when-not (:compact? options)
              [numeric/number-input {:class "numeric-exact" :display-schema schema :type "number" :aria-label (str title " exact value") :value (or value 0)
                             :min (first bounds) :max (second bounds) :step (if (= "integer" type) 1 "any")
@@ -500,7 +521,7 @@
      [:button.icon-button {:type "button" :aria-label "Fullscreen preview" :title "Fullscreen preview"
                             :on-click #(input! [:studio/preview-fullscreen])} "⛶"]]]
    [scene-draft-banner db]
-   [spatial-preview/scene (events/room-show db) (get-in db [:server-projection :view :settings :spatial]) :perform]
+   [spatial-preview/scene (interop/room-input (events/room-show db)) (get-in db [:server-projection :view :settings :spatial]) :perform]
    [camera-controls/controls]
    (when (get-in db [:ui :preview-controls?])
      [:div.preview-settings
@@ -696,7 +717,9 @@
           [parameter-control instance parameter (assoc schema :name (str "Step " (inc index) " · " (or (:name schema) (label parameter))))
            {:change #(input! [:studio/slot-param index parameter %])
             :key-change #(input! [:studio/slot-param-key index parameter schema %])
-            :component #(input! [:studio/slot-param-component index parameter %1 %2])}])
+            :component #(input! [:studio/slot-param-component index parameter %1 %2])
+            ;; Compound widgets step a component against app-db, so presses accumulate.
+            :component-key #(input! [:studio/slot-param-component-key index parameter %2 %1 %3])}])
         [button nil "Reset to cue defaults" [:studio/slot-params-reset index] "text-button"]]
        [:p.small.muted "This cue has no adjustable parameters."])]))
 
@@ -1153,29 +1176,41 @@
                           (send! [:operator-history/close])
                           (some-> (.getElementById js/document "open-operator-history") .focus)))])))
 
-(defn studio []
-  (let [db @(rf/subscribe [:studio/db])
-        error (or (get-in db [:show :status :error :message]) (get-in db [:connection :error]))
+(defn- with-db
+  "Render (panel db & args) from the panel's own app-db subscription, so the
+  root component depends on no app-db state."
+  [panel & args]
+  (into [panel @(rf/subscribe [:studio/db])] args))
+
+(defn- main-area [db]
+  (let [error (or (get-in db [:show :status :error :message]) (get-in db [:connection :error]))
         connected? (get-in db [:connection :connected?])]
+    [:main#main (merge {:tab-index -1} (view-tabs/panel-attributes db))
+     (when (or error (not connected?))
+       [:div#connection-banner.connection-banner {:role "status"}
+        (or error "Connecting to the studio. Cue controls become available when the show is ready.")])
+     [checkpoints/folder-notice (checkpoints/notice-props db)]
+     [perform-view db]
+     (when (= :compose (get-in db [:ui :view])) [composition-view {:ui (:ui db) :show (select-keys (:show db) [:cues :effects :compositions])}])
+     (when (= :rig (get-in db [:ui :view])) [rig-view (select-keys db [:ui :show :server-presentation :session])])
+     [definition-view {:ui (:ui db) :show (select-keys (:show db) [:effects :cues :pages :runtime-id :show-id :epoch])}]
+     [chat/panel db]
+     (when (= :connections (get-in db [:ui :view])) [:<> [connections/panel {:show (select-keys (:show db) [:cues :transport])}]
+            [expressive/panel (:show db)]])
+     (when (= :develop (get-in db [:ui :view])) [workspace/panel db])
+     (when (= :debug (get-in db [:ui :view])) [debug/panel])
+     [footer db]]))
+
+(defn- checkpoint-panel [db] [checkpoints/panel (checkpoints/view-props db)])
+
+(rf/reg-sub ::toast (fn [db _] (get-in db [:ui :toast])))
+
+(defn studio []
+  (let [toast @(rf/subscribe [::toast])]
     [:<>
      [:a.skip {:href "#main"} "Skip to show controls"]
-     [sidebar db]
-     [:div.workspace [topbar db] [view-tabs/strip db]
-      [:main#main (merge {:tab-index -1} (view-tabs/panel-attributes db))
-       (when (or error (not connected?))
-         [:div#connection-banner.connection-banner {:role "status"}
-          (or error "Connecting to the studio. Cue controls become available when the show is ready.")])
-       [checkpoints/folder-notice (checkpoints/notice-props db)]
-       [perform-view db]
-       (when (= :compose (get-in db [:ui :view])) [composition-view {:ui (:ui db) :show (select-keys (:show db) [:cues :effects :compositions])}])
-       (when (= :rig (get-in db [:ui :view])) [rig-view (select-keys db [:ui :show :server-presentation :session])])
-       [definition-view {:ui (:ui db) :show (select-keys (:show db) [:effects :cues :pages :runtime-id :show-id :epoch])}]
-       [chat/panel db]
-       (when (= :connections (get-in db [:ui :view])) [:<> [connections/panel {:show (select-keys (:show db) [:cues :transport])}]
-              [expressive/panel (:show db)]])
-       (when (= :develop (get-in db [:ui :view])) [workspace/panel db])
-       (when (= :debug (get-in db [:ui :view])) [debug/panel])
-       [footer db]]]
-     [cue-actions db] [prompt-dialog db] [checkpoints/panel (checkpoints/view-props db)] [operator-history] [repl/console-view]
-     (when-let [toast (get-in db [:ui :toast])]
+     [with-db sidebar]
+     [:div.workspace [with-db topbar] [with-db view-tabs/strip] [with-db main-area]]
+     [with-db cue-actions] [with-db prompt-dialog] [with-db checkpoint-panel] [operator-history] [repl/console-view]
+     (when toast
        [:div#toast.toast {:class (when (:error? toast) "error") :role "status" :aria-live "polite"} (:message toast)])]))

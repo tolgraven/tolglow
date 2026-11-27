@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {fogTransmissionGLSL} from './fog-optics.generated.js';
 import {DEFAULT_EXTINCTION_PER_M, ShowAtmosphere} from './show-atmosphere.js';
-import { FogField, FOG_QUALITY } from './fog-field.js';
+import { FogField, FOG_QUALITY, fogRasterScale } from './fog-field.js';
 
 const vertex = `out vec2 vUv;
 void main(){vUv=uv;gl_Position=vec4(position.xy,0.0,1.0);}`;
@@ -217,7 +217,9 @@ void integrateFog(out vec4 volumeOutput){
     float lo=max(begin,span.x),hi=min(begin+stepSize,span.y);
     if(hi<=lo)continue;
     vec3 samplePosition=eye+ray*((lo+hi)*.5);
-    float localDensity=densityAt(eye+ray*(lo+(.2+.6*jitter)*(hi-lo)));
+    // A span covering the whole interval samples exactly the step's own point,
+    // so reuse its density instead of evaluating the detail noise again.
+    float localDensity=lo<=begin&&hi>=begin+stepSize?density:densityAt(eye+ray*(lo+(.2+.6*jitter)*(hi-lo)));
     if(localDensity<=0.)continue;
     float foreground=fogTransmission(extinctionPerM,density,lo-begin);
     radiance+=transmission*foreground*(1.-fogTransmission(extinctionPerM,localDensity,hi-lo))*.92*
@@ -258,6 +260,69 @@ void main(){
  // this pixel up to its actual depth instead of discarding the medium in front.
  if(total>.00001)fog/=total;else integrateFog(fog);
  compositeOutput=vec4(color.rgb*fog.a+fog.rgb,color.a);
+}`;
+
+// Low-cost atmosphere for tiers without a raymarch (#782): eight jittered taps
+// of the same density field give camera-path extinction and ambient
+// in-scattering at full resolution in the composite itself. There is no
+// per-light loop or shadow lookup; beams come from the faked cones drawn after
+// this pass. Zero amount copies the scene exactly, as the raymarch does.
+export const HAZE_COMPOSITE_FRAGMENT = `precision highp float;
+precision highp sampler3D;
+${fogTransmissionGLSL}
+in vec2 vUv;
+out vec4 compositeOutput;
+uniform sampler2D sceneColor, sceneDepth;
+uniform sampler3D densityTexture;
+uniform mat4 inverseProjection, cameraWorld;
+uniform vec3 eye, room, ambientSky, ambientGround;
+uniform float amount, extinctionPerM, time, nearPlane, farPlane;
+uniform sampler2D volume;
+uniform vec2 volumeSize;
+uniform bool beamLayer;
+float viewDepth(float z){return (nearPlane*farPlane)/(farPlane-(farPlane-nearPlane)*z);}
+// Faked beams are drawn into the reduced raster; upsample them with the same
+// opaque-depth weights as the raymarch composite.
+vec3 beams(float depth){
+ if(!beamLayer)return vec3(0.);
+ float center=viewDepth(depth);
+ vec2 p=vUv*volumeSize-.5,base=floor(p),fraction=fract(p);
+ vec3 sum=vec3(0.);float total=0.;
+ for(int y=0;y<2;y++)for(int x=0;x<2;x++){
+  vec2 uv=(base+vec2(float(x),float(y))+.5)/volumeSize;
+  float spatial=(x==0?1.-fraction.x:fraction.x)*(y==0?1.-fraction.y:fraction.y);
+  float weight=spatial*exp(-abs(viewDepth(texture(sceneDepth,uv).r)-center)/max(.03,center*.012));
+  sum+=texture(volume,uv).rgb*weight;total+=weight;
+ }
+ return total>.00001?sum/total:vec3(0.);
+}
+void main(){
+ vec4 color=texture(sceneColor,vUv);
+ if(amount<=0.){compositeOutput=color;return;}
+ vec4 farView=inverseProjection*vec4(vUv*2.-1.,1.,1.);farView/=farView.w;
+ vec3 ray=normalize((cameraWorld*farView).xyz-eye);
+ float depth=texture(sceneDepth,vUv).r;
+ vec4 surfaceView=inverseProjection*vec4(vUv*2.-1.,depth*2.-1.,1.);surfaceView/=surfaceView.w;
+ vec3 surfaceWorld=(cameraWorld*surfaceView).xyz;
+ vec3 safe=vec3(abs(ray.x)<1e-7?1e-7:ray.x,abs(ray.y)<1e-7?1e-7:ray.y,abs(ray.z)<1e-7?1e-7:ray.z);
+ vec3 a=(vec3(-room.x*.5,0.,-room.z*.5)-eye)/safe,b=(vec3(room.x*.5,room.y,room.z*.5)-eye)/safe;
+ vec3 lo=min(a,b),hi=max(a,b);
+ float start=max(0.,max(max(lo.x,lo.y),lo.z)),finish=min(min(min(hi.x,hi.y),hi.z),length(surfaceWorld-eye));
+ if(finish<=start){compositeOutput=color;return;}
+ // Interleaved gradient noise spreads the tap offsets evenly across
+ // neighbouring pixels, so eight taps read as a fine dither, not grain.
+ float stepSize=(finish-start)/8.,jitter=fract(52.9829189*fract(dot(gl_FragCoord.xy,vec2(.06711056,.00583715))));
+ vec3 radiance=vec3(0.);float transmission=1.;
+ for(int i=0;i<8;i++){
+  vec3 p=eye+ray*(start+(float(i)+jitter)*stepSize);
+  vec3 uvw=vec3(p.x/room.x+.5,p.y/room.y,p.z/room.z+.5);
+  float density=amount*texture(densityTexture,clamp(uvw,vec3(0.),vec3(1.))).r;
+  float segment=fogTransmission(extinctionPerM,density,stepSize);
+  vec3 ambient=mix(ambientGround,ambientSky,.65+.15*clamp(p.y/room.y,0.,1.));
+  radiance+=transmission*(1.-segment)*.92*ambient;
+  transmission*=segment;
+ }
+ compositeOutput=vec4(color.rgb*transmission+radiance+beams(depth),color.a);
 }`;
 
 const now = () => globalThis.performance?.now?.() ?? Date.now();
@@ -301,11 +366,13 @@ export class VolumetricFog {
     };
     for (let i = 0; i < 4; i++) this.uniforms[`shadow${i}`] = { value: this.dummyShadow };
     this.compositeUniforms = { ...this.uniforms, sceneColor: { value: null }, volume: { value: this.target.texture },
-      volumeSize: { value: new THREE.Vector2(1, 1) }, nearPlane: { value: 0.08 }, farPlane: { value: 80 } };
+      volumeSize: { value: new THREE.Vector2(1, 1) }, nearPlane: { value: 0.08 }, farPlane: { value: 80 }, beamLayer: { value: false } };
     const material = (fragmentShader, uniforms) => new THREE.ShaderMaterial({ vertexShader: vertex, fragmentShader, uniforms,
       glslVersion: THREE.GLSL3, depthTest: false, depthWrite: false, blending: THREE.NoBlending, toneMapped: false });
     this.volumeMaterial = material(FOG_FRAGMENT, this.uniforms);
     this.compositeMaterial = material(FOG_COMPOSITE_FRAGMENT, this.compositeUniforms);
+    this.hazeMaterial = material(HAZE_COMPOSITE_FRAGMENT, this.compositeUniforms);
+    this.mode = this.budget.mode || 'raymarch';
     this.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.volumeMaterial); this.quad.frustumCulled = false;
     this.scene = new THREE.Scene(); this.scene.add(this.quad); this.camera = new THREE.Camera();
     this.upload();
@@ -342,12 +409,16 @@ export class VolumetricFog {
     const budget = FOG_QUALITY[quality];
     if (!budget) throw new Error('Unknown fog quality');
     if (this.disposed || this.quality === quality) return;
+    if (budget.grid.every((n, i) => n === this.budget.grid[i])) {
+      this.quality = quality; this.budget = budget; this.mode = budget.mode || 'raymarch';
+      this.uniforms.raySteps.value = budget.steps; return;
+    }
     const field = new FogField({grid: budget.grid});
     field.copyFrom(this.field);
     const density = densityTexture(field);
     this.density.dispose();
     this.field = field; this.density = density; this.packed = density.image.data;
-    this.quality = quality; this.budget = budget;
+    this.quality = quality; this.budget = budget; this.mode = budget.mode || 'raymarch';
     // The linked programs use uniform step counts and texture bindings.
     this.uniforms.densityTexture.value = density;
     this.uniforms.raySteps.value = budget.steps;
@@ -390,17 +461,21 @@ export class VolumetricFog {
   }
   setSize(width, height) {
     if (![width, height].every(v => Number.isFinite(v) && v > 0)) return;
-    this.width = Math.max(1, Math.floor(width * this.budget.scale)); this.height = Math.max(1, Math.floor(height * this.budget.scale));
+    const scale = fogRasterScale(width, height, this.budget);
+    this.width = Math.max(1, Math.floor(width * scale)); this.height = Math.max(1, Math.floor(height * scale));
+    this.sceneWidth = width; this.sceneHeight = height;
     this.target.setSize(this.width, this.height); this.compositeUniforms.volumeSize.value.set(this.width, this.height);
   }
   update(dt, lights = []) {
     if (this.disposed) return;
-    const start = now(); this.lights = lights.slice(0, 16);
+    const start = now(); this.lights = this.mode === 'haze' ? [] : lights.slice(0, 16);
     const changed = this.showAtmosphere ? this.showAtmosphere.paint(this.field,dt) : this.field.advance(dt);
     if (changed) this.upload();
     this.updateMs = now() - start;
   }
-  render(sceneTarget, camera, outputTarget = null) {
+  // `overlay(target)` may add radiance (faked beams) into the reduced-raster
+  // fog target before the depth-aware composite; it returns true if it drew.
+  render(sceneTarget, camera, outputTarget = null, overlay = null) {
     if (this.disposed) return;
     if (!sceneTarget?.depthTexture || !sceneTarget?.texture) throw new Error('Fog requires opaque scene color and depth');
     const renderer = this.renderer, previousTarget = renderer.getRenderTarget(), autoClear = renderer.autoClear;
@@ -435,19 +510,34 @@ export class VolumetricFog {
       }
     });
     this.shadowCount = shadows;
+    this.visibleAmount = visibleAmount;
     c.sceneColor.value = sceneTarget.texture; c.sceneDepth.value = sceneTarget.depthTexture;
     c.nearPlane.value = camera.near; c.farPlane.value = camera.far; c.amount.value = visibleAmount;
     try {
       renderer.autoClear = true;
-      if (visibleAmount > 0) { renderer.setRenderTarget(this.target); this.quad.material = this.volumeMaterial; renderer.render(this.scene, this.camera); }
-      renderer.setRenderTarget(outputTarget); this.quad.material = this.compositeMaterial; renderer.render(this.scene, this.camera);
+      if (this.mode === 'haze') {
+        c.beamLayer.value = false;
+        if (visibleAmount > 0 && overlay) {
+          const clear = renderer.getClearColor(new THREE.Color()), alpha = renderer.getClearAlpha();
+          renderer.setClearColor(0x000000, 1); renderer.setRenderTarget(this.target); renderer.clear(true, false, false);
+          renderer.setClearColor(clear, alpha);
+          c.beamLayer.value = Boolean(overlay(this.target));
+        }
+        renderer.setRenderTarget(outputTarget); this.quad.material = this.hazeMaterial; renderer.render(this.scene, this.camera);
+      } else {
+        if (visibleAmount > 0) {
+          renderer.setRenderTarget(this.target); this.quad.material = this.volumeMaterial; renderer.render(this.scene, this.camera);
+          overlay?.(this.target);
+        }
+        renderer.setRenderTarget(outputTarget); this.quad.material = this.compositeMaterial; renderer.render(this.scene, this.camera);
+      }
     } finally { renderer.setRenderTarget(previousTarget); renderer.autoClear = autoClear; }
   }
-  stats() { return { quality: this.quality, targetSize: [this.width, this.height], raySteps: this.budget.steps,
+  stats() { return { quality: this.quality, mode: this.mode, targetSize: this.mode === 'haze' ? [this.sceneWidth, this.sceneHeight] : [this.width, this.height], raySteps: this.mode === 'haze' ? 8 : this.budget.steps,
     lightCount: this.lights.length, shadowCount: this.shadowCount ?? 0, cpuUpdateMs: this.updateMs, uploads: this.uploads, atmosphere:this.showAtmosphere?.stats(), ...this.field.stats() }; }
   dispose() {
     if (this.disposed) return; this.disposed = true;
     this.target.dispose(); this.density.dispose(); this.dummyShadow.dispose();
-    this.volumeMaterial.dispose(); this.compositeMaterial.dispose(); this.quad.geometry.dispose(); this.scene.clear(); this.lights = [];
+    this.volumeMaterial.dispose(); this.compositeMaterial.dispose(); this.hazeMaterial.dispose(); this.quad.geometry.dispose(); this.scene.clear(); this.lights = [];
   }
 }

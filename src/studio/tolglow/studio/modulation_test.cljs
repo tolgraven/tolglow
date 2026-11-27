@@ -1,5 +1,6 @@
 (ns tolglow.studio.modulation-test
   (:require [cljs.test :refer-macros [deftest is]]
+            [tolglow.studio.frame-stream :as frame-stream]
             [re-frame.db :as rf-db]
             [re-frame.interceptor :as interceptor]
             [re-frame.registrar :as registrar]
@@ -62,7 +63,10 @@
         form (modulation/widget-form modulation/defaults "4:1" :level schema)
         config (modulation/widget-config form "4:1" :level schema "owned")
         started (transition base [:modulation/widget-start "4:1" :level schema])
+        ;; The current beat is a per-frame clock field, read from its lane.
+        _ (frame-stream/install! :clock {:token "t" :value {:beat 10}})
         hold (transition base [:modulation/hold "4:1" :level "1/2"])
+        _ (frame-stream/reset-all!)
         resume (transition base [:modulation/resume "4:1" :level])]
     (is (= {"level" [0.2 0.8]} (:ranges config)))
     (is (= {:instance-ids ["4:1"]} (:select config)))

@@ -58,13 +58,22 @@
   (let [model (showcase/model)
         cues (get-in model [:registry :cues])
         new-with-sources (filter #(and (= :new (:origin %)) (contains? looks/sources (:id %))) looks/catalogue)]
-    (is (= 20 (count cues)))
+    (is (= 24 (count cues)))
     (is (>= (count looks/catalogue) 12))
     (is (= #{:atmosphere :colour :intensity :movement :pixel} (set (map :category looks/catalogue))))
-    (is (= 9 (count (filter #(= :ported (:origin %)) looks/catalogue))))
+    (is (= 12 (count (filter #(= :ported (:origin %)) looks/catalogue))))
     (is (every? :legacy (filter #(= :ported (:origin %)) looks/catalogue)))
     (is (= #{:haze :wash-tide :wash-ember :beam-shafts :mover-orbit :riser-chase :aurora}
            (set (map :id new-with-sources))))
+    (testing "the cues from before the after-hours slice keep master's cells, and the new four follow"
+      (let [cells (into {} (map (fn [[cell id]] [id cell])) (get-in model [:pages :showcase :cells]))]
+        (is (= {:haze [0 0] :wash-tide [1 0] :wash-ember [2 0] :beam-shafts [3 0] :pinstripes [4 0] :bloom-halo [5 0]
+                :bloom-keyhole [0 1] :dimmer-sweep [1 1] :strobe [2 1] :blinder-hit [3 1] :aim-lfo [4 1] :can-can [5 1]
+                :mover-orbit [0 2] :tube-sparkle [1 2] :confetti [2 2] :riser-chase [3 2] :aurora [4 2]
+                :gather-path [5 2] :colour-drift [0 3] :rolling-volume [1 3]}
+               (apply dissoc cells looks/after-hours-cues)))
+        (is (= {:searchlight-drift [2 3] :twin-cones [3 3] :run [4 3] :matrix-chase [5 3]}
+               (select-keys cells looks/after-hours-cues)))))
     (testing "every cue is on the grid and compiles against the rig"
       (is (= (set (keys cues)) (set (vals (get-in model [:pages :showcase :cells])))))
       (doseq [[id effect] (get-in model [:registry :effects])]
@@ -76,6 +85,7 @@
             (str cue-id " " param))))
     (is (= #{:mixed-movement :heavy-colour :strobe-chase} (set (keys (:compositions model)))))
     (is (contains? (get-in model [:waveforms :waveforms]) :heartbeat))
+    (is (contains? (get-in model [:waveforms :waveforms]) looks/bass-waveform) "the cones' audio LFO is configured")
     (is (empty? (:instances model)) "Loading the show launches nothing")))
 
 (deftest timeline-positions-are-zero-based-and-validated-against-the-show
@@ -191,9 +201,9 @@
         (is (= #{[:rate 8.0] [:level 1.0] [:saturation 0.95]} (:ramps (bar-frame 18.5))))
         (is (empty? (:ramps (bar-frame 23)))))
       (is (empty? (distinct (mapcat :faults probes))) "No cue faulted on any frame"))
-    (testing "every cue on the grid plays at some point"
+    (testing "every cue on the grid plays at some point, the tolglow-web cues in after-hours"
       (is (= (set (keys (get-in (showcase/model) [:registry :cues])))
-             (reduce into #{} (map :running probes)))))
+             (reduce into looks/after-hours-cues (map :running probes)))))
     (testing "the recorded moments are in the output"
       (is (= #{:haze :aurora :wash-tide} (:running (bar-frame 1))))
       (is (contains? (:running (bar-frame 13)) :can-can))

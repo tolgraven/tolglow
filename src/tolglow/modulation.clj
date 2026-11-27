@@ -368,7 +368,7 @@
      (seq params) (assoc ::frame-params params)
      (seq targets) (assoc ::ramp-targets targets))))
 
-(defn- attempted-revision
+(defn attempted-revision
   "The newer registry definition the engine attempts for this instance on the
   next frame, or nil. Paused and pinned instances defer hot reload."
   [model instance]
@@ -426,6 +426,26 @@
   "True when the next frame attempts a hot reload of some running instance."
   [model]
   (boolean (some #(reload-candidate model %) (vals (:instances model)))))
+
+(defn without-reloads
+  "Return `model` as the engine and modulation read it in a frame that defers
+  the hot reloads of `instance-ids` until their programs are compiled (#774):
+  those instances read as pinned, so they keep their captured definition for
+  this frame. A frame view only; `restore-reloads` puts the policies back."
+  [model instance-ids]
+  (reduce (fn [model id]
+            (if (contains? (:instances model) id) (assoc-in model [:instances id :reload-policy] :pinned) model))
+          model instance-ids))
+
+(defn restore-reloads
+  "Give the instances of `result`, a model evaluated from a `without-reloads`
+  view, the reload policies they have in `model`."
+  [result model instance-ids]
+  (reduce (fn [result id]
+            (if (and (contains? (:instances result) id) (contains? (:instances model) id))
+              (assoc-in result [:instances id :reload-policy] (get-in model [:instances id :reload-policy]))
+              result))
+          result instance-ids))
 
 (defn owner-definition
   "Select the definition for the next frame: the pending reload candidate, or

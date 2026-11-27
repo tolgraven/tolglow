@@ -319,8 +319,9 @@
         ctx (context definition)
         values #(get-in (first (:contributions (step %))) [:batch :outputs :dimmer :values])
         original (values ctx)]
-    (aset-double ^doubles original 0 0.9)
-    (is (= [0.25 0.25 0.25] (vec (values (assoc-in ctx [:frame :time-ms] 900)))))
+    ;; Evaluated fields are read-only and shared: a hit returns the same array.
+    (is (identical? original (values (assoc-in ctx [:frame :time-ms] 900))))
+    (is (= [0.25 0.25 0.25] (vec original)))
     (is (= 1 @calls))
     (is (= [0.75 0.75 0.75] (vec (values (assoc-in ctx [:instance :params :level] 0.75)))))
     (is (= 2 @calls))
@@ -334,6 +335,35 @@
       (is (= 4 @calls))
       (is (= [0.25 0.25 0.25] (sample (assoc-in ctx [:frame :transport :beat] 4.0))))
       (is (= 5 @calls)))))
+
+(deftest envelope-scaling-never-writes-to-retained-fields
+  ;; A stopped transport hits the pure binding every frame. Scaling the shared
+  ;; array in place would compound the envelope frame after frame.
+  (let [calls (atom 0)
+        retained (atom [])
+        bind-pure (fn [spec calculate]
+                    (let [evaluate (reuse/evaluator spec (fn [inputs] (swap! calls inc) (calculate inputs)))]
+                      (fn [env] (let [result (evaluate env)] (swap! retained conj result) result))))
+        definition {:id :fade :version 1 :envelope {:attack {:beats 2} :release {:beats 1}}
+                    :params {:level {:type :number :default 0.5 :bounds [0 1]}}
+                    :outputs {:dimmer {:op :param :key :level} :focus {:op :param :key :level}}}
+        step (batch/compile-effect definition fixtures {:bind-pure bind-pure})
+        scalar (compiler/compile-effect definition)
+        ctx (context definition)
+        expected (frame-bytes (render/resolve-contributions fixtures (blocks (scalar ctx)) {:include-values? false}))
+        frames (vec (repeatedly 4 #(step ctx)))
+        published (fn [frame attribute] (get-in (first (:contributions frame)) [:batch :outputs attribute :values]))]
+    (is (= 1 @calls) "every frame after the first hits the binding")
+    (is (every? #(identical? (first @retained) %) @retained))
+    (is (= [0.5 0.5 0.5] (vec (get-in (first @retained) [:outputs :dimmer :values]))) "the retained field is unscaled")
+    (doseq [frame frames]
+      (is (= expected (frame-bytes (render/resolve-contributions fixtures (blocks frame) {:include-values? false}))))
+      (is (not= [0.5 0.5 0.5] (vec (published frame :dimmer))) "the envelope is mid-attack")
+      (is (not (identical? (get-in (first @retained) [:outputs :dimmer :values]) (published frame :dimmer)))
+          "a scaled attribute gets an array the frame owns")
+      (is (identical? (get-in (first @retained) [:outputs :focus :values]) (published frame :focus))
+          "an unscaled attribute keeps the shared array"))
+    (is (apply = (map #(vec (published % :dimmer)) frames)))))
 
 (deftest exact-coordinates-are-checked-on-the-targets-and-axes-each-output-reads
   (let [rig (mapv #(assoc %1 :position %2) fixtures [[0.25 0 0] [0 0.5 0] [0 0 0]])

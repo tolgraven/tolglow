@@ -77,14 +77,50 @@ ambient, fog attenuates visible surfaces without generating coloured radiance.
 
 ## Budgets and evidence
 
-| Tier | Density grid | Output scale | Ray steps | Shadowed lights |
-| --- | --- | --- | --- | --- |
-| phone | 20 × 12 × 20 | .33 | 24 | 1 |
-| mobile | 24 × 14 × 24 | .40 | 32 | 2 |
-| desktop | 32 × 18 × 32 | .50 | 48 | 4 |
-| high | 48 × 24 × 48 | .67 | 72 | 4 |
+| Tier | Density grid | Output scale | Raster cap | Mode | Ray steps | Shadowed lights |
+| --- | --- | --- | --- | --- | --- | --- |
+| phone (Low) | 20 × 12 × 20 | .33 | 0.12 MP | haze | 8 taps | 1 |
+| mobile | 24 × 14 × 24 | .34 | 0.30 MP | raymarch | 32 | 2 |
+| desktop | 32 × 18 × 32 | .50 | 0.52 MP | raymarch | 48 | 4 |
+| high | 48 × 24 × 48 | .67 | 1.4 MP | raymarch | 72 | 4 |
 
-At most 16 supplied lights and four active machine sources are retained. The
+The raster cap stops the raymarch from growing with a large or fullscreen
+canvas: desktop at 1920×1080 keeps scale .5, and above that the scale shrinks so
+the fog raster stays at about 0.52 million pixels. At most 16 supplied lights
+and four active machine sources are retained. The scene owner passes only its
+prominence-ranked full lights (see the README).
+
+### Haze mode and faked beams
+
+`mode: 'haze'` (the Low tier) replaces the raymarch with eight taps of the same
+density texture per pixel, at full resolution inside the composite. It computes
+camera-path extinction and ambient in-scattering only: there is no per-light
+loop or shadow lookup. Interleaved gradient noise spreads the tap offsets.
+Zero amount still copies the scene exactly.
+
+`render(sceneTarget, camera, output, overlay)` calls `overlay(target)` with the
+reduced-raster fog target before compositing. The scene owner draws faked beams
+(`beams.js`) there with additive blending, so they share the depth-aware upsample
+and their cost does not grow with the display. In haze mode the target is
+cleared and holds only the beams. Each faked beam is one instance of a shared
+open cone. Its radiance is `colour × intensity / distance² × (1/4π) × .92 ×
+(1 − T(density, chord)) × spot profile × T_incident × T_view`, the raymarch's
+single-scattering estimate. The chord is `radius × |n·v|` per face; the profile is
+the spot smoothstep at the chord's closest radius (from `|n·v|` and penumbra),
+which softens the silhouette. `T_incident` uses one density tap halfway along
+the path from the lens, as the raymarch does, and `T_view` three taps along the
+eye path clipped to the room. The beam fades over its last 28 %, near the camera
+and where it meets opaque depth. Two scrolling samples of a tiling noise texture
+(addressed by the cylinder's seam-duplicated u) and a four-octave world-space
+fbm add drifting structure. It reads local density from the field, so at zero
+fog it draws nothing. With uniform densities .03, .10 and .35 on 16 heads, the
+mean luma of all-faked and all-full frames differs by 2.7, 3.3 and 1.5 /255
+(headless ANGLE Metal; numbers in #793). Faked beams cast no shadows and have no
+forward-scatter halo.
+
+A light span that covers a whole march interval reuses that interval's density
+sample. The jittered sample point is identical, so this saves detail-noise
+evaluations without changing the result. The
 scene owner may expose fewer tiers and must display its selected limits. These
 are bounded work settings, not measured phone/iPad frame-rate guarantees.
 

@@ -4,6 +4,7 @@
             [re-frame.core :as rf]
             [tolglow.studio.checkpoints :as checkpoints]
             [tolglow.studio.fog-fields :as fog]
+            [tolglow.studio.frame-stream :as frame-stream]
             [tolglow.studio.operator-history :as history]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.page-routes :as pages]
@@ -14,7 +15,8 @@
             [tolglow.studio.show-window :as show-window]
             [tolglow.studio.view-tabs :as view-tabs]
             [tolglow.transit :as transit]
-            [tolglow.studio.parameter-widgets :as widgets]))
+            [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.visualization.control-geometry :as control-geometry]))
 
 (def initial-source
   "{:id :after-hours\n :version 1\n :name \"After hours\"\n :swatch \"#b981a3\"\n :duration {:beats 4}\n :envelope {:attack {:beats 0.125} :release {:beats 1}}\n :params {:level {:type :number :default 0.7 :bounds [0.0 1.0]}}\n :outputs {:color {:op :const :value [0.725 0.506 0.639]}\n           :dimmer {:op :param :key :level}}}")
@@ -183,8 +185,6 @@
 (defn slug [value]
   (let [s (-> value str/lower-case str/trim (str/replace #"[^a-z0-9._/-]+" "-") (str/replace #"^-+|-+$" ""))]
     (if (seq s) s "untitled")))
-
-(defn snapshot-order [show] (mapv #(get show % 0) [:epoch :revision :frame-number]))
 
 (defn outstanding-drafts [drafts show]
   (into {} (filter (fn [[_ draft]]
@@ -368,7 +368,6 @@
                                               (get-in db [:server-projection :view]) (:server-presentation db))
         runtime-changed? (and (:show db) (not= (:runtime-id presentation) (get-in db [:show :runtime-id])))
         drafts (if runtime-changed? {} (outstanding-drafts (:drafts db) presentation))
-        order (snapshot-order presentation)
         show (apply-drafts presentation drafts)
         previous (when (= (projection/identity-of show) (projection/identity-of (:server-presentation db)))
                    (:server-presentation db))
@@ -380,7 +379,7 @@
                                       (or (not (get-in db [:connection :connected?]))
                                           (not= (projection/identity-of (:view server))
                                                 (projection/identity-of (get-in db [:server-projection :view])))))
-        updated (-> db (assoc :show show :snapshot-order order :drafts drafts :connection {:connected? true}
+        updated (-> db (assoc :show show :drafts drafts :connection {:connected? true}
                              :server-projection server :server-presentation presentation)
                     settle-history
                     spatial-drafts/settle
@@ -439,10 +438,20 @@
 (defn- current-stream? [db session id]
   (and (= session (:session db)) (some? id) (= id (:stream-id db))))
 
+(defn- lane-installs
+  "Split an accepted projection into the app-db projection and one whole frame
+  per high-rate lane at the accepted token. view-token names the message that
+  last changed the app-db view."
+  [{:keys [token view] :as state} view-token]
+  (let [[app-view lanes] (frame-stream/split-view view)]
+    [(assoc state :view app-view)
+     (into {} (map (fn [[lane parts]] [lane (frame-stream/frame token view-token view parts)])) lanes)]))
+
 (rf/reg-event-fx :studio/stream-frame
-  (fn [{:keys [db]} [_ session id envelope]]
+  [(rf/inject-cofx :studio/frame-baselines)]
+  (fn [{:keys [db frame-baselines]} [_ session id envelope]]
     (when (current-stream? db session id)
-      (let [current (:server-projection db)
+      (let [current (frame-stream/join-view (:server-projection db) frame-baselines)
             received (if (and (:awaiting-full? db) (not= :full (:kind envelope)))
                        {:status :resync}
                        (projection/receive current envelope))]
@@ -452,9 +461,25 @@
           ;; Another show answered on this window's address: never install or acknowledge it.
           :foreign {:db (assoc db :awaiting-full? true
                                :connection {:connected? false :error (show-window/refusal-message db)})}
-          :accepted (-> (install-show db (:state received))
-                        (update :db dissoc :awaiting-full?)
-                        (assoc :studio/stream-reply [id {:op :ack :token (:token envelope)}]))
+          ;; High-rate lanes install outside app-db at the same token. The ACK
+          ;; follows both installations; lane consumers hear of the frame only
+          ;; after it, so their work never holds back the next server frame.
+          ;; A patch inside lane-owned subtrees only (clocks, scheduler
+          ;; status, fixture values) leaves app-db untouched: no db write, no
+          ;; subscription recompute, no Reagent render beyond lane readers.
+          :accepted (let [state (:state received)
+                          lanes-only? (and (= :patch (:kind envelope)) (:token current)
+                                           (frame-stream/lane-only? (:changes envelope)))
+                          view-token (if lanes-only? (get-in db [:server-projection :token]) (:token state))
+                          [app-state installs] (lane-installs state view-token)
+                          lane-fx [[:studio/frame-install installs]
+                                   [:studio/stream-reply [id {:op :ack :token (:token envelope)}]]
+                                   [:studio/frame-notify (vec (keys installs))]]]
+                      (if lanes-only?
+                        {:fx lane-fx}
+                        (-> (install-show db app-state)
+                            (update :db dissoc :awaiting-full?)
+                            (update :fx (fnil into []) lane-fx))))
           :duplicate (cond-> {:db (-> db (dissoc :awaiting-full?) (assoc :connection {:connected? true}))
                               :studio/stream-reply [id {:op :ack :token (:token envelope)}]}
                        (and (:awaiting-full? db) (:recover-held? db))
@@ -499,7 +524,8 @@
     (cond-> (assoc db :settings-loaded? true :settings-supported? true)
       (and (contains? #{nil :home} (:route-name db)) (pages/views view)) (assoc-in [:ui :view] view)
       (string? (:page-id prefs)) (assoc-in [:ui :page-id] (:page-id prefs))
-      (contains? #{"toggle" "held" "one-shot"} (:launch-mode prefs)) (assoc-in [:ui :launch-mode] (:launch-mode prefs)))))
+      (contains? #{"toggle" "held" "one-shot"} (:launch-mode prefs)) (assoc-in [:ui :launch-mode] (:launch-mode prefs))
+      (contains? prefs :knob-skin) (assoc-in [:ui :knob-skin] (control-geometry/knob-skin (:knob-skin prefs))))))
 (rf/reg-event-fx :studio/settings-received
   (fn [{:keys [db]} [_ settings]]
     (let [updated (apply-ui-preferences db settings)]
@@ -511,7 +537,14 @@
       {:studio/http {:path "/api/settings"
                      :body {:scope "ui" :values {:view (name (get-in db [:ui :view]))
                                                 :page-id (get-in db [:ui :page-id])
-                                                :launch-mode (get-in db [:ui :launch-mode])}}}})))
+                                                :launch-mode (get-in db [:ui :launch-mode])
+                                                :knob-skin (name (control-geometry/knob-skin (get-in db [:ui :knob-skin])))}}}})))
+
+(rf/reg-sub :ui/knob-skin (fn [db _] (control-geometry/knob-skin (get-in db [:ui :knob-skin]))))
+
+(rf/reg-event-fx :studio/set-knob-skin
+  (fn [{:keys [db]} [_ skin]]
+    {:db (assoc-in db [:ui :knob-skin] (control-geometry/knob-skin skin)) :fx [[:dispatch [:studio/persist-ui]]]}))
 (rf/reg-event-fx :studio/set-view
   (fn [_ [_ view]]
     (when (pages/views view) {:studio/navigate [:push view]})))
@@ -654,13 +687,11 @@
                 (when-let [why (reason (:code missed))] (str ": " why)))))))
 
 (defn room-show
-  "The show the Room preview renders. A staged draft's audition frame replaces
-  only the Room's fixture values; every other preview keeps the live frame."
+  "The show the Perform Room renders. Live fixture values and a staged draft's
+  audition values both arrive on the :room frame lane; only this Room shows
+  the audition, so every other preview keeps the live frame."
   [db]
-  (let [show (or (:server-presentation db) (:show db))]
-    (if-let [values (get-in show [:draft-output :values])]
-      (assoc-in show [:output :values] values)
-      show)))
+  (or (:server-presentation db) (:show db)))
 
 (defn- scene-draft-fx [db unique op fields]
   (let [{:keys [id revision]} (scene-draft-control db)]
@@ -869,6 +900,36 @@
     (let [instance (some #(when (= (:id %) instance-id) %) (get-in db [:show :instances]))
           current (get-in instance [:params param] [])]
       (set-param-fx cofx [:studio/param-set instance-id param (assoc (vec current) index value)]))))
+(defn- vector-value [db instance-id param fallback]
+  (let [instance (some #(when (= (:id %) instance-id) %) (get-in db [:show :instances]))]
+    (vec (or (get-in instance [:params param]) fallback))))
+
+;; A compound widget (#655) sets components against the current value in
+;; app-db, so a pad gesture and a Z fader moved together, or repeated key
+;; presses inside one frame, never overwrite each other with a stale vector.
+(rf/reg-event-fx :studio/param-components
+  (fn [{:keys [db] :as cofx} [_ instance-id param changes fallback]]
+    (let [current (vector-value db instance-id param fallback)
+          next (when (every? #(< -1 % (count current)) (keys changes)) (reduce-kv assoc current changes))]
+      ;; param/set carries the whole vector (docs/repl-studio-parity.md), so
+      ;; a gesture that changes nothing sends nothing.
+      (when (and next (not= next current))
+        (set-param-fx cofx [:studio/param-set instance-id param next])))))
+(rf/reg-event-fx :studio/param-set-if-changed
+  ;; Grouped X/Y/Z axes are separate parameters. A pad gesture sends an axis
+  ;; only when it differs from the latest value in app-db, so two pointer
+  ;; events inside one frame cannot suppress a real change.
+  (fn [{:keys [db] :as cofx} [_ instance-id param value fallback]]
+    (let [params (:params (some #(when (= (:id %) instance-id) %) (get-in db [:show :instances])))
+          current (some #(when (contains? params %) (get params %)) [param (keyword (wire-id param)) (wire-id param)])]
+      (when (not= value (if (some? current) current fallback))
+        (set-param-fx cofx [:studio/param-set instance-id param value])))))
+(rf/reg-event-fx :studio/param-component-key
+  (fn [{:keys [db] :as cofx} [_ instance-id param schema index key fallback]]
+    (let [current (vector-value db instance-id param fallback)]
+      (when-let [next (and (< -1 index (count current)) (number? (get current index))
+                           (widgets/keyboard-value schema (get current index) key))]
+        (set-param-fx cofx [:studio/param-set instance-id param (assoc current index next)])))))
 (rf/reg-event-fx :studio/queue-param
   (fn [{:keys [db]} [_ key op fields]]
     {:db (assoc-in db [:pending-params key] {:op op :fields fields :epoch (get-in db [:show :epoch]) :runtime-id (get-in db [:show :runtime-id])})
@@ -1058,6 +1119,13 @@
   (fn [db [_ index parameter component value]]
     (assoc-in db [:ui :composition :slots index :params parameter]
               (assoc (vec (get (slot-parameters db index) parameter)) component value))))
+(rf/reg-event-db :studio/slot-param-component-key
+  (fn [db [_ index parameter schema component key]]
+    (let [current (vec (get (slot-parameters db index) parameter))]
+      (if-let [next (and (< -1 component (count current)) (number? (get current component))
+                         (widgets/keyboard-value schema (get current component) key))]
+        (assoc-in db [:ui :composition :slots index :params parameter] (assoc current component next))
+        db))))
 (rf/reg-event-db :studio/slot-params-reset
   (fn [db [_ index]] (assoc-in db [:ui :composition :slots index :params] {})))
 (rf/reg-event-db :studio/composition-remove

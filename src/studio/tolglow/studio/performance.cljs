@@ -6,6 +6,7 @@
             [clojure.set :as set]
             [re-frame.core :as rf]
             [reagent.core :as r]
+            [tolglow.authoring.parameter-controls :as controls]
             [tolglow.authoring.parameter-layout :as layout]
             [tolglow.studio.events :as events]
             [tolglow.studio.cue-variations :as variations]
@@ -15,7 +16,8 @@
             [tolglow.studio.spatial-picker :as spatial]
             [tolglow.studio.parameter-widgets :as widgets]
             [tolglow.studio.parameter-source :as sources]
-            [tolglow.studio.param-visualization :as visualization]))
+            [tolglow.studio.param-visualization :as visualization]
+            [tolglow.visualization.control-geometry :as control-geometry]))
 
 (def defaults {:generation 0 :serial 0 :requests {} :errors {} :opacity {} :envelopes {}
                :group {:scope "categories" :categories [] :match "any" :envelope-open? false}})
@@ -478,15 +480,28 @@
     (if description (str axis " · " description) axis)))
 
 (defn- xyz-editor [show instance {:keys [components] :as control} compact?]
-  (let [{:keys [base]} (xyz-readings show instance components)
+  (let [{:keys [base effective]} (xyz-readings show instance components)
         title (control-title control)
         axes (mapv (fn [[id schema] axis] (assoc schema :axis-label (xyz-axis-label axis id schema)))
                    components ["X" "Y" "Z"])
         update! (fn [index value]
-                  (rf/dispatch-sync [:studio/param-set (:id instance) (first (nth components index)) value]))]
+                  (rf/dispatch-sync [:studio/param-set (:id instance) (first (nth components index)) value]))
+        ;; Each axis is its own parameter: a pad move sends param/set only for
+        ;; the axes whose latest app-db value it changes, so a horizontal
+        ;; drag leaves Y alone.
+        set! (fn [changes]
+               (doseq [[index value] changes]
+                 (rf/dispatch-sync [:studio/param-set-if-changed (:id instance) (first (nth components index)) value (get base index)])))
+        key! (fn [index schema key]
+               (rf/dispatch-sync [:studio/param-key (:id instance) (first (nth components index)) schema key]))
+        widget (controls/compound-widget (xyz-schema control))]
     [:div.param-row {:data-group (control-id control) :class (when compact? "strip-control")}
      [:label title]
-     [widgets/axes-control title axes base update!]
+     (if (#{:xyz :rings} widget)
+       [widgets/compound-control {:title title :widget widget :components (mapv second components)
+                                  :labels (mapv :axis-label axes) :values effective :base base
+                                  :set! set! :set-component! update! :key! key! :skin @(rf/subscribe [:ui/knob-skin])}]
+       [widgets/axes-control title axes base update!])
      (let [param (or (some #(when (sources/driven? instance (first %)) (first %)) components)
                      (some #(when (sources/bound? instance (first %)) (first %)) components)
                      (ffirst components))]
@@ -605,7 +620,10 @@
         editing @(rf/subscribe [::sources/selection id])
         priority (sources/priority-destination show)
         scope (resolve-monitor (driven-controls instance controls) (get-in state [:monitor id]) monitor)
-        strip (get (:instances @(rf/subscribe [:surfaces/on-surface])) id)]
+        on-surface @(rf/subscribe [:surfaces/on-surface])
+        strip (get (:instances on-surface) id)
+        ;; A cue grid's committed selection, from a Push pad, the REPL or Follow selection (#545).
+        grid-selection (get (:selected on-surface) id)]
     [:article.live-effect-card {:data-live-instance id :aria-label (str title " · " id)
                                 :data-reorder-source (= id source-id)
                                 :data-density (if expanded? "detail" "strip")
@@ -620,6 +638,10 @@
        [:div.live-effect-meta
         [:span.live-effect-phase (cond faulted? "Fault" paused? "Paused" :else (widgets/label (:phase instance)))]
         (when strip [:span.surface-strip-badge {:title "Shown on this control surface strip"} strip])
+        (when grid-selection
+          [:span.surface-strip-badge {:data-surface-selected grid-selection
+                                      :title "The selected launch on this control surface"}
+           (str "Selected on " grid-selection)])
         (when-let [label (case (:suppressed-by selection-row) :mute "Muted" :solo "Excluded by Solo" nil)]
           [:span.live-selection-state {:data-suppressed-by (name (:suppressed-by selection-row))} label])
         (when duplicate? [:span.live-effect-phase (str "Launch " id)])
@@ -676,11 +698,17 @@
         source-id (when (= (:identity capture) (:identity source)) (:id source))
         priority-id (priority-source-id source (:identity capture))
         selected (some #(when (= priority-id (:id %)) %) instances)]
-    [:section.live-board {:aria-label "Running effects"}
+    [:section.live-board {:aria-label "Running effects" :data-skin (name @(rf/subscribe [:ui/knob-skin]))}
      [:div.live-board-heading
       [:h2 "In the mix"] [:span#active-count.count (str (count instances) " active")]
       [:div.live-board-actions
        (when (:selection selection-view) [selection/toolbar selection-view])
+       (let [skin @(rf/subscribe [:ui/knob-skin])]
+         [:label.knob-skin-choice [:span "Widgets"]
+          [:select {:aria-label "Widget style" :value (name skin)
+                    :on-change #(rf/dispatch [:studio/set-knob-skin (.. % -target -value)])}
+           (for [{:keys [id label]} control-geometry/knob-skins]
+             ^{:key id} [:option {:value (name id)} label])]])
        (when (or (seq running-ids) open?)
          [:button.button.live-reorder-toggle {:type "button" :disabled (boolean pending?)
                                              :on-click #(rf/dispatch [:performance/reorder-toggle])}
