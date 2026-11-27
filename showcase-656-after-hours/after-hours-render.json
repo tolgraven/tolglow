@@ -18,7 +18,7 @@
   "drift": 0,
   "workLight": 0.04,
   "bundleSha256": "1e5c30ebe7e98bd8384e12f7f36293a0ee667d27cb3923b009fdef6eb1be4c4d",
-  "imagesSha256": "728953863e3e3fbfda09d1ea741d0d9bdc47f87b7fa6321908d7e74cee4012a5",
+  "imagesSha256": "155c6a173bebb11366bc126cca583ddb46c62cc057d3f51cfad1c24416852faf",
   "video": "room.mp4",
   "stills": [
     {
@@ -43,14 +43,14 @@
       ],
       "tier": "high",
       "fog": {
-        "sampleTimeMs": 911.5985,
-        "mixedDensity": 0.14057462600268006,
+        "sampleTimeMs": 1480.904375,
+        "mixedDensity": 0.14038164624796876,
         "extinctionPerM": 1.25,
         "referencePathM": 1,
-        "fogLevel": 0.16114573002253701,
-        "mixedVolumeM3": 61.85283544117923,
+        "fogLevel": 0.16094335325030745,
+        "mixedVolumeM3": 61.76792434910625,
         "roomVolumeM3": 440,
-        "localVolumeM3": 0.42193959922208274,
+        "localVolumeM3": 0.544212863202291,
         "foggerCount": 1
       },
       "frameNumber": 197
@@ -78,14 +78,14 @@
       ],
       "tier": "high",
       "fog": {
-        "sampleTimeMs": 1693.466667,
-        "mixedDensity": 0.14037799309336568,
+        "sampleTimeMs": 2671.319458,
+        "mixedDensity": 0.1401522874871778,
         "extinctionPerM": 1.25,
         "referencePathM": 1,
-        "fogLevel": 0.16093952173699513,
-        "mixedVolumeM3": 61.766316961080896,
+        "fogLevel": 0.16070276252254603,
+        "mixedVolumeM3": 61.66700649435824,
         "roomVolumeM3": 440,
-        "localVolumeM3": 0.5284762777786144,
+        "localVolumeM3": 0.6276072857681584,
         "foggerCount": 1
       },
       "frameNumber": 376
@@ -112,14 +112,14 @@
       ],
       "tier": "high",
       "fog": {
-        "sampleTimeMs": 2564.229125,
-        "mixedDensity": 0.1402124182046464,
+        "sampleTimeMs": 4300.240208,
+        "mixedDensity": 0.13996673537517662,
         "extinctionPerM": 1.25,
         "referencePathM": 1,
-        "fogLevel": 0.160765844583109,
-        "mixedVolumeM3": 61.693464010044416,
+        "fogLevel": 0.16050807322652416,
+        "mixedVolumeM3": 61.585363565077714,
         "roomVolumeM3": 440,
-        "localVolumeM3": 0.622567604143615,
+        "localVolumeM3": 0.7844594848919186,
         "foggerCount": 1
       },
       "frameNumber": 639
@@ -146,14 +146,14 @@
       ],
       "tier": "high",
       "fog": {
-        "sampleTimeMs": 3375.9745,
-        "mixedDensity": 0.1401073860125246,
+        "sampleTimeMs": 5784.320083,
+        "mixedDensity": 0.13992245638203238,
         "extinctionPerM": 1.25,
         "referencePathM": 1,
-        "fogLevel": 0.16065565409599086,
-        "mixedVolumeM3": 61.64724984551082,
+        "fogLevel": 0.16046160711902793,
+        "mixedVolumeM3": 61.56588080809425,
         "roomVolumeM3": 440,
-        "localVolumeM3": 0.6404809195233224,
+        "localVolumeM3": 0.7743026704186726,
         "foggerCount": 1
       },
       "frameNumber": 871
@@ -181,14 +181,14 @@
       ],
       "tier": "high",
       "fog": {
-        "sampleTimeMs": 3516.808167,
-        "mixedDensity": 0.1400891101073767,
+        "sampleTimeMs": 6064.944375,
+        "mixedDensity": 0.13990766163221977,
         "extinctionPerM": 1.25,
         "referencePathM": 1,
-        "fogLevel": 0.1606364791549019,
-        "mixedVolumeM3": 61.63920844724576,
+        "fogLevel": 0.16044608102486202,
+        "mixedVolumeM3": 61.5593711181767,
         "roomVolumeM3": 440,
-        "localVolumeM3": 0.6442587093813075,
+        "localVolumeM3": 0.7635378611013988,
         "foggerCount": 1
       },
       "frameNumber": 909
@@ -230,14 +230,14 @@
     ],
     "tier": "high",
     "fog": {
-      "sampleTimeMs": 3624.876167,
-      "mixedDensity": 0.1400787488942036,
+      "sampleTimeMs": 6256.193792,
+      "mixedDensity": 0.13990750935962065,
       "extinctionPerM": 1.25,
       "referencePathM": 1,
-      "fogLevel": 0.1606256080540419,
-      "mixedVolumeM3": 61.63464951344958,
+      "fogLevel": 0.16044592122352513,
+      "mixedVolumeM3": 61.55930411823309,
       "roomVolumeM3": 440,
-      "localVolumeM3": 0.7215005910014026,
+      "localVolumeM3": 0.8921832333599286,
       "foggerCount": 1
     },
     "frameNumber": 939
