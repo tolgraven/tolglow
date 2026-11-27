@@ -90,7 +90,7 @@ function inspect(engine) {
   const ext = timersAllowed ? gl.getExtension('EXT_disjoint_timer_query_webgl2') : null;
   const originalShadowUpdate = renderer.shadowMap.autoUpdate;
   const pending = new Map(), instrumentedFog = new WeakMap();
-  let sample, frame = 0, copy, frozenPolicy, comparison, resetPending = false;
+  let sample, frame = 0, copy, frozenPolicy, comparison, resetPending = false, hold;
   const policy = () => ({choice: engine.qualityChoice, tier: engine.quality, scale: engine.renderScale,
     scene: [engine.width, engine.height], display: [engine.displayWidth, engine.displayHeight],
     fog: [engine.fog.width, engine.fog.height], raySteps: engine.fog.budget.steps,
@@ -111,9 +111,47 @@ function inspect(engine) {
   engine.getTelemetry = () => {
     const value = telemetry();
     if (sample) value.passProbe = {...sample, policy: policy(), detailActive: detailActive(),
-      maximumDensity: value.fog.maximumDensity};
+      maximumDensity: value.fog.maximumDensity, meanDensity: value.fog.meanDensity, fieldTime: value.fog.time,
+      fogHold: holdState()};
     return value;
   };
+  // Measurement-only stationary medium. The manual preview's field decays
+  // toward empty air (100 s time constant), so a later sample would otherwise
+  // render a thinner medium than an earlier one. After each simulation step
+  // the held field is restored to one captured state before its texture
+  // upload: the step and upload still cost what they cost in production,
+  // but every frame of every sample renders the same density and fog time.
+  function holdState() {
+    if (!hold) return null;
+    const field = engine.fog.field;
+    if (!hold.broken && (field !== hold.field || engine.fog.showAtmosphere))
+      hold.broken = field !== hold.field ? 'fog field replaced while held' : 'show atmosphere replaced the local field';
+    return {broken: hold.broken, restores: hold.restores, restoreMs: hold.restoreMs,
+      meanDensity: hold.stats.meanDensity, maximumDensity: hold.stats.maximumDensity, time: hold.time};
+  }
+  function holdFog() {
+    const fog = engine.fog, field = fog.field;
+    if (hold) return holdState();
+    if (fog.showAtmosphere) throw new Error('A show atmosphere owns the fog field; it cannot be held.');
+    const copySources = sources => sources.map(s => ({...s, position: [...s.position], direction: [...s.direction]}));
+    const captured = {data: Float32Array.from(field.data), temperature: Float32Array.from(field.temperature),
+      time: field.time, sources: copySources(field.sources)};
+    hold = {field, time: captured.time, stats: field.stats(), restores: 0, restoreMs: 0, broken: false};
+    const advance = field.advance;
+    field.advance = function(dt) {
+      const steps = advance.call(this, dt);
+      if (steps) {
+        const start = performance.now();
+        this.data.set(captured.data); this.temperature.set(captured.temperature);
+        this.time = captured.time; this.sources = copySources(captured.sources);
+        hold.restoreMs += performance.now() - start; hold.restores++;
+      }
+      return steps;
+    };
+    // Make the current texture the captured state too, without waiting for a step.
+    fog.upload();
+    return holdState();
+  }
   function observe(phase, run) {
     const timed = sample.timerQueriesEnabled && frame % 8 === 0 && !pending.has(phase);
     if (timed) sample.timerApiCalls++;
@@ -202,6 +240,7 @@ function inspect(engine) {
       renderer.shadowMap.autoUpdate = originalShadowUpdate;
     },
     requestReset() {resetPending = true;},
+    holdFog,
     freezeQuality() {
       if (engine.qualityChoice !== 'auto' || engine.resizePending) throw new Error('Room Auto policy is not ready to freeze.');
       frozenPolicy ||= policy();
@@ -276,7 +315,8 @@ function inspect(engine) {
       }
     },
     state: () => ({mode, frozenPolicy, policy: policy(), detailActive: detailActive(),
-      maximumDensity: engine.fog.field.stats().maximumDensity})
+      maximumDensity: engine.fog.field.stats().maximumDensity, meanDensity: engine.fog.field.stats().meanDensity,
+      fogHold: holdState()})
   };
 }
 
@@ -303,5 +343,9 @@ self.freezeRoomPassQuality = () => {
   return probe.freezeQuality();
 };
 self.getRoomPassState = () => probe?.state();
+self.holdRoomFog = () => {
+  if (!probe) throw new Error('Room renderer has not drawn.');
+  return probe.holdFog();
+};
 self.compareRoomPassPixels = () => probe.comparePixels();
 self.readRoomFallbackMask = () => probe.fallbackMask();

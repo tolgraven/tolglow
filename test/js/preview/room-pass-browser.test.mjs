@@ -38,6 +38,12 @@ test('private Room diagnostics keep real worker presentations through each pass 
     assert.ok(peer, 'private worker stayed active');
     await page.evaluate(() => document.querySelector('#preview').tolglowPreview.setQuality('desktop'));
     await page.waitForFunction(() => document.querySelector('#preview').tolglowPreview.getTelemetry().quality === 'desktop');
+    // Hold the real manual field: every later sample must render this medium.
+    const held = await peer.evaluate(() => self.holdRoomFog());
+    assert.equal(held.broken, false); assert.ok(held.meanDensity > 0);
+    // Two frames can be in flight: wait until a published frame was drawn after the hold.
+    await page.waitForFunction(() => document.querySelector('#preview').tolglowPreview.getTelemetry().passProbe?.fogHold != null);
+    const media = [];
     // The loop and composite-fallback probes rewrite the production fog shader source.
     for (const mode of ['full','cached-shadows','skip-fog-raymarch','present-cached-frame','simple-fixed-loop','no-composite-fallback','full']) {
       await peer.evaluate(choice => self.setRoomPassMode(choice),mode);
@@ -52,7 +58,8 @@ test('private Room diagnostics keep real worker presentations through each pass 
           if (e.data.type === 'frame') {engine.worker.removeEventListener('message',next);ok();}
         }));
       });
-      const {timings:observations,raymarched}=await page.evaluate(() => window.finishRoomPassSample());
+      const {timings:observations,raymarched,medium}=await page.evaluate(() => window.finishRoomPassSample());
+      media.push(medium);
       if (['full','cached-shadows','simple-fixed-loop','no-composite-fallback'].includes(mode)) assert.ok(raymarched > 0);
       else assert.equal(raymarched,0);
       assert.ok(observations.domSubmitMs.samples > 0,mode);
@@ -61,5 +68,13 @@ test('private Room diagnostics keep real worker presentations through each pass 
       if(process.env.ROOM_TEST_MEDIA) await page.locator('#preview').screenshot({path:process.env.ROOM_TEST_MEDIA+'/'+mode+'.png'});
     }
     assert.deepEqual(shaderErrors, []);
+    // Equal mean density and fog time in the first and last sample, and in every frame between.
+    for (const medium of media) {
+      assert.deepEqual([medium.minimum, medium.maximum, medium.minimumTime, medium.maximumTime],
+        [held.meanDensity, held.meanDensity, held.time, held.time]);
+      assert.equal(medium.brokenHoldFrames, 0); assert.ok(medium.heldFrames > 0);
+    }
+    const state = await peer.evaluate(() => self.getRoomPassState());
+    assert.ok(state.fogHold.restores > 0, 'the field kept stepping and was restored');
   } finally {await browser.close(); await new Promise(ok => server.close(ok));}
 });
