@@ -94,7 +94,7 @@ export async function measureRoom(durationMs) {
   const fields = ['renderer', 'deviceRenderer', 'softwareRenderer', 'targetRefreshHz', 'quality',
     'frameCPUms', 'gpuTimeMs', 'gpuCompletionWaitMs', 'workerFrameMs', 'sceneSamples', 'edgeFilter',
     'renderScale', 'displayRange', 'fixtureCount', 'visibleFixtures', 'activeLights', 'shadowCount',
-    'workLight', 'fogAmount', 'fog', 'camera', 'target', 'lightIds', 'fallbackReason', 'frameNumber'];
+    'workLight', 'fogAmount', 'fog', 'camera', 'target', 'lightIds', 'slotIds', 'lightLod', 'fallbackReason', 'frameNumber'];
   const project = t => Object.fromEntries(fields.map(k => [k, t[k] ?? null]));
   if (end.failed || !end.visible || (worker && end.thread !== 'worker')) invalid.push('renderer interrupted');
   if (frames.length < 2) invalid.push('fewer than two completed renderer frames');

@@ -15,6 +15,12 @@ export function receiverMaterial(wall, reading) {
   return material;
 }
 
+/** The stage box: shared with the footprint atlas's stage tiles. */
+export function stageDimensions([width, , depth]) {
+  const stageDepth = Math.min(2.3, depth * .27);
+  return {width: width * .68, height: .42, depth: stageDepth, z: -depth / 2 + stageDepth / 2 + .16};
+}
+
 export function createRoom(dimensions, materials, surfaces = []) {
   const [width, height, depth] = dimensions, root = new THREE.Group(); root.name = 'venue-context';
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), materials.floor);
@@ -32,8 +38,8 @@ export function createRoom(dimensions, materials, surfaces = []) {
     tube(root, [x - Math.sign(x) * .22, height - .25, -depth / 2], [x - Math.sign(x) * .22, height - .25, depth / 2], .075, materials.blackMetal, 12);
   }
   // A low modular stage, seams, front edge and a pair of access steps.
-  const stageWidth = width * .68, stageDepth = Math.min(2.3, depth * .27), stageZ = -depth / 2 + stageDepth / 2 + .16;
-  box(root, [stageWidth, .42, stageDepth], [0, .21, stageZ], materials.stage, .025).userData.receiver = 'stage';
+  const {width: stageWidth, height: stageHeight, depth: stageDepth, z: stageZ} = stageDimensions(dimensions);
+  box(root, [stageWidth, stageHeight, stageDepth], [0, stageHeight / 2, stageZ], materials.stage, .025).userData.receiver = 'stage';
   box(root, [stageWidth, .025, .045], [0, .435, stageZ + stageDepth / 2 - .02], materials.stage, .008);
   for (let x = -stageWidth / 2 + 1; x < stageWidth / 2; x += Math.max(1.2, stageWidth / 64))
     box(root, [.008, .003, stageDepth - .08], [x, .423, stageZ], materials.rubber);

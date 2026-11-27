@@ -1,12 +1,22 @@
 // Budgets are in physical pixels. Only the last pass and editor overlay run
 // at display resolution when the lighting scene needs a smaller raster.
 const UHD = 3840 * 2160;
+// `fullLights` is the default number of prominence-ranked full lights (real
+// SpotLight in forward shading + raymarched fog beam). Every other emitting
+// fixture is a faked cone with a painted footprint (#782).
+export const MAX_FULL_LIGHTS = 16;
 export const TIERS = {
-  low: {dpr: .75, maxPixels: 180000, shadows: 1, shadowSize: 256, fps: 10, fixtures: 32, fog: 'phone'},
-  mobile: {dpr: 2, maxPixels: 1500000, shadows: 2, shadowSize: 512, fps: 120, fixtures: 32},
-  desktop: {dpr: 2, maxPixels: 3200000, shadows: 4, shadowSize: 1024, fps: 120, fixtures: 64},
-  high: {dpr: 4, maxPixels: UHD, shadows: 4, shadowSize: 2048, fps: 120, fixtures: 128},
+  low: {dpr: .75, maxPixels: 180000, shadows: 1, shadowSize: 256, fps: 10, fixtures: 32, fullLights: 4, fog: 'phone'},
+  mobile: {dpr: 2, maxPixels: 1500000, shadows: 2, shadowSize: 512, fps: 120, fixtures: 32, fullLights: 8},
+  desktop: {dpr: 2, maxPixels: 6000000, shadows: 4, shadowSize: 1024, fps: 120, fixtures: 128, fullLights: 8},
+  high: {dpr: 4, maxPixels: UHD, shadows: 4, shadowSize: 2048, fps: 120, fixtures: 128, fullLights: 16},
 };
+
+/** Full-light budget for a tier, or an explicit override, within the slot cap. */
+export function lightBudget(tier, override = null) {
+  const value = override ?? tier?.fullLights ?? MAX_FULL_LIGHTS;
+  return Math.max(0, Math.min(MAX_FULL_LIGHTS, Math.floor(Number(value) || 0)));
+}
 
 // Auto may use low's spatial budget on a hardware GPU while still presenting
 // faster than 10 Hz. Manual low and software rendering retain their explicit cap.
@@ -36,9 +46,12 @@ export function supportedSamples(gl) {
 }
 
 export function sceneSamples(quality, width, height, samples) {
-  // Bound multisample colour + depth memory at large resolutions. The image
-  // AA pass still resolves silhouettes in the fully composited picture.
-  return quality === 'low' || width * height * samples > 16000000 ? 0 : samples;
+  // Bound multisample colour + depth memory at large resolutions, stepping
+  // from 4 to 2 samples before switching off. The image AA pass still resolves
+  // silhouettes in the fully composited picture.
+  if (quality === 'low') return 0;
+  for (const count of [samples, 2]) if (count >= 2 && count <= samples && width * height * count <= 16000000) return count;
+  return 0;
 }
 
 export function adjacentQuality(quality, direction) {
