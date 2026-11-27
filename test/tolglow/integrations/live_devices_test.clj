@@ -267,7 +267,9 @@
               (is (= [[:level 0.3]] (mapv (juxt :param :value) (:moves take))) "the turn is a take move"))
             (is (= 1 (count @sent)) "a Live input is not echoed back to Live")))
         (testing "the owner step stays cheap"
-          (is (< (get-in (show/live-parameter-devices rt) [:cost :mean-us]) 2000.0))))
+          (let [{:keys [cycles mean-us max-us]} (:cost (show/live-parameter-devices rt))]
+            (println (format "live parameter devices owner step: %d cycles, mean %.1f us, max %.1f us" cycles mean-us max-us))
+            (is (< mean-us 2000.0)))))
       (finally (show/stop! rt)))))
 
 (deftest a-stale-device-is-reconfigured-and-a-device-that-ignores-it-stays-pending
@@ -288,4 +290,48 @@
                (filterv :parameter-device? (:pending result))))
         (is (= [0] (get-in result [:parameter-devices [:a 0] :stale])))
         (is (empty? (filter #(= :watch-run-tracks (first %)) (:requests @ls))) "{:watch? false} skips the watch"))
+      (finally (show/stop! rt)))))
+
+(deftest slot-values-from-another-thread-never-hold-the-owner
+  (let [sent (atom 0)
+        rt (show/create-runtime {:model (model-with registry) :sink {:send! (fn [_ _])} :workspace-options nil :phrase-capture false
+                                 :live-runs {:record-id "c" :device-send! (fn [_] (swap! sent inc) (Thread/sleep 5) {:status :executed})}})
+        tick! (fn [beat] (show/tick! rt (long (* 500 beat))))]
+    (try
+      (tick! 0)
+      (let [a (let [reply (show/submit! rt :command {:op :cue/launch :cue-id :a :launch {:mode :persistent}})]
+                (tick! 1)
+                (:instance-id (deref reply 1000 nil)))]
+        (let [reply (show/submit! rt :command {:op :cue/launch :cue-id :a :launch {:mode :persistent}})]
+          (tick! 1.5)
+          (show/submit! rt :command {:op :instance/end :instance-id (:instance-id @reply) :force? true}))
+        (tick! 2) (tick! 3)
+        (let [ls (fake/create {:companion? false :tracks [{:name "Tolglow run a"} {:name "Tolglow run a · 2"}]})
+              _ (fake/add-parameter-device! ls "Tolglow run a")
+              _ (fake/add-parameter-device! ls "Tolglow run a · 2")
+              result (show/sync-live-runs! rt (live/open (fake/transport ls) {}))
+              track-id (get-in result [:tracks [:lane :a 0]])
+              running (atom true)
+              owner (future (loop [beat 4.0 i 0]
+                              (when @running
+                                (when (even? i)
+                                  (show/submit! rt :command {:op :param/set :instance-id a :param :level :value (mod (* i 0.01) 1.0)}))
+                                (show/tick! rt (long (* 500 beat)))
+                                (recur (+ beat 0.05) (inc i)))))
+              callback (future (dotimes [i 500]
+                                 (show/live-parameter-device-value! rt {:type :parameter-device-value :track-id track-id :slot (rand-int 13)
+                                                                        :value (rand) :automation-state (rand-int 3)
+                                                                        :watch-session "t" :serial i})
+                                 (when (zero? (mod i 50)) (Thread/sleep 1))))]
+          (try
+            (is (not= ::timeout (deref callback 10000 ::timeout)) "the callback thread finished")
+            (Thread/sleep 100)
+            (reset! running false)
+            (is (not= ::timeout (deref owner 10000 ::timeout)) "the owner kept cycling")
+            (is (nil? (.findDeadlockedThreads (java.lang.management.ManagementFactory/getThreadMXBean))))
+            (is (pos? @sent) "Tolglow writes left on their own thread")
+            (let [{:keys [counts cost inbox]} (show/live-parameter-devices rt)]
+              (println (format "live parameter devices under load: %d cycles, mean %.1f us, max %.1f us; %s; inbox %s"
+                               (:cycles cost) (:mean-us cost) (:max-us cost) (pr-str counts) (pr-str inbox))))
+            (finally (reset! running false)))))
       (finally (show/stop! rt)))))
