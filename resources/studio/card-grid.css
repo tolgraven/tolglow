@@ -105,8 +105,9 @@
 #view-perform [data-slot-grid] .compound-control>.axis-control { grid-column: 1 / -1; grid-row: 2; justify-self: stretch; }
 
 /* Rings fill a compact slot (Detail adds the legend). Opened, the component
-   knobs draw over a 2x2 area anchored to the slot, away from the grid edge
-   they would cross, and the cards around them stay where they are. */
+   knobs draw over a 2x2 area beside the slot (below it when neither side has
+   room), so the rings and their toggle stay uncovered and the cards around
+   them stay where they are. */
 #view-perform [data-slot-grid] .compound-control[data-widget=rings] { display: grid; grid-template-rows: minmax(0, 1fr); }
 #view-perform [data-slot-grid] .parameter-rings { display: grid; grid-template-rows: minmax(0, 1fr); height: 100%; min-height: 0; }
 #view-perform [data-slot-grid] .rings-trigger { grid-template-columns: minmax(0, 1fr); justify-items: center; min-height: 0; height: 100%; padding: 0; }
@@ -119,6 +120,7 @@
   left: var(--overlay-left, -1px); right: var(--overlay-right, auto);
   top: var(--overlay-top, -1px); bottom: var(--overlay-bottom, auto);
   width: calc(2 * var(--slot-col) + var(--slot-gap)); height: calc(2 * var(--slot-row) + var(--slot-gap));
+  max-width: calc(var(--slot-columns, 2) * (var(--slot-col) + var(--slot-gap)) - var(--slot-gap));
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr) auto;
   gap: 2px 6px; padding: 6px; box-sizing: border-box; align-items: stretch;
   box-shadow: 0 10px 28px rgb(0 0 0 / .55);

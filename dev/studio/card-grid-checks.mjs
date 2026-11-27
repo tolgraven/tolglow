@@ -228,8 +228,12 @@ async function checkRingsOverlay(page, card, where) {
       const b = k.getBoundingClientRect(), hit = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
       return {w: b.width, mine: Boolean(hit && panel.contains(hit))};
     });
-    return {inside: r.left >= bank.left - 1 && r.right <= bank.right + 1, knobs};
+    const trigger = panel.closest('.parameter-rings').querySelector('.rings-trigger').getBoundingClientRect();
+    const onTrigger = document.elementFromPoint(trigger.x + trigger.width / 2, trigger.y + trigger.height / 2);
+    return {inside: r.left >= bank.left - 1 && r.right <= bank.right + 1, knobs,
+            toggle: Boolean(onTrigger?.closest('.rings-trigger'))};
   });
+  assert.ok(geometry.toggle, `${where}: the rings and their toggle stay uncovered`);
   assert.ok(geometry.inside, `${where}: the ring overlay stays within the bank`);
   assert.equal(geometry.knobs.length, 4, `${where}: one knob per ring`);
   for (const knob of geometry.knobs) {

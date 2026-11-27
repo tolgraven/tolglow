@@ -539,6 +539,27 @@
         gap (or (css-px style "--slot-gap") 6)]
     (max 1 (js/Math.floor (/ (+ (.-clientWidth node) gap) (+ unit gap))))))
 
+(defn overlay-anchor
+  "CSS offsets for an overlay two slots wide and two tall opened from the
+  card at col/row (`w` columns wide): beside the card, on the side with room,
+  so the card itself and its toggle stay uncovered; below it when neither
+  side has two columns. Vertically it starts at the card, or ends at it in
+  the last row."
+  [columns rows col row w]
+  (let [gap "var(--slot-gap)"
+        beside (str "calc(100% + " gap ")")
+        right-room (- columns col w)]
+    (merge
+     (cond
+       (>= right-room 2) {"--overlay-left" beside "--overlay-right" "auto"}
+       (>= col 2) {"--overlay-left" "auto" "--overlay-right" beside}
+       (> (+ col 2) columns) {"--overlay-left" "auto" "--overlay-right" "-1px"}
+       :else {"--overlay-left" "-1px" "--overlay-right" "auto"})
+     (cond
+       (and (< right-room 2) (< col 2)) {"--overlay-top" beside "--overlay-bottom" "auto"}
+       (and (> rows 1) (> (+ row 2) rows)) {"--overlay-top" "auto" "--overlay-bottom" "-1px"}
+       :else {"--overlay-top" "-1px" "--overlay-bottom" "auto"}))))
+
 (defn packed-grid
   "A grid whose cards `slot-grid/pack` places. `measure` turns the element
   into its column limit (a ResizeObserver owned by this component re-measures
@@ -568,11 +589,8 @@
               ;; `render` returns hiccup: called as a function, not mounted as
               ;; a component, so a parent re-render never remounts a card.
               (with-meta
-                (render index (cond-> {:grid-column (str (inc col) " / span " w) :grid-row (str (inc row) " / span " h)}
-                                ;; Opened rings overlay their slot, anchored away
-                                ;; from the edge they would cross.
-                                (> (+ col 2) columns) (assoc "--overlay-left" "auto" "--overlay-right" "0")
-                                (and (> rows 1) (> (+ row 2) rows)) (assoc "--overlay-top" "auto" "--overlay-bottom" "0")))
+                (render index (merge {:grid-column (str (inc col) " / span " w) :grid-row (str (inc row) " / span " h)}
+                                     (overlay-anchor columns rows col row w)))
                 {:key (nth keys index)}))))
     (finally (some-> @observer .disconnect))))
 
