@@ -923,8 +923,10 @@ appears under the buttons and on the timeline with an **auto** icon, and its
 **Cancel** sends `:schedule/cancel`. A REPL post appears in the panel's list; a
 Studio post appears in the REPL's `[:auto :pending]`; a cancel from either side
 empties both; an immediate stop from either side withdraws it. A refused `:at`
-(a passed position, no section playing) returns `:status :rejected` with its
-message to both. Agents send `configure_auto` with `at` and read it back with
+(a position a bar or more behind, no section playing; Studio's **Next section
+line** chosen while none plays is sent and refused the same way) returns
+`:status :rejected` with its message to both. A position less than a bar
+behind applies at once with `:late? true :late-beats` in the receipt. Agents send `configure_auto` with `at` and read it back with
 `inspect_schedule`. Checked by `tolglow.automation.configure-at-test` (REPL and
 agent paths through the real owner), Studio's event tests and
 `tolglow.qa.auto-show-browser` in headless Chrome.

@@ -57,13 +57,13 @@
               {:id :quiet :kind :quiet :bars 4 :start-bar 16}]
    :stops []})
 
-(defn- club-frame [beat cues & {:as more}]
+(defn- club-frame [beat cues & {:keys [session] :or {session "groove"} :as more}]
   (merge {:t (* beat 500.0) :beat beat :playing? true :music (if (< beat 64) :groove :quiet)
-          :instances (into {} (map-indexed (fn [i cue] [(str beat ":" i) {:cue-id cue :adapter :auto :phase :running
+          :instances (into {} (map-indexed (fn [i cue] [(str beat ":" i) {:cue-id cue :adapter :auto :phase :running :session session
                                                                           :started-at-beat beat :params {:color [1.0 0.0 0.0]}}])
                                            cues))
-          :lit #{:a :b :c} :brightness 0.4 :strobe? false :auto-tick (long beat)}
-         more))
+          :lit #{:a :b :c} :brightness 0.4 :strobe? false :auto-tick (long beat) :auto-session session}
+         (dissoc more :session)))
 
 (deftest repeated-phrases-a-held-stop-and-a-bright-quiet-section-are-measured
   (let [frames (concat (for [b (range 0 64)] (club-frame (double b) [:wash]))
@@ -111,8 +111,8 @@
   ;; The agent heard of the quiet line at beat 60 and put its change :at beat
   ;; 64; it applied on the frame at 64.25, before the planner decided there.
   (let [frames (concat (for [b (range 0 64)] (club-frame (double b) [:wash]))
-                       [(club-frame 64.25 [:spot] :auto-section :hush :auto-section-start 64.0 :auto-section-length 8)]
-                       (for [b (range 65 80)] (club-frame (double b) [:spot] :auto-section :hush
+                       [(club-frame 64.25 [:spot] :session "quiet" :auto-section :hush :auto-section-start 64.0 :auto-section-length 8)]
+                       (for [b (range 65 80)] (club-frame (double b) [:spot] :session "quiet" :auto-section :hush
                                                           :auto-section-start 64.0 :auto-section-length 8)))
         agent [{:section :quiet :section-beat 64.0 :suggested-beat 60.0 :accepted-beat 60.0 :scheduled? true
                 :applied-beat 64.25 :status :completed :tools ["configure_auto"] :receipts {"configure_auto" {:status :accepted}}}]
@@ -125,9 +125,20 @@
            (mapv #(select-keys % [:auto-section :beat :with-agent-change?]) (:boundaries review)))
         "the new configuration's first section is not counted as a plan boundary")
     (is (re-find #"\| hush \| bar 16 beat 0.25 \| 8 \| true" (:report review))))
+  (testing "a launch is attributed to the session that made it, not to when it was seen"
+    ;; As if the planner had decided before the change on the line frame: the
+    ;; groove session's launch on that frame is carry-over.
+    (let [frames (concat (for [b (range 0 64)] (club-frame (double b) [:wash]))
+                         [(assoc (club-frame 64.25 [:wash]) :auto-session "quiet")
+                          (club-frame 64.5 [:spot] :session "quiet")])
+          agent [{:section :quiet :section-beat 64.0 :suggested-beat 60.0 :accepted-beat 60.0 :scheduled? true
+                  :applied-beat 64.25 :status :completed :tools ["configure_auto"] :receipts {"configure_auto" {:status :accepted}}}]
+          [r] (:responses (review/club {:passage club-passage :frame-ms 500.0 :frames (vec frames) :transport []
+                                        :agent agent :gestures [] :schedule {:recent []} :status {}}))]
+      (is (= [1 0 64.5] [(:carry-over-launches r) (:early-launches r) (:first-launch-beat r)]))))
   (testing "the same frame counts as carry-over when the change applied on arrival after it"
     (let [frames (concat (for [b (range 0 64)] (club-frame (double b) [:wash]))
-                         [(club-frame 64.25 [:wash]) (club-frame 64.5 [:spot])])
+                         [(club-frame 64.25 [:wash]) (club-frame 64.5 [:spot] :session "quiet")])
           agent [{:section :quiet :section-beat 64.0 :suggested-beat 64.25 :accepted-beat 64.25 :scheduled? false
                   :applied-beat 64.25 :status :completed :tools ["configure_auto"] :receipts {"configure_auto" {:status :accepted}}}]
           [r] (:responses (review/club {:passage club-passage :frame-ms 500.0 :frames (vec frames) :transport []

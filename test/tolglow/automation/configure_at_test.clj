@@ -6,6 +6,7 @@
   schedule."
   (:require [clojure.test :refer [deftest is testing]]
             [tolglow.automation.red-show :as red-show]
+            [tolglow.clock :as clock]
             [tolglow.event-subscribers :as subscribers]
             [tolglow.show :as show]))
 
@@ -113,7 +114,6 @@
             (is (re-find #"No auto section is playing" (str (:message (submit! rt t :auto (assoc (mood :accent) :at :next-section))))))
             (is (re-find #"Count must be an integer" (str (:message (submit! rt t :auto (assoc (mood :accent) :count 99 :at {:bar 4}))))))
             (is (re-find #"No saved cue" (str (:message (submit! rt t :auto (assoc (mood :missing) :at {:bar 4}))))))
-            (is (re-find #"already passed" (str (:message (submit! rt t :auto (assoc (mood :accent) :at {:bar 0}))))))
             (is (re-find #"Auto :at is" (str (:message (submit! rt t :auto (assoc (mood :accent) :at :soon))))))
             (is (= pending (count (get-in (show/snapshot rt) [:auto :pending])))))))
       (testing "the next section line is where the playing plan section ends"
@@ -149,11 +149,12 @@
 (defn- dispatch!
   "Call an agent tool as a provider run would, ticking the headless owner
   until the receipt arrives."
-  [rt t tool arguments run-id call-id]
+  [rt t tool arguments run-id call-id & [conversation-id]]
   (let [identity (select-keys (:model @(:state rt)) [:epoch :show-id])
         result (future (show/dispatch-tool! rt tool arguments
-                                            (merge identity {:run-id run-id :command-id (str run-id "/" call-id)
-                                                             :expected-epoch (:epoch identity)})))]
+                                            (cond-> (merge identity {:run-id run-id :command-id (str run-id "/" call-id)
+                                                                     :expected-epoch (:epoch identity)})
+                                              conversation-id (assoc :conversation-id conversation-id))))]
     (loop [n 0]
       (show/tick! rt t)
       (if (or (realized? result) (> n 5000)) (deref result 2000 ::missing)
@@ -179,19 +180,69 @@
                              "run-5" "auto")
               stop (dispatch! rt 0.0 "configure_auto" {:configuration {:enabled? false}} "run-5" "stop")]
           (is (= (:event-ids own) (:withdrawn-event-ids stop)))
+          (is (= (:event-ids human) (:pending-event-ids stop)) "the receipt says what still waits")
           (is (= (:event-ids human) (mapv :event-id (get-in (show/snapshot rt) [:auto :pending]))) "the REPL's change still waits")
           (submit! rt 0.0 :command {:op :schedule/cancel :event-ids (:event-ids human) :source {:adapter :repl :session-id "t"}})))
-      (testing "a change for a line already passed is refused with its reason"
+      (testing "one conversation owns what it posted in earlier runs (turns)"
+        (let [posted (dispatch! rt 0.0 "configure_auto" {:configuration {:enabled? true :scope {:cue-ids ["accent"]}} :at {:bar 6}}
+                                "turn-1" "auto" "conv-1")
+              _ (is (= {:adapter :agent :session-id "conv-1" :run-id "turn-1"}
+                       (get-in (show/snapshot rt) [:auto :pending 0 :source])))
+              cancelled (dispatch! rt 0.0 "cancel_scheduled" {:mine? true} "turn-2" "undo" "conv-1")
+              again (dispatch! rt 0.0 "configure_auto" {:configuration {:enabled? true :scope {:cue-ids ["accent"]}} :at {:bar 6}}
+                               "turn-3" "auto" "conv-1")
+              other (dispatch! rt 0.0 "configure_auto" {:configuration {:enabled? false}} "turn-9" "stop" "conv-2")
+              stop (dispatch! rt 0.0 "configure_auto" {:configuration {:enabled? false}} "turn-4" "stop" "conv-1")]
+          (is (= (:event-ids posted) (:event-ids cancelled)) "cancel_scheduled mine? in a later turn")
+          (is (= (:event-ids again) (:pending-event-ids other)) "another conversation cannot withdraw it, and is told it waits")
+          (is (= (:event-ids again) (:withdrawn-event-ids stop)) "a stop in a later turn withdraws it")
+          (is (empty? (get-in (show/snapshot rt) [:auto :pending])))))
+      (testing "a change that arrives after its line: within a bar it applies now, marked late; later it is refused"
         (is (re-find #"nonnegative"
                      (str (:message (dispatch! rt 0.0 "configure_auto" {:configuration {:enabled? true} :at {:beat -1}} "run-2" "auto")))))
         (play! rt frame-ms 600.0 {})
-        (is (re-find #"already passed"
-                     (str (:message (dispatch! rt 600.0 "configure_auto" {:configuration {:enabled? true} :at {:beat 0}} "run-3" "auto"))))))
+        (let [late (dispatch! rt 600.0 "configure_auto" {:configuration {:enabled? true :scope {:cue-ids ["accent"]}} :at {:beat 0}}
+                              "run-3" "auto")
+              outcome (some #(when (= (first (:event-ids late)) (:event-id %)) %) (recent rt))]
+          (is (= {:status :accepted :late? true} (select-keys late [:status :late?])))
+          (is (< 1.0 (:late-beats late) 1.5))
+          (is (= {:status :fired :late? true :late-beats (:late-beats late)} (select-keys outcome [:status :late? :late-beats])))
+          (is (== (beat rt) (:at-beat outcome)) "applied on arrival, before auto decided on that frame")
+          (is (= {:cue-ids [:accent]} (get-in @(:state rt) [:model :auto :config :scope]))))
+        (play! rt 730.0 2600.0 {})
+        (is (re-find #"already passed by \d"
+                     (str (:message (dispatch! rt 2600.0 "configure_auto" {:configuration {:enabled? true} :at {:beat 0}} "run-6" "auto"))))
+            "a bar or more late"))
       (testing "an auto/configure posted through schedule_events is checked like configure_auto"
         (is (re-find #"No saved cue"
                      (str (:message (dispatch! rt 600.0 "schedule_events"
                                                {:events [{:op "auto/configure" :request {:enabled? true :scope {:cue-ids ["nope"]}}
                                                           :grid {:bars 1}}]} "run-4" "post"))))))
+      (finally (show/stop! rt)))))
+
+(deftest a-subscriber-cannot-restart-auto
+  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"scheduled with :at, not run by a subscriber"
+                        (subscribers/validate-definition {:id :bars :match {:type :clock/bar}
+                                                          :actions [{:op :auto/configure :request {:enabled? true}}]}))))
+
+(deftest a-next-section-change-moves-with-the-section-on-a-seek
+  ;; Review of #768: the section timer moves with a seek or loop, so the change
+  ;; waiting for its line must move by the same offset.
+  (let [rt (runtime)]
+    (try
+      (submit! rt 0.0 :auto (red-show/auto-config 217))
+      (show/tick! rt 130.0)
+      (let [ack (submit! rt 130.0 :auto (assoc (mood :accent) :at :next-section))
+            model (:model @(:state rt))
+            end #(get-in (show/snapshot rt) [:auto :section-end-beat])
+            section-end (fn [m] (let [{:keys [started-at duration]} (get-in m [:auto :state :section :timer])]
+                                  (+ started-at (:value duration))))
+            due (fn [m] (:due-beat (first (subscribers/upcoming m :auto/configure))))]
+        (is (= [(end)] (:due-beats ack)))
+        (doseq [offset [2.0 -2.0]]
+          (let [moved (clock/rebase model {:beat (+ (beat rt) offset)})]
+            (is (== (+ (section-end model) offset) (section-end moved)))
+            (is (== (section-end moved) (due moved)) (str "a seek of " offset " beats keeps the change on the section line")))))
       (finally (show/stop! rt)))))
 
 (deftest the-scheduler-alone-cannot-apply-an-auto-change

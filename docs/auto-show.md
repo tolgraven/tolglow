@@ -74,27 +74,51 @@ before it ([#767](https://github.com/tolgraven/tolglow/issues/767)).
 `:at` takes a zero-based position (`{:bar n}`, `{:beat n}`, `{:phrase n}` or a
 sum of them) or one of `:next-bar`, `:next-phrase` and `:next-section`, the end
 of the auto section now playing (refused when no section plays). JSON clients
-send the words as text. A request is checked when it is posted, against the
-config it would install (with `:keep-plan?`, the plan saved then), and again
-when it applies, against the plan saved at that point; a position already
-passed is refused. `:event-id` and `:label` name the event.
+send the words as text. `:event-id` and `:label` name the event.
 
-A pending change behaves like any scheduled event. It holds while the transport
-is stopped and fires at its beat after play resumes, never caught up. A seek
-past its line reports it missed; a next-bar or next-phrase line re-quantizes
-from the new position. It is saved with the show, listed by `show/schedule`,
-Studio's timeline and `inspect_schedule`, and cancelled by event ID (an agent
-cancels only its own). Its auto session takes the scheduled step's command ID,
-so a replay is deterministic. Several changes due on the same frame apply in
-the order they were posted. An immediate **Stop auto** withdraws the pending
-auto changes its sender may cancel (from Studio or the REPL, all of them; from
-an agent, its own) and lists them in its receipt's `:withdrawn-event-ids`, so
-nothing waiting on a line starts auto again; an immediate start leaves them
-waiting.
+A request is checked when it is posted, against the config it would install
+(with `:keep-plan?`, the plan saved then). It is checked again when it
+applies, against the plan saved at that point, with one trial decision as an
+immediate configure has. A request refused then is recorded as `:rejected` in
+the schedule's recent outcomes, and auto mode and its looks stay as they were.
+
+**Late changes** (operator policy). A position that has already passed by less
+than one bar applies at once, before auto decides on that frame. Its receipt
+and its recent outcome carry `:late? true` and `:late-beats`. A position a bar
+or more behind is refused as already passed.
+
+A pending change behaves like any scheduled event:
+
+- It holds while the transport is stopped and fires at its beat after play
+  resumes, never caught up.
+- A seek or loop moves a `:next-section` change with the section timer, so it
+  stays on the section line. A seek past a position reports the change missed.
+  A next-bar or next-phrase line re-quantizes from the new position.
+- It is saved with the show and listed by `show/schedule`, Studio's timeline
+  and `inspect_schedule`. A show saved, or a recovery checkpoint written, while
+  a change is pending does not restore on a build that predates
+  `:auto/configure`.
+- It is cancelled by event ID. An agent cancels what its conversation posted,
+  in any turn: an agent source is `{:adapter :agent :session-id
+  <conversation-id> :run-id <run-id>}`.
+- A subscriber cannot run `:auto/configure`. A subscriber would restart auto
+  behind an operator's Stop on every trigger.
+
+Each auto session is named deterministically: `sched/<epoch>/<run>/0` for a
+scheduled change, `auto/<epoch>/<revision>` for an immediate one. A replay
+gives the same names. Several changes due on the same frame apply in the order
+they were posted.
+
+An immediate **Stop auto** withdraws the pending auto changes its sender may
+cancel: from Studio or the REPL, all of them; from an agent, its
+conversation's. The receipt lists them in `:withdrawn-event-ids` and any that
+still wait in `:pending-event-ids`, so nothing waiting on a line starts auto
+again unannounced. An immediate start leaves pending changes waiting.
 
 In Studio, **Start or stop** chooses **Now**, **Next bar**, **Next phrase** or
 **Next section line** (offered while a plan section plays; the projection gives
-its end as `:section-end-beat`). Pending changes are listed under the buttons
+its end as `:section-end-beat`; chosen while none plays, the show refuses it, as
+it does for the REPL). Pending changes are listed under the buttons
 with their position and a **Cancel** button. An agent passes `configure_auto`
 an `at` beside its `configuration`, for example `{"configuration": {...},
 "at": {"bar": 16}}` or `"at": "next-bar"`.
@@ -253,8 +277,12 @@ discards ownership and the section, and the next decision starts a new one.
   it with no launch of the previous mood from the line and none of the new one
   before it, a pending change holds across a stop and fires once on its beat
   after resume, positions and next bar, phrase and section lines resolve,
-  refusals leave nothing scheduled, an immediate stop withdraws a pending change,
-  and the agent tool posts, lists and withdraws its own.
+  refusals leave nothing scheduled, an immediate stop withdraws a pending change
+  and reports what still waits, the agent tool posts, lists and withdraws its
+  own (across turns of one conversation, not another conversation's), a
+  change arriving a beat after its line applies at once marked late while one
+  a bar late is refused, a `:next-section` change stays on the section line
+  across seeks of ±2 beats, and a subscriber cannot carry an auto change.
 - `lein with-profile +dev run -m tolglow.qa.auto-show-browser` runs the
   optimized Studio in headless Chrome against the red-show example: a REPL plan
   reaching the panel, a Studio start that keeps it, refusals on both sides and a

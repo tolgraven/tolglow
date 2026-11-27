@@ -76,6 +76,18 @@
     (is (some #(re-find #"landed 2\.\d+ beats after the section line; the previous mood launched" %) (:flags late)))
     (is (some :stale? (:responses stale)))
     (is (some #(re-find #"suggestion for breakdown landed in return" %) (:flags stale))))
+  (testing "a reply that takes a beat still lands on the line; one that takes five lands late and is measured"
+    (let [beat (rehearsal/club 670 {:passage {:agent-latency-beats 1}})
+          slow (rehearsal/club 670 {:passage {:agent-latency-beats 5}})
+          late (rest (:responses slow))]
+      (is (every? #(and (zero? (:carry-over-launches %)) (zero? (:early-launches %)) (<= 0 (:late-beats %) 0.26))
+                  (:responses beat)))
+      (is (every? :scheduled? late))
+      (is (every? #(< 1.0 (:arrived-late-beats %) 1.5) late) "a bar ahead, five beats to reply: a beat and a bit late")
+      (is (every? #(= (:accepted-beat %) (:applied-beat %)) late) "applied when it arrived")
+      (is (some #(pos? (:carry-over-launches %)) late) "the previous mood went on deciding until then")
+      (is (every? #(zero? (:early-launches %)) late))
+      (is (= (count late) (count (filter #(re-find #"beats after the section line" %) (:flags slow)))))))
   (testing "an agent answering on arrival a frame early launches the new mood before the line"
     (let [early (rehearsal/club 670 {:passage {:agent-lag-beats -0.3 :agent-schedules? false}})
           lines (rest (:responses early))]

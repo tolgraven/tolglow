@@ -590,7 +590,8 @@
                                                        (emit! (assoc event :conversation-id conversation-id))))
                                                    (merge (select-keys config [:timeout-ms :connect-timeout-ms :max-rounds :max-tool-calls])
                                                           {:transport (get-in manager [:options :transport])
-                                                           :cancelled? cancelled? :run-id run-id}))]
+                                                           :cancelled? cancelled? :run-id run-id
+                                                           :conversation-id conversation-id}))]
                            (finish! (redact outcome secret))))
                        (catch Exception _
                          (finish! {:status (if @cancelled? :cancelled :error) :run-id run-id

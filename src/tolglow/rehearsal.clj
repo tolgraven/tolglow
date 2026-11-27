@@ -81,14 +81,16 @@
   suggestion with receipts. :wall-ms is the host's turnaround for the run,
   kept apart from frame timing."
   [rt suggestion wait!]
-  (let [suggested-beat (get-in @(:state rt) [:model :transport :beat])
+  (let [suggested-beat (:asked-beat suggestion (get-in @(:state rt) [:model :transport :beat]))
         identity (select-keys (:model @(:state rt)) [:epoch :show-id])
         events (atom [])
         started (System/nanoTime)
         result (future
                  (agent/run! provider-config nil [{:role :user :content (:prompt suggestion)}] agent/default-tools
                              (fn [tool arguments metadata]
-                               (show/dispatch-tool! rt tool arguments (merge metadata identity {:expected-epoch (:epoch identity)})))
+                               ;; One conversation per take: the agent owns what it posted in earlier turns.
+                               (show/dispatch-tool! rt tool arguments (merge metadata identity {:expected-epoch (:epoch identity)
+                                                                                                :conversation-id (:conversation-id suggestion)})))
                              #(swap! events conj %)
                              {:transport (recorded-transport [(sse-round (:text suggestion) (:calls suggestion))
                                                               (sse-round "Done." [])])
@@ -103,7 +105,7 @@
        :accepted-beat (get-in @(:state rt) [:model :transport :beat])
        :status (:status outcome)
        :tools (mapv :name (:calls suggestion))
-       :receipts (update-vals results #(select-keys % [:status :message :code :event-ids :due-beats]))
+       :receipts (update-vals results #(select-keys % [:status :message :code :event-ids :due-beats :late? :late-beats]))
        :wall-ms (/ (- (System/nanoTime) started) 1e6)})))
 
 (defn- newest-instance [model pred]
@@ -124,6 +126,9 @@
 (defn- instance-summary [categories instance]
   {:cue-id (:cue-id instance)
    :adapter (get-in instance [:source :adapter])
+   ;; The auto session that launched it, so the review attributes a launch to
+   ;; the settings that made it rather than to when it was seen.
+   :session (get-in instance [:source :session-id])
    :phase (:phase instance)
    :params (:params instance)
    :launch-mode (:launch-mode instance)
@@ -158,6 +163,7 @@
                         {:started-at started-at :value (:value duration)
                          :step (grid/step (:source duration) (:value duration) (:meter duration))}))
      :auto-tick (get-in model [:auto :state :tick])
+     :auto-session (get-in model [:auto :state :owner-id])
      :instances instances
      :lit lit :brightness brightness
      :strobe? (boolean (some #(and (= :running (:phase %)) (contains? (:categories %) :strobe)) (vals instances)))
@@ -180,6 +186,11 @@
         (throw (ex-info "Stem routes were refused" {:statuses statuses})))
       statuses)))
 
+(defn- conversation-id
+  "One agent conversation per passage take."
+  [passage]
+  (str "rehearsal:" (name (:id passage)) (when (:take passage) (str ":" (name (:take passage))))))
+
 (defn- window [items prev-beat beat first?]
   (filterv #(let [b (:beat %)] (and (<= b beat) (if first? (>= b prev-beat) (> b prev-beat)))) items))
 
@@ -189,7 +200,7 @@
   {:adapter :repl :session-id "rehearsal"})
 
 (defn- initial-progress [passage]
-  {:prev-beat 0.0 :first? true :next-section 0 :agent [] :gestures [] :transport []
+  {:prev-beat 0.0 :first? true :next-section 0 :in-flight nil :agent [] :gestures [] :transport []
    :onset-counts {} :taken {} :stopped nil :pending-stops (:stops passage)})
 
 (defn- deliver!
@@ -200,16 +211,26 @@
   this one reach the owner on its next tick, as a capture block does.
   Returns [progress pending], where pending holds unresolved receipts for
   settle!."
-  [rt callbacks passage {:keys [prev-beat first? next-section onset-counts taken stopped pending-stops] :as progress}
+  [rt callbacks passage {:keys [prev-beat first? next-section in-flight onset-counts taken stopped pending-stops] :as progress}
    t beat wait!]
   (let [sections (:sections passage)
         ;; The agent hears of a section line on the first frame at or past
         ;; the line plus its offset: a bar ahead by default, as a song map
-        ;; gives it; :agent-lag-beats simulates a slow or late agent.
-        suggestion (when (and (< next-section (count sections))
-                              (>= beat (+ (* passage/beats-per-bar (:start-bar (nth sections next-section)))
-                                          (passage/agent-heard-offset passage))))
-                     (run-agent! rt (script/suggestion passage next-section beat) wait!))
+        ;; gives it; :agent-lag-beats simulates a slow or late agent. It
+        ;; decides then; its reply arrives :agent-latency-beats later.
+        in-flight (or in-flight
+                      (when (and (< next-section (count sections))
+                                 (>= beat (+ (* passage/beats-per-bar (:start-bar (nth sections next-section)))
+                                             (passage/agent-heard-offset passage))))
+                        (assoc (script/suggestion passage next-section beat)
+                               :asked-beat beat
+                               ;; The first round is the agent's plan before the downbeat (a
+                               ;; Room rehearsal takes it before play starts); later replies
+                               ;; take the latency.
+                               :arrives-beat (+ beat (if (zero? next-section) 0 (:agent-latency-beats passage 0)))
+                               :conversation-id (conversation-id passage))))
+        suggestion (when (and in-flight (>= beat (- (:arrives-beat in-flight) 1e-9)))
+                     (run-agent! rt in-flight wait!))
         model (:model @(:state rt))
         onsets (window (:onsets passage) prev-beat beat first?)
         levels (window (:levels passage) prev-beat beat first?)
@@ -255,6 +276,7 @@
                           resume? (show/submit! rt :command {:op :transport/set :source transport-source :transport {:playing? true}}))]
     [(-> progress
          (assoc :prev-beat beat :first? false :onset-counts onset-counts :taken taken
+                :in-flight (when-not suggestion in-flight)
                 :stopped (cond stop-now (assoc stop-now :at-ms t) resume? nil :else stopped)
                 :pending-stops (if stop-now (vec (rest pending-stops)) pending-stops))
          (cond-> suggestion (-> (update :next-section inc) (update :agent conj suggestion))))
@@ -287,8 +309,10 @@
             (assoc entry :applied-beat accepted-beat)
             (let [id (first (get-in receipts ["configure_auto" :event-ids]))
                   outcome (last (filter #(= id (:event-id %)) recent))]
-              (assoc entry :applied-beat (when (= :fired (:status outcome)) (:at-beat outcome))
-                     :applied-status (:status outcome :pending)))))
+              (cond-> (assoc entry :applied-beat (when (= :fired (:status outcome)) (:at-beat outcome))
+                             :applied-status (:status outcome :pending))
+                ;; Arrived after its line, within a bar: applied at once, marked late.
+                (:late-beats outcome) (assoc :late-beats-on-arrival (:late-beats outcome))))))
         agent-log))
 
 (defn- capture-sink [captured]
@@ -353,7 +377,9 @@
            ;; already behind it.
            progress (if (get-in @(:state runtime) [:model :transport :playing?])
                       (initial-progress passage)
-                      (let [first-suggestion (run-agent! runtime (script/suggestion passage 0) wait!)]
+                      (let [first-suggestion (run-agent! runtime (assoc (script/suggestion passage 0)
+                                                                         :conversation-id (conversation-id passage))
+                                                         wait!)]
                         (deref (show/submit! runtime :command {:op :transport/set :source transport-source
                                                                :transport {:playing? true}}) 5000 nil)
                         (-> (initial-progress passage) (assoc :next-section 1) (update :agent conj first-suggestion))))]

@@ -41,6 +41,11 @@ Use `:select {:pick :random}`, `:first` or `:all`. The default is seeded random 
 
 Each step's optional `:delay` is relative to the preceding scheduled step and accepts beats, bars or phrases. A step can use one of three alternatives. `:in` counts from the triggering event. `:at {:bar n}` names an absolute, zero-based transport position. `:grid {:bars 1}` waits for the next boundary. Pausing transport freezes musical waits, and clock rebasing preserves remaining time on a seek. After a seek past a waiting `:at` or `:grid` step, the step is recorded as missed and its sequence stops there, so nothing fires twice. Pending steps appear in the snapshot's `:schedule :upcoming` list. A registration edit or removal cancels its pending sequences. Restart clears pending runs. A full show save retains queued musical steps, selection RNG and paused progress. Restoring a run remaps references to active instances. Sequences waiting on an external callback at the instant of save are retired to avoid replaying work of uncertain completion.
 
+`:auto/configure` is scheduler-only. A subscriber definition with it is
+refused, because a subscriber would restart auto behind an operator's Stop on
+every trigger. Put an auto change on a line with the auto request's `:at`
+([auto show](auto-show.md#on-a-musical-line)).
+
 ## Middleware
 
 A callback receives an immutable context and the original event. Return that context with edits to `:variables` and/or a vector of built-in `:actions`. Read the captured show through `:show`. Variable edits apply per key and detect concurrent changes. Actions returned by a callback run before the next authored step in that sequence.

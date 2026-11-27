@@ -830,7 +830,7 @@
         (is (= {:at "next-bar" :source {:adapter "web" :session-id (:session base)}}
                (select-keys (start on-bar) [:at :source])))
         (is (= "next-bar" (get-in (transition on-bar [:studio/auto-stop]) [:studio/http :body :at])))
-        (is (not (contains? (start on-section) :at)) "no section line without a playing auto section")
+        (is (= "next-section" (:at (start on-section))) "sent without a playing section, for the show to refuse")
         (is (= "next-section" (:at (start (assoc-in on-section [:show :auto :section-end-beat] 24.0)))))
         (is (= ["Auto configure at bar 6" "Stop auto at bar 8 beat 2.00"]
                (events/auto-pending-text (assoc-in base [:show :auto :pending]

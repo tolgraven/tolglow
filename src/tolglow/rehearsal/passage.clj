@@ -139,9 +139,12 @@
   bar) is how far ahead of each section line the agent hears of it;
   :agent-lag-beats instead makes it hear each line that many beats after it
   (negative: before). :agent-schedules? false makes it apply each change on
-  arrival instead of on the line (#767)."
+  arrival instead of on the line (#767). :agent-latency-beats (default 0) is
+  how long, in transport beats, its reply takes to arrive after it hears of
+  the line; it decides when it hears."
   [options]
-  (merge {:agent-lead-beats (:agent-lead-beats options default-agent-lead-beats)}
+  (merge {:agent-lead-beats (:agent-lead-beats options default-agent-lead-beats)
+          :agent-latency-beats (:agent-latency-beats options 0)}
          (select-keys options [:agent-lag-beats :agent-schedules?])))
 
 (defn agent-heard-offset

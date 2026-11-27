@@ -50,7 +50,12 @@ passage, the take and the section, and `:at` the section's first bar
 ([auto show](auto-show.md#on-a-musical-line)), so the change applies on the
 downbeat. A line it hears only after it has passed (`:agent-lag-beats`) is
 answered at once; `:agent-schedules? false` makes it answer every line at once,
-as before #767. In a concert its first round also sends
+as before #767. `:agent-latency-beats` (default 0) delays each reply after the
+agent heard of the line, in transport beats. The first round is the agent's
+plan before the downbeat and takes no latency. A reply that arrives after its
+line applies at once if it is less than a bar late, marked late
+([auto show](auto-show.md#on-a-musical-line)). Every round of a take belongs to
+one agent conversation, so the agent owns what it posted in earlier rounds. In a concert its first round also sends
 `schedule_events`: each section's anchor on its first bar for the section's
 length, and in a chorus a four-bar `ease-in` build of the anchor's level.
 
@@ -71,6 +76,8 @@ length, and in a chorus a four-bar `ease-in` build of the anchor's level.
 
 ;; A late agent, answering each section line two beats late:
 (:flags (rehearsal/club 670 {:passage {:agent-lag-beats 2}}))
+;; Replies that take five beats: a bar ahead is not enough, changes land late:
+(:responses (rehearsal/club 670 {:passage {:agent-latency-beats 5}}))
 ;; The agent before #767, applying each change when it hears the line:
 (:flags (rehearsal/club 670 {:passage {:agent-lag-beats 0 :agent-schedules? false}}))
 
@@ -91,13 +98,14 @@ the host's agent turnaround, kept apart from frame timing.
 
 - *Agent responses.* For each section line: the beat the change was
   accepted, whether it waited on the line (*On the line*), the beat it applied
-  and how late that was, *carry-over launches* (looks the previous mood
-  launched from the line until the change applied; a change applied on arrival
-  lands after its frame was decided, so that frame counts too), *early
-  launches* (the new mood's launches before the line) and whether the change
-  landed in a later section than it was for (stale). A change on the line
-  applies on the first frame at or past it, before the planner decides there,
-  so it has neither.
+  and how late that was, *carry-over launches*, *early launches* and whether
+  the change landed in a later section than it was for (stale). Each launch is
+  attributed to the auto session that made it (its source session, recorded
+  per frame), not to when it was seen. Carry-over launches are the previous
+  session's launches from the line on; early launches are the new session's
+  launches before the line. A planner that decided before the change on the
+  line's frame would therefore show carry-over even though the change applied
+  on time.
 - *Phrasing.* Each auto section the planner entered: on the bar grid, on a
   multiple of its own length, on the phrase grid. A section whose timer starts
   after the frame that entered it is reported at that frame. Auto launches are
@@ -184,7 +192,9 @@ real-time `play!` is not frame-for-frame repeatable; use `run-take` for that.
   carry-over launches; a 40-beat-late one is named stale; one answering on
   arrival 0.3 beats early launches the new mood before each line, and one
   answering on arrival at the line leaves the previous mood one decision on
-  it. Two concert takes keep all four anchors on their bars (a scheduler
+  it. Replies taking a beat still land on every line; replies taking five beats
+  land 1–1.5 beats late, applied on arrival, marked late, with carry-over
+  measured and flagged. Two concert takes keep all four anchors on their bars (a scheduler
   check, given identical anchor events), raise no flags (zero carry-over and
   zero early launches on every line), differ
   in chorus fills, fill parameters and stem hits, accept every Push 3 gesture,
@@ -195,7 +205,8 @@ real-time `play!` is not frame-for-frame repeatable; use `run-take` for that.
   anchors before play and launches them, the hits and the gesture.
 - `tolglow.rehearsal.review-test`: the overwritten-gesture, anchor, repeat,
   stop and contrast detectors fire on hand-built frames, and two silent
-  phrases are not a repeat. A `{:beats 3/2}` interval is on its grid while a
+  phrases are not a repeat. A launch the previous session made on the frame a
+  change applied counts as carry-over. A `{:beats 3/2}` interval is on its grid while a
   whole-beat interval off its grid is flagged; a change on its line is measured
   where it applied, with its first section not counted as a plan boundary, and
   the same frame counts as carry-over for a change applied on arrival.
@@ -220,9 +231,16 @@ real-time `play!` is not frame-for-frame repeatable; use `run-take` for that.
   the verse looks flashed on each chorus downbeat the same way (1–2 launches
   per line). Answering 0.3 beats early removed the carry-over but launched the
   new mood 1–2 times in the previous section. Since #767 the agent puts its
-  change `:at` the line: on seed 670 the club and both concert takes show zero
-  carry-over and zero early launches on every line and no strobe frame in the
-  quiet, and the concert raises no flags.
+  change `:at` the line. On seed 670, with launches attributed to the session
+  that made them:
+  - Replies with no latency, or a beat of latency: the club and both concert
+    takes show zero carry-over and zero early launches on every line, with no
+    strobe frame in the quiet, and the concert raises no flags.
+  - Replies five beats after the agent heard of the line (one bar ahead):
+    changes arrive 1.2–1.4 beats late in the club and one beat late in the
+    concert. They apply at once, marked late. The previous mood launches 1–5
+    looks into the new section (club) and 1–2 (concert). The quiet shows 0.04
+    strobe frames, and the review flags every late line.
 - A Push-sourced write cancels an agent ramp with `:human-override` only when
   its source adapter is the device profile (`:push-3`), as real Push sessions
   send. Tests that use `{:adapter :push}` (for example the R1o scenario) are

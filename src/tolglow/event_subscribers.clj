@@ -266,6 +266,10 @@
                          (or (identifier? pattern) (integer? pattern) (uuid? pattern)))))
               (vector? actions) (<= 1 (count actions) 32))
          "Invalid event subscriber definition" {:id id})
+  ;; Auto changes are scheduled on a line, never repeated by a subscriber: one
+  ;; would restart auto behind an operator's Stop on every trigger (#767).
+  (check (not-any? #(contains? #{:auto/configure "auto/configure"} (:op %)) actions)
+         "An auto configure is scheduled with :at, not run by a subscriber" {:id id})
   (run! validate-action actions)
   registration)
 
@@ -355,7 +359,9 @@
       (if (neg? n) f (inc f)))
     q))
 
-(defn- position-beat [at meter]
+(defn position-beat
+  "Beat of a zero-based {:beat :bar :phrase} position in meter."
+  [at meter]
   (let [{:keys [beats-per-bar bars-per-phrase]} (time/normalize-meter meter)]
     (+ (:beat at 0) (* (:bar at 0) beats-per-bar) (* (:phrase at 0) beats-per-bar bars-per-phrase))))
 
@@ -931,6 +937,7 @@
                     :at-beat (double (get-in model [:transport :beat] 0)) :time-ms (:time-ms model)
                     :source (if scheduled (:source scheduled) (run-source run))}
              (:label scheduled) (assoc :label (:label scheduled))
+             (:late-beats scheduled) (assoc :late? true :late-beats (:late-beats scheduled))
              (:subscriber run) (assoc :subscriber-id (:subscriber run)))
            extra)))
 
@@ -1054,11 +1061,14 @@
     (check (map? event) "An event must be a map" {})
     (let [id (id-text (or (:id event) (str (:command-id command) "/" index)))
           label (:label event)
-          action (->> (validate-action (normalize-action (dissoc event :id :label)))
+          late (:late-beats event)
+          action (->> (validate-action (normalize-action (dissoc event :id :label :late-beats)))
                       (resolve-references model))]
       (check (identifier? id) "Event ID must be a keyword or nonblank string" {})
       (check (or (nil? label) (and (string? label) (<= (count label) 128))) "Label must be text up to 128 characters" {})
       (check (not= :callback (:op action)) "Scheduled events use built-in actions; register middleware as a subscriber" {})
+      (check (or (nil? late) (and (= :auto/configure (:op action)) (registry/finite-number? late) (pos? late)))
+             "Only an auto configure that arrived after its line carries :late-beats" {})
       (check-authority (:source command) action)
       (check-protected model (:source command) action)
       (check-references model action)
@@ -1067,7 +1077,7 @@
                (str "Position " (position-text (:at action)) " (beat " (double due) ") has already passed; the transport is at beat "
                     (double beat) ". Positions are zero-based: {:bar 0} is the first bar.")
                {:due-beat due :beat beat})
-        {:id id :label label :action action :due due :anchor anchor}))
+        {:id id :label label :action action :due due :anchor anchor :late late}))
     (catch clojure.lang.ExceptionInfo error
       (throw (ex-info (str "Event " index ": " (.getMessage error))
                       {:index index :errors [{:path [:events index] :message (.getMessage error)}]})))))
@@ -1091,7 +1101,7 @@
            "The schedule is full" {:limit scheduled-limit})
     {:event-ids ids
      :due-beats (mapv (comp double :due) prepared)
-     :model (reduce (fn [m {:keys [id label action due anchor]}]
+     :model (reduce (fn [m {:keys [id label action due anchor late]}]
                       (let [serial (inc (get-in m [:event-subscribers :next-run]))]
                         (-> m
                             (assoc-in [:event-subscribers :next-run] serial)
@@ -1101,7 +1111,8 @@
                                         :scheduled (cond-> {:event-id id :source (portable-source source)
                                                             :category (get categories (:op action))
                                                             :command-id command-id :posted-beat (double beat)}
-                                                     label (assoc :label label))}))))
+                                                     label (assoc :label label)
+                                                     late (assoc :late-beats (double late)))}))))
                     (assoc model :event-subscribers (merge empty-state s)) prepared)}))
 
 (defn- action-destination [action]
@@ -1346,6 +1357,7 @@
                     :step (:index run) :steps (count (:steps run))
                     :source (if scheduled (:source scheduled) (run-source run))}
              (:label scheduled) (assoc :label (:label scheduled))
+             (:late-beats scheduled) (assoc :late-beats (:late-beats scheduled))
              (:posted-beat scheduled) (assoc :posted-beat (:posted-beat scheduled))
              (:subscriber run) (assoc :subscriber-id (:subscriber run))))))
 

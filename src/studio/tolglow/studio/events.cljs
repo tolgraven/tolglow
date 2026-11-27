@@ -1474,12 +1474,12 @@
   [["now" "Now"] ["next-bar" "Next bar"] ["next-phrase" "Next phrase"] ["next-section" "Next section line"]])
 
 (defn auto-at
-  "The :at Start and Stop send, or nil to apply now. The section line needs a
-  playing auto section."
+  "The :at Start and Stop send, or nil to apply now. A section line chosen
+  while no section plays is still sent, so the show refuses it with its
+  reason, as it does for the REPL and agents, rather than applying now."
   [db]
   (let [line (get-in db [:ui :auto-form :applies] "now")]
-    (when-not (or (= "now" line) (and (= "next-section" line) (nil? (get-in db [:show :auto :section-end-beat]))))
-      line)))
+    (when-not (= "now" line) line)))
 
 (defn- auto-request [db body]
   (let [at (auto-at db)]
