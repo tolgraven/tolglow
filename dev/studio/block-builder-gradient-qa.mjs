@@ -17,14 +17,17 @@ const context = await chromium.launchPersistentContext(join(directory, 'chrome-p
   viewport: {width: 1280, height: 1000}, deviceScaleFactor: 2});
 
 // The gradient is the first parameter, which the builder used to offer to every input.
+// The private varying hue is a colour (its base reads tint), so it is never a position.
 const authored = `; Tide gel: a gel whose transmission follows a gradient along x
 {:id :tide-gel :version 1 :name "Tide gel"
  :params {:palette {:type :gradient
                     :default [{:position 0.0 :color [1.0 0.0 0.0]}
                               {:position 0.5 :color [0.0 1.0 0.0]}
                               {:position 1.0 :color [0.0 0.0 1.0]}]}
-          :level {:type :number :default 1.0 :bounds [0.0 1.0]}}
- :outputs {:color [1.0 1.0 1.0]}}
+          :level {:type :number :default 1.0 :bounds [0.0 1.0]}
+          :tint {:type :color :default [1.0 0.6 0.2]}}
+ :outputs {:color [1.0 1.0 1.0]}
+ :blocks {[:varyings :hue] {:base {:op :param :key :tint} :stages []}}}
 `;
 
 const combo = (scope, name) => scope.getByRole('combobox', {name, exact: true});
@@ -64,6 +67,11 @@ try {
     const bindings = await optionLabels(combo(panel, 'Block binding'));
     assert.ok(bindings.includes('params / level'), bindings.join(', '));
     assert.ok(!bindings.some(label => label.includes('palette')), 'a gradient is not a numeric binding: ' + bindings.join(', '));
+    // A colour varying's base is a colour input: tint is its valid choice, level broadcasts.
+    await combo(panel, 'Block binding').selectOption({label: 'varyings / hue'});
+    assert.equal(await chosen(combo(panel, 'base')), 'parameter');
+    assert.deepEqual(await optionLabels(combo(panel, 'base parameter')), ['level', 'tint']);
+    assert.equal(await chosen(combo(panel, 'base parameter')), 'tint');
     await combo(panel, 'Block binding').selectOption({label: 'outputs / color'});
     await combo(panel, 'New block').selectOption({label: 'Color gel'});
     await panel.getByRole('button', {name: 'Add stage'}).click();
@@ -82,8 +90,12 @@ try {
     const transmission = combo(stage, 'transmission');
     const modes = await optionLabels(transmission);
     assert.ok(modes.includes('Gradient sample'), modes.join(', '));
-    assert.ok(!modes.includes('parameter'), 'no colour parameter, so no Parameter mode: ' + modes.join(', '));
+    assert.ok(modes.includes('Private varying'), 'a colour input reads the colour varying: ' + modes.join(', '));
+    await transmission.selectOption({label: 'parameter'});
+    assert.deepEqual(await optionLabels(combo(stage, 'transmission parameter')), ['level', 'tint'],
+                     'a colour input reads a colour and, broadcast, a number');
     await transmission.selectOption({label: 'Gradient sample'});
+    await stage.getByRole('group', {name: 'transmission gradient sample', exact: true}).waitFor();
     assert.deepEqual(await optionLabels(combo(stage, 'transmission gradient')), ['palette']);
     assert.equal(await stage.locator('.block-gradient-sample .parameter-color.gradient').getAttribute('aria-label'), 'Gradient with 3 stops');
     await combo(stage, 'transmission extend').selectOption({label: 'mirror'});
@@ -91,6 +103,12 @@ try {
     const positionModes = await optionLabels(position);
     for (const mode of ['constant', 'Fixture position', 'Musical period', 'parameter'])
       assert.ok(positionModes.includes(mode), mode + ' in ' + positionModes.join(', '));
+    assert.ok(!positionModes.includes('Private varying'), 'the colour varying is not a position: ' + positionModes.join(', '));
+    await position.selectOption({label: 'Musical period'});
+    for (const name of ['transmission position phase reference', 'transmission position period unit'])
+      await combo(stage, name).waitFor();
+    await stage.getByRole('textbox', {name: 'transmission position period', exact: true}).waitFor();
+    await stage.getByRole('spinbutton', {name: 'transmission position phase (cycles)', exact: true}).waitFor();
     await position.selectOption({label: 'parameter'});
     assert.deepEqual(await optionLabels(combo(stage, 'transmission position parameter')), ['level']);
     await position.selectOption({label: 'Fixture position'});
@@ -99,7 +117,7 @@ try {
     await stage.screenshot({path: join(directory, 'block-builder-gradient-author.png')});
 
     await panel.getByRole('button', {name: 'Write stages to EDN'}).click();
-    await page.waitForFunction(() => document.querySelector('#definition-source').value.includes(':blocks'));
+    await page.waitForFunction(() => document.querySelector('#definition-source').value.includes(':op :gradient'));
     const written = await source.inputValue();
     assert.ok(written.startsWith('; Tide gel: a gel whose transmission'), 'the comment survives');
     assert.match(written, /\{:op :gradient,?\s+:key :palette,?\s+:args \[\{:op :position,?\s+:axis :x\}\],?\s+:extend :mirror\}/);

@@ -178,7 +178,10 @@ the position as a scalar input of its own: a constant, a fixture position axis,
 a scalar parameter, a clock, a musical-period oscillator or a scalar private
 varying whose stages run an oscillator block. **Write stages to EDN** writes the
 form above, and loading a definition that contains it shows the same choices.
-A parameter input lists only the parameters of the input's type, so a gradient
+A parameter or varying input lists what the compiler accepts there: a scalar
+input reads numbers, and a colour input reads colours and numbers (the IR
+broadcasts a number). A private varying takes its base's type, parameter reads
+included, so only a scalar varying is offered as a gradient position. A gradient
 is never offered as a plain `{:op :param}` input, and **Block binding** no
 longer lists a gradient. Publishing goes through the same `:definition`
 operation as the REPL, with the same refusals and messages.

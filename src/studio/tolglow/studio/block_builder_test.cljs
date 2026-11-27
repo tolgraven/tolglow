@@ -128,27 +128,66 @@
         (is (= a b {:block :scale}))
         (is (not= (builder/stage-id 0 a) (builder/stage-id 0 b)))))))
 
+;; Studio's own definitions for the gradient-sample and typed-parameter tests (#775).
+
 (def schemas
   {:palette {:type :gradient :default [{:position 0.0 :color [1.0 0.0 0.0]} {:position 1.0 :color [0.0 0.0 1.0]}]}
    :level {:type :number :default 0.8 :bounds [0 1]}
+   :steps {:type :integer :default 4 :bounds [1 8]}
    :tint {:type :color :default [1.0 0.5 0.0]}
    :mode {:type :enum :values [:a :b] :default :a}})
 
-(deftest a-parameter-is-offered-only-to-inputs-of-its-type
-  (is (= [:level] (builder/parameter-choices schemas :number)))
-  (is (= [:tint] (builder/parameter-choices schemas :vec3)))
+(defn- stage-change!
+  "The `change!` stage-list gives a stage: a function and arguments applied to
+  the current stage, here kept in `stage`."
+  [stage]
+  (fn [f & args] (swap! stage #(apply f % args))))
+
+(deftest a-parameter-is-offered-to-inputs-that-can-read-it
+  (testing "a scalar input reads only scalar parameters, integers included"
+    (is (= [:level :steps] (builder/parameter-choices schemas :number)))
+    (is (= "tint (color)" ((builder/parameter-title schemas (builder/parameter-fits :number)) :tint)))
+    (is (= "palette (gradient)" ((builder/parameter-title schemas (builder/parameter-fits :number)) :palette))))
+  (testing "a colour input reads colours and, broadcast, numbers, but never a gradient"
+    (is (= [:level :steps :tint] (builder/parameter-choices schemas :vec3)))
+    (is (= "level" ((builder/parameter-title schemas (builder/parameter-fits :vec3)) :level)) "a published broadcast is not an error")
+    (is (= "gone (missing)" ((builder/parameter-title schemas (builder/parameter-fits :vec3)) :gone))))
   (is (= [:palette] (builder/gradient-choices schemas)))
   (testing "a scalar input whose definition's only parameter is a gradient offers no Parameter mode"
     (let [only-gradient (select-keys schemas [:palette])]
       (is (not-any? #{:parameter :gradient} (builder/input-modes {:type :number :value 0.5 :schemas only-gradient})))
       (is (= [:constant :beat :bar :phrase :time :gradient]
              (builder/input-modes {:type :vec3 :value [1 1 1] :schemas only-gradient})))))
-  (testing "Parameter mode defaults to the first parameter of the input's type, never the first parameter"
+  (testing "a colour input in a definition with only a number parameter offers it"
+    (is (some #{:parameter} (builder/input-modes {:type :vec3 :value [1 1 1] :schemas (select-keys schemas [:level])}))))
+  (testing "Parameter mode defaults to the first parameter the input can read"
     (is (= {:op :param :key :level} (builder/mode-value :parameter {:type :number :schemas schemas})))
-    (is (= {:op :param :key :tint} (builder/mode-value :parameter {:type :vec3 :schemas schemas}))))
+    (is (= {:op :param :key :level} (builder/mode-value :parameter {:type :vec3 :schemas schemas}))))
   (testing "block bindings list only parameters an expression can read"
-    (is (= [[:outputs :color] [:params :level] [:params :tint]]
+    (is (= [[:outputs :color] [:params :level] [:params :steps] [:params :tint]]
            (builder/binding-paths {:params schemas :outputs {:color [1 1 1]}})))))
+
+(deftest a-private-varying-has-the-type-of-its-base
+  (let [bindings {[:varyings :sweep] {:base 0.0 :stages [{:block :lfo/sine}]}
+                  [:varyings :hue] {:base {:op :param :key :tint} :stages []}
+                  [:varyings :glow] {:base [0.0 0.0 0.0] :stages []}
+                  [:varyings :echo] {:base {:op :varying :key :hue} :stages []}
+                  [:varyings :loop] {:base {:op :varying :key :loop} :stages []}
+                  [:varyings :swell] {:base {:op :param :key :level} :stages []}}
+        varyings (builder/varying-types bindings schemas)]
+    (is (= {:sweep :number :hue :vec3 :glow :vec3 :echo :vec3 :loop :number :swell :number} varyings))
+    (is (= :vec3 (builder/input-type {:op :param :key :tint} schemas {})))
+    (is (= :vec3 (builder/input-type {:op :varying :key :echo} schemas varyings)))
+    (testing "a gradient position reads only scalar varyings, never the edited one"
+      (is (= [:loop :sweep :swell] (builder/readable-varyings varyings :number)))
+      (is (= [:loop :swell] (builder/readable-varyings varyings :number :sweep)))
+      (is (= "hue (vec3)" ((builder/varying-title varyings :number) :hue))))
+    (testing "a colour input reads colour and scalar varyings"
+      (is (= [:echo :glow :hue :loop :sweep :swell] (builder/readable-varyings varyings :vec3))))
+    (testing "a colour varying's base is a colour input: it resets to a colour and lists colour parameters"
+      (is (= [0.0 0.0 0.0] (builder/zero (:hue varyings))))
+      (is (= :vec3 (builder/input-type (builder/zero (:hue varyings)))))
+      (is (= "tint" ((builder/parameter-title schemas (builder/parameter-fits :vec3)) :tint))))))
 
 (deftest a-colour-input-samples-a-gradient-at-a-scalar-position
   (let [spec {:type :vec3 :default [0.65 0.86 1.0] :schemas schemas}
@@ -157,46 +196,73 @@
     (is (= :vec3 (builder/input-type sample)))
     (is (= {:op :gradient :key :palette :args [0.0] :extend :mirror} (builder/with-extend sample :mirror)))
     (is (= sample (builder/with-extend (builder/with-extend sample :repeat) :clamp)) "clamp is the default and is left out")
-    (testing "the position is a scalar input offering the fixture position, an oscillator and private varyings"
-      (let [modes (builder/input-modes {:type :number :value 0.0 :schemas schemas :varyings [:sweep]
-                                        :position? true :phase? true})]
-        (is (= [:constant :beat :bar :phrase :time :position :oscillator-phase :parameter :varying] modes))
+    (testing "the position is a scalar input offering the fixture position, an oscillator and scalar varyings"
+      (let [varyings {:sweep :number :hue :vec3}]
+        (is (= [:constant :beat :bar :phrase :time :position :oscillator-phase :parameter :varying]
+               (builder/input-modes {:type :number :value 0.0 :schemas schemas :varyings varyings
+                                     :position? true :phase? true})))
+        (is (not-any? #{:varying} (builder/input-modes {:type :number :value 0.0 :varyings {:hue :vec3}})))
         (is (= {:op :position :axis :x} (builder/mode-value :position {:type :number})))
-        (is (= {:op :varying :key :sweep} (builder/mode-value :varying {:type :number :varyings [:sweep]})))
-        (is (= :oscillator-phase (:op (builder/mode-value :oscillator-phase {:type :number}))))))
-    (testing "only scalar private varyings other than the edited binding are readable"
-      (let [bindings {[:varyings :sweep] {:base 0.0 :stages [{:block :lfo/sine}]}
-                      [:varyings :hue] {:base [0.0 0.0 0.0] :stages []}
-                      [:varyings :self] {:base 0.0 :stages []}}]
-        (is (= [:sweep] (builder/scalar-varyings bindings [:varyings :self])))))))
+        (is (= {:op :varying :key :sweep} (builder/mode-value :varying {:type :number :varyings varyings})))
+        (is (= :oscillator-phase (:op (builder/mode-value :oscillator-phase {:type :number}))))))))
 
-(deftest a-loaded-gradient-sample-round-trips-through-the-source
-  (let [sample {:op :gradient :key :palette :args [{:op :position :axis :x}] :extend :mirror}
-        source (pretty/edn {:id :tide :version 1 :params schemas :outputs {:color [1.0 1.0 1.0]}
-                            :blocks {[:outputs :color] {:stages [{:block :optics/gel :inputs {:transmission sample}}]}}})
-        loaded (:blocks (edn/read-string source))
-        stage-input (get-in loaded [[:outputs :color] :stages 0 :inputs :transmission])
-        edited (assoc-in loaded [[:outputs :color] :stages 0 :inputs :transmission]
-                         (-> stage-input (builder/with-extend :repeat) (assoc :args [{:op :oscillator-phase :period {:bars 1}}])))
-        written (builder/write-bindings source edited)]
-    (is (= sample stage-input))
-    (is (= {:op :gradient :key :palette :args [{:op :oscillator-phase :period {:bars 1}}] :extend :repeat}
-           (get-in (edn/read-string written) [:blocks [:outputs :color] :stages 0 :inputs :transmission])))
-    (is (= (dissoc (edn/read-string source) :blocks) (dissoc (edn/read-string written) :blocks)))
-    (testing "a loaded mismatched choice stays visible and says why"
-      (is (= "palette (gradient)" ((builder/parameter-title schemas #(= :number (:type %))) :palette)))
-      (is (= "gone (missing)" ((builder/parameter-title schemas any?) :gone))))))
-
-(deftest gradient-field-edits-made-before-a-render-compose
-  ;; Each field's callback is made at render; an extension chosen and a position mode
-  ;; chosen before the next render must both reach the sample.
-  (let [rendered {:op :gradient :key :palette :args [0.0]}
-        extend (partial builder/edit-op :gradient #(builder/with-extend % :mirror))
-        position (partial builder/edit-position (constantly {:op :position :axis :x}))
-        axis (partial builder/edit-position (partial builder/edit-op :position #(assoc % :axis :y)))]
-    (is (= {:op :gradient :key :palette :args [{:op :position :axis :y}] :extend :mirror}
-           (-> rendered extend position axis)))
-    (is (= {:op :gradient :key :palette :args [0.5]} (builder/edit-position inc {:op :gradient :key :palette :args [-0.5]})))
+(deftest edits-made-before-a-render-compose-through-the-stage-wiring
+  ;; Every callback is made at render. Fields committed before the next render (a
+  ;; blur and the tap that caused it, or two quick choices) must all reach the stage.
+  (let [stage (atom {:block :optics/gel})
+        edit! (builder/stage-input-edit (stage-change! stage) :transmission)
+        transmission! (builder/current-edit edit! [0.65 0.86 1.0])
+        sample (builder/gradient-callbacks transmission!)
+        position! (builder/current-edit (:position sample) 0.0)
+        timing (builder/timing-callbacks position! false)]
+    (transmission! (constantly {:op :gradient :key :palette :args [0.0]}))
+    ((:extend sample) :mirror)
+    (position! (constantly {:op :beat}))
+    ((:amount timing) 2)
+    ((:phase timing) 0.25)
+    ((:unit timing) :bars)
+    (is (= {:block :optics/gel
+            :inputs {:transmission {:op :gradient :key :palette :extend :mirror
+                                    :args [{:op :oscillator-phase :period {:bars 2} :phase 0.25 :phase-reference :launch}]}}}
+           @stage))
     (testing "a field of a mode the input has since left changes nothing"
-      (is (= [0.65 0.86 1.0] (extend [0.65 0.86 1.0])))
-      (is (= {:op :gradient :key :palette :args [0.25]} (axis {:op :gradient :key :palette :args [0.25]}))))))
+      (transmission! (constantly [0.1 0.2 0.3]))
+      ((:extend sample) :repeat)
+      ((:amount timing) 4)
+      (is (= [0.1 0.2 0.3] (get-in @stage [:inputs :transmission]))))
+    (testing "two vector components committed together both land"
+      (let [{:keys [transmission]} (:inputs @stage)]
+        (transmission! (partial builder/edit-constant 0 0.9))
+        (transmission! (partial builder/edit-constant 2 0.7))
+        (is (= [0.9 0.2 0.7] (get-in @stage [:inputs :transmission])))
+        (is (= [0.1 0.2 0.3] transmission))))
+    (testing "an unset input edits its default"
+      (let [stage (atom {:block :lfo/sine})
+            phase! (builder/current-edit (builder/stage-input-edit (stage-change! stage) :phase) {:op :beat})
+            timing (builder/timing-callbacks phase! true)]
+        ((:amount timing) 3)
+        ((:phase timing) 0.5)
+        (is (= {:op :oscillator-phase :period {:beats 3} :phase 0.5 :phase-reference :transport}
+               (get-in @stage [:inputs :phase])))))))
+
+(deftest a-loaded-gradient-sample-is-edited-and-written-back-with-its-comments
+  (let [source (str "; Tide: a gel following the palette along x\n"
+                    "{:id :tide :version 1\n"
+                    " ;; the palette runs red to blue\n"
+                    " :params " (pr-str (select-keys schemas [:palette :level])) "\n"
+                    " :outputs {:color [1.0 1.0 1.0]}\n"
+                    " :blocks {[:outputs :color] {:stages [{:block :optics/gel :inputs {:transmission "
+                    "{:op :gradient :key :palette :args [{:op :position :axis :x}] :extend :mirror}}}]}}}"
+                    " ; end of tide\n")
+        bindings (atom (:blocks (edn/read-string source)))
+        ;; The editor's write! for stage 0 of the colour binding.
+        change! (fn [f & args] (swap! bindings update-in [[:outputs :color] :stages 0] #(apply f % args)))
+        transmission! (builder/current-edit (builder/stage-input-edit change! :transmission) [0.65 0.86 1.0])
+        sample (builder/gradient-callbacks transmission!)]
+    ((:extend sample) :repeat)
+    ((:position sample) (partial builder/edit-op :position #(assoc % :axis :y)))
+    (let [written (builder/write-bindings source @bindings)]
+      (is (str/starts-with? written "; Tide: a gel following the palette along x\n{:id :tide :version 1\n ;; the palette runs red to blue\n"))
+      (is (str/ends-with? written " ; end of tide\n"))
+      (is (= {:op :gradient :key :palette :args [{:op :position :axis :y}] :extend :repeat}
+             (get-in (edn/read-string written) [:blocks [:outputs :color] :stages 0 :inputs :transmission]))))))
