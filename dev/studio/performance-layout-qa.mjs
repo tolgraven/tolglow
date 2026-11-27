@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {checkCardAlignment} from './live-card-alignment.mjs';
+import {checkCardGrid} from './card-grid-checks.mjs';
 import {join} from 'node:path';
 import {chromium, devices, webkit} from 'playwright-core';
 
@@ -155,6 +156,8 @@ async function verifyControls(page,touch,profile) {
   else await positionBoard(page);
   await page.screenshot({path:join(directory,profile+'-bound.png')});
   if(profile==='ipad') {
+    // The scope samples only while visible; large pad slots (#795) make the strip taller.
+    await scope.scrollIntoViewIfNeeded();
     for(let i=0;i<8;i++) {
       const previous=await scope.locator('svg path').first().getAttribute('d');
       await page.waitForFunction(d=>document.querySelector('.strip-monitor svg path')?.getAttribute('d')!==d,previous);
@@ -293,6 +296,8 @@ try {
     measurements[name]=await measureCards(page);
     assert.equal(measurements[name].horizontalOverflow,0,'Document overflow at '+name);
     await checkCardAlignment(page, name, directory, measurements[name]);
+    await checkCardGrid(page, name, directory, measurements[name]);
+    await positionBoard(page);
     if(process.env.STUDIO_CARD_LAYOUT_ONLY==='1') {
       await page.close();
       continue;

@@ -24,9 +24,10 @@
     (is (= :vector (controls/control-type {:type "vector" :size 3} catalog)) "wire strings read as keywords"))
   (testing "one description"
     (is (= {:param :period :label "period" :type :number :places 3 :unit "beats" :bounds [0.5 32]
-            :step (/ 31.5 1000) :widget :rotary}
+            :step (/ 31.5 1000) :widget :rotary :slot :compact}
            (controls/control :period {:type :number :bounds [0.5 32] :unit :beats} catalog)))
-    (is (= {:param :mode :label "Mode" :type :shape :places 3 :choices [{:value :sine :label "Sine"} {:value :saw :label "Saw"}]}
+    (is (= {:param :mode :label "Mode" :type :shape :places 3 :choices [{:value :sine :label "Sine"} {:value :saw :label "Saw"}]
+            :slot :wide}
            (controls/control :mode {:type :enum :name "Mode" :values [:sine :saw]} catalog)))
     (is (= :fader (:widget (controls/control :width {:type :number :ui/widget :fader :bounds [0 1]}))))
     (is (= :field (:widget (controls/control :drift {:type :number}))))))
@@ -69,3 +70,33 @@
     (is (= :xy (:widget (controls/control :offset {:type :vector :size 2 :bounds [-1 1]}))))
     (is (= :rings (:widget (controls/control :mix {:type :vector :size 4 :bounds [0 1]}))))
     (is (not (contains? (controls/control :tint {:type :color}) :widget)))))
+
+(deftest every-widget-type-has-one-standard-slot
+  (let [slot (fn [schema] (:slot (controls/control :p schema catalog)))]
+    (testing "knobs, faders, toggles, choices, swatches, fields and closed rings are compact"
+      (is (= #{:compact}
+             (set (map slot [{:type :number :bounds [0 1]}
+                             {:type :integer :bounds [0 8] :ui/widget :fader}
+                             {:type :boolean} {:type :enum :values [:soft :hard]}
+                             {:type :number :choices [{:value 0 :label "Off"} {:value 1 :label "On"}]}
+                             {:type :color} {:type :number}
+                             {:type :vector :size 4 :bounds [0 1]}
+                             {:type :vector :size 2 :bounds [0 1] :ui/widget :rings}])))))
+    (testing "pickers, gradients, ranges and component readouts are wide"
+      (is (= #{:wide}
+             (set (map slot [{:type :enum :values [:sine :saw]}
+                             {:type :number :semantic/type :waveform-selector :choices [{:value 0 :id :sine}]}
+                             {:type :gradient} {:type :range :bounds [0 1]}
+                             {:type :vector :size 3}
+                             {:type :vector :size 2 :bounds [0 1] :ui/widget :axes}
+                             {:type :vector :size 3 :semantic/type :rgb :bounds [0 1]}])))))
+    (testing "pads are large"
+      (is (= #{:large} (set (map slot [{:type :vector :size 2 :bounds [-1 1]}
+                                       {:type :vector :size 3 :bounds [0 1]}])))))
+    (testing "an expanded card takes the large standard size, never an arbitrary one"
+      (is (= :large (controls/slot-size {:type :vector :widget :rings} {:expanded? true})))
+      (is (= :large (controls/slot-size {:type :number :widget :rotary} {:expanded? true})))
+      (is (= :compact (controls/slot-size {:type :vector :widget :rings} {:expanded? false}))))
+    (testing "spans are whole slots of one unit"
+      (is (= {:compact [1 1] :wide [2 1] :large [2 2]} controls/slot-sizes))
+      (is (= [1 1] (controls/slot-span :unknown))))))

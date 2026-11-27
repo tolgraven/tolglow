@@ -2,6 +2,7 @@
   "The studio application is data + re-frame transitions. I/O lives in effects."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
+            [tolglow.authoring.card-layout :as card-layout]
             [tolglow.studio.checkpoints :as checkpoints]
             [tolglow.studio.fog-fields :as fog]
             [tolglow.studio.operator-history :as history]
@@ -57,7 +58,7 @@
 (defn- dispatch-result [event result] (when event (rf/dispatch (conj event result))))
 
 (def guarded-paths
-  #{"/api/definition" "/api/materials" "/api/rig" "/api/composition" "/api/composition/append" "/api/composition/run"
+  #{"/api/definition" "/api/materials" "/api/rig" "/api/composition" "/api/composition/append" "/api/composition/cards" "/api/composition/run"
     "/api/composition/stop" "/api/import" "/api/auto" "/api/response"
     "/api/response/release" "/api/response/delete" "/api/page/generate" "/api/settings"
     "/api/fixtures/publish" "/api/fixtures/patch"
@@ -1115,12 +1116,24 @@
                           (some? (get-in typed [:slots i :transforms]))
                           (assoc :transforms (get-in typed [:slots i :transforms]))))
                       (range) (:slots composition))]
-      (assoc-in db [:ui :composition] (assoc (dissoc composition :running? :playback) :slots slots)))))
+      (assoc-in db [:ui :composition] (assoc (dissoc composition :running? :playback :layer-id :member-slots) :slots slots)))))
 (rf/reg-event-db :studio/composition-new [(rf/inject-cofx :studio/unique)]
   (fn [db _] (assoc-in db [:ui :composition] {:id "new-composition" :name "New composition" :mode "sequence" :loop "once" :slots []})))
+(defn composition-for-save
+  "The edited composition to save. Its macro card arrangement (#795) belongs
+  to the :composition-cards command, so the saved show's current cards are
+  kept, pruned to the slots the edit still has; a sequence has none."
+  [db composition]
+  (let [saved (some #(when (= (wire-id (:id %)) (wire-id (:id composition))) %)
+                    (get-in db [:server-projection :view :compositions]))
+        cards (when (= "macro" (some-> (:mode composition) name))
+                (not-empty (card-layout/prune (:slots composition) (:cards saved))))]
+    (cond-> (dissoc composition :cards :layer-id :member-slots)
+      cards (assoc :cards cards))))
+
 (rf/reg-event-fx :studio/composition-save
   (fn [{:keys [db]} [_ run?]]
-    (let [composition (get-in db [:ui :composition])]
+    (let [composition (composition-for-save db (get-in db [:ui :composition]))]
       (if (seq (:slots composition))
         {:studio/http {:path "/api/composition" :body composition :on-success [:studio/composition-saved (:id composition) run?]}}
         {:dispatch [:studio/failure "Add at least one cue to the composition."]}))))
