@@ -19,16 +19,27 @@
 
 (def wide-falloff {:inner-m 0.0 :outer-m 3.0 :curve :linear})
 
+(def aimer
+  "A sphere that steers the reachable head toward its centre and paints red."
+  {:op :spawn :id :orb :page-id :main :cell [4 1]
+   :volume {:shape :sphere :position [0 3 0] :radius 3.0 :selection #{:position}}
+   :paint {:aim :volume :red 1.0}})
+
 (def variants
   "Each spawns an orb and revises one thing its spatial pass reads before the
-  engine runs: the volume, the scene members or the parameter sources."
+  engine runs: the volume, the scene members, sources that shape the mask,
+  a sourced paint value that reaches an output, or the aim points."
   {:volume {:spawn orb
             :revise #(-> % (assoc-in [:spatial-volume :volume :falloff] wide-falloff)
                          (update :params dissoc :inner-m :outer-m))}
    :members {:spawn (assoc orb :paint {:blue 0.0} :members [{:cue-id :blue}])
              :revise #(assoc-in % [:spatial-volume :members] [{:effect-id :red}])}
    :sources {:spawn orb
-             :revise #(assoc-in % [:spatial-volume :sources] {:inner-m 0.25 :outer-m 3.0})}})
+             :revise #(assoc-in % [:spatial-volume :sources] {:inner-m 0.25 :outer-m 3.0})}
+   :paint {:spawn orb
+           :revise #(assoc-in % [:spatial-volume :sources] {:red 0.3})}
+   :aim {:spawn aimer
+         :revise #(assoc-in % [:spatial-volume :sources] {:position [2 1 2]})}})
 
 (defn- param [key] {:op :param :key key})
 
@@ -129,7 +140,12 @@
       :evaluate (-> next
                     (assoc-in [:params :divisor] {:type :number :default 0.0 :bounds [0.0 1.0]})
                     (assoc-in [:outputs (painted definition)] {:op :divide :args [(param (painted definition)) (param :divisor)]}))
-      :output (assoc-in next [:outputs :aim] {:op :const :value (:position head)}))))
+      ;; A volume that aims its heads writes their aim after the paint, so
+      ;; that revision is refused for adding red beyond the unit range instead.
+      :output (if (get-in definition [:spatial-volume :aim-at-volume?])
+                (assoc next :outputs [{:attribute :red :value (param :red)}
+                                      {:attribute :red :blend :add :value {:op :const :value 0.8}}])
+                (assoc-in next [:outputs :aim] {:op :const :value (:position head)})))))
 
 (def cases
   (for [variant (sort (keys variants))
@@ -249,8 +265,8 @@
 
 (defn- hdr-run
   "Light a source above unity, scale its HDR excess by the driver's
-  waveform-bound level and publish `revision` at 200 ms."
-  [rt revision]
+  waveform-bound level and publish `revision` at `publish-at` ms."
+  [rt revision & [publish-at]]
   (let [driver-id (:instance-id (host/submit rt 0 :command {:op :cue/launch :cue-id :driver
                                                            :launch {:params {:level 0.2}}}))]
     (host/submit rt 0 :modulation-bind {:instance-id driver-id :param :level :binding saw})
@@ -258,7 +274,7 @@
     (host/submit rt 0 :settings {:scope :hdr :values {:enabled? true :gain {:cue-id :driver :param :level}
                                                       :spill 1.0 :spill-white-mix 1.0}})
     (mapv (fn [t]
-            (let [reply (when (and revision (= t 200))
+            (let [reply (when (and revision (= t (or publish-at 200)))
                           (show/submit! rt :definition {:kind :effects :definition revision}))]
               (show/tick! rt t)
               (some-> reply (deref 2000 ::timeout))
@@ -279,3 +295,120 @@
         (is (= [] (differing :dmx expected actual)) "Captured DMX differs at these frame times")
         (is (every? nil? (map :error actual))))
       (finally (show/stop! broken) (show/stop! control)))))
+
+(defn- run
+  "Spawn `spawns` under `policy`, then before each tick publish the revisions
+  `plan` lists for that time ({t [[effect-id revise] ...]}), all in one cycle."
+  [rt spawns policy plan]
+  (doseq [spawn spawns] (host/submit rt 0 :spatial-cue (assoc spawn :launch {:reload-policy policy})))
+  (mapv (fn [t]
+          (let [replies (mapv (fn [[id revise]]
+                                (show/submit! rt :definition
+                                              {:kind :effects :definition (revise (get-in (state rt) [:registry :effects id]))}))
+                              (get plan t))]
+            (show/tick! rt t)
+            (assoc (observed rt) :time-ms t :acks (mapv #(:status (deref % 2000 ::timeout)) replies))))
+        times))
+
+(defn- versions [rt ids]
+  (into (sorted-map) (keep (fn [i] (when (ids (:cue-id i))
+                                     [(:cue-id i) [(:effect-version i) (get-in i [:reload-fault :stage])]])))
+        (vals (:instances (state rt)))))
+
+(def orb-a (assoc orb :id :orb-a :cell [2 1]))
+
+(def orb-b (assoc orb :id :orb-b :cell [3 1] :volume (assoc (:volume orb) :position [3 1 0])))
+
+(deftest a-rejected-and-an-accepted-spatial-revision-in-one-frame
+  ;; The engine defers every candidate of a frame that rejects one, so the
+  ;; accepted revision takes over a frame later, as in a twin publishing it then.
+  (doseq [variant [:volume :paint] stage [:compile :evaluate :output] policy [:preserve-state :restart]]
+    (testing (str variant " rejected at " stage " " policy)
+      (let [revise (get-in variants [variant :revise])
+            ;; The renderer refusal aims the head at the first orb's centre.
+            [good bad] (if (= :output stage) [:orb-b :orb-a] [:orb-a :orb-b])
+            mixed (runtime (when (= :compile stage) {:failing-compile [bad 2]})) late (runtime {}) never (runtime {})]
+        (try
+          (let [frames (run mixed [orb-a orb-b] policy {200 [[good (partial accepted revise policy)]
+                                                             [bad (partial rejected-at revise policy stage)]]})
+                expected (run late [orb-a orb-b] policy {250 [[good (partial accepted revise policy)]]})
+                unpublished (run never [orb-a orb-b] policy {})]
+            (is (= {good [2 nil] bad [1 stage]} (versions mixed #{:orb-a :orb-b})))
+            (is (not= (map :dmx expected) (map :dmx unpublished)) "The accepted revision is visible")
+            (frames-match expected frames))
+          (finally (show/stop! mixed) (show/stop! late) (show/stop! never)))))))
+
+(deftest a-rejected-revision-that-leaves-the-spatial-group-keeps-its-group-level-once
+  ;; The revision drops the volume, so the frame that accepts it would apply
+  ;; the scene member's group level in the engine instead of in the spatial
+  ;; member mix. (The halved aim of the output-stage revision is not
+  ;; zero-distance, so that stage is omitted.)
+  (doseq [stage [:compile :evaluate]]
+    (testing (str stage)
+      (let [revise #(dissoc % :spatial-volume)
+            broken (runtime (when (= :compile stage) {:failing-compile [:orb 2]})) control (runtime {})
+            grouped (fn [rt publish]
+                      (host/submit rt 0 :command {:op :effect-groups/configure :config {:manual [{:id :mix :cue-ids [:blue]}]}})
+                      (host/submit rt 0 :command {:op :effect-groups/level-set :channel-id [:manual :mix] :value 0.5})
+                      (run rt [(get-in variants [:members :spawn])] :preserve-state (if publish {200 [[:orb (partial rejected-at revise :preserve-state stage)]]} {})))]
+        (try
+          (let [expected (grouped control false)
+                actual (grouped broken true)]
+            (is (= [:accepted] (some #(not-empty (:acks %)) actual)))
+            (is (= {:orb [1 stage]} (versions broken #{:orb})))
+            (is (= [0 0 128] (subvec (:dmx (first expected)) 0 3)) "The group level halves the scene member")
+            (frames-match expected actual))
+          (finally (show/stop! broken) (show/stop! control)))))))
+
+(deftest a-volume-linked-to-a-rejected-volume-keeps-its-committed-field-next-frame
+  ;; A volume reading another volume's sourced parameter reads last frame's
+  ;; committed field, which must be the running revision's after a rejection.
+  (let [leader (assoc orb :sources {:strength 0.4})
+        follower (assoc orb-b :id :follower :sources {:strength {:cue-id :orb :param :strength}})
+        revise #(assoc-in % [:spatial-volume :sources] {:strength 0.9})
+        broken (runtime {}) control (runtime {})]
+    (try
+      (let [expected (run control [leader follower] :preserve-state {})
+            actual (run broken [leader follower] :preserve-state {200 [[:orb (partial rejected-at revise :preserve-state :evaluate)]]})]
+        (is (= {:orb [1 :evaluate]} (versions broken #{:orb})))
+        (frames-match expected actual))
+      (finally (show/stop! broken) (show/stop! control)))))
+
+(deftest an-accepted-revision-publishes-its-scene-view-on-the-takeover-frame
+  (doseq [variant [:volume :paint :aim]]
+    (testing (str variant)
+      (let [{:keys [spawn revise]} (variants variant)
+            published (runtime {}) adopted (runtime {})]
+        (try
+          (let [frames (capture! published spawn :preserve-state (partial accepted revise :preserve-state) 200)
+                new (capture! adopted spawn :preserve-state nil nil)
+                ;; The adopted twin publishes at 0, before any frame renders.
+                new (do (show/stop! adopted)
+                        (let [rt (runtime {})]
+                          (try (host/submit rt 0 :spatial-cue (assoc spawn :launch {:reload-policy :preserve-state}))
+                               (host/submit rt 0 :definition {:kind :effects
+                                                              :definition (accepted revise :preserve-state
+                                                                                    (get-in (state rt) [:registry :effects :orb]))})
+                               (mapv (fn [t] (show/tick! rt t) (assoc (observed rt) :time-ms t)) times)
+                               (finally (show/stop! rt)))))
+                scene (fn [frame] (-> (:spatial frame)
+                                      (update :signals update-vals #(select-keys % [:volume :paint :affected-head-count :error]))
+                                      (select-keys [:signals :members])))]
+            (is (= (dmx-from 200 new) (dmx-from 200 frames)))
+            (is (= (map scene (drop-while #(< (:time-ms %) 200) new))
+                   (map scene (drop-while #(< (:time-ms %) 200) frames)))
+                "The scene view shows the field the fixtures render from the takeover frame"))
+          (finally (show/stop! published) (show/stop! adopted)))))))
+
+(deftest hdr-reading-a-cue-whose-revision-is-accepted-follows-it-on-the-takeover-frame
+  (let [published (runtime {}) adopted (runtime {}) unpublished (runtime {})]
+    (try
+      (let [frames (hdr-run published narrowed)
+            ;; Publishing at 0 adopts the revision before the first measured frame.
+            new (with-redefs [times (vec (cons 0 times))] (hdr-run adopted narrowed 0))
+            new (vec (rest new))
+            old (hdr-run unpublished nil)]
+        (is (not= (dmx-from 200 old) (dmx-from 200 new)) "The narrowed level changes the HDR output")
+        (is (= (dmx-from 200 new) (dmx-from 200 frames)))
+        (is (every? nil? (map :error frames))))
+      (finally (show/stop! published) (show/stop! adopted) (show/stop! unpublished)))))

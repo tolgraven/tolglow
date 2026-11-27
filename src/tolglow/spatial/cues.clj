@@ -365,7 +365,8 @@
         spec (get-in instance [:definition :spatial-volume])
         {:keys [weights aims]} (coverage volume instance (:aim-at-volume? spec) sample)
         error (or (:error entry) (get-in model (into run-path [key :error])))
-        paint (cond-> (select-keys values (keys (get-in instance [:definition :outputs])))
+        ;; Outputs may be an attribute map or an ordered vector of writes.
+        paint (cond-> (select-keys values (map :attribute (registry/output-entries (get-in instance [:definition :outputs]))))
                 (:aim-at-volume? spec) (assoc :aim :volume))
         view (cond-> {:volume volume :cue-id (:cue-id instance) :instance-id (:id instance)
                       :paint paint :affected-head-count (count weights)}

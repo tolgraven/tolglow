@@ -2750,6 +2750,14 @@
         hdr-scope (when hdr? (autopilot/standalone-scope (:hdr-scope before) model patch))
         hdr-opts (when hdr? (or (autopilot/render-options (assoc model :time-ms time-ms) prepared suspended?
                                                            control-view hdr-scope) {}))
+        ;; HDR values apply after the engine, so they can follow its reload
+        ;; decision as the spatial masks do. Autopilot decisions above cannot:
+        ;; they commit before the engine runs, from the running revisions.
+        candidate-hdr (when (and hdr? last-good-samples (not= candidate-view control-view))
+                        (or (autopilot/render-options (assoc model :time-ms time-ms)
+                                                      (some-> prepared (assoc-in [:context :modulation-view] candidate-view))
+                                                      suspended? candidate-view hdr-scope) {}))
+        hdr-for (fn [result] (if (and candidate-hdr (not= :fallback (:reload-inputs result))) candidate-hdr hdr-opts))
         modulation-result (modulation/advance (:modulation model) (reading model)
                                                {:time-ms time-ms :transport (:transport model)})
         last-good (when last-good-samples
@@ -2898,9 +2906,10 @@
         followers (into #{} (keep :follower) (get-in model [:rig :edge-tracking]))
         resolved (effect-faults/resolve-output result
                    ;; A head no effect positions this frame holds its last committed pose.
-                   #(resolve-frame patch (position-hold/with-hold patch (:output before)
-                                           (lighting/contributions standby % extra-blocks) followers)
-                                   render-options)
+                   (fn [contributions prepared]
+                     (resolve-frame patch (position-hold/with-hold patch (:output before)
+                                            (lighting/contributions standby contributions extra-blocks) followers)
+                                    (cond-> render-options candidate-hdr (assoc :hdr (hdr-for prepared)))))
                    (fn [result]
                      (let [[groups levels] (masks result)]
                        (if (seq groups) (spatial-cues/mask-contributions result groups levels) result))))
@@ -2915,7 +2924,10 @@
         input-overrides (if last-good? (:overrides last-good) input-overrides)
         spatial-fields (if last-good? committed-fields spatial-fields)
         result (cond-> result
-                 last-good? (assoc-in [:model :modulation] (:state modulation-result)))
+                 last-good? (assoc-in [:model :modulation] (:state modulation-result))
+                 ;; The scene view shows the field the fixtures rendered.
+                 (and (not last-good?) (:candidate-view space))
+                 (assoc-in [:model :variables :spatial] (:candidate-view space)))
         finished (when (or (get-in model [:settings :output-response :enabled?])
                            (get-in model [:settings :lighting-budget :enabled?])
                            (get-in model [:settings :lighting-activity :enabled?]))
@@ -2947,7 +2959,7 @@
      :projector-gain (if (:blackout? render-options) 0.0 (double (:master render-options)))
      ::waveforms/response-frame response-frame
      ::show-events/intent-emissions (:intent-emissions result)
-     :preview-hdr (when (:hdr? frame-input) (or hdr-opts {}))
+     :preview-hdr (when (:hdr? frame-input) (or (hdr-for result) {}))
      :keyframes (:keyframes result) :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
      :lighting-history (:state finished) :fault-events (:fault-events result)
      :parameter-samples (assoc parameter-samples :spatial-overrides (:overrides spatial-fields)

@@ -30,12 +30,14 @@
 
 (defn resolve-output
   "Resolve once on the healthy path. A renderer-attributed effect failure removes
-  only that evaluated attempt. The engine rejects repeated/unknown attribution."
+  only that evaluated attempt. The engine rejects repeated/unknown attribution.
+  resolve! receives the prepared contributions and the prepared result, whose
+  :reload-inputs can change after a rejection."
   ([result resolve!] (resolve-output result resolve! identity))
   ([result resolve! prepare]
    (loop [result result]
      (let [prepared (prepare result)
-           attempt (try {:output (resolve! (:contributions prepared))}
+           attempt (try {:output (resolve! (:contributions prepared) prepared)}
                         (catch Exception error {:error error}))]
        (if-let [error (:error attempt)]
          (recur (engine/reject-output result error))

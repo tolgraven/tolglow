@@ -69,10 +69,13 @@ levels as part of its reload fallback and applies the masks of whichever input
 set the engine reports in `:reload-inputs`. A rejected revision then leaves
 DMX, the spatial view and the member leases as a twin show that never
 published it; an accepted one paints its new field on its takeover frame,
-and member leases and bodies follow it from the next frame. Autopilot
-decisions and standalone HDR values also read the running revisions' samples
-while a reload is pending, so an accepted candidate reaches them one frame
-later. See [spatial cues](spatial-show.md).
+where the owner also publishes the candidate's scene view, and member leases
+and bodies follow it from the next frame. Standalone and managed HDR values
+apply after the engine, so the owner prepares them from both sample sets and
+picks by `:reload-inputs` as it does the masks. Autopilot decisions are the
+exception: they edit the model before the engine runs, so they read the
+running revisions' samples while a reload is pending and reach an accepted
+candidate one frame later. See [spatial cues](spatial-show.md).
 
 Full backups preserve faults and event history. Restore remaps active diagnostic
 instance IDs/epochs; historical events remain historical evidence. Restore does

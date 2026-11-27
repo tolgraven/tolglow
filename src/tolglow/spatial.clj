@@ -269,8 +269,9 @@
   modulation view of the frame that accepts every one. `:candidate-fields`
   are the frame inputs and masks for that outcome, or nil when they equal the
   committed `:fields`, which serve the frame that keeps the running
-  revisions. Member leases, bodies, contacts and events follow an accepted
-  revision from the next frame."
+  revisions. `:candidate-view` is the `[:variables :spatial]` view of that
+  outcome, for the owner to publish if the engine accepts it. Member leases,
+  bodies, contacts and events follow an accepted revision from the next frame."
   [model before now graph command & [sampler {:keys [candidates candidate-view]}]]
   (let [original (get-in model [:settings :spatial])
         old-cache (:spatial-cache before)
@@ -322,18 +323,29 @@
                        (sampling/sample sampler @slices volume (when (optical-volume? volume) @split-optical))
                        (optical-volume? volume) (@optical-sample volume)
                        :else (field/positions volume rig)))
+            ;; Sampling is a pure function of the volume within one frame. While
+            ;; a reload is pending, a candidate volume equal to a committed one
+            ;; reuses its fields instead of sampling the patch again.
+            sample (if-not candidate-view sample
+                     (let [sampled (volatile! {})]
+                       (fn [volume]
+                         (if-let [hit (find @sampled volume)] (val hit)
+                           (let [fields (sample volume)] (vswap! sampled assoc volume fields) fields)))))
             fields (when (seq active) (cues/frame-fields (assoc model :time-ms now) active result sample))
             candidate (candidate-fields model before now candidates candidate-view old-cache
                                         fields result sample)
             events (into (:events result) (volume-errors model fields now))
-            view (cond-> (assoc (select-keys result [:members :signals :dropped-ms]) :events events)
-                   fields (update :signals #(merge-with merge % (:views fields)))
-                   fields (update :members merge (:members fields)))
+            signal-view (fn [fields]
+                          (cond-> (assoc (select-keys result [:members :signals :dropped-ms]) :events events)
+                            fields (update :signals #(merge-with merge % (:views fields)))
+                            fields (update :members merge (:members fields))))
+            view (signal-view fields)
             model (-> model (assoc-in state-path (assoc (:state result) :start-clock start))
                       (assoc-in [:variables :spatial] view) (stage events))]
         {:model (actions/apply-frame model result (:bindings s {}) now command)
          :fields fields
          :candidate-fields candidate
+         :candidate-view (when candidate (signal-view candidate))
          :cache (cond-> {:fixtures fixtures :rig rig :settings s :dynamic? dynamic? :scene scene}
                   (realized? observations) (assoc :optics (:cache @observations))
                   (or kept (realized? slices)) (assoc :slices @slices))
