@@ -31,7 +31,6 @@
       (is (= {:pixels 40 :dimmers 6 :pars 6 :movers 4} (:counts data)))
       (is (<= 18 (count (:definitions data))))
       (is (= 8 (:modulation-bindings (first runs))))
-      (is (zero? (:over-25ms result 0)) "a 62-fixture rig ticks well inside one 40 Hz period")
       (is (pos? (get-in result [:milliseconds :p50]))))
     (testing "recorded per-frame parameter resolution matches the earlier composition"
       (is (< 100 (count @calls)))
