@@ -121,6 +121,10 @@ function applyConfig(config) {
   });
   if (engine.setLightBudget) engine.setLightBudget(config.fullLights ?? null);
   if (engine.beams) engine.beams.mesh.visible = config.fakedBeams !== false;
+  if (engine.fog.hazeMaterial) {
+    const mode = config.fogMode ?? FOG_QUALITY[engine.fog.quality].mode;
+    if (engine.fog.mode !== mode) { engine.fog.mode = mode; engine.applyLighting(engine.displayedValues); }
+  }
   if (engine.footprints) engine.footprints.disabled = config.footprints === false;
   else {
     // Before the LOD change the fog takes at most 16 entries in fixture order.

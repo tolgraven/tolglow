@@ -3,7 +3,7 @@
 //
 //   node dev/preview/room-gpu-profile.mjs [--label before] \
 //     [--sizes 960x540,1920x1080] [--fixtures 16,64] [--configs full,no-fog] \
-//     [--out target/room-gpu] [--port 19180] [--screenshots]
+//     [--out target/room-gpu] [--port 19180] [--rounds 3] [--repeats 2] [--screenshots]
 //
 // It bundles dev/preview/room-gpu-profile-page.mjs, which draws the source
 // SceneRenderer on a synthetic rig without a host, show, device or output.
@@ -33,7 +33,7 @@ const fixtureCounts = arg('fixtures', '16,32,64,128').split(',').map(Number);
 const out = path.resolve(root, arg('out', 'target/room-gpu'));
 const port = Number(arg('port', 19180));
 if (!(port >= 19180 && port <= 19199)) throw new Error('Use a port in 19180-19199');
-const frames = Number(arg('frames', 40)), repeats = Number(arg('repeats', 5));
+const frames = Number(arg('frames', 40)), repeats = Number(arg('repeats', 2)), rounds = Number(arg('rounds', 3));
 
 // Named configurations, each applied to an otherwise identical scene. A
 // configuration's `delta` names the pass whose cost is full minus that run.
@@ -55,6 +55,8 @@ export const CONFIGS = {
   'lights-8': {fullLights: 8},
   'lights-16': {fullLights: 16},
   'moving-lights-8': {moving: true, fullLights: 8},
+  haze: {fogMode: 'haze'},
+  raymarch: {fogMode: 'raymarch'},
   'tier-low': {tier: 'low'},
   'tier-mobile': {tier: 'mobile'},
   'tier-high': {tier: 'high'},
@@ -70,8 +72,19 @@ for (const name of configNames) configFor(name);
 const executablePath = process.env.CHROMIUM_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 if (!existsSync(executablePath)) throw new Error('Set CHROMIUM_PATH to a Chrome executable');
 
+// --source <checkout> profiles another checkout's js/preview (e.g. the
+// read-only origin/master copy) with this page, for before/after runs.
+const source = arg('source', null);
+const redirect = source ? [{name: 'preview-source', setup(build) {
+  build.onResolve({filter: /\/js\/preview\//}, args => {
+    const resolved = path.resolve(args.resolveDir, args.path);
+    const relative = path.relative(path.join(root, 'js/preview'), resolved);
+    return relative.startsWith('..') ? undefined : {path: path.join(path.resolve(source), 'js/preview', relative)};
+  });
+}}] : [];
 const bundle = await build({entryPoints: [path.join(root, 'dev/preview/room-gpu-profile-page.mjs')],
-  bundle: true, format: 'esm', platform: 'browser', target: ['es2022'], write: false, logLevel: 'warning'});
+  bundle: true, format: 'esm', platform: 'browser', target: ['es2022'], write: false, logLevel: 'warning',
+  plugins: redirect, nodePaths: [path.join(root, 'node_modules')]});
 const server = createServer((request, response) => {
   const script = request.url === '/page.js';
   response.setHeader('Content-Type', script ? 'text/javascript' : 'text/html');
@@ -83,7 +96,7 @@ await new Promise(resolve => server.listen(port, '127.0.0.1', resolve));
 const userDataDir = path.join(root, `target/room-gpu-chrome-${port}`);
 await mkdir(out, {recursive: true});
 let context;
-const results = {label,
+const results = {label, source: source ? path.resolve(source) : root,
   method: 'wall-clock cost of back-to-back presented frames ending in one GPU fence (median of batches); pass cost = full minus the run with that pass toggled off',
   conditions: 'headless Chrome (--headless=new), ANGLE Metal, OffscreenCanvas + bitmaprenderer on the page thread, device scale 1, every tier forced to the requested raster, synthetic rig, audience camera, fog .7 after an 80-step manual burst',
   startedAt: new Date().toISOString(), runs: []};
@@ -102,19 +115,31 @@ try {
     const setup = await page.evaluate(options => window.setupRoom(options), {width, height, fixtures});
     if (!results.renderer) { results.renderer = setup.renderer; results.userAgent = setup.userAgent; }
     const inventory = await page.evaluate(() => window.inventory());
-    const group = [];
-    for (const name of configNames) {
+    // Interleave configurations across rounds so slow drift (thermal state,
+    // other GPU clients) spreads over all of them; report per-config medians.
+    const group = new Map();
+    for (let round = 0; round < rounds; round++) for (const name of configNames) {
       const run = await page.evaluate(config => window.profileRoom(config), {...configFor(name), name, frames, repeats});
+      if (!group.has(name)) group.set(name, []);
+      group.get(name).push(run);
+    }
+    const median = values => { const v = [...values].sort((a, b) => a - b), m = v.length >> 1; return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; };
+    let full;
+    for (const name of configNames) {
+      const runs = group.get(name), run = {...runs[runs.length - 1]};
+      run.frameMs = median(runs.map(r => r.frameMs)); run.rounds = runs.map(r => r.frameMs); run.cpuDrawMs = median(runs.map(r => r.cpuDrawMs));
       run.name = name; run.size = [width, height]; run.fixtures = fixtures;
-      if (!group.length) run.inventory = inventory;
-      group.push(run); results.runs.push(run);
-      const full = group.find(r => r.name === 'full');
+      if (name === configNames[0]) run.inventory = inventory;
+      if (name === 'full') full = run;
+      results.runs.push(run);
       const delta = full && configFor(name).delta ? ` (${configFor(name).delta}: ${(full.frameMs - run.frameMs).toFixed(2)} ms)` : '';
-      console.log(`${width}x${height} n=${fixtures} ${name}: ${run.frameMs.toFixed(2)} ms/frame, cpu draw ${run.cpuDrawMs.toFixed(2)} ms${delta}`);
-      if (flag('screenshots') && !configFor(name).delta && !name.includes('+')) {
-        const png = await page.evaluate(() => window.screenshot());
-        await writeFile(path.join(out, `${label}-${width}x${height}-n${fixtures}-${name}.png`), Buffer.from(png.split(',')[1], 'base64'));
-      }
+      console.log(`${width}x${height} n=${fixtures} ${name}: ${run.frameMs.toFixed(2)} ms/frame [${run.rounds.map(v => v.toFixed(1)).join(' ')}]${delta}`);
+    }
+    if (flag('screenshots')) for (const name of configNames) {
+      if (configFor(name).delta || name.includes('+')) continue;
+      await page.evaluate(config => window.profileRoom(config), {...configFor(name), name, frames: 2, repeats: 1, warm: 4});
+      const png = await page.evaluate(() => window.screenshot());
+      await writeFile(path.join(out, `${label}-${width}x${height}-n${fixtures}-${name}.png`), Buffer.from(png.split(',')[1], 'base64'));
     }
     await page.evaluate(() => window.disposeRoom());
   }
