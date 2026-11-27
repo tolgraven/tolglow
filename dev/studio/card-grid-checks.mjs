@@ -380,18 +380,32 @@ export async function checkDetachedRepack(page, directory) {
   await page.locator('#view-perform [data-panel="live"] .layout-detach').click();
   const live = await popup;
   await live.waitForSelector('[data-live-instance] [data-slot-grid]', {timeout: 20000});
+  // A ResizeObserver reports at its document's next rendering opportunity,
+  // and a background window may not render. A person resizing the panel's
+  // window is looking at it, so bring it to the front as they would.
+  await live.bringToFront();
   const tier = () => live.evaluate(() => document.querySelector('.panel-window-content[data-panel="live"]')?.dataset.tier);
-  // Orbital wash's strip: its column count and width, once the grid has
-  // settled to the most columns that fit (or fewer only by the packer's rule).
   const orbital = () => live.evaluate(() => {
     const bank = [...document.querySelectorAll('[data-live-instance]')]
       .find(c => c.querySelector('h3')?.textContent === 'Orbital wash')?.querySelector('[data-slot-grid]');
-    return bank && {columns: Number(bank.dataset.columns), width: bank.clientWidth};
+    return bank && {columns: Number(bank.dataset.columns), width: bank.clientWidth,
+                    visible: document.visibilityState, focused: document.hasFocus()};
   });
+  // Resize, then poll (bounded) until the grid reports a column count that
+  // matches the new width: the packer's count is never more than fits, and
+  // for Orbital wash (two 2x2 pads and six knobs) it uses at least six
+  // columns once nine or more fit.
   const settle = async width => {
     await live.setViewportSize({width, height: 1000});
     await live.waitForFunction(width => innerWidth === width, width);
-    await live.waitForTimeout(400);
+    await live.waitForFunction(() => {
+      const bank = [...document.querySelectorAll('[data-live-instance]')]
+        .find(c => c.querySelector('h3')?.textContent === 'Orbital wash')?.querySelector('[data-slot-grid]');
+      if (!bank) return false;
+      const style = getComputedStyle(bank), unit = parseFloat(style.getPropertyValue('--slot-col')), gap = parseFloat(style.getPropertyValue('--slot-gap'));
+      const fit = Math.floor((bank.clientWidth + gap) / (unit + gap)), columns = Number(bank.dataset.columns);
+      return columns <= Math.max(2, fit) && (fit < 9 || columns >= 6);
+    }, null, {timeout: 5000, polling: 100}).catch(() => null);
     return {...await orbital(), tier: await tier()};
   };
   const wide = await settle(1400);

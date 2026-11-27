@@ -590,16 +590,27 @@
   (r/with-let [limit (r/atom nil)
                node (atom nil)
                observer (atom nil)
-               attach! (fn [element]
+               resized (atom nil)
+               remeasure! #(when-let [n @node] (reset! limit (measure n)))
+               detach! (fn []
                          (some-> @observer .disconnect)
                          (reset! observer nil)
+                         (when-let [[win f] @resized] (.removeEventListener win "resize" f))
+                         (reset! resized nil))
+               attach! (fn [element]
+                         (detach!)
                          (reset! node element)
                          (when element
                            (reset! limit (measure element))
-                           (when-let [Observer (.-ResizeObserver (element-window element))]
-                             (let [o (Observer. #(when-let [n @node] (reset! limit (measure n))))]
-                               (.observe o element)
-                               (reset! observer o)))))]
+                           (let [win (element-window element)]
+                             ;; The window's own resize event backs up the
+                             ;; observer, e.g. for a popped-out panel.
+                             (.addEventListener win "resize" remeasure!)
+                             (reset! resized [win remeasure!])
+                             (when-let [Observer (.-ResizeObserver win)]
+                               (let [o (Observer. remeasure!)]
+                                 (.observe o element)
+                                 (reset! observer o))))))]
     (let [span-list (spans (or @limit 4))
           {:keys [columns rows cells]} (pack span-list (or @limit 4) exact?)]
       (into [:div (merge attrs {:ref attach! :data-columns columns :data-rows rows
@@ -613,7 +624,7 @@
                                      overlay)
                         (mapv #(nth keys %) (sort covers)))
                 {:key (nth keys index)}))))
-    (finally (some-> @observer .disconnect))))
+    (finally (detach!))))
 
 (defn control-slot
   "The standard slot of one bank control: its shared description's :slot,
