@@ -497,3 +497,59 @@
     (is (not-any? #(and (= (first (first-run [:band 0])) (first %)) (not (last %))) (vals second-run))
         "band's old slots stay unused, not given to another parameter")
     (is (= "Level" (:name (nth (:parameters (fake/parameter-device ls "Tolglow run a" 0)) (first (second-run [:level nil]))))))))
+
+(deftest a-performer-picking-an-earlier-value-is-a-move-not-an-echo
+  ;; Delta review of #769, finding A: without the companion's receipt the
+  ;; queue still holds earlier writes; on a choice slot or at a range end only
+  ;; the newest may be taken for an echo.
+  (let [{:keys [layout ctx state]} (owned)
+        writes (fn [state param values]
+                 (let [history (into {} (map-indexed (fn [i v] [(str "w" (name param) i)
+                                                                {:command {:op :param/set :instance-id "i1" :param param :value v :source {:adapter :studio}}
+                                                                 :ack {:status :accepted}}])
+                                                     values))]
+                   (devices/mirror-writes state (assoc-in ctx [:model :control] {:history history :history-order (vec (sort (keys history)))}))))
+        mode (get-in layout [:slots [:mode nil]])
+        level (get-in layout [:slots [:level nil]])
+        turn (fn [state slot v] (devices/ingest state ctx [{:type :parameter-device-value :track-id "track:1" :slot slot :value v}]))]
+    (testing "Studio went soft -> hard -> strobe; the performer picks hard in Live"
+      (let [state (:state (writes state :mode [:soft :hard :strobe]))
+            r (turn state mode 1)]
+        (is (= [[:mode :hard :live-input]] (mapv (juxt :param :value (comp :origin :source)) (:commands r))))))
+    (testing "Studio wrote 1.0 then 0.6; the performer turns the dial to its maximum"
+      (let [state (:state (writes state :level [1.0 0.6]))
+            r (turn state level 1.0)]
+        (is (= [1.0] (mapv :value (:commands r))))))
+    (testing "the newest write's echo is still dropped"
+      (let [state (:state (writes state :mode [:soft :strobe]))]
+        (is (empty? (:commands (turn state mode 2))))))
+    (testing "slots the companion reports as its own stop waiting for an echo"
+      (let [{:keys [state writes]} (writes state :level [0.3])
+            seqs (into {} (map (fn [{:keys [slot seq]}] [slot [seq]])) (:values (first writes)))
+            confirmed (devices/writes-confirmed state "track:1" [{:device 0 :index level}] seqs)]
+        (is (seq (get-in state [:echo ["track:1" level]])))
+        (is (empty? (get-in confirmed [:echo ["track:1" level]])))))))
+
+(deftest seeding-merges-every-lane-device-and-reports-conflicts
+  ;; Delta review of #769, finding B.
+  (let [configured {:ordinal 0 :parameters [{:index 0 :name "aim X"} {:index 1 :name "steps"} {:index 2 :name "Level"}]}
+        fresh {:ordinal 0 :parameters [{:index 0 :name "slot 1"} {:index 1 :name "slot 2"} {:index 2 :name "slot 3"}]}
+        other {:ordinal 0 :parameters [{:index 0 :name "aim X"} {:index 1 :name "mode"}]}]
+    (testing "an unconfigured device inspected after a configured one does not erase its names"
+      (is (= {:names {0 "aim X" 1 "steps" 2 "Level"} :conflicts []} (devices/merge-read-back [configured fresh])))
+      (is (= (devices/merge-read-back [configured fresh]) (devices/merge-read-back [fresh configured]))))
+    (testing "two configured devices naming one slot differently are reported and the slot is reserved"
+      (let [{:keys [names conflicts]} (devices/merge-read-back [configured other])
+            layout (devices/seed-layout {"aim X" [:aim 0] "Level" [:level nil] "mode" [:mode nil] "steps" [:steps nil]}
+                                        names (set (map :slot conflicts)) [[:aim 0] [:level nil] [:mode nil] [:steps nil]])]
+        (is (= [{:slot 1 :names ["mode" "steps"]}] conflicts))
+        (is (= 0 (get-in layout [:slots [:aim 0]])))
+        (is (= 2 (get-in layout [:slots [:level nil]])))
+        (is (not-any? #{1} (map (:slots layout) [[:mode nil] [:steps nil]])) "neither guess takes the disputed slot")))
+    (testing "shared labels are told apart by parameter ID, independent of order"
+      (let [twins (-> effect (assoc-in [:params :gain] {:type :number :bounds [0.0 1.0] :name "Level"}))
+            model (model-with (assoc-in registry [:effects :beam] twins))
+            names (fn [keys] (let [spec (devices/device-spec model :a (devices/allocate nil keys) nil)]
+                               (set (keep #(when (#{:level :gain} (:param %)) [(:param %) (:name %)]) (:slots spec)))))]
+        (is (= #{[:level "Level [level]"] [:gain "Level [gain]"]}
+               (names [[:level nil] [:gain nil]]) (names [[:gain nil] [:level nil]])))))))

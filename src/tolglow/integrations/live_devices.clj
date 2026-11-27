@@ -83,8 +83,24 @@
     :vector (mapv str (views/component-labels schema))
     [nil]))
 
+(def ^:dynamic ^:private *kinds*
+  "A call-local identity memo of slot-kind (ingest and mirror-writes bind
+  one), so each schema is classified once per owner step however many values
+  name it."
+  nil)
+
+(declare slot-kind*)
+
 (defn- slot-kind
   "What one parameter becomes in Live, or {:unsupported reason}."
+  [schema catalog]
+  (if-let [^java.util.IdentityHashMap memo *kinds*]
+    (if (.containsKey memo schema)
+      (.get memo schema)
+      (let [k (slot-kind* schema catalog)] (.put memo schema k) k))
+    (slot-kind* schema catalog)))
+
+(defn- slot-kind*
   [schema catalog]
   (let [type (controls/control-type schema catalog)
         listed (controls/choices schema catalog)]
@@ -146,27 +162,42 @@
 (defn- assign [layout k slot]
   (-> layout (assoc-in [:slots k] slot) (update :order conj k) (update :next max (inc slot))))
 
+(def ^:private unconfigured #"slot \d+")
+
+(defn merge-read-back
+  "One name per slot from every device a channel's run tracks show:
+  {:names {slot name} :conflicts [{:slot :names}]}. A configured name wins over
+  an unconfigured \"slot n\" whichever device was inspected first; two
+  devices naming one slot differently are a conflict, not a guess."
+  [devices]
+  (let [by-slot (reduce (fn [m {:keys [ordinal parameters]}]
+                          (reduce (fn [m {:keys [index name]}]
+                                    (if (and (string? name) (not (re-matches unconfigured name)) (integer? index))
+                                      (update m (+ (* slots-per-device (or ordinal 0)) index) (fnil conj #{}) name)
+                                      m))
+                                  m parameters))
+                        (sorted-map) devices)]
+    {:names (into {} (keep (fn [[slot names]] (when (= 1 (count names)) [slot (first names)]))) by-slot)
+     :conflicts (vec (for [[slot names] by-slot :when (> (count names) 1)] {:slot slot :names (vec (sort names))}))}))
+
 (defn seed-layout
   "A layout rebuilt from what a Set's parameter devices show, so a restarted
   show keeps every parameter on the slot its automation was recorded for.
   names->key maps a slot name the current spec would show to its
-  [param component]; read-back is the inspected devices
-  [{:ordinal o :parameters [{:index i :name n}]}]. A slot whose name the
-  current revision no longer produces (an Unused slot, a removed parameter)
-  stays reserved; a slot that was never configured (\"slot n\") is free.
-  Keys without a slot are then allocated after the highest one."
-  [names->key read-back keys]
+  [param component]; slot-names is merge-read-back's :names and reserved
+  its conflicting slots. A slot whose name the current revision no longer
+  produces (an Unused slot, a removed parameter) or that is in conflict stays
+  reserved; a slot never configured is free. Keys without a slot are then
+  allocated after the highest one."
+  [names->key slot-names reserved keys]
   (allocate
-   (reduce (fn [layout {:keys [ordinal parameters]}]
-             (reduce (fn [layout {:keys [index name]}]
-                       (let [slot (+ (* slots-per-device (or ordinal 0)) index)
-                             k (get names->key name)]
-                         (cond (some #{slot} (vals (:slots layout))) layout
-                               (and k (not (contains? (:slots layout) k))) (assign layout k slot)
-                               (or (not (string? name)) (re-matches #"slot \d+" name)) layout
-                               :else (assign layout [::reserved slot] slot))))
-                     layout (sort-by :index parameters)))
-           (new-layout) (sort-by :ordinal read-back))
+   (reduce (fn [layout [slot name]]
+             (let [k (when-not (contains? reserved slot) (get names->key name))]
+               (cond (some #{slot} (vals (:slots layout))) layout
+                     (and k (not (contains? (:slots layout) k))) (assign layout k slot)
+                     :else (assign layout [::reserved slot] slot))))
+           (reduce #(assign %1 [::reserved %2] %2) (new-layout) (sort reserved))
+           (sort-by key slot-names))
    keys))
 
 (defn devices-needed [layout] (max 1 (long (Math/ceil (/ (:next layout 0) (double slots-per-device))))))
@@ -235,12 +266,15 @@
                              :name (str "Unused " (inc slot)) :short-name (str "— " (inc slot))
                              :type :float :min 0.0 :max 1.0 :places 3 :widget :rotary))))
           slots (mapv (fn [k] (entry k (get-in layout [:slots k]))) (:order layout))
-          ;; Live wants distinct long names within a device.
-          slots (second (reduce (fn [[seen out] s]
-                                  (let [n (get seen [(:device s) (:name s)] 0)]
-                                    [(update seen [(:device s) (:name s)] (fnil inc 0))
-                                     (conj out (cond-> s (pos? n) (update :name str " " (inc n))))]))
-                                [{} []] slots))
+          ;; Live wants distinct long names within a device. Labels two
+          ;; parameters share are told apart by the parameter's own ID, never
+          ;; by position, so a reordered revision cannot swap them.
+          shared (into #{} (keep (fn [[n group]] (when (> (count group) 1) n))) (group-by :name (remove :retired? slots)))
+          slots (mapv (fn [s] (cond-> s
+                                (and (not (:retired? s)) (shared (:name s)))
+                                (assoc :name (str (:name s) " [" (clojure.core/name (:param s))
+                                                  (when (some? (:component s)) (str " " (:component s))) "]"))))
+                      slots)
           devices (devices-needed layout)
           by-key (into {} (map (juxt (juxt :param :component) :slot)) slots)]
       {:cue-id cue-id :effect-id (:effect-id cue) :effect-version (:version definition)
@@ -248,7 +282,7 @@
        :slots slots
        :banks (vec (for [d (range devices)]
                      (vec (map vec (partition-all bank-size
-                                                  (filter #(= d (quot % slots-per-device)) (map by-key keys)))))))
+                                                  (filter #(= d (quot % slots-per-device)) (keep by-key keys)))))))
        :unsupported unsupported})))
 
 (defn device-slots
@@ -405,14 +439,21 @@
                             d))
              [cue definition] (definition-of model cue-id)
              keys (when definition (:keys (slot-keys definition cue catalog)))
+             ;; A name two keys would share identifies neither.
              names->key (when definition
-                          (into {} (map (juxt :name (juxt :param :component)))
-                                (remove :retired? (:slots (device-spec model cue-id (allocate nil keys) catalog)))))
+                          (->> (:slots (device-spec model cue-id (allocate nil keys) catalog))
+                               (remove :retired?)
+                               (group-by :name)
+                               (keep (fn [[n slots]] (when (= 1 (count slots)) [n ((juxt :param :component) (first slots))])))
+                               (into {})))
+             {:keys [names conflicts]} (merge-read-back devices)
              layout (if (and (seq devices) definition)
-                      (try (seed-layout names->key (vals (into {} (map (juxt :ordinal identity)) devices)) keys)
+                      (try (seed-layout names->key names (set (map :slot conflicts)) keys)
                            (catch clojure.lang.ExceptionInfo _ layout))
                       layout)]
-         (assoc-in s [:layouts cue-id] (assoc layout :seeded? true)))))
+         (cond-> (assoc-in s [:layouts cue-id] (assoc layout :seeded? true))
+           (seq conflicts)
+           (update :seed-problems (fnil into []) (map #(assoc % :code :slot-name-conflict :cue-id cue-id) conflicts))))))
    state (:layouts state)))
 
 (defn specs
@@ -445,14 +486,42 @@
   16)
 
 (defn- echo-match
-  "The index of the outstanding write a reported value echoes, or nil."
+  "The index of the outstanding write a reported value echoes, or nil.
+  On a continuous slot any outstanding write may match: a drag's echoes come
+  back in order, and a performer landing on exactly an earlier float is not
+  plausible. On an integer, choice or toggle slot, or at either end of a
+  range, a performer can easily pick an earlier value, so only the newest
+  write may match: swallowing that move is harmless, the show already holds
+  it. (The companion reports the writes it suppressed itself, which clears
+  most queues before any value arrives.)"
   [entries value schema catalog]
   (let [{:keys [kind]} (slot-kind schema catalog)
         [lo hi] (live-bounds schema)
-        tolerance (if (#{:enum :toggle :integer} kind)
-                    0.5
-                    (* echo-tolerance (max 1e-9 (if (and lo hi (not= :color kind)) (- hi lo) 1.0))))]
-    (first (keep-indexed (fn [i {v :value}] (when (<= (Math/abs (- (double value) (double v))) tolerance) i)) entries))))
+        [lo hi] (if (= :color kind) [0.0 1.0] [lo hi])
+        discrete? (#{:enum :toggle :integer} kind)
+        tolerance (if discrete? 0.5 (* echo-tolerance (max 1e-9 (if (and lo hi) (- hi lo) 1.0))))
+        at-end? (and lo hi (or (<= (Math/abs (- (double value) (double lo))) tolerance)
+                               (<= (Math/abs (- (double value) (double hi))) tolerance)))
+        matches? (fn [{v :value}] (<= (Math/abs (- (double value) (double v))) tolerance))
+        newest (dec (count entries))]
+    (if (or discrete? at-end?)
+      (when (and (<= 0 newest) (matches? (nth entries newest))) newest)
+      (first (keep-indexed (fn [i e] (when (matches? e) i)) entries)))))
+
+(declare forget-writes)
+
+(defn writes-confirmed
+  "The companion executed a send and reports the slots ({:device :index})
+  whose values it set itself and will not report back, or already showed:
+  forget those writes (by their sequence numbers in that send) instead of
+  waiting for echoes that never come."
+  [state track-id own seqs-by-slot]
+  (forget-writes state track-id
+                 (into {} (keep (fn [{:keys [device index]}]
+                                  (when (and (integer? device) (integer? index))
+                                    (let [slot (+ (* slots-per-device device) index)]
+                                      (when-let [q (get seqs-by-slot slot)] [slot q])))))
+                       own)))
 
 (defn forget-writes
   "Forget the outstanding writes with these sequence numbers (a send that did
@@ -466,7 +535,16 @@
 
 (defn- slot-of [layout param component] (get-in layout [:slots [param component]]))
 
-(defn- key-of [layout slot] (some (fn [[k s]] (when (= s slot) k)) (:slots layout)))
+(def ^:dynamic ^:private *slot-index*
+  "A call-local identity memo of each layout's slot -> key index."
+  nil)
+
+(defn- key-of [layout slot]
+  (if-let [^java.util.IdentityHashMap memo *slot-index*]
+    (let [index (or (.get memo layout)
+                    (let [i (into {} (map (fn [[k s]] [s k])) (:slots layout))] (.put memo layout i) i))]
+      (get index slot))
+    (some (fn [[k s]] (when (= s slot) k)) (:slots layout))))
 
 (defn clip-started
   "A run clip started on a track: Live playback owns its slots again."
@@ -513,6 +591,7 @@
   parameter (the last value wins). A value that cannot be applied is counted
   and dropped; nothing here throws on Live's data."
   [state {:keys [model mirror player envelope-fn catalog now-ms] :as ctx} events]
+  (binding [*kinds* (java.util.IdentityHashMap.) *slot-index* (java.util.IdentityHashMap.)]
   (let [lanes (track-lanes mirror)
         now (or now-ms 0)
         state (-> state
@@ -603,7 +682,7 @@
                       (merge (envelope-fn)
                              {:op :param/set :instance-id instance-id :param param :value value
                               :source {:type :ableton :adapter :live-device :origin origin
-                                       :live/track-id track-id :live/slot slot}})))}))
+                                       :live/track-id track-id :live/slot slot}})))})))
 
 (defn waiting?
   "Do values wait for a replay's launch? The host then runs ingest even in a
@@ -647,6 +726,7 @@
   coalesced per track (the last value of a slot wins). A write that is not
   sent should be forgotten with forget-writes."
   [state {:keys [model mirror catalog now-ms present?] :as ctx}]
+  (binding [*kinds* (java.util.IdentityHashMap.)]
   (let [history (get-in model [:control :history])
         ids (fresh-ids state model)
         [state values]
@@ -697,7 +777,7 @@
                      :values (mapv (fn [[[_ slot] {:keys [value seq]}]]
                                      {:slot slot :device (quot slot slots-per-device) :index (mod slot slots-per-device)
                                       :value value :seq seq})
-                                   entries)}))}))
+                                   entries)}))})))
 
 ;; ---------------------------------------------------------------------------
 ;; Take moves as clip envelopes
@@ -791,4 +871,4 @@
    :holds (count (:holds state))
    :pending-echoes (count (:echo state))
    :counts (:counts state {})
-   :problems (:problems state [])})
+   :problems (into (vec (:problems state [])) (:seed-problems state))})

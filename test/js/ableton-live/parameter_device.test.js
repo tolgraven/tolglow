@@ -164,10 +164,24 @@ test("values the companion wrote for Tolglow are not reported back, and unchange
   live.request("configure-parameter-device", { "track-id": "track:" + track.id, "device-id": "device:" + device.id, ordinal: 0, slots: [level] });
   live.request("watch-run-tracks", { "track-ids": ["track:" + track.id] });
   const write = (v) => live.request("set-parameter-values", { "track-id": "track:" + track.id, values: [{ device: 0, index: 0, value: v }] });
-  assert.deepEqual(write(0.3).result, { written: 1, skipped: 0 });
-  assert.deepEqual(write(0.4).result, { written: 1, skipped: 0 });
-  assert.deepEqual(live.emitted, [], "the companion's own writes are not echoed");
-  assert.deepEqual(write(0.4).result, { written: 0, skipped: 1 }, "a slot already showing the value is skipped");
+  const own = [{ device: 0, index: 0 }];
+  assert.deepEqual(write(0.3).result, { written: 1, skipped: 0, own });
+  assert.deepEqual(write(0.4).result, { written: 1, skipped: 0, own });
+  assert.deepEqual(live.emitted, [], "the companion's own writes are not echoed, compared as Live's 32-bit floats");
+  assert.equal(device.params[1].props.value, Math.fround(0.4));
+  assert.deepEqual(write(0.4).result, { written: 0, skipped: 1, own }, "a slot already showing the value is skipped");
   live.turn(device.params[1].id, 0.25);
   assert.deepEqual(live.emitted.map(e => e.value), [0.25], "a performer's turn is still reported");
+});
+
+test("a performer returning to a value Tolglow wrote earlier is reported", () => {
+  const live = liveSet({ tracks: [{ name: "Tolglow run a", parameterDevices: 1 }] });
+  const track = live.song.tracks[0], [device] = live.parameterDevicesOf(0);
+  live.request("configure-parameter-device", { "track-id": "track:" + track.id, "device-id": "device:" + device.id, ordinal: 0, slots: [shape] });
+  live.request("watch-run-tracks", { "track-ids": ["track:" + track.id] });
+  const write = (v) => live.request("set-parameter-values", { "track-id": "track:" + track.id, values: [{ device: 0, index: 3, value: v }] });
+  write(0); write(1); write(2);   // soft -> hard -> strobe from Studio
+  assert.deepEqual(live.emitted, []);
+  live.turn(device.params[4].id, 1); // the performer picks hard in Live
+  assert.deepEqual(live.emitted.map(e => [e.value, e["value-changed?"]]), [[1, true]]);
 });

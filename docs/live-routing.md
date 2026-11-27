@@ -727,9 +727,14 @@ takes the next free slot, a removed one keeps its slot (shown as unused) and a
 re-added one gets its old slot back, so automation recorded in Live stays on
 its parameter. Layouts live in memory. On a channel's first sync after a
 start, the layout is rebuilt from the slot names its devices show in the Set
-(`seed-from-set`): a name the current revision still produces keeps its slot,
-any other configured name (an Unused slot, a removed parameter) stays
-reserved, and only new parameters get new slots. So a restart with a revision
+(`seed-from-set`). Names are merged across every lane track's devices: a
+configured name wins over an unconfigured `slot n` whichever device is read
+first, and two devices naming one slot differently are reported as
+`:slot-name-conflict` with the slot reserved. A name the current revision
+still produces keeps its slot, any other configured name (an Unused slot, a
+removed parameter) stays reserved, and only new parameters get new slots.
+Labels two parameters share get the parameter ID appended (`Level [gain]`),
+so their names do not depend on order. So a restart with a revision
 that dropped a parameter does not move automation onto another one. A device
 removed from the Set, or a Set opened without its devices, loses that memory.
 The spec follows the revision a cue launches (an `:effect-version` pin), and
@@ -798,9 +803,13 @@ adds threads. Only tracks whose device the last sync found are written. Each
 write joins its slot's outstanding writes (up to 16, forgotten after 3 s); a
 value Live reports that matches any of them (within 1e-5 of a continuous
 range, half a step otherwise) is that write's echo and retires it and every
-older one, so a drag's echoes never come back as performer moves. The
-companion also remembers the values it set and does not report them, and it
-skips a slot already showing the value. The slot holds Live automation until
+older one, so a drag's echoes never come back as performer moves. On an
+integer, choice or toggle slot, and at either end of a range, only the newest
+outstanding write may match, so a performer picking an earlier value is a
+move. The companion remembers the value it last set on each watched slot
+(compared as Live's 32-bit float) and does not report it, skips a slot
+already showing the value, and lists those slots as `:own` in its receipt;
+Tolglow then stops waiting for their echoes. The slot holds Live automation until
 Live reports the automation playing again after an override, or a run clip
 starts on that track. Nothing from Live (`:live-playback`, `:live-input`) or
 `:tolglow-feedback` is written back. A send that did not execute forgets only
@@ -809,11 +818,13 @@ sent. A ramp's committed values are `:param/set` commands and are mirrored;
 its per-frame values, like modulation, are not. A Tolglow colour write drops
 the hue a previous Live turn cached.
 
-**Cost.** Decoding a batch of 50 slot values takes about 250 µs and 5 values
-about 30 µs in the pooled REPL; collecting three writes about 12 µs. In the
-two-thread load test the owner step averaged under 100 µs with single spikes
-of several ms (JIT, GC and other lanes' load on this Mac). The projection
-reports `:cost` from the running show.
+**Cost.** The owner decodes at most 256 slot values per cycle and keeps the
+rest queued. Classifying a slot is memoised per decode, and the waveform
+catalog's index is built once per catalog change (it was rebuilt on every
+question, several times per value). With the built-in waveform catalog in
+the pooled REPL: 5 values take about 60 µs, 50 values about 210 µs, 256
+values (the per-cycle cap) about 660 µs; collecting three writes about
+25 µs. The projection reports `:cost` from the running show.
 Sending, rendering and every Live request stay off the owner thread.
 
 **Shared parameter frames.** `tolglow.visualization.parameter-frames` renders a

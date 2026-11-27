@@ -1039,13 +1039,19 @@
           [:figure.parameter-frame
            (when lease
              [:img {:width 320 :height 64 :alt (str "Shared frame of " (id-text param))
-                    ;; 410: the lease expired (the tab was hidden or asleep). Subscribe
-                    ;; again, at most every two seconds.
+                    ;; An image error is either 204 (no frame yet) or 410 (the lease
+                    ;; expired while the tab was hidden or asleep). Only a 410
+                    ;; subscribes again, at most every two seconds.
                     :on-error (fn [_]
                                 (when (> (- (js/Date.now) @resubscribed) 2000)
-                                  (reset! resubscribed (js/Date.now))
-                                  (rf/dispatch [:connections/frame-unsubscribe lease])
-                                  (rf/dispatch [:connections/frame-subscribe request])))
+                                  (-> (js/fetch (str "/api/parameter-frames/frame?latest=true&lease=" (js/encodeURIComponent lease)))
+                                      (.then (fn [response]
+                                               (when (and (= 410 (.-status response))
+                                                          (> (- (js/Date.now) @resubscribed) 2000))
+                                                 (reset! resubscribed (js/Date.now))
+                                                 (rf/dispatch [:connections/frame-unsubscribe lease])
+                                                 (rf/dispatch [:connections/frame-subscribe request]))))
+                                      (.catch (fn [_] nil)))))
                     :src (str "/api/parameter-frames/frame?latest=true&lease=" (js/encodeURIComponent lease) "&n=" @tick)}])
            [:figcaption.small.muted (str (id-text param) " · 4 beats" (when shared? " · shared with another view"))]]))})))
 

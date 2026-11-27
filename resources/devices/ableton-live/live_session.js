@@ -343,26 +343,31 @@
     var targets = values.map(function (v) {
       if (!v || !integer(v.device, 0, 7) || !integer(v.index, 0, SLOTS - 1) || !finite(v.value)) fault("value", "A slot value needs a device, an index and a number");
       var w = watched[v.device * SLOTS + v.index];
-      if (w) return {id: w.id, entry: w.entry, value: v.value};
+      if (w) return {id: w.id, entry: w.entry, value: v.value, device: v.device, index: v.index};
       if (!devices) { devices = {}; self.parameterDevices(track).forEach(function (d) { devices[d.ordinal] = d; }); }
       var d = devices[v.device];
       if (!d) fault("parameter-device-missing", "No Tolglow parameters device " + (v.device + 1) + " on that track");
       if (!d.parameters[v.index]) fault("slot-missing", "The parameter device has no slot " + (v.index + 1));
-      return {id: Number(self.slotParameters(self.object({id: idOf(d["device-id"], "device")}))[v.index].id), entry: null, value: v.value};
+      return {id: Number(self.slotParameters(self.object({id: idOf(d["device-id"], "device")}))[v.index].id), entry: null, value: v.value,
+        device: v.device, index: v.index};
     });
-    var written = 0, skipped = 0;
+    // Live keeps parameter values as 32-bit floats: compare in that precision.
+    var written = 0, skipped = 0, own = [];
     targets.forEach(function (t) {
       var parameter = self.object({id: t.id});
       var lo = Number(self.read(parameter, "min")), hi = Number(self.read(parameter, "max")), value = Math.max(lo, Math.min(hi, t.value));
-      if (t.entry && t.entry.value === value) { skipped++; return; }
+      if (t.entry && Math.fround(t.entry.value) === Math.fround(value)) { skipped++; own.push({device: t.device, index: t.index}); return; }
       if (!written) mark();
       if (t.entry) {
-        t.entry.own = (t.entry.own || []).concat([value]).slice(-16);
+        t.entry.own = (t.entry.own || []).concat([Math.fround(value)]).slice(-16);
+        own.push({device: t.device, index: t.index});
       }
       parameter.set("value", value);
       written++;
     });
-    return {written: written, skipped: skipped};
+    // own: slots whose value this write leaves unreported (suppressed or
+    // unchanged), so Tolglow stops waiting for their echo.
+    return {written: written, skipped: skipped, own: own};
   };
   // Envelope targets of a run clip: the slots of parameter devices on its track.
   Session.prototype.envelopeTargets = function (track, list, length) {
@@ -821,9 +826,15 @@
     if (!finite(value) || !integer(state, 0, 2) || (value === entry.value && state === entry.state)) return;
     var valueChanged = value !== entry.value;
     entry.value = value; entry.state = state;
-    // A value this companion just wrote for Tolglow is not reported back.
-    var own = (entry.own || []).indexOf(value);
-    if (valueChanged && own >= 0) { entry.own = entry.own.slice(own + 1); if (state === entry.reportedState) return; valueChanged = false; }
+    // The value this companion last wrote for Tolglow is not reported back.
+    // The deferred read sees the newest value, so only the newest write can
+    // match; a performer returning to an earlier value is reported.
+    var own = entry.own || [];
+    if (valueChanged && own.length && own[own.length - 1] === Math.fround(value)) {
+      entry.own = [];
+      if (state === entry.reportedState) return;
+      valueChanged = false;
+    } else if (valueChanged) entry.own = [];
     entry.reportedState = state;
     this.emit({type: "parameter-device-value", "track-id": "track:" + entry.track, slot: entry.slot, value: value,
       "automation-state": state, "value-changed?": valueChanged, "watch-session": this.watchSession, serial: ++this.watchSerial});

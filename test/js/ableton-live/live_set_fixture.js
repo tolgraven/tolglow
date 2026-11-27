@@ -127,6 +127,8 @@ function liveSet({ tracks = [], host = 0, canCapture = true, slots = 4, joinsGro
           value = palette.reduce((best, c) => (dist(c, value) < dist(best, value) ? c : best), palette[0]);
         }
         o.props[key] = value;
+        // Live stores a parameter value as a 32-bit float.
+        if (o.kind === "param" && key === "value") { o.props.value = Math.fround(value); value = o.props.value; }
         if (o.kind === "param" && key === "value") { o.props.automation_state = o.props.automation_state === 1 ? 2 : o.props.automation_state; notifyAll(o.id, "value", value); }
       },
       call(method, ...args) {

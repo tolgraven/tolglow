@@ -2174,6 +2174,8 @@
 
 (def ^:private device-inbox-limit 1024)
 
+(def ^:private device-events-per-cycle 256)
+
 (defn- device-catalog [model] (parameter-sources/waveform-options model))
 
 (defn- device-layouts
@@ -2216,7 +2218,12 @@
           (swap! state (fn [s]
                          (cond-> (-> (update-in s [:device-sends :requests] inc)
                                      (update-in [:device-sends :last-seq] (fnil max 0) (reduce max 0 (keep :seq ordered))))
-                           (= :executed status) (update-in [:device-sends :executed] inc)
+                           (= :executed status)
+                           (-> (update-in [:device-sends :executed] inc)
+                               ;; Slots the companion set itself (or found already showing
+                               ;; the value) send no echo: stop waiting for one.
+                               (update :devices live-devices/writes-confirmed track-id (get-in receipt [:result :own])
+                                       (into {} (keep (fn [{:keys [slot seq]}] (when seq [slot [seq]]))) ordered)))
                            (= :not-connected (:code receipt)) (update-in [:device-sends :not-connected] inc)
                            (not= :executed status)
                            (-> (update-in [:device-sends :failed] inc)
@@ -2228,12 +2235,17 @@
   "On the writer thread: send what waits, then look again, until the outbox
   is empty; only then may the owner schedule another drain."
   [runtime state]
-  (loop []
-    (let [[old _] (swap-vals! state assoc :device-outbox {})]
-      (when (seq (:device-outbox old))
-        (send-device-writes! runtime state (:device-outbox old))))
-    (let [[old _] (swap-vals! state (fn [s] (if (empty? (:device-outbox s)) (assoc s :device-flush? false) s)))]
-      (when (seq (:device-outbox old)) (recur)))))
+  (try
+    (loop []
+      (let [[old _] (swap-vals! state assoc :device-outbox {})]
+        (when (seq (:device-outbox old))
+          (send-device-writes! runtime state (:device-outbox old))))
+      (let [[old _] (swap-vals! state (fn [s] (if (empty? (:device-outbox s)) (assoc s :device-flush? false) s)))]
+        (when (seq (:device-outbox old)) (recur))))
+    (finally
+      ;; Never leave the flag set by an escaped exception: the owner would stop
+      ;; scheduling drains and writes would pile up unsent.
+      (swap! state assoc :device-flush? false))))
 
 (defn- device-present?
   "From the last sync: does this run track hold parameter device d?"
@@ -2252,8 +2264,10 @@
         lock (:player-lock @state)
         [commands writes]
         (locking lock
-          (let [[old _] (swap-vals! state assoc :device-inbox [])
-                events (:device-inbox old)
+          (let [;; At most device-events-per-cycle values are decoded per owner
+                ;; step; the rest stay queued, in order, for the next one.
+                [old _] (swap-vals! state update :device-inbox #(vec (drop device-events-per-cycle %)))
+                events (vec (take device-events-per-cycle (:device-inbox old)))
                 s (device-layouts @state model)
                 ctx {:model model :record (:record s) :mirror (:mirror s) :player (:player s) :catalog catalog
                      :now-ms (now-ms runtime) :present? (device-present? (:mirror s))
