@@ -437,9 +437,11 @@
 
 (def ^:private view-titles {:spatial "3D" :color "Colour" :history "History"})
 
-(rf/reg-sub ::view-state (fn [db [_ key]] (get-in db [:ui :plot-views key])))
+;; Under their own top-level key, so a plot's choice re-runs only its own
+;; subscription; events/install-show prunes entries whose launch is gone.
+(rf/reg-sub ::view-state (fn [db [_ key]] (get-in db [:plot-views key])))
 
-(rf/reg-event-db ::view-state-set (fn [db [_ key field value]] (assoc-in db [:ui :plot-views key field] value)))
+(rf/reg-event-db ::view-state-set (fn [db [_ key field value]] (assoc-in db [:plot-views key field] value)))
 
 (defn- view-state
   "The view choice and beat window of a plot: local to the plot, or, with a

@@ -576,16 +576,19 @@
 
 (defn fluid-style
   "Track and smallest row size for `columns` stretched tracks across
-  `width`. The tracks fill the width; the row height follows the track up
-  to the stretch limit. The grid's rows then share any further height the
-  card gives the bank (a card grown beside a taller one), and every widget
-  sizes to the smaller side of its slot, so pads stay square and knobs
-  grow into the space instead of leaving a band."
+  `width`, each at most the stretch limit (so a lone strip knob stays near
+  twice its usual size; the grid centres in the card). The grid's rows then
+  share any further height the card gives the bank (a card grown beside a
+  taller one), and every widget sizes to the smaller side of its slot, so
+  pads stay square."
   [surface columns width & [control-count]]
   (let [{:keys [min ratio gap]} (fluid-units surface)
         stretch (fluid-stretch surface control-count)
-        track (js/Math.max min (/ (- width (* gap (dec columns))) (max 1 columns)))
-        row-track (js/Math.min track (* stretch min))]
+        track (js/Math.max min (js/Math.min (* stretch min) (/ (- width (* gap (dec columns))) (max 1 columns))))
+        ;; Rows keep the surface's usual stretch, so one or two controls widen
+        ;; their slot without making it needlessly tall; extra card height
+        ;; still reaches them through the grid's 1fr rows.
+        row-track (js/Math.min track (* (:stretch (fluid-units surface)) min))]
     {"--slot-col" (str (js/Math.floor track) "px") "--slot-row" (str (js/Math.floor (* ratio row-track)) "px")}))
 
 (defn overlay-anchor
@@ -1025,7 +1028,11 @@
      (when (:arranging? macro-card) [card-size-picker macro-card title (count controls)])
      (when (seq shown)
        [:div.live-effect-body
-        ^{:key (if expanded? "detail" "strip")} [parameter-bank show instance shown (not expanded?) parameter-control (some? macro-card)]
+        ;; One or two controls in a macro card use their Detail form (knob,
+        ;; slider and exact entry): the card's room holds useful controls
+        ;; rather than one enlarged knob.
+        (let [detail? (or expanded? (and macro-card (<= (count shown) 2)))]
+          ^{:key (if detail? "detail" "strip")} [parameter-bank show instance shown (not detail?) parameter-control (some? macro-card)])
         (when (< (count shown) (count controls))
           [:p.live-effect-more (str (- (count controls) (count shown)) " more in the medium and large sizes")])
         (if expanded?

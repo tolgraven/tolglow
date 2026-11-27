@@ -344,9 +344,15 @@ export async function checkCardGrid(page, profile, directory, measurement) {
   for (const {name, blank, row} of bands)
     assert.ok(blank <= row, `${profile}: ${name} has ${blank} px of blank space above its action row (one row is ${row} px)`);
   result.macroBlank = Object.fromEntries(bands.map(b => [b.name, b.blank]));
-  // A small card's single knob fills the card rather than its margins.
-  const knob = await members.filter({has: page.getByRole('heading', {name: 'Solitary', exact: true})}).locator('.parameter-rotary-control').boundingBox();
-  assert.ok(knob.width >= Math.min(solitary.width - 140, 170), `${profile}: a one-knob small card grows its knob (${Math.round(knob.width)} px in ${solitary.width})`);
+  // A lone control in a macro card uses its Detail form (knob, slider and
+  // exact entry) at a bounded size, not one enlarged knob.
+  const lone = members.filter({has: page.getByRole('heading', {name: 'Solitary', exact: true})});
+  assert.equal(await lone.locator('[data-slot-grid=detail] .numeric-exact').count(), 1, `${profile}: a lone-control card shows the exact entry`);
+  const knobs = await members.locator('.parameter-rotary-control').evaluateAll(all => all.map(k => Math.round(k.getBoundingClientRect().width)));
+  assert.ok(knobs.every(w => w <= 210), `${profile}: no macro knob is wider than 210 px (${knobs})`);
+  const loneKnob = (await lone.locator('.parameter-rotary-control').boundingBox()).width;
+  assert.ok(loneKnob >= 110, `${profile}: the lone knob still uses its room (${Math.round(loneKnob)} px)`);
+  result.knobs = {lone: Math.round(loneKnob), max: Math.max(...knobs)};
   assert.equal(await page.locator('.live-effect-grid>[data-live-instance][data-card-size]').count(), 0,
     `${profile}: default cards never take a custom size`);
 

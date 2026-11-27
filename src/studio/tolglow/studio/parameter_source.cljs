@@ -475,6 +475,12 @@
              [:button.button {:type "button" :disabled (or (:pending? in-flight) (not current))
                               :on-click #(do (when forget! (forget!)) (rf/dispatch [::unbind id param]))} "Detach LFO"]])]]))))
 
+(defn lfo-identity
+  "What tells one bound LFO from another: its projected :identity, else its
+  binding (older projections)."
+  [lfo]
+  (when lfo (or (:identity lfo) (:binding lfo))))
+
 (defn remembered-lfo
   "The next state of an LFO panel's memory, {:known :seen :detaching}, given
   what the projection shows now (`current`, at `revision`) and whether a
@@ -487,9 +493,12 @@
   - The binding this panel asked to detach is not learned again while the
     projection still shows it."
   [{:keys [known seen detaching] :as state} {:keys [current revision pending?]}]
-  (let [binding (:binding current)]
+  ;; LFOs compare by their projected :identity (bound-at, definition and
+  ;; waveform versions), not their settings, so a detach followed by a
+  ;; re-attach with identical settings is a new LFO.
+  (let [current-id (lfo-identity current)]
     (cond
-      (and current (not= binding detaching)) {:known current :seen revision :detaching detaching}
+      (and current (not= current-id detaching)) {:known current :seen revision :detaching detaching}
       current state
       :else (cond-> (assoc state :detaching nil)
               (and known (not pending?) (integer? revision) (integer? seen) (> revision seen))
@@ -508,12 +517,12 @@
           revision @(rf/subscribe [::view-revision])
           pending? (boolean (:pending? @(rf/subscribe [::request id param])))
           {:keys [known detaching]} (swap! memory remembered-lfo {:current current :revision revision :pending? pending?})
-          live (when (not= (:binding current) detaching) current)
+          live (when (not= (lfo-identity current) detaching) current)
           lfo (or live known)]
       (with-meta [lfo-editor id param schema base source catalog instance
                   {:shown lfo :current live
-                   :forget! #(swap! memory (fn [m] (assoc m :detaching (:binding (:known m)) :known nil :seen nil)))}]
-        {:key (pr-str (:binding lfo))}))))
+                   :forget! #(swap! memory (fn [m] (assoc m :detaching (lfo-identity (:known m)) :known nil :seen nil)))}]
+        {:key (pr-str (lfo-identity lfo))}))))
 
 (defn- source-label [{:keys [type binding controller-id source-id controller lane-note source id]}]
   (case (keyword type)
