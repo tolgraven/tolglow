@@ -1113,6 +1113,17 @@ Studio and Push read one committed response sample instead of evaluating the res
 
 Studio does not display these lease faults yet. Close the gap when Studio shows the same fault records as the REPL. [Issue #533](https://github.com/tolgraven/tolglow/issues/533) · [PR #624](https://github.com/tolgraven/tolglow/pull/624)
 
+Each committed frame has one shared parameter sample, held beside the committed state. The Studio stream, the Push parameter display, waveform previews, cue pad prediction and the REPL resolve an instance's effective parameters from it at most once per frame, whether or not a lease retained the owner's response inputs. A Push display leases those inputs only while it shows parameters or audio, not scene, block-trace or pad-overlay views. The REPL reads the same frame:
+
+```clojure
+(show/parameter-sample runtime)
+;; => {:identity {:show-id :main :epoch 0 :frame-number 6 :time-ms 375 :transport-generation 0}
+;;     :instances [{:instance-id "0:1" :definition-version 1 :params {:level 0.5625 ...}
+;;                  :response-values [{:id :gain :value 0.75 ...}]}]}
+```
+
+Studio shows the same values as `:parameter-sources` effective values on each instance, identified by the stream's `:epoch`, `:frame-number` and `:transport-generation`. Studio has no view of the whole-frame sample itself. [Waveform projections](waveform-projections.md#shared-parameter-sample) · [Issue #533](https://github.com/tolgraven/tolglow/issues/533)
+
 Calibrated paired aim arrival uses one host operation from both surfaces. In Studio, **Rig & space → Draw path → Arrive together using calibrated motor rates** lists, reopens, publishes and converts synchronized paths. Studio always sends `:sync-arrival?` explicitly and shows the solved arrival time or the refusal. The REPL submits the same `:aim-path` operation and reads `:arrival-duration-ms` from the acknowledgement. Launch refusals (`:stale-calibration`, `:start-wrap-mismatch`) come back from the shared launch command on both surfaces. A launch at a tempo too fast for the motors is stretched rather than refused on both surfaces. The shared launch acknowledgement and the running instance carry `:arrival-stretch`; the REPL reads it from the acknowledgement, but Studio's cue grid does not display it yet. [Aim paths](aim-paths.md#calibrated-paired-arrival) · [Issue #481](https://github.com/tolgraven/tolglow/issues/481)
 
 ```clojure
@@ -1123,6 +1134,8 @@ Calibrated paired aim arrival uses one host operation from both surfaces. In Stu
 The remaining gaps are tracked in issue #481. Studio has no editor for `:calibration :motor-rate-deg-per-sec`, so rates are set through the rig data or the REPL. Studio also cannot display the physical `:minimum-travel-ms` or the fingerprint behind a stale-calibration refusal. Close these gaps when an operator can enter rates in the fixture inspector and see why a launch was refused without the REPL.
 
 Retrospective Capture has a shared operation. The runtime owns the capture buffer. `show/capture-phrase!` at the REPL and **Connections → Capture** in Studio both call `show/capture-action!` with `:capture`. The REPL receives the phrase; Studio receives its summary and a MIDI clip download of the same capture (`:smf`). `(show/capture-action! rt :status {})` reads the buffer and the last capture that both surfaces show. Two gaps remain. Writing the capture into Live from Studio (`live-connection/capture!` over the configured bridge) is REPL-only, and Push has no Capture button: the uniform surface layer lives with the Push controllers, outside this change. Close them when Studio and Push both send the last capture to Live and the REPL can read the resulting clip identities. [Capture into Live](live-routing.md#capture-the-last-phrase-into-live) · [Issue #671](https://github.com/tolgraven/tolglow/issues/671) · [Issue #680](https://github.com/tolgraven/tolglow/issues/680)
+
+Rig editor placement and aim calibration use the shared rig and fixture operations from both surfaces. In Studio, **Rig & space → Place fixture** builds the draft instance with `tolglow.rig.placement/place` and **Save rig** sends it through `POST /api/rig`. The REPL builds the same marked entry with the same function, or writes `{:placement? true :fixture-type-id … :id … :universe … :address …}` itself, and calls `(show/submit! runtime :rig rig)`. On both surfaces the host instantiates marked entries from the registry, refuses one without documented movement travel, and leaves every unmarked fixture as submitted. **Calibrate aim** calls `POST /api/fixtures/aim-check` and `aim-fit`, which are `(show/fixture-action! runtime :aim-check …)` and `:aim-fit` at the REPL; **Send test aim** is the ordinary `:surface-aim` operation. A REPL rig edit redraws the open editor through the state stream. Remaining gaps: the fit proposes mounting rotation only, not travel ranges or reversal, and Studio has no pan/tilt jog control, so observations take the committed output or typed DMX values. [Rig editor](rig-editor.md#place-fixtures-from-the-library) · [Issue #226](https://github.com/tolgraven/tolglow/issues/226)
 
 ## See what ran as Live runs
 

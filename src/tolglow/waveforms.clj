@@ -71,30 +71,155 @@
                (Objects/equals (:responses owner) (:responses model)))
       owner)))
 
+(defn- snapshot-overrides [{:keys [resolved-param-overrides modulation-view]}]
+  (or resolved-param-overrides (:overrides modulation-view)))
+
+(defn- once
+  "A memo of f that runs f at most once under races. A Throwable that escapes
+  f is rethrown to that caller and nothing is cached, so the next reader retries."
+  [f]
+  (let [lock (Object.) cell (volatile! nil)]
+    (fn []
+      (or @cell (locking lock (or @cell (let [value (f)] (vreset! cell value) value)))))))
+
+(defn- independent-inputs
+  "Resolve one snapshot's instances on the caller: the owner's retained response
+  sample when it matches exactly, otherwise the response chain compiled once
+  for this resolver."
+  [{:keys [model] :as snapshot} compile-responses]
+  (let [owner (response-frame snapshot)
+        overrides (snapshot-overrides snapshot)
+        middleware (once #(let [responses (filterv (fn [response] (not= false (:enabled? response))) (:responses model []))]
+                            (if (seq responses) (compile-responses responses) identity)))]
+    (fn [instance]
+      (let [sample (when owner (runtime/observe instance [::response-inputs nil]))
+            instance (update instance :params merge (get overrides (:id instance)))
+            clock (instance-clock model instance)]
+        (if (and sample (identical? owner (:owner sample))
+                 (= (response-instance instance) (:instance sample))
+                 (Objects/equals clock (:clock sample))
+                 (Objects/equals (:schemas sample) (get-in instance [:definition :params]))
+                 (Objects/equals (:params sample) (:params instance)))
+          {:instance (assoc instance :params (:effective sample)) :frame clock
+           :response-values (:responses sample)}
+          ((middleware) {:instance instance :frame clock}))))))
+
+(defn- frame-identity [{:keys [model transport-generation]}]
+  (assoc (select-keys model [:show-id :epoch :frame-number :time-ms])
+         :transport-generation (or transport-generation 0)))
+
+(defn- frame-slot
+  "The shared, lazily resolved parameter sample of one committed state."
+  [state seq-number]
+  (let [render (delay (independent-inputs state response/compile-middleware))
+        monitor (delay (independent-inputs state response/monitor-middleware))
+        model (:model state)]
+    {:state state :seq seq-number :identity (frame-identity state) :overrides (snapshot-overrides state)
+     :status-error (get-in state [:status :error]) :responses (:responses model) :transport (:transport model)
+     :instances (delay (into {} (map (fn [[id instance]]
+                                       [id {:instance instance
+                                            ;; A failing response chain is data: it is kept for the
+                                            ;; frame. A VM error or other Throwable is not cached.
+                                            :resolved (once #(try {:context (@render instance)}
+                                                                  (catch Exception error {:error error})))
+                                            ;; Diagnosed only when a monitor asks; a failure is retried.
+                                            :diagnosed (once #(@monitor instance))}]))
+                             (:instances model)))}))
+
+;; Owner-held side table: each running show's latest committed state and its
+;; shared sample, keyed by the show's state atom. Committed states stay plain
+;; data; the memo lives only here and is replaced on every commit.
+(defonce ^:private frame-slots (atom {:seq 0 :slots {}}))
+
+(def ^:private max-frame-slots
+  "Live shows whose latest frame is kept. A show that is never stopped is
+  dropped once this many newer shows have committed."
+  32)
+
+(defn remember-frame!
+  "Record state as owner's latest committed frame, replacing its previous
+  sample. Nothing is resolved here: the first consumer that reads an instance
+  resolves it once and every other consumer of that committed state reads the
+  result. Returns state unchanged. Called by the show owner at commit."
+  [owner state]
+  (swap! frame-slots
+         (fn [{counter :seq slots :slots}]
+           (let [slots (assoc slots owner (frame-slot state counter))
+                 slots (if (<= (count slots) max-frame-slots) slots
+                           (dissoc slots (key (apply min-key (comp :seq val) slots))))]
+             {:seq (inc counter) :slots slots})))
+  state)
+
+(defn forget-frames!
+  "Drop owner's shared sample, when its show stops."
+  [owner]
+  (swap! frame-slots update :slots dissoc owner)
+  nil)
+
+(defn- matching-slot
+  "The shared sample taken from this snapshot's exact inputs: show, epoch,
+  frame number, time, transport generation, overrides, frame error, responses
+  and transport. Derived copies such as a Push view with its runtime ID match;
+  any copy that changes one of those inputs resolves independently."
+  [snapshot]
+  (let [slots (vals (:slots @frame-slots))]
+    (or (some #(when (identical? snapshot (:state %)) %) slots)
+        (let [model (:model snapshot) overrides (snapshot-overrides snapshot)
+              status-error (get-in snapshot [:status :error])]
+          (some #(when (and (identical? overrides (:overrides %))
+                            (identical? status-error (:status-error %))
+                            (identical? (:responses model) (:responses %))
+                            (identical? (:transport model) (:transport %))
+                            (= (:identity %) (frame-identity snapshot)))
+                   %)
+                slots)))))
+
+(defn- shared-entry [slot snapshot instance]
+  (when-let [entry (get @(:instances slot) (:id instance))]
+    (when (and (identical? instance (:instance entry))
+               (identical? instance (get-in snapshot [:model :instances (:id instance)])))
+      entry)))
+
 (defn resolved-inputs
-  "Read typed responses from the matching successful owner frame, with an
-  independent resolver for absent, faulted or differently timed samples."
+  "Read typed responses for a snapshot's instances. A committed owner state
+  shares one resolution per instance between every consumer (Studio, Push,
+  previews, cue pads); edited snapshots, other middleware and absent samples
+  resolve independently, from the matching owner frame when there is one."
   ([snapshot] (resolved-inputs snapshot response/compile-middleware))
-  ([{:keys [model resolved-param-overrides modulation-view] :as snapshot} compile-responses]
-   (let [owner (response-frame snapshot)
-         overrides (or resolved-param-overrides (:overrides modulation-view))
-         middleware (delay (let [responses (filterv #(not= false (:enabled? %)) (:responses model []))]
-                             (if (seq responses) (compile-responses responses) identity)))]
+  ([snapshot compile-responses]
+   (let [mode (condp identical? compile-responses
+                response/compile-middleware :render
+                response/monitor-middleware :monitor
+                nil)
+         slot (delay (when mode (matching-slot snapshot)))
+         independent (delay (independent-inputs snapshot compile-responses))]
      (fn [instance]
-       (let [sample (when owner (runtime/observe instance [::response-inputs nil]))
-             instance (update instance :params merge (get overrides (:id instance)))
-             clock (instance-clock model instance)]
-         (if (and sample (identical? owner (:owner sample))
-                  (= (response-instance instance) (:instance sample))
-                  (Objects/equals clock (:clock sample))
-                  (Objects/equals (:schemas sample) (get-in instance [:definition :params]))
-                  (Objects/equals (:params sample) (:params instance)))
-           {:instance (assoc instance :params (:effective sample)) :frame clock
-            :response-values (:responses sample)}
-           (@middleware {:instance instance :frame clock})))))))
+       (if-let [entry (some-> @slot (shared-entry snapshot instance))]
+         (let [{:keys [context error]} ((:resolved entry))]
+           (cond context context
+                 (= :monitor mode) ((:diagnosed entry))
+                 :else (throw error)))
+         (@independent instance))))))
 
 (defn effective-params [snapshot instance]
   (get-in ((resolved-inputs snapshot) instance) [:instance :params]))
+
+(defn frame-parameters
+  "The shared resolved parameter sample of one committed state: its identity
+  (show, epoch, frame number, time and transport generation) and each running
+  instance in launch order, with its effective parameters and response values.
+  Reading it resolves each instance at most once per committed state, shared
+  with every other consumer. An instance whose responses fail carries :error."
+  [snapshot]
+  (let [resolve (resolved-inputs snapshot)]
+    {:identity (frame-identity snapshot)
+     :instances (mapv (fn [instance]
+                        (merge {:instance-id (:id instance) :definition-version (:effect-version instance)}
+                               (try (let [{:keys [instance response-values]} (resolve instance)]
+                                      (cond-> {:params (:params instance)}
+                                        (seq response-values) (assoc :response-values response-values)))
+                                    (catch Exception error {:error (.getMessage error)}))))
+                      (sort-by (juxt #(:order % 0) :id) (vals (get-in snapshot [:model :instances]))))}))
 
 (defn- normalized-selection [waveforms selection]
   (if (map? selection)

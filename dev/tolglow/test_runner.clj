@@ -41,7 +41,7 @@
     tolglow.fixtures.definitions-test tolglow.fixtures.library-test
     tolglow.connections-test tolglow.studio.connections-host-test
     tolglow.studio.output-options-test
-    tolglow.studio.fixture-host-test tolglow.rig-test tolglow.pixel-layout-test tolglow.pixel-layout-host-test tolglow.rig-surfaces-test
+    tolglow.studio.fixture-host-test tolglow.rig-placement-test tolglow.rig-test tolglow.pixel-layout-test tolglow.pixel-layout-host-test tolglow.rig-surfaces-test
     tolglow.reflected-surfaces-test tolglow.fixture-photometry-test
     tolglow.rig.rdm-test tolglow.studio.rdm-host-test
     tolglow.integrations.live-sync-test tolglow.integrations.phrase-capture-test tolglow.integrations.phrase-clip-test
@@ -55,7 +55,7 @@
     tolglow.development.workspace-test tolglow.development-test tolglow.studio.restart-host-test tolglow.cue-timing-host-test
     tolglow.development.terminal-test tolglow.sensors-test tolglow.sensors.osc-test tolglow.sensors.audience-test
     tolglow.studio.sensor-host-test tolglow.output.scheduler-test tolglow.perf.output-deadlines-test
-    tolglow.waveforms-test tolglow.development.agents-test tolglow.studio.application-agent-host-test
+    tolglow.waveforms-test tolglow.parameter-sample-test tolglow.development.agents-test tolglow.studio.application-agent-host-test
     tolglow.render.workers-test tolglow.request-archive-test
     tolglow.knobs-test tolglow.knob-sweep-test tolglow.controllers.push-knobs-test tolglow.knob-presets-test
     tolglow.knob-candidates.generate-test tolglow.knob-candidates-test
