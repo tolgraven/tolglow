@@ -437,23 +437,41 @@
 
 (def ^:private view-titles {:spatial "3D" :color "Colour" :history "History"})
 
+(rf/reg-sub ::view-state (fn [db [_ key]] (get-in db [:ui :plot-views key])))
+
+(rf/reg-event-db ::view-state-set (fn [db [_ key field value]] (assoc-in db [:ui :plot-views key field] value)))
+
+(defn- view-state
+  "The view choice and beat window of a plot: local to the plot, or, with a
+  `view-key`, kept in app-db under that key, so a plot that unmounts while
+  its source briefly stops driving comes back with the operator's choice."
+  [view-key local-choice local-window]
+  (if view-key
+    (let [{:keys [choice window]} @(rf/subscribe [::view-state view-key])]
+      {:choice (or choice :auto) :window (or window 4)
+       :set-choice! #(rf/dispatch-sync [::view-state-set view-key :choice %])
+       :set-window! #(rf/dispatch-sync [::view-state-set view-key :window %])})
+    {:choice @local-choice :window @local-window
+     :set-choice! #(reset! local-choice %) :set-window! #(reset! local-window %)}))
+
 (defn studio [schema value & [options]]
-  (r/with-let [choice (r/atom :auto) window (r/atom 4)]
-    (let [mode (views/studio-view schema @choice)]
+  (r/with-let [local-choice (r/atom :auto) local-window (r/atom 4)]
+    (let [{:keys [choice window set-choice! set-window!]} (view-state (:view-key options) local-choice local-window)
+          mode (views/studio-view schema choice)]
       [:div.parameter-visualizer
        [:div.parameter-views
         (for [view (views/studio-choices schema)]
           ^{:key view}
           [:button {:type "button" :aria-pressed (= mode view)
                     :on-click (if (= :history view)
-                                #(swap! choice (partial history-toggle schema))
-                                #(reset! choice view))}
+                                #(set-choice! (history-toggle schema choice))
+                                #(set-choice! view))}
            (view-titles view)])
         (when (= mode :history)
-          [:label "Window " [:select {:value @window :aria-label "Parameter history beat window"
-                                     :on-change #(reset! window (js/Number (.. % -target -value)))}
+          [:label "Window " [:select {:value window :aria-label "Parameter history beat window"
+                                     :on-change #(set-window! (js/Number (.. % -target -value)))}
                             (for [zoom zooms] ^{:key zoom} [:option {:value zoom} (str zoom " beats")])]])]
        (when (#{:spatial :color :history} mode)
          [watch-visibility
           (fn [visible?] (when visible?
-                           ^{:key mode} [visible-visual mode schema value @window options]))])])))
+                           ^{:key mode} [visible-visual mode schema value window options]))])])))

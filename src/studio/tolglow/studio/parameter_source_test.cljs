@@ -171,3 +171,21 @@
     (is (nil? (performance/modulated-priority high destination)))
     (is (nil? (performance/modulated-priority (assoc-in low [:parameter-sources :layer/priority :effective-value] 0) destination)))
     (is (nil? (performance/modulated-priority (assoc-in low [:parameter-sources :layer/priority :sources 0 :held?] true) destination)))))
+
+(deftest an-lfo-panel-remembers-through-a-gap-and-forgets-a-confirmed-absence
+  (let [lfo {:type :lfo :binding {:waveform :sine}}
+        step (fn [state & {:as input}] (source/remembered-lfo state input))
+        seen (step {} :current lfo :revision 10 :pending? false)]
+    (is (= lfo (:known seen)))
+    (testing "a brief gap during a round trip (resume) keeps the LFO"
+      (is (= lfo (:known (step seen :current nil :revision 10 :pending? false))) "at the revision that showed it")
+      (is (= lfo (:known (step seen :current nil :revision 15 :pending? true))) "while a request is pending"))
+    (testing "an unbind from the REPL is confirmed at the next revision without it"
+      (is (nil? (:known (step seen :current nil :revision 11 :pending? false)))))
+    (testing "this panel's own detach is not learned again while the projection still shows it"
+      (let [detaching (assoc seen :known nil :detaching (:binding lfo))]
+        (is (nil? (:known (step detaching :current lfo :revision 11 :pending? true))))
+        (is (nil? (:detaching (step detaching :current nil :revision 12 :pending? false))))))
+    (testing "a new binding is learned"
+      (let [other {:type :lfo :binding {:waveform :saw}}]
+        (is (= other (:known (step seen :current other :revision 11 :pending? false))))))))

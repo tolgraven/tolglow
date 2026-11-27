@@ -242,13 +242,13 @@
   [source]
   (some #(when (and (driving-source? %) (= :lfo (keyword (:type %)))) (:period-beats %)) (:sources source)))
 
-(defn result-visual [view instance param schema]
+(defn result-visual [view instance param schema & [options]]
   (when (driven? instance param)
     (let [source (reading instance param)]
       [result-view view instance schema #(native-value instance param) (driving-block source)
-       {:period-beats (source-period source)}])))
+       (merge options {:period-beats (source-period source)})])))
 
-(defn axes-visual [view instance components schema]
+(defn axes-visual [view instance components schema & [options]]
   (let [axis (fn [[param spec]]
                (if (driven? instance param)
                  (native-value instance param)
@@ -256,7 +256,7 @@
         sample (fn [] (let [values (mapv axis components)] (when (every? some? values) values)))
         block? (some (fn [[k _]] (driving-block (reading instance k))) components)]
     [result-view view instance schema sample block?
-     {:period-beats (some (fn [[k _]] (source-period (reading instance k))) components)}]))
+     (merge options {:period-beats (some (fn [[k _]] (source-period (reading instance k))) components)})]))
 
 (defn- owner-document [^js event] (some-> event .-currentTarget .-ownerDocument))
 
@@ -475,22 +475,44 @@
              [:button.button {:type "button" :disabled (or (:pending? in-flight) (not current))
                               :on-click #(do (when forget! (forget!)) (rf/dispatch [::unbind id param]))} "Detach LFO"]])]]))))
 
+(defn remembered-lfo
+  "The next state of an LFO panel's memory, {:known :seen :detaching}, given
+  what the projection shows now (`current`, at `revision`) and whether a
+  request for this parameter is pending. The panel shows `:known`.
+  - A brief gap during a round trip keeps the LFO: while a request is
+    pending, or while the projection is still at the revision that last
+    showed it.
+  - An absence confirmed past that (an unbind from the REPL or another
+    surface) forgets it, so the panel offers Attach again.
+  - The binding this panel asked to detach is not learned again while the
+    projection still shows it."
+  [{:keys [known seen detaching] :as state} {:keys [current revision pending?]}]
+  (let [binding (:binding current)]
+    (cond
+      (and current (not= binding detaching)) {:known current :seen revision :detaching detaching}
+      current state
+      :else (cond-> (assoc state :detaching nil)
+              (and known (not pending?) (integer? revision) (integer? seen) (> revision seen))
+              (assoc :known nil :seen nil)))))
+
+(rf/reg-sub ::view-revision (fn [db _] (get-in db [:server-projection :view :revision])))
+
 (defn- lfo-panel
-  "The LFO editor, keyed by the LFO binding last seen here. A projection
-  that briefly lacks the LFO during a round trip neither resets the draft
-  nor unmounts the actions under a press; only this panel's own Detach
-  forgets the binding."
+  "The LFO editor, keyed by the LFO binding last seen here (`remembered-lfo`).
+  A projection that briefly lacks the LFO during a round trip neither resets
+  the draft nor unmounts the actions under a press; a confirmed absence, or
+  this panel's own Detach, forgets it."
   [id param schema base source catalog instance]
-  ;; `detaching` is the binding this panel asked to detach: it is not learned
-  ;; again while the projection still shows it, and is let go once it is gone.
-  (r/with-let [known (atom nil) detaching (atom nil)]
+  (r/with-let [memory (atom {})]
     (let [current (source-of source :lfo)
-          _ (cond (nil? current) (reset! detaching nil)
-                  (not= (:binding current) @detaching) (reset! known current))
-          lfo (or (when (not= (:binding current) @detaching) current) @known)]
+          revision @(rf/subscribe [::view-revision])
+          pending? (boolean (:pending? @(rf/subscribe [::request id param])))
+          {:keys [known detaching]} (swap! memory remembered-lfo {:current current :revision revision :pending? pending?})
+          live (when (not= (:binding current) detaching) current)
+          lfo (or live known)]
       (with-meta [lfo-editor id param schema base source catalog instance
-                  {:shown lfo :current (when (not= (:binding current) @detaching) current)
-                   :forget! #(do (reset! detaching (:binding @known)) (reset! known nil))}]
+                  {:shown lfo :current live
+                   :forget! #(swap! memory (fn [m] (assoc m :detaching (:binding (:known m)) :known nil :seen nil)))}]
         {:key (pr-str (:binding lfo))}))))
 
 (defn- source-label [{:keys [type binding controller-id source-id controller lane-note source id]}]

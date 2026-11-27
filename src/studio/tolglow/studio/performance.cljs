@@ -575,12 +575,18 @@
       stretch)))
 
 (defn fluid-style
-  "Track and row size for `columns` stretched tracks across `width`."
+  "Track and smallest row size for `columns` stretched tracks across
+  `width`. The tracks fill the width; the row height follows the track up
+  to the stretch limit. The grid's rows then share any further height the
+  card gives the bank (a card grown beside a taller one), and every widget
+  sizes to the smaller side of its slot, so pads stay square and knobs
+  grow into the space instead of leaving a band."
   [surface columns width & [control-count]]
   (let [{:keys [min ratio gap]} (fluid-units surface)
         stretch (fluid-stretch surface control-count)
-        track (js/Math.max min (js/Math.min (* stretch min) (/ (- width (* gap (dec columns))) (max 1 columns))))]
-    {"--slot-col" (str (js/Math.floor track) "px") "--slot-row" (str (js/Math.floor (* ratio track)) "px")}))
+        track (js/Math.max min (/ (- width (* gap (dec columns))) (max 1 columns)))
+        row-track (js/Math.min track (* stretch min))]
+    {"--slot-col" (str (js/Math.floor track) "px") "--slot-row" (str (js/Math.floor (* ratio row-track)) "px")}))
 
 (defn overlay-anchor
   "Where an overlay two slots wide and two tall, opened from the card at
@@ -685,7 +691,7 @@
       (into [:div (merge attrs {:ref attach! :data-columns columns :data-rows rows
                                 :data-packing (if exact "final" "quick")
                                 :data-slot-scale (when fluid "fluid")
-                                :style (merge (:style attrs) {"--slot-columns" columns}
+                                :style (merge (:style attrs) {"--slot-columns" columns "--slot-rows" (max 1 rows)}
                                               (when (and fluid (map? reading)) (fluid-style fluid columns (:width reading) control-count)))})]
             (for [{:keys [index col row w h] :as cell} cells
                   :let [{overlay :style covers :covers} (overlay-anchor columns rows cells cell)]]
@@ -748,9 +754,13 @@
        ^{:key (control-id control)}
        [:figure.detail-plot {:data-plot (if components (control-id control) (wire parameter))}
         [:figcaption (control-title control)]
-        (if components
-          [sources/axes-visual visualization/studio instance components (xyz-schema control)]
-          [sources/result-visual visualization/studio instance parameter schema])])]))
+        ;; The view and beat window live in app-db, so a plot that unmounts
+        ;; while its source briefly stops driving (after Resume LFO, say)
+        ;; returns as the operator left it.
+        (let [options {:view-key [(wire (:id instance)) (control-id control)]}]
+          (if components
+            [sources/axes-visual visualization/studio instance components (xyz-schema control) options]
+            [sources/result-visual visualization/studio instance parameter schema options]))])]))
 
 (defn- viewable? [{:keys [schema components]}]
   (or (seq components)
