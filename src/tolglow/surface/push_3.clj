@@ -17,8 +17,11 @@
   committed change (a pad, Studio, the REPL, a linked member) moves the
   encoders; a change the Afterglow profile makes itself (a launch pad, its
   ack, the display falling back to the latest launch) is committed as the
-  shared selection. Select on the selected pad points the encoders back at
-  it. :cue-variation-pads? is refused alongside :cue-grid: both own the pads.
+  shared selection, judged against the model after its commands landed:
+  stopping a cue from a pad keeps the committed launch and points the
+  encoders back at it. That publish goes through the host's :publish!
+  outside the session lock, so feedback never waits on the show owner.
+  Select on the selected pad points the encoders back at it. :cue-variation-pads? is refused alongside :cue-grid: both own the pads.
 
   LEDs: Afterglow sends no Push 3 pad LEDs, so the grid lights only the pads
   it shows and turns them off when it closes. The default bytes follow the
@@ -144,40 +147,59 @@
       (assoc-in [::grid :edited] id)))
 
 ;; One selection. The surface's committed :selected and the launch the
-;; Afterglow profile edits (:selected-instance) are kept equal both ways:
-;; ::grid :adopted is the committed value last applied, :edited the profile
-;; target last seen.
+;; Afterglow profile edits (:selected-instance) are kept equal both ways.
+;; ::grid keys: :adopted, the committed value last applied; :edited, the
+;; profile target last seen; :publishing, a profile target waiting to be
+;; committed; :outbox, the publish request for the host to send.
 
 (defn- adopt-selection
   "A committed selection change (a pad, Studio, the REPL or a linked member)
-  points the encoders at that launch."
+  points the encoders at that launch and drops a pending publish."
   [state model v]
   (let [[kind id :as selected] (:selected v)]
     (if (= selected (get-in state [::grid :adopted]))
       state
-      (cond-> (assoc-in state [::grid :adopted] selected)
+      (cond-> (update state ::grid assoc :adopted selected :publishing nil)
         (and (= :instance kind) (running? model id)) (point-at model id)))))
 
-(defn- publish-selection
-  "A change the profile made itself (a launch pad and its ack, a cue gesture,
-  the display falling back to the latest launch) is committed as the shared
-  selection, so Studio and the REPL see what the Push edits. Returns
-  {:state :commands}."
-  [{:keys [surface-id]} state model v]
-  (let [current (:selected-instance state)]
-    (cond
-      (= current (get-in state [::grid :edited])) {:state state :commands []}
-      (and (some? current) (running? model current) (not= [:instance current] (:selected v)))
-      {:state (update state ::grid assoc :edited current :adopted [:instance current])
-       :commands (fence model [{:op :control-surface/layout :target surface-id :viewport viewport
-                                :set {:selected [:instance current]}}])}
-      :else {:state (assoc-in state [::grid :edited] current) :commands []})))
+(defn- follow-committed
+  "Before the profile's feedback: adopt a committed change, and when the
+  profile's own target is no longer running (a Push pad just stopped it),
+  point back at the committed launch instead of letting the display fall
+  back to another one."
+  [state model v]
+  (let [state (adopt-selection state model v)
+        [kind id] (:selected v)
+        current (:selected-instance state)]
+    (if (and (some? current) (not= current id) (not (running? model current))
+             (= :instance kind) (running? model id))
+      (point-at state model id)
+      state)))
 
-(defn- with-published [options model v result]
-  (if-let [state (:state result)]
-    (let [{state :state commands :commands} (publish-selection options state model v)]
-      (cond-> (assoc result :state state) (seq commands) (update :commands (fnil into []) commands)))
-    result))
+(defn- track-selection
+  "After the profile's feedback, against the committed model it saw: a
+  running target the profile picked itself (a launch pad and its ack, a cue
+  gesture, the display's fallback to the latest launch) becomes a pending
+  publish of the shared selection. It is put in the outbox once the surface
+  is attached, so a target picked before attach commits is published too.
+  Feedback never dispatches: the host sends the outbox outside the session
+  lock (publish!)."
+  [state model v envelope]
+  (let [grid (::grid state) current (:selected-instance state) committed (:selected v)
+        state (if (= current (:edited grid))
+                state
+                (update state ::grid assoc :edited current :emitted? false
+                        :publishing (when (and (some? current) (running? model current)
+                                               (not= [:instance current] committed))
+                                      [:instance current])))
+        {:keys [publishing emitted?]} (::grid state)]
+    (cond
+      (nil? publishing) state
+      (= publishing committed) (update state ::grid assoc :publishing nil)
+      (not (running? model (second publishing))) (update state ::grid assoc :publishing nil)
+      (and (:attached? v) (not emitted?))
+      (update state ::grid assoc :emitted? true :outbox {:id (:command-id envelope) :selected publishing})
+      :else state)))
 
 (defn- grid-input [{:keys [surface-id buttons] :as options} underlying state event model envelope]
   (let [{:keys [type control-id pressed?] :as decoded} event
@@ -194,8 +216,8 @@
                        {:state (cond-> (assoc state ::grid g)
                                  (and (= :instance kind) (running? model id))
                                  (-> (point-at model id) (assoc-in [::grid :adopted] selection)))
-                        :commands (fence model commands)}))
-        result (cond
+                        :commands (fence model commands)}))]
+    (cond
       (and (= :button type) (contains? buttons control-id))
       (if pressed?
         (apply-grid (cue-grid/action grid surface-id viewport (get buttons control-id)))
@@ -210,15 +232,13 @@
       (and (= :poly-pressure type) (cue-grid/owns? grid identity))
       {:state state}
 
-      :else (or (lift state underlying event model envelope) {:state state}))]
-    (with-published options model v result)))
+      :else (or (lift state underlying event model envelope) {:state state}))))
 
 (defn- grid-feedback [{:keys [layout buttons leds] :as options} underlying state model envelope]
   (let [v (view options model)
-        state (adopt-selection state model v)
-        base (with-published options model v
-               (if underlying (or (lift state underlying model envelope) {:state state}) {:state state}))
-        state (:state base state)
+        state (follow-committed state model v)
+        base (if underlying (or (lift state underlying model envelope) {:state state}) {:state state})
+        state (track-selection (:state base state) model v envelope)
         grid (::grid state)
         {projected :state pads :pads} (cue-grid/project grid model v)
         open? (cue-grid/open? grid)
@@ -306,20 +326,60 @@
   [device]
   (get-in (session/snapshot device) [:local ::grid]))
 
+(defn publish-pending!
+  "Send this session's selection outbox, if it holds a request not yet sent,
+  through the host's :publish! (or :dispatch!). Runs outside the session
+  lock, after a refresh or an input, so feedback never waits on the show
+  owner. Returns the device."
+  [device]
+  (when-let [publish (::publish device)] (publish))
+  device)
+
+(defn refresh!
+  "afterglow session/refresh!, then publish-pending!."
+  [device]
+  (session/refresh! device)
+  (publish-pending! device))
+
+(defn- publisher
+  "A function that sends a session's newest outbox request once, even when
+  the scheduler and the MIDI input thread both call it."
+  [session-ref {:keys [publish! dispatch!] :as options}]
+  (let [sent-id (atom nil)
+        surface-id (:surface-id options (:session-id options))]
+    (fn []
+      (when (realized? session-ref)
+        (let [{:keys [id selected]} (get-in (session/snapshot @session-ref) [:local ::grid :outbox])
+              seen @sent-id]
+          (when (and id (not= id seen) (compare-and-set! sent-id seen id))
+            ((or publish! dispatch!)
+             {:op :control-surface/layout :target surface-id :viewport viewport :set {:selected selected}})))))))
+
 (defn connect!
   "Open a Push 3 User Mode session with the cue grid: the options of
   afterglow.control.devices.push-3/connect! (and devices.repl/open-push-3!)
-  plus :cue-grid. Without :schedule! it refreshes every 10 ms (gestures and
-  the grid's feedback), and without :midi or :transport it opens the
-  selected MIDI ports."
+  plus :cue-grid and an optional host :publish! (command -> nil, must not
+  wait on the owner) for selections the Push picks itself; :dispatch! is
+  used without it. Without :schedule! it refreshes every 10 ms (gestures
+  and the grid's feedback), and without :midi or :transport it opens the
+  selected MIDI ports. A scheduled refresh and each MIDI input publish the
+  outbox after they release the session lock; with :schedule! nil call
+  refresh! here instead of afterglow session/refresh!."
   [options]
   (when-let [display (:display options)]
     (when-not (and (= :push-3 (:device display)) (= :view (:input display))
                    (every? #(fn? (get display %)) [:open! :render! :close!]))
       (throw (ex-info "Choose a tagged Push 3 display transport" {}))))
-  (session/open!
-   (session/create
-    (cond-> (assoc options :profile (profile options))
-      (not (contains? options :schedule!)) (assoc :schedule! (transports/scheduler (get options :refresh-ms 10)))
-      (and (:transport options) (not (:midi options))) (assoc :midi (:transport options))
-      (not (or (:midi options) (:transport options))) (assoc :midi (transports/midi-transport options))))))
+  (let [session-ref (promise)
+        publish (publisher session-ref options)
+        schedule (if (contains? options :schedule!) (:schedule! options) (transports/scheduler (get options :refresh-ms 10)))
+        midi (cond (:midi options) (:midi options)
+                   (:transport options) (:transport options)
+                   :else (transports/midi-transport options))
+        options (assoc options
+                       :profile (profile options)
+                       :schedule! (when schedule (fn [refresh] (schedule (fn [] (refresh) (publish)))))
+                       :midi (update midi :open! (fn [open!] (fn [receive!] (open! (fn [input] (receive! input) (publish)))))))
+        device (assoc (session/create options) ::publish publish)]
+    (deliver session-ref device)
+    (session/open! device)))

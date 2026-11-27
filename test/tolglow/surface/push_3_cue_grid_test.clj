@@ -95,7 +95,15 @@
     (tick!)
     device))
 
-(defn- refresh! [{:keys [owner!]} & devices] (owner! #(run! device-session/refresh! devices)))
+(defn- refresh!
+  "Refresh and publish each device's selection outbox, with the owner ticking."
+  [{:keys [owner!]} & devices]
+  (owner! #(run! push-3/refresh! devices)))
+
+(defn- display
+  "A tagged Push 3 display transport that renders nowhere."
+  []
+  {:device :push-3 :input :view :open! (fn [] :display) :render! (fn [_ _]) :close! (fn [_])})
 
 (defn- take-sent! [{:keys [sent]} unit]
   (let [messages (get @sent unit)]
@@ -448,3 +456,70 @@
       (is (.waitFor process 180 java.util.concurrent.TimeUnit/SECONDS))
       (is (re-find #"\[:validated false false\]" (deref out 5000 "")) (deref out 5000 ""))
       (finally (.destroyForcibly process)))))
+
+(defn- stop-from-a-closed-grid-pad-keeps-the-selection [extra]
+  (let [{:keys [runtime owner!] :as h} (harness 3)]
+    (try
+      (let [[a b c] (launch-all! h 3)
+            _ (accepted! h {:op :page/put :page {:id :main :cells {[1 7] :c1}}})
+            device (connect! h "push-a" (merge {:page-id :main} extra))
+            edited #(get-in (device-session/snapshot device) [:local :selected-instance])]
+        (refresh! h device)
+        (is (= :accepted (:status (owner! #(deref (show/surface-layout! runtime "push-a" {:selected [:instance a]})
+                                                  1000 ::missing)))))
+        (refresh! h device)
+        (is (= a (edited)))
+        (testing "the Push stops c1 from its launch pad: the selection and the encoders stay on A"
+          (tap! h "push-a" (pad [1 0]))
+          (refresh! h device)
+          (is (= [a c] (order h)) "B ended")
+          (is (= [:instance a] (selected h "push-a")))
+          (is (= a (edited)))
+          (let [revision (:revision (model-of h))]
+            (dotimes [_ 10] (refresh! h device))
+            (is (= revision (:revision (model-of h))) "Idle refreshes commit nothing")))
+        (is (empty? (:errors (device-session/snapshot device)))))
+      (finally (show/stop! runtime)))))
+
+(deftest a-push-pad-that-stops-a-cue-leaves-the-shared-selection-alone
+  (testing "without a display" (stop-from-a-closed-grid-pad-keeps-the-selection {}))
+  (testing "with a display, which would otherwise fall back to the latest launch"
+    (stop-from-a-closed-grid-pad-keeps-the-selection {:display (display)})))
+
+(deftest the-displays-first-target-is-published-once-the-surface-attaches
+  (let [{:keys [runtime] :as h} (harness 3)]
+    (try
+      (let [[_ _ c] (launch-all! h 3)
+            device (connect! h "push-a" {:display (display)})
+            edited #(get-in (device-session/snapshot device) [:local :selected-instance])]
+        (is (= c (edited)) "Before attach commits, the display falls back to the latest launch")
+        (is (nil? (selected h "push-a")))
+        (refresh! h device)
+        (is (= [:instance c] (selected h "push-a")) "Committed as soon as the surface is attached")
+        (let [revision (:revision (model-of h))]
+          (dotimes [_ 10] (refresh! h device))
+          (is (= revision (:revision (model-of h))) "Published once")))
+      (finally (show/stop! runtime)))))
+
+(deftest a-stalled-owner-never-blocks-feedback-or-loses-pad-leds
+  (let [{:keys [runtime receivers tick!] :as h} (harness 3)]
+    (try
+      (let [[_ _ c] (launch-all! h 3)
+            device (connect! h "push-a" {:display (display)})]
+        ;; From here the owner does not tick, so nothing submitted is admitted.
+        (take-sent! h "push-a")
+        ((get @receivers "push-a") [0xb0 20 127])
+        ((get @receivers "push-a") [0xb0 20 0])
+        (let [started (System/nanoTime)]
+          (push-3/refresh! device)
+          (is (< (/ (- (System/nanoTime) started) 1e6) 1000.0) "Feedback and the publish do not wait on the owner"))
+        (let [messages (take-sent! h "push-a")
+              recorded (::push-3/sent (:local (device-session/snapshot device)))]
+          (is (= 64 (count (filter #(#{0x80 0x90} (first %)) messages))) "Every pad was sent")
+          (is (every? (set messages) (map val (filter #(= :pad (first (key %))) recorded)))
+              "What is recorded as sent is what was sent"))
+        (is (nil? (selected h "push-a")) "The publish waits for the owner")
+        (tick!)
+        (is (= [:instance c] (selected h "push-a")) "and lands when it ticks")
+        (is (empty? (:errors (device-session/snapshot device)))))
+      (finally (show/stop! runtime)))))

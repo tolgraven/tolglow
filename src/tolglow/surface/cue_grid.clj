@@ -46,17 +46,18 @@
 
 (defn member-view
   "What one member viewport of [columns rows] geometry shows:
-  {:logical-id :window :limit :count :selected :cells {[column row] cell}}.
+  {:attached? :logical-id :window :limit :count :selected
+   :cells {[column row] cell}}.
   Until its attach commits, a device shows own-content from the first cell."
   [model surface-id viewport [columns rows] own-content]
   (let [projected (link/window model surface-id viewport)
         member (some #(when (= surface-id (:surface-id %)) %) (:members projected))]
     (if (and member (:attached? member))
-      {:logical-id (:id projected) :window (:window projected) :limit (:limit projected)
+      {:attached? true :logical-id (:id projected) :window (:window projected) :limit (:limit projected)
        :count (:count projected) :selected (get-in projected [:layout :selected])
        :cells (into {} (map (fn [{:keys [position] :as cell}] [[(:x position) (:y position)] cell])) (:cells member))}
       (let [all (link/content-cells model own-content)]
-        {:logical-id surface-id :window {:x 0 :y 0} :limit {:x 0 :y 0} :count (count all) :selected nil
+        {:attached? false :logical-id surface-id :window {:x 0 :y 0} :limit {:x 0 :y 0} :count (count all) :selected nil
          :cells (into {} (keep (fn [{:keys [x y] :as cell}]
                                  (when (and (< x columns) (< y rows)) [[x y] (assoc cell :position {:x x :y y})])))
                       all)}))))

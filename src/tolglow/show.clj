@@ -3964,7 +3964,8 @@
                                :cue-strips (vec (:channels options []))})
             options (cond-> (dissoc options ::restore-lease ::reconnect-lease :knob-page)
                       knob-page (assoc :encoder-overlay knob-page)
-                      push-3-grid? (assoc :surface-id id)
+                      ;; A selection the Push picks itself is published without waiting on the owner.
+                      push-3-grid? (assoc :surface-id id :publish! #(surface-command! runtime epoch id %))
                       x-touch?
                       ;; The Tolglow mixer layout (#706 slice 2) reads strips, window and
                       ;; layout state from the committed surface link.

@@ -269,7 +269,8 @@ launch's pad colour. Select commits that surface's selection,
 ends anything. There is one selection: the Push encoders and display always
 edit the committed launch. When the Push moves its own target, for example
 by launching from a pad with the grid closed, that launch becomes the
-committed selection. Pressing the selected pad in Select points the encoders
+committed selection. Stopping a cue from a pad leaves the selection where it
+was. Pressing the selected pad in Select points the encoders
 back at it. A selected launch that ends reads as no selection, and a restore
 moves the selection to the restored launch. Reorder
 takes a first pad, which blinks, and a second pad as the target. It sends
