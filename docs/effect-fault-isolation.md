@@ -87,32 +87,42 @@ took about 0.45 ms each on the mixed 2,048-pixel/64-head rig, so 32
 revisions, or one revision launched on 64 heads, made that frame miss the
 25 ms deadline.
 
-- **Compiled ahead of launches.** The worker warms these programs whenever the
-  registry, rig, recorded takes or launch schedule change:
+- **Compiled ahead of launches.** The worker warms these programs:
   - every registered effect's untargeted program;
   - each cue's fixture or group selection;
   - each recorded live-run take's targets;
   - each quantized launch as soon as it is scheduled. One beat at 120 BPM
     gives 500 ms of lead.
 
-  This warm tier is sized by the registry and kept apart from the 256-entry
-  cache. Volume selections follow moving volumes and are not warmed.
+  The worker rebuilds that list from the immutable model snapshot whenever
+  the registry, rig, settings or recorded takes change; the owner only
+  compares identities. Each cue's selection is resolved once per cue value,
+  rig and settings. Scheduled launches are added one by one as they are
+  queued. This warm tier is sized by the registry, about 55 KB per program on
+  the mixed rig, and is kept apart from the 256-entry cache: programs leaving
+  it are dropped, so they never evict a running instance's program. Volume
+  selections follow moving volumes and are not warmed.
 - **A launch never waits.** If a launch's program is not ready, the frame
   compiles it, so the launch renders on its start. A short one-shot is never
   lost, and a burst of grid launches lands on the beat.
 - **Pending revisions wait.** Until every program a revision needs is ready,
   the effect's instances keep their captured definition in modulation,
   waveform sampling, spatial cues and the engine alike. Then they all adopt it
-  on the same frame. A launch of that effect in the meantime makes the whole
-  effect take the revision over at once, so no frame runs two revisions of one
-  effect.
+  on the same frame. A launch of that effect in the meantime starts on the
+  revision its running instances use, compiling at most its own program, and
+  adopts the new revision with them, so no frame runs two revisions of one
+  effect. A pinned launch never reloads, so it starts on the revision it
+  captured. So does a launch whose values do not fit the older revision.
 - **Order and supersession.** The worker runs first in first out. It skips a
   compile that no frame still needs, such as a superseded revision.
-- **Compile failures.** Every compile failure is kept, so the revision is
-  refused at `:compile` once and never compiled again. An error the engine
-  would not attribute to an effect, such as a stack overflow in a deeply
-  nested definition, is kept as a plain failure naming it, because it was
-  raised compiling that one revision.
+- **Compile failures.** Every compile failure is kept and met once, and
+  nothing compiles that program again.
+  - A recoverable failure refuses the revision at `:compile`.
+  - A StackOverflowError is kept as a plain failure naming it, because the
+    stack has unwound and the overflow belongs to that definition's nesting.
+  - Any other VM error, such as an out-of-memory error, is rethrown on the
+    owner and fails the frame, as an inline compile would.
+  - A CancellationException is retried once.
 - **Events.** Each `:effect/reloaded` event carries `:pending-since-frame` and
   `:adopted-frame`.
 - **Where compiles stay on the owner.**

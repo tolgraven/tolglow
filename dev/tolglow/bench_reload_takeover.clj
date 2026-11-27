@@ -355,10 +355,71 @@
              :gc {:before gc-before :after gc-after} :load-average-after (load-average)})))
       (finally (show/stop! rt)))))
 
+(defn- with-selector-cues
+  "Add `n` cues on the corpus effects, each selecting its own 64-fixture slice."
+  [model n]
+  (let [fixtures (mapv :id (get-in model [:rig :fixtures]))
+        effects (vec (sort (keys (get-in model [:registry :effects]))))]
+    (reduce (fn [model i]
+              (let [id (keyword (str "sel-" i))]
+                (bench/command model [id :cue]
+                               {:op :cue/put :cue {:id id :effect-id (nth effects (mod i (count effects)))
+                                                   :selector {:fixture-ids (vec (take 64 (drop (* 16 i) (cycle fixtures))))}}})))
+            model (range n))))
+
+(defn selector-profile
+  "Owner ticks on the mixed corpus with `n` selector cues: the frame that
+  publishes a revision (a full warm rebuild), the frame that schedules a grid
+  launch of one selector cue (a pad press), and the beat frame it fires on,
+  with the launch latency in frames from the beat."
+  [n rounds mode]
+  (let [rt (show/create-runtime {:model (with-selector-cues (:model (bench/corpus 2048 64)) n)
+                                 :workers 2 :sink (bench/capture-sink) :background-compile (= :background mode)
+                                 :workspace-options nil :effect-log! (fn [_]) :worker-timeout-ms 60000})
+        clock (volatile! 0)
+        {:keys [redefs frame] :as recorder} (stage-recorder rt)
+        accent (fn [version] {:id :accent :version version :targets (vec (take 16 (map :id (get-in @(:state rt) [:model :rig :fixtures]))))
+                              :outputs {:dimmer {:op :tween :spec {:keyframes [{:at-ms 0 :value 0.3}
+                                                                              {:at-ms 10000 :value (if (odd? version) 0.7 0.6)}]}}}})]
+    (try
+      (count-frame-compiles! rt frame (Thread/currentThread))
+      (with-redefs-fn redefs
+        (fn []
+          (dotimes [_ 200] (measured-tick! recorder clock))
+          (let [rounds-data
+                (vec (for [round (range (inc rounds))]
+                       (let [version (inc (get-in @(:state rt) [:model :registry :effects :accent :version]))
+                             _ (show/submit! rt :definition {:kind :effects :definition (accent version)})
+                             publication (measured-tick! recorder clock)
+                             _ (dotimes [_ 40] (measured-tick! recorder clock))
+                             cue (keyword (str "sel-" (mod (* 7 round) n)))
+                             reply (show/submit! rt :command {:op :cue/launch :cue-id cue :grid {:beats 1}
+                                                              :command-id (str "pad-" round) :source {:adapter :repl :session-id "bench"}
+                                                              :launch {:mode :one-shot :duration {:beats 1/4}}})
+                             press (measured-tick! recorder clock)
+                             due (:due-beat (deref reply 5000 nil))
+                             rendered? #(some (fn [instance] (and (= cue (:cue-id instance)) (get-in instance [:system :last-frame-number])))
+                                              (vals (get-in @(:state rt) [:model :instances])))
+                             frames (loop [frames []]
+                                      (let [observed (assoc (measured-tick! recorder clock) :beat (get-in @(:state rt) [:model :transport :beat]))]
+                                        (if (or (rendered?) (> (count frames) 120)) (conj frames observed) (recur (conj frames observed)))))
+                             beat-frame (first (keep-indexed #(when (>= (:beat %2) due) %1) frames))]
+                         (dotimes [_ 20] (measured-tick! recorder clock))
+                         {:publication publication :press press :beat (nth frames beat-frame)
+                          :latency (- (dec (count frames)) beat-frame)})))
+                rounds-data (rest rounds-data)]
+            {:selector-cues n :mode mode :rounds rounds
+             :publication-frame (summary (map :publication rounds-data))
+             :pad-press-frame (summary (map :press rounds-data))
+             :beat-frame (summary (map :beat rounds-data))
+             :launch-latency-frames (bench/distribution (map :latency rounds-data))
+             :load-average-after (load-average)})))
+      (finally (show/stop! rt)))))
+
 (defn -main [& args]
   (let [rounds (or (some-> (first args) parse-long) 20)
         words (map keyword (rest args))
-        rigs (or (seq (filter #{:showcase :mixed} words)) [:showcase :mixed])
+        rigs (or (seq (filter #{:showcase :mixed :selectors} words)) [:showcase :mixed :selectors])
         modes (or (seq (filter #{:inline :background} words)) [:inline :background])
         build {:showcase showcase-rig :mixed mixed-rig}]
     (pprint/pprint {:benchmark :reload-takeover :measured-at (str (java.time.Instant/now))
@@ -370,4 +431,6 @@
                                   :load-average (load-average)}})
     (doseq [rig rigs mode modes]
       (binding [pprint/*print-right-margin* 160]
-        (pprint/pprint (profile ((get build rig)) rounds mode))))))
+        (if (= :selectors rig)
+          (doseq [n [100 500]] (pprint/pprint (selector-profile n rounds mode)))
+          (pprint/pprint (profile ((get build rig)) rounds mode)))))))

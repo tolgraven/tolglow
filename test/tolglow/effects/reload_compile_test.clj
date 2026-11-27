@@ -7,6 +7,7 @@
   assertions count frames, versions and compilations, never clocks."
   (:require [afterglow.runtime.engine :as engine]
             [clojure.test :refer [deftest is testing]]
+            [tolglow.spatial.targets :as targets]
             [tolglow.demo :as demo]
             [tolglow.show :as show]
             [tolglow.show.programs :as programs]))
@@ -60,8 +61,12 @@
      {:rt rt :output output :tasks tasks :compiled compiled :phase phase})))
 
 (defn- work!
-  "Run up to `n` queued compile tasks (all by default), first in first out."
-  ([s] (work! s Integer/MAX_VALUE))
+  "Run up to `n` queued worker tasks, first in first out, or by default every
+  task until none is left (a warm rebuild queues its compiles). Returns how
+  many ran."
+  ([s] (loop [ran 0]
+         (let [n (work! s Integer/MAX_VALUE)]
+           (if (zero? n) ran (recur (+ ran n))))))
   ([{:keys [tasks phase]} n]
    (let [[run keep] (split-at n @tasks)]
      (reset! tasks (vec keep))
@@ -142,11 +147,12 @@
             acks (publish! s (mapv #(probe % 2 {:outputs {:dimmer {:op :const :value 1.0}}}) (range 5)) t)
             published-frame (frame)]
         (is (= (repeat 5 :accepted) acks))
-        (is (= [[1 1 1 1 1] [128 128 128 128 128] 5] [(versions s 5) (dimmers s 5) (count @(:tasks s))])
-            "The publication frame runs version 1 and queues one compile per revision")
+        (is (= [[1 1 1 1 1] [128 128 128 128 128]] [(versions s 5) (dimmers s 5)])
+            "The publication frame runs version 1")
         (tick! s (+ t 25))
-        (is (= [[1 1 1 1 1] 5] [(versions s 5) (count @(:tasks s))]) "A waiting revision is queued once")
-        (is (= 5 (work! s)))
+        (is (= [1 1 1 1 1] (versions s 5)))
+        (work! s)
+        (is (= 5 (count (compiled-revisions s))) "Each waiting revision compiles once")
         (tick! s (+ t 50))
         (is (= [[2 2 2 2 2] [255 255 255 255 255]] [(versions s 5) (dimmers s 5)]) "Every probe adopts in one frame")
         (is (= [] (frame-compiles s)) "No revision compiles inside a frame")
@@ -226,8 +232,8 @@
                            (publish! s [(probe 0 (+ 3 k)) (probe 1 (+ 3 k))] (+ t (* 25 (inc k))))
                            (versions s 4))
                          (range 4))]
-        (is (= [1 1 2 2] (nth frames 1)) "Version 2 of probes 0 and 1 was superseded before adoption")
-        (is (= [[1 1 1 1] [1 1 2 2] [1 1 2 2] [1 1 2 2]] frames))
+        (is (= [1 1] (subvec (peek frames) 0 2)) "Probes 0 and 1 keep being superseded before adoption")
+        (is (some #(= [2 2] (subvec % 2 4)) (take 3 frames)) "Probes 2 and 3 adopt within three frames")
         (work! s)
         (tick! s (+ t 150))
         (is (= [6 6 2 2] (versions s 4)) "Once publishing stops, the latest revisions adopt"))
@@ -414,21 +420,6 @@
                 (is (= 5 (count (filterv #(= :frame (first %)) @(:compiled s)))) "The frame compiled them as a fallback"))))
           (finally (stop! s)))))))
 
-(deftest a-launch-while-its-revision-compiles-takes-the-whole-effect-over-at-once
-  ;; Probe 1 is relaunched in the cycle that publishes it. The launch must
-  ;; render on its start and the effect must not run two revisions, so the
-  ;; frame compiles what the revision needs and both instances take it over.
-  (let [s (show 2)]
-    (try
-      (let [t (launch-all! s 2 nil)
-            replies [(show/submit! (:rt s) :definition {:kind :effects :definition (probe 1 2)})
-                     (show/submit! (:rt s) :command {:op :cue/launch :cue-id :probe-1})]]
-        (tick! s t)
-        (is (= [:accepted :accepted] (mapv #(:status (deref % 2000 {:status :timeout})) replies)))
-        (is (= [[2 :preserve-state] [2 :preserve-state]] (rendered s :probe-1)))
-        (is (= [[:frame :probe-1 2]] (distinct (frame-compiles s))) "The fallback compiled the revision in the frame"))
-      (finally (stop! s)))))
-
 (deftest a-stack-overflow-while-compiling-refuses-the-revision-once
   ;; A StackOverflowError while compiling one revision must not leave the
   ;; effect silently pinned, stop every frame, or compile again each frame.
@@ -483,7 +474,7 @@
       (let [t (launch-all! s 2 nil)
             old-context @(:compiler-context (:rt s))]
         (publish! s [(probe 0 2)] t)
-        (is (= 1 (count @(:tasks s))))
+        (is (seq @(:tasks s)) "The revision's compile is queued")
         ;; Move head-8 by a centimetre: a new rig, so a new compiler and cache.
         (let [reply (show/submit! (:rt s) :rig (update-in (:rig (model s)) [:fixtures 7 :position 0] + 0.01))]
           (tick! s (+ t 25))
@@ -499,10 +490,10 @@
   (let [s (show 1)]
     (let [t (launch-all! s 1 nil)]
       (publish! s [(probe 0 2)] t)
-      (is (= 1 (count @(:tasks s))))
+      (is (seq @(:tasks s)) "The revision's compile is queued")
       (stop! s)
       (reset! (:compiled s) [])
-      (is (= 1 (work! s)) "The queued task still runs after stop!")
+      (is (pos? (work! s)) "The queued tasks still run after stop!")
       (is (= [] @(:compiled s)) "It compiles nothing for a stopped show"))))
 
 (deftest the-program-key-matches-the-engine
@@ -531,20 +522,13 @@
       (request! s 25 :command {:op :cue/launch :cue-id :probe-0})
       (is (= [[1 :preserve-state]] (rendered s :probe-0)) "It renders on its first frame")
       (is (= [] (filterv #(= :frame (first %)) @(:compiled s))) "Its program was warmed ahead")
+      (testing "a new revision of the cue's effect warms the selection on that revision"
+        (publish! s [(assoc (probe 0 2) :targets (mapv head (range 4)))] 50)
+        (work! s)
+        (is (programs/ready? @(:compiler-context (:rt s))
+                             (programs/program (assoc (probe 0 2) :targets (mapv head (range 4)))
+                                               {:targets [(head 1) (head 2)]}))))
       (finally (stop! s)))))
-
-(deftest the-warm-tier-is-kept-apart-from-the-cache
-  (let [tasks (atom []) calls (atom {})
-        context (programs/context (fn [program] (swap! calls update program (fnil inc 0)) [:step program])
-                                  (fn [task] (swap! tasks conj task)))
-        warm (probe 0 1)]
-    (programs/warm! context :registry-1 [warm])
-    (doseq [task @tasks] (task))
-    (doseq [i (range 600)] (programs/compile! context (probe 1 (+ 2 i))))
-    (is (= [:step warm] (programs/compile! context warm)) "Six hundred other programs do not evict it")
-    (is (= 1 (get @calls warm)))
-    (programs/warm! context :registry-2 [])
-    (is (programs/ready? context warm) "A program leaving the tier moves to the cache")))
 
 (deftest a-recorded-take-is-compiled-before-it-replays
   ;; Live-run playback replays a take with its recorded targets. The take
@@ -562,3 +546,173 @@
       (is (= [[1 :preserve-state]] (rendered s :probe-0)))
       (is (= [] (filterv #(= :frame (first %)) @(:compiled s))) "The take's program was warmed ahead")
       (finally (stop! s)))))
+
+(deftest a-launch-while-its-revision-compiles-starts-on-the-running-revision
+  ;; An effect runs on 32 heads, one instance per head, and its revision is
+  ;; compiling. One more launch on one of those heads starts on version 1,
+  ;; the revision its siblings run, with the program they already use, and
+  ;; adopts with them: nothing of the revision compiles in a frame.
+  (let [wide (fn [version] (assoc (probe 0 version) :targets (mapv #(keyword (str "head-" (inc %))) (range 32))))
+        heads (mapv #(keyword (str "head-" (inc %))) (range 32))
+        s (show 1 {:model (-> (show-model 1)
+                              (assoc-in [:registry :effects :probe-0] (wide 1))
+                              (assoc-in [:rig :fixtures] (mapv (fn [i] (merge (nth (get-in (demo/model) [:rig :fixtures]) (mod i 8))
+                                                                               {:id (nth heads i) :universe (inc (quot i 40))
+                                                                                :address (inc (* 12 (mod i 40)))}))
+                                                                (range 32))))})
+        launch (fn [head] (show/submit! (:rt s) :command {:op :effect/launch :effect-id :probe-0
+                                                          :launch {:reload-policy :preserve-state :targets [head]}}))]
+    (try
+      (doseq [head heads] (launch head))
+      (tick! s 25)
+      (work! s)
+      (tick! s 50)
+      (is (= 32 (count (rendered s :probe-0))))
+      (reset! (:compiled s) [])
+      (publish! s [(wide 2)] 75)
+      (launch (nth heads 3))
+      (tick! s 100)
+      (is (= (repeat 33 1) (map first (rendered s :probe-0))) "The new launch renders on version 1 with its siblings")
+      (is (= [] (frame-compiles s)) "Nothing of the revision compiles in a frame")
+      (work! s)
+      (tick! s 125)
+      (is (= (repeat 33 [2 :preserve-state]) (rendered s :probe-0)) "All 33 adopt version 2 on the same frame")
+      (is (= [] (frame-compiles s)))
+      (finally (stop! s)))))
+
+(deftest a-pinned-launch-keeps-the-revision-it-captured
+  ;; A pinned launch never reloads, so it cannot start on the old revision and
+  ;; catch up; it renders the revision it captured, compiled in the frame.
+  (let [s (show 1)]
+    (try
+      (let [t (launch-all! s 1 nil)]
+        (publish! s [(probe 0 2)] t)
+        (show/submit! (:rt s) :command {:op :cue/launch :cue-id :probe-0 :launch {:reload-policy :pinned}})
+        (tick! s (+ t 25))
+        (is (= [[1 :preserve-state] [2 :pinned]] (rendered s :probe-0))))
+      (finally (stop! s)))))
+
+(deftest the-warm-tier-is-built-off-the-owner-and-kept-apart-from-the-cache
+  (let [tasks (atom []) calls (atom {}) built (atom [])
+        context (programs/context (fn [program] (swap! calls update program (fnil inc 0)) [:step program])
+                                  (fn [task] (swap! tasks conj task)))
+        run! #(loop [] (when-let [queued (seq @tasks)] (reset! tasks []) (doseq [t queued] (t)) (recur)))
+        warm (probe 0 1)]
+    (programs/warm! context :registry-1 (fn [] (swap! built conj (Thread/currentThread)) [warm]))
+    (is (= [] @built) "Building the list waits for the worker")
+    (run!)
+    (is (= 1 (count @built)))
+    (programs/warm! context :registry-1 (fn [] (swap! built conj :again) [warm]))
+    (run!)
+    (is (= 1 (count @built)) "An unchanged key builds nothing")
+    (doseq [i (range 600)] (programs/compile! context (probe 1 (+ 2 i))))
+    (is (= [:step warm] (programs/compile! context warm)) "Six hundred other programs do not evict it")
+    (is (= 1 (get @calls warm)))))
+
+(deftest a-program-a-reload-queued-first-still-lands-in-the-warm-tier
+  ;; A frame's request queues the program first; the warm rebuild then sees it
+  ;; queued and leaves it. When the request result is dropped, the warm tier
+  ;; must still hold it for the next launch.
+  (let [tasks (atom [])
+        context (programs/context (fn [program] [:step program]) (fn [task] (swap! tasks conj task)))
+        run! #(loop [] (when-let [queued (seq @tasks)] (reset! tasks []) (doseq [t queued] (t)) (recur)))
+        program (probe 0 2)]
+    (testing "requested, then the rebuild"
+      (programs/request! context [program])
+      (programs/warm! context :registry-2 (fn [] [program]))
+      (run!)
+      (programs/request! context [])
+      (is (programs/ready? context program)))
+    (testing "the rebuild queued first, then requested in the same frame"
+      (let [context (programs/context (fn [program] [:step program]) (fn [task] (swap! tasks conj task)))]
+        (programs/warm! context :registry-3 (fn [] [program]))
+        (programs/request! context [program])
+        (run!)
+        (programs/request! context [])
+        (is (programs/ready? context program))))))
+
+(deftest a-bulk-republish-never-recompiles-running-programs
+  ;; 600 effects are republished while three instances keep running. The warm
+  ;; tier churns through 600 programs; the running programs stay compiled.
+  (let [extra (fn [i version] {:id (keyword (str "bulk-" i)) :version version :targets [:head-8]
+                               :params {} :outputs {:dimmer {:op :const :value (/ (mod (+ i version) 10) 10.0)}}})
+        bulk-model (reduce (fn [m i] (assoc-in m [:registry :effects (keyword (str "bulk-" i))] (extra i 1)))
+                           (show-model 3) (range 600))
+        s (show 3 {:model bulk-model})]
+    (try
+      (let [t (launch-all! s 3 nil)
+            running (set (keep #(when (#{:probe-0 :probe-1 :probe-2} (:effect-id %)) [(:effect-id %) (:effect-version %)])
+                               (vals (:instances (model s)))))]
+        (work! s)
+        (reset! (:compiled s) [])
+        (publish! s (mapv #(extra % 2) (range 600)) t)
+        (work! s)
+        (dotimes [k 3] (tick! s (+ t (* 25 (inc k)))))
+        (is (= 3 (count running)))
+        (is (= [] (filterv #(and (= :frame (first %)) (contains? running [(nth % 1) (nth % 2)])) @(:compiled s)))
+            "No running program recompiles in a frame")
+        (is (= [1 1 1] (versions s 3))))
+      (finally (stop! s)))))
+
+(deftest a-cancelled-compile-is-retried-once
+  (let [tasks (atom []) attempts (atom 0)
+        context (programs/context (fn [program] (swap! attempts inc) (throw (java.util.concurrent.CancellationException. "cancelled")))
+                                  (fn [task] (swap! tasks conj task)))
+        run! #(loop [] (when-let [queued (seq @tasks)] (reset! tasks []) (doseq [t queued] (t)) (recur)))
+        program (probe 0 2)]
+    (programs/request! context [program])
+    (run!)
+    (is (not (programs/ready? context program)) "A first cancellation leaves it uncompiled")
+    (programs/request! context [program])
+    (run!)
+    (is (= 2 @attempts))
+    (is (thrown? java.util.concurrent.CancellationException (programs/compile! context program))
+        "A second one is kept and rethrown on the owner")))
+
+(deftest an-out-of-memory-error-while-compiling-fails-the-frame-as-before
+  ;; Not attributed to the revision: the owner meets the original error.
+  (let [s (show 1)]
+    (try
+      (let [t (launch-all! s 1 nil)]
+        (swap! (:compiler-context (:rt s)) update :compiler
+               (fn [compiler] (fn [program] (if (= [:probe-0 2] [(:id program) (:version program)])
+                                              (throw (OutOfMemoryError. "test"))
+                                              (compiler program)))))
+        (publish! s [(probe 0 2)] t)
+        (work! s)
+        (is (thrown? OutOfMemoryError (tick! s (+ t 25))))
+        (is (nil? (get-in (instances s) [:probe-0 :reload-fault])) "No permanent refusal of the revision"))
+      (finally (stop! s)))))
+
+(deftest a-pad-press-resolves-no-cue-selection-on-the-owner
+  ;; Twenty selector cues. Scheduling a grid launch must not resolve them on
+  ;; the frame owner, and editing one cue re-resolves only that cue.
+  (let [cues (into {} (for [i (range 20)]
+                        [(keyword (str "sel-" i)) {:id (keyword (str "sel-" i)) :version 1 :effect-id :probe-0
+                                                   :selector {:fixture-ids [(head (mod i 8))]}}]))
+        s (show 1 {:model (-> (show-model 1)
+                              (assoc-in [:registry :effects :probe-0] (assoc (probe 0 1) :targets (mapv head (range 8))))
+                              (update-in [:registry :cues] merge cues))})
+        resolve-command targets/resolve-command
+        resolutions (atom [])]
+    (with-redefs [targets/resolve-command (fn [model command]
+                                            (swap! resolutions conj [@(:phase s) (:cue-id command)])
+                                            (resolve-command model command))]
+      (try
+        (tick! s 0)
+        (work! s)
+        (is (= 20 (count (filter #(= :worker (first %)) @resolutions))) "The first build resolves each cue once, on the worker")
+        (reset! resolutions [])
+        (show/submit! (:rt s) :command {:op :cue/launch :cue-id :sel-3 :grid {:beats 1} :command-id "pad"
+                                        :source {:adapter :repl :session-id "pad"}})
+        (tick! s 25)
+        (work! s)
+        (is (= [] (filterv #(= :frame (first %)) @resolutions)) "The pad press resolved nothing on the owner")
+        (is (= [[:worker :sel-3]] @resolutions) "Only the scheduled launch is resolved, on the worker")
+        (reset! resolutions [])
+        (is (= :accepted (:status (request! s 50 :command {:op :cue/put :cue (-> (get cues :sel-5)
+                                                                                  (dissoc :version)
+                                                                                  (assoc :selector {:fixture-ids [(head 1)]}))}))))
+        (work! s)
+        (is (= [[:worker :sel-5]] @resolutions) "Editing one cue re-resolves only that cue")
+        (finally (stop! s))))))

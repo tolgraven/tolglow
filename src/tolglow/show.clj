@@ -2717,38 +2717,62 @@
           (when (= version (:version current)) current)))
     (get-in model [:registry :effects (:effect-id cue)])))
 
+(defn- launch-effect [model command]
+  (if-let [cue (get-in model [:registry :cues (:cue-id command)])]
+    (cue-effect model cue)
+    (get-in model [:registry :effects (:effect-id command)])))
+
+(defn- launch-targets
+  "The launch targets `command` resolves to, or ::unresolved."
+  [model command]
+  (try (get-in (targets/resolve-command model command) [:launch :targets])
+       (catch Exception _ ::unresolved)))
+
 (defn- launch-program
   "The program a launch of `command` (a cue or effect launch) compiles, or nil."
-  [model command]
-  (let [resolved (try (targets/resolve-command model command) (catch Exception _ nil))
-        effect (if-let [cue (get-in model [:registry :cues (:cue-id resolved)])]
-                 (cue-effect model cue)
-                 (get-in model [:registry :effects (:effect-id resolved)]))]
-    (when effect (programs/program effect {:targets (get-in resolved [:launch :targets])}))))
+  ([model command] (launch-program model command (launch-targets model command)))
+  ([model command targets]
+   (let [effect (launch-effect model command)]
+     (when (and effect (not= ::unresolved targets)) (programs/program effect {:targets targets})))))
 
 (defn- warm-programs!
-  "Compile ahead, off the frame, what a launch is likely to need: every
-  registered effect's untargeted program, each cue's fixture or group
-  selection, each recorded live-run take's targets, and every scheduled
-  quantized launch, so a launch on the beat finds its program ready (#774).
-  Volume selections follow moving volumes and are left to the launch."
+  "Compile ahead, off the frame, what a launch is likely to need (#774):
+  every registered effect's untargeted program, each cue's fixture or group
+  selection, each recorded live-run take's targets, and each quantized launch
+  as soon as it is scheduled. The owner
+  only compares identities and submits; the worker resolves selections from
+  the immutable snapshot, reusing each cue's resolution while the cue, rig
+  and settings are unchanged. Volume selections follow moving volumes and are
+  left to the launch."
   [runtime context model]
   (when (:submit context)
     (let [registry (:registry model)
           takes (some-> (:live-runs runtime) deref :record :takes)
-          scheduled (cue-timing/scheduled-commands model)]
-      (programs/warm! context [registry (get-in model [:rig :fixtures]) takes scheduled]
-                      (concat
-                       ;; In a stable order, so the worker's first-in-first-out queue is reproducible.
-                       (map #(programs/program (val %) {}) (sort-by (comp str key) (:effects registry)))
-                       (keep (fn [[id cue]]
-                               (when (and (:selector cue) (not (:volume-id (:selector cue))))
-                                 (launch-program model {:op :cue/launch :cue-id id})))
-                             (:cues registry))
-                       (keep (fn [take] (launch-program model {:op :cue/launch :cue-id (:cue-id take)
-                                                               :launch (select-keys (:launch take) [:targets])}))
-                             (vals takes))
-                       (keep #(launch-program model %) scheduled))))))
+          basis [(:rig model) (:settings model)]]
+      (programs/warm! context [registry (:rig model) (:settings model) takes]
+                      (fn []
+                        (swap! (:resolutions context) select-keys (keys (:cues registry)))
+                        (concat
+                         ;; In a stable order, so the worker's first-in-first-out queue is reproducible.
+                         (map #(programs/program (val %) {}) (sort-by (comp str key) (:effects registry)))
+                         (keep (fn [[id cue]]
+                                 (when (and (:selector cue) (not (:volume-id (:selector cue))))
+                                   (let [command {:op :cue/launch :cue-id id}]
+                                     ;; Selections are resolved once per cue, rig and settings;
+                                     ;; the program follows the effect's current revision.
+                                     (launch-program model command
+                                                     (programs/resolved! context id cue basis #(launch-targets model command))))))
+                               (sort-by (comp str key) (:cues registry)))
+                         (keep (fn [take] (launch-program model {:op :cue/launch :cue-id (:cue-id take)
+                                                                 :launch (select-keys (:launch take) [:targets])}))
+                               (vals takes)))))
+      (let [scheduled (cue-timing/scheduled-commands model)
+            seen @(:scheduled-seen context)
+            fresh (remove #(contains? seen (:command-id %)) scheduled)]
+        (when (or (seq fresh) (not= (count seen) (count scheduled)))
+          (reset! (:scheduled-seen context) (into #{} (map :command-id) scheduled)))
+        (when (seq fresh)
+          (programs/warm-more! context (fn [] (keep #(launch-program model %) fresh))))))))
 
 (defn- spatial-levels
   "Split the frame's group levels into those the spatial native-member mix
@@ -2783,7 +2807,7 @@
                    (warm-programs! runtime context model)
                    (programs/request! context (:programs plan))
                    (assoc (programs/hold context plan) :frame frame-number))
-        attempting #(modulation/without-reloads % (:deferred programs))
+        attempting #(programs/frame-view % programs)
         reading #(modulation/with-frame-params (attempting %) (:params ramp-frame) (:param-targets ramp-frame))
         parameter-samples (parameter-sources/sample (reading model) {:time-ms time-ms :transport (:transport model)}
                                                    (:parameter-samples before))
@@ -2937,7 +2961,7 @@
         ;; it receives that value, so it turns the revision down instead of
         ;; adopting one that cannot hold what the model keeps or the ramp
         ;; commits. The ramp still reaches evaluation through the overrides.
-        engine-model (programs/engine-view model programs)
+        engine-model (programs/frame-view model programs)
         engine-ramps (reduce (fn [frame id]
                                (if-let [values (modulation/ramp-preparation engine-model (get-in engine-model [:instances id])
                                                                             (get-in ramp-frame [:params id])
