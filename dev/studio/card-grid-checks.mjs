@@ -332,9 +332,27 @@ export async function checkCardGrid(page, profile, directory, measurement) {
   } else {
     assert.ok(study2.height > solitary.height, `${profile}: on one track a medium card is taller than a small one`);
   }
-  // A small card's single knob fills the card rather than its margins.
-  const knob = await members.filter({has: page.getByRole('heading', {name: 'Solitary', exact: true})}).locator('.parameter-rotary-control').boundingBox();
-  assert.ok(knob.width >= Math.min(solitary.width - 140, 170), `${profile}: a one-knob small card grows its knob (${Math.round(knob.width)} px in ${solitary.width})`);
+  // A card's bank fills its height: at most one row unit of blank space
+  // between the last thing in its body and its action row.
+  const bands = await members.evaluateAll(cards => cards.map(card => {
+    const body = card.querySelector('.live-effect-body'), footer = card.querySelector('.performance-instance');
+    const bank = card.querySelector('[data-slot-grid]');
+    const last = Math.max(...[...body.children].map(c => c.getBoundingClientRect().bottom));
+    return {name: card.querySelector('h3').textContent, blank: Math.round(footer.getBoundingClientRect().top - last),
+            row: parseFloat(getComputedStyle(bank).getPropertyValue('--slot-row'))};
+  }));
+  for (const {name, blank, row} of bands)
+    assert.ok(blank <= row, `${profile}: ${name} has ${blank} px of blank space above its action row (one row is ${row} px)`);
+  result.macroBlank = Object.fromEntries(bands.map(b => [b.name, b.blank]));
+  // A lone control in a macro card uses its Detail form (knob, slider and
+  // exact entry) at a bounded size, not one enlarged knob.
+  const lone = members.filter({has: page.getByRole('heading', {name: 'Solitary', exact: true})});
+  assert.equal(await lone.locator('[data-slot-grid=detail] .numeric-exact').count(), 1, `${profile}: a lone-control card shows the exact entry`);
+  const knobs = await members.locator('.parameter-rotary-control').evaluateAll(all => all.map(k => Math.round(k.getBoundingClientRect().width)));
+  assert.ok(knobs.every(w => w <= 210), `${profile}: no macro knob is wider than 210 px (${knobs})`);
+  const loneKnob = (await lone.locator('.parameter-rotary-control').boundingBox()).width;
+  assert.ok(loneKnob >= 110, `${profile}: the lone knob still uses its room (${Math.round(loneKnob)} px)`);
+  result.knobs = {lone: Math.round(loneKnob), max: Math.max(...knobs)};
   assert.equal(await page.locator('.live-effect-grid>[data-live-instance][data-card-size]').count(), 0,
     `${profile}: default cards never take a custom size`);
 
@@ -499,4 +517,21 @@ export async function measurePackTime(page) {
     }
     return stats;
   });
+}
+
+// An LFO removed elsewhere (here, from the REPL) while its editor is open:
+// once the show confirms the absence, the editor offers Attach again, with no
+// stale Detach or Update (#795 follow-up).
+export async function checkOutsideUnbind(page) {
+  const card = page.locator('[data-live-instance]', {has: page.getByRole('heading', {name: 'Slot study', exact: true})}).first();
+  const id = await card.getAttribute('data-live-instance');
+  await card.getByRole('button', {name: 'Attach source for Level', exact: true}).click();
+  const panel = card.getByRole('region', {name: 'Level source'});
+  await panel.getByRole('button', {name: 'Attach LFO', exact: true}).click();
+  await panel.getByRole('button', {name: 'Detach LFO', exact: true}).and(page.locator(':enabled')).waitFor();
+  await repl(page, `@(tolglow.show/submit! runtime :modulation-unbind {:instance-id ${JSON.stringify(id)} :param :level})`);
+  await panel.getByRole('button', {name: 'Attach LFO', exact: true}).waitFor({timeout: 5000});
+  assert.equal(await panel.getByRole('button', {name: 'Detach LFO', exact: true}).count(), 0, 'no stale Detach after an outside unbind');
+  assert.equal(await panel.getByRole('button', {name: 'Update LFO', exact: true}).count(), 0, 'no stale Update after an outside unbind');
+  await panel.getByRole('button', {name: 'Close source editor'}).click();
 }
