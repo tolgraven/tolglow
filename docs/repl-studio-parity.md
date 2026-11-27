@@ -258,6 +258,65 @@ submit the same operation. Watch **In the mix** update in Studio.
                             :epoch epoch :runtime-id runtime-id})))
 ```
 
+### Select and reorder from a Push 3 pad grid
+
+A Push 3 in User Mode can open the same two modes on its pads
+([issue #545](https://github.com/tolgraven/tolglow/issues/545)). Bind captured,
+otherwise unbound buttons under `:cue-grid` when connecting. The grid shows
+one pad per running launch in the committed order, top-left first, in the
+launch's pad colour. Select commits that surface's selection,
+`:control-surface/layout {:selected [:instance id]}`, and never launches or
+ends anything. There is one selection: the Push encoders and display always
+edit the committed launch. When the Push moves its own target, for example
+by launching from a pad with the grid closed, that launch becomes the
+committed selection. Stopping a cue from a pad leaves the selection where it
+was. Pressing the selected pad in Select points the encoders
+back at it. A selected launch that ends reads as no selection, and a restore
+moves the selection to the restored launch. Reorder
+takes a first pad, which blinks, and a second pad as the target. It sends
+the same `:instance/move-after` with `:expected-revision` as **Place after**.
+A press on a pad whose launch moved since the last refresh does nothing.
+Page Up and Page Down move the surface window, so 70 launches take two pages.
+Code lives in `tolglow.surface.cue-grid`, which holds the modes and the
+`:active-cues` content, and `tolglow.surface.push-3`, which holds the pad and
+button addresses and the LED bytes.
+
+```clojure
+(show/connect-device! runtime :push-3
+  {:session-id "push-a" :user-mode? true :expression-mode :poly-aftertouch
+   :input-index 0 :output-index 0 :layout captured-layout
+   :cue-grid {:buttons {:select :cue-grid/select :reorder :cue-grid/reorder
+                        :up :cue-grid/page-up :down :cue-grid/page-down}}})
+(let [grid (some #(when (= "push-a" (:id %)) %) (:logical (:control-surfaces (show/snapshot runtime))))]
+  [(:window grid) (:count grid) (get-in grid [:layout :selected])])
+;; => [{:x 0, :y 0} 70 [:instance "0:12"]]
+@(show/surface-layout! runtime "push-a" {:selected [:instance "0:14"]})   ; the Push encoders follow
+@(show/bank-surface! runtime "push-a" :down)                               ; launches 65–70
+```
+
+In Studio, **Perform → Group mixer → Surfaces** shows the grid's session box as
+"Cues 65–70 of 70", with page buttons and the selected launch. Each **In the
+mix** card on the current page has a row·pad badge such as `push-a 1·3`. The
+selected launch shows **Selected on push-a**. With **Follow selection** on,
+**Detail** on a card pages the grid to that launch and selects it there. Two
+Pushes linked with `{:mode :extend :direction :down}` page as one 128-pad grid.
+`lein with-profile +dev run -m tolglow.qa.push-cue-grid-browser` checks this
+round trip with a virtual Push 3 in headless Chrome.
+
+**Tracked gaps.** The pad LED bytes use the Push 2 palette and animation
+channels. Push 3 pad addresses come from a capture. Neither has been checked
+on a physical Push 3 yet; the #545 hardware checklist is still open. Studio
+selection opens **Detail** but the Push selection only adds a badge in Studio.
+Because the selection is shared, **Follow selection** in Studio also moves the
+Push encoders to the card a Studio user opens, even while someone else is
+playing the Push. A Push launch likewise changes the selection Studio shows.
+There is no per-operator selection yet. `:cue-variation-pads?` is refused
+together with `:cue-grid`, because both own the pads. Push 2 keeps Afterglow's
+own Select and Reorder grids, which use a private page rather than the
+surface window.
+Pushes extended to the right need `:columns 16`. A Studio grid cannot mirror
+the Push yet (#706 slice 5), and the Push has no shuffle button.
+
 ### Set a running layer's priority
 
 In **Reorder**, choose **Move** on a running card, enter a **Layer priority**
@@ -697,6 +756,9 @@ REPL with `(showcase/play! runtime {:loop? true})`. Studio's cue panel lists
 the timeline's upcoming events, labelled **Launch …**, **End …** or with the
 ramp's parameter, and shows each running ramp with **Stop**. Cancelling one
 there records `:operator-cancel` in `(:outcomes (showcase/status player))`.
+The second timeline, `showcase/after-hours`, plays the same way with
+`(showcase/play! runtime {:timeline showcase/after-hours})`, or from the config
+with `[:showcase-timeline :timeline]` set to `:after-hours`.
 
 **Tracked gap.** Studio cannot start, stop or loop the timeline, and its
 waveform binds and spatial-volume launches are direct commands that never
@@ -1134,6 +1196,16 @@ Calibrated paired aim arrival uses one host operation from both surfaces. In Stu
 The remaining gaps are tracked in issue #481. Studio has no editor for `:calibration :motor-rate-deg-per-sec`, so rates are set through the rig data or the REPL. Studio also cannot display the physical `:minimum-travel-ms` or the fingerprint behind a stale-calibration refusal. Close these gaps when an operator can enter rates in the fixture inspector and see why a launch was refused without the REPL.
 
 Retrospective Capture has a shared operation. The runtime owns the capture buffer. `show/capture-phrase!` at the REPL and **Connections → Capture** in Studio both call `show/capture-action!` with `:capture`. The REPL receives the phrase; Studio receives its summary and a MIDI clip download of the same capture (`:smf`). `(show/capture-action! rt :status {})` reads the buffer and the last capture that both surfaces show. Two gaps remain. Writing the capture into Live from Studio (`live-connection/capture!` over the configured bridge) is REPL-only, and Push has no Capture button: the uniform surface layer lives with the Push controllers, outside this change. Close them when Studio and Push both send the last capture to Live and the REPL can read the resulting clip identities. [Capture into Live](live-routing.md#capture-the-last-phrase-into-live) · [Issue #671](https://github.com/tolgraven/tolglow/issues/671) · [Issue #680](https://github.com/tolgraven/tolglow/issues/680)
+
+Vector widgets send the whole vector. Studio's XY pad, Z fader and ring knobs (#655) edit a `:vector` parameter through the same `param/set` the REPL submits. That command has no component form:
+
+```clojure
+@(show/submit! runtime {:op :param/set :instance-id id :param :aim :value [45.0 30.0 10.0]})
+```
+
+Studio applies a gesture's changed components to its current copy of the vector and sends nothing when no component changes. That copy can lag a REPL or Push edit to another component that has not reached the page yet, and in that window a pad drag sends the old component back. The edit is lost without a message. Grouped X, Y and Z parameters (aim and gimbal) are separate parameters, so the pad sends `param/set` only for the axes it changes. Close the gap when `param/set` accepts a validated component path, the runtime merges it into the committed vector, Studio sends only the changed components, and a REPL edit to Z survives a concurrent Studio pad drag. [Issue #655](https://github.com/tolgraven/tolglow/issues/655)
+
+Rig editor placement and aim calibration use the shared rig and fixture operations from both surfaces. In Studio, **Rig & space → Place fixture** builds the draft instance with `tolglow.rig.placement/place` and **Save rig** sends it through `POST /api/rig`. The REPL builds the same marked entry with the same function, or writes `{:placement? true :fixture-type-id … :id … :universe … :address …}` itself, and calls `(show/submit! runtime :rig rig)`. On both surfaces the host instantiates marked entries from the registry, refuses one without documented movement travel, and leaves every unmarked fixture as submitted. **Calibrate aim** calls `POST /api/fixtures/aim-check` and `aim-fit`, which are `(show/fixture-action! runtime :aim-check …)` and `:aim-fit` at the REPL; **Send test aim** is the ordinary `:surface-aim` operation. A REPL rig edit redraws the open editor through the state stream. Remaining gaps: the fit proposes mounting rotation only, not travel ranges or reversal, and Studio has no pan/tilt jog control, so observations take the committed output or typed DMX values. [Rig editor](rig-editor.md#place-fixtures-from-the-library) · [Issue #226](https://github.com/tolgraven/tolglow/issues/226)
 
 ## See what ran as Live runs
 

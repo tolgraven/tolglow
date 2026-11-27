@@ -57,8 +57,17 @@
           input))))
 
 (defn needs-plan? [expression]
-  (and (map? expression) (or (#{:variable :oscillator-phase} (:op expression))
+  (and (map? expression) (or (#{:variable :oscillator-phase :phase-accumulator} (:op expression))
                              (some needs-plan? (:args expression)))))
+
+(def accumulator-units #{:beats :bars :phrases})
+
+(defn accumulates?
+  "Whether a definition reads a phase accumulator, which keeps its phase in
+  instance state and so cannot be forecast between keyframes."
+  [definition]
+  (boolean (some #(and (map? %) (= :phase-accumulator (:op %)))
+                 (tree-seq coll? seq (select-keys definition [:outputs :blocks :prefabs])))))
 
 (defn- raw-value [{:keys [type-param entries] :as compiler} [kind id :as path]]
   (case kind
@@ -102,6 +111,35 @@
         (vswap! oscillators assoc node input)
         input)))
 
+(declare lower)
+
+(defn- accumulator-input
+  "Lower `{:op :phase-accumulator :id k :period expr :unit u :phase-reference r}`
+  to a frame input. The period is a scalar, frame-wide expression in `:unit`
+  (default beats). `:phase-reference` :launch (default) starts at zero on
+  launch; :transport starts at transport beat / period, so the phase stays on
+  the beat grid wherever the cue was launched."
+  [{:keys [accumulators] :as compiler} current trail depth {:keys [id period unit phase-reference] :as node}]
+  (when-not (and (every? #{:op :id :period :unit :phase-reference} (keys node)) (keyword? id) (contains? node :period)
+                 (accumulator-units (or unit :beats))
+                 (oscillator/phase-references (or phase-reference :launch)))
+    (fail! current "A phase accumulator needs a keyword :id, a :period expression, a :unit of :beats, :bars or :phrases and a :launch or :transport phase reference"))
+  (if-let [existing (get @accumulators id)]
+    (if (= node (:node existing)) (:input existing)
+        (fail! current "Two phase accumulators share one :id"))
+    (let [lowered (lower compiler current trail (inc depth) period)
+          spatial? (some #(and (map? %) (#{:position :surface-uv} (:op %)))
+                         (tree-seq #(and (map? %) (vector? (:args %))) :args lowered))
+          _ (when (or spatial? (not= :number (ir/expression-type lowered)))
+              (fail! current "A phase accumulator period must be one scalar for the whole frame"))
+          index (count @accumulators)
+          input {:op :param :key (keyword "tolglow.block-accumulator" (str index)) :type :number}]
+      (when (>= index 16) (fail! current "A field plan supports up to 16 phase accumulators"))
+      (vswap! accumulators assoc id {:node node :input input :unit (or unit :beats)
+                                     :reference (or phase-reference :launch)
+                                     :evaluate (ir/compile-expression lowered)})
+      input)))
+
 (defn- lower [compiler current trail depth node]
   (when (> depth 64) (fail! current "Expression nesting exceeds 64 levels"))
   (if-let [path (and (map? node) (path-of node))]
@@ -109,6 +147,7 @@
     (cond
       (= :tween (:op node)) (tween-input compiler node)
       (= :oscillator-phase (:op node)) (phase-input compiler current node)
+      (= :phase-accumulator (:op node)) (accumulator-input compiler current trail depth node)
       (or (number? node) (vector? node)) {:op :const :value node}
       ;; A gradient samples its own parameter at an already lowered position.
       (gradient/gradient-node? node)
@@ -166,17 +205,21 @@
         prepared (volatile! {})
         tweens (volatile! {})
         oscillators (volatile! {})
+        accumulators (volatile! {})
         compiler {:bindings blocks :entries entries :uniforms uniforms :prepared prepared :tweens tweens
-                  :oscillators oscillators :schemas params
+                  :oscillators oscillators :accumulators accumulators :schemas params
                   :catalog (merge blocks/library imported-prefabs prefabs)
                   :type-param #(prepare-expression %1 params %2)}]
-    (when (some (comp #{"tolglow.block-input" "tolglow.block-tween" "tolglow.block-phase"} namespace) (keys params))
+    (when (some (comp #{"tolglow.block-input" "tolglow.block-tween" "tolglow.block-phase" "tolglow.block-accumulator"} namespace) (keys params))
       (fail! [] "Parameter ID collides with a block input binding"))
     (doseq [path (keys blocks)] (binding-plan compiler path #{}))
     (let [outputs (mapv (partial output-entry compiler) (range) entries)]
       {:outputs outputs
        :tweens (mapv (fn [{:keys [input sample]}] [(:key input) sample]) (vals @tweens))
        :oscillators (mapv (fn [[spec input]] [spec (:key input)]) @oscillators)
+       :accumulators (mapv (fn [[id {:keys [input unit reference evaluate]}]]
+                             {:id id :key (:key input) :unit unit :reference reference :evaluate evaluate})
+                           (sort-by (comp :key :input val) @accumulators))
        :transport-clock? (boolean (some #(= :transport (:phase-reference %)) (keys @oscillators)))
        :uniforms @uniforms
        :targets (when (some? targets) (set targets))
@@ -195,17 +238,57 @@
                  (if (nil? value) result (assoc result (:key uniform) value))))
              params (:uniforms plan)))
 
+(defn- accumulate
+  "Advance each phase accumulator by the beats of its reference since its last
+  frame divided by the period now, so editing the period keeps the phase it
+  has reached. The reference is the cue's elapsed beats (:launch, starting at
+  zero) or the transport beat (:transport, starting at transport beat /
+  period). A stopped transport adds nothing, and play resumes from the held
+  phase. While the period is not a positive number the phase holds. The new
+  phases go to `::phases` in env; the step commits them to instance state."
+  [plan env transport-clock]
+  (if-let [accumulators (seq (:accumulators plan))]
+    (let [previous (get-in env [:state ::phases])
+          phases (into {} (map (fn [{:keys [id unit reference evaluate]}]
+                                 (let [[beat meter] (case reference
+                                                      :transport [(:beat transport-clock) (time/normalize-meter (:meter transport-clock))]
+                                                      :launch [(:elapsed-beats env) (:meter env)])
+                                       _ (when-not (time/finite-number? beat)
+                                           (throw (ex-info "A phase accumulator needs a finite beat for its phase reference"
+                                                           {:path [:phase-accumulator id]})))
+                                       period (* (double (evaluate env)) (time/duration->beats {unit 1} meter))
+                                       moving? (and (time/finite-number? period) (pos? period))
+                                       {before :beat phase :phase} (get previous id)
+                                       started? (and (time/finite-number? before) (time/finite-number? phase))]
+                                   [id {:beat (double beat)
+                                        :phase (cond (and started? moving?) (+ phase (/ (- beat before) period))
+                                                     started? phase
+                                                     (and moving? (= :transport reference)) (/ beat period)
+                                                     (= :transport reference) 0.0
+                                                     moving? (/ beat period)
+                                                     :else 0.0)}])))
+                       accumulators)]
+      (assoc (reduce (fn [out {:keys [id key]}] (assoc-in out [:params key] (get-in phases [id :phase]))) env accumulators)
+             ::phases phases))
+    env))
+
+(defn with-phases
+  "Instance state with the phases a frame's inputs advanced."
+  [state env]
+  (if-let [phases (::phases env)] (assoc (or state {}) ::phases phases) state))
+
 (defn sample-inputs
   ([plan env transport-clock] (sample-inputs plan env transport-clock false))
   ([plan env transport-clock isolate-phases?]
    (let [env (reduce (fn [out [id sample]] (assoc-in out [:params id] (:value (sample env))))
-                     env (:tweens plan))]
-     (reduce (fn [out [spec id]]
-               (try
-                 (assoc-in out [:params id] (oscillator/phase spec transport-clock (:elapsed-beats env) (:meter env)))
-                 (catch clojure.lang.ExceptionInfo error
-                   (if isolate-phases? out (throw error)))))
-             env (:oscillators plan)))))
+                     env (:tweens plan))
+         env (reduce (fn [out [spec id]]
+                       (try
+                         (assoc-in out [:params id] (oscillator/phase spec transport-clock (:elapsed-beats env) (:meter env)))
+                         (catch clojure.lang.ExceptionInfo error
+                           (if isolate-phases? out (throw error)))))
+                     env (:oscillators plan))]
+     (accumulate plan env transport-clock))))
 
 (defn fixture-index
   "Index this rig on first inspection. Effects that nobody views never build the index."

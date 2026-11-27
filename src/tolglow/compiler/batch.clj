@@ -214,7 +214,7 @@
              (let [now (:time-ms frame), start (:started-at-ms instance 0)
                    _ (when-not (and (registry/finite-number? now) (registry/finite-number? start))
                        (fail! [:frame :time-ms] "Effect frame/start time must be finite milliseconds"))
-                   params (expand-gradients (registry/resolve-params schemas (merge defaults (:params instance))))
+                   params (expand-gradients (registry/resolve-accepted-params schemas defaults (:params instance)))
                    params (if block-plan (blocks/with-variables block-plan params frame) params)
                    releasing? (= :releasing (:phase instance))
                    clock (time/frame-clock frame)
@@ -239,7 +239,7 @@
                (if exact? (scalar-step context)
                    (-> context
                        (blocks/observed block-plan env frame fixture-index)
-                       (assoc :state state :done? done?)
+                       (assoc :state (if done? state (blocks/with-phases state env)) :done? done?)
                        (runtime/append-contributions blocks)
                        (update :intents #(or % []))))))
            (blocks/step-info {:backend (if prepare-group :deferred :batch)

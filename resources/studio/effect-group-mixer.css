@@ -159,6 +159,7 @@
 .surface-box-name { font-weight: 600; font-size: 12px; overflow-wrap: anywhere; }
 .surface-box-range { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .surface-box-layout select { font-size: 12px; padding: 2px 4px; max-width: 8em; }
+span.surface-box-layout { font-size: 12px; overflow-wrap: anywhere; }
 .surface-box-buttons { display: inline-flex; gap: 4px; margin-inline-start: auto; }
 .surface-box-button { min-width: 32px; min-height: 32px; border: 1px solid var(--line); border-radius: 4px;
   background: transparent; color: inherit; cursor: pointer; }

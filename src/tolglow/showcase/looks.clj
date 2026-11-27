@@ -8,7 +8,8 @@
 
   `catalogue` lists each cue with its category and where it came from. The
   ported looks name the original effect they restate."
-  (:require [tolglow.effects :as fx]
+  (:require [tolglow.audio-lfo :as audio-lfo]
+            [tolglow.effects :as fx]
             [tolglow.registry :as registry]
             [tolglow.showcase.rig :as rig]
             [tolglow.signals :as signals]))
@@ -394,6 +395,177 @@
            :params {:scroll [0.0 0.0 1.0] :level [0.22 0.0 1.0] :wavelength [6.0 1.0 20.0]}}
           (fx/color (fx/multiply (gradient aurora-stops drift) swell (p :level))))))
 
+;; ------------------------------------------------------- after-hours cues
+;;
+;; Ideas from the operator's 2020 tolglow-web frontend (#656): the searchlight
+;; wander and the twin audio cones of its Three.js scene, and the "Run" and
+;; matrix concepts of its placeholder grid. Each reads only the transport beat,
+;; the head position, its parameters and a seed, so a stopped transport holds
+;; every frame and play resumes where it stopped, with no catch-up.
+
+(defn- signed [unit] (fx/subtract (fx/multiply 2.0 unit) 1.0))
+
+(defn- ease-out-quad
+  "Quadratic-out easing of a unit fraction: fast away, settling on arrival."
+  [t]
+  (let [rest (fx/subtract 1.0 t)] (fx/subtract 1.0 (fx/multiply rest rest))))
+
+(def searchlight-drift
+  "Port of the tolglow-web searchlight wander (`three.cljs`, random tweens of
+  each spot's aim over 2-7 s with quadratic-out easing). Each beam lunges to a
+  new seeded point in the box `:center` +/- `:extent`, settles there for the
+  `:hold` fraction of its move and picks the next. Moves last `:move-beats`
+  on average; every head's are 0.6 to 1.4 times that, by seed, with its own
+  phase, so the six beams never move in step. The moves count from the launch
+  in a phase accumulator, so turning `:move-beats` changes the pace from the
+  move each beam is in rather than sending it to another one. A move is a
+  stretch of beats, so the drift follows tempo and freezes with the
+  transport. Nothing limits how fast a head is asked to travel. The original
+  also tweened beam angle and penumbra; these heads have no zoom, so the
+  brightness wanders instead, between `:level-min` and `:level`."
+  (let [salt (fx/multiply (p :seed) 0.618)
+        pace (fx/add 0.6 (fx/multiply 0.8 (noise head-hash salt 0.37)))
+        moves (fx/phase-accumulator :moves (p :move-beats))
+        clock (fx/add (fx/divide moves pace) (noise (fx/multiply head-hash 1.91) salt 5.3))
+        move (floor clock)
+        eased (ease-out-quad (fx/clamp (fx/divide (fract clock) (fx/subtract 1.0 (p :hold)))))
+        draw (fn [index salt-2] (noise head-hash (fx/multiply index 3.17) salt salt-2))
+        spot (fn [index] (fx/add (p :center)
+                                 (fx/multiply (p :extent) (fx/xyz (signed (draw index 1.1))
+                                                                  (signed (draw index 2.2))
+                                                                  (signed (draw index 3.3))))))
+        level (fn [index] (fx/mix (p :level-min) (p :level) (draw index 4.4)))
+        previous (fx/subtract move 1.0)]
+    (look :searchlight-drift
+          {:name "Searchlight drift" :targets rig/beams :envelope soft
+           :params {:center (fx/parameter [0.0 0.8 1.6] {:type :vector :size 3 :bounds [-6.0 6.0]
+                                                         :semantic/type :position :unit :m :name "Centre"})
+                    :extent (fx/parameter [4.2 0.8 2.2] {:type :vector :size 3 :bounds [0.0 6.0]
+                                                         :unit :m :name "Extent"})
+                    :move-beats (fx/parameter 8.0 {:bounds [1.0 32.0] :unit :beats :name "Move length"})
+                    :hold (fx/parameter 0.3 {:bounds [0.0 0.9] :unit :fraction :name "Settle"})
+                    :level (fx/parameter 0.9 {:bounds [0.0 1.0] :name "Brightest"})
+                    :level-min (fx/parameter 0.45 {:bounds [0.0 1.0] :name "Dimmest"})
+                    :tint (fx/parameter [0.78 0.86 1.0] {:name "Tint"})
+                    :seed (fx/parameter 656.0 {:bounds [0.0 9999.0] :name "Seed"})}}
+          (fx/color (p :tint))
+          (fx/intensity (fx/mix (level previous) (level move) eased))
+          (fx/aim (fx/mix (spot previous) (spot move) eased))
+          shutter-open)))
+
+(def twin-cones
+  "Port of the tolglow-web twin audio cones (`crazy-spotlight-shader.glsl`).
+  The floor heads trace circles above the stage, the stage-left pair turning
+  one way and the stage-right pair the other. Their tints sway between
+  `:tint-a` and `:tint-b` in opposite phase. The turn and the sway count from the
+  transport beat in phase accumulators, so they stay on the bar wherever the
+  cue was launched, and turning `:bars` or `:sway-bars` changes the speed from
+  where the cones are. Brightness follows a mix of a
+  kick that decays from every beat and `:energy`. The show binds `:energy` to
+  an audio-shaped LFO on the bass band, so with a capture running each bar of
+  bass sets the next bar's brightness. Without audio that LFO rests on a sine
+  and the cones still breathe once a bar."
+  (let [side (signed (at-least x 0.0))
+        kick (op :exp (fx/multiply -1.0 (p :punch) (fract beat)))
+        drive (fx/mix kick (fx/clamp (p :energy)) (p :follow))
+        turns (fx/phase-accumulator :turn (p :bars) {:unit :bars :phase-reference :transport})
+        angle (fx/multiply tau (fx/add (fx/multiply side turns) (fx/divide x 4.8)))
+        sway (sine (fx/add (fx/phase-accumulator :sway (p :sway-bars) {:unit :bars :phase-reference :transport}) (fx/multiply 0.25 side)))]
+    (look :twin-cones
+          {:name "Twin cones" :targets rig/movers :envelope soft
+           :params {:energy (fx/parameter 0.5 {:bounds [0.0 1.0] :unit :fraction :name "Energy"
+                                               :control/axis :pressure})
+                    :follow (fx/parameter 0.6 {:bounds [0.0 1.0] :unit :fraction :name "Audio follow"})
+                    :punch (fx/parameter 3.0 {:bounds [0.0 12.0] :unit :per-beat :name "Kick decay"})
+                    :floor (fx/parameter 0.15 {:bounds [0.0 1.0] :name "Floor"})
+                    :level (fx/parameter 1.0 {:bounds [0.0 1.0] :name "Level"})
+                    :bars (fx/parameter 2.0 {:bounds [0.25 16.0] :unit :bars :name "Turn"})
+                    :sway-bars (fx/parameter 4.0 {:bounds [0.25 32.0] :unit :bars :name "Sway"})
+                    :spread (fx/parameter 1.8 {:bounds [0.0 5.0] :unit :m :name "Spread"})
+                    :radius (fx/parameter 1.1 {:bounds [0.0 4.0] :unit :m :name "Radius"})
+                    :height (fx/parameter 3.6 {:bounds [0.5 5.0] :unit :m :name "Height"})
+                    :depth (fx/parameter 0.4 {:bounds [-4.0 4.0] :unit :m :name "Depth"})
+                    :tint-a (fx/parameter [0.05 0.35 1.0] {:name "Tint A"})
+                    :tint-b (fx/parameter [0.95 0.1 0.55] {:name "Tint B"})}}
+          (fx/color (fx/mix (p :tint-a) (p :tint-b) sway))
+          (fx/intensity (fx/multiply (p :level) (fx/mix (p :floor) 1.0 drive)))
+          (fx/aim (fx/xyz (fx/add (fx/multiply side (p :spread)) (fx/multiply (p :radius) (op :cos angle)))
+                          (p :height)
+                          (fx/add (p :depth) (fx/multiply (p :radius) (op :sin angle))))))))
+
+(def run
+  "The \"Run\" concept from the tolglow-web grid (strobe, level, lightness and
+  colour) as a macro cue: `:drive` alone takes the beams and washes from a
+  dim single colour to a white-hot strobe. It writes no aim, so whatever moves
+  the beams keeps moving them, and it leaves the floor heads to the cones. As
+  it rises the level
+  climbs from `:floor`, the hue fans out across the room by up to
+  `:hue-spread` turns, the colour whitens by up to `:whiten`, and past
+  `:strobe-from` a beat-locked strobe starts and doubles its rate in steps,
+  up to 2^`:rate-steps` flashes per beat, while its duty shortens. Two
+  doublings, four flashes a beat, is 12 Hz at 180 BPM, the most the show's
+  40 Hz frames draw as distinct flashes; eight a beat would alias. At full
+  drive each flash lasts 0.35 of its slot, long enough for a 25 ms frame. The other
+  parameters shape the ramp; a performer only needs the one control."
+  (let [drive (fx/clamp (p :drive))
+        strobing (at-least drive (p :strobe-from))
+        rate (op :pow 2.0 (floor (fx/multiply drive (fx/add (p :rate-steps) 0.999))))
+        ;; At full drive a flash lasts 0.35 of its slot: 29 ms at four a beat
+        ;; and 180 BPM, so a 25 ms frame always lands in it.
+        flash (at-least (fx/mix 0.6 0.35 drive) (fract (fx/multiply beat rate)))
+        gate (fx/mix 1.0 flash strobing)
+        hue (fx/add (p :hue) (fx/multiply drive (p :hue-spread) (fx/divide x 10.0)))
+        colour (fx/mix (hue->rgb hue) [1.0 1.0 1.0] (fx/multiply (p :whiten) drive drive))]
+    (look :run
+          {:name "Run" :targets (into rig/beams rig/washes) :envelope soft
+           :params {:drive (fx/parameter 0.0 {:bounds [0.0 1.0] :unit :fraction :name "Drive"
+                                              :control/axis :pressure})
+                    :floor (fx/parameter 0.2 {:bounds [0.0 1.0] :name "Floor"})
+                    :hue (fx/parameter 0.62 {:bounds [0.0 1.0] :unit :turns :name "Hue"})
+                    :hue-spread (fx/parameter 0.35 {:bounds [0.0 1.0] :unit :turns :name "Hue spread"})
+                    :whiten (fx/parameter 0.8 {:bounds [0.0 1.0] :unit :fraction :name "Whiten"})
+                    :strobe-from (fx/parameter 0.55 {:bounds [0.0 1.0] :unit :fraction :name "Strobe from"})
+                    :rate-steps (fx/parameter 2 {:type :integer :bounds [0 2] :unit :doublings :name "Strobe doublings"})}}
+          (fx/color (fx/multiply colour gate))
+          (fx/intensity (fx/mix (p :floor) 1.0 (op :sqrt drive)))
+          shutter-open)))
+
+(def matrix-stops
+  [{:position 0.0 :color [0.95 0.05 0.25]}
+   {:position 0.5 :color [0.4 0.08 0.95]}
+   {:position 1.0 :color [0.02 0.7 0.95]}])
+
+(def matrix-chase
+  "A grid chase on the tube wall, read as eight columns of ten cells. Bands of
+  light every `:spacing` cells step one cell per `:step` beats across the grid
+  at `:angle` degrees: 0 sweeps the columns left to right, 90 climbs the rows,
+  anything between runs diagonals. Each band fades over `:tail` cells behind
+  it. Rows take their colour from the `:palette` gradient, bottom to top. The
+  bands count from the transport beat in a phase accumulator, so they step on
+  the beat grid wherever the cue was launched, one band cycle per
+  `:step` x `:spacing` beats, so editing either changes the pace or the gaps
+  from where the bands are."
+  (let [column (floor (fx/add 0.5 (fx/divide (fx/subtract x (first rig/tube-xs)) 1.2)))
+        row (floor (fx/multiply 10.0 (fx/clamp (fx/divide (fx/subtract y rig/tube-base) rig/tube-length) 0.0 0.999)))
+        angle (degrees (p :angle))
+        along (fx/add (fx/multiply column (op :cos angle)) (fx/multiply row (op :sin angle)))
+        cycle (fx/phase-accumulator :bands (fx/multiply (p :step) (p :spacing)) {:phase-reference :transport})
+        head (floor (fx/multiply (fract cycle) (p :spacing)))
+        ;; The nudge keeps a cell exactly on a band from rounding to the far
+        ;; end of the gap when cos or sin of the angle is not exactly zero.
+        behind (fx/multiply (p :spacing) (fract (fx/add (fx/divide (fx/subtract head along) (p :spacing)) 1.0e-6)))
+        lit (fx/clamp (fx/subtract 1.0 (fx/divide behind (p :tail))))]
+    (look :matrix-chase
+          {:name "Matrix chase" :targets rig/tubes :envelope (soft-colour 1/4 1)
+           :params {:angle (fx/parameter 0.0 {:bounds [-180.0 180.0] :unit :deg :name "Angle"})
+                    :step (fx/parameter 0.5 {:bounds [0.125 4.0] :unit :beats :semantic/type :beat-ratio
+                                             :name "Step"})
+                    :spacing (fx/parameter 4 {:type :integer :bounds [1 12] :unit :cells :name "Spacing"})
+                    :tail (fx/parameter 2.0 {:bounds [0.5 8.0] :unit :cells :name "Tail"})
+                    :level (fx/parameter 0.6 {:bounds [0.0 1.0] :name "Level"})
+                    :palette (fx/parameter matrix-stops {:name "Palette"})}}
+          (fx/color (fx/multiply (fx/gradient :palette (fx/divide row 9.0)) lit (p :level)) {:blend :max}))))
+
 ;; ----------------------------------------------------------------- modulator
 
 (defn colour-drift
@@ -415,6 +587,17 @@
     {:id :heartbeat :version 1 :name "Heartbeat" :category :composite :range [0.0 1.0] :params {}
      :expression (fx/clamp (op :max (thump 0.0 1.0) (thump 0.28 0.62)))}))
 
+(def bass-lfo
+  "The audio-shaped LFO the show configures (`tolglow.audio-lfo`, #676): the
+  RMS envelope of each whole bar of the bass band, morphing over two beats.
+  Until a capture supplies a bar it rests on a sine, and through silence it
+  holds the last bar it heard."
+  {:lfo-id :showcase-bass :name "Showcase bass"
+   :config {:band :bass :extract :envelope :window {:bars 1} :points 16
+            :morph {:beats 2} :curve :smoothstep :rest-shape :sine :on-silence :hold}})
+
+(def bass-waveform (audio-lfo/waveform-id (:lfo-id bass-lfo)))
+
 (defn- lfo [waveform period from to & {:as options}]
   (merge {:type :lfo :waveform waveform :period period :phase-reference :transport :from from :to to}
          options))
@@ -432,7 +615,8 @@
                  :height (lfo :sine {:bars 6} 2.6 4.6)}
    :riser-chase {:width (lfo :triangle {:bars 2} 0.12 0.6)}
    :aurora {:scroll (lfo :saw {:bars 4} 0.0 1.0)
-            :level (lfo :sine {:bars 3} 0.12 0.3)}})
+            :level (lfo :sine {:bars 3} 0.12 0.3)}
+   :twin-cones {:energy (lfo bass-waveform {:bars 1} 0.0 1.0)}})
 
 ;; ------------------------------------------------------------------ catalogue
 
@@ -463,7 +647,18 @@
    {:id :confetti :effect confetti :category :pixel :origin :ported :swatch "#7a6ae0" :priority 25
     :legacy "tolglow.fx/confetti, tolglow.cue/confetti"}
    {:id :riser-chase :effect riser-chase :category :pixel :origin :new :swatch "#ff7a1a" :priority 15}
-   {:id :aurora :effect aurora :category :pixel :origin :new :swatch "#19c37d" :priority 5}])
+   {:id :aurora :effect aurora :category :pixel :origin :new :swatch "#19c37d" :priority 5}
+   {:id :searchlight-drift :effect searchlight-drift :category :movement :origin :ported :swatch "#c8d6ff" :priority 11
+    :legacy "tolglow-web three.cljs searchlight wander (random aim and beam tweens, quadratic-out)"}
+   {:id :twin-cones :effect twin-cones :category :intensity :origin :ported :swatch "#3a5cff" :priority 13
+    :legacy "tolglow-web crazy-spotlight-shader.glsl two-spot audio cones"}
+   {:id :run :effect run :category :intensity :origin :ported :swatch "#ff3d6e" :priority 70
+    :legacy "tolglow-web placeholder grid concept \"Run\" (strobe, level, lightness, colour)"}
+   {:id :matrix-chase :effect matrix-chase :category :pixel :origin :new :swatch "#9a2cf0" :priority 20}])
+
+(def after-hours-cues
+  "The cues the `after-hours` timeline was written for."
+  #{:searchlight-drift :twin-cones :run :matrix-chase})
 
 (defn cue [{:keys [id effect category swatch priority]}]
   {:id id :version 1 :name (:name effect) :effect-id id :swatch swatch :tags [category]

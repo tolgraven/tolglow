@@ -35,6 +35,7 @@
             [tolglow.controllers.push-knobs :as push-knobs]
             [tolglow.controllers.push-variations :as push-variations]
             [tolglow.surface.link :as surface]
+            [tolglow.surface.push-3 :as push-3-surface]
             [tolglow.surface.x-touch :as x-touch]
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
@@ -112,6 +113,7 @@
             [tolglow.sensors.audience.zones :as audience-zones]
             [tolglow.sensors.osc :as sensor-osc]
             [tolglow.fixtures.library :as fixture-service]
+            [tolglow.rig.aim-calibration :as aim-calibration]
             [tolglow.rig :as rig]
             [tolglow.fixtures.patch :as fixture-patch]
             [tolglow.rig.rdm :as rdm]
@@ -3443,13 +3445,19 @@
            ;; Hand the committed shader uniforms to their producer; it never
            ;; renders here, and a stopped producer ignores them (#673).
            (shader-producer/sync! (:shader-video runtime) (video-shader/requests model))
-           (let [signal (:video-frame-signal runtime)] (locking signal (.notifyAll signal)))))))))
+           (let [^Object signal (:video-frame-signal runtime)] (locking signal (.notifyAll signal)))))))))
 
 (defn- prepare-rig-edit [model proposed]
   (let [basis (:rig model)
         proposed (dissoc proposed :runtime-id :expected-epoch)
-        proposed (cond-> proposed (map? (:fixtures proposed))
-                   (update :fixtures (partial fixture-patch/expand (get-in model [:registry :fixtures]))))]
+        types (get-in model [:registry :fixtures])
+        proposed (cond-> proposed
+                   (map? (:fixtures proposed))
+                   (update :fixtures (partial fixture-patch/expand types))
+                   ;; Entries marked :placement? are instantiated from their
+                   ;; published type, as :fixture-patch does (#226).
+                   (vector? (:fixtures proposed))
+                   (update :fixtures (partial fixture-service/admit-placements types)))]
     {:basis basis :rig (rig/prepare-edit basis proposed)}))
 
 (defn- ingress-queue [runtime type payload]
@@ -3920,6 +3928,13 @@
   Set :cue-variation-pads? true on Push 3 with captured pads and a dedicated
   :variation/cycle button in :button-bindings. The display must support
   presentation receipts. This option also enables exact beat-ratio edits.
+  Push 3 accepts :cue-grid {:buttons {id action}} with captured, unbound
+  User Mode buttons for :cue-grid/select, :cue-grid/reorder,
+  :cue-grid/page-up and :cue-grid/page-down (tolglow.surface.push-3). It
+  registers a control surface under its session ID whose :grid shows the
+  running launches; Select commits that surface's :selected and Reorder
+  sends :instance/move-after, as Studio does. :columns (8) widens the
+  content for a Push extended to the right.
   X-Touch accepts :effect-group-view :manual or :overlay. Group faders occupy
   the first strips, followed by any configured cue channels. Each X-Touch or
   extender registers a control surface under its session ID; its window is
@@ -3951,10 +3966,14 @@
             knob-page (when (and (= :push-2 kind) (contains? options :knob-page))
                         (push-knobs/push-2-encoder-overlay (:knob-page options) options))
             options (cond-> options (= :push-3 kind) push-knobs/push-3-options)
+            ;; The Push 3 Select/Reorder pad grid (#545), validated before any port opens.
+            push-3-grid? (and (= :push-3 kind) (some? (:cue-grid options)))
+            _ (when push-3-grid? (push-3-surface/validate-options! options))
             push-source (when (#{:push-2 :push-3} kind)
                           {:adapter kind :session-id id})
             operator-id (when push-source (str (name kind) "/" id "/" (UUID/randomUUID)))
-            open! (case kind :push-2 devices/open-push-2! :push-3 devices/open-push-3!
+            open! (case kind :push-2 devices/open-push-2!
+                         :push-3 (if push-3-grid? push-3-surface/connect! devices/open-push-3!)
                          :push-3-midi devices/open-push-3-midi! :seaboard devices/open-seaboard! :x-touch x-touch/connect!
                          :midi devices/open-midi! :osc devices/open-osc! :sensor devices/open-sensor!
                          (throw (ex-info "Unknown device kind" {:kind kind})))
@@ -3972,6 +3991,8 @@
                                :cue-strips (vec (:channels options []))})
             options (cond-> (dissoc options ::restore-lease ::reconnect-lease :knob-page)
                       knob-page (assoc :encoder-overlay knob-page)
+                      ;; A selection the Push picks itself is published without waiting on the owner.
+                      push-3-grid? (assoc :surface-id id :publish! #(surface-command! runtime epoch id %))
                       x-touch?
                       ;; The Tolglow mixer layout (#706 slice 2) reads strips, window and
                       ;; layout state from the committed surface link.
@@ -4013,7 +4034,7 @@
                                                                 (cond-> {:status :pending :command-id (:command-id command)}
                                                                   gesture? (assoc :completion reply)))))}))
             device (cond-> device
-                     x-touch? (assoc ::surface-id id)
+                     (or x-touch? push-3-grid?) (assoc ::surface-id id)
                      push-3-variation-pads? (assoc ::ratio-pad-operator operator-id)
                      restore-lease (assoc ::restore-lease restore-lease))]
         (if (locking (:lock runtime)
@@ -4029,6 +4050,10 @@
                                    :descriptor (if (:extender? options) :behringer/x-touch-ext :behringer/x-touch)
                                    :role (if (:extender? options) :extender :main)
                                    :viewports {:strips surface-content}}))
+              (when push-3-grid?
+                (surface-command! runtime epoch id
+                                  {:op :control-surface/attach :surface-id id :descriptor :ableton/push-3
+                                   :role :main :viewports {:grid (push-3-surface/content options)}}))
               device)
           (do (devices/close! device)
               (throw (ex-info "Show stopped or changed while connecting device" {}))))))))
@@ -4145,7 +4170,7 @@
           status (recovery/status owner)
           checkpoints (into {} (keep (fn [kind]
                                        (when-let [file (recovery/latest-file owner show-id kind)]
-                                         [kind {:modified-at-ms (.lastModified file)}])))
+                                         [kind {:modified-at-ms (.lastModified ^java.io.File file)}])))
                             (into [:recovery :named :prior] (keys recovery/legacy-kinds)))]
       (cond-> (assoc (merge status identity) :runtime-id (:id runtime)
                      :checkpoints checkpoints :available (set (keys checkpoints)))
@@ -4315,6 +4340,12 @@
                         5000 {:status :pending :message "Publication remains queued"}))
       :patch (deref (submit! runtime :fixture-patch payload)
                     5000 {:status :pending :message "Patch remains queued"})
+      ;; Read-only aim calibration against the committed rig plus draft
+      ;; overrides (#226). Live test aims use :surface-aim.
+      :aim-check (let [rig (get-in @(:state runtime) [:model :rig])]
+                   (aim-calibration/check (aim-calibration/fixture rig payload) (:point payload)))
+      :aim-fit (let [rig (get-in @(:state runtime) [:model :rig])]
+                 (aim-calibration/fit (aim-calibration/fixture rig payload) (:samples payload) (:axis-verified? payload)))
       (throw (ex-info "Unknown fixture operation" {:operation operation})))))
 
 (defn- session-operation!
@@ -4831,7 +4862,7 @@
           (loop []
             (let [remaining (quot (- deadline (System/nanoTime)) 1000000)]
               (if (pos? remaining)
-                (do (locking signal (.wait signal (long remaining)))
+                (do (locking signal (.wait ^Object signal (long remaining)))
                     (let [[_ f gain] (current)]
                       (if (fresh? f gain)
                         {:status :frame :frame f :gain gain :pixels (video-source/scaled-pixels f gain)}
