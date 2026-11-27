@@ -55,7 +55,7 @@
     tolglow.development.workspace-test tolglow.development-test tolglow.studio.restart-host-test tolglow.cue-timing-host-test
     tolglow.development.terminal-test tolglow.sensors-test tolglow.sensors.osc-test tolglow.sensors.audience-test
     tolglow.studio.sensor-host-test tolglow.output.scheduler-test tolglow.perf.output-deadlines-test
-    tolglow.waveforms-test tolglow.development.agents-test tolglow.studio.application-agent-host-test
+    tolglow.waveforms-test tolglow.parameter-sample-test tolglow.development.agents-test tolglow.studio.application-agent-host-test
     tolglow.render.workers-test tolglow.request-archive-test
     tolglow.knobs-test tolglow.knob-sweep-test tolglow.controllers.push-knobs-test tolglow.knob-presets-test
     tolglow.knob-candidates.generate-test tolglow.knob-candidates-test
