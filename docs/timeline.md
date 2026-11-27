@@ -172,9 +172,10 @@ The recording step uses Chrome's screencast and the system ffmpeg
 `tolglow.qa.timeline` is a preview-only show. It runs the real owner,
 scheduler, capture worker and section analyzer on generated PCM that follows
 the transport, posts a phrase of events and ramps every eight bars and simulates
-a recording match. The simulated recording lasts four hours at 120 BPM. After
-its end the timeline shows no predicted section, so the browser check needs a
-host younger than that. The browser script asserts the layout and behaviour in
+a recording match. The simulated recording lasts four hours at 120 BPM. Its
+matches carry that end as `:until-position-ms`. After the end the lock reports
+"No match · playback-boundary" and no section is predicted, so the browser
+check needs a host younger than that. The browser script asserts the layout and behaviour in
 headless Chrome and writes stills, a recording and `report.json`. Create
 `stop` in the control directory to end the show. Headless desktop Chrome is not
 evidence for a foreground display or for iPad Safari.

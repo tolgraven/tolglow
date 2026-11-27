@@ -123,23 +123,29 @@
 (defn- match-loop
   "Publish a simulated match of the live music against the profile every 100
   ms: the recording position that corresponds to the transport beat, and the
-  playback rate the current tempo implies. Stops publishing while `off?`."
+  playback rate the current tempo implies. Stops publishing while `off?`.
+  Each match carries the recording's end as :until-position-ms, as a matcher
+  that knows the track length would. Past the end nothing more is published,
+  so the lock reports :unavailable :playback-boundary instead of a match with
+  nothing left to forecast."
   [runtime running? off?]
-  (let [{:keys [provenance alignment-options now-ms! publish!]} (show/section-reference-callbacks runtime)]
+  (let [{:keys [provenance alignment-options now-ms! publish!]} (show/section-reference-callbacks runtime)
+        end-ms (double (:duration-ms profile))]
     (loop [state (position/new-state provenance alignment-options)]
       (when @running?
         (Thread/sleep 100)
-        (if (off?)
-          (recur state)
-          (let [now (now-ms!)
-                {:keys [beat bpm]} (get-in @(:state runtime) [:model :transport])
-                observation {:type :match :provenance provenance :occurrence (:occurrence state) :observed-at-ms now
-                             :match {:reference (:reference profile) :position-ms (* beat (/ 60000.0 track-bpm))
-                                     :rate (/ bpm track-bpm) :score 0.93}}
-                next-state (try (position/advance state now observation)
-                                (catch clojure.lang.ExceptionInfo _ state))]
-            (publish! next-state)
-            (recur next-state)))))))
+        (let [{:keys [beat bpm]} (get-in @(:state runtime) [:model :transport])
+              position-ms (* beat (/ 60000.0 track-bpm))]
+          (if (or (off?) (>= position-ms end-ms))
+            (recur state)
+            (let [now (now-ms!)
+                  observation {:type :match :provenance provenance :occurrence (:occurrence state) :observed-at-ms now
+                               :match {:reference (:reference profile) :position-ms position-ms
+                                       :rate (/ bpm track-bpm) :score 0.93 :until-position-ms end-ms}}
+                  next-state (try (position/advance state now observation)
+                                  (catch clojure.lang.ExceptionInfo _ state))]
+              (publish! next-state)
+              (recur next-state))))))))
 
 ;; Scheduled content -----------------------------------------------------------------
 

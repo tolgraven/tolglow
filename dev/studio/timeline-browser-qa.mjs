@@ -212,6 +212,15 @@ async function cancelFromTimeline(page, touch) {
   const outcome = schedule.recent.find(e => e['event-id'] === candidate.id);
   assert.equal(outcome.status, 'cancelled');
   assert.equal(outcome.reason, 'operator-cancel');
+  // The playhead never passes the newest committed sample and covers each step
+  // over one sample period (at most 250 ms), so the marker of a just-cancelled
+  // event can sit up to one delivered step right of now. Wait longer than one
+  // such step before asserting where it ended up (#801).
+  await page.waitForFunction(id => {
+    const now = document.querySelector('#timeline-panel .timeline-now')?.getBoundingClientRect();
+    const chip = document.querySelector(`#timeline-panel .timeline-event[data-event-id="${id}"] .timeline-chip`)?.getBoundingClientRect();
+    return now && chip && chip.x + chip.width / 2 <= now.x + 2;
+  }, candidate.id, {timeout: 1000, polling: 'raf'}).catch(() => {});
   const after = await snapshot(page);
   const marker = after.events.find(e => e.id === candidate.id);
   assert.ok(marker.chip.cx <= after.now.x + 2,
