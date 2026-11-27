@@ -242,13 +242,13 @@
   [source]
   (some #(when (and (driving-source? %) (= :lfo (keyword (:type %)))) (:period-beats %)) (:sources source)))
 
-(defn result-visual [view instance param schema]
+(defn result-visual [view instance param schema & [options]]
   (when (driven? instance param)
     (let [source (reading instance param)]
       [result-view view instance schema #(native-value instance param) (driving-block source)
-       {:period-beats (source-period source)}])))
+       (merge options {:period-beats (source-period source)})])))
 
-(defn axes-visual [view instance components schema]
+(defn axes-visual [view instance components schema & [options]]
   (let [axis (fn [[param spec]]
                (if (driven? instance param)
                  (native-value instance param)
@@ -256,7 +256,7 @@
         sample (fn [] (let [values (mapv axis components)] (when (every? some? values) values)))
         block? (some (fn [[k _]] (driving-block (reading instance k))) components)]
     [result-view view instance schema sample block?
-     {:period-beats (some (fn [[k _]] (source-period (reading instance k))) components)}]))
+     (merge options {:period-beats (some (fn [[k _]] (source-period (reading instance k))) components)})]))
 
 (defn- owner-document [^js event] (some-> event .-currentTarget .-ownerDocument))
 
@@ -377,8 +377,12 @@
                  vec)
       (and priority (free? (:param priority))) (conj [(:param priority) (:schema priority)]))))
 
-(defn- lfo-editor [id param schema base source catalog instance]
-  (let [lfo (source-of source :lfo)]
+(defn- lfo-editor [id param schema base source catalog instance & [{:keys [shown forget!] :as panel}]]
+  ;; From lfo-panel: `shown` is the LFO to edit, the one last seen bound here,
+  ;; so the actions stay mounted (disabled) while the projection briefly
+  ;; lacks it (#795); `current` is what the projection shows now.
+  (let [current (if panel (:current panel) (source-of source :lfo))
+        lfo (if panel shown current)]
     (r/with-let [form (r/atom (editor-draft schema base (:binding lfo) catalog))
                  move (r/atom nil) error (r/atom nil)]
       (let [{:keys [waveform period unit phase-reference phase inputs band dwell dwell-unit]} @form
@@ -460,12 +464,65 @@
          [:div.source-actions
           [:button.button.primary {:type "submit" :disabled (or (:pending? in-flight) (not wave))}
            (cond destination "Move LFO" lfo "Update LFO" :else "Attach LFO")]
-          (when (and lfo (not destination))
+          ;; Kept mounted (disabled) while a change is pending, so a projection
+          ;; that briefly lacks the LFO during the round trip does not remove
+          ;; the buttons under a press.
+          (when (and (or lfo (:pending? in-flight)) (not destination))
             [:<>
-             [:button.button {:type "button" :disabled (:pending? in-flight)
+             [:button.button {:type "button" :disabled (or (:pending? in-flight) (not current))
                               :on-click #(rf/dispatch [(if (:held? lfo) :modulation/resume :modulation/hold) id param])}
               (if (:held? lfo) "Resume LFO" "Use base value")]
-             [:button.button {:type "button" :disabled (:pending? in-flight) :on-click #(rf/dispatch [::unbind id param])} "Detach LFO"]])]]))))
+             [:button.button {:type "button" :disabled (or (:pending? in-flight) (not current))
+                              :on-click #(do (when forget! (forget!)) (rf/dispatch [::unbind id param]))} "Detach LFO"]])]]))))
+
+(defn lfo-identity
+  "What tells one bound LFO from another: its projected :identity, else its
+  binding (older projections)."
+  [lfo]
+  (when lfo (or (:identity lfo) (:binding lfo))))
+
+(defn remembered-lfo
+  "The next state of an LFO panel's memory, {:known :seen :detaching}, given
+  what the projection shows now (`current`, at `revision`) and whether a
+  request for this parameter is pending. The panel shows `:known`.
+  - A brief gap during a round trip keeps the LFO: while a request is
+    pending, or while the projection is still at the revision that last
+    showed it.
+  - An absence confirmed past that (an unbind from the REPL or another
+    surface) forgets it, so the panel offers Attach again.
+  - The binding this panel asked to detach is not learned again while the
+    projection still shows it."
+  [{:keys [known seen detaching] :as state} {:keys [current revision pending?]}]
+  ;; LFOs compare by their projected :identity (bound-at, definition and
+  ;; waveform versions), not their settings, so a detach followed by a
+  ;; re-attach with identical settings is a new LFO.
+  (let [current-id (lfo-identity current)]
+    (cond
+      (and current (not= current-id detaching)) {:known current :seen revision :detaching detaching}
+      current state
+      :else (cond-> (assoc state :detaching nil)
+              (and known (not pending?) (integer? revision) (integer? seen) (> revision seen))
+              (assoc :known nil :seen nil)))))
+
+(rf/reg-sub ::view-revision (fn [db _] (get-in db [:server-projection :view :revision])))
+
+(defn- lfo-panel
+  "The LFO editor, keyed by the LFO binding last seen here (`remembered-lfo`).
+  A projection that briefly lacks the LFO during a round trip neither resets
+  the draft nor unmounts the actions under a press; a confirmed absence, or
+  this panel's own Detach, forgets it."
+  [id param schema base source catalog instance]
+  (r/with-let [memory (atom {})]
+    (let [current (source-of source :lfo)
+          revision @(rf/subscribe [::view-revision])
+          pending? (boolean (:pending? @(rf/subscribe [::request id param])))
+          {:keys [known detaching]} (swap! memory remembered-lfo {:current current :revision revision :pending? pending?})
+          live (when (not= (lfo-identity current) detaching) current)
+          lfo (or live known)]
+      (with-meta [lfo-editor id param schema base source catalog instance
+                  {:shown lfo :current live
+                   :forget! #(swap! memory (fn [m] (assoc m :detaching (lfo-identity (:known m)) :known nil :seen nil)))}]
+        {:key (pr-str (lfo-identity lfo))}))))
 
 (defn- source-label [{:keys [type binding controller-id source-id controller lane-note source id]}]
   (case (keyword type)
@@ -508,7 +565,7 @@
         (for [[i input] (map-indexed vector (:sources source))]
           ^{:key i} [:span (source-label input)
                      (cond (:held? input) " · using base" (:pending? input) " · awaiting sample") (when-let [error (:error input)] [:span.performance-error {:role "alert"} error])])])
-     ^{:key [id param (:binding (source-of source :lfo))]} [lfo-editor id param typed base source catalog raw]
+     ^{:key [id param]} [lfo-panel id param typed base source catalog raw]
      (when-not priority? [motion/parameter-widget id param schema base])]))
 
 (defn mounted-editor

@@ -138,32 +138,96 @@
       (cond-> {:clock-source (:source clock) :clock-epoch epoch}
         session (assoc :clock-session-id session)))))
 
+(def ^:private tempo-history-ms
+  "How far back the section analyzer keeps transport segments. Pitch evidence
+  is at most a few hundred milliseconds old; capture blocks can be longer."
+  2000.0)
+
+(def ^:private tempo-history-limit 64)
+
+(defn- tempo-change-ms
+  "Where the latest segment's line meets a snapshot at another tempo, if that
+  is after the last snapshot seen on the line: the beat stayed continuous and
+  only the tempo changed, somewhere between two snapshots."
+  [{:keys [seen-ms] :as latest} {:keys [time-ms beat bpm]}]
+  (let [rate (fn [bpm] (/ bpm 60000.0))
+        gap (- (clock-beat-at latest time-ms) beat)
+        at (- time-ms (/ gap (- (rate (:bpm latest)) (rate bpm))))]
+    (when (<= (or seen-ms (:time-ms latest)) at time-ms) at)))
+
+(defn- remember-tempo
+  "Add a transport snapshot to the recent segments the analyzer turns capture
+  times into beats with. A snapshot on the latest segment's line adds nothing.
+  A tempo change starts a new segment where the two lines meet, when they meet
+  after the last snapshot on the old line; a clock correction, a jump or any
+  other change starts one at the snapshot. A clock that goes back in time
+  starts the history again. At most 64 segments and two seconds are kept."
+  [segments clock]
+  (let [segment (select-keys clock [:time-ms :beat :bpm])
+        latest (peek segments)]
+    (cond
+      (or (nil? latest) (< (:time-ms segment) (max (:time-ms latest) (:seen-ms latest 0.0)))) [segment]
+
+      (and (== (:bpm segment) (:bpm latest))
+           (< (Math/abs (- (:beat segment) (clock-beat-at latest (:time-ms segment)))) 1.0e-6))
+      (assoc segments (dec (count segments)) (assoc latest :seen-ms (:time-ms segment)))
+
+      :else
+      (let [changed-at (when-not (== (:bpm segment) (:bpm latest)) (tempo-change-ms latest segment))
+            segment (if changed-at
+                      {:time-ms changed-at :beat (clock-beat-at segment changed-at) :bpm (:bpm segment)
+                       :seen-ms (:time-ms segment)}
+                      segment)
+            segments (conj segments segment)
+            n (count segments)
+            cutoff (- (:time-ms segment) tempo-history-ms)
+            ;; Keep the segment that contains the cutoff.
+            first-kept (loop [i (max 0 (- n tempo-history-limit))]
+                         (if (and (< (inc i) n) (<= (:time-ms (nth segments (inc i))) cutoff)) (recur (inc i)) i))]
+        ;; A subvec keeps its whole backing vector, so copy what is kept.
+        (if (pos? first-kept) (into [] (subvec segments first-kept)) segments)))))
+
+(defn- tempo-beat-at
+  "The transport beat at a capture time, on the segment that time fell in.
+  Times before the history extrapolate from its oldest segment."
+  [segments time-ms]
+  (clock-beat-at (reduce (fn [found segment] (if (<= (:time-ms segment) time-ms) segment (reduced found)))
+                         (first segments) segments)
+                 time-ms))
+
 (defn- prepare-sections [state clock]
   (if-let [grid (get-in state [:options :sections])]
     (let [clock-id (section-clock-id clock (get-in state [:options :beat-clock-confidence-min]))]
       (if (and clock-id (= clock-id (get-in state [:section-state :clock-id])))
-        state
+        (update-in state [:section-state :tempo] remember-tempo clock)
         (cond-> (dissoc state :section-state)
           (:features state) (update :features dissoc :audio/section)
           clock-id (assoc :section-state {:clock-id clock-id
                                          :anchor-beat (double (:anchor-beat grid 0.0))
+                                         :tempo (remember-tempo [] clock)
                                          :detector (sections/new-detector (dissoc grid :anchor-beat))}))))
     state))
 
-(defn- section-grid-beat [clock end-ms anchor-beat]
-  (let [relative (- (clock-beat-at clock end-ms) anchor-beat)
+(defn- section-grid-beat [tempo end-ms anchor-beat]
+  (let [relative (- (tempo-beat-at tempo end-ms) anchor-beat)
         edge (* 0.5 (Math/rint (* 2.0 relative)))]
     ;; Equivalent clock snapshots can differ by rounding at a half-beat edge.
     (if (< (Math/abs (- relative edge)) 1.0e-9) edge relative)))
 
 (defn- section-step [state events end-ms received-at-ms clock]
-  (if-let [{:keys [clock-id anchor-beat detector last-beat feel] :as section-state} (:section-state state)]
-    (let [beat (section-grid-beat clock end-ms anchor-beat)
+  (if-let [{:keys [clock-id anchor-beat detector last-beat feel tempo] :as section-state} (:section-state state)]
+    (let [beat (section-grid-beat tempo end-ms anchor-beat)
+          ;; The bass pitch describes a fixed span of milliseconds that ends
+          ;; before this hop. Its beat comes from the transport segment it was
+          ;; heard in, so the detector compares pitch evidence where it was
+          ;; heard at any tempo and across a tempo change (#805).
+          pitch-beat (min beat (section-grid-beat tempo (- end-ms (get-in state [:features :bass-pitch-delay-ms] 0.0))
+                                                  anchor-beat))
           ;; Use the detector's documented continuity limit for the retained
           ;; feature as well as the underlying comparison.
           discontinuity? (and last-beat (or (<= beat last-beat) (> (- beat last-beat) 0.125)))
           {:keys [event] next-detector :state}
-          (sections/observe-hop detector {:beat beat
+          (sections/observe-hop detector {:beat beat :pitch-beat pitch-beat
                                           :features (:features state) :discontinuity? discontinuity?})
           feel (if event
                  (-> (merge clock-id (dissoc event :type :available-at-beat)
@@ -321,7 +385,10 @@
   The comparison needs completed hops no more than 1/8 beat apart, and the
   latest confirmation is available under :audio/section in the features.
   The section event's :time-ms is the confirming hop end. :boundary-beat and
-  :confirmation-delay-beats describe the earlier change on the supplied grid."
+  :confirmation-delay-beats describe the earlier change on the supplied grid.
+  Capture times become beats through the clock snapshots seen in the last two
+  seconds, so audio heard before a tempo change keeps the tempo it was heard
+  at. Bass pitch counts at the centre of its analysis window."
   [state {:keys [samples sample-rate started-at-ms received-at-ms clock]}]
   (when-not (and (= 1 (:version state)) (map? (:options state))
                  (finite? sample-rate) (<= 8000 sample-rate 192000)

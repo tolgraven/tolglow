@@ -139,6 +139,24 @@ result). Printing stops at the character bound, and a map or set longer than
 64 items shows the first 64 that `pr` would show, sorted, so a huge result costs
 no more than the text shown. Strings and other values print as `pr` prints them.
 
+## Publication checks
+
+Studio's **Definitions** editor, agents' `publish_effect` and the REPL all
+publish through `submit! :definition` (#784). In a scheduled show the
+revision is validated and compiled once on the compile worker before the
+frame owner commits it. A publication submitted just before an owner cycle
+can therefore be acknowledged one cycle later. Messages that depend on it,
+such as a cue pinning the new revision or a launch of that effect, wait with
+it. Blackout, master, transport and other controller input do not. Acks,
+refusals and revision numbers are the same on both surfaces and with or
+without the worker. There is no new command or
+projection, and no gap. [Effect fault isolation](effect-fault-isolation.md)
+
+```clojure
+@(show/submit! runtime :definition {:kind :effects :definition revision})
+;; => {:status :accepted :kind :effects :id ... :version n ...}
+```
+
 ## Sample a gradient parameter
 
 An effect output can read a `:gradient` parameter with

@@ -155,8 +155,9 @@
 }
 #view-perform .live-effect-grid>.live-effect-card { grid-column: span 1; min-width: 0; }
 #view-perform .live-effect-grid>.live-effect-card[data-wide=true] { grid-column: 1 / -1; }
-/* A macro card's height follows its size, so cards sharing a row keep their own height. */
-#view-perform .live-effect-grid.live-macro-grid { grid-template-columns: repeat(var(--slot-columns, 1), minmax(0, 1fr)); align-items: start; }
+/* A macro card fills the rows the packer gives it: a short card that grew
+   down beside a taller one takes that band's full height. */
+#view-perform .live-effect-grid.live-macro-grid { grid-template-columns: repeat(var(--slot-columns, 1), minmax(0, 1fr)); align-items: stretch; }
 .live-macro-slot { display: flex; min-width: 0; }
 .live-macro-slot>.live-effect-card { flex: 1 1 auto; min-width: 0; }
 .live-macro { margin: 14px 0 0; }
@@ -174,3 +175,12 @@
 .card-size-picker>button[aria-pressed=true] { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
 .card-size-picker>button:is(:hover, :focus-visible) { color: var(--text); }
 .card-size-picker>button:disabled { opacity: .35; cursor: default; }
+
+/* A macro card's bank fills the card's height (#795): the card body grows,
+   the bank grows with it, and its rows share the height above their
+   smallest size, so a card grown down beside a taller one has no blank band
+   between its controls and its action row. */
+#view-perform .live-macro-slot .live-effect-body { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+#view-perform .live-macro-slot .live-effect-body>[data-slot-grid][data-slot-scale=fluid] {
+  flex: 1 1 auto; grid-template-rows: repeat(var(--slot-rows, 1), minmax(var(--slot-row), 1fr)); align-content: stretch;
+}

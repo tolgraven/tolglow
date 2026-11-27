@@ -500,6 +500,8 @@
                       (mapv (fn [t]
                               (work!)
                               (let [reply (when (= t 200) (show/submit! rt :definition {:kind :effects :definition wide}))]
+                                ;; The publication is checked before the owner cycle (#784).
+                                (when reply (work!))
                                 (show/tick! rt t)
                                 (assoc (observed rt) :time-ms t :ack (some-> reply (deref 2000 ::timeout) :status))))
                             times))

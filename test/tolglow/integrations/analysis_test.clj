@@ -92,7 +92,9 @@
     (is (= 3 (:clock-epoch event)))
     (is (= "transport-a" (:clock-session-id event)))
     (is (<= 0.45 (:confidence event) 0.9))
-    (is (= (:current-rms (:level event)) (:previous-rms (:level event))))
+    ;; The reference is the first window, which lacks the hop that ends on its
+    ;; start, so the level matches to a fraction of a percent, not exactly.
+    (is (close? (:current-rms (:level event)) (:previous-rms (:level event)) 1.0e-4))
     (is (= feel (get-in irregular [:features :audio/section])))
     (is (= (select-keys event (keys feel)) feel))
     (is (= (range 1 (inc (count (:events large)))) (map :sequence (:events large))))

@@ -14,7 +14,9 @@
 
 (def ^:private profile-version 1)
 
-(def ^:private algorithm :causal-bass-and-accents-v1)
+(def ^:private algorithm
+  "v2 places bass pitch evidence at the centre of its analysis window (#805)."
+  :causal-bass-and-accents-v2)
 
 (def ^:private hop-ms 10.0)
 
@@ -92,11 +94,16 @@
                 result (analysis/analyze analyzer {:samples samples :sample-rate rate
                                                    :started-at-ms (frame-position-ms frames rate)
                                                    :received-at-ms position-ms})
+                features (:features result)
+                beat (half-beat-edge (relative-beat beat-grid position-ms))
+                ;; Bass pitch evidence is placed where it was heard, as live (#805).
+                pitch-ms (- position-ms (get features :bass-pitch-delay-ms 0.0))
                 ;; The final partial hop contributes to identity and duration.
                 observation (when (= n (alength buffer))
                               (sections/observe-hop detector
-                                                    {:beat (half-beat-edge (relative-beat beat-grid position-ms))
-                                                     :features (:features result)}))]
+                                                    {:beat beat
+                                                     :pitch-beat (min beat (half-beat-edge (relative-beat beat-grid pitch-ms)))
+                                                     :features features}))]
             (.update digest buffer 0 n)
             (recur end (:state result) (or (:state observation) detector)
                    (cond-> windows (:window observation) (conj (:window observation)))

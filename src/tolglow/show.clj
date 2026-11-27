@@ -99,6 +99,7 @@
             [tolglow.show.lighting :as lighting]
             [tolglow.show.position-hold :as position-hold]
             [tolglow.show.programs :as programs]
+            [tolglow.show.publication :as publication]
             [tolglow.integrations.analysis :as analysis]
             [tolglow.integrations.mpv-session :as mpv-session]
             [tolglow.integrations.reference-position :as reference-position]
@@ -633,6 +634,8 @@
                     :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?})
                     :status {}})
       :queue (LinkedBlockingQueue. 256) :cue-release-queue (LinkedBlockingQueue. 256)
+      ;; Owner only, under the lock: messages a cycle held back, in order (#784).
+      :held-messages (atom [])
       :push-gesture-ends (volatile! {})
       :ingress-order (volatile! 0) :lock (Object.) :running (atom true)
       :venue-fog (atom {}) :fog-deadlines (atom nil)
@@ -1439,7 +1442,23 @@
   (when-not (and lease (identical? lease (get-in @(:devices runtime) [session-id ::restore-lease])))
     (throw (ex-info "Checkpoint restore belongs to a retired device session" {:code :stale-device-session}))))
 
-(defn- apply-message [model {:keys [type payload expected-epoch authority]} time-ms & [runtime]]
+(defn- prepare-publication!
+  "Check a :definition `message` on the compile worker, ahead of the compiles
+  queued there, and return it carrying the promise of that check (#784).
+  `model` is the model to check against, or nil for the last committed one
+  when the worker runs. Without a worker the message is returned unchanged
+  and the owner checks it itself."
+  [runtime message model]
+  (if-let [submit (some-> (:compile-worker runtime) compile-submit)]
+    (let [prepared (promise)
+          task (programs/ahead
+                (fn [] (deliver prepared (publication/prepare (or model (:model @(:state runtime))) (:payload message)))))]
+      (try (submit task)
+           (catch java.util.concurrent.RejectedExecutionException _ (deliver prepared {:unchecked true})))
+      (assoc message ::prepared prepared))
+    message))
+
+(defn- apply-message [model {:keys [type payload expected-epoch authority] :as message} time-ms & [runtime]]
   (when (and (some? expected-epoch) (not= expected-epoch (:epoch model)))
     (throw (ex-info "Operation belongs to a previous show session" {:expected-epoch (:epoch model)
                                                                     :received-epoch expected-epoch})))
@@ -1503,31 +1522,43 @@
     {:model (routing/set-enabled model (:enabled? payload) time-ms)
      :ack {:status :accepted}}
     :definition
-    (let [{:keys [kind definition]} payload
-          previous (get-in model [:registry kind (:id definition)])
-          _ (when (and (contains? payload :expected-version) (not= (:expected-version payload) (:version previous)))
-              (throw (ex-info "Definition changed since editing began" {:current-version (:version previous)})))
-          definition (if-let [edit (:output-patch payload)]
-                       (do (when-not (and (= kind :effects) previous (contains? payload :expected-version))
-                             (throw (ex-info "An output patch needs the current effect revision" {})))
-                           (output-patch/apply-patch previous edit)) definition)
-          definition (cond-> definition
-                       (or (contains? payload :expected-version) (nil? (:version definition)))
-                       (assoc :version (inc (get previous :version 0))))
-          errors (registry/validate-definition kind definition)]
-      (when (seq errors) (throw (ex-info "Invalid definition" {:errors errors})))
-      (when (= :effects kind) (compiler/compile-effect (prefabs/capture (prefabs/catalog model) definition)))
-      ;; A shader cue that alone exceeds the show's pixel budget could never render (#673).
-      (when (and (= :effects kind) runtime (video-shader/shader? definition))
-        (let [[w h] (get-in definition [:shader :size])
-              rate (* w h (get-in definition [:shader :fps] video-shader/default-fps))
-              budget (shader-producer/pixel-budget (:shader-video runtime))]
-          (when (> rate budget)
-            (let [message (str "This shader renders " rate " pixels per second; the show's budget is " budget)]
-              (throw (ex-info message {:code :shader/over-budget :rate rate :budget budget
-                                       :errors [{:path [:shader :size] :message message}]}))))))
-      (update (command model {:op :registry/publish :kind kind :definition definition} time-ms)
-              :ack merge {:kind kind :id (:id definition) :version (:version definition)}))
+    (let [{:keys [kind]} payload
+          definition (publication/revision model payload)
+          captured (publication/captured model kind definition)
+          prepared (::prepared message)
+          ;; A worker checked this revision before the owner saw it (#784).
+          ;; Until its verdict is ready, or when it checked another revision
+          ;; than the current registry now derives, the owner holds it, and
+          ;; the messages that depend on it, for one cycle. A publication
+          ;; already held once, or whose second preparation is stale too, is
+          ;; checked on the owner instead: a short inline check costs less
+          ;; than holding input any longer.
+          checked (cond
+                    (nil? prepared) (publication/check kind definition captured)
+                    (not (realized? prepared)) (if (::held? message)
+                                                 (publication/check kind definition captured)
+                                                 ::pending)
+                    :else (or (publication/verdict-for @prepared definition captured)
+                              (if (::reprepared? message)
+                                (publication/check kind definition captured)
+                                ::stale)))]
+      (case checked
+        ::pending {::hold (assoc message ::held? true)}
+        ::stale {::hold (prepare-publication! runtime (assoc message ::reprepared? true ::held? true) model)}
+        (do
+          (some-> (:failure checked) throw)
+          ;; A shader cue that alone exceeds the show's pixel budget could never render (#673).
+          (when (and (= :effects kind) runtime (video-shader/shader? definition))
+            (let [[w h] (get-in definition [:shader :size])
+                  rate (* w h (get-in definition [:shader :fps] video-shader/default-fps))
+                  budget (shader-producer/pixel-budget (:shader-video runtime))]
+              (when (> rate budget)
+                (let [message (str "This shader renders " rate " pixels per second; the show's budget is " budget)]
+                  (throw (ex-info message {:code :shader/over-budget :rate rate :budget budget
+                                           :errors [{:path [:shader :size] :message message}]}))))))
+          (update (binding [spatial/*checked* checked]
+                    (command model {:op :registry/publish :kind kind :definition definition} time-ms))
+                  :ack merge {:kind kind :id (:id definition) :version (:version definition)}))))
     :material-edit
     (let [{:keys [settings] :as result} (material-design/edit model payload)]
       (if settings
@@ -3340,6 +3371,88 @@
             (> (System/currentTimeMillis) deadline) false
             :else (do (Thread/sleep 1) (recur))))))
 
+(def ^:private independent-commands
+  "Commands that neither read nor write the registry or pages, so they never
+  wait behind a held publication (#784): blackout, master, transport,
+  parameters and ramps, gestures and edit history, instance controls, group
+  and selection controls, knobs, audio LFOs and control-surface links. Any
+  command not listed here waits, so a new command is safe until classified."
+  #{:blackout/set :master/set :transport/set
+    :param/set :param/ramp :variable/set
+    :gesture/begin :gesture/sample :gesture/end :gesture/cancel
+    :history/undo :history/redo :history/select
+    :instance/end :instance/remove :instance/set-priority :instance/move-after :instances/shuffle
+    :instance/pause :instance/resume :instance/opacity-set :instance/gain-set :instance/opacity-toggle
+    :instance/envelope-set
+    :group/apply :effect-selection/configure :effect-selection/toggle
+    :effect-groups/configure :effect-groups/overlay-set :effect-groups/level-set :effect-groups/assign-instance
+    :knob/create :knob/link :knob/nudge :knob/remove :knob/rename :knob/set :knob/unlink
+    :knob-preset/capture :knob-preset/clear :knob-preset/recall
+    :audio-lfo/configure :audio-lfo/remove
+    :control-surface/attach :control-surface/bank :control-surface/detach :control-surface/layout
+    :control-surface/link :control-surface/remove :control-surface/unlink})
+
+(def ^:private launch-commands
+  "Commands that wait only when they launch a held effect or cue, or a cue
+  the show does not know yet."
+  #{:cue/launch :effect/launch})
+
+(def ^:private independent-message-types
+  "Message types that neither read nor write the registry or pages: device
+  and sensor input, parameter sources and surface aim. Every other type
+  waits behind a held publication unless `waits-behind?` says otherwise."
+  #{:rdm-update :sensor-audience-zone :sensor-configure :sensor-arm :sensor-calibrate
+    :modulation-bind :modulation-unbind :modulation-hold :modulation-resume :surface-aim})
+
+(defn- message-class
+  "How a message of `type` (and command `op`) relates to a held publication:
+  :independent never waits; :launch waits when it launches what is held;
+  :cancel waits when a held message is a launch it could cancel; :dependent
+  always waits. Unknown messages are :dependent."
+  [type op]
+  (cond
+    (= :command type) (cond
+                        (contains? independent-commands op) :independent
+                        (contains? launch-commands op) :launch
+                        (= :cue/cancel-launch op) :cancel
+                        :else :dependent)
+    (contains? independent-message-types type) :independent
+    (= :cue-schedule type) :launch
+    (= :cue-cancel type) :cancel
+    :else :dependent))
+
+(defn- waits-behind?
+  "True when `message` must wait behind the `held` messages, a publication
+  waiting for its check and what waits with it (#784). Safe by default: only
+  messages `message-class` lists as independent go ahead (blackout, master,
+  transport, parameters, gestures, instance and controller input), and
+  launches of cues and effects nothing held touches. Everything else, any
+  message that may read or write the registry included, waits in order."
+  [model held {:keys [type payload]}]
+  (let [held-ids (fn [kind]
+                   (into #{} (keep (fn [{held-type :type held-payload :payload}]
+                                     (case held-type
+                                       :definition (when (= kind (:kind held-payload)) (get-in held-payload [:definition :id]))
+                                       :command (when (= :cues kind)
+                                                  (or (get-in held-payload [:cue :id]) (:cue-id held-payload)))
+                                       nil)))
+                         held))
+        launch-waits? (fn [{:keys [cue-id effect-id]}]
+                        (let [cue (when (some? cue-id) (get-in model [:registry :cues cue-id]))
+                              effect-id (or effect-id (:effect-id cue))]
+                          (or (and (some? cue-id) (nil? cue))
+                              (nil? effect-id)
+                              (contains? (held-ids :cues) cue-id)
+                              (contains? (held-ids :effects) effect-id))))
+        held-launch? (fn [{held-type :type held-payload :payload}]
+                       (or (= :cue-schedule held-type)
+                           (and (= :command held-type) (contains? launch-commands (:op held-payload)))))]
+    (case (message-class type (:op payload))
+      :independent false
+      :launch (launch-waits? (if (= :cue-schedule type) (:command payload) payload))
+      :cancel (boolean (some held-launch? held))
+      :dependent true)))
+
 (def ^:private ingress-order
   (reify java.util.Comparator
     (compare [_ left right]
@@ -3379,6 +3492,10 @@
                      (doseq [message gesture-ends] (.add messages message)))
                  _ (when (or gesture-ends (and (pos? ordinary-count) (pos? release-count)))
                      (.sort messages ingress-order))
+                 ;; Messages the previous cycle held back come first, in their order.
+                 _ (when-let [held (seq @(:held-messages runtime))]
+                     (reset! (:held-messages runtime) [])
+                     (.addAll messages 0 ^java.util.Collection (vec held)))
                  _ (vreset! candidates (vec (keep #(get-in % [:payload :candidate]) messages)))
                  reactive-error (volatile! nil)
                  actions (try (connections/drain-actions! (:connections runtime))
@@ -3401,12 +3518,22 @@
                  draft-initial @(:scene-draft runtime)
                  draft-view (atom draft-initial)
                  owner-runtime (assoc runtime ::draft-view draft-view)
-                 [model receipts restored? restored-output]
+                 [model receipts restored? restored-output processed held]
                  (reduce
-                  (fn [[model receipts restored? restored-output] {:keys [reply authority] :as message}]
+                  (fn [[model receipts restored? restored-output processed held :as acc] {:keys [reply authority] :as message}]
+                    (cond
+                      ;; A message that depends on a publication waiting for
+                      ;; its check waits with it, in order; everything else,
+                      ;; blackout, master, transport and controller input
+                      ;; included, goes ahead (#784).
+                      (and held (waits-behind? model held message))
+                      (assoc acc 5 (conj held (cond-> message (= :definition (:type message)) (assoc ::held? true))))
+                      :else
                     (try
-                      (let [result (apply-message model message (if restored? (:time-ms model) time-ms) owner-runtime)
-                            command (when (= :command (:type message)) (:payload message))
+                      (let [result (apply-message model message (if restored? (:time-ms model) time-ms) owner-runtime)]
+                       (if-let [waiting (::hold result)]
+                        (assoc acc 5 (conj (or held []) waiting))
+                      (let [command (when (= :command (:type message)) (:payload message))
                             ;; The reducer supplies the committed sample or rollback value.
                             gesture-write (when (#{:gesture/sample :gesture/cancel} (:op command))
                                             (first (filter (comp #{:param/changed} :type) (:events result))))]
@@ -3426,15 +3553,19 @@
                           (when (fn? handler) (vswap! inline-registrations assoc key handler)))
                         [(:model result) (conj receipts [reply (:ack result) command (:replayed? result) gesture-write])
                          (or restored? (:restore? result))
-                         (if (:restore? result) (:restored-output result) restored-output)])
+                         (if (:restore? result) (:restored-output result) restored-output)
+                         (conj processed message) held])))
                       (catch Exception error
                         [model (conj receipts [reply (merge {:status :rejected} (error-data error)) (when (= :command (:type message)) (:payload message))])
-                         restored? restored-output])))
+                         restored? restored-output (conj processed message) held]))))
                   [(-> (consume-sync! runtime (consume-audio! runtime (staging/collect (staging/begin clock-model)
                                                        :reactive {:kind :runtime :id :reactive} (:pending-reactive-faults before)) time-ms))
                        (calibration/advance physical-receipts physical-now)
                        (photometry/advance physical-receipts physical-now)
-                       (fog-scan/expire physical-now)) [] false nil] messages)
+                       (fog-scan/expire physical-now)) [] false nil [] nil] messages)
+                 ;; Held messages keep their prepared restore for a later cycle.
+                 _ (reset! (:held-messages runtime) (vec held))
+                 _ (when held (vreset! candidates (vec (keep #(get-in % [:payload :candidate]) processed))))
                  time-ms (if restored? (:time-ms model) time-ms)
                  _ (when (or restored? @restarted-generation)
                      (reset! draft-view nil)
@@ -3501,7 +3632,7 @@
                               :output (if (or (pause-look/blackout? model) (zero? (:master model)))
                                         (render/resolve-frame (patch! runtime (get-in model [:rig :fixtures])) [] {:blackout? true})
                                         (:output before))))))
-                 message-receipts (map vector messages receipts)
+                 message-receipts (map vector processed receipts)
                  operations (keep (fn [[message [_ ack _ replayed?]]]
                                     (when-not replayed?
                                       {:operation (:type message) :command (get-in message [:payload :op])
@@ -3646,7 +3777,8 @@
       (deliver reply {:status :rejected :code :gesture-end-queued :command-id (:command-id payload)})
 
       (or (open-push-gesture (:model @(:state runtime)) key)
-          (some queued-begin? (iterator-seq (.iterator ^LinkedBlockingQueue (:queue runtime)))))
+          (some queued-begin? (iterator-seq (.iterator ^LinkedBlockingQueue (:queue runtime))))
+          (some queued-begin? @(:held-messages runtime)))
       (vswap! ends assoc key message)
 
       :else (deliver reply {:status :rejected :code :unknown-gesture :command-id (:command-id payload)}))))
@@ -3702,7 +3834,11 @@
                                                 checkpoint-request (assoc ::checkpoint-request checkpoint-request))]
                                   (if (and (= :command type) (push-gesture-terminal? payload authority))
                                     (do (enqueue-push-gesture-end! runtime message) true)
-                                    (.offer ^LinkedBlockingQueue queue message)))))]
+                                    ;; Messages a cycle held back still count against the
+                                    ;; queue's 256 slots (#784).
+                                    (and (< (+ (.size ^LinkedBlockingQueue queue) (count @(:held-messages runtime))) 256)
+                                         (.offer ^LinkedBlockingQueue queue
+                                                 (if (= :definition type) (prepare-publication! runtime message nil) message)))))))]
            (when-not accepted? (throw (ex-info "Show changed or command queue is full" {})))))
        (catch Exception error
          (when @candidate (connections/abort-prepared! @candidate))
@@ -3823,6 +3959,11 @@
                           (vswap! candidates conj candidate))
                         (deliver (:reply message) {:status :rejected :message "Show stopped"})
                         (recur))))
+                  (doseq [message @(:held-messages runtime)]
+                    (when-let [candidate (get-in message [:payload :candidate])]
+                      (vswap! candidates conj candidate))
+                    (deliver (:reply message) {:status :rejected :message "Show stopped"}))
+                  (reset! (:held-messages runtime) [])
                   (doseq [message (vals @(:push-gesture-ends runtime))]
                     (deliver (:reply message) {:status :rejected :message "Show stopped"}))
                   (vreset! (:push-gesture-ends runtime) {})
