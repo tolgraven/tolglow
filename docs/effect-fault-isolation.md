@@ -26,7 +26,8 @@ one already-evaluated result removed; healthy effect code is never run twice.
 | New candidate fails preparation, compile or evaluation | Store `:reload-fault`; evaluate captured last-good code in the same frame |
 | Renderer rejects a candidate | Drop its attempt this frame; captured code resumes next frame |
 | Candidate that modulation or a spatial cue follows is rejected at any stage | Every instance renders its captured revision with the last-good modulation and spatial fields in the same frame; other reloads of that frame wait one frame |
-| More than 8 effects have a newly published revision pending | The frame attempts the first 8 revisions in launch order; the others keep their captured revisions everywhere and take over on the next frames |
+| A published revision's programs are still compiling on the show's worker | Every instance of the effect keeps its captured revision everywhere; all adopt it together on the first frame after the programs are ready |
+| The worker fails to compile a revision | The engine turns it down at `:compile` on the adoption frame, as for an inline compile failure |
 | New valid version with preserve/restart policy | Adopt using the existing state/time policy and emit recovery |
 | Explicit Retry | Try the same version with current parameters and retained state |
 | Faulted one-shot/release reaches deadline | Finish normally; quarantine does not make instances immortal |
@@ -78,20 +79,45 @@ exception: they edit the model before the engine runs, so they read the
 running revisions' samples while a reload is pending and reach an accepted
 candidate one frame later. See [spatial cues](spatial-show.md).
 
-A frame attempts at most 8 newly published effect revisions (#774). Every new
-revision is compiled inside the frame that attempts it, at about 0.45 ms each
-on the mixed 2,048-pixel/64-head rig, so 32 revisions published in one owner
-cycle made that frame miss the 25 ms deadline. Further revisions wait, in the
-launch order of the first instance that would attempt them, and keep their
-captured definitions in modulation, waveform sampling, spatial cues and the
-engine alike until a later frame takes them over. A deferral is not a fault and
-records no event. Set the limit with `(show/create-runtime {:reloads-per-frame
-n})`. The extra engine pass of a frame that turns a candidate down costs about
-one ordinary evaluation, plus a second render after a renderer rejection; the
-renderer turns down one candidate per frame, so each further candidate the
-renderer refuses takes another such frame. The runtime's compile cache keeps
-its previous 256 definitions as a retired generation, so filling it with
-published revisions no longer recompiles every running effect in one frame.
+A scheduled show (`show/start!`, or `:background-compile true` on
+`show/create-runtime`) compiles the programs a published revision needs on
+its own worker thread, outside the lighting frame (#774). The engine compiles
+one program per revision and launch target set, so one revision launched once
+per fixture needs one program per fixture. Compiling them inside the frame
+took about 0.45 ms each on the mixed 2,048-pixel/64-head rig, so 32 revisions,
+or one revision on 64 heads, made that frame miss the 25 ms deadline.
+
+- **Waiting for compiles.** Until every program is ready, the effect's
+  instances keep their captured definition in modulation, waveform sampling,
+  spatial cues and the engine alike. Then they all adopt the revision on the
+  same frame, so no frame runs two revisions of one effect.
+- **First launches.** A frame still compiles up to 4 first-launch programs
+  itself, so a single launch renders on the frame that admits it. Launches
+  needing more programs wait unrendered for the worker, typically one or two
+  frames, and the instances of one effect appear together. They keep their
+  place on the beat grid. A launch of an effect whose revision is still
+  compiling always waits, then starts on the new revision with the rest.
+- **Order and failures.** The worker runs first in first out. It skips a
+  compile that no frame still needs, such as a superseded revision. A
+  recoverable compile failure is kept and becomes the usual refused-candidate
+  fault.
+- **Events.** Each `:effect/reloaded` event carries `:pending-since-frame` and
+  `:adopted-frame`.
+- **Where compiles still happen in the frame.** An unscheduled runtime (the
+  default for manual `tick!`, tests and auditions) compiles on the owner
+  before the engine runs. That keeps manual ticks deterministic and adopts on
+  the publication frame. A show whose GPU expression groups prepare against
+  its compute session compiles on the owner too. A function passed as
+  `:background-compile` receives each compile task instead, which lets tests
+  and replays step the worker.
+- **What the extra pass costs.** Once adopted, the takeover runs with no
+  compiles: the extra engine pass of a frame that turns a candidate down
+  costs about one ordinary evaluation, plus a second render after a renderer
+  rejection.
+- **Compile cache.** The runtime's compile cache keeps its previous 256
+  programs as a retired generation, so filling it does not recompile every
+  running effect in one frame.
+
 Measurements: [reload takeover benchmark](benchmarks/README.md#hot-reload-takeover-frames).
 
 Full backups preserve faults and event history. Restore remaps active diagnostic

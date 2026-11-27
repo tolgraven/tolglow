@@ -283,10 +283,10 @@ healthy revision published for that same frame waits one frame, without a
 fault. The owner commits the state behind the inputs that were read. The frames
 and the controller's seed, ticks, anchor and cells are then those of a show
 that never published the rejected revision. An accepted revision still
-switches its controller once, on the takeover frame. A frame attempts at most
-8 newly published revisions; modulation reads a deferred one's captured
-definition, as the engine does, until the frame that attempts it
-([effect failure isolation](effect-fault-isolation.md)). The show owner supplies
+switches its controller once, on the takeover frame. In a scheduled
+show a revision waits while its programs compile off the frame; modulation
+reads the captured definition, as the engine does, until the frame that
+adopts it ([effect failure isolation](effect-fault-isolation.md)). The show owner supplies
 the fallback only when the two outcomes differ, so an ordinary hot reload keeps
 the engine's single pass. Spatial cue fields are the other input that can
 differ between the outcomes, and readers that commit before the engine

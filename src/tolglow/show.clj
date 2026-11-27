@@ -2730,7 +2730,8 @@
         programs (let [context @(:compiler-context runtime)
                        frame-number (inc (get model :frame-number 0))
                        plan (programs/plan model (modulation/with-frame-params model (:params ramp-frame) (:param-targets ramp-frame))
-                                           (:reload-waits before) frame-number)]
+                                           (:reload-waits before) frame-number)
+                       plan (programs/admit-launches context plan)]
                    (programs/request! context (:programs plan))
                    (assoc (programs/hold context plan) :frame frame-number))
         attempting #(modulation/without-reloads % (into (:deferred programs) (:hidden programs)))

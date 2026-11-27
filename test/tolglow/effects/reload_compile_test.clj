@@ -380,3 +380,26 @@
     (programs/compile! context running)
     (is (= 2 (get @calls running)) "An unused program still leaves the cache")
     (is (every? #(= 1 %) (map @calls others)) "Every published revision is compiled once")))
+
+(deftest a-single-first-launch-renders-at-once-and-a-wide-one-waits-for-the-worker
+  ;; A frame compiles up to four first-launch programs itself, so one launch
+  ;; renders on the frame that admits it. Six launches of one effect on six
+  ;; heads need six programs: they wait for the worker and appear together.
+  (let [wide (assoc (probe 0 1) :targets (mapv head (range 6)))
+        s (show 1 {:model (assoc-in (show-model 1) [:registry :effects :probe-0] wide)})
+        launch (fn [i] (show/submit! (:rt s) :command {:op :effect/launch :effect-id :probe-0
+                                                         :launch {:reload-policy :preserve-state :targets [(head i)]}}))]
+    (try
+      (launch 0)
+      (tick! s 25)
+      (is (= [[1 :preserve-state]] (rendered s :probe-0)) "One launch renders on its admission frame")
+      (is (= 0 (count @(:tasks s))))
+      (doseq [i (range 1 6)] (launch i))
+      (tick! s 50)
+      (is (= 1 (count (rendered s :probe-0))) "Five new programs are more than the frame compiles itself")
+      (is (= 5 (count @(:tasks s))))
+      (work! s)
+      (tick! s 75)
+      (is (= 6 (count (rendered s :probe-0))) "All five appear on the same frame")
+      (is (= 1 (count (filter #(= :frame (first %)) @(:compiled s)))) "Only the single launch compiled in a frame")
+      (finally (stop! s)))))

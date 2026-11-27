@@ -132,8 +132,9 @@
                   [(program (:definition instance) instance)]))
         members (group-by :effect-id (concat pending fresh))
         order (concat pending-effects (remove (set pending-effects) (distinct (map :effect-id fresh))))
+        pending-set (set pending-effects)
         groups (mapv (fn [effect-id]
-                       {:effect-id effect-id :members (get members effect-id)
+                       {:effect-id effect-id :members (get members effect-id) :pending? (contains? pending-set effect-id)
                         :programs (into [] (comp (mapcat needs) (distinct)) (get members effect-id))})
                      order)]
     {:groups groups :programs (into [] (comp (mapcat :programs) (distinct)) groups) :waits waits}))
@@ -151,8 +152,8 @@
   carries the frame each pending revision was first seen. Programs are
   requested in launch order; the worker runs them first in first out, so a
   revision that keeps being republished cannot delay older ones. Returns
-  {:groups [...] :programs [program ...] :waits waits}; call `request!` with
-  :programs, then `hold` to decide."
+  {:groups [...] :programs [program ...] :waits waits}; pass it through
+  `admit-launches`, call `request!` with its :programs, then `hold`."
   [model framed waits frame]
   (let [pending (filterv #(modulation/attempted-revision model %) (vals (:instances model)))
         pending-ids (into #{} (map :id) pending)
@@ -161,13 +162,34 @@
       {:groups [] :programs [] :waits {}}
       (plan-held model framed waits frame (sort-by :order pending) pending-ids (sort-by :order fresh)))))
 
+(def launch-compiles
+  "Programs a frame may still compile itself for first launches, so a single
+  launch renders on the frame that admits it (#774)."
+  4)
+
+(defn admit-launches
+  "Choose the effects whose first launches this frame compiles itself: those
+  with no pending revision whose missing programs, taken in launch order,
+  fit within `launch-compiles` together. The others wait for the worker.
+  Returns `plan` with those groups marked :inline and left out of :programs."
+  [context {:keys [groups] :as plan}]
+  (let [[groups _] (reduce (fn [[groups budget] {:keys [programs] :as group}]
+                             (let [missing (count (remove #(ready? context %) programs))]
+                               (if (and (pos? missing) (<= missing budget) (not (:pending? group)))
+                                 [(conj groups (assoc group :inline? true)) (- budget missing)]
+                                 [(conj groups group) budget])))
+                           [[] launch-compiles] groups)]
+    (assoc plan :groups groups
+           :programs (into [] (comp (remove :inline?) (mapcat :programs) (distinct)) groups))))
+
 (defn hold
   "Decide a `plan` after its programs were requested: an effect whose programs
   are not all ready keeps its pending instances on their captured definition
-  and hides its instances that never rendered."
+  and hides its instances that never rendered. Groups `admit-launches` marked
+  :inline compile in the frame."
   [context {:keys [groups waits]}]
-  (reduce (fn [held {:keys [members programs]}]
-            (if (every? #(ready? context %) programs)
+  (reduce (fn [held {:keys [members programs inline?]}]
+            (if (or inline? (every? #(ready? context %) programs))
               held
               (reduce (fn [held instance]
                         (if (fresh? instance)
