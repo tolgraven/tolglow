@@ -771,3 +771,27 @@
             (is (= #{128} (set (map #(nth (:dmx %) head-2-dimmer) frames))) "The wash keeps its canonical level")
             (is (= [:modulation/refused] (mapv :type (refusals rt)))))
           (finally (show/stop! rt)))))))
+
+(deftest a-refused-global-controller-stays-visible-until-it-is-stopped
+  ;; A double cannot add 1/1024 to beat 2^60: the global controller starts and
+  ;; is then refused in the frame. REPL and Studio read the same diagnostic.
+  (let [output (atom []) rt (runtime output (assoc-in (model {} [wash]) [:transport :beat] (Math/pow 2 60)))]
+    (try
+      (apply! rt {:op :cue/launch :cue-id :wash} 0)
+      (let [started (let [reply (show/submit! rt :modulation-start {:id :fine :every {:beats 1/1024} :params [:level]})]
+                      (show/tick! rt 50)
+                      (deref reply 2000 ::timeout))
+            seen (mapv (fn [t] (show/tick! rt t)
+                         {:error (get-in @(:state rt) [:status :error]) :refusals (mapv :controller-id (refusals rt))})
+                       [100 150 200])
+            stopped (let [reply (show/submit! rt :modulation-stop {:id :fine})]
+                      (show/tick! rt 250)
+                      (deref reply 2000 ::timeout))]
+        (is (= :accepted (:status started)))
+        (is (= [nil nil nil] (map :error seen)))
+        (is (= (repeat 3 [:fine]) (map :refusals seen)) "Every frame shows the refusal")
+        (is (= :accepted (:status stopped)))
+        (show/tick! rt 300)
+        (is (= [] (refusals rt)))
+        (is (nil? (get-in @(:state rt) [:model :modulation :refused]))))
+      (finally (show/stop! rt)))))

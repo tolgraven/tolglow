@@ -108,8 +108,19 @@ judged on. While those are unchanged the owner is not attempted again and
 reports the recorded diagnostic each frame. A new revision, config or priority
 starts the controller like a reload, at that frame's beat and meter, not like a
 first launch that would catch up over the cue's whole life. The record follows
-`restore-state` and goes when the owner ends. A refused global controller is
-dropped; its diagnostic appears in that frame only.
+`restore-state` and goes when the owner ends.
+
+A refusal on reload is judged in the frame's transport meter, and a first
+launch in the owner's captured launch meter. The refusal then holds until the
+owner's revision, modulation config or priority changes. A later change of the
+transport meter alone does not retry it; publish a new revision to try again.
+
+A refused global controller (one started with `:modulation-start`) leaves its
+schedule and keeps a record under its own ID. It reports the same diagnostic
+every frame until `:modulation-stop` with that ID clears it, or a new
+`:modulation-start` with that ID replaces it. `restore-state` keeps it.
+`:modulation-stop` on a refused cue owner ends the owner, as it does for a
+running one.
 
 Saved shows load without the range check: registry and running definitions
 (`compiler/definition-errors` without `:publication?`), saved controller
@@ -133,6 +144,15 @@ random draw, as a stopped transport resumes without catch-up. The frame
 reports `:modulation/rebased` with the controller ID, the number of skipped
 steps, the budget, the next beat and the current beat. The skip is
 deterministic for a given state and beat.
+
+Within the budget, a frame that jumps to a beat reaches the same state as
+frames that step there. A skip breaks that equivalence: the controller draws
+once at the last boundary instead of once per boundary, so two timelines that
+reach the same beat with different frame timing can diverge in seed and
+values. A deterministic replay must therefore record each frame's beat, not
+only the transport timeline. Seeding each draw from the controller's seed and
+tick count, rather than from the previous draw, could remove this divergence;
+that is a possible follow-up, not implemented here.
 
 ## Parameter domains and interpolation
 
@@ -384,7 +404,9 @@ every tick instead.
 ## Verification and limits
 
 The focused `tolglow.modulation-test` suite covers musical fractions and captured
-meters, pause and catch-up equivalence, schema types/bounds, missing ranges,
+meters, pause and catch-up equivalence within the catch-up budget (beyond it,
+see [catch-up budget](#catch-up-budget)), backlog skips, period refusals and
+their records, schema types/bounds, missing ranges,
 curved glides, categories and precedence, manual holds, cue timing/reload,
 portable state restoration, explicit loop/seek rebasing, target-schema reload,
 reload candidates and both reload outcomes, and actual compiler/engine worker
@@ -394,7 +416,7 @@ controller state frame by frame, for each reload policy and rejection stage.
 Canonical parameters remain unchanged across those frames. The replay lane in
 [runtime-replay.md](runtime-replay.md) supplies complementary explicit-state
 recording infrastructure; a complete host trace must also capture modulation
-activation, holds, state updates and external inputs.
+activation, holds, state updates, external inputs and each frame's beat.
 
 This module does not yet implement correlated perceptual-color sampling,
 constraint solving across parameters, audio-reactive modulation, or learned

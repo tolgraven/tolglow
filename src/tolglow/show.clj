@@ -1577,9 +1577,11 @@
     :modulation-stop
     (let [id (:id payload)
           id (if (and (vector? id) (= "cue" (first id))) (assoc id 0 :cue) id)
-          controller (some #(when (= id (:id %)) %) (get-in model [:modulation :controllers]))]
-      (when-not controller (throw (ex-info "Modulator is not active" {:id id})))
-      (if-let [owner (:owner-instance-id controller)]
+          controller (some #(when (= id (:id %)) %) (get-in model [:modulation :controllers]))
+          ;; A refused controller has no schedule; stopping clears its record.
+          refused (get-in model [:modulation :refused id])]
+      (when-not (or controller refused) (throw (ex-info "Modulator is not active" {:id id})))
+      (if-let [owner (:owner-instance-id (or controller refused))]
         (command model {:op :instance/end :instance-id owner} time-ms)
         {:model (-> model (update :modulation modulation/stop id) (update :revision inc))
          :ack {:status :accepted}}))

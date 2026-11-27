@@ -167,6 +167,12 @@
   {:schema-version 1 :next-order 0 :controllers [] :holds {}
    :show-id nil :epoch nil :last-beat nil})
 
+(defn- with-refused
+  "Store refusal records under :refused, keyed by controller ID, and leave the
+  key out when there are none."
+  [state refused]
+  (if (seq refused) (assoc state :refused refused) (dissoc state :refused)))
+
 (defn- hold-record? [hold]
   (and (map? hold) (contains? hold :until-beat)
        (or (nil? (:until-beat hold)) (time/finite-number? (:until-beat hold)))))
@@ -182,8 +188,8 @@
                  (or (nil? (:refused state))
                      (and (map? (:refused state))
                           (every? (fn [[id record]]
-                                    (and (controller-id? id) (map? record) (id? (:owner-instance-id record))
-                                         (map? (:diagnostic record))))
+                                    (and (controller-id? id) (map? record) (map? (:diagnostic record))
+                                         (or (nil? (:owner-instance-id record)) (id? (:owner-instance-id record)))))
                                   (:refused state)))))
     (fail! ::invalid-state "Invalid portable modulation state" {}))
   (doseq [controller (:controllers state)]
@@ -265,11 +271,16 @@
                     :interval-beats interval :timing-meter meter :values {}}]
     (-> state
         (update :next-order inc)
-        (update :controllers #(conj (vec (remove (fn [c] (= (:id c) (:id config))) %)) controller)))))
+        (update :controllers #(conj (vec (remove (fn [c] (= (:id c) (:id config))) %)) controller))
+        (with-refused (dissoc (:refused state) (:id config))))))
 
-(defn stop [state controller-id]
+(defn stop
+  "Stop a controller, or clear a refused global controller's record."
+  [state controller-id]
   (valid-state! state)
-  (update state :controllers #(vec (remove (fn [c] (= controller-id (:id c))) %))))
+  (-> state
+      (update :controllers #(vec (remove (fn [c] (= controller-id (:id c))) %)))
+      (with-refused (dissoc (:refused state) controller-id))))
 
 (defn hold
   "Suspend overlays for selected instance parameters. nil :until-beat holds
@@ -454,12 +465,6 @@
          (when-let [path (:path (first (:errors (ex-data error))))] {:path path})
          (select-keys (ex-data error) [:path :every :meter])))
 
-(defn- with-refused
-  "Store refusal records under :refused, keyed by controller ID, and leave the
-  key out when there are none."
-  [state refused]
-  (if (seq refused) (assoc state :refused refused) (dissoc state :refused)))
-
 (defn- refusal-record
   "What an owner's refusal was judged on, with the diagnostic it reports each
   frame. The same owner version, config and priority stay refused without
@@ -485,7 +490,8 @@
                   (update :controllers #(vec (remove (fn [c]
                                                        (and (:owner-instance-id c)
                                                             (not (ids (:owner-instance-id c))))) %)))
-                  (with-refused (into {} (filter (fn [[_ record]] (ids (:owner-instance-id record))))
+                  ;; Global refusals stay until that ID is started again or stopped.
+                  (with-refused (into {} (filter (fn [[_ {owner :owner-instance-id}]] (or (nil? owner) (ids owner))))
                                       (:refused state))))]
     (reduce
       (fn [{:keys [state] :as result} [instance definition]]
@@ -739,9 +745,11 @@
                             :every (get-in controller [:config :every]) :interval-beats (:interval-beats controller)}
                      owner (assoc :owner-instance-id owner))]
     {:controller nil :overrides {} :events [] :diagnostics [diagnostic]
-     :refusal (when-let [instance (and owner (get-in model [:instances owner]))]
-                [(:id controller) (refusal-record instance (:owner-version controller)
-                                                  (:owner-config controller) diagnostic)])}))
+     :refusal (if owner
+                (when-let [instance (get-in model [:instances owner])]
+                  [(:id controller) (refusal-record instance (:owner-version controller)
+                                                    (:owner-config controller) diagnostic)])
+                [(:id controller) {:diagnostic diagnostic}])}))
 
 (defn- safe-advance-controller
   "Advance one controller, or refuse it alone: a saved interval outside the
@@ -786,7 +794,11 @@
      :events (into (if (and (:epoch previous) (not= [(:show-id previous) (:epoch previous)]
                                                    [(:show-id model) (:epoch model)]))
                      [{:type :modulation/reset :epoch (:epoch model)}] []) (mapcat :events results))
-     :diagnostics (into refused (mapcat :diagnostics) results)}))
+     :diagnostics (-> refused
+                      (into (keep (fn [[_ {:keys [owner-instance-id diagnostic]}]]
+                                    (when-not owner-instance-id diagnostic)))
+                            (:refused state))
+                      (into (mapcat :diagnostics) results))}))
 
 (defn middleware
   "Return a pure context transform. Compose as
@@ -898,10 +910,12 @@
                                    (contains? (get-in controller [:config :select]) :instance-ids)
                                    (update-in [:config :select :instance-ids] #(into [] (keep instance-ids) %)))))))
                      (:controllers state)))
-        (with-refused (into {} (keep (fn [[_ record]]
-                                       (when-let [next-owner (get instance-ids (:owner-instance-id record))]
-                                         [[:cue next-owner]
-                                          (-> record (assoc :owner-instance-id next-owner)
-                                              (update :diagnostic assoc :owner-instance-id next-owner
-                                                      :controller-id [:cue next-owner]))])))
+        (with-refused (into {} (keep (fn [[id record]]
+                                       (if (nil? (:owner-instance-id record))
+                                         [id record]
+                                         (when-let [next-owner (get instance-ids (:owner-instance-id record))]
+                                           [[:cue next-owner]
+                                            (-> record (assoc :owner-instance-id next-owner)
+                                                (update :diagnostic assoc :owner-instance-id next-owner
+                                                        :controller-id [:cue next-owner]))]))))
                             (:refused state))))))

@@ -678,7 +678,18 @@
     (is (= [{:type :modulation/refused :controller-id :fine :every {:beats 1/1024}}]
            (mapv #(select-keys % [:type :controller-id :every]) (:diagnostics result))))
     (is (re-find #"no longer advances its schedule" (:message (first (:diagnostics result)))))
-    (is (= [] (modulation/validate-state (:state result))))))
+    (is (= [] (modulation/validate-state (:state result))))
+    (testing "a refused global controller keeps reporting until it is stopped or started again"
+      (let [later (modulation/advance (:state result) (model) {:beat (+ beat 4096.0) :time-ms 1.0})
+            restored (modulation/restore-state (:state later) {:show-id :modulation-test :epoch 0
+                                                               :instance-ids {"0:1" "0:1"}})
+            stopped (modulation/advance (modulation/stop (:state later) :fine) (model) {:beat (+ beat 8192.0) :time-ms 2.0})
+            restarted (modulation/start (:state later) {:id :fine :seed 7 :every {:beats 1} :params [:level]} {:beat 0.0})]
+        (is (= [(first (:diagnostics result))] (filterv #(= :fine (:controller-id %)) (:diagnostics later))))
+        (is (= [:fine] (keys (:refused restored))) "Restore keeps a global refusal")
+        (is (= [] (filterv #(= :fine (:controller-id %)) (:diagnostics stopped))))
+        (is (nil? (:refused (:state stopped))))
+        (is (nil? (:refused restarted)))))))
 
 (deftest saved-controllers-outside-the-period-range-load-and-are-refused-alone
   (doseq [interval [1/4096 1.0e-9]]
@@ -693,8 +704,9 @@
             frames (reductions (fn [result beat] (modulation/advance (:state result) (model) (frame beat)))
                                {:state saved} [0 1 5 9])]
         (is (= [] (modulation/validate-state saved)) "Backups keep their controllers")
-        (is (= [[:modulation/refused] [] [] []] (mapv #(mapv :type (:diagnostics %)) (rest frames)))
-            "Refused once, with no frame failure")
+        (is (= (repeat 4 [:modulation/refused]) (mapv #(mapv :type (:diagnostics %)) (rest frames)))
+            "Refused, reported every frame, with no frame failure")
+        (is (apply = (map #(first (:diagnostics %)) (rest frames))) "The recorded diagnostic")
         (is (re-find #"^Saved modulation interval of .* beats is outside" (:message (first (:diagnostics (second frames))))))
         (is (every? #(= [:other] (mapv :id (get-in % [:state :controllers]))) (rest frames)))
         (is (every? #(= 0.3 (level %)) (rest frames)))))))
