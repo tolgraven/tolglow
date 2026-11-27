@@ -33,6 +33,9 @@
     ;; registered effect does so later patches find their exact baseline.
     (doseq [[id installs] (:fx effects) :when (= id :studio/frame-install)]
       (doseq [[lane frame] installs] (frame-stream/install! lane frame)))
+    ;; Publishing lane frames to their readers is state as well.
+    (doseq [[id lanes] (:fx effects) :when (= id :studio/frame-notify)]
+      (doseq [lane lanes] (frame-stream/notify! lane)))
     effects))
 
 (defn stream-reply
@@ -58,7 +61,12 @@
   (:db (transition db [:studio/stream-opening (:session db) "connected"])))
 
 (defn stream-event [db envelope]
-  (transition db [:studio/stream-frame (:session db) "connected" envelope]))
+  ;; A patch inside lane-owned subtrees installs lanes and leaves app-db as it
+  ;; was: report that unchanged db, so tests can chain the resulting state.
+  (let [effects (transition db [:studio/stream-frame (:session db) "connected" envelope])]
+    (cond-> effects
+      (and (not (contains? effects :db)) (some #(= :studio/frame-install (first %)) (:fx effects)))
+      (assoc :db db))))
 
 (defn full-frame [db view]
   (stream-event (with-stream db)
@@ -1262,17 +1270,22 @@
       (is (= {:sources []} (get-in full [:db :server-projection :view :output :atmosphere]))))
     (testing "the whole lane frame installs before the ACK and consumers hear of it after"
       (is (= [:studio/frame-install :studio/stream-reply :studio/frame-notify] (replies full)))
-      (is (= [:studio/frame-notify [:room]] (last (:fx full))))
+      (is (= [:studio/frame-notify [:room :clock]] (last (:fx full))))
       (is (= {:token "full" :identity (projection/identity-of view) :revision 3 :frame-number 12 :time-ms 500
               :master 0.7 :blackout? nil :cut? nil :last-intents nil :atmosphere {:sources []}
-              :value {:values {:head-1 {:intensity 0.2}}}}
+              :view-token "full" :value {:values {:head-1 {:intensity 0.2}}}}
              (:room (installs full)))))
     (testing "a patch addresses lane values at the same token"
       (is (= ["connected" {:op :ack :token "moved"}] (stream-reply moved)))
       (is (= {:values {:head-1 {:intensity 0.8}}} (:value (frame-stream/baseline :room))))
       (is (= [13 "moved"] ((juxt :frame-number :token) (frame-stream/baseline :room))))
       (is (nil? (get-in moved [:db :server-projection :view :output :values])))
-      (is (= 13 (get-in moved [:db :show :frame-number]))))
+      (is (= 13 (get-in (frame-stream/baseline :clock) [:value :frame-number])))
+      (is (nil? (get-in moved [:db :show :frame-number])) "the frame number lives on the clock lane")
+      (is (not (contains? (transition (:db full) [:studio/stream-frame (:session base) "connected"
+                                                   (patch "moved" "again" [[:set [:frame-number] 14]])])
+                          :db))
+          "a frame that changes only lane fields writes nothing to app-db"))
     (testing "a lane that is not at the projection's token requests a full view"
       (frame-stream/install! :room (assoc (frame-stream/baseline :room) :token "stale"))
       (let [refused (stream-event (:db moved) (patch "moved" "after" [[:set [:frame-number] 14]]))
@@ -1281,7 +1294,7 @@
                                                   :view (assoc view :frame-number 15)})]
         (is (= ["connected" {:op :resync}] (stream-reply refused)))
         (is (nil? (installs refused)))
-        (is (= 13 (get-in refused [:db :show :frame-number])) "visible state stays until the full view")
+        (is (identical? (get-in moved [:db :show]) (get-in refused [:db :show])) "visible state stays until the full view")
         (is (= ["connected" {:op :ack :token "fresh"}] (stream-reply restored)))
         (is (= ["fresh" {:values {:head-1 {:intensity 0.2}}}] ((juxt :token :value) (frame-stream/baseline :room))))))
     (testing "a view without values installs an absent lane frame, not a stale one"

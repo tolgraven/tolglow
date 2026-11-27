@@ -1,6 +1,7 @@
 (ns tolglow.studio.modulation
   "Re-frame controls for the server's musical parameter modulation owner."
-  (:require [clojure.string :as str]
+  (:require [tolglow.studio.clock]
+            [clojure.string :as str]
             [re-frame.core :as rf]
             [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.events :as events]))
@@ -112,17 +113,33 @@
 (defn- failure [db key error]
   {:db (store db (-> (state db) (assoc-in [:errors key] (events/error-message error)) (update :pending dissoc key)))})
 
+(rf/reg-sub ::form (fn [db _] (state db)))
+
+(rf/reg-sub ::page-id (fn [db _] (get-in db [:ui :page-id])))
+
+(rf/reg-sub ::show
+  ;; The show with its per-frame beat from the clock lane, for hold expiry.
+  :<- [:tolglow.studio.clock/show]
+  :<- [:studio/clock-part :beat]
+  (fn [[show beat] _] (cond-> show (some? beat) (assoc-in [:transport :beat] beat))))
+
 (rf/reg-sub :modulation/state
-  (fn [db _]
-    {:form (state db)
-     :show (select-keys (:show db) [:effects :cues :instances :pages :modulation])
-     :manual-holds (vec (for [[id holds] (get-in db [:show :modulation :holds]) [parameter hold] holds
-                              :when (held? (:show db) id parameter)]
+  :<- [::form]
+  :<- [::show]
+  :<- [::page-id]
+  (fn [[form show page-id] _]
+    {:form form
+     :show (select-keys show [:effects :cues :instances :pages :modulation])
+     :manual-holds (vec (for [[id holds] (get-in show [:modulation :holds]) [parameter hold] holds
+                              :when (held? show id parameter)]
                           {:instance-id (wire id) :param (wire parameter) :until-beat (:until-beat hold)}))
-     :page-id (get-in db [:ui :page-id]) :playing? (get-in db [:show :transport :playing?])}))
+     :page-id page-id :playing? (get-in show [:transport :playing?])}))
+
 (rf/reg-sub :modulation/parameter
-  (fn [db [_ instance-id parameter schema]]
-    (let [s (state db) key (widget-key instance-id parameter) show (:show db)]
+  :<- [::form]
+  :<- [::show]
+  (fn [[s show] [_ instance-id parameter schema]]
+    (let [key (widget-key instance-id parameter)]
       {:form (widget-form s instance-id parameter schema) :key key
        :controller (controller-for show instance-id parameter)
        :held? (held? show instance-id parameter)
@@ -185,13 +202,14 @@
           (send-request db key "/api/modulation/start" config "This parameter now follows its musical modulation."))
         (catch :default error (failure db key error))))))
 (rf/reg-event-fx :modulation/hold
-  (fn [{:keys [db]} [_ instance-id parameter beats]]
+  [(rf/inject-cofx :studio/clock)]
+  (fn [{:keys [db clock]} [_ instance-id parameter beats]]
     (let [key (widget-key instance-id parameter)]
       (try
         (let [duration (when (seq (str/trim (str beats))) (number-value beats "Hold length"))
               _ (when (and duration (not (pos? duration))) (throw (js/Error. "Hold length must be positive beats.")))
               payload (cond-> {:instance-id (wire instance-id) :params [(wire parameter)]}
-                        duration (assoc :until-beat (+ (get-in db [:show :transport :beat] 0) duration)))]
+                        duration (assoc :until-beat (+ (or (:beat clock) 0) duration)))]
           (send-request db key "/api/modulation/hold" payload "Manual value is in control."))
         (catch :default error (failure db key error))))))
 (rf/reg-event-fx :modulation/resume

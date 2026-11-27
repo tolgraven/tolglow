@@ -34,6 +34,7 @@
             [tolglow.studio.fog-fields :as fog-fields]
             [tolglow.studio.rdm :as rdm]
             [tolglow.studio.interop :as interop]
+            [tolglow.studio.clock :as clock]
             [tolglow.studio.rig-editor :as rig-editor]
             [tolglow.studio.spatial :as spatial]
             [tolglow.studio.spatial-preview :as spatial-preview]
@@ -280,7 +281,8 @@
   pending scheduled events and running ramps, each cancellable by event ID."
   [db]
   (let [{:keys [upcoming ramps]} (get-in db [:show :schedule])
-        show (:show db)
+        ;; Ramp progress follows the per-frame clock; only this list re-renders.
+        show (clock/with-clock (:show db) (when (seq ramps) @(rf/subscribe [:studio/clock])))
         ms? (fn [ramp] (= "ms" (events/wire-id (:unit ramp))))
         ;; The projection is stable; live progress comes from the transport clock.
         progress (fn [{:keys [start end] :as ramp}]
@@ -317,6 +319,12 @@
            [:button.text-button {:type "button" :aria-label (str "Stop ramp " title)
                                  :disabled (not connected?) :on-click (cancel! event-id)} "Stop"]])]])))
 
+(defn- live-clock-driver
+  "Feed the pad clock the committed transport with its per-frame beat. Only
+  this invisible component follows each frame."
+  [generation animate?]
+  [pad-breath/clock-driver @(rf/subscribe [:studio/transport]) generation animate?])
+
 (defn- cue-grid [db]
   (let [view (get-in db [:server-projection :view]) ui (:ui db)
         authored-pages (:pages view)
@@ -351,7 +359,7 @@
       [pad-preview/grid (:id page) rows (and (not selected-recent) (= :perform (:view ui))
                                              (get-in db [:connection :connected?]))
        cue-cell db page]
-      [pad-breath/clock-driver (get-in db [:show :transport]) (get-in db [:show :transport-generation])
+      [live-clock-driver (get-in db [:show :transport-generation])
        (and (= :perform (:view ui)) (pad-breath-wanted? db page))]]
      [queued-cues db]
      [scheduled-events db]
@@ -1153,29 +1161,41 @@
                           (send! [:operator-history/close])
                           (some-> (.getElementById js/document "open-operator-history") .focus)))])))
 
-(defn studio []
-  (let [db @(rf/subscribe [:studio/db])
-        error (or (get-in db [:show :status :error :message]) (get-in db [:connection :error]))
+(defn- with-db
+  "Render (panel db & args) from the panel's own app-db subscription, so the
+  root component depends on no app-db state."
+  [panel & args]
+  (into [panel @(rf/subscribe [:studio/db])] args))
+
+(defn- main-area [db]
+  (let [error (or (get-in db [:show :status :error :message]) (get-in db [:connection :error]))
         connected? (get-in db [:connection :connected?])]
+    [:main#main (merge {:tab-index -1} (view-tabs/panel-attributes db))
+     (when (or error (not connected?))
+       [:div#connection-banner.connection-banner {:role "status"}
+        (or error "Connecting to the studio. Cue controls become available when the show is ready.")])
+     [checkpoints/folder-notice (checkpoints/notice-props db)]
+     [perform-view db]
+     (when (= :compose (get-in db [:ui :view])) [composition-view {:ui (:ui db) :show (select-keys (:show db) [:cues :effects :compositions])}])
+     (when (= :rig (get-in db [:ui :view])) [rig-view (select-keys db [:ui :show :server-presentation :session])])
+     [definition-view {:ui (:ui db) :show (select-keys (:show db) [:effects :cues :pages :runtime-id :show-id :epoch])}]
+     [chat/panel db]
+     (when (= :connections (get-in db [:ui :view])) [:<> [connections/panel {:show (select-keys (:show db) [:cues :transport])}]
+            [expressive/panel (:show db)]])
+     (when (= :develop (get-in db [:ui :view])) [workspace/panel db])
+     (when (= :debug (get-in db [:ui :view])) [debug/panel])
+     [footer db]]))
+
+(defn- checkpoint-panel [db] [checkpoints/panel (checkpoints/view-props db)])
+
+(rf/reg-sub ::toast (fn [db _] (get-in db [:ui :toast])))
+
+(defn studio []
+  (let [toast @(rf/subscribe [::toast])]
     [:<>
      [:a.skip {:href "#main"} "Skip to show controls"]
-     [sidebar db]
-     [:div.workspace [topbar db] [view-tabs/strip db]
-      [:main#main (merge {:tab-index -1} (view-tabs/panel-attributes db))
-       (when (or error (not connected?))
-         [:div#connection-banner.connection-banner {:role "status"}
-          (or error "Connecting to the studio. Cue controls become available when the show is ready.")])
-       [checkpoints/folder-notice (checkpoints/notice-props db)]
-       [perform-view db]
-       (when (= :compose (get-in db [:ui :view])) [composition-view {:ui (:ui db) :show (select-keys (:show db) [:cues :effects :compositions])}])
-       (when (= :rig (get-in db [:ui :view])) [rig-view (select-keys db [:ui :show :server-presentation :session])])
-       [definition-view {:ui (:ui db) :show (select-keys (:show db) [:effects :cues :pages :runtime-id :show-id :epoch])}]
-       [chat/panel db]
-       (when (= :connections (get-in db [:ui :view])) [:<> [connections/panel {:show (select-keys (:show db) [:cues :transport])}]
-              [expressive/panel (:show db)]])
-       (when (= :develop (get-in db [:ui :view])) [workspace/panel db])
-       (when (= :debug (get-in db [:ui :view])) [debug/panel])
-       [footer db]]]
-     [cue-actions db] [prompt-dialog db] [checkpoints/panel (checkpoints/view-props db)] [operator-history] [repl/console-view]
-     (when-let [toast (get-in db [:ui :toast])]
+     [with-db sidebar]
+     [:div.workspace [with-db topbar] [with-db view-tabs/strip] [with-db main-area]]
+     [with-db cue-actions] [with-db prompt-dialog] [with-db checkpoint-panel] [operator-history] [repl/console-view]
+     (when toast
        [:div#toast.toast {:class (when (:error? toast) "error") :role "status" :aria-live "polite"} (:message toast)])]))

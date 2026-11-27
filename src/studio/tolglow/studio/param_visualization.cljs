@@ -2,7 +2,8 @@
   "Passive visualizations of published parameter values. Geometry uses normalized
   coordinates only for display. History keeps the observed beat and components.
   The shared parameter-views projection chooses the widget for each type."
-  (:require [clojure.string :as str]
+  (:require [tolglow.studio.clock :as clock]
+            [clojure.string :as str]
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.parameter-widgets :as widgets]
@@ -378,8 +379,10 @@
             [widgets/typed-display parameter]))))))
 
 (rf/reg-sub ::clock
-  (fn [db _]
-    (let [show (:show db)]
+  :<- [:tolglow.studio.clock/show]
+  :<- [:studio/clock]
+  (fn [[show clock] _]
+    (let [show (clock/with-clock show clock)]
       {:time-ms (or (get-in show [:transport :time-ms]) (:time-ms show))
        :beat (get-in show [:transport :beat])
        :source [(:runtime-id show) (:epoch show)]

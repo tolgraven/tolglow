@@ -2,6 +2,7 @@
   "Live subscription and event boundaries for Studio. External resources exist
   only while the corresponding re-frame query has consumers."
   (:require [cljs.spec.alpha :as s]
+            [tolglow.studio.frame-stream :as frame-stream]
             [re-frame.core :as rf]
             [reagent.core :as r]
             [reagent.ratom :as ratom]))
@@ -54,17 +55,20 @@
     (let [event (:event-v (ex-data wrapped))]
       (report! :event (first event) (rest event) error))))
 
-(defn- bucket [db period]
+(defn- bucket [db lane-frame period]
+  ;; Frame number and beat change every frame on the :clock lane; the meter
+  ;; and show identity are app-db state.
   (let [view (get-in db [:server-projection :view])
-        transport (:transport view)
-        meter (:meter transport)
+        clock (:value lane-frame)
+        meter (get-in view [:transport :meter])
         beats (:beats-per-bar meter 4)
         [unit span] (first period)
+        beat (:beat clock)
         position (case unit
-                   :frames (:frame-number view)
-                   :beats (:beat transport)
-                   :bars (some-> (:beat transport) (/ beats))
-                   :phrases (some-> (:beat transport) (/ (* beats (:bars-per-phrase meter 4)))))]
+                   :frames (:frame-number clock)
+                   :beats beat
+                   :bars (some-> beat (/ beats))
+                   :phrases (some-> beat (/ (* beats (:bars-per-phrase meter 4)))))]
     (when (number? position)
       [(:runtime-id view) (:epoch view) (js/Math.floor (/ position span))])))
 
@@ -73,11 +77,14 @@
     (let [timer (js/setInterval tick! (max 1 ms))]
       #(js/clearInterval timer))
     (let [key (random-uuid)
-          last (volatile! (bucket @db period))]
-      (add-watch db key (fn [_ _ _ next-db]
-                          (let [current (bucket next-db period)]
-                            (when (not= current @last) (vreset! last current) (tick!)))))
-      #(remove-watch db key))))
+          clock (frame-stream/published-ref :clock)
+          last (volatile! (bucket @db @clock period))
+          check! (fn [_ _ _ _]
+                   (let [current (bucket @db @clock period)]
+                     (when (not= current @last) (vreset! last current) (tick!))))]
+      (add-watch db key check!)
+      (add-watch clock key check!)
+      #(do (remove-watch db key) (remove-watch clock key)))))
 
 (defn- read-cofx [db query injections]
   (reduce (fn [ctx spec]

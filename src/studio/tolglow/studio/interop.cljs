@@ -1,6 +1,7 @@
 (ns tolglow.studio.interop
   "Lifecycle-owned graphics/editor engines. Show state stays in re-frame."
   (:require [afterglow.render.photometry :as photometry]
+            [tolglow.studio.clock]
             [tolglow.studio.frame-stream :as frame-stream]
             [tolglow.studio.observations :as observations]
             [tolglow.studio.projection :as projection]
@@ -259,12 +260,10 @@
                                             (:type %)) intents))))
     (js-invoke engine "update" frame)))
 
-(rf/reg-sub ::frame-ms (fn [db _] (get-in db [:show :status :frame-ms])))
-
 (defn- frame-time
   "The show host's frame compute time. Only this readout follows each frame."
   [owner]
-  (when-some [ms @(rf/subscribe [::frame-ms])]
+  (when-some [ms @(rf/subscribe [:studio/clock-part :frame-ms])]
     [:span {:id (if (= :rig owner) "rig-frame-time" "frame-time")
             :title "Time the show host spent producing its latest lighting frame"}
      (str "Show compute · " (.toFixed ms 1) " ms")]))

@@ -16,16 +16,48 @@
   delivers the latest frame when it is newer than the last one delivered.
   Releasing is idempotent and only removes the attachment that created the
   release function."
-  (:require [re-frame.core :as rf]))
+  (:require [re-frame.core :as rf]
+            [reagent.core :as r]))
 
 (def lane-paths
-  "Lane ID -> part -> path in the server view whose subtree the lane owns."
+  "Lane ID -> part -> path in the server view whose subtree the lane owns.
+  :clock holds every field the show host changes on each frame, so a frame
+  that changes nothing else leaves app-db untouched."
   {:room {:values [:output :values]
-          :audition [:draft-output :values]}})
+          :audition [:draft-output :values]}
+   :clock {:frame-number [:frame-number]
+           :time-ms [:time-ms]
+           :beat [:transport :beat]
+           :transport-time-ms [:transport :time-ms]
+           :schedule-beat [:schedule :beat]
+           :frame-ms [:status :frame-ms]
+           :output-scheduler [:status :output-scheduler]}})
+
+(def ^:private owned-paths (vec (for [[_ parts] lane-paths [_ path] parts] path)))
+
+(defn lane-only?
+  "Whether every change of a patch lies inside a lane-owned subtree, so the
+  app-db view after it equals the one before."
+  [changes]
+  (and (vector? changes)
+       (every? (fn [[_ path]]
+                 (and (vector? path)
+                      (some #(and (<= (count %) (count path)) (= % (subvec path 0 (count %)))) owned-paths)))
+               changes)))
 
 (defonce ^:private frames (atom {}))
 
 (defonce ^:private consumers (atom {}))
+
+(defonce ^:private published (atom {}))
+
+(defn published-ref
+  "A Reagent atom holding lane's frame as last notified, after its ACK. Reagent
+  views and re-frame subscriptions read high-rate fields through it; renders
+  follow on animation frames and stop while the page is hidden."
+  [lane]
+  (or (get @published lane)
+      (get (swap! published (fn [refs] (if (contains? refs lane) refs (assoc refs lane (r/atom nil))))) lane)))
 
 (defn baseline
   "The installed frame of lane, or nil. Its :token and :identity name the
@@ -35,6 +67,9 @@
 
 (defn- identity-of [view] (select-keys view [:runtime-id :show-id :epoch]))
 
+(defn- dissoc-path [view path]
+  (if (= 1 (count path)) (dissoc view (peek path)) (update-in view (pop path) dissoc (peek path))))
+
 (defn split-view
   "Separate every lane's subtrees from a server view. Returns [view lanes],
   where lanes maps every lane to {part typed-subtree} for the parts present."
@@ -43,7 +78,7 @@
                (reduce-kv (fn [[view lanes] part path]
                             (let [parent (get-in view (pop path))]
                               (if (and (map? parent) (contains? parent (peek path)))
-                                [(update-in view (pop path) dissoc (peek path))
+                                [(dissoc-path view path)
                                  (assoc-in lanes [lane part] (get parent (peek path)))]
                                 [view lanes])))
                           [view (assoc lanes lane {})] parts))
@@ -51,15 +86,19 @@
 
 (defn join-view
   "Restore lane subtrees into an app-db projection so a patch can address them.
-  Every lane must hold a frame of this exact token and server identity. If one
-  does not, the projection loses its token: the next patch then requests a
-  full snapshot instead of applying to a partial baseline."
+  The app-db projection's :token names the message that last changed its view;
+  every lane must hold a frame for that view, of the same server identity, and
+  all lanes the same current token. The joined projection carries that current
+  token. Otherwise the projection loses its token: the next patch then requests
+  a full snapshot instead of applying to a partial baseline."
   [{:keys [token view] :as projection} installed]
   (if-not projection projection
-    (let [joined (reduce-kv
+    (let [current (:token (get installed (key (first lane-paths))))
+          joined (reduce-kv
                   (fn [view lane parts]
                     (let [frame (get installed lane)]
-                      (if-not (and frame (= token (:token frame)) (= (:identity frame) (identity-of view)))
+                      (if-not (and frame current (= current (:token frame)) (= token (:view-token frame))
+                                   (= (:identity frame) (identity-of view)))
                         (reduced nil)
                         (reduce-kv (fn [view part value]
                                      (let [path (get parts part)]
@@ -68,13 +107,15 @@
                                          (reduced nil))))
                                    view (:value frame)))))
                   view lane-paths)]
-      (if joined (assoc projection :view joined) (dissoc projection :token)))))
+      (if joined (assoc projection :view joined :token current) (dissoc projection :token)))))
 
 (defn frame
-  "The lane frame of an accepted view: the lane's parts with the clock and
-  output-gating fields of the same token, which also remain in app-db."
-  [token view parts]
+  "The lane frame of an accepted view at token, whose app-db view was last
+  written at view-token: the lane's parts with the clock and output-gating
+  fields of the same token."
+  [token view-token view parts]
   {:token token
+   :view-token view-token
    :identity (identity-of view)
    :revision (:revision view)
    :frame-number (:frame-number view)
@@ -132,8 +173,10 @@
   (swap! frames assoc lane frame))
 
 (defn notify!
-  "Offer lane's installed frame to every active consumer."
+  "Publish lane's installed frame and offer it to every active consumer."
   [lane]
+  (let [current (get @frames lane) ref (published-ref lane)]
+    (when-not (identical? current @ref) (reset! ref current)))
   (doseq [owner (keys (get @consumers lane))]
     (offer! lane owner)))
 
@@ -176,6 +219,7 @@
   []
   (reset! frames {})
   (reset! consumers {})
+  (doseq [ref (vals @published)] (reset! ref nil))
   (reset! failures {}))
 
 (rf/reg-cofx :studio/frame-baselines
