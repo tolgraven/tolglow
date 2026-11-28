@@ -92,6 +92,17 @@ When the measured rate first exceeds the base limit a burst starts. It may last
 before another burst can start. A grant is stamped with the show epoch when it
 is given and lapses when the show restarts.
 
+## Where it is enforced
+
+The show owner enforces the guard in its frame path, on the instance's recorded
+launch source. It does not depend on an orchestrator or on one tool: a
+`launch_cue` through `show/dispatch-tool!` (Studio chat, rehearsal scripts,
+agent runs), a cue launch the agent posted with `schedule_events`, and any
+future agent route are all limited, because each records `{:adapter :agent}` on
+the instance it launches. An orchestrator may check a proposal before it posts
+it, but the owner is the enforcement point. Agent attribution comes from the
+envelope `dispatch-tool!` builds; HTTP `/api/command` records `:web` (#895).
+
 ## Who may change it
 
 Only an operator surface (Studio, web, Push, X-Touch, MIDI, OSC, sensor or REPL
