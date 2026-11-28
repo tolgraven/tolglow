@@ -186,6 +186,36 @@
         (is (= {:status :rejected :error source/stale-session-message :reason :stale-show-session :move-label "Step"}
                (source/move-result stale "2:1" :level "move")))))))
 
+(deftest a-session-change-settles-a-draft-and-http-refusals-keep-their-reason
+  (let [draft {:param :step :label "Step" :source {:owner ["studio" 2] :from-param :level}}]
+    (testing "a draft chosen in the current session waits for its own result"
+      (is (nil? (source/settled-move draft ["studio" 2] nil)))
+      (is (= {:status :accepted} (source/settled-move draft ["studio" 2] {:status :accepted}))))
+    (testing "a restart or reconnect settles it at once, sent or not"
+      (is (= {:status :rejected :reason :stale-show-session :error source/stale-session-message :move-label "Step"}
+             (source/settled-move draft ["studio" 3] nil)))
+      (is (= {:status :rejected :reason :stale-show-session :error source/stale-session-message :move-label "Step"}
+             (source/settled-move draft ["replaced" 2] nil))))
+    (is (nil? (source/settled-move nil ["studio" 3] nil)) "no draft, nothing to settle"))
+  (testing "the HTTP refusal carries the binding reason, and an epoch refusal is a stale session"
+    (is (= :occupied-destination (source/rejection-reason {:details {:reason :occupied-destination}})))
+    (is (= :stale-source (source/rejection-reason {:details {:reason "stale-source"}})))
+    (is (= :stale-show-session (source/rejection-reason {:details {:expected-epoch 3 :received-epoch 2}})))
+    (is (nil? (source/rejection-reason {:message "No details"}))))
+  (let [view {:runtime-id "studio" :epoch 2 :revision 12}
+        db {:show view :server-projection {:view view}}
+        sent (source/request db "bind" "2:1" :step {:from 1 :to 5} "move"
+                             {:from-param :level :owner ["studio" 2] :expected-source [[2 11] :wash 4 1] :label "Step"})
+        key [["studio" 2] "2:1" :level]]
+    (is (= (get-in sent [:studio/http :on-success]) (get-in sent [:studio/http :on-rejection]))
+        "a refusal reaches the same reply, whole")
+    (is (= {:status :rejected :error "Operation belongs to a previous show session" :reason :stale-show-session
+            :move-label "Step"}
+           (source/move-result (source/record-reply (:db sent) key "move"
+                                                    {:status :rejected :message "Operation belongs to a previous show session"
+                                                     :details {:expected-epoch 3 :received-epoch 2}})
+                               "2:1" :level "move")))))
+
 (deftest a-move-to-another-activation-names-both-and-locks-both-inputs
   (let [db {:show {:runtime-id "studio" :epoch 2}}
         move {:from-param :level :from-instance-id "2:1" :owner ["studio" 2] :expected-source [[2 11] :wash 4 1]

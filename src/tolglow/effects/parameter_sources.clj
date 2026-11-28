@@ -143,14 +143,24 @@
   (let [beat (:beat (system/private-clock instance clock))]
     (when (time/finite-number? beat) (- beat (or (:started-at-beat instance) 0.0)))))
 
+(defn- periodic-phase?
+  "Does `waveform` repeat every phase cycle? The built-in shapes wrap their
+  phase, and an audio-shaped LFO reads its table at fract(phase). A custom
+  expression is not assumed to be periodic."
+  [{:keys [id expression]}]
+  (boolean (or (and (keyword? id) (= "audio" (namespace id)))
+               (when-let [builtin (get-in @builtins [:waveforms id])]
+                 (.equals ^Object (:expression builtin) expression)))))
+
 (defn- carried-phase
   "Keep a cue-launch waveform's phase continuous when it moves to another
   activation: shift its phase offset by the difference of the two
   activations' launch phases at the command's frame clock, each in the meter
-  its activation captured. A transport-referenced waveform already reads the
-  shared clock and keeps its binding. A paused destination holds the carried
-  phase, and a stopped transport freezes both clocks, so nothing catches up."
-  [binding source destination frame]
+  its activation captured. A periodic waveform's offset is wrapped into
+  [0, 1). A transport-referenced waveform already reads the shared clock and
+  keeps its binding. A paused destination holds the carried phase, and a
+  stopped transport freezes both clocks, so nothing catches up."
+  [binding waveform source destination frame]
   (if (= :transport (:phase-reference binding :launch))
     binding
     (let [clock (when frame (time/frame-clock frame))
@@ -158,33 +168,43 @@
           to (when clock (launch-elapsed destination clock))
           period (:period binding {:beats 1})]
       (require! (and from to) "Moving a waveform to another activation needs the show's beat clock" :clock-unavailable)
-      (assoc binding :phase (+ (:phase binding 0.0)
-                               (- (/ from (time/duration->beats period (:timing-meter source)))
-                                  (/ to (time/duration->beats period (:timing-meter destination)))))))))
+      (let [phase (+ (:phase binding 0.0)
+                     (- (/ from (time/duration->beats period (:timing-meter source)))
+                        (/ to (time/duration->beats period (:timing-meter destination)))))]
+        (assoc binding :phase (if (periodic-phase? waveform) (mod phase 1.0) phase))))))
 
 (defn bind
   "Attach or edit a waveform on one running input, or move a bound waveform.
   A move names its current input with :from-param, and with
   :from-instance-id when that input belongs to another running activation,
   plus the projected source :identity as :expected-source and the
-  destination's :from and :to as :binding. Attach and move validate against
-  the definition the next frame evaluates (`modulation/owner-definition`),
-  which is also the schema the frame owner samples. A move to another
-  activation needs `frame` ({:time-ms :transport}) to carry its phase."
-  ([model payload] (bind model payload nil))
-  ([model {:keys [instance-id param binding from-param from-instance-id expected-source] :as payload} frame]
-   (let [instance (get-in model [:instances instance-id])
+  destination's :from and :to as :binding. A move to another activation
+  needs `frame` ({:time-ms :transport}) to carry its phase.
+
+  Attach and move validate against the definition the frame owner samples:
+  `modulation/owner-definition` read through `basis`, the model as the last
+  frame read it (`tolglow.show.programs/frame-view` with that frame's
+  deferred compiles). While a pending revision waits for its programs (#774)
+  that is the captured definition, as the projected source :identity shows.
+  Without `basis` the definitions are read from `model` itself."
+  ([model payload] (bind model payload nil nil))
+  ([model payload frame] (bind model payload frame nil))
+  ([model {:keys [instance-id param binding from-param from-instance-id expected-source] :as payload} frame basis]
+   (let [basis (or basis model)
+         sampled (fn [id] (when-let [instance (get-in basis [:instances id])]
+                            (modulation/owner-definition basis instance)))
+         instance (get-in model [:instances instance-id])
          moving? (contains? payload :from-param)
          source-id (if (contains? payload :from-instance-id) from-instance-id instance-id)
          across? (and moving? (not= source-id instance-id))
          source-instance (get-in model [:instances source-id])
          bindings (:parameter-bindings instance)
-         definition (when instance (modulation/owner-definition model instance))
+         definition (when instance (sampled instance-id))
          schema (destination-schema definition param)
          registry (waveforms model)
          binding (if moving?
                    (let [source (get-in source-instance [:parameter-bindings from-param])
-                         source-definition (when source-instance (modulation/owner-definition model source-instance))
+                         source-definition (when source-instance (sampled source-id))
                          waveform (get-in registry [:waveforms (get-in source [:binding :waveform])])
                          current (when source (source-identity source source-definition waveform))]
                      (require! instance "Unknown running instance or parameter" :unknown-instance)
@@ -201,19 +221,20 @@
                                "Moving a waveform requires both destination endpoints" :invalid-endpoints)
                      (cond-> (merge (:binding source) binding)
                        (not= priority-param param) (dissoc :hysteresis)
-                       across? (carried-phase source-instance instance frame)))
+                       across? (carried-phase waveform source-instance instance frame)))
                    binding)
          waveform (get-in registry [:waveforms (:waveform binding)])]
      (require! (and instance schema) "Unknown running instance or parameter" :unknown-parameter)
      (require! (not (and (= priority-param param) (get-in instance [:source :native-layer])))
-               "Compound layer members share one priority. Set it with the layer priority command.")
+               "Compound layer members share one priority. Set it with the layer priority command."
+               :native-layer-priority)
      ;; A new binding takes the controller period range; saved bindings keep loading.
      (when-let [message (modulation/period-range-error
                          "Waveform period :period" (:period binding)
                          (if (= :transport (:phase-reference binding))
                            (get-in model [:transport :meter]) (:timing-meter instance))
                          (if (= :transport (:phase-reference binding)) "transport" "cue's captured"))]
-       (require! false message))
+       (require! false message :period-out-of-range))
      (let [entry {:binding (try (checked-binding schema waveform binding (= priority-param param))
                                 (catch clojure.lang.ExceptionInfo error
                                   (throw (if (and moving? (= ::invalid-binding (:type (ex-data error))))

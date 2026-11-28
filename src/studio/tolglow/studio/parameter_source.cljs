@@ -179,7 +179,8 @@
                              binding (assoc :binding binding)
                              from-param (assoc :from-param from-param :expected-source expected-source)
                              (and from-param (not= source-instance id)) (assoc :from-instance-id source-instance))
-                     :on-success reply :on-failure [::failed key request-id]
+                     ;; A refusal arrives whole, with its details, on the reply.
+                     :on-success reply :on-rejection reply :on-failure [::failed key request-id]
                      :on-uncertain (conj reply {:status :pending})}})))
 
 (defn move-result
@@ -199,14 +200,32 @@
 
 (rf/reg-sub ::move-result (fn [db [_ id param request-id]] (move-result db id param request-id)))
 
-(defn record-reply [db [owner :as key] request-id {:keys [status revision message]}]
+(defn settled-move
+  "The settled state of a move draft: `result` (see `move-result`), or a
+  :stale-show-session refusal as soon as the show session the draft was
+  chosen in (`[:source :owner]`) is no longer `owner`, sent or not."
+  [draft owner result]
+  (or result
+      (when (and draft (not= owner (get-in draft [:source :owner])))
+        {:status :rejected :reason :stale-show-session :error stale-session-message :move-label (:label draft)})))
+
+(defn rejection-reason
+  "The refusal reason of a rejected acknowledgement: the binding refusal's
+  :reason, or :stale-show-session when the show refused the request's epoch."
+  [{:keys [details]}]
+  (cond
+    (some? (:reason details)) (keyword (events/wire-id (:reason details)))
+    (contains? details :received-epoch) :stale-show-session))
+
+(defn record-reply [db [owner :as key] request-id {:keys [status revision message] :as receipt}]
   (let [path (conj requests-path key)
         request (get-in db path)]
     (if (and (= owner (context db)) (= request-id (:id request)))
       (case status
         :accepted (if (integer? revision) (assoc-in db (conj path :accepted-revision) revision) db)
         :pending (assoc-in db (conj path :waiting?) true)
-        :rejected (update-in db path merge {:pending? false :error (events/error-message message)})
+        :rejected (update-in db path merge (cond-> {:pending? false :error (events/error-message message)}
+                                             (rejection-reason receipt) (assoc :reason (rejection-reason receipt))))
         :expired (if-let [visible (request-status db key request)]
                    (if (:pending? visible)
                      (update-in db path merge {:pending? false :error "The show has not confirmed this edit. Check the current source before retrying."})
@@ -473,7 +492,7 @@
             elsewhere (when lfo (other-destinations activations id priority))
             ;; A settled move (refused or committed) no longer drives the select,
             ;; which then shows the input the waveform is actually on.
-            result @(rf/subscribe [::move-result id param (:request-id @move)])
+            result (settled-move @move owner @(rf/subscribe [::move-result id param (:request-id @move)]))
             draft (when-not result @move)
             destination (:param draft)
             target-instance (when-let [other (:instance-id draft)] (some #(when (= other (:id %)) %) activations))
@@ -573,7 +592,9 @@
             (for [[key input] (:params wave)] ^{:key key}
               [number-field (or (:name input) (widgets/label key)) (get inputs key (:default input))
                #(swap! form assoc-in [:inputs key] %) input])])
-         (when-let [message (or @error (refusal-text in-flight here (some? current)))]
+         (when-let [message (or @error
+                                (when (= :stale-show-session (:reason result)) (refusal-text result here (some? current)))
+                                (refusal-text in-flight here (some? current)))]
            [:p.performance-error {:role "alert"} message])
          (when (and (:pending? in-flight) (:waiting? in-flight))
            [:p {:role "status"} "Waiting for the show to confirm the source change."])

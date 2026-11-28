@@ -1654,9 +1654,13 @@
                   (update :revision inc))
        :ack (assoc (select-keys result [:placements :collisions :overflow]) :status :accepted :page-id id)})
     (:modulation-bind :modulation-unbind)
-    (let [updated (update (if (= type :modulation-bind)
+    (let [;; Validate against the definitions the last frame sampled: its
+          ;; deferred compiles keep their captured definition (#774).
+          hold (when runtime (:program-hold @(:state runtime)))
+          updated (update (if (= type :modulation-bind)
                             ;; A move to another activation carries its phase at this command's clock.
-                            (parameter-sources/bind model payload {:time-ms time-ms :transport (:transport model)})
+                            (parameter-sources/bind model payload {:time-ms time-ms :transport (:transport model)}
+                                                    (when hold (programs/frame-view model hold)))
                             (parameter-sources/unbind model payload))
                           :revision inc)]
       {:model updated
@@ -3192,6 +3196,8 @@
                                :live-routing (when-not audition? (live-sync/parameter-routing (connections/sync (:connections runtime)))))
      :resolved-param-overrides input-overrides
      :reload-waits (:waits programs)
+     ;; The definitions this frame sampled; binds validate against the same view.
+     :program-hold (select-keys programs [:deferred :downgraded])
      :modulation-view (select-keys modulation-result [:overrides :diagnostics])
      :status (let [failures (programs/repeated-failures @(:compiler-context runtime))]
                (cond-> {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}
