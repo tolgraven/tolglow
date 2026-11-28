@@ -1,11 +1,13 @@
 (ns tolglow.studio.patchbay-test
   (:require [cljs.test :refer-macros [deftest is]]
             [cljs.reader :as reader]
+            [re-frame.core :as rf]
             [re-frame.db :as rf-db]
             [re-frame.interceptor :as interceptor]
             [re-frame.registrar :as registrar]
             [reagent.core :as reagent]
             ["react-dom/server" :refer [renderToStaticMarkup]]
+            [tolglow.studio.frame-stream :as frame-stream]
             [tolglow.studio.patchbay :as patchbay]))
 
 (defn transition [db event]
@@ -118,8 +120,10 @@
   (let [ports (patchbay/source-ports {:ports [{:id "audio/rms" :kind "audio" :value 0.4}]})]
     (is (= "audio/rms" (:source-id (first ports))))
     (is (= "audio/rms" (:source-id (first (patchbay/source-ports {:sources [{:source-id "audio/rms"}]}))))))
+  (frame-stream/reset-all!)
   (reset! rf-db/app-db (assoc-in base [:show :patch]
                                {:enabled? false :sources [{:source-id "live/ableton-live/ch/1/note/36" :kind "midi" :value 110}]}))
+  (is (= ["live/ableton-live/ch/1/note/36"] (map :source-id (:sources (:remote @(rf/subscribe [:patchbay/view]))))))
   (let [html (renderToStaticMarkup (reagent/as-element [patchbay/panel base]))]
     (is (.includes html "Signal patchbay"))
     (is (.includes html "live/ableton-live/ch/1/note/36"))
@@ -140,3 +144,18 @@
   (is (= {:knob-id "lift" :cue-id "" :param "" :low "0" :high "1" :base "0" :destination-low 0 :destination-high 1}
          (patchbay/target-fields "knob:lift")))
   (is (= {:knob-id nil :cue-id "wash" :param ""} (patchbay/target-fields "wash"))))
+
+(deftest observed-sources-follow-the-signals-lane
+  (frame-stream/reset-all!)
+  (reset! rf-db/app-db (assoc-in base [:show :patch] {:enabled? true :source "{}"}))
+  (frame-stream/install! :signals {:token "t" :value {:patch-sources [{:source-id "audio/rms" :kind :audio :value 0.25}]}})
+  (frame-stream/notify! :signals)
+  (let [{:keys [remote]} @(rf/subscribe [:patchbay/view])]
+    (is (true? (:enabled? remote)) "the patch itself comes from app-db")
+    (is (= [{:source-id "audio/rms" :kind "audio" :value 0.25}] (:sources remote))
+        "its per-frame sources come presented from the lane"))
+  (let [effects (transition (assoc-in (assoc-in base [:patchbay] form) [:show :patch] {:enabled? true})
+                            [:patchbay/source 0 "audio/rms"])]
+    (is (= "audio" (get-in effects [:db :patchbay :routes 0 :source-kind]))
+        "choosing a source reads its kind from the lane through the coeffect"))
+  (frame-stream/reset-all!))

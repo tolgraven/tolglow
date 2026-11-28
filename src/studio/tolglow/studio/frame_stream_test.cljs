@@ -174,3 +174,39 @@
   (is (not (frame-stream/lane-only? [[:set [:transport] {:beat 1}]])) "replacing a parent is not lane-only")
   (is (not (frame-stream/lane-only? [[:set [:output] {}]])))
   (is (not (frame-stream/lane-only? nil))))
+
+(deftest connection-status-and-sampled-signals-leave-app-db-on-their-own-lanes
+  ;; Measured on a capture-only host with synthetic audio (#790): these are the
+  ;; Connections and signal fields that change on every frame.
+  (let [view {:runtime-id "r" :show-id :main :epoch 1 :revision 2
+              :connection-status {:audio {:state :running :config {:sample-rate 48000}
+                                          :features {:rms 0.2} :waveform {:bins [0.1]} :metrics {:blocks 9}
+                                          :sample-counter 4800 :received-event-count 3}
+                                  :sync {:state :idle :config {:selected-source :manual} :clock {:status :manual}}
+                                  :audience {:sessions 0}}
+              :patch {:enabled? true :source "{}" :sources [{:source-id "audio/rms" :value 0.2}]}
+              :audio/energy 0.4
+              :output {:lighting-activity {:scene {:score 0.3}} :lighting-budget {:enabled? true}}}
+        [app-view lanes] (frame-stream/split-view view)]
+    (is (= {:audio {:state :running :config {:sample-rate 48000}}
+            :sync {:state :idle :config {:selected-source :manual}}
+            :audience {:sessions 0}}
+           (:connection-status app-view)))
+    (is (= {:enabled? true :source "{}"} (:patch app-view)))
+    (is (not (contains? app-view :audio/energy)))
+    (is (= {:lighting-budget {:enabled? true}} (:output app-view)))
+    (is (= {:audio-features {:rms 0.2} :audio-waveform {:bins [0.1]} :audio-metrics {:blocks 9}
+            :audio-samples 4800 :audio-events 3 :sync-clock {:status :manual}}
+           (:connections lanes)))
+    (is (= {:patch-sources [{:source-id "audio/rms" :value 0.2}] :audio-energy 0.4
+            :lighting-activity {:scene {:score 0.3}}}
+           (:signals lanes)))
+    (is (= {:token "t" :view view}
+           (frame-stream/join-view {:token "t" :view app-view} (lanes-at "t" "t" view lanes))))
+    (is (frame-stream/lane-only? [[:set [:connection-status :audio :features :rms] 0.3]
+                                  [:set [:connection-status :audio :waveform :bins 0] 0.2]
+                                  [:set [:connection-status :sync :clock :beat] 4]
+                                  [:set [:patch :sources 0 :value] 0.5] [:set [:audio/energy] 0.5]
+                                  [:set [:output :lighting-activity :scene :score] 0.4]]))
+    (is (not (frame-stream/lane-only? [[:set [:connection-status :audio :state] :stopped]])))
+    (is (not (frame-stream/lane-only? [[:remove [:connection-status]]])) "closing Connections changes the view")))
