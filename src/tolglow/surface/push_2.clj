@@ -18,6 +18,14 @@
     linked-knob page is on the track encoders.
   - :capture-button cc (#671): a press runs the host's :capture! once,
     outside the session lock.
+  - :vector-encoders true or {:linger-ms n :buttons [cc x8] :leds {...}}
+    (#813): touching the track encoder of a ring, XY or XY+Z vector spreads
+    its components over consecutive track encoders, even over a full bank
+    (tolglow.surface.vector-encoders). The bank is never written, so it
+    returns exactly when the takeover closes. The upper-row button under
+    each taken encoder (CC 102-109, the Push 2 MIDI interface's display
+    buttons) is lit in the device palette's entry nearest its component's
+    colour and pulses while touched; :buttons false leaves them dark.
 
   Addresses and LEDs, all from Afterglow's source-derived Push 2 profile
   and codec (afterglow.control.devices.push-2, codecs.push-2), unverified
@@ -40,9 +48,12 @@
   others dimmed, and a launch chosen for Reorder is white."
   (:require [afterglow.control.codecs.push-2 :as codec]
             [afterglow.control.devices.push-2 :as push-2]
+            [afterglow.control.devices.push-view :as push-view]
+            [afterglow.control.views :as views]
             [tolglow.surface.cue-grid :as cue-grid]
             [tolglow.surface.descriptor :as descriptor]
-            [tolglow.surface.push :as push]))
+            [tolglow.surface.push :as push]
+            [tolglow.surface.vector-encoders :as vectors]))
 
 (def viewport :grid)
 
@@ -67,8 +78,16 @@
 
 (def ^:private own-keys
   "Each add-on keeps its own state key: the grid ::push/grid and its button
-  LEDs ::grid-sent, the knob page LED ::knob-sent, Capture ::push/capture."
-  [::push/grid ::grid-sent ::knob-sent ::push/capture])
+  LEDs ::grid-sent, the knob page LED ::knob-sent, Capture ::push/capture,
+  the vector takeover ::push/vector, its button LEDs ::vector-sent and the
+  display view it last decorated ::vector-shown."
+  [::push/grid ::grid-sent ::knob-sent ::push/capture ::push/vector ::vector-sent ::vector-shown])
+
+(def default-vector-buttons
+  "The upper row of display buttons, one under each track encoder (Push 2
+  MIDI interface: CC 102-109). Neither the Afterglow profile nor the other
+  Tolglow parts use them."
+  (vec (range 102 110)))
 
 ;; ---------------------------------------------------------------------------
 ;; Addresses and colours
@@ -113,13 +132,37 @@
 (defn- modifier-cc [{:keys [temporary-encoder-modifier]}]
   (if (integer? temporary-encoder-modifier) temporary-encoder-modifier 57))
 
+(defn vector-options
+  "The vector takeover options, normalized to {:linger-ms :buttons :leds},
+  or nil when off. :buttons are eight CCs, one under each track encoder,
+  none of them in taken (CCs other controls use); false leaves no LEDs."
+  [{:keys [vector-encoders]} taken]
+  (when (and (some? vector-encoders) (not (false? vector-encoders)))
+    (let [config (if (true? vector-encoders) {} vector-encoders)
+          {:keys [linger-ms leds]} config
+          buttons (get config :buttons default-vector-buttons)
+          cc? #(and (integer? %) (<= 0 % 127))]
+      (when-not (and (map? config) (every? #{:linger-ms :buttons :leds} (keys config))
+                     (or (nil? linger-ms) (and (number? linger-ms) (pos? linger-ms) (Double/isFinite (double linger-ms))))
+                     (or (false? buttons)
+                         (and (vector? buttons) (= 8 (count buttons)) (every? cc? buttons) (apply distinct? buttons)
+                              (not-any? (into profile-ccs taken) buttons)))
+                     (push/valid-vector-leds? leds))
+        (throw (ex-info (str "Push 2 :vector-encoders takes true or {:linger-ms ms :buttons [eight free button CCs] "
+                             ":leds {:colors [[r g b] per component]}}")
+                        {:push-2/error :invalid-vector-encoders :vector-encoders vector-encoders})))
+      {:linger-ms (or linger-ms vectors/default-linger-ms)
+       :buttons (when-not (false? buttons) buttons)
+       :leds leds})))
+
 (defn validate-options!
   "Check the Push 2 parts before any port opens: grid buttons are CCs
   mapped to cue-grid actions, including a mode, and the mode buttons are
   ones the profile does not interpret (paging may share Page Left/Right,
   which keep their profile use while the grid is closed); the knob page
-  and Capture buttons are free and distinct from the grid's. Returns
-  {:grid :capture :knob-button}."
+  and Capture buttons are free and distinct from the grid's, and so are
+  the vector takeover's LED buttons. Returns {:grid :capture :knob-button
+  :vectors}."
   [{:keys [knob-page capture-button cue-variations?] :as options}]
   (let [grid (grid-options options)
         {:keys [buttons columns]} grid
@@ -147,12 +190,17 @@
                      (not (and (true? cue-variations?) (#{50 58} capture-button))))
         (throw (ex-info "The Push 2 Capture button must be a button CC no other Push 2 control uses"
                         {:push-2/error :invalid-capture-button :capture-button capture-button}))))
-    {:grid grid :capture capture-button :knob-button knob-button}))
+    {:grid grid :capture capture-button :knob-button knob-button
+     :vectors (vector-options options (cond-> (into taken (keys buttons))
+                                        knob-button (conj knob-button)
+                                        capture-button (conj capture-button)
+                                        (true? cue-variations?) (into #{50 58})))}))
 
 (defn surface?
   "Whether these Push 2 options need this namespace's profile."
   [options]
-  (boolean (or (grid-options options) (some? (:knob-page options)) (some? (:capture-button options)))))
+  (boolean (or (grid-options options) (some? (:knob-page options)) (some? (:capture-button options))
+               (and (some? (:vector-encoders options)) (not (false? (:vector-encoders options)))))))
 
 (defn content
   "The surface content a Push 2 grid attaches with."
@@ -381,6 +429,172 @@
                       (input state event model envelope))))))
 
 ;; ---------------------------------------------------------------------------
+;; Vector takeover (#813)
+
+(defn- selected-instance
+  "The launch the track encoders edit, as the profile picks it: its
+  :selected-instance, else the latest launch."
+  [state model]
+  (or (get-in model [:instances (:selected-instance state)])
+      (last (views/active-instances model))))
+
+(defn- knob-page? [state] (some? (get-in state [:encoder-overlay :knob-ids])))
+
+(defn- vector-candidate
+  "What a touch on track encoder slot would spread: the bank's parameter
+  in that slot, when it is a vector the takeover spreads. :basis is what
+  must stay the same for the takeover to stay valid."
+  [state model slot]
+  (let [instance (selected-instance state model)
+        bank (push-view/parameter-bank state instance)
+        param (get (:ids bank) slot)
+        schema (get-in instance [:definition :params param])]
+    (when (and param (= :running (:phase instance)))
+      (when-let [spread (vectors/spread param schema)]
+        (assoc spread :instance-id (:id instance)
+                      :basis {:bank (:index bank) :slot slot :size (count (:components spread))})))))
+
+(defn- vector-valid?
+  "A running takeover still edits the selected launch, on the same bank,
+  with the same vector in its slot, and nothing else holds the encoders:
+  no knob page and no Accent (temporary edits belong to the profile)."
+  [state model {:keys [instance-id param basis]}]
+  (let [instance (get-in model [:instances instance-id])
+        bank (push-view/parameter-bank state instance)]
+    (and (:ready? state) (nil? (:fault state)) (not (knob-page? state))
+         (not (:temporary-encoder-modifier-down? state))
+         (= instance-id (:id (selected-instance state model)))
+         (= :running (:phase instance))
+         (= (:bank basis) (:index bank))
+         (= param (get (:ids bank) (:slot basis)))
+         (= (:size basis) (count (:components (vectors/spread param (get-in instance [:definition :params param]))))))))
+
+(defn- busy-slots
+  "Track encoders the profile holds a touch or touch mode for."
+  [state]
+  (set (filter #(and (integer? %) (<= 0 % 7)) (concat (keys (:touches state)) (keys (:encoder-touch-modes state))))))
+
+(defn- vector-input [{:keys [linger-ms]} underlying state event model envelope]
+  (let [{:keys [type note controller raw-value]} event
+        time-ms (:time-ms envelope)
+        ;; A takeover that lapsed or no longer applies closes before the event.
+        v (vectors/refresh (::push/vector state vectors/initial-state) #(vector-valid? state model %) time-ms)
+        state (assoc state ::push/vector v)
+        slot (cond (and (#{:note-on :note-off} type) (integer? note) (<= 0 note 7)) note
+                   (and (= :control-change type) (integer? controller) (<= 71 controller 78)) (- controller 71))
+        result (when (and slot (:ready? state))
+                 (case type
+                   :note-on (when-let [next-v (vectors/touch v slot
+                                                             (when (and (not (knob-page? state))
+                                                                        (not (:temporary-encoder-modifier-down? state)))
+                                                               (vector-candidate state model slot))
+                                                             (busy-slots state) 8)]
+                              {:state next-v})
+                   :note-off (when-let [next-v (vectors/lift v slot time-ms linger-ms)] {:state next-v})
+                   :control-change (vectors/turn v slot (codec/signed-encoder raw-value) (:shift? state)
+                                                 time-ms linger-ms)
+                   nil))]
+    (if result
+      {:state (assoc state ::push/vector (:state result)) :commands (vec (:commands result))}
+      (underlying state event model envelope))))
+
+(def vector-pulse-channel
+  "The MIDI channel (0-based) whose CC pulses an RGB button between the
+  colour set on channel 0 and its own: the Push 2 MIDI interface's pulsing
+  animations, the channel tolglow.surface.push-3/default-leds names :pulse.
+  A touched component pulses, so it reads as touched whatever its colour."
+  9)
+
+(defn- palette-choices
+  "The device's own palette, as the profile read it at connect (:palettes,
+  index -> [r g b w] 0-255), as {index [r g b]} 0-1. Index 0 and the pad
+  indices 36-99, which the profile reprograms for pad colours, are left out."
+  [state]
+  (into {} (keep (fn [[index [r g b]]]
+                   (when (and (integer? index) (pos? index) (not (<= 36 index 99)) (number? r) (number? g) (number? b))
+                     [index (mapv #(/ (double %) 255.0) [r g b])])))
+        (:palettes state)))
+
+(defn- vector-button-messages
+  "{cc [messages]} for the LED buttons: off for a button no longer taken
+  that this add-on lit; a taken one in the palette entry nearest its
+  component colour; a touched one pulsing from dark to that colour."
+  [{:keys [buttons leds]} state]
+  (when (seq buttons)
+    (let [intents (vectors/led-intents (::push/vector state))
+          palette (palette-choices state)
+          sent (::vector-sent state {})]
+      (into {} (keep (fn [[slot cc]]
+                       (let [intent (get intents slot)
+                             index (when intent (push/nearest-palette-index palette (push/vector-color leds intent)))]
+                         (when (or intent (contains? sent cc))
+                           [cc (cond (nil? index) [[0xb0 cc 0]]
+                                     (:touched? intent) [[0xb0 cc 0] [(bit-or 0xb0 vector-pulse-channel) cc index]]
+                                     :else [[0xb0 cc index]])]))))
+            (map-indexed vector buttons)))))
+
+(defn- vector-feedback [options underlying state model envelope]
+  (let [base (or (underlying state model envelope) {:state state})
+        current (:state base state)
+        v (vectors/refresh (::push/vector current vectors/initial-state) #(vector-valid? current model %)
+                           (:time-ms envelope))
+        current (assoc current ::push/vector v)
+        ;; The profile's own view: what it just sent, else what it last sent.
+        view (or (:display base) (:last-display current))
+        shown (::vector-shown current)
+        decorated (when (and view (vectors/open? v)) (vectors/decorate view v model))
+        ;; A view the profile sends while the takeover is open always goes
+        ;; out decorated; closing sends the profile's view back once.
+        display (cond decorated (when (or (:display base) (not= decorated shown)) decorated)
+                      shown view)
+        live? (and (:ready? current) (nil? (:fault current)))
+        desired (when live? (vector-button-messages options current))
+        sent (::vector-sent current {})
+        messages (into [] (mapcat val) (filter (fn [[cc ms]] (not= ms (get sent cc))) (sort-by key desired)))]
+    (cond-> (assoc base :state (assoc current
+                                      ::vector-shown decorated
+                                      ::vector-sent (merge sent desired)))
+      display (assoc :display display)
+      (seq messages) (update :midi #(into messages %)))))
+
+(defn- reset-vectors [state]
+  (assoc state ::push/vector (vectors/forget-touches (::push/vector state)) ::vector-sent {} ::vector-shown nil))
+
+(defn- vector-stop [_ state result disconnected?]
+  (let [lit (keep (fn [[cc messages]] (when-not (= [[0xb0 cc 0]] messages) [0xb0 cc 0]))
+                  (sort-by key (::vector-sent state)))]
+    (cond-> (update result :state reset-vectors)
+      (not disconnected?) (update :midi (fnil into []) lit))))
+
+(defn- vector-stale-input [underlying state {:keys [type note] :as event} envelope]
+  (let [v (::push/vector state vectors/initial-state)
+        state (if (and (= :note-off type) (integer? note) (contains? (:held v) note))
+                (update-in state [::push/vector :held] disj note)
+                state)]
+    (if underlying (underlying state event envelope) state)))
+
+(defn with-vector-encoders
+  "Wrap an isolated Afterglow Push 2 profile with the vector takeover:
+  touch, lift and turn on the track encoders (notes 0-7, CC 71-78) go to
+  it while it holds them, everything else to the profile. options from
+  vector-options. Its state is ::push/vector, its LEDs ::vector-sent and
+  the view it last decorated ::vector-shown."
+  [profile options]
+  (let [{:keys [input feedback stop reset-model stale-input initial-state]} profile]
+    (assoc profile
+           :capabilities (update (:capabilities profile) :implemented (fnil conj #{}) :vector-encoders)
+           :initial-state (assoc (or initial-state {}) ::push/vector vectors/initial-state ::vector-sent {} ::vector-shown nil)
+           :input (partial vector-input options input)
+           :feedback (partial vector-feedback options feedback)
+           :stop (push/guarded-stop stop (partial vector-stop options) reset-vectors)
+           :reset-model (fn [state]
+                          (assoc (if reset-model (reset-model state) state)
+                                 ::push/vector (vectors/forget-touches (::push/vector state))
+                                 ::vector-sent (::vector-sent state {})
+                                 ::vector-shown (::vector-shown state)))
+           :stale-input (partial vector-stale-input stale-input))))
+
+;; ---------------------------------------------------------------------------
 ;; Profile and session
 
 (defn profile
@@ -388,12 +602,13 @@
   Afterglow active cue grid is never enabled; :cue-grid or :active-cue-grid?
   runs the Tolglow grid instead."
   [options]
-  (let [{:keys [grid capture knob-button]} (validate-options! options)
+  (let [{:keys [grid capture knob-button vectors]} (validate-options! options)
         surface-id (:surface-id options (:session-id options))
         grid-config {:surface-id surface-id :content (content options)}
-        afterglow-options (cond-> (dissoc options :active-cue-grid? :cue-grid)
+        afterglow-options (cond-> (dissoc options :active-cue-grid? :cue-grid :vector-encoders)
                             grid (assoc :pad-overlay (pad-overlay grid-config (:pad-overlay options))))]
     (cond-> (push/isolate own-keys (push-2/profile afterglow-options))
+      vectors (with-vector-encoders vectors)
       grid (with-cue-grid (assoc grid-config :buttons (:buttons grid) :leds default-leds))
       knob-button (with-knob-page-led knob-button default-leds)
       capture (with-capture-button capture))))
@@ -407,7 +622,8 @@
 (defn connect!
   "Open a Push 2 session with this namespace's parts: the options of
   afterglow.control.devices.push-2/connect! (and devices.repl/open-push-2!)
-  plus :cue-grid or :active-cue-grid?, :knob-page, :capture-button, an
+  plus :cue-grid or :active-cue-grid?, :knob-page, :capture-button,
+  :vector-encoders, an
   optional host :publish! (command -> nil, must not wait on the owner) for
   selections the Push picks itself (:dispatch! without it) and :capture!.
   Without :schedule! it refreshes every :refresh-ms (40, as open-push-2!),

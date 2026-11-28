@@ -170,7 +170,12 @@
                      (:fx effects) (update :fx #(mapv (fn [[kind value]]
                                                         [kind (if (= kind :studio/http) (guard-request db value) value)]) %)))))))))
 
-(defn http! [{:keys [path body typed? raw-response? on-success on-failure on-uncertain timeout-ms]}]
+(defn http!
+  "Fetch `path`. `on-success` gets the decoded response; `on-failure` gets an
+  error message. With `on-uncertain`, a definite refusal goes to
+  `on-rejection`, when given, as the whole acknowledgement (with its
+  :details), and an uncertain outcome to `on-uncertain`."
+  [{:keys [path body typed? raw-response? on-success on-failure on-uncertain on-rejection timeout-ms]}]
   (let [controller (js/AbortController.)
         timeout (js/setTimeout #(.abort controller) (or timeout-ms 5000))]
     (-> (js/fetch path
@@ -194,14 +199,18 @@
                                     rejected? (contains? #{:rejected "rejected"} (:status data))]
                                 (if (or (not (.-ok response)) rejected? (:error data))
                                   (throw (if (and on-uncertain (or rejected? (and (<= 400 status 499) (not= 408 status))))
-                                           (ex-info (str (error-message data)) {::definite-http-failure true})
+                                           (ex-info (str (error-message data))
+                                                    (cond-> {::definite-http-failure true}
+                                                      rejected? (assoc ::rejection (assoc data :status :rejected))))
                                            (js/Error. (str (error-message data)))))
                                   data)))))))
         (.then #(dispatch-result on-success %))
         (.catch (fn [error]
-                  (if (and on-uncertain (not (::definite-http-failure (ex-data error))))
-                    (rf/dispatch on-uncertain)
-                    (dispatch-result (or on-failure [:studio/failure]) (error-message error)))))
+                  (let [{::keys [definite-http-failure rejection]} (ex-data error)]
+                    (cond
+                      (and on-uncertain (not definite-http-failure)) (rf/dispatch on-uncertain)
+                      (and on-rejection rejection) (rf/dispatch (conj on-rejection rejection))
+                      :else (dispatch-result (or on-failure [:studio/failure]) (error-message error))))))
         (.finally #(js/clearTimeout timeout)))))
 (rf/reg-fx :studio/http http!)
 (rf/reg-fx :studio/scroll-top (fn [_] (.scrollTo js/window #js {:top 0 :behavior "auto"})))

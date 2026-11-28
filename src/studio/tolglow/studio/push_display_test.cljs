@@ -8,7 +8,8 @@
             [re-frame.registrar :as registrar]
             [reagent.core :as r]
             [tolglow.studio.push-display :as display]
-            [tolglow.studio.parameter-widgets :as widgets]))
+            [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.studio.push-vector-takeover-fixture :as takeover]))
 
 (deftest passive-display-snapshot-is-bounded-and-emits-no-effects
   (reset! db/app-db {:unrelated :preserved})
@@ -253,6 +254,22 @@
     (is (= [] (areas (view [color level] touch))) "a single slot followed by another parameter stays in place")
     (is (= [{:start 0 :width 8}] (areas (view [color] touch))))
     (is (= [] (areas (view [level] {:instance-id "a" :param "level"}))) "scalars never expand")))
+
+(def ^:private vector-takeover
+  "The view tolglow.surface.vector-encoders/decorate builds for a ring
+  spread over encoders 2-5 of a full bank, as the JVM test writes it
+  (tolglow.surface.vector-encoders-test), after a JSON round trip."
+  (-> takeover/view clj->js js/JSON.stringify js/JSON.parse (js->clj :keywordize-keys true)))
+
+(deftest a-vector-spread-over-a-full-bank-draws-as-one-ring-over-its-encoders
+  ;; A Push vector takeover (#813): slots 2-5 of a full bank carry the ring's components.
+  (let [normal (display/normalize-view vector-takeover)
+        html (renderToStaticMarkup (r/as-element [display/display normal]))]
+    (is (= ["a" "b" "offset" "offset" "offset" "offset" "f" "g"] (mapv :param (:parameters normal))))
+    (is (= [{:start 2 :width 4}]
+           (mapv #(select-keys % [:start :width]) (display/compound-areas (display/encoder-slots normal)))))
+    (is (str/includes? html "Offset components"))
+    (is (= 4 (count (re-seq #"ring-component ring-" html))))))
 
 (deftest the-push-display-draws-each-colour-layout-in-its-own-space
   ;; A device snapshot carries its schema through JSON, so the layout is text.

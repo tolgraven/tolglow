@@ -22,6 +22,7 @@
             [tolglow.studio.block-builder :as block-builder]
             [tolglow.studio.material-designer :as materials]
             [tolglow.studio.connections :as connections]
+            [tolglow.studio.db-slice :as db-slice]
             [tolglow.studio.events :as events]
             [tolglow.studio.keyframe-editor :as keyframes]
             [tolglow.studio.knob-candidates :as knob-candidates]
@@ -119,6 +120,8 @@
    [:span.nav-short {:aria-hidden true} (or short-label label)]
    [:span.nav-key {:aria-hidden true} shortcut]])
 
+(def ^:private sidebar-paths [[:ui :view] [:connection :connected?] [:show :status :output :type]])
+
 (defn- sidebar [db]
   (let [{:keys [ui connection]} db]
     [:aside.sidebar
@@ -133,6 +136,8 @@
       [:div#output-status.muted.small
        (if (= "art-net" (get-in db [:show :status :output :type])) "Art-Net output enabled" "Local studio · preview")]
       [file-actions false]]]))
+
+(def ^:private topbar-paths [[:ui :view] [:show :transport] [:show :master] [:show :blackout?] [:show :rig :name]])
 
 (defn- topbar [db]
   (let [show (:show db) ui (:ui db) playing? (get-in show [:transport :playing?] true)
@@ -325,6 +330,20 @@
   [generation animate?]
   [pad-breath/clock-driver @(rf/subscribe [:studio/transport]) generation animate?])
 
+(def ^:private cue-grid-paths
+  "What the cue grid, its cells, queued launches and scheduled events read.
+  Instances keep only the fields a pad shows, so a parameter edit leaves the
+  grid's slice equal."
+  [[:ui :page-id] [:ui :typed-page-id] [:ui :edit?] [:ui :full-grid?] [:ui :launch-mode] [:ui :launch-grid]
+   [:ui :view] [:ui :recent-page?]
+   [:server-projection :view :pages] [:server-projection :view :recent-page] [:server-projection :view :cues]
+   {:path [:server-projection :view :instances] :select [:id :cue-id :phase :launch-mode]}
+   [:server-projection :view :pending-cue-launches] [:server-projection :view :runtime-id]
+   [:server-projection :view :epoch]
+   [:show :recent-page] [:show :cues] [:show :pending-cue-launches] [:show :schedule] [:show :transport-generation]
+   [:show :status :response-sample-faults]
+   [:connection :connected?] [:session]])
+
 (defn- cue-grid [db]
   (let [view (get-in db [:server-projection :view]) ui (:ui db)
         authored-pages (:pages view)
@@ -515,6 +534,21 @@
         [:button.text-button {:type "button" :disabled busy?
                               :on-click #(send! [:studio/scene-draft-discard])} "Discard"]]]))))
 
+(def ^:private room-paths
+  [[:ui :view] [:ui :preview-expanded?] [:ui :room-window] [:ui :panel-layout] [:ui :fullscreen-preview-controls?]
+   [:ui :preview-controls?] [:ui :preview-settings] [:ui :preview-lights] [:ui :fog] [:ui :window-tiers] [:show :rig :fixtures] [:show :output :atmosphere] [:server-projection :view :scene-draft]
+   [:scene-draft-request] [:connection :connected?]])
+
+(rf/reg-sub ::room-input (fn [db _] (interop/room-input (events/room-show db))))
+
+(rf/reg-sub ::spatial-settings (fn [db _] (get-in db [:server-projection :view :settings :spatial])))
+
+(defn- room-scene
+  "The Perform Room. Its structural input changes with each show revision, so
+  only this component, not the panel's controls, follows it."
+  []
+  [spatial-preview/scene @(rf/subscribe [::room-input]) @(rf/subscribe [::spatial-settings]) :perform])
+
 (defn- preview-panel [db]
   [:section#preview-panel.preview-panel.panel {:aria-label "Live fixture preview"
                                               :class (when (get-in db [:ui :preview-expanded?]) "expanded")}
@@ -531,7 +565,7 @@
      [:button.icon-button {:type "button" :aria-label "Fullscreen preview" :title "Fullscreen preview"
                             :on-click #(input! [:studio/preview-fullscreen])} "⛶"]]]
    [scene-draft-banner db]
-   [spatial-preview/scene (interop/room-input (events/room-show db)) (get-in db [:server-projection :view :settings :spatial]) :perform]
+   [room-scene]
    [camera-controls/controls]
    (when (get-in db [:ui :preview-controls?])
      [:div.preview-settings
@@ -572,6 +606,11 @@
       [button "fog-burst" "+ Plume" [:studio/preview-burst] "text-button"])
     [:button#reset-camera.icon-button {:aria-label "Reset preview camera" :title "Reset preview camera"
                                        :on-click #(send! [:studio/preview-reset])} "⟳"]]])
+
+(defn- room-panel [as]
+  [db-slice/view-as as room-paths room-window/room preview-panel])
+
+(def ^:private auto-paths [[:ui :auto-form] [:show :auto] [:show :transport :meter]])
 
 (defn- auto-panel [db]
   (let [form (get-in db [:ui :auto-form])
@@ -634,6 +673,8 @@
     (str (numeric/number-label value) " " (name unit))
     "0"))
 
+(def ^:private response-paths [[:ui :response-form] [:server-projection :view :responses]])
+
 (defn- response-panel [db]
   (let [form (get-in db [:ui :response-form])
         responses (get-in db [:server-projection :view :responses])]
@@ -683,8 +724,10 @@
           [button nil "Remove" [:studio/response-action :delete id] "text-button"]]])
       [:p.small.muted "Attack, decay and release share one unit. Release fades to zero and holds there. Remove the envelope to restore the original parameters."]]]))
 
-(defn- section-pattern-panel [db]
-  (when-let [{:keys [override? pending? connected?]} (events/section-pattern-control db)]
+(rf/reg-sub ::section-patterns (fn [db _] (events/section-pattern-control db)))
+
+(defn- section-pattern-panel []
+  (when-let [{:keys [override? pending? connected?]} @(rf/subscribe [::section-patterns])]
     [:section.panel {:aria-label "Section patterns"}
      [:div.panel-top
       [:div [:span.section-label "SECTION PATTERNS"]
@@ -694,9 +737,35 @@
                        :on-click #(send! [:studio/section-pattern-override (not override?)])}
        (cond pending? "Applying…" override? "Resume" :else "Suspend")]]]))
 
-(defn- perform-view [db]
-  (let [section (get-in db [:ui :performance-section] "cues")
-        count-active (count (get-in db [:show :instances]))
+(def ^:private perform-paths
+  ;; Perform's heading, layout and panel windows.
+  ;; The edit chrome offers Detach or Redock for the Room from [:ui :room-window].
+  [[:ui :view] [:ui :performance-section] [:ui :preview-expanded?] [:ui :panel-layout] [:ui :panel-windows]
+   [:ui :room-window] [:ui :window-tiers]])
+
+(rf/reg-sub ::perform
+  ;; Its slice and how many launches run, not the instances themselves.
+  (fn [db [_ paths]] (assoc (db-slice/slice db paths) ::running (count (get-in db [:show :instances])))))
+
+(def ^:private board-paths [[:show] [:ui :performance] [:server-projection :view :compositions]])
+
+(def ^:private knob-presets-paths
+  [[:show :knob-presets :slots] [:show :knobs :knobs] [:connection :connected?] [:ui :knob-presets :error]])
+
+(def ^:private knob-candidates-paths
+  [[:show :knob-candidates] [:show :knobs :knobs] {:path [:show :instances] :select [:cue-id :phase :order]}
+   [:connection :connected?] [:ui :knob-candidates]])
+
+(declare with-db)
+
+(defn- perform-view
+  "Perform, as the current view `as` names ({[:ui :view] view}): the main
+  page's, or :perform in its own window. Its panels that read the current
+  view receive the same override."
+  [as]
+  (let [db (db-slice/guard (db-slice/with-overrides @(rf/subscribe [::perform (db-slice/without-overridden perform-paths as)]) as) perform-paths)
+        section (get-in db [:ui :performance-section] "cues")
+        count-active (::running db)
         custom? (some? (panel-layout/active-layout db))]
     [:section#view-perform.view {:hidden (not= :perform (get-in db [:ui :view]))
                                 :data-section section :data-layout (if custom? "custom" "built-in")}
@@ -710,15 +779,20 @@
      [timeline/panel]
      [panel-layout/arrangement db
       {:class (when (and (not custom?) (get-in db [:ui :preview-expanded?])) "preview-expanded")}
-      {:cues [:div.performance-launch [cue-grid db]]
-       :live [:div.performance-live [section-pattern-panel db] [personality/panel] [performance/board db parameter-control]
-              [effect-group-mixer/panel] [knobs/panel db] [knob-presets/panel db] ; knob looks (#547)
-              [knob-candidates/panel db]
+      ;; Each panel subscribes to its own slice of app-db, so it re-renders
+      ;; only when what it shows changes.
+      {:cues [:div.performance-launch [db-slice/view-as as cue-grid-paths cue-grid]]
+       :live [:div.performance-live [section-pattern-panel] [personality/panel]
+              [db-slice/view board-paths performance/board parameter-control]
+              [effect-group-mixer/panel] [knobs/panel] [db-slice/view knob-presets-paths knob-presets/panel] ; knob looks (#547)
+              [db-slice/view knob-candidates-paths knob-candidates/panel]
               [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
-       :room [:div.performance-room [room-window/room db preview-panel]]
-       :tools [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]}
-      {:render (fn [entry tier] [panel-tiles/render db parameter-control entry tier])
-       :chrome (fn [entry] [panel-tiles/chrome db entry])}]]))
+       :room [:div.performance-room [room-panel as]]
+       :tools [:div.performance-tools [db-slice/view auto-paths auto-panel] [db-slice/view response-paths response-panel]
+               [modulation/panel nil]]}
+      ;; Added tiles of a saved layout still read the whole db.
+      {:render (fn [entry tier] [with-db panel-tiles/render parameter-control entry tier])
+       :chrome (fn [entry] [with-db panel-tiles/chrome entry])}]]))
 
 (defn- slot-parameter-editor [db index slot]
   (let [cue (find-id (get-in db [:show :cues]) (:cue-id slot))
@@ -1167,8 +1241,10 @@
           (when-let [error (:error cell)] [:p {:role "alert"} error])
           [:p.small.muted "These actions are also available with Shift + F10 on a focused cell."]])])))
 
-(defn- prompt-dialog [db]
-  (when-let [prompt (get-in db [:ui :prompt])]
+(rf/reg-sub ::prompt (fn [db _] (get-in db [:ui :prompt])))
+
+(defn- prompt-dialog []
+  (when-let [prompt @(rf/subscribe [::prompt])]
     [dialog {:id "text-prompt" :class "prompt-dialog" :aria-labelledby "text-prompt-title"
              :on-cancel (fn [event] (.preventDefault event) (send! [:studio/prompt-cancel]))}
      [:form#text-prompt-form {:on-submit (fn [event] (.preventDefault event) (send! [:studio/prompt-submit]))}
@@ -1179,10 +1255,14 @@
       [:div.button-row [button "text-prompt-cancel" "Cancel" [:studio/prompt-cancel]]
        [:button.button.primary {:type "submit"} "Create"]]]]))
 
-(defn- footer [db]
+(rf/reg-sub ::session-meta
+  (fn [db _]
+    (str (count (get-in db [:show :rig :fixtures])) " fixtures · " (count (get-in db [:show :cues])) " cues · revision " (get-in db [:show :revision] 0))))
+
+(defn- footer []
   [:footer.workspace-footer
    [:span "TOLGLOW STUDIO " [:span.muted "/"] " "
-    [:span#session-meta (str (count (get-in db [:show :rig :fixtures])) " fixtures · " (count (get-in db [:show :cues])) " cues · revision " (get-in db [:show :revision] 0))]]
+    [:span#session-meta @(rf/subscribe [::session-meta])]]
    [:span.mobile-file-actions [file-actions true]]
    [:span#shortcut-hint "B blackout · Space transport · 1–8 views"]])
 
@@ -1198,10 +1278,42 @@
                           (some-> (.getElementById js/document "open-operator-history") .focus)))])))
 
 (defn- with-db
-  "Render (panel db & args) from the panel's own app-db subscription, so the
-  root component depends on no app-db state."
+  "Render (panel db & args) from the whole app-db. Only for panels that are
+  shown rarely (an open dialog, the Develop view, a saved layout's added
+  tiles); every other panel subscribes to its own slice."
   [panel & args]
   (into [panel @(rf/subscribe [:studio/db])] args))
+
+(def ^:private view-tabs-paths [[:view-tabs] [:ui :view] [:ui :panel-windows] [:window :show] [:show :rig :name]])
+
+(def ^:private main-paths
+  ;; Detached views (#669): which views have a window (panel-window/detached?),
+  ;; the placeholder's and each window's phase.
+  [[:ui :view] [:ui :panel-windows] [:view-tabs :active] [:show :status :error :message] [:connection]])
+
+(def ^:private folder-notice-paths [[:show :show-folder] [:ui :show-folder-notices]])
+
+(defn- folder-notice [db] [checkpoints/folder-notice (checkpoints/notice-props db)])
+
+(def ^:private composition-paths
+  [[:ui :view] [:ui :composition] [:ui :slot-cue] [:show :cues] [:show :effects] [:show :compositions]])
+
+(def ^:private rig-paths
+  ;; The rig editor's Room reads the show's spatial settings, which the rig
+  ;; view's props did not carry before slices.
+  [[:ui :view] [:ui :rig-draft] [:ui :rig-dirty?] [:ui :rig-editor] [:ui :preview-settings] [:ui :page-id]
+   [:ui :fixture-library] [:show] [:server-presentation] [:session] [:server-projection :view :settings :spatial]])
+
+(def ^:private definition-paths
+  [[:ui :view] [:ui :definition] [:ui :definition-search] [:ui :builder]
+   [:show :effects] [:show :cues] [:show :pages] [:show :runtime-id] [:show :show-id] [:show :epoch]])
+
+(def ^:private chat-paths
+  [[:chat] [:ui :view] [:ui :provider-form] [:ui :chat-draft] [:show :rig :fixtures] [:show :cues]])
+
+(def ^:private connections-paths [[:show :cues] [:show :transport]])
+
+(defn- expressive-panel [db] [expressive/panel (:show db)])
 
 (def ^:private kept-mounted
   "Views that stay mounted, hidden, while another view shows."
@@ -1209,18 +1321,24 @@
 
 (defn- view-content
   "One view's content for `db`, whose current view is `view`. The main page
-  and a detached view's window (#669) render the same content."
+  and a detached view's window (#669) render the same content. Each panel
+  reads its own slice of app-db, with `db`'s current view in place of the
+  main page's: a view in its own window is the current view there. A view
+  reads the current view only to compare it with itself, so a hidden view
+  sees one constant and navigating between other views leaves it alone."
   [db view]
-  (case view
-    :perform [perform-view db]
-    :compose [composition-view {:ui (:ui db) :show (select-keys (:show db) [:cues :effects :compositions])}]
-    :rig [rig-view (select-keys db [:ui :show :server-presentation :session])]
-    :library [definition-view {:ui (:ui db) :show (select-keys (:show db) [:effects :cues :pages :runtime-id :show-id :epoch])}]
-    :assistant [chat/panel db]
-    :connections [:<> [connections/panel {:show (select-keys (:show db) [:cues :transport])}] [expressive/panel (:show db)]]
-    :develop [workspace/panel db]
-    :debug [debug/panel]
-    nil))
+  (let [as {[:ui :view] (if (= view (get-in db [:ui :view])) view ::elsewhere)}]
+    (case view
+      :perform [perform-view as]
+      :compose [db-slice/view-as as composition-paths composition-view]
+      :rig [db-slice/view-as as rig-paths rig-view]
+      :library [db-slice/view-as as definition-paths definition-view]
+      :assistant [db-slice/view-as as chat-paths chat/panel]
+      :connections [:<> [db-slice/view connections-paths connections/panel]
+                    [db-slice/view [[:show]] expressive-panel]]
+      :develop [with-db workspace/panel]
+      :debug [debug/panel]
+      nil)))
 
 (defn- main-area [db]
   (let [error (or (get-in db [:show :status :error :message]) (get-in db [:connection :error]))
@@ -1231,7 +1349,7 @@
      (when (or error (not connected?))
        [:div#connection-banner.connection-banner {:role "status"}
         (or error "Connecting to the studio. Cue controls become available when the show is ready.")])
-     [checkpoints/folder-notice (checkpoints/notice-props db)]
+     [db-slice/view folder-notice-paths folder-notice]
      ;; A detached view renders only in its own window, never here as well.
      ;; Views in navigation order, from the one route table.
      (for [view (view-tabs/views)
@@ -1239,9 +1357,18 @@
        (with-meta (view-content db view) {:key view}))
      (when (detached current) [view-tabs/placeholder db current])
      [view-tabs/windows db view-content]
-     [footer db]]))
+     [footer]]))
 
-(defn- checkpoint-panel [db] [checkpoints/panel (checkpoints/view-props db)])
+(rf/reg-sub ::checkpoint-props (fn [db _] (checkpoints/view-props db)))
+
+(defn- checkpoint-panel [] [checkpoints/panel @(rf/subscribe [::checkpoint-props])])
+
+(rf/reg-sub ::action-cell (fn [db _] (get-in db [:ui :action-cell])))
+
+(defn- cue-actions-dialog
+  "The cue actions dialog reads the whole db, but only while it is open."
+  []
+  (when @(rf/subscribe [::action-cell]) [with-db cue-actions]))
 
 (rf/reg-sub ::toast (fn [db _] (get-in db [:ui :toast])))
 
@@ -1249,8 +1376,9 @@
   (let [toast @(rf/subscribe [::toast])]
     [:<>
      [:a.skip {:href "#main"} "Skip to show controls"]
-     [with-db sidebar]
-     [:div.workspace [with-db topbar] [with-db view-tabs/strip] [with-db main-area]]
-     [with-db cue-actions] [with-db prompt-dialog] [with-db checkpoint-panel] [operator-history] [repl/console-view]
+     [db-slice/view sidebar-paths sidebar]
+     [:div.workspace [db-slice/view topbar-paths topbar] [db-slice/view view-tabs-paths view-tabs/strip]
+      [db-slice/view main-paths main-area]]
+     [cue-actions-dialog] [prompt-dialog] [checkpoint-panel] [operator-history] [repl/console-view]
      (when toast
        [:div#toast.toast {:class (when (:error? toast) "error") :role "status" :aria-live "polite"} (:message toast)])]))
