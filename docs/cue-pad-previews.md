@@ -182,8 +182,10 @@ projections, Transit encoding and browser drawing are excluded. To exercise actu
 `npm run studio:build`, start `lein run -m tolglow.qa.cue-pad-preview PORT_FILE
 STOP_FILE`, then run `node dev/studio/cue-pad-preview-qa.mjs
 http://127.0.0.1:PORT OUTPUT_DIRECTORY`. Create the stop file to release the QA
-server. The browser check records an inactive moving page, switches pages and
-verifies the outgoing unsubscribe when navigating away.
+server. The browser check records an inactive moving page, switches pages, checks
+the fault notice for the Faults page's overdriven cue and verifies the
+outgoing unsubscribe when navigating away. A third argument to the QA server
+binds that port instead of an ephemeral one.
 
 To replay the Push 2 session, run
 `lein run -m tolglow.qa.push-pad-feedback /tmp/push-pad-feedback.edn`.
