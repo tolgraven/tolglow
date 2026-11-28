@@ -1,0 +1,172 @@
+{
+  "schema": "tolglow-agent-obs/1",
+  "kind": "snapshot",
+  "profile": "compact",
+  "token": "o-0412",
+  "base": null,
+  "id": {"runtime": "studio-1", "show": "main", "epoch": 2, "rev": 1841, "frame": 51210, "gen": 3},
+  "blocks": {"rig": "sha256:9f2c41d0", "catalog": "sha256:51aa07e3", "goals": "sha256:c0ffee12"},
+  "rig": {
+    "units": {"pos": "m", "axes": "x=width y=up z=depth", "angle": "deg"},
+    "bounds": {"min": [-4.0, 0.0, -3.0], "max": [4.0, 3.5, 3.0]},
+    "room": {"size": [10.0, 4.0, 8.0]},
+    "counts": {"fixtures": 14, "heads": 73, "movers": 8, "pixels": 60, "universes": 2},
+    "density": {"per_m2": 0.29, "nn_median_m": 1.0, "height_layers": 2},
+    "sig": {"v": 1, "x": [0.14, 0.73, 0.57, 0.29, 0.0, 0.82, 0.29, 0.25, 0.5, 0.5, 1.0, 0.0, 0.57, 0.57, 0.07, 0.43]},
+    "types": {
+      "mh": {"kind": "mover", "caps": ["rgb", "w", "dim", "pan", "tilt", "zoom", "strobe"],
+             "beam_deg": [4, 36], "pan_deg": 540, "tilt_deg": 270, "rel": 1.0},
+      "par": {"kind": "par", "caps": ["rgb", "w", "dim", "strobe"], "beam_deg": [25, 25], "rel": 0.6},
+      "strip": {"kind": "strip", "caps": ["rgb", "pix"], "rel": 0.2},
+      "haze": {"kind": "fog", "caps": ["fog"]}
+    },
+    "fixtures": {
+      "legend": ["type", "group", "pos", "npos", "heads"],
+      "rows": {
+        "mh-l1": ["mh", "left", [-3.5, 3.2, -1.0], [-0.88, 0.83, -0.33], 1],
+        "mh-l2": ["mh", "left", [-2.5, 3.2, -1.0], [-0.63, 0.83, -0.33], 1],
+        "mh-l3": ["mh", "left", [-1.5, 3.2, -1.0], [-0.38, 0.83, -0.33], 1],
+        "mh-l4": ["mh", "left", [-0.5, 3.2, -1.0], [-0.13, 0.83, -0.33], 1],
+        "mh-r1": ["mh", "right", [0.5, 3.2, -1.0], [0.13, 0.83, -0.33], 1],
+        "mh-r2": ["mh", "right", [1.5, 3.2, -1.0], [0.38, 0.83, -0.33], 1],
+        "mh-r3": ["mh", "right", [2.5, 3.2, -1.0], [0.63, 0.83, -0.33], 1],
+        "mh-r4": ["mh", "right", [3.5, 3.2, -1.0], [0.88, 0.83, -0.33], 1],
+        "par-1": ["par", "floor", [-3.0, 0.2, -2.5], [-0.75, -0.89, -0.83], 1],
+        "par-2": ["par", "floor", [-1.0, 0.2, -2.5], [-0.25, -0.89, -0.83], 1],
+        "par-3": ["par", "floor", [1.0, 0.2, -2.5], [0.25, -0.89, -0.83], 1],
+        "par-4": ["par", "floor", [3.0, 0.2, -2.5], [0.75, -0.89, -0.83], 1],
+        "strip-1": ["strip", "strip", [-3.0, 2.0, -3.0], [-0.75, 0.14, -1.0], 60],
+        "haze-1": ["haze", null, [-4.0, 0.3, 2.0], [-1.0, -0.83, 0.67], 1]
+      }
+    },
+    "spans": {"strip-1": {"to": [3.0, 2.0, -3.0], "nto": [0.75, 0.14, -1.0]}},
+    "groups": {
+      "legend": ["n", "ncentroid", "nextent"],
+      "rows": {
+        "left": [4, [-0.5, 0.83, -0.33], [0.75, 0.0, 0.0]],
+        "right": [4, [0.5, 0.83, -0.33], [0.75, 0.0, 0.0]],
+        "floor": [4, [0.0, -0.89, -0.83], [1.5, 0.0, 0.0]],
+        "strip": [1, [0.0, 0.14, -1.0], [1.5, 0.0, 0.0]]
+      }
+    }
+  },
+  "catalog": {
+    "param_legend": ["type", "default", "bounds", "unit", "recommended"],
+    "effects": {
+      "legend": ["ver", "cats", "params"],
+      "rows": {
+        "wash": [3, ["color", "intensity"],
+                 {"level": ["num", 0.6, [0, 1], "norm", [0.2, 0.9]], "tint": ["color", [0.65, 0.1, 0.08], null, "rgb", null]}],
+        "breath": [2, ["intensity"],
+                   {"level": ["num", 0.5, [0, 1], "norm", null], "period": ["num", 2, [0.25, 16], "bars", [1, 8]]}],
+        "sweep": [5, ["movement"],
+                  {"width": ["num", 4, [0, 8], "m", [1, 6]], "zoom": ["num", 0.2, [0, 1], "norm", null],
+                   "center": ["vec3", [0, 0, 2], [-5, 5], "m", null]}],
+        "strobe": [1, ["strobe", "intensity"], {"rate": ["num", 8, [1, 20], "hz", [4, 12]]}],
+        "chase": [4, ["color", "intensity"],
+                  {"drive": ["num", 1, [0, 2], "ratio", [0.5, 1.5]], "palette": ["grad", "g:ember", null, "rgb", null]}]
+      }
+    },
+    "gradients": {"g:ember": [[0.0, [0.9, 0.1, 0.02]], [1.0, [0.35, 0.02, 0.3]]]},
+    "cues": {
+      "legend": ["effect", "targets", "launch", "prio", "auto"],
+      "rows": {
+        "wash": ["wash", "all", "persistent", 0, true],
+        "breath": ["breath", "floor", "persistent", 0, true],
+        "sweep": ["sweep", "left+right", "persistent", 0, true],
+        "strobe": ["strobe", "all", "one-shot", 10, true],
+        "chase": ["chase", "strip", "persistent", 0, true]
+      }
+    }
+  },
+  "goals": [
+    {"id": "g-night", "scope": "night", "by": "operator", "order": 1,
+     "text": "Warm and patient until the room fills. Save strobe and white for the last hour."},
+    {"id": "g-set", "scope": "set", "by": "operator", "order": 2,
+     "text": "Ember reds drifting to violet by the end of this set.",
+     "palette": [{"at": {"phrase": 0}, "colors": [[0.9, 0.1, 0.02]]},
+                 {"at": {"phrase": 48}, "colors": [[0.35, 0.02, 0.3]]}]}
+  ],
+  "clock": {
+    "beat": 130.25, "pos": {"phrase": 8, "bar": 32, "beat": 2.25},
+    "bpm": 124.0, "meter": {"beats_per_bar": 4, "bars_per_phrase": 4},
+    "playing": true, "source": "link", "confidence": 0.98,
+    "next": {"bar": 132.0, "phrase": 144.0, "section": 144.0},
+    "tempo_map": [{"from_beat": 0.0, "bpm": 124.0}]
+  },
+  "run": {
+    "legend": ["cue", "effect", "ver", "phase", "layer_prio", "opacity", "start_beat", "end_beat", "owner", "params"],
+    "rows": {
+      "2:17": ["wash", "wash", 3, "running", 0, 1.0, 96.0, null, "push-3", {"level": 0.6, "tint": [0.65, 0.1, 0.08]}],
+      "2:21": ["sweep", "sweep", 5, "running", 0, 1.0, 112.0, null, "agent:night-1", {"width": 4, "zoom": 0.2}],
+      "2:22": ["chase", "chase", 4, "running", 0, 0.8, 112.0, null, "agent:night-1", {"drive": 1}]
+    }
+  },
+  "sched": {
+    "legend": {"upcoming": ["due_beat", "id", "op", "group", "intent", "owner", "guarded"],
+               "ramps": ["id", "dest", "progress", "value", "to", "end_beat", "owner"],
+               "recent": ["id", "status", "reason"]},
+    "upcoming": [[144.0, "p9-breath", "cue/launch", "g-p9", ["lift"], "agent:night-1", false],
+                 [144.0, "p9-swell", "param/ramp", "g-p9", ["lift"], "agent:night-1", true],
+                 [160.0, "kick-accents/41", "cue/launch", null, [], "subscriber", false]],
+    "ramps": [["p8-dim", "cat:intensity/opacity", 0.56, 0.78, 0.6, 136.0, "agent:night-1"]],
+    "recent": [["p8-drop", "cancelled", "guard"], ["p8-wash", "fired", null]]
+  },
+  "audio": {
+    "ok": true, "age_beats": 0.05,
+    "energy": 0.62, "energy_slope_bar": 0.08,
+    "rms": 0.17, "bands": {"low": 0.71, "mid": 0.42, "high": 0.33},
+    "onsets_per_beat": 2.0, "kick_confidence": 0.9,
+    "history": {"step_beats": 1, "energy": [0.41, 0.44, 0.43, 0.47, 0.5, 0.49, 0.53, 0.55, 0.54, 0.58, 0.57, 0.6, 0.59, 0.61, 0.6, 0.62]},
+    "section": {"now": {"label": "B", "start_beat": 112.0, "confidence": 0.76, "source": "causal"},
+                "next": {"label": "C", "start_beat": 144.0, "confidence": 0.7, "source": "reference"}},
+    "breakdown": false,
+    "feel": "squares"
+  },
+  "look": {
+    "v": 1, "frame": 51210, "window": {"bars": 2},
+    "meters": {"brightness": 0.29, "activity": 0.22, "coverage": 0.57, "flashing": 0.05, "movement": 0.31, "strobe": 0.0, "lit": 0.64},
+    "groups": {
+      "legend": ["lit", "level", "rgb", "aim", "spread", "zoom", "motion", "strobe_hz"],
+      "rows": {
+        "left": [1.0, 0.55, [0.65, 0.1, 0.08], [-0.2, -1.0, 0.4], 0.35, 0.2, 0.3, 0],
+        "right": [1.0, 0.55, [0.65, 0.1, 0.08], [0.2, -1.0, 0.4], 0.35, 0.2, 0.3, 0],
+        "floor": [0.0, 0.0, [0, 0, 0], null, null, null, 0, 0],
+        "strip": [0.8, 0.3, [0.7, 0.08, 0.1], null, null, null, 0.6, 0]
+      }
+    },
+    "palette": {"legend": ["rgb", "weight", "hue_deg", "chroma"],
+                "rows": [[[0.65, 0.1, 0.08], 0.72, 8, 0.6], [[0.7, 0.08, 0.1], 0.28, 2, 0.62]]},
+    "luma_hist": [0.36, 0.1, 0.12, 0.2, 0.14, 0.06, 0.02, 0.0],
+    "rhythm": {"step_beats": 0.5, "brightness": [0.31, 0.27, 0.3, 0.26, 0.31, 0.27, 0.3, 0.26]},
+    "maps": {
+      "floor": {"w": 8, "h": 6, "enc": "u8-hex-luma",
+                "data": "0102040707040201030c1b28281b0c030920496f6f4920090c295d8c8c5d290c071736515136170702060e16160e0602"},
+      "front": {"w": 8, "h": 4, "enc": "u8-hex-luma",
+                "data": "22436882826843221c36556a6a55361c0810191f1f1910080102030303030201"}
+    },
+    "views": {
+      "renderer": "room-look/1", "cameras": ["foh", "top", "side"], "size": [96, 54], "age_beats": 0.6,
+      "frames": ["sha256:1c0de5a1", "sha256:77aa02b3", "sha256:0be11e55"],
+      "embedding": {"encoder": "siglip2-b16-224@pinned+pca32/1", "dtype": "i8",
+                    "x": [12, -40, 7, 88, -3, 19, -61, 4, 0, 33, -12, 5, 71, -8, 26, -19, 2, 9, -44, 13, 60, -7, 1, -28, 15, 38, -2, -53, 6, 21, -9, 30]}
+    }
+  },
+  "budgets": {
+    "light": {"limit": 0.6, "use": 0.41, "unmet_w": 0, "max_lit": 8, "lit": 5},
+    "frame": {"deadline_ms": 25.0, "compute_ms_p95": 6.1, "instances": 3},
+    "sched": {"events": [3, 256], "ramps": [1, 256], "batch": 64},
+    "agent": {"actions_per_bar": [3, 16], "definitions": [2, 32]},
+    "forecast": [{"at_beat": 144.0, "lit": 9, "max_lit": 8, "over": true}]
+  },
+  "humans": {
+    "present": ["push-3", "studio"],
+    "master": 1.0, "blackout": false,
+    "holds": [{"dest": "2:17/level", "by": "push-3", "since_beat": 126.5, "released_beat": 128.0, "until_beat": 132.0}],
+    "recent": [[120.0, "push-3", "cue/launch", "strobe"], [126.5, "push-3", "param/set", "2:17/level"]]
+  },
+  "feedback": [
+    {"decision": "d-000409", "event": "p8-drop", "status": "cancelled", "reason": "guard", "at_beat": 127.0},
+    {"decision": "d-000407", "signal": "human-override", "dest": "2:17/level", "by": "push-3", "at_beat": 126.5}
+  ]
+}
