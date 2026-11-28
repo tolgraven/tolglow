@@ -33,7 +33,19 @@
   (is (= {:fields {}} (candidates/generate-fields {})))
   (is (= {:fields {:seed 42 :character "energy" :cue-ids ["strobe" "wash-tide"]}}
          (candidates/generate-fields {:seed " 42 " :character "energy" :cue-ids #{"wash-tide" "strobe"}})))
-  (is (= {:error "The seed is a whole number."} (candidates/generate-fields {:seed "4.5"}))))
+  (is (= {:error "The seed is a whole number."} (candidates/generate-fields {:seed "4.5"})))
+  (is (= {:fields {:types ["choice" "switch"]}} (candidates/generate-fields {:types #{"switch" "choice"}}))
+      "a type selection is sent sorted"))
+
+(deftest typed-ranges-read-as-values
+  (is (= "bar → star" (candidates/range-text {:range [:bar :star] :direction :up})))
+  (is (= "on → off" (candidates/range-text {:range [false true] :direction :down})))
+  (is (= "0 0.5 1 → 2 2 2" (candidates/range-text {:range [[0 0.5 1] [2 2 2]] :direction :up})))
+  (is (= "0.25 → 1.5" (candidates/range-text {:range [0.25 1.5] :quantize {:step 0.25}}))))
+
+(deftest the-candidate-picker-names-a-fresh-link
+  (is (= "picked-2" (:link-id (candidates/candidate-link-target {:links [{:id "picked-1"} {:id "a"}]}))))
+  (is (= :knob-candidate/link (:op (candidates/candidate-link-target {:links []})))))
 
 (deftest ranges-read-in-sweep-order-with-musical-fractions
   (let [[level duty period] (get-in show [:knob-candidates :candidate :links])]

@@ -236,7 +236,9 @@
   (let [model (sources/bind (configured) {:instance-id "0:1" :param :level :binding audio-binding})
         created (knobs/apply-operation model {:op :knob/create :knob-id :scan :name "Scan"
                                               :links [{:id "rate" :destination {:kind :lfo :instance-id "0:1" :param :level :field :period}
-                                                       :range [4 1/2] :quantize {:ratios :preferred}}]})
+                                                       :range [4 1/2] :quantize {:ratios :preferred}
+                                                       ;; Steps at once, without #667's default envelope.
+                                                       :envelope {}}]})
         turned (knobs/apply-operation (:model created) {:op :knob/set :knob-id :scan :value 1.0})]
     (is (= [:applied] (mapv :status (get-in turned [:result :links]))))
     (is (= {:beats 1/2} (get-in turned [:model :instances "0:1" :parameter-bindings :level :binding :period])))))

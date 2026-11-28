@@ -10,7 +10,8 @@
   explanation. Randomness comes only from `tolglow.automation.random` and the
   supplied seed, so the same show, personality, seed and options always give
   the same candidate. See docs/generated-knobs.md."
-  (:require [clojure.string :as str]
+  (:require [afterglow.control.params :as params]
+            [clojure.string :as str]
             [tolglow.authoring.cue-variations :as ratios]
             [tolglow.automation.random :as random]
             [tolglow.effects.parameter-sources :as parameter-sources]
@@ -23,14 +24,18 @@
   A build that only knows 1 refuses such a recipe instead of misreplaying it.
   3 (#747): integer destinations get whole-number endpoints and :quantize
   :integer, so they can be linked at all; versions 1 and 2 drafted fractional
-  endpoints the knob API refused, and their replays still leave them out."
-  3)
+  endpoints the knob API refused, and their replays still leave them out.
+  4 (#667): enum, boolean and vector destinations are generated too, a
+  number with a :step stays on its grid, and stepped links carry the stepped
+  default :envelope. Replays of versions 1–3 leave the new types out and draft
+  no envelope."
+  4)
 
 (def generator-versions
   "Recipe versions this build replays. A version 1 recipe regenerates with
   version 1 link IDs (the cue's plain name), so its recorded edits still match.
   Versions 1 and 2 replay without integer links, as they were made."
-  #{1 2 3})
+  #{1 2 3 4})
 
 (def min-links 2)
 
@@ -63,36 +68,58 @@
    [:spread #{"spread" "fan" "stagger" "radius" "reach" "size" "pitch" "wavelength" "bands" "zoom"}]
    [:position #{"pan" "tilt" "x" "y" "z" "center" "depth" "height" "scroll" "focus"}]])
 
+(def ^:private vector-role-tokens
+  "Extra name tokens for vector destinations only, so number roles (and the
+  replays of earlier recipes) stay as they were."
+  [[:spread #{"extent" "scale" "dimensions"}]
+   [:position #{"point" "offset" "origin" "target" "centre" "position" "aim"}]])
+
 (def role-names
   {:intensity "intensity" :saturation "saturation" :lightness "lightness" :hue "hue" :colour "colour"
-   :rate "rate" :period "period" :duty "pulse width" :spread "spread" :position "position"})
+   :rate "rate" :period "period" :duty "pulse width" :spread "spread" :position "position"
+   :mode "choice" :toggle "switch"})
 
 (defn- tokens [k] (str/split (str/lower-case (name k)) #"[-_/.]+"))
 
+(defn- named-role [k table]
+  (let [words (set (tokens k))]
+    (some (fn [[role names]] (when (some names words) role)) table)))
+
 (defn param-role
-  "Role of a destination from its schema and name, or nil when none is known."
+  "Role of a destination from its schema and name, or nil when none is known.
+  An enum is a choice (:mode) and a boolean a switch (:toggle) whatever its
+  name; a vector is a position or a spread by its semantic type or name."
   [k schema]
-  (cond
-    (= :color (:type schema)) :colour
-    (or (= :beat-ratio (:semantic/type schema)) (#{:beats :bars :phrases} (:unit schema))) :period
-    :else (let [words (set (tokens k))]
-            (some (fn [[role names]] (when (some names words) role)) role-tokens))))
+  (case (:type schema)
+    :color :colour
+    :enum :mode
+    :boolean :toggle
+    :vector (cond
+              (= :position (:semantic/type schema)) :position
+              :else (let [role (or (named-role k role-tokens) (named-role k vector-role-tokens))]
+                      (when (#{:position :spread} role) role)))
+    (cond
+      (or (= :beat-ratio (:semantic/type schema)) (#{:beats :bars :phrases} (:unit schema))) :period
+      :else (named-role k role-tokens))))
 
 ;; ---------------------------------------------------------------------------
 ;; Characters: what turning the knob up means
 
 (def characters
   "Each character names the roles it moves and the direction each takes as the
-  knob rises. An anchor role must be present for the character to be chosen."
+  knob rises. An anchor role must be present for the character to be chosen.
+  A choice steps up through its declared values and a switch turns on as the
+  knob rises; neither anchors a character (version 4)."
   [{:id :energy :name "Energy" :anchors #{:intensity :rate :period}
-    :polarity {:intensity :up :rate :up :period :down :duty :down :saturation :up :spread :up :lightness :down}
-    :weights {:intensity 3 :rate 2 :period 2 :duty 2 :saturation 1 :spread 1 :lightness 1}}
+    :polarity {:intensity :up :rate :up :period :down :duty :down :saturation :up :spread :up :lightness :down
+               :toggle :up :mode :up}
+    :weights {:intensity 3 :rate 2 :period 2 :duty 2 :saturation 1 :spread 1 :lightness 1 :toggle 1 :mode 1}}
    {:id :colour :name "Colour" :anchors #{:hue :colour :saturation}
-    :polarity {:hue :up :colour :up :saturation :up :lightness :down :intensity :up}
-    :weights {:hue 3 :colour 3 :saturation 2 :lightness 1 :intensity 1}}
+    :polarity {:hue :up :colour :up :saturation :up :lightness :down :intensity :up :mode :up}
+    :weights {:hue 3 :colour 3 :saturation 2 :lightness 1 :intensity 1 :mode 1}}
    {:id :motion :name "Motion" :anchors #{:position :spread}
-    :polarity {:position :up :spread :up :period :down :rate :up}
-    :weights {:position 3 :spread 3 :period 1 :rate 1}}])
+    :polarity {:position :up :spread :up :period :down :rate :up :mode :up :toggle :up}
+    :weights {:position 3 :spread 3 :period 1 :rate 1 :mode 1 :toggle 1}}])
 
 (def ^:private character-index (into {} (map (juxt :id identity)) characters))
 
@@ -108,7 +135,17 @@
 ;; ---------------------------------------------------------------------------
 ;; Eligibility against the running show
 
-(def ^:private generated-types #{:number :integer :color})
+(def generated-types
+  "Destination types the current generator drafts."
+  #{:number :integer :color :enum :boolean :vector})
+
+(def ^:private legacy-types
+  "Types versions 1–3 drafted; their replays leave the others out."
+  #{:number :integer :color})
+
+(def type-names
+  "Names surfaces use for the :types selection."
+  {:number "number" :integer "integer" :color "colour" :enum "choice" :boolean "switch" :vector "vector"})
 
 (defn- running-instances [model]
   (->> (vals (:instances model)) (filter #(= :running (:phase %))) (sort-by :order)))
@@ -131,6 +168,15 @@
 (defn- range-of [schema]
   (or (:recommended schema) (:bounds schema) (when (= :color (:type schema)) [0.0 1.0])))
 
+(defn- grid-step
+  "A schema's declared :step on a number, integer or vector, or nil."
+  [schema]
+  (let [step (:step schema)]
+    (when (and (#{:number :integer :vector} (:type schema)) (registry/finite-number? step) (pos? step)) step)))
+
+(defn- bounded? [bounds]
+  (and (vector? bounds) (= 2 (count bounds)) (every? registry/finite-number? bounds) (< (first bounds) (second bounds))))
+
 (defn- exclusion [instance param reason message]
   {:owner (owner-name instance) :param param :reason reason :message message
    :label (str (owner-name instance) " · " (name param))})
@@ -142,10 +188,10 @@
     (cond
       (not (generated-types type))
       [:unsupported-type (str "A " (name (or type :unknown)) " parameter is linked by hand, not generated")]
-      (and (#{:number :integer} type)
-           (not (and (vector? bounds) (= 2 (count bounds)) (every? registry/finite-number? bounds)
-                     (< (first bounds) (second bounds)))))
+      (and (#{:number :integer :vector} type) (not (bounded? bounds)))
       [:unbounded "The parameter has no bounds, so no useful range is known"]
+      (and (= :enum type) (< (count (or (:values schema) (:options schema))) 2))
+      [:too-few-steps "The choice has one value, so a knob cannot change it"]
       (= :seed role) [:seed-parameter "A seed chooses a pattern; it is not a performance control"]
       (nil? role) [:no-role "No musical role is known for this parameter name"]
       :else nil)))
@@ -237,9 +283,11 @@
   selection. :avoid maps destination keys (see `knob-driven`) to the knob IDs
   that drive them; those destinations are left out with reason :knob-driven.
   :shared is the same map for destinations offered anyway, which then carry
-  :driven-by. Every parameter left out is listed under :excluded with a reason."
+  :driven-by. :types (a set of `generated-types`) keeps only destinations of
+  those types; the others are left out with reason :type-not-selected. Every
+  parameter left out is listed under :excluded with a reason."
   ([model] (eligibility model {}))
-  ([model {:keys [cue-ids avoid shared]}]
+  ([model {:keys [cue-ids avoid shared types]}]
    (let [known (set (keys (get-in model [:registry :cues])))
          wanted (when (seq cue-ids) (mapv #(or (id-match known %) %) cue-ids))
          running (running-instances model)
@@ -260,15 +308,23 @@
                  {:eligible [] :excluded (vec unselected)} selected)
          seen (volatile! #{})
          unique (filter #(when-not (@seen (:key %)) (vswap! seen conj (:key %))) eligible)
+         unselected-type? #(and (seq types) (not (contains? (set types) (get-in % [:schema :type]))))
          avoided? #(contains? avoid (:destination %))]
-     {:eligible (vec (for [entry unique :when (not (avoided? entry))]
+     {:eligible (vec (for [entry unique :when (not (or (avoided? entry) (unselected-type? entry)))]
                        (if-let [knob-ids (get shared (:destination entry))]
                          (assoc entry :driven-by (vec knob-ids))
                          entry)))
       :excluded (vec (distinct (concat excluded
-                                       (for [entry unique :when (avoided? entry)]
+                                       (for [entry unique :when (unselected-type? entry)]
+                                         {:owner (:group entry) :param (get-in entry [:destination :param])
+                                          :reason :type-not-selected :label (:label entry)
+                                          :destination (:destination entry)
+                                          :message (str "A " (type-names (get-in entry [:schema :type]))
+                                                        " destination; the selection asks for "
+                                                        (str/join ", " (map type-names (sort types))))})
+                                       (for [entry unique :when (and (avoided? entry) (not (unselected-type? entry)))]
                                          (knob-driven-exclusion entry (get avoid (:destination entry)))))))
-      :selection (cond-> {:running (count selected)} wanted (assoc :cue-ids wanted))})))
+      :selection (cond-> {:running (count selected)} wanted (assoc :cue-ids wanted) (seq types) (assoc :types (vec (sort types))))})))
 
 ;; ---------------------------------------------------------------------------
 ;; Track feel
@@ -417,15 +473,20 @@
     (str (or id-group group) "-" (id-text param) (when (or field input) (str "-" (id-text (or field input)))))))
 
 (defn- too-few-steps?
-  "Whether an integer destination's range holds fewer than two whole values."
-  [{:keys [schema]}]
-  (and (= :integer (:type schema))
-       (let [[lo hi] (range-of schema)]
-         (< (- (Math/floor (double hi)) (Math/ceil (double lo))) 1.0))))
+  "Whether an integer destination's range holds fewer than two whole values,
+  or (from version 4) a stepped number's range fewer than two grid values."
+  [version {:keys [schema]}]
+  (let [[lo hi] (range-of schema)]
+    (or (and (= :integer (:type schema))
+             (< (- (Math/floor (double hi)) (Math/ceil (double lo))) 1.0))
+        (and (>= version 4) (#{:number :integer :vector} (:type schema)) (grid-step schema)
+             (< (- (double hi) (double lo)) (double (grid-step schema)))))))
 
-(defn- too-few-steps-exclusion [{:keys [group destination label]}]
+(defn- too-few-steps-exclusion [{:keys [group destination label schema]}]
   {:owner group :param (:param destination) :reason :too-few-steps :label label :destination destination
-   :message "The range holds fewer than two whole values, so an integer knob link cannot step"})
+   :message (if (grid-step schema)
+              "The range holds fewer than two grid steps, so the knob link cannot step"
+              "The range holds fewer than two whole values, so an integer knob link cannot step")})
 
 (defn- version-1-ids
   "Version 1 named an owner by its plain name: :rig/feel gave link IDs such as
@@ -437,12 +498,86 @@
         plain (if (keyword? id) (name id) (str id))]
     (assoc entry :id-group plain :group plain)))
 
-(defn- build-link
-  "[seed link-or-nil] for one destination in a character and feel. From
-  version 3 an integer destination gets whole-number endpoints and steps
-  through them. Its range is drawn like a number destination's, except that
-  an integer with a beat unit takes the period path instead of ratio steps,
-  centred like a waveform period, and so also draws a curve."
+(defn- grid-anchor [schema] (or (first (:bounds schema)) 0))
+
+(defn- on-grid
+  "x on schema's step grid, the nearest grid value inside the hard bounds."
+  [schema step x]
+  (let [anchor (grid-anchor schema)
+        [lo hi] (:bounds schema)
+        k (Math/round (/ (- (double x) anchor) (double step)))
+        at #(let [v (+ anchor (* % step))] (if (and (rational? anchor) (rational? step)) v (round3 v)))
+        k (cond (and lo (< (double (at k)) lo)) (inc k) (and hi (> (double (at k)) hi)) (dec k) :else k)]
+    (at k)))
+
+(defn- grid-range
+  "[low high] snapped onto the schema's step grid, one step apart at least, or nil."
+  [schema step [a b]]
+  (let [a (on-grid schema step a) b (on-grid schema step b)
+        [_ hi] (:bounds schema)]
+    (cond
+      (not= a b) [a b]
+      (or (nil? hi) (<= (+ (double b) step) hi)) [a (on-grid schema step (+ b step))]
+      :else [(on-grid schema step (- a step)) b])))
+
+(defn- enum-range
+  "[seed [from to]]: a contiguous span of two to five declared values that
+  holds the default where it can, stepped through in declared order."
+  [seed {:keys [values options default]}]
+  (let [values (vec (or values options))
+        n (count values)
+        d (max 0 (.indexOf ^java.util.List values default))
+        [seed span] (random/choose seed (vec (range 2 (inc (min n 5)))))
+        [seed start] (random/choose seed (vec (range (max 0 (- d (dec span))) (inc (min d (- n span))))))]
+    [seed [(values start) (values (+ start (dec span)))]]))
+
+(def ^:private switch-windows
+  "Knob windows for a switch: it turns on at knob 0.5, 0.75 or 0.625."
+  [[0 1] [0.5 1] [0.25 1]])
+
+(defn- vector-range
+  "[seed [from to]]: a curve through vector space. A position moves from the
+  default along a seeded direction by width of the range on each component;
+  a spread grows every component from below the default towards the upper
+  bound. Components stay inside the bounds and on the :step grid."
+  [seed role schema default width]
+  (let [[lo hi] (range-of schema)
+        span (- (double hi) (double lo))
+        n (or (:size schema) (count default))
+        d (mapv #(max (double lo) (min (double hi) (double %))) (or default (repeat n (+ lo (/ span 2)))))
+        [seed directions] (reduce (fn [[seed acc] _] (let [[seed x] (draw seed)] [seed (conj acc (- (* 2.0 x) 1.0))]))
+                                  [seed []] (range n))
+        clamp #(max (double lo) (min (double hi) %))
+        [a b] (case role
+                :spread [(mapv #(- % (* width (- % lo))) d) (mapv #(+ % (* width (- hi %))) d)]
+                (let [offsets (mapv #(* 0.5 width span %) directions)]
+                  [(mapv #(clamp (- %1 %2)) d offsets) (mapv #(clamp (+ %1 %2)) d offsets)]))
+        step (grid-step schema)
+        tidy (fn [v] (mapv #(if step (on-grid schema step %) (round3 %)) v))]
+    [seed [(tidy a) (tidy b)]]))
+
+(defn- build-typed-link
+  "[seed link-or-nil] for a choice, switch or vector destination (version 4).
+  A choice steps through a seeded span of its declared values and a switch
+  turns on at a seeded knob position, both on a linear curve so each step has
+  an equal share of the knob window; a vector moves along a seeded curve."
+  [seed {:keys [role schema default] :as entry} character feel]
+  (let [direction (get-in character [:polarity role] :up)
+        base {:id (link-id entry) :destination (:destination entry) :direction direction :input [0 1]}]
+    (case (:type schema)
+      :enum (let [[seed range] (enum-range seed schema)] [seed (assoc base :range range :curve :linear)])
+      :boolean (let [[seed window] (random/choose seed switch-windows)]
+                 [seed (assoc base :range [false true] :curve :linear :input window)])
+      :vector (let [[seed x] (draw seed)
+                    width (between x 0.35 0.8)
+                    [seed range] (vector-range seed role schema default width)
+                    [seed curve] (random/choose seed (curve-choices role feel))]
+                [seed (when (not= (first range) (second range))
+                        (cond-> (assoc base :range range :curve curve)
+                          (grid-step schema) (assoc :quantize {:step (grid-step schema)})))]))))
+
+(defn- build-scalar-link
+  "build-link for a number, integer or colour destination."
   [seed {:keys [role schema default] :as entry} character {:keys [speed jitter smoothness palette] :as feel} version]
   (let [whole? (and (>= version 3) (= :integer (:type schema)))
         direction (get-in character [:polarity role] :up)
@@ -470,11 +605,32 @@
            nil]
           :else [seed (continuous-range role bounds default width) nil])
         [range quantize] (if whole? [(some-> range (integer-range bounds)) :integer] [range quantize])
+        step (when (and (>= version 4) (not (:ratios quantize)) (grid-step schema)
+                        (or (not= :integer (:type schema)) (integer? (grid-step schema))))
+               (grid-step schema))
+        [range quantize] (if step [(some->> range (grid-range schema step)) {:step step}] [range quantize])
+        range (if (and (>= version 4) (= :colour role) range (:bounds schema))
+                (let [[lo hi] (params/color-bounds schema)] (mapv (fn [c] (mapv #(max lo (min hi %)) c)) range))
+                range)
         [seed curve] (if (:ratios quantize) [seed :linear] (random/choose seed (curve-choices role feel)))]
     [seed (when (and range (not= (first range) (second range)))
             (cond-> {:id (link-id entry) :destination (:destination entry) :range range
                      :direction direction :curve curve :input [0 1]}
               quantize (assoc :quantize quantize)))]))
+
+(defn- build-link
+  "[seed link-or-nil] for one destination in a character and feel. From
+  version 3 an integer destination gets whole-number endpoints and steps
+  through them. Its range is drawn like a number destination's, except that
+  an integer with a beat unit takes the period path instead of ratio steps,
+  centred like a waveform period, and so also draws a curve. From version 4
+  choices, switches and vectors take `build-typed-link`, a number or integer
+  with a :step stays on its grid, and a colour target is kept inside the
+  colour bounds."
+  [seed {:keys [role schema default] :as entry} character {:keys [speed jitter smoothness palette] :as feel} version]
+  (if (and (>= version 4) (#{:enum :boolean :vector} (:type schema)))
+    (build-typed-link seed entry character feel)
+    (build-scalar-link seed entry character feel version)))
 
 (defn- correlation [a b]
   (when (and (= (:group a) (:group b)) (not= (:role a) (:role b)))
@@ -584,20 +740,39 @@
   (let [[a b] (:range link)
         role (:role entry)
         partner (some #(when (some #{(:id link)} (:links %)) %) pairs)
-        text #(if (vector? %) (str "[" (str/join " " (map (fn [c] (format "%.2f" (double c))) %)) "]")
-                  (if (ratio? %) (str (numerator %) "/" (denominator %)) (str %)))]
+        text #(cond (vector? %) (str "[" (str/join " " (map (fn [c] (format "%.2f" (double c))) %)) "]")
+                    (ratio? %) (str (numerator %) "/" (denominator %))
+                    (boolean? %) (if % "on" "off")
+                    (keyword? %) (name %)
+                    :else (str %))
+        [w0 w1] (:input link [0 1])]
     (cond-> {:link-id (:id link) :role role
              :why (str (str/capitalize (role-names role)) " "
                        (if (= :up (:direction link)) (str (text a) " → " (text b)) (str (text b) " → " (text a)))
                        " as the knob rises (" (:name character) ")"
-                       (case (:quantize link)
-                         nil nil
-                         :integer ", in whole steps"
-                         ", in preferred beat ratios")
-                       (when (= [0.5 1.0] (:input link)) ", over the knob's upper half"))}
+                       (cond
+                         (nil? (:quantize link)) nil
+                         (= :integer (:quantize link)) ", in whole steps"
+                         (:step (:quantize link)) (str ", in steps of " (text (:step (:quantize link))))
+                         :else ", in preferred beat ratios")
+                       (cond
+                         (= :toggle role) (str ", switching at knob " (text (+ w0 (/ (- w1 w0) 2.0))))
+                         (= [0.5 1.0] (:input link)) ", over the knob's upper half")
+                       (when (:envelope link)
+                         (str "; smoothed over " (text (get-in link [:envelope :attack :beats]))
+                              " beat for the whole range, so brief spikes do not change the step")))}
       partner (assoc :correlated-with (first (remove #{(:id link)} (:links partner))) :correlation (:why partner))
       ;; Offered on request although an existing knob drives it: the last committed write wins.
       (:driven-by entry) (assoc :shared-with (:driven-by entry)))))
+
+(defn- with-envelope
+  "From version 4 a stepped link smooths the knob with `knobs/stepped-envelope`,
+  so a brief spike or a noisy input does not reach the next step; the step is
+  read after the envelope. Continuous links follow the knob at once."
+  [link schema version]
+  (if (and (>= version 4) (knobs/stepped? link schema))
+    (assoc link :envelope knobs/stepped-envelope)
+    link))
 
 (defn- draft [seed pool character feel [low high] version]
   (let [[seed x] (draw seed)
@@ -609,7 +784,8 @@
                              [seed []] chosen)
         chosen (mapv first built)
         pairs (correlated-pairs chosen)
-        [seed links] (share-windows seed (mapv second built) pairs)]
+        [seed links] (share-windows seed (mapv second built) pairs)
+        links (mapv #(with-envelope %2 (:schema %1) version) chosen links)]
     [seed {:links links :pairs pairs :chosen chosen}]))
 
 (defn- signature [{:keys [character links]}]
@@ -642,12 +818,15 @@
              {:character character :known (mapv :id characters)}))
   (let [version (or generator generator-version)
         eligible (if (= 1 version) (mapv version-1-ids eligible) eligible)
+        ;; Versions 1–3 drafted numbers, integers and colours only; their replays do too.
+        eligible (if (< version 4) (filterv #(legacy-types (get-in % [:schema :type])) eligible) eligible)
         ;; Version 3 leaves out integers that cannot step, with a reason. Earlier
         ;; versions kept them in the pool, whose size feeds the draws, so their
         ;; replays keep them too.
         [eligible excluded] (if (>= version 3)
-                              [(filterv (complement too-few-steps?) eligible)
-                               (into (vec excluded) (map too-few-steps-exclusion) (filter too-few-steps? eligible))]
+                              [(filterv (complement #(too-few-steps? version %)) eligible)
+                               (into (vec excluded) (map too-few-steps-exclusion)
+                                     (filter #(too-few-steps? version %) eligible))]
                               [eligible excluded])
         feel (feel personality)
         [low high] (cond (nil? size) default-size (and (sequential? size) (= 2 (count size))) size)
@@ -700,6 +879,7 @@
            :recipe (cond-> {:generator version :seed seed :character (:id chosen)}
                      size (assoc :size size)
                      (:cue-ids selection) (assoc :cue-ids (:cue-ids selection))
+                     (:types selection) (assoc :types (:types selection))
                      ;; Exactly the knob-driven destinations this show left out, so the
                      ;; recipe repeats after this candidate's own knob drives them too.
                      (seq avoided) (assoc :avoid avoided)

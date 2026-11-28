@@ -22,7 +22,7 @@ The show model keeps portable, versioned data under `:knobs`. It contains no
 functions, so a full backup saves it and a restore validates it.
 
 ```clojure
-{:schema-version 1 :next-order 1
+{:schema-version 2 :next-order 1
  :knobs {:look {:id :look :name "Look" :value 0.5 :order 0
                 :links [{:id "sat" :destination {:kind :param :cue-id :tint :param :saturation}
                          :range [0.2 1.0] :direction :up :curve :linear :input [0 1]}]}}}
@@ -30,6 +30,18 @@ functions, so a full backup saves it and a restore validates it.
 
 A knob made from a generated candidate also keeps the `:recipe` it came
 from, so it can be regenerated ([generated knobs](generated-knobs.md#recipes)).
+Knob state is schema version 2 (#667). An agent's own knob keeps
+`:created-by`, and while an envelope is moving a knob keeps `:motion`: per
+moving link the level it started from, its start beat and rate, the turn that
+started it, its crossing beats, the segment it has committed, the next beat
+it acts at and the step it last wrote. A restore keeps well-formed moves for
+links that still have an envelope as fresh moves (crossings planned again,
+the start no later than the restored beat, commits carrying the knob's own
+source) and drops anything malformed per link. Version 1 state restores as
+version 2. A backup is written as version 1 when no knob uses a version 2
+field (an envelope, empty included, a grid, a move or an agent creator), so a
+plain backup still opens in an older build; one that does is refused there
+with a version mismatch.
 
 A link has these fields:
 
@@ -41,7 +53,8 @@ A link has these fields:
 | `:direction` | `:up` (default) or `:down`, which runs the range from `to` back to `from` |
 | `:curve` | Any `afterglow.render.easing` curve, as in scheduler ramps. Default `:linear` |
 | `:input` | `[low high]` part of the knob that moves this link. Default `[0 1]`. Below `low` the link holds `from`, above `high` it holds `to` |
-| `:quantize` | Optional. `{:ratios :preferred}` or `{:ratios :free}` for beat ratios, `:integer` for whole numbers |
+| `:quantize` | Optional. `{:ratios :preferred}` or `{:ratios :free}` for beat ratios, `:integer` for whole numbers, `{:step size}` for a grid anchored at the parameter's lower bound (per component on a vector) |
+| `:envelope` | Optional. `{:attack {:beats n} :release {:beats n}}`, musical durations from 0 to 64 (beats, bars or phrases): the time the smoothed knob takes to cross the whole 0–1 range rising and falling (see below) |
 | `:unit` | Optional unit for a show variable, which has no schema |
 
 Destinations:
@@ -88,8 +101,9 @@ then the direction, giving a fraction `u` from 0 to 1. A continuous destination
 takes `from + u × (to − from)`, component-wise for colours and vectors, clamped
 to the parameter's bounds and rounded for integers.
 
-A stepped destination (beat ratios, enums, booleans) divides `u` into equal
-steps: step `floor(u × n)` of the `n` values from `from` to `to`.
+A stepped destination (beat ratios, enums, booleans, `{:step size}` grids)
+divides `u` into equal steps: step `floor(u × n)` of the `n` values from `from`
+to `to`. Integers round the continuous value to whole numbers.
 
 - **Preferred ratios** are the exact fractions `n/d` with `n` and `d` from 1, 2,
   3, 4, 6 and 8, the same set as cue variations and the Push ratio pad (#529,
@@ -97,17 +111,82 @@ steps: step `floor(u × n)` of the `n` values from `from` to `to`.
   `[2 1/2]` steps through 2, 3/2, 4/3, 1, 3/4, 2/3 and 1/2 beats.
 - **Free ratios** use every fraction with a denominator up to 16 in the range.
 - An **enum** steps through its declared values between the two endpoints.
-  A **boolean** switches at the halfway point.
+  A **boolean** switches at the halfway point of its window. A JSON surface may
+  name an enum endpoint as text (`"ring"`); it becomes the declared value.
+- A **grid** (`{:step 0.25}`) steps through the multiples of the step from the
+  parameter's lower bound (or zero) that lie between the endpoints, at most
+  1024 of them. An integer parameter takes whole steps only. On a vector each
+  component snaps to the grid along the straight path between the endpoints.
 
-**No hysteresis.** A knob position exactly on a boundary selects the step that
-a slightly higher position selects, in either sweep direction. A position a
-hair below selects the previous step. Boundaries are placed before the
-direction is applied, so `:direction :down` over `[a b]` steps exactly like
-`:up` over `[b a]`, boundaries included. Positions within 10⁻⁹ below a boundary
-count as on it, so a decimal `3/7` behaves like the exact fraction. The knob is the operator's own position,
-so the same value must give the same step on Studio, Push, the REPL and after a
-reload. Hysteresis would make the step depend on the path taken. Layer priority
-uses hysteresis because it follows a free-running waveform; a knob does not.
+**Boundaries.** A knob position exactly on a boundary
+selects the step that a slightly higher position selects, in either sweep
+direction. A position a hair below selects the previous step. Boundaries are
+placed before the direction is applied, so `:direction :down` over `[a b]`
+steps exactly like `:up` over `[b a]`, boundaries included. Positions within
+10⁻⁹ below a boundary count as on it, so a decimal `3/7` behaves like the exact
+fraction.
+
+**Envelopes (#667).** A knob driven by a noisy or fast-changing input, a
+wavering fader or an agent's brief spike, would make a stepped destination
+chatter. A link may smooth the knob with an `:envelope`, a linear slew: its
+output level moves towards the knob value at a fixed rate in musical time,
+the whole range per attack when rising and per release when falling, and the
+destination is resolved from that level, after the envelope. A spike lasting
+a fraction f of the attack moves the level at most f of the range, so it
+reaches a step boundary only if the boundary is that close. Once the level
+arrives, the step is the plain step at the knob value, endpoints included, so
+looks, recipes and agent `set` reproduce the same output.
+
+- **Musical time.** The rate is fixed in beats when a move starts, so a meter
+  change does not move a bar or phrase envelope. The level follows the
+  transport beat: a stopped transport holds it, and turns on enveloped links
+  while stopped wait for Play; a tempo change stretches the move (70–180 BPM
+  give the same crossings at the same beats). A seek, loop, source change or
+  Link resume rebases the move with the clock (`knobs/rebase-clock`, called
+  from `clock/rebase`), so it keeps its remaining musical time: no step fires
+  again and none is caught up.
+- **Takeover.** A new knob value, a Push detent, a recalled look or an edit of
+  the link takes over a running move from the level it outputs now, at the
+  link's rate, never from its old start. Crossings the old move reached since
+  the last frame fire first, in order. Speed is kept in the same direction; a
+  reversal turns at once, which for a stepped destination only moves the next
+  crossing. A velocity-continuous follower for continuous links is #914.
+- **Scheduled crossings.** A stepped link's move knows the beat of each step
+  crossing (`knobs/step-boundaries` along the move). The owner skips the link
+  until the transport reaches the next one, then commits every crossing
+  reached once, in order, so a replay at another frame rate commits the same
+  sequence. A continuous link with an envelope resolves every frame and
+  commits when its value changes. Commits go through the shared reducer with
+  the source of the turn that started the move.
+- **Other writers win.** A move commits only when it enters a new segment. If
+  another writer (a hand edit, another knob, routing) has committed to the
+  destination since the move last did, the move ends and that write stands,
+  as a committed write cancels a ramp. Writers are found in the shared receipt
+  history, so writing the step the destination already shows also ends the
+  move and holds it there; a waveform field, which has no receipts, is
+  compared by value. Turning the knob again moves the destination as usual.
+- **Failures are recorded.** A move that throws while advancing is dropped,
+  not retried every frame, and recorded under `:diagnostics` in the `:knobs`
+  projection (`{:code :move-failed :knob-id :link-id :beat :message}`, the
+  last 32).
+- **Defaults.** `knobs/default-envelope` gives a link to a stepped destination
+  (choice, switch, integer, beat ratio, `{:step}` grid) without an
+  `:envelope` the stepped envelope, one beat either way, for the REPL, agents,
+  Studio and the generator alike. Continuous destinations follow the knob at
+  once. `:envelope {}` asks for no smoothing on a stepped destination; on a
+  continuous one it is dropped, so it never forces a version 2 backup. Studio
+  sends an envelope only when the operator set one, or `{}` when they cleared
+  a stepped link's fields, and an edit of a link without one sends `{}`, so a
+  link restored from an older backup keeps stepping at once. A REPL link to a
+  stepped destination now smooths unless it passes `:envelope {}`, which
+  changes the REPL's default from before #667.
+- The Room audition of a generated candidate shows the settled step at the
+  sweep value; envelopes run on kept knobs.
+
+A `{:step size}` grid is checked at link time: a step that puts more than 1024
+values between the endpoints, on any vector component, or that is wider than
+the range, is refused with that reason. A vector value snaps to the nearest
+grid value inside the bounds.
 
 Ratios stay exact. `[:knobs ...]` in the snapshot reports `:resolved {:value 3/2
 :text "3/2 beats" :unit :beats :ratio [3 2]}`, and Transit carries the fraction
@@ -232,9 +311,18 @@ newest position, sent when the receipt arrives, so the owner admits them in
 order and ends on the last position. The slider shows the local position until
 a snapshot at or past the receipt's revision arrives. A link that differs from the
 knob, is shared with another knob, inactive or dangling says so under its
-name. The picker offers numeric destinations only; colour, enum and boolean
-links made from the REPL are shown and can be re-shaped, but their endpoints
-are edited from the REPL.
+name.
+
+The picker offers every linkable type, named in the list (number, integer,
+colour, vector, choice for an enum, switch for a boolean). **From** and **To**
+follow the type: a list of the declared values for a choice, off/on for a
+switch, three numbers for a colour and the parameter's size for a vector,
+separated by spaces. **Steps** offers the parameter's own grid when it declares
+`:step`. A choice, a switch, an integer and a beat-ratio period start with an
+**Attack** and **Release** of 1 beat; clear them for none. A link row shows a
+choice or switch range as values (`dot → wave`, `off → on`) and its envelope.
+The same picker adds a destination to a generated candidate, so it can be
+swept in the Room before it is kept ([generated knobs](generated-knobs.md#using-it-from-studio)).
 
 `dev/tolglow/qa/knobs_browser.clj` drives this in headless Chrome against the
 preview-only demo show on port 4300: it builds a four-link knob in the panel,

@@ -14,6 +14,7 @@
             [afterglow.runtime.faults :as faults]
             [tolglow.automation.random :as random]
             [tolglow.composition :as composition]
+            [tolglow.composition.step-schedule :as step-schedule]
             [tolglow.composition.tween :as tween]
             [tolglow.modulation :as modulation]
             [tolglow.registry :as registry]
@@ -310,6 +311,12 @@
                   (or (nil? (:due-start-ms ramp)) (registry/finite-number? (:due-start-ms ramp)))
                   (or (nil? (:started-ms ramp)) (registry/finite-number? (:started-ms ramp))))
              "Invalid active ramp" {:event-id (:event-id ramp)})
+      ;; A stepped ramp's takeover position (#667) lies by its endpoints.
+      (when (contains? ramp :origin)
+        (check (and (registry/finite-number? (:origin ramp)) (number? (:from ramp)) (number? (:to ramp))
+                    ;; Within one whole step of the committed :from it was rounded to.
+                    (<= (dec (min (:from ramp) (:to ramp))) (:origin ramp) (inc (max (:from ramp) (:to ramp)))))
+               "Invalid stepped ramp origin" {:event-id (:event-id ramp)}))
       (curve! (:curve ramp))))
   s)
 
@@ -565,9 +572,48 @@
 
 (defn- ramp-clock [ramp beat now] (if (= :ms (:unit ramp)) now beat))
 
-(defn- sample-ramp [model ramp beat now]
-  (let [p (progress ramp (ramp-clock ramp beat now))]
-    [p (ramp-value (schema-of model (:destination ramp)) (:from ramp) (:to ramp) (easing/sample (:curve ramp) p))]))
+(defn- stepped-ramp? [schema curve] (and (= :integer (:type schema)) (= :linear (or curve :linear))))
+
+(defn- stepped-value
+  "An integer ramp's value at progress p: the whole number its continuous
+  position rounds to. :origin is that position at the start, so a ramp that
+  took over from another carries on from the exact place it was."
+  [schema {:keys [origin from to]} p]
+  (modulation/interpolate-value schema (or origin from) to p))
+
+(defn- ramp-steps
+  "Crossing schedule of a linear integer ramp (#667): the progress values at
+  which the rounded value changes, each segment's value evaluated once."
+  [schema {:keys [origin from to] :as ramp}]
+  (let [a (double (or origin from)) b (double to)]
+    (step-schedule/schedule
+     (when (not= a b)
+       (for [m (range (long (Math/floor (min a b))) (long (Math/ceil (max a b))))
+             :let [p (/ (- (+ m 0.5) a) (- b a))] :when (< 0.0 p 1.0)]
+         p))
+     #(stepped-value schema ramp %))))
+
+(defn- sample-ramp
+  "[progress value] of a ramp at the frozen frame clock. A linear integer ramp
+  looks its value up in its crossing schedule instead of evaluating every
+  frame; the lookup equals evaluation at every position."
+  [model ramp beat now]
+  (let [p (progress ramp (ramp-clock ramp beat now))
+        schema (schema-of model (:destination ramp))]
+    [p (cond
+         (not (stepped-ramp? schema (:curve ramp))) (ramp-value schema (:from ramp) (:to ramp) (easing/sample (:curve ramp) p))
+         (:crossings ramp) (step-schedule/value-at (:crossings ramp) #(stepped-value schema ramp %) p)
+         :else (stepped-value schema ramp p))]))
+
+(defn- ramp-position
+  "The exact continuous position of a running ramp, for a ramp that takes
+  over: an integer ramp's unrounded place between its endpoints."
+  [model ramp beat now]
+  (let [schema (schema-of model (:destination ramp))]
+    (if (stepped-ramp? schema (:curve ramp))
+      (let [p (progress ramp (ramp-clock ramp beat now))]
+        (tween/interpolate (double (or (:origin ramp) (:from ramp))) (double (:to ramp)) p))
+      (second (sample-ramp model ramp beat now)))))
 
 (defn- remember [model entry]
   (update-in model [:event-subscribers :recent]
@@ -694,13 +740,19 @@
   cuts short (previous, or nil), at the frozen frame clock: {:from value}, the
   outgoing ramp's frame value, so the output does not jump. This is the one
   place a handover is decided. The incoming action and the destination schema
-  are passed so a handover can depend on both: a stepped integer ramp's exact
-  continuous position (#820) and the outgoing velocity (#896) belong here.
+  are passed so a handover can depend on both. A stepped (linear integer) ramp
+  taking over another inherits :origin, the outgoing ramp's exact continuous
+  position (#667), from which its step crossings are planned; the outgoing
+  velocity (#896) belongs here too.
   Any key other than :from is added to the new ramp, under its core fields
   (:start, :end, :base, :due-start, ...), which it cannot replace."
-  [model previous _action _schema beat now]
+  [model previous action schema beat now]
   (when previous
-    {:from (second (sample-ramp model previous beat now))}))
+    (cond-> {:from (second (sample-ramp model previous beat now))}
+      ;; A stepped ramp carries on from the outgoing ramp's exact continuous
+      ;; position, so the steps it already passed never fire again (#667).
+      (and (stepped-ramp? schema (:curve action :linear)) (stepped-ramp? schema (:curve previous)))
+      (assoc :origin (ramp-position model previous beat now)))))
 
 (defn- start-ramp [model run action destination now]
   (let [schema (schema-of model destination)
@@ -732,21 +784,24 @@
     (-> model
         (supersede destination event-id now)
         (update-in [:event-subscribers :ramps] (fnil conj [])
-                   (cond-> (merge
-                            ;; What the handover adds goes in first: it can never replace a core field.
-                            (dissoc inherited :from)
-                            {:event-id event-id :destination destination :from from :to to :base base
-                             :curve (:curve action :linear) :unit unit :over (:over action)
-                             :start start :end (+ start over) :source (run-source run) :category :ramp
-                             ;; The frame time it started at never moves with a clock rebase,
-                             ;; so a display can key the ramp by it (#646).
-                             :started-ms now})
-                     ;; Its musical start: the beat it was due on, not the frame that fired it.
-                     (and (= :beats unit) (registry/finite-number? (:due-beat run))) (assoc :due-start (double (:due-beat run)))
-                     ;; The same for a millisecond ramp: the instant it was due.
-                     (and (= :ms unit) (registry/finite-number? (:due-beat run)))
-                     (assoc :due-start-ms (double (- now (beats->ms model (- beat (:due-beat run))))))
-                     (get-in run [:scheduled :label]) (assoc :label (get-in run [:scheduled :label])))))))
+                   (let [ramp (cond-> (merge
+                                       ;; What the handover adds goes in first: it can never replace a core field.
+                                       (dissoc inherited :from)
+                                       {:event-id event-id :destination destination :from from :to to :base base
+                                        :curve (:curve action :linear) :unit unit :over (:over action)
+                                        :start start :end (+ start over) :source (run-source run) :category :ramp
+                                        ;; The frame time it started at never moves with a clock rebase,
+                                        ;; so a display can key the ramp by it (#646).
+                                        :started-ms now})
+                                ;; Its musical start: the beat it was due on, not the frame that fired it.
+                                (and (= :beats unit) (registry/finite-number? (:due-beat run))) (assoc :due-start (double (:due-beat run)))
+                                ;; The same for a millisecond ramp: the instant it was due.
+                                (and (= :ms unit) (registry/finite-number? (:due-beat run)))
+                                (assoc :due-start-ms (double (- now (beats->ms model (- beat (:due-beat run))))))
+                                (get-in run [:scheduled :label]) (assoc :label (get-in run [:scheduled :label])))]
+                     ;; A linear integer ramp plans its step crossings (#667), from the
+                     ;; position the handover gave it (:origin).
+                     (cond-> ramp (stepped-ramp? schema (:curve ramp)) (assoc :crossings (ramp-steps schema ramp))))))))
 
 (declare apply-operation)
 
@@ -893,7 +948,11 @@
                                                          now)))
                          more kept))
 
-                :else (recur model more (conj kept ramp))))))))))
+                ;; A restored stepped ramp plans its crossings again (#667).
+                :else (recur model more (conj kept (cond-> ramp
+                                                     (and (not (:crossings ramp))
+                                                          (stepped-ramp? (schema-of model destination) (:curve ramp)))
+                                                     (assoc :crossings (ramp-steps (schema-of model destination) ramp)))))))))))))
 
 (defn advance-ramps
   "Settle ramp lifecycles on the owner at the frame time now: a committed write
@@ -1517,7 +1576,8 @@
                 (update :subscribers #(mapv (fn [d] (update d :actions (partial mapv rekey))) %))
                 (update :runs #(into [] (comp (remove :waiting?) (map rekey-run)) %)))
       (seq (:ramps s))
-      (update :ramps (partial mapv (fn [ramp] (cond-> ramp (get-in ramp [:destination :instance-id])
+      (update :ramps (partial mapv (fn [ramp] (cond-> (dissoc ramp :crossings) ; recomputed against the restored schema
+                                                (get-in ramp [:destination :instance-id])
                                                 (update-in [:destination :instance-id] #(get instance-ids % %)))))))))
 
 ;; Projection ----------------------------------------------------------------

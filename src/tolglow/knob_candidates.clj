@@ -10,6 +10,7 @@
   candidate's links and recipe. The pure generator is
   `tolglow.knob-candidates.generate`. See docs/generated-knobs.md."
   (:require [afterglow.control.model :as control]
+            [clojure.string :as str]
             [tolglow.knob-candidates.generate :as generate]
             [tolglow.knobs :as knobs]
             [tolglow.personalities :as personalities]
@@ -50,12 +51,31 @@
 
 (defn- keywordish [x] (if (string? x) (keyword x) x))
 
+(def ^:private type-aliases
+  "Destination type names surfaces may send for :types: the schema type or the
+  name the picker shows."
+  (into {} (concat (map (fn [t] [(name t) t]) generate/generated-types)
+                   (map (fn [[t n]] [n t]) generate/type-names)
+                   [["color" :color] ["colour" :color]])))
+
+(defn- types-of
+  "A :types selection as a sorted vector of `generate/generated-types`, or nil for all."
+  [types]
+  (when (some? types)
+    (let [parsed (when (sequential? types) (map #(get type-aliases (if (keyword? %) (name %) %)) types))]
+      (when-not (and (seq parsed) (every? some? parsed))
+        (fail! :invalid-types (str "Types are a non-empty list of "
+                                   (str/join ", " (sort (map generate/type-names generate/generated-types))))
+               {:types types}))
+      (vec (sort (distinct parsed))))))
+
 (defn- options-of
   "Generation options from a command. Form and JSON surfaces send text, so
   character and cue IDs are accepted as strings. A size is the two link-count
   bounds in either order, as the agent tool's schema allows; it is kept as
-  [min max]. :include-knob-driven? offers destinations existing knobs drive."
-  [{:keys [character cue-ids size include-knob-driven?]}]
+  [min max]. :include-knob-driven? offers destinations existing knobs drive.
+  :types restricts the destination types (see `types-of`)."
+  [{:keys [character cue-ids size include-knob-driven? types]}]
   (when (and (some? cue-ids) (not (and (sequential? cue-ids) (every? #(or (keyword? %) (string? %)) cue-ids))))
     (fail! "Cue IDs are a list of cue identifiers"))
   (when (and (some? size) (not (and (sequential? size) (= 2 (count size)))))
@@ -67,7 +87,8 @@
     character (assoc :character (keywordish character))
     (seq cue-ids) (assoc :cue-ids (vec cue-ids))
     size (assoc :size (if (every? integer? size) (vec (sort size)) (vec size)))
-    include-knob-driven? (assoc :include-knob-driven? true)))
+    include-knob-driven? (assoc :include-knob-driven? true)
+    (some? types) (assoc :types (types-of types))))
 
 (defn- knob-driven-options
   "Eligibility options for destinations existing knobs drive, from the current
@@ -97,7 +118,8 @@
   (when-not (or (nil? (:include-knob-driven? recipe)) (boolean? (:include-knob-driven? recipe)))
     (fail! "A recipe's include-knob-driven? is true or false"))
   (cond-> (select-keys recipe [:character :size :cue-ids :include-knob-driven?])
-    (and (sequential? (:size recipe)) (every? integer? (:size recipe))) (update :size #(vec (sort %)))))
+    (and (sequential? (:size recipe)) (every? integer? (:size recipe))) (update :size #(vec (sort %)))
+    (some? (:types recipe)) (assoc :types (types-of (:types recipe)))))
 
 (defn- default-seed
   "A seed from the command ID when none is given. Replaying the command ID
@@ -127,14 +149,20 @@
                   (fail! "That knob has no generation recipe" {:knob-id from-knob}))
     :else nil))
 
-(defn- text-link
-  "A link edit from a form or JSON surface, with its textual enums as keywords."
+(defn text-link
+  "A link edit from a form or JSON surface, with its textual enums as keywords.
+  Text endpoints naming a destination's declared enum values are matched by
+  the knob API."
   [link]
   (when-not (map? link) (fail! "A link must be a map"))
   (cond-> link
     (string? (:direction link)) (update :direction keyword)
+    (string? (:curve link)) (update :curve keyword)
+    (string? (get-in link [:destination :kind])) (update-in [:destination :kind] keyword)
+    (string? (get-in link [:destination :param])) (update-in [:destination :param] keyword)
     (string? (get-in link [:destination :field])) (update-in [:destination :field] keyword)
     (string? (get-in link [:destination :input])) (update-in [:destination :input] keyword)
+    (string? (get-in link [:destination :variable])) (update-in [:destination :variable] keyword)
     (string? (get-in link [:quantize :ratios])) (update-in [:quantize :ratios] keyword)
     (= "integer" (:quantize link)) (assoc :quantize :integer)))
 
@@ -303,7 +331,7 @@
           knob-id (or (:knob-id command)
                       (let [existing (set (keys (get-in model [:knobs :knobs])))]
                         (first (remove existing (map #(str "generated-" %) (iterate inc 1))))))
-          created (knobs/apply-operation model {:op :knob/create :knob-id knob-id
+          created (knobs/apply-operation model {:op :knob/create :knob-id knob-id :source (:source command)
                                                 :name (generated-name command current)
                                                 :value (double (:value command 0.0))
                                                 :links (:links current) :recipe (:recipe current)})]
@@ -329,6 +357,48 @@
     (dissoc model :knob-candidates)))
 
 ;; ---------------------------------------------------------------------------
+;; Agent tool
+
+(def ^:private knob-tool-ops
+  "The `knob` agent tool's ops: the candidate's own, then the kept knob's."
+  {"propose" :knob-candidate/generate "reroll" :knob-candidate/reroll "audition" :knob-candidate/audition
+   "keep" :knob-candidate/keep "discard" :knob-candidate/discard
+   "create" :knob/create "rename" :knob/rename "remove" :knob/remove "set" :knob/set "nudge" :knob/nudge})
+
+(defn- known-knob
+  "The existing knob ID a tool's text names: the same ID, or the keyword a REPL
+  knob was created with. Otherwise the text itself, for create or a refusal."
+  [model id]
+  (let [knobs (get-in model [:knobs :knobs])]
+    (cond (contains? knobs id) id
+          (and (string? id) (contains? knobs (keyword id))) (keyword id)
+          :else id)))
+
+(defn knob-tool-command
+  "The owner command for a `knob` agent tool call (arguments as normalized
+  JSON) from source. link and unlink edit the draft, or the kept knob that
+  knob-id names; every other op maps to one :knob-candidate/* or :knob/*
+  command, so the tool is validated and applied exactly like the REPL and
+  Studio. The knob reducer refuses an agent's remove, unlink or link
+  replacement on a knob that agent did not create."
+  [model {:keys [op knob-id link] :as arguments} source]
+  (let [op (if (keyword? op) (name op) (str op))
+        knob-id (some->> knob-id (known-knob model))
+        fields (cond-> (dissoc arguments :op :knob-id)
+                 link (assoc :link (text-link link)))]
+    (case op
+      "link" (if knob-id
+               (assoc (select-keys fields [:link]) :op :knob/link :knob-id knob-id)
+               (assoc (select-keys fields [:link]) :op :knob-candidate/link))
+      "unlink" (if knob-id
+                 (assoc (select-keys fields [:link-id]) :op :knob/unlink :knob-id knob-id)
+                 (assoc (select-keys fields [:link-id]) :op :knob-candidate/unlink))
+      (if-let [command-op (knob-tool-ops op)]
+        (cond-> (assoc fields :op command-op)
+          knob-id (assoc :knob-id knob-id))
+        (fail! :unknown-op (str "Unknown knob tool op " op) {:op op})))))
+
+;; ---------------------------------------------------------------------------
 ;; Room audition
 
 (defn running-destinations?
@@ -340,6 +410,14 @@
                      (some #(if instance-id (= instance-id (:id %)) (= cue-id (:cue-id %))) running))
                    (:links candidate)))))
 
+(defn- audition-knob
+  "The private knob an audition turns. Its links resolve at once, envelopes
+  left out: the Room shows where the candidate settles at the sweep value,
+  the step a kept knob reaches once its envelope has moved there."
+  [candidate value]
+  {:id draft-id :name "Candidate" :value (double value) :order 0
+   :links (mapv #(dissoc % :envelope) (:links candidate))})
+
 (defn audition-model
   "The private Room model with the candidate's links resolved at knob value and
   written in, through the knob API's resolution and the shared command path.
@@ -348,26 +426,26 @@
   retune), so the private copy's command receipts are cleared first: a write
   reusing an earlier write's command ID with a new value would be refused as a
   command-ID conflict and never land. The private revision is kept, as staging
-  keeps it at the live show's."
+  keeps it at the live show's. Envelopes are left out (see `audition-knob`)."
   [private candidate value]
-  (let [knob {:id draft-id :name "Candidate" :value (double value) :links (:links candidate) :order 0}
-        staged (-> private
-                   (assoc-in [:control :history] {})
-                   (assoc-in [:control :history-order] [])
-                   (assoc :knobs {:schema-version knobs/schema-version :next-order 1 :knobs {draft-id knob}}))
-        {resolved :model result :result} (knobs/apply-operation staged {:op :knob/set :knob-id draft-id :value (double value)})]
-    (-> (reduce (fn [model [index {:keys [op] :as write}]]
-                  (case op
-                    :variable/set (assoc-in model [:variables (:variable write)] (:value write))
-                    :param/set (let [command (-> (select-keys write [:instance-id :param :value])
-                                                 (assoc :op :param/set :show-id (:show-id model) :epoch (:epoch model)
-                                                        :command-id (str draft-id ":" index)
-                                                        :source {:adapter :knob-candidate :session-id draft-id}))
-                                     {next-model :model ack :ack} (control/apply-command model command)]
-                                 (if (= :accepted (:status ack)) next-model model))))
-                resolved (map-indexed vector (:writes result)))
-        (dissoc :knobs)
-        (cond-> (contains? private :revision) (assoc :revision (:revision private))))))
+  (let [knob (audition-knob candidate value)
+         staged (-> private
+                    (assoc-in [:control :history] {})
+                    (assoc-in [:control :history-order] [])
+                    (assoc :knobs {:schema-version knobs/schema-version :next-order 1 :knobs {draft-id knob}}))
+         {resolved :model result :result} (knobs/apply-operation staged {:op :knob/set :knob-id draft-id :value (double value)})]
+     (-> (reduce (fn [model [index {:keys [op] :as write}]]
+                   (case op
+                     :variable/set (assoc-in model [:variables (:variable write)] (:value write))
+                     :param/set (let [command (-> (select-keys write [:instance-id :param :value])
+                                                  (assoc :op :param/set :show-id (:show-id model) :epoch (:epoch model)
+                                                         :command-id (str draft-id ":" index)
+                                                         :source {:adapter :knob-candidate :session-id draft-id}))
+                                      {next-model :model ack :ack} (control/apply-command model command)]
+                                  (if (= :accepted (:status ack)) next-model model))))
+                 resolved (map-indexed vector (:writes result)))
+         (dissoc :knobs)
+         (cond-> (contains? private :revision) (assoc :revision (:revision private))))))
 
 (defn preview
   "Descriptor a candidate audition carries on its Room draft."

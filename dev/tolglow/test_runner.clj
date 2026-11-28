@@ -59,7 +59,7 @@
     tolglow.waveforms-test tolglow.parameter-sample-test tolglow.development.agents-test tolglow.studio.application-agent-host-test
     tolglow.render.workers-test tolglow.request-archive-test
     tolglow.knobs-test tolglow.knob-sweep-test tolglow.controllers.push-knobs-test tolglow.knob-presets-test
-    tolglow.knob-candidates.generate-test tolglow.knob-candidates-test
+    tolglow.knob-candidates.generate-test tolglow.knob-candidates.golden-test tolglow.knob-candidates-test tolglow.knob-typed-destinations-test
     tolglow.event-subscribers-test tolglow.beat-scheduler-test tolglow.studio.projection-test tolglow.studio.active-preview-test tolglow.push-scene-test
     tolglow.show.scene-draft-test
     tolglow.controllers.content-browser-test tolglow.controllers.content-browser-host-test

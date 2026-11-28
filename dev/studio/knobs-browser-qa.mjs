@@ -21,7 +21,11 @@ async function addLink(page, card, destination, fields) {
   const details = card.locator('details.knob-add-link');
   // The live board above re-renders each frame; open the disclosure directly.
   await details.evaluate(element => { element.open = true; });
-  await details.getByLabel('Knob destination').selectOption({label: destination});
+  // Options name the destination's type after its label, e.g. "sweep · width (number)".
+  const select = details.getByLabel('Knob destination');
+  const label = (await select.locator('option').allTextContents())
+    .find(text => text === destination || text.startsWith(`${destination} (`));
+  await select.selectOption({label});
   for (const [label, value] of Object.entries(fields)) {
     const control = details.getByLabel(label, {exact: true});
     if (await control.evaluate(element => element.tagName === 'SELECT')) await control.selectOption({label: value});

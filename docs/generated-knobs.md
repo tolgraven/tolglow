@@ -37,11 +37,12 @@ share a link ID.
 
 | Offered | Left out, with a reason |
 | --- | --- |
-| Number, integer and colour parameters with bounds and a known role | `:unsupported-type` (vector, enum, boolean, gradient, range: linked by hand) |
+| Number, integer, colour, enum, boolean and vector parameters with bounds where they are numeric, and a known role (generator version 4; earlier recipes replay with numbers, integers and colours only) | `:unsupported-type` (gradient, range: linked by hand) |
 | A bound waveform's gain (`:to`), period and registered inputs such as `:duty` | `:modulated`: the base value of a parameter a waveform drives (writing it would hold the waveform; its waveform fields are offered instead) |
 | | `:knob-driven`: an existing knob already drives it (see below) |
 | | `:unbounded`, `:seed-parameter`, `:no-role`, `:no-parameters`, `:not-running`, `:cue-missing` |
-| | `:too-few-steps`: an integer whose range holds fewer than two whole values (generator version 3 and later; `generate` lists it under `:excluded`) |
+| | `:too-few-steps`: an integer whose range holds fewer than two whole values (generator version 3 and later), an enum with one value, or a number or vector whose range is narrower than its `:step` (version 4; `generate` lists it under `:excluded`) |
+| | `:type-not-selected`: a `:types` selection leaves its type out |
 
 #### Destinations an existing knob drives
 
@@ -67,7 +68,18 @@ parameter name: `level`, `dimmer`, `gain` → intensity; `duty`, `width`, `fade`
 → pulse width; `rate`, `speed`, `decay` → rate; `beats`, `bars`, `period` →
 period; `hue`, `saturation`, `lightness`; `spread`, `fan`, `radius` → spread;
 `pan`, `tilt`, `x`, `height` → position. `x-bars` is a period, not a position:
-earlier roles in the table in the source win.
+earlier roles in the table in the source win. An enum is a **choice** and a
+boolean a **switch**, whatever their names. A vector is a position when its
+schema says `:semantic/type :position` or its name reads as one (`centre`,
+`point`, `offset`, `origin`, `target`, `aim`, or the number tokens), and a
+spread when it reads as a size (`extent`, `scale`, `size`, `spread`, ...); a
+vector with neither is left out with `:no-role`.
+
+`:types` on generate (a list of `number`, `integer`, `colour`, `vector`,
+`choice`, `switch`, or the schema type names) keeps only those destination
+types; the recipe records it, so a repeat uses the same selection. The
+character still needs one of its anchor roles, so a selection of choices and
+switches alone is explained as too few.
 
 ### Characters
 
@@ -78,6 +90,10 @@ A candidate has one character, which says what turning the knob up means:
 | Energy | intensity, rate, period | brighter, busier, shorter periods and pulses, more saturated, wider |
 | Colour | hue, colour, saturation | the colour turns and deepens, lightness falls |
 | Motion | position, spread | positions travel, spread widens, periods shorten |
+
+Choices and switches anchor no character but join any of them with weight 1:
+a choice steps up through its declared values and a switch turns on as the
+knob rises.
 
 Each link's direction follows its role in the character, so every link on a
 knob agrees about what "more" means. The character is drawn by seed, weighted
@@ -116,9 +132,30 @@ Picking one makes its partner three times as likely to be picked next.
   with reason `:too-few-steps`.
 - A colour runs from its default to a palette colour of the track feel that is
   clearly different from it, or to a fallback colour when no feel is selected.
+- A **choice** (enum) steps through a contiguous span of two to five of its
+  declared values that holds the default where it can, in declared order, on
+  a linear curve so each value has an equal share of the knob window.
+- A **switch** (boolean) runs off to on and switches at a seeded knob position
+  (0.5, 0.625 or 0.75, through its input window), on a linear curve.
+- A **vector** moves along a seeded curve through vector space. A position
+  goes from the default by a seeded width of the range along a seeded
+  direction, each component kept inside the bounds; a spread grows every
+  component from below the default towards the upper bound. The curve follows
+  the feel like a number's.
+- A number, integer or vector whose schema declares `:step` keeps its
+  endpoints (every component of a vector) on that grid, anchored at the lower
+  bound, and gets `:quantize {:step size}`, so the knob steps through the grid.
+- A colour target is kept inside the schema's colour bounds.
 - Curves follow the feel: a smooth feel eases (`:ease-in-out`, `:sine`,
   `:smoothstep`), a nervous one moves straight (`:linear`, `:ease-in`).
   Intensity favours `:ease-in`. Ratio steps are linear.
+- **Envelopes (version 4).** Every stepped link (choice, switch, integer,
+  beat ratio, grid) gets `knobs/stepped-envelope`: the smoothed knob crosses
+  the whole range in one beat either way and the step is read after it, so a
+  brief spike or a noisy input does not change the step, and at rest the step
+  is the plain step at the knob value ([linked knobs](linked-knobs.md#resolving-a-knob-value)).
+  Continuous links (numbers, colours, vectors without a grid) follow the knob
+  at once. Version 4 never emits `:hysteresis`.
 
 ### Constraints and score
 
@@ -153,11 +190,11 @@ All surfaces send the same owner commands with the usual receipts.
 
 ```clojure
 {:op :knob-candidate/generate :seed 11}                      ; also :character, :cue-ids, :size [min max], :name,
-                                                             ; :include-knob-driven? true
+                                                             ; :include-knob-driven? true, :types ["choice" "switch"]
 {:op :knob-candidate/generate :from-knob "generated-1"}      ; repeat a kept knob's recipe, or :recipe {...}
 {:op :knob-candidate/reroll}                                 ; next seed with a different mapping
 {:op :knob-candidate/audition :value 0.75}                   ; sweep in the Room
-{:op :knob-candidate/link :link {...}}                       ; replace one link by :id (knob link format)
+{:op :knob-candidate/link :link {...}}                       ; replace one link by :id, or add one (knob link format)
 {:op :knob-candidate/unlink :link-id "strobe-duty"}
 {:op :knob-candidate/keep :name "Lift" :value 0.75}          ; optional :knob-id
 {:op :knob-candidate/discard}
@@ -168,7 +205,7 @@ All surfaces send the same owner commands with the usual receipts.
   `:candidate-status` `:ready` or `:insufficient`. `:size` is the two link-count
   bounds (2–8) in either order and is kept as `[min max]`.
 - **Refusals** carry a `:code`: `:invalid-seed`, `:unknown-character`,
-  `:invalid-size`, `:unknown-link`, `:duplicate-destination`,
+  `:invalid-size`, `:invalid-types`, `:unknown-link`, `:duplicate-destination`,
   `:unsupported-generator`, or `:invalid-knob-candidate` for other malformed
   input.
 - **Reroll** tries the next seeds until the character or destination set
@@ -203,8 +240,9 @@ All surfaces send the same owner commands with the usual receipts.
 A kept knob stores `:recipe`:
 
 ```clojure
-{:generator 3 :seed 13 :character :colour
+{:generator 4 :seed 13 :character :colour
  :size [3 6] :cue-ids [...]              ; when given
+ :types [:boolean :enum :number]         ; when given
  :avoid [{:kind :param :cue-id :strobe :param :rate}] ; knob-driven destinations left out
  :include-knob-driven? true              ; when made with sharing
  :personality {:id :squircle :version 1} ; when a feel shaped it
@@ -230,6 +268,15 @@ candidates never drove an integer parameter. A version 1 or 2 recipe still
 replays that way, leaving integer parameters out (and keeping integers that
 cannot step in the pool, whose size feeds the draws), and a show without
 integer parameters generates the same links under versions 2 and 3.
+
+Version 4 (#667) generates enum, boolean and vector destinations, keeps `:step`
+grids and gives stepped links the stepped envelope. It draws nothing extra
+for numbers and colours, so a show without the new types or `:step` generates
+version 3's links with the envelope added to the stepped ones. A version 1–3
+recipe replays with numbers, integers and colours only and no envelope;
+`tolglow.knob-candidates.golden-test` checks 1080 version 1–3 candidates
+drawn by master's generator before version 4 (`v3_golden.edn`), on a show
+with every type and a number whose `:step` is wider than its range.
 
 ## Room audition
 
@@ -307,6 +354,20 @@ audition** instead of the scene Apply buttons. **Reroll**, **Drop** (a link),
 A kept knob with a recipe appears under **Repeat a kept knob**. A selection with
 too few parameters shows the explanation and every excluded parameter.
 
+Type chips (**Numbers**, **Integers**, **Colours**, **Vectors**, **Choices**,
+**Switches**) restrict the destination types, sent as `:types`; none pressed
+means every type. **Add a destination to the candidate** under the links is
+the knobs panel's typed picker: choose any running destination, its endpoints
+in its own type (declared values for a choice, off/on for a switch, components
+for a colour or vector), steps, attack and release, and select **Link**. It
+sends `:knob-candidate/link`, so the link is validated by the knob API and
+recorded in the recipe, and the sweep then auditions it in the Room with the
+rest. A link row shows its envelope.
+
+The audition shows where the candidate settles at the sweep value: links
+resolve at once there, envelopes left out, which is the step a kept knob
+reaches once its envelope has moved.
+
 While the sweep is dragged one audition is in flight; moves made meanwhile
 collapse into the newest value, sent when the receipt arrives. A REPL or agent
 generation or audition moves the open panel and slider.
@@ -318,6 +379,24 @@ The `knob_candidate` tool takes `op` (`generate`, `reroll`, `audition`, `link`,
 commands with the agent run as source. `inspect_show` returns the
 `:knob-candidates` projection, so an agent reads the candidate, its
 explanation or why too few parameters were eligible the same way.
+
+The `knob` tool (#667) covers the whole loop over every destination type in
+one declaration: `propose` (generate, with `types` as well as the generate
+fields), `reroll`, `audition`, `keep` and `discard` for the draft; `link` and
+`unlink` on the draft, or on the kept knob that `knob-id` names; and `create`,
+`rename`, `remove`, `set` and `nudge` (`delta`) on kept knobs, which change live
+output like `set_parameter`. `remove`, and `unlink` or a link replacement on a
+kept knob, work only on knobs the same agent conversation created
+(`:created-by`); the knob reducer refuses them for any agent source with
+`:not-agent-knob`. The operator's knobs can still gain links, be renamed and
+be turned. A link the tool adds to a stepped destination gets the stepped
+envelope, as from the REPL and Studio. The show merges the
+command envelope last, so tool fields never replace its source or command ID. `tolglow.knob-candidates/knob-tool-command`
+translates a call into exactly one `:knob-candidate/*` or `:knob/*` command,
+so it is validated and applied like the REPL and Studio. A knob ID sent as
+text also finds a knob the REPL created with a keyword ID, and enum endpoints
+sent as text become the declared values. `inspect_show` returns `:knobs` with
+every link's resolved value.
 
 ## Verification
 
@@ -341,6 +420,36 @@ explanation or why too few parameters were eligible the same way.
   recipe repeat leaving out knob-driven destinations.
 - `dev/tolglow/bench_knob_candidate_sweep.clj` measures the owner tick and the
   Room frame while a candidate is swept on the showcase rig (below).
+- `tolglow.knob-typed-destinations-test` (#667), through the real generator,
+  knob API and show owner: every type drafted within its schema over 300
+  seeds, stepped links with the stepped envelope and no hysteresis; `:types`;
+  older recipes without the new types or envelopes;
+  - scheduled steps against per-frame evaluation: one enveloped knob turned up,
+    retargeted down and up again, and the same links without envelopes turned
+    every frame to the first run's smoothed level. Committed values and
+    captured packets match on all 90 frames, and stepped links were evaluated
+    161 times instead of 546;
+  - a noisy input: twenty one-frame spikes to 0.95 from 0.3 change no stepped
+    destination and commit nothing for them, while a sustained move does;
+  - a sweep that is monotone, visits each step once and settles on the plain
+    step at the knob value, by one turn and by a hand sweep;
+  - retargets mid-move, up and down, by one step and by several: the level
+    carries on from where it was, no step is skipped or committed twice;
+  - Push coarse detents on a 64-step integer and a 12-value choice reach both
+    endpoints; the same crossings at the same beats at 70 and 180 BPM; a
+    stopped transport holds a move and resumes it without catching up;
+  - a knob look recalls the captured step; envelope state saved, validated
+    and dropped for links that went; bounded grids; a stepped `:param/ramp`
+    whose frames look values up and whose takeover carries on from the exact
+    position; the Room audition; and the `knob` agent tool, including the
+    refusal to remove the operator's knobs.
+- `dev/tolglow/qa/knob_typed_browser.clj` drives the production Studio build in
+  headless Chrome on a cue with a parameter of every type: a candidate limited
+  to choices, switches and numbers, a choice added from the picker with its
+  envelope and swept in the Room, a switch linked to a kept knob and turned
+  live until its envelope settles, phone width, then a REPL knob with a vector
+  link followed by the open page.
+  `CHROMIUM_PATH=... lein with-profile +dev run -m tolglow.qa.knob-typed-browser target/knob-typed-browser 19701`
 - `dev/tolglow/qa/knob_candidates_browser.clj` drives the production Studio
   build in headless Chrome against the showcase rig: generate, sweep, reroll
   twice, keep, too few parameters, phone width, then a REPL generation and
@@ -382,8 +491,15 @@ the show.
 - Push: a candidate cannot be swept from an encoder yet; the linked-knob Push
   binding it would reuse is itself waiting on an Afterglow adapter change
   ([linked knobs](linked-knobs.md#push)).
-- Enum, boolean and vector destinations are not generated; they can be linked
-  by hand after keeping.
+- Vectors move along a straight segment (eased by the curve), not a path
+  through several points, and per-component links to one vector parameter are
+  not offered.
+- Envelopes are linear slews; a velocity-continuous follower for continuous
+  links is #914. The Push
+  encoder path is tested only through the shared `:knob/nudge` command.
+- A `:param/ramp` schedules its steps only for an integer destination with a
+  linear curve; other ramps sample every frame as before. Enum and boolean
+  parameters still cannot ramp.
 - Musical subdivisions step only on beat-unit schemas; showcase periods such as
   `:bars` have plain number schemas and move continuously between musical
   endpoints.

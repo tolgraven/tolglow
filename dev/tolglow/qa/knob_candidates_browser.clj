@@ -41,7 +41,9 @@
                    (str "bind " cue " " param)))
       (browser! origin directory "browser")
       ;; REPL -> Studio: the open page follows a REPL generation and audition.
-      (repl! {:op :knob-candidate/generate :seed 30 :character :colour})
+      ;; The kept Lift knob drives the colour destinations, which a fresh
+      ;; candidate leaves out since #737; share them so a Colour candidate exists.
+      (repl! {:op :knob-candidate/generate :seed 30 :character :colour :include-knob-driven? true})
       (repl! {:op :knob-candidate/audition :value 0.2})
       (println "REPL candidate:" (select-keys (get-in (show/snapshot host) [:knob-candidates :candidate])
                                               [:id :seed :character]))
