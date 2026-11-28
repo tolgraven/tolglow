@@ -137,8 +137,8 @@
     base))
 
 (defn- connect
-  "Open a WebSocket on path. A state message carries ::frame-number from the
-  client's applied view. :auto-ack? acknowledges each one as soon as it is
+  "Open a WebSocket on path. A state message carries ::frame-number and ::view
+  from the client's applied view. :auto-ack? acknowledges each one as soon as it is
   applied, as Studio does; otherwise the test decides when to acknowledge."
   [port path & {:keys [auto-ack?]}]
   (let [messages (LinkedBlockingQueue.) latest (atom nil) closed (promise) buffer (StringBuilder.) view (volatile! nil)
@@ -150,7 +150,7 @@
                        (let [message (transit/decode (.toString buffer))]
                          (.setLength buffer 0)
                          (vswap! view apply-patch message)
-                         (let [message (assoc message ::frame-number (:frame-number @view))]
+                         (let [message (assoc message ::frame-number (:frame-number @view) ::view @view)]
                            (reset! latest message)
                            (.offer messages message))
                          (when (and auto-ack? (:token message))
@@ -259,11 +259,14 @@
       (finally (deliver release true)))))
 
 (deftest a-blocked-remote-query-leaves-output-untouched
-  ;; A Studio query surface samples each committed state on the stream worker.
-  ;; The timeline surface stands in for any slow sampler. [:clock/beat] is a
-  ;; graph lease whose change listener runs inside the owner's publication.
+  ;; A Studio query surface samples each committed state on the stream's
+  ;; sampler pool. The timeline surface stands in for any slow sampler.
+  ;; [:clock/beat] is a graph lease whose change listener runs inside the
+  ;; owner's publication. A second client without the query keeps its frames
+  ;; while the sampler is blocked (#906).
   (let [frames (range 48)
         expected (baseline frames)
+        timeline [:timeline/view {:bars 2}]
         entered (promise) release (promise) finished (promise)
         slow-timeline (fn [& _]
                         (deliver entered (Thread/currentThread))
@@ -276,26 +279,40 @@
            (fn [{:keys [runtime] :as fixture}]
              (with-studio runtime
                (fn [port]
-                 (let [client (state-client port "remote-queries")]
+                 (let [client (state-client port "remote-queries")
+                       spectator (state-client port "spectator" :auto-ack? true)]
                    (try
                      (acknowledge client (receive client))
-                     (send-control client {:op :queries :queries [[:timeline/view {:bars 2}] [:clock/beat]]})
+                     (send-control client {:op :queries :queries [timeline [:clock/beat]]})
                      (let [sampler (deref entered bound-ms nil)]
-                       (is (instance? Thread sampler) "The stream worker entered the slow sampler")
+                       (is (instance? Thread sampler) "A sampler thread entered the slow sampler")
                        (let [observed (drive! fixture frames)]
                          (check-packets expected observed)
-                         (is (not (realized? finished)) "The sampler stayed blocked across every frame")))
-                     (deliver release true)
-                     ;; The released pass completes the view it was sampling, and
-                     ;; its acknowledgement brings the newest frame, not a backlog.
-                     (let [sampled (receive client)]
-                       (is (= {:value {:sampled? true}} (get-in sampled [:view :subscriptions [:timeline/view {:bars 2}]])))
-                       (is (contains? (get-in sampled [:view :subscriptions]) [:clock/beat]))
-                       (acknowledge client sampled)
-                       (let [latest (receive client)]
-                         (is (= (frame-number runtime) (::frame-number latest)))
-                         (is (empty? (drain client)))))
-                     (finally (close-clients! [client])))))))))
+                         (is (not (realized? finished)) "The sampler stayed blocked across every frame")
+                         (eventually "the spectator to receive the newest frame"
+                                     (fn [] (= (frame-number runtime) (::frame-number @(:latest spectator)))))))
+                     ;; The pass that started the sample waits a bounded time,
+                     ;; then sends the other fields with the timeline unavailable.
+                     (let [stale (receive client)]
+                       (is (= :late (get-in stale [::view :subscriptions timeline :stale :reason])))
+                       (is (contains? (get-in stale [::view :subscriptions]) [:clock/beat]))
+                       (deliver release true)
+                       (acknowledge client stale))
+                     ;; Once released, acknowledgements bring the newest frame
+                     ;; with a fresh sample, not a backlog.
+                     (let [latest (loop [n 0]
+                                    (let [message (receive client)]
+                                      (acknowledge client message)
+                                      (if (or (and (= {:value {:sampled? true}} (get-in message [::view :subscriptions timeline]))
+                                                   (= (frame-number runtime) (::frame-number message)))
+                                              (> n 20))
+                                        message
+                                        (recur (inc n)))))]
+                       (is (= {:value {:sampled? true}} (get-in latest [::view :subscriptions timeline])))
+                       (is (contains? (get-in latest [::view :subscriptions]) [:clock/beat]))
+                       (is (= (frame-number runtime) (::frame-number latest)))
+                       (is (empty? (drain client))))
+                     (finally (close-clients! [client spectator])))))))))
       (finally (deliver release true)))))
 
 (deftest blocked-frame-consumers-leave-output-untouched

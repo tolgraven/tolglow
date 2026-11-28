@@ -1,11 +1,17 @@
 (ns tolglow.studio.query-stream
   "Reference-counted websocket demand for the show's registered reactive signals.
   Only the delivery worker installs leases; graph callbacks publish immutable
-  values and wake it. A disconnected socket never owns the underlying graph."
+  values and wake it. A disconnected socket never owns the underlying graph.
+
+  Surface leases with a :sample! function sample on a small bounded pool, never
+  on the delivery worker: at most one sample per lease runs at a time, and each
+  committed source is sampled at most once. A slow sample is awaited for a
+  bounded deadline and then delivered late as a :stale result (#906)."
   (:require [afterglow.reactive :as reactive]
             [tolglow.registry :as registry])
   (:import [java.lang System$Logger System$Logger$Level]
-           [java.util.concurrent Executors ThreadFactory ThreadPoolExecutor TimeUnit]
+           [java.util.concurrent Executors RejectedExecutionException SynchronousQueue ThreadFactory
+            ThreadPoolExecutor TimeUnit]
            [java.util.concurrent.atomic AtomicInteger]))
 
 (def defaults
@@ -18,26 +24,195 @@
 
 (def ^:private unavailable-lease {:result (delay {:error :unavailable})})
 
+(def ^:private sampler-threads
+  "The most surface samples that run at once across one store. A further
+  sample is refused and counted as :busy until a sampler returns."
+  8)
+
+(def default-sample-wait-ms
+  "How long a delivery pass waits for the samples it started before it sends
+  their clients the previous result marked :stale."
+  50)
+
+(def ^:private sample-counts {:completed 0 :failed 0 :late 0 :skipped 0 :busy 0})
+
+(defn- sampler-executor ^ThreadPoolExecutor []
+  ;; No queue: a sample either gets a thread now or is refused. Idle threads
+  ;; exit after a second, so a store without demand holds none.
+  (ThreadPoolExecutor. 0 (int sampler-threads) 1 TimeUnit/SECONDS (SynchronousQueue.)
+                       (reify ThreadFactory
+                         (newThread [_ task] (doto (Thread. task "tolglow-query-sample") (.setDaemon true))))))
+
 (defn create
   "Create a query store. Shutdown can retry a surface's detach callback once
-  after an exception. Surface close callbacks run once even if they throw."
+  after an exception. Surface close callbacks run once even if they throw.
+  :sample-wait-ms bounds how long a delivery pass waits for a surface sample."
   ([get-graph wake!] (create get-graph wake! {}))
-  ([get-graph wake! surfaces]
-   {:get-graph get-graph :wake! wake! :state (atom {}) :surfaces surfaces}))
+  ([get-graph wake! surfaces] (create get-graph wake! surfaces {}))
+  ([get-graph wake! surfaces {:keys [sample-wait-ms] :or {sample-wait-ms default-sample-wait-ms}}]
+   {:get-graph get-graph :wake! wake! :state (atom {}) :surfaces surfaces
+    :sampler (delay (sampler-executor)) :sample-wait-ms sample-wait-ms :totals (atom sample-counts)}))
 
-(defn read-result [lease source]
-  (if-let [sample! (:sample! lease)]
-    (let [slot (:last lease)]
-      (locking slot
-        (let [last @slot]
-          (when-not (= ::retired last)
-            (let [source (if-let [current (:source! lease)] (current) source)]
-              (if (and last (identical? source (:source last))) (:value last)
-                (let [value (try {:value (sample! source)}
-                                 (catch Exception _ {:error :unavailable}))]
-                  (vreset! slot {:source source :value value})
-                  value)))))))
-    @(:result lease)))
+;; Surface sampling ------------------------------------------------------------
+;;
+;; A sampled lease's :last slot holds, under its own lock, the last completed
+;; sample (:source, :frame, :value), the running :flight, :late? when a sample
+;; overran the deadline, :busy? when the pool refused the latest start, and its
+;; :counts. ::retired fences the lease; :retiring? defers that fence, with the
+;; lease's retirement, until the running sample returns.
+
+(defn- count-in [state outcome]
+  (update-in state [:counts outcome] (fnil inc 0)))
+
+(defn- total! [store outcome]
+  (swap! (:totals store) update outcome inc))
+
+(defn- finish-sample! [store lease flight outcome]
+  (let [slot (:last lease)
+        on-time? (<= (- (System/nanoTime) (:started flight))
+                     (.toNanos TimeUnit/MILLISECONDS (:sample-wait-ms store)))
+        kind (if (:error outcome) :failed :completed)
+        retire! (locking slot
+                  (let [state @slot]
+                    (if (:retiring? state)
+                      (do (vreset! slot ::retired) (:on-retire state))
+                      (do (vreset! slot (cond-> (-> state
+                                                    (assoc :source (:source flight) :frame (:frame flight) :value outcome)
+                                                    (dissoc :flight)
+                                                    (count-in kind))
+                                          on-time? (assoc :late? false)))
+                          nil))))]
+    (total! store kind)
+    (deliver (:done flight) true)
+    (if retire! (retire!) ((:wake! store)))))
+
+(defn- run-sample! [store lease flight]
+  (finish-sample! store lease flight
+                  (try {:value ((:sample! lease) (:source flight))}
+                       (catch Throwable _ {:error :unavailable}))))
+
+(defn- begin-flight! [store lease source committed]
+  (let [slot (:last lease)
+        [flight late?] (locking slot
+                         (let [state @slot]
+                           (cond
+                             (or (not (map? state)) (:retiring? state)) nil
+                             (identical? source (:source state)) nil
+
+                             (:flight state)
+                             ;; Never a second concurrent sample of one lease.
+                             (do (when-not (or (identical? source (:source (:flight state)))
+                                               (identical? source (:skipped state)))
+                                   (vswap! slot #(-> % (assoc :skipped source) (count-in :skipped)))
+                                   (total! store :skipped))
+                                 nil)
+
+                             :else
+                             (let [flight {:source source :frame (get-in committed [:model :frame-number])
+                                           :started (System/nanoTime) :done (promise)}]
+                               (vswap! slot assoc :flight flight :busy? false)
+                               [flight (:late? state)]))))
+        started? (when flight
+                   (try (.execute ^ThreadPoolExecutor @(:sampler store) ^Runnable #(run-sample! store lease flight))
+                        true
+                        (catch RejectedExecutionException _
+                          (locking slot
+                            (when (map? @slot)
+                              (vswap! slot #(-> % (dissoc :flight) (assoc :busy? true) (count-in :busy)))))
+                          (total! store :busy)
+                          false)))]
+    {:lease lease :source source :flight (when started? flight) :await? (and started? (not late?))}))
+
+(defn- begin-sample! [store lease committed]
+  (if-not (:sample! lease)
+    {:lease lease}
+    (let [source (try (if-let [current (:source! lease)] (current) committed)
+                      (catch Exception _ ::source-failed))]
+      (if (= ::source-failed source)
+        {:lease lease :failed? true}
+        (begin-flight! store lease source committed)))))
+
+(defn sample!
+  "Start this pass's sample of each leased surface, keyed like leases. Graph
+  leases need no sample. Returns entries for result and await-samples!."
+  [store leases committed]
+  (into {} (map (fn [[query lease]] [query (begin-sample! store lease committed)])) leases))
+
+(defn awaiting
+  "The queries whose fresh samples a pass should wait for."
+  [entries]
+  (into #{} (keep (fn [[query entry]] (when (:await? entry) query))) entries))
+
+(defn await-samples!
+  "Wait, at most the store's sampling deadline, for the samples this pass
+  started. A sample that overruns is counted late, and its lease is not
+  waited for again until one of its samples finishes inside the deadline."
+  [store entries]
+  (let [deadline (+ (System/nanoTime) (.toNanos TimeUnit/MILLISECONDS (:sample-wait-ms store)))]
+    (doseq [{:keys [lease flight await?]} (vals entries) :when await?]
+      (let [remaining (max 0 (.toMillis TimeUnit/NANOSECONDS (- deadline (System/nanoTime))))]
+        (when-not (deref (:done flight) remaining false)
+          (let [slot (:last lease)
+                counted? (locking slot
+                           (when (and (map? @slot) (identical? flight (:flight @slot)))
+                             (vswap! slot #(-> % (assoc :late? true) (count-in :late)))
+                             true))]
+            (when counted? (total! store :late))))))))
+
+(defn- stale-marker [state]
+  (cond-> {:reason (if (:busy? state) :busy :late)}
+    (:frame state) (assoc :frame-number (:frame state))))
+
+(defn result
+  "A query's result for this pass: the graph value, the fresh sample of this
+  pass's source, or the last completed sample (or :error :unavailable) with
+  :stale {:reason :late|:busy :frame-number n} while sampling is behind.
+  nil once the lease retires."
+  [{:keys [lease source failed?]}]
+  (cond
+    failed? {:error :unavailable}
+    (not (:sample! lease)) @(:result lease)
+    :else
+    (let [state (let [slot (:last lease)] (locking slot @slot))]
+      (when (and (map? state) (not (:retiring? state)))
+        (if (identical? source (:source state))
+          (:value state)
+          (assoc (or (:value state) {:error :unavailable}) :stale (stale-marker state)))))))
+
+(defn- defer-retirement!
+  "Fence lease against new samples. While a sample runs, retire! runs on its
+  thread once it returns, and this answers true. Otherwise answers false."
+  [lease retire!]
+  (if-let [slot (:last lease)]
+    (locking slot
+      (let [state @slot]
+        (cond
+          (and (map? state) (:retiring? state)) true
+          (and (map? state) (:flight state)) (do (vswap! slot assoc :retiring? true :on-retire retire!) true)
+          :else (do (vreset! slot ::retired) false))))
+    false))
+
+(defn sampling-status
+  "Totals of completed, failed, late, skipped and busy surface samples, and
+  for each leased surface whether a sample is in flight and the :stale marker
+  Studio receives while it is behind. Graph leases are not sampled."
+  [store]
+  (let [state @(:state store)
+        status (fn [lease]
+                 (let [s (let [slot (:last lease)] (locking slot @slot))]
+                   (if (map? s)
+                     (cond-> (merge {:counts (merge sample-counts (:counts s)) :in-flight? (boolean (:flight s))}
+                                    (select-keys s [:frame]))
+                       (or (:late? s) (:busy? s)) (assoc :stale (stale-marker s))
+                       (:retiring? s) (assoc :retiring? true))
+                     {:retired? true})))
+        sampler @(:sampler store)]
+    {:totals @(:totals store)
+     :threads {:active (.getActiveCount ^ThreadPoolExecutor sampler) :live (.getPoolSize ^ThreadPoolExecutor sampler)
+               :max sampler-threads}
+     :queries (into {}
+                    (keep (fn [[query lease]] (when (:sample! lease) [query (status lease)])))
+                    (concat (:leases state) (map (fn [[q r]] [q (:lease r)]) (:retiring state))))}))
 
 (defn validate [queries]
   (when-not (and (vector? queries) (<= (count queries) 32)
@@ -54,8 +229,8 @@
       false)))
 
 (defn- detach-lease! [query lease]
-  ;; A delivery pass may already hold this lease. Finish any active sample
-  ;; and prevent that pass from starting a new one after detachment.
+  ;; Prevent a delivery pass from starting a sample after detachment. Callers
+  ;; defer retirement past a running sample, so none runs now.
   (when-let [slot (:last lease)]
     (locking slot (vreset! slot ::retired)))
   (cleanup-safely! query "detach" (:detach! lease)))
@@ -111,7 +286,12 @@
   ;; Shutdown can take queued entries from a socket or delivery pass. The
   ;; thread already executing an entry keeps ownership of that callback.
   (when (compare-and-set! owner nil (Thread/currentThread))
-    (complete-retirement! store query lease retirement (detach-lease! query lease))))
+    (let [retire! #(complete-retirement! store query lease retirement (detach-lease! query lease))]
+      ;; A blocked sample keeps its lease, and its close, until it returns.
+      ;; The sampling thread then owns the retirement; this thread moves on.
+      (if (defer-retirement! lease (fn [] (reset! owner (Thread/currentThread)) (retire!)))
+        (compare-and-set! owner (Thread/currentThread) ::sampling)
+        (retire!)))))
 
 (defn- cleanup-executor ^ThreadPoolExecutor [^String name]
   (doto ^ThreadPoolExecutor (Executors/newFixedThreadPool
@@ -139,7 +319,13 @@
         (doseq [[query {:keys [lease owner] :as retirement}] queued]
           (.execute detach-executor
                     ^Runnable #(try
-                                 (when (compare-and-set! owner nil (Thread/currentThread))
+                                 (when (and (compare-and-set! owner nil (Thread/currentThread))
+                                            (or (not (defer-retirement!
+                                                       lease (fn []
+                                                               (reset! owner (Thread/currentThread))
+                                                               (complete-retirement! store query lease retirement
+                                                                                     (detach-lease! query lease)))))
+                                                (do (compare-and-set! owner (Thread/currentThread) ::sampling) false)))
                                    (let [detached? (detach-lease! query lease)]
                                      (.execute release-executor
                                                ^Runnable (fn []
@@ -173,6 +359,8 @@
                                    (when detach! #(cleanup-safely! query "retry detach for" detach!))))
                            failed)
          completions (start-terminal-cleanups! store retiring detachments releases)]
+     ;; Running samples finish on their own threads; idle ones exit.
+     (when store (.shutdown ^ThreadPoolExecutor @(:sampler store)))
      (when (and wait? (not reentrant?))
        (await-retirements! deadline (cond-> (into (vec completions) (map :done) (vals retiring))
                                       reconciling (conj (:done reconciling))))))
@@ -222,7 +410,7 @@
 (defn- open-lease [store system query public]
   (if-let [open! (get (:surfaces store) (first query))]
     (try
-      (let [{:keys [observe!] :as lease} (assoc (open! query) :last (volatile! nil))]
+      (let [{:keys [observe!] :as lease} (assoc (open! query) :last (volatile! {:source ::none}))]
         (try
           (cond-> lease
             (and observe! (not (:closed? @(:state store)))) (assoc :detach! (observe! (:wake! store))))

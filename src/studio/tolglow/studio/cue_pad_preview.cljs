@@ -1,6 +1,7 @@
 (ns tolglow.studio.cue-pad-preview
   (:require [re-frame.core :as rf]
-            [reagent.core :as r]))
+            [reagent.core :as r]
+            [tolglow.studio.state-socket :as socket]))
 
 (defn- foreground?
   "Whether `doc`, the document the grid is in, is visible and has focus. A Cues
@@ -54,8 +55,8 @@
 
 (defn fault-lines
   "What the preview fault notice says, from the cue pad query result and the
-  show status: the whole query or its lease failing, each faulted cue on the
-  page (a few by name, then a count) and response-sample lease faults (the
+  show status: the whole query or its lease failing, sampling that is behind
+  (a :stale result), each faulted cue on the page (a few by name, then a count) and response-sample lease faults (the
   messages of the records show/response-sample-faults returns at the REPL,
   and whether each repeated). Empty when nothing
   failed. A faulted cue has no preview colour; this says why."
@@ -64,7 +65,9 @@
         cue-faults (sort-by (comp text-id key) (get-in result [:value :faults]))
         extra (- (count cue-faults) listed-faults)]
     (cond-> []
-      (:error result)
+      (:stale result)
+      (conj (socket/stale-note "The pad preview for this page" result))
+      (and (:error result) (not (:stale result)))
       (conj "Pad previews unavailable: the show did not sample this page.")
       refused
       (conj (str "Pad previews unavailable: " (:message refused) "."))

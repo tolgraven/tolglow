@@ -27,7 +27,8 @@
            [java.net.http HttpClient WebSocket WebSocket$Listener]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
-           [java.util.concurrent CountDownLatch LinkedBlockingQueue TimeUnit]))
+           [java.util.concurrent CountDownLatch LinkedBlockingQueue TimeUnit]
+           [java.util.concurrent.atomic AtomicInteger]))
 
 (defrecord TestColour [red green blue])
 
@@ -1299,3 +1300,152 @@
         (is (empty? (primitive-array-paths (studio/browser-snapshot runtime {} (constantly nil)) [])))
         (is (= stream-view (transit/decode (transit/encode stream-view)))))
       (finally (show/stop! runtime)))))
+
+;; Query sampling isolation (#906) ---------------------------------------------
+
+(def ^:private bound-ms
+  "Upper bound for any single wait in the sampling tests. Never a threshold."
+  10000)
+
+(defn- eventually [description predicate]
+  (let [deadline (+ (System/nanoTime) (* 1000000 bound-ms))]
+    (loop []
+      (or (predicate)
+          (if (< (System/nanoTime) deadline)
+            (do (Thread/sleep 5) (recur))
+            (throw (ex-info (str "Timed out waiting for " description) {})))))))
+
+(defn- sample-threads []
+  (count (filter #(and (= "tolglow-query-sample" (.getName ^Thread %)) (.isAlive ^Thread %))
+                 (keys (Thread/getAllStackTraces)))))
+
+(defn- follower
+  "Receive and acknowledge a client's messages, as Studio does, until done?
+  holds for its applied view. Returns that view."
+  [client]
+  (let [view (volatile! nil)]
+    (fn [done?]
+      (loop [n 0]
+        (let [message (receive client)]
+          (acknowledge client message)
+          (let [applied (vswap! view apply-patch message)]
+            (cond (done? applied) applied
+                  (< n 400) (recur (inc n))
+                  :else (throw (ex-info "The expected view never arrived" {:view applied})))))))))
+
+(defn- frame-of [committed] (get-in committed [:model :frame-number]))
+
+(deftest a-blocked-sampler-delays-only-the-clients-that-lease-its-query
+  ;; reader leases a slow and a fast surface, other only the fast one and the
+  ;; spectator none. The slow sampler blocks from frame 1 until released.
+  (let [block-from (atom Long/MAX_VALUE)
+        entered (promise) release (promise)
+        running (AtomicInteger.) overlaps (atom 0) slow-frames (atom []) closes (atom 0)
+        hub (stream/create (fn [{:keys [model]}] (assoc model :runtime-id "server")) (constantly nil)
+                           {:runtime-id "server" :get-graph (constantly nil)
+                            :surfaces {::slow (fn [_]
+                                                {:sample! (fn [committed]
+                                                            (when (> (.incrementAndGet running) 1) (swap! overlaps inc))
+                                                            (try
+                                                              (swap! slow-frames conj (frame-of committed))
+                                                              (when (>= (frame-of committed) @block-from)
+                                                                (deliver entered true)
+                                                                (deref release bound-ms nil))
+                                                              {:frame (frame-of committed)}
+                                                              (finally (.decrementAndGet running))))
+                                                 :close! #(swap! closes inc)})
+                                       ::fast (fn [_] {:sample! (fn [committed] {:frame (frame-of committed)})})}})
+        server (jetty/run-jetty (wrap-params #(stream/response hub %)) {:host "127.0.0.1" :port 0 :join? false})
+        model {:show-id :fixture-show :epoch 0 :revision 0 :frame-number 0}
+        publish! #(stream/publish! hub {:model (assoc model :frame-number %)})
+        baseline-threads (sample-threads)
+        slow #(get-in % [:subscriptions [::slow]])
+        fast #(get-in % [:subscriptions [::fast]])]
+    (try
+      (publish! 0)
+      (let [reader (connect server "reader") other (connect server "other") spectator (connect server "spectator")
+            [follow-reader follow-other follow-spectator] (map follower [reader other spectator])]
+        (try
+          (doseq [follow [follow-reader follow-other follow-spectator]] (follow some?))
+          (send-control reader {:op :queries :queries [[::slow] [::fast]]})
+          (send-control other {:op :queries :queries [[::fast]]})
+          (follow-reader #(and (= {:value {:frame 0}} (slow %)) (= {:value {:frame 0}} (fast %))))
+          (follow-other #(= {:value {:frame 0}} (fast %)))
+          (reset! block-from 1)
+          (publish! 1)
+          (is (deref entered bound-ms false) "The slow sampler blocks on frame 1")
+          (doseq [frame (range 2 21)] (publish! frame) (Thread/sleep 5))
+          (testing "clients without the blocked query keep receiving frames"
+            (is (= 20 (:frame-number (follow-spectator #(= 20 (:frame-number %))))))
+            (is (= {:value {:frame 20}} (fast (follow-other #(= {:value {:frame 20}} (fast %)))))))
+          (testing "its client gets the other fields and a stale marker for the blocked query"
+            (let [view (follow-reader #(and (= 20 (:frame-number %)) (= {:value {:frame 20}} (fast %))))]
+              (is (= {:value {:frame 0} :stale {:reason :late :frame-number 0}} (slow view)))))
+          (is (= 1 (.get running)) "The sampler is still blocked")
+          (let [{:keys [totals queries threads]} (stream/sampling-status hub)]
+            (is (= {:reason :late :frame-number 0} (get-in queries [[::slow] :stale])))
+            (is (true? (get-in queries [[::slow] :in-flight?])))
+            (is (pos? (:late totals)) "The overrun is counted late")
+            (is (pos? (:skipped totals)) "Frames committed while it was blocked are counted skipped")
+            (is (<= 1 (:live threads) (:max threads))))
+          (deliver release true)
+          (testing "the released query recovers to the newest frame"
+            (is (= {:value {:frame 20}} (slow (follow-reader #(= {:value {:frame 20}} (slow %)))))))
+          (is (zero? @overlaps) "A lease never samples concurrently with itself")
+          (is (apply distinct? @slow-frames) "Each committed source is sampled at most once")
+          (is (= [0 1 20] @slow-frames) "Frames committed while it was blocked were skipped, not queued")
+          (finally
+            (doseq [client [reader other spectator]] (.abort ^WebSocket (:socket client))))))
+      (finally
+        (deliver release true)
+        (stream/close! hub)
+        (.stop server)))
+    (is (= 1 @closes) "The slow lease closes once")
+    (eventually "sampler threads to exit" #(<= (sample-threads) baseline-threads))
+    (is (zero? (get-in (stream/sampling-status hub) [:threads :live])))))
+
+(deftest blocked-samplers-hold-a-bounded-number-of-threads
+  ;; Ten queries block at once. The pool runs eight; the rest are refused and
+  ;; marked :busy until a thread is free. No sample is queued behind them.
+  (let [release (promise) entered (AtomicInteger.)
+        queries (mapv #(vector ::blocking %) (range 10))
+        hub (stream/create (fn [{:keys [model]}] (assoc model :runtime-id "server")) (constantly nil)
+                           {:runtime-id "server" :get-graph (constantly nil)
+                            :surfaces {::blocking (fn [[_ i]]
+                                                    {:sample! (fn [committed]
+                                                                (.incrementAndGet entered)
+                                                                (deref release bound-ms nil)
+                                                                {:query i :frame (frame-of committed)})})}})
+        server (jetty/run-jetty (wrap-params #(stream/response hub %)) {:host "127.0.0.1" :port 0 :join? false})
+        model {:show-id :fixture-show :epoch 0 :revision 0 :frame-number 0}
+        publish! #(stream/publish! hub {:model (assoc model :frame-number %)})
+        baseline-threads (sample-threads)]
+    (try
+      (publish! 0)
+      (let [reader (connect server "reader&view=queries") spectator (connect server "spectator")
+            [follow-reader follow-spectator] (map follower [reader spectator])]
+        (try
+          (follow-reader some?)
+          (follow-spectator some?)
+          (send-control reader {:op :queries :queries queries})
+          (let [view (follow-reader #(= 10 (count (:subscriptions %))))
+                reasons (frequencies (map (comp :reason :stale) (vals (:subscriptions view))))]
+            (is (= {:late 8 :busy 2} reasons))
+            (is (every? #(= :unavailable (:error %)) (vals (:subscriptions view)))
+                "Nothing has completed, so each query is unavailable"))
+          (doseq [frame (range 1 6)] (publish! frame) (Thread/sleep 5))
+          (is (= 5 (:frame-number (follow-spectator #(= 5 (:frame-number %))))))
+          (let [{:keys [threads totals]} (stream/sampling-status hub)]
+            (is (= 8 (:live threads) (:max threads) (.get entered)))
+            (is (<= 2 (:busy totals))))
+          (deliver release true)
+          (let [view (follow-reader (fn [v] (every? #(= 5 (get-in % [:value :frame])) (vals (:subscriptions v)))))]
+            (is (= (set (range 10)) (set (map #(get-in % [:value :query]) (vals (:subscriptions view))))))
+            (is (not-any? :stale (vals (:subscriptions view)))))
+          (finally
+            (doseq [client [reader spectator]] (.abort ^WebSocket (:socket client))))))
+      (finally
+        (deliver release true)
+        (stream/close! hub)
+        (.stop server)))
+    (eventually "sampler threads to exit" #(<= (sample-threads) baseline-threads))))

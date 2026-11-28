@@ -91,6 +91,17 @@
   []
   (get-in (frame-stream/baseline :remote) [:value :results]))
 
+(defn stale-note
+  "What to say about a remote query result the server marked :stale (#906):
+  its sampler is still running past the delivery deadline, or waiting for a
+  free sampler thread, so the result is its last completed sample, from the
+  frame named, or none. nil for a current result. The REPL reads the same
+  marker with (tolglow.studio/query-sampling runtime)."
+  [subject {:keys [stale]}]
+  (when stale
+    (str subject " " (if (= :busy (:reason stale)) "is waiting for a free sampler" "is still being sampled")
+         (if-let [frame (:frame-number stale)] (str "; showing frame " frame) "; nothing sampled yet") ".")))
+
 (rf/reg-cofx :studio/remote (fn [cofx _] (assoc cofx :remote (remote-results))))
 
 (rf/reg-sub-raw :studio/remote-result

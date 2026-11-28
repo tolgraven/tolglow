@@ -16,6 +16,14 @@
          (pad-preview/fault-lines {:value {:colors {} :fault {:stage :lease :message "Visible cue preview limit reached"}}}
                                   cues []))))
 
+(deftest sampling-that-is-behind-is-said-with-the-frame-shown
+  ;; The server's :stale marker (#906), also in tolglow.studio/query-sampling.
+  (is (= ["The pad preview for this page is still being sampled; showing frame 12."]
+         (pad-preview/fault-lines {:value {:colors {:ember [1 0 0]}} :stale {:reason :late :frame-number 12}} cues [])))
+  (is (= ["The pad preview for this page is waiting for a free sampler; nothing sampled yet."]
+         (pad-preview/fault-lines {:error :unavailable :stale {:reason :busy}} cues []))
+      "an unavailable result that is only behind does not say the show refused the page"))
+
 (deftest faulted-cues-are-named-with-their-stage-and-message
   (testing "typed and text cue IDs both find their names"
     (is (= ["Ember cannot be compiled for its preview head: Invalid effect expression"
