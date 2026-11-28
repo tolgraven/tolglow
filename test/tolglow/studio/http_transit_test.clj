@@ -23,7 +23,8 @@
         form (request handler :post {"x-tolglow-form" "studio-v1"} (assoc payload :op "param/set"))]
     (is (= 200 (:status response)))
     (is (= "application/transit+json; charset=utf-8" (get-in response [:headers "Content-Type"])))
-    (is (= payload received))
+    ;; The listener names the issuer; the typed payload is otherwise unchanged.
+    (is (= (assoc payload :source {:adapter :web}) received))
     (is (= (type color) (type (:value received))))
     (is (= [:param/set :looks/blue color]
            ((juxt :op :id :value) (:received (transit/decode (:body form))))))

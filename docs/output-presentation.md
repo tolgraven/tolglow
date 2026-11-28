@@ -201,6 +201,57 @@ cover immutable buffer ownership, bounded completion storage, epoch/blackout/clo
 fencing and saved settings. This establishes functional concurrency, not a
 physical-device latency guarantee.
 
+## Preview and Studio consumers
+
+No preview or Studio consumer can hold back the owner, the output scheduler or
+the frame commit. Each one receives committed data through a bounded handoff
+and does its own work on its own thread:
+
+| Consumer | Handoff from the owner | When it stalls |
+| --- | --- | --- |
+| Studio state stream | Replace one latest-state reference and release a semaphore | Each client holds one unacknowledged view; its next view is the newest frame |
+| Studio query surfaces | Sampled by the stream worker; graph lease listeners only store the value and wake it | A blocked sampler delays that server's Studio clients, not output |
+| Debug stream | At most 16 pending event batches; older batches are dropped and their IDs leave a visible gap | One message per lane waits for its acknowledgement |
+| Event-subscriber middleware | Two workers with a 32-job queue and a deadline | A full queue rejects the callback with an error; the run waits without the owner |
+| Parameter frames, Room audition | Their own workers read committed snapshots; one audition frame in flight, skips counted | Mailbox drops and skips are counted |
+| Distributed compute (Room GPU) peer | Non-blocking 4-packet queue per socket | One frame waits up to `:gpu-budget-ms` and renders locally; the peer stays busy and gets no more jobs until it answers |
+| Push and browser displays, MIDI | Device sessions refresh on their own scheduler; a display transport keeps one pending view | Only that session waits |
+
+A restore or epoch change retires every device session. The sessions close on a
+dedicated retirement worker, in order, never on the render thread. A display or
+MIDI write that never returns keeps that session, and any later retirement,
+waiting there ([#905](https://github.com/tolgraven/tolglow/issues/905)). A
+restored device reopens after the earlier sessions have closed. A session's ID
+enters `:closing` in the same owner critical section that detaches it, and
+stays there until its close returns. `connect-device!` refuses that ID with
+`:code :device/closing`, so a new session cannot claim a port or display the
+old one still holds. `:status :device-retirement` reports `:pending`,
+`:retired`, `:failed` (a close threw), `:reopen-failed`, `:abandoned`, `:late`,
+`:closing` and the last error with its `:stage` (`:close` or `:reopen`).
+`stop!` waits up to one second for queued closes. A close still blocked after
+that keeps its device claimed until the write returns; `stop!` counts it as
+`:abandoned` and records a `:cleanup-error`. A retirement that a tick commits
+as `stop!` runs closes on its own daemon thread and is counted as `:late`. Studio does not show these fields
+yet ([#907](https://github.com/tolgraven/tolglow/issues/907)).
+
+`tolglow.studio.output-isolation-test` drives the real owner and scheduler with
+an injected physical clock and a capture sink. Each frame changes the grand
+master. The consumer stays blocked or unacknowledged for the whole run, and the
+published packets must equal an unstalled run of the same commands: frame ID,
+sample time, send time and bytes. Every owner call is bounded, and a stalled
+consumer outlasts that bound, so an owner that waits fails the test. Covered:
+Studio clients that never or slowly acknowledge, 31 acknowledging clients with
+a silent one, a blocked query sampler with a graph lease, blocked event
+middleware, the debug stream and a blocked parameter renderer, a stalled compute
+peer on the real `/api/compute/stream` socket, and blocked Push display writes
+(direct and through the display transport) across an import that changes the
+epoch. Before the retirement worker, that import blocked the render thread until
+the display write returned. The same namespace covers the `:device/closing`
+refusal, including a connect that races the retiring tick, a restored
+device's reopen behind a blocked close, the `stop!` bound, a late retirement
+after `stop!`, and errors from a close or reopen. Only the display and retirement tests depend on the retirement
+worker; the other cases characterise boundaries that were already isolated.
+
 ## Reading the physical timing capture
 
 At 40 Hz there is one opportunity to send light levels every 25 ms. Rendering

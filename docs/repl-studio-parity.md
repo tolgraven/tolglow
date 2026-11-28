@@ -858,6 +858,9 @@ event**, or a running ramp and **Stop ramp**. Both submit the same
 `:schedule/cancel` by event ID, and the outcome appears in
 `(:recent (show/schedule runtime))` and as a cancelled marker on the timeline.
 An event cancelled from the REPL moves on the open timeline in the same way.
+After a loop or seek, fired and completed outcomes stay left of the centre
+line, because the owner moves their `:at-beat` in `(:recent (show/schedule
+runtime))` with the transport; the REPL and Studio read the same rebased beats.
 [Musical timeline](timeline.md)
 
 **Tracked gaps.** Studio lists and cancels scheduled work, but you cannot author
@@ -1158,6 +1161,24 @@ Studio's routes and the REPL session, by Studio's event tests, and by
 `lein run -m tolglow.qa.show-folder` in headless Chrome. No foreground Mac
 window has shown the note yet.
 
+## See device sessions that are still closing
+
+A restore, import or restart retires every connected device session. The
+sessions close on a retirement worker, off the lighting frame. The REPL reads
+the state from the same snapshot Studio receives, and a reconnect of an ID that
+is still closing is refused with `:code :device/closing`.
+[Output presentation](output-presentation.md#preview-and-studio-consumers) · [Issue #226](https://github.com/tolgraven/tolglow/issues/226)
+
+```clojure
+(get-in (show/snapshot runtime) [:status :device-retirement])
+;; => {:pending 1 :retired 3 :failed 0 :reopen-failed 0 :abandoned 0 :late 0 :closing #{"push-3"}}
+```
+
+Gap: Studio's diagnostics do not show this map yet, so a Studio-initiated
+connect refused with `:device/closing` is the only Studio-side signal. Tracked
+in [#907](https://github.com/tolgraven/tolglow/issues/907). Checked from the REPL
+side by `tolglow.studio.output-isolation-test`.
+
 ## Let the show wander with a section plan
 
 Both surfaces send the same `:auto` request (`POST /api/auto` from Studio,
@@ -1246,6 +1267,39 @@ reads which instances were handed over only from the reasons of the decision
 that noticed it. Push has no auto-mode control. Close these when a performer can
 build a plan in Studio and start or stop auto mode from Push, both reading the
 same projection ([issue #217](https://github.com/tolgraven/tolglow/issues/217)).
+
+## Who issued a command
+
+Precedence, ownership and agent limits read one field: the command's
+`:source`. The show assigns it from the transport. Studio's HTTP commands are
+`{:adapter :web :session-id <tab>}` whatever the request claims. Agent tool
+calls are `{:adapter :agent :session-id <conversation> :run-id <run>}`. REPL
+helpers use `{:adapter :repl :session-id "repl"}`. [Who may schedule, cancel
+and move](scheduler.md#who-may-schedule-cancel-and-move)
+
+Read the committed source of any command from the REPL, including one sent
+from Studio:
+
+```clojure
+(get-in @(:state runtime) [:model :control :history command-id :command :source])
+(map :source (:upcoming (show/schedule runtime)))
+```
+
+The scheduled list and the timeline in Perform show the same `:source`.
+The source also decides who may change the lighting budget. Chat and
+`show/dispatch-tool!` may tighten it but not loosen it past the operator's
+setting.
+Studio's **Output budget** panel and `show/submit! runtime :settings` stay
+unrestricted. A refusal returns `:code :agent-budget-loosening` with the
+loosened paths in Chat's tool result and in the REPL acknowledgement.
+[What Chat may change](group-lighting-scenes.md#what-chat-may-change)
+
+**Tracked gap.** The **Output budget** panel shows the current budget, which
+may be the agent's tighter value, and does not show the operator setting that
+caps the agent. Neither surface can switch
+`tolglow.lighting-budget.agent-policy/policy` without code. Close this when
+Studio shows both values and the operator can choose the policy from Studio
+and the REPL ([issue #835](https://github.com/tolgraven/tolglow/issues/835)).
 
 ## Rehearse a passage with the agent
 

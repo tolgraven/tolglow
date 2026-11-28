@@ -189,6 +189,15 @@
         (for [{:keys [id name]} available]
           ^{:key (pr-str id)} [:option {:value (pr-str id)} (or name (events/wire-id id))])]]]]))
 
+(defn limit-label
+  "Text for a limit Studio cannot edit as one fraction: a cue parameter
+  binding, or an agent's cap under it, {:op :min :args [binding fraction]}."
+  [limit]
+  (cond (number? limit) (str (js/Math.round (* 100 limit)) "%")
+        (:cue-id limit) (str (events/wire-id (:cue-id limit)) " · " (events/wire-id (:param limit)))
+        (#{:min "min"} (:op limit)) (str/join ", at most " (map limit-label (:args limit)))
+        :else "Bound limit"))
+
 (defn- budget [location disabled?]
   (let [scope :lighting-budget
         settings @(rf/subscribe [::settings scope])
@@ -204,7 +213,7 @@
       [:div.policy-grid
        (if (map? limit)
          [:div.scene-target [:span "Emitter power budget"]
-          [:output (str (events/wire-id (:cue-id limit)) " · " (events/wire-id (:param limit)))]]
+          [:output (limit-label limit)]]
          [percent-input "Emitter power budget" limit #(edit :limit %)])
        [:label "Maximum active sources"
         [:input {:type "number" :min 0 :step 1 :input-mode "numeric"
