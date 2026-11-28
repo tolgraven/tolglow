@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tolglow:research:native-agent:decision-log:1",
   "title": "tolglow-agent-log/1 (draft)",
-  "description": "One logged agent decision: what it saw, what it returned, what the show did with it and what followed. Research draft for #821; not an implemented contract. Large values are content-addressed blobs beside the log.",
+  "description": "One logged agent decision: what it saw, what it returned, what the show did with it and what followed. Research draft for #821. The implemented contract is resources/schemas/agent-log-1.schema.json (#856, docs/agent-log.md), which adds round, session.run, session.conversation, request, omitted and redacted. Large values are content-addressed blobs beside the log.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "decision", "session", "actor", "observation", "output", "validation"],

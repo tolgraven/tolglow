@@ -27,7 +27,7 @@
     tolglow.rehearsal.review-test tolglow.rehearsal-test
     tolglow.integrations.fixtures-test tolglow.integrations.ableton-test
     tolglow.integrations.audio-test tolglow.studio.audio-return-test tolglow.integrations.providers-test
-    tolglow.integrations.agent-test
+    tolglow.integrations.agent-test tolglow.agent-log-test
     tolglow.lighting-capacity-test tolglow.lighting-scenes-test tolglow.atmosphere.control-test
     tolglow.lighting-budget-test tolglow.mixed-stage-test tolglow.lighting-activity-test tolglow.output-response-test
     tolglow.autopilot.signal-test tolglow.autopilot.statistics-test tolglow.autopilot.actions-test

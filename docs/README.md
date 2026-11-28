@@ -85,6 +85,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [3D rig editor](rig-editor.md) | Draft fixture/truss placement, direct musical aim paths, explicit cue creation and saved-path editing |
 | [Auto show](auto-show.md) | Seeded cue selection on the beat: typed parameter domains and palettes, musical section plans, quiet and strobe contrast, and handing looks to a performer |
 | [Rehearsal with the agent](rehearsal.md) | Recorded club and Push-led concert passages played by one agent through the real show, reviewed for phrasing, repetition, contrast, stops, anchors kept and what varied between takes; a Room-only real-time path |
+| [Agent decision log](agent-log.md) | One bounded `tolglow-agent-log/1` record per agent decision, written off the caller's thread with content-addressed blobs and scrubbed secrets, and decision replay that reproduces the commands on the same show epoch without a model |
 | [Energy autopilot](energy-autopilot.md) | Steer brightness and visual activity over musical time, admit and retire cues, and overdrive or whiten nearby fixtures |
 | [Group lighting scenes](group-lighting-scenes.md) | Match unequal fixtures to a common brightness and cap the number and wattage of active sources |
 | [Output response](output-response.md) | Set attack and release for fixture light and for the conductor’s changing targets |

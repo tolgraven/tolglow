@@ -4,6 +4,7 @@
   Calling run! is an explicit I/O boundary, never a fixture rendering step."
   (:refer-clojure :exclude [run!])
   (:require [clojure.string :as str]
+            [clojure.walk :as walk]
             [tolglow.integrations.providers :as providers])
   (:import [java.util UUID]))
 
@@ -201,10 +202,36 @@
          (reset! cancelled? true)
          (throw (ex-info "Agent event consumer disconnected" {:agent/error :cancelled} exception)))))
 
+(def max-logged-reply-chars
+  "Raw reply text a round keeps for its decision record (#856). A reply past
+  this is kept up to it, and decision replay then refuses it as incomplete."
+  4194304)
+
+(defn decode-reply
+  "Decode one provider's complete raw streamed reply exactly as a live round
+  does: {:text :tools :errors}. Decision replay (#856) feeds a logged reply
+  here in place of the model."
+  [provider raw]
+  (let [{:keys [state events]} (providers/parse-sse provider raw)]
+    {:text (apply str (keep #(when (= :text/delta (:type %)) (:text %)) events))
+     :errors (vec (keep #(when (= :error (:type %)) (:error %)) events))
+     :tools (providers/completed-tools state)}))
+
+(defn call-problems
+  "Validation problems for one completed provider tool call against the
+  session's declarations (tool name to declaration), before any dispatch."
+  [definitions {:keys [id name input error]}]
+  (let [declaration (get definitions name)]
+    (cond error [{:path [] :message "Provider tool arguments are invalid JSON"}]
+          (not (and (string? id) (not (str/blank? id)))) [{:path [:id] :message "Tool call needs an ID"}]
+          (nil? declaration) [{:path [:name] :message "Tool is not declared for this session"}]
+          :else (validate-arguments (:parameters declaration) input))))
+
 (defn- provider-round! [config credential messages tools transport emit! cancelled? options round]
   (let [req (providers/request (assoc config :stream? true :tools tools) messages credential)
         stream (atom (providers/new-stream (:provider config)))
         text (StringBuilder.)
+        raw (StringBuilder.)
         errors (atom [])
         consume! (fn [events]
                    (doseq [event events]
@@ -214,6 +241,7 @@
         response (transport req
                             (fn [chunk]
                               (require-running! cancelled?)
+                              (when (< (.length raw) max-logged-reply-chars) (.append raw ^String chunk))
                               (let [parsed (providers/stream-feed @stream chunk)]
                                 (reset! stream (:state parsed))
                                 (consume! (remove #(= :done (:type %)) (:events parsed)))))
@@ -226,16 +254,13 @@
       (reset! stream (:state finished))
       (consume! (:events finished)))
     (when (seq @errors) (throw (ex-info "Provider stream failed" {:agent/error :provider-stream :errors @errors})))
-    {:text (str text) :tools (providers/completed-tools @stream)}))
+    {:text (str text) :raw (str raw) :tools (providers/completed-tools @stream)}))
 
 (defn- execute-tool! [call definitions executed dispatch! emit! cancelled? metadata]
   (require-running! cancelled?)
-  (let [{:keys [id name input error]} call
-        declaration (get definitions name)
-        problems (cond error [{:path [] :message "Provider tool arguments are invalid JSON"}]
-                       (not (and (string? id) (not (str/blank? id)))) [{:path [:id] :message "Tool call needs an ID"}]
-                       (nil? declaration) [{:path [:name] :message "Tool is not declared for this session"}]
-                       :else (validate-arguments (:parameters declaration) input))
+  (let [{:keys [id name input]} call
+        problems (call-problems definitions call)
+        command-id (str (:run-id metadata) "/" id)
         previous (get executed id)
         same-call? (and previous (= name (:name previous)) (= input (:input previous)))
         result (cond
@@ -246,8 +271,7 @@
                  (do
                    (emit-event! emit! cancelled? {:type :tool/start :id id :name name :arguments input})
                    (try
-                     (dispatch! name input (assoc metadata :tool-call-id id
-                                                  :command-id (str (:run-id metadata) "/" id)))
+                     (dispatch! name input (assoc metadata :tool-call-id id :command-id command-id))
                      (catch Exception exception
                        {:ok? false :error :tool-failed :message (.getMessage exception)}))))]
     (require-running! cancelled?)
@@ -255,7 +279,19 @@
       (throw (ex-info "Tool dispatcher must return portable JSON result data" {:agent/error :invalid-tool-result :tool name})))
     (emit-event! emit! cancelled? {:type :tool/result :id id :name name :result result :replayed? (boolean same-call?)})
     {:executed (if (or previous (seq problems)) executed (assoc executed id {:name name :input input :result result}))
-     :message {:role :tool :tool-call-id (or id (str "invalid-" (:round metadata))) :name name :content result}}))
+     :message {:role :tool :tool-call-id (or id (str "invalid-" (:round metadata))) :name name :content result}
+     :record {:id id :name name :arguments input :command-id command-id :problems problems
+              :result result :replayed? (boolean same-call?)}}))
+
+(defn- log-decision!
+  "Hand one round's decision to the caller's :on-decision (#856), with the
+  credential scrubbed. A failing logger never changes the run."
+  [on-decision credential decision]
+  (when on-decision
+    (try
+      (on-decision (if (str/blank? credential) decision
+                       (walk/postwalk #(if (string? %) (str/replace % ^String credential "[REDACTED]") %) decision)))
+      (catch Exception _ nil))))
 
 (defn run!
   "Run a bounded provider/tool conversation. Tools are generic declarations.
@@ -266,7 +302,15 @@
   (8), :max-tool-calls (32), and HTTP limits. No operation runs at namespace load.
   Same tool IDs/arguments within a run replay their prior result, never execute
   twice. Changed arguments with a reused ID are rejected. Model calls remain
-  off the render loop and root dispatch retains final domain authorization."
+  off the render loop and root dispatch retains final domain authorization.
+
+  :on-decision, when supplied, receives one portable map per provider round
+  after its tools ran (#856): :run-id, :round, :conversation-id, :provider,
+  :model, :messages (as sent), :tools (declarations), :raw (the streamed reply
+  text), :text, :results (per call :id :name :arguments :command-id :problems
+  :result :replayed?), :error for a reply rejected before dispatch, and
+  :timing {:policy-ms :admit-ms}. The credential is scrubbed first. It runs on
+  this thread, so it must hand off and return (tolglow.agent-log.writer)."
   ([config credential messages tools dispatch! emit!]
    (run! config credential messages tools dispatch! emit! {}))
   ([config credential messages tools dispatch! emit! options]
@@ -275,6 +319,16 @@
          max-rounds (get options :max-rounds 8) max-tools (get options :max-tool-calls 32)
          transport (get options :transport providers/http-transport!)
          definitions (into {} (map (juxt :name identity)) tools)
+         on-decision (:on-decision options)
+         decision (fn [round sent response started dispatched results & [error]]
+                    (log-decision! on-decision credential
+                                   (cond-> {:run-id run-id :round round :conversation-id (:conversation-id options)
+                                            :provider (:provider config) :model (:model config)
+                                            :messages sent :tools tools :raw (:raw response) :text (:text response)
+                                            :results results
+                                            :timing {:policy-ms (/ (- dispatched started) 1e6)
+                                                     :admit-ms (/ (- (System/nanoTime) dispatched) 1e6)}}
+                                     error (assoc :error error))))
          progress (atom {:messages messages :rounds 0 :tool-calls 0})]
      (when-not (and (every? #(and (integer? %) (pos? %)) [max-rounds max-tools])
                     (instance? clojure.lang.IAtom cancelled?) (ifn? dispatch!) (ifn? emit!)
@@ -287,29 +341,36 @@
          (require-running! cancelled?)
          (when (>= round max-rounds)
            (throw (ex-info "Agent round limit reached" {:agent/error :round-limit})))
-         (let [response (provider-round! config credential conversation tools transport emit! cancelled? options round)
+         (let [started (System/nanoTime)
+               sent conversation
+               response (provider-round! config credential conversation tools transport emit! cancelled? options round)
+               dispatched (System/nanoTime)
                calls (:tools response)
                _ (when (some #(or (:error %) (not (and (string? (:id %)) (not (str/blank? (:id %)))))) calls)
+                   (decision round sent response started dispatched [] :invalid-tool-call)
                    (throw (ex-info "Provider returned invalid tool JSON or identity" {:agent/error :invalid-tool-call})))
                assistant {:role :assistant :content (:text response)
                           :tool-calls (mapv (fn [call] {:id (:id call) :name (:name call) :arguments (:input call)}) calls)}
                conversation (conj (vec conversation) assistant)]
            (reset! progress {:messages conversation :rounds (inc round) :tool-calls tool-count})
            (if (empty? calls)
-             (let [result {:status :completed :run-id run-id :text (:text response)
+             (let [_ (decision round sent response started dispatched [])
+                   result {:status :completed :run-id run-id :text (:text response)
                            :messages conversation :rounds (inc round) :tool-calls tool-count}]
                (emit-event! emit! cancelled? {:type :agent/done :run-id run-id :status :completed})
                result)
              (do
                (when (> (+ tool-count (count calls)) max-tools)
                  (throw (ex-info "Agent tool-call limit reached" {:agent/error :tool-limit})))
-               (let [processed (reduce (fn [{:keys [executed messages]} call]
+               (let [processed (reduce (fn [{:keys [executed messages records]} call]
                                          (let [result (execute-tool! call definitions executed dispatch! emit! cancelled?
                                                                      (cond-> {:run-id run-id :round round}
                                                                        (:conversation-id options)
                                                                        (assoc :conversation-id (:conversation-id options))))]
-                                           {:executed (:executed result) :messages (conj messages (:message result))}))
-                                       {:executed executed :messages []} calls)]
+                                           {:executed (:executed result) :messages (conj messages (:message result))
+                                            :records (conj records (:record result))}))
+                                       {:executed executed :messages [] :records []} calls)]
+                 (decision round sent response started dispatched (:records processed))
                  (reset! progress {:messages (into conversation (:messages processed))
                                    :rounds (inc round) :tool-calls (+ tool-count (count calls))})
                  (recur (:messages @progress) (inc round)
