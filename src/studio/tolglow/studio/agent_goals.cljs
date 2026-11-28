@@ -272,7 +272,8 @@
         ^{:key id}
         [:button.agent-goal-button {:type "button" :disabled (or busy? (nil? command)) :data-action (name id)
                                     :aria-label (str title " " label)
-                                    :on-click #(rf/dispatch [::send command])} title])]]))
+                                    :on-click #(rf/dispatch [::send command])}
+         (case id :up "↑" :down "↓" title)])]]))
 
 (defn- field! [k] #(rf/dispatch-sync [::field k (.. % -target -value)]))
 
