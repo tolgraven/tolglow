@@ -290,21 +290,30 @@ knob does nothing. While the page is shown, a touch reports the knob as
 does not change while any track encoder is touched (a knob touch, a parameter
 touch, or a touch mode such as Accent on an empty slot), so an open gesture
 always ends where it started. Master, tempo, the touch strip and the pads are
-unchanged (the strip does not drive a knob).
+unchanged (the strip does not drive a knob). The page button's LED is lit
+while the page is shown and dark otherwise (`tolglow.surface.push-2`; CC value
+127 or 0, as Afterglow's legacy Push 2 adapter sends button brightness).
 
 **Display.** `tolglow.controllers.push-knobs/project-display` adds the touched
 knob's `knobs/encoder-display` (value and up to eight link columns with the
 same resolved text and exact ratios Studio shows) and, for the knob page, each
 knob's name and value. A knob that was removed is shown as missing, not
 dropped. The browser Push display (`push_display.cljs`) draws these in the
-encoder area. The native Push 2 display (`:native-display? true`) receives the
-same data but does not draw it yet.
+encoder area. The native Push 2 display (`:native-display? true`) draws it
+too: Afterglow's Wayang transport takes an injected renderer, and
+`tolglow.surface.push-2-display` draws the touched knob (its links' labels and
+resolved text, `*` when edited since the knob moved) or the knob page (each
+knob's name, text and a value bar; a removed knob in red without a bar). Other
+views are drawn by Afterglow's parameter display as before.
 
 `tolglow.controllers.push-knobs-test` proves both with captured MIDI through
 `show/connect-device!`: a Push 3 encoder touch and turns (coarse, Shift and a
 binding's own step), and a Push 2 page toggle, touch, coarse and Shift turns,
 an empty slot and the touch-held toggle rule, each compared with the `:knobs`
-projection Studio reads. Option validation is tested before connecting. Physical Push hardware is not verified.
+projection Studio reads. It also checks the page button's LED bytes and the
+frames the native display would send, through Wayang with an image in place of
+the USB library. Option validation is tested before connecting. Physical Push
+hardware, including the Push 2 screen, is not verified.
 
 ## Verification
 
@@ -392,8 +401,13 @@ Record (Push 2) or the captured `:variation/record` button (Push 3) held with a
 saved pad overwrites it. Cycle closes the overlay. On Push 2 the pads are dim
 when empty, green when saved, white when selected and blue when selected but
 moved. The display, on both models, names each slot, its state and its knob
-positions. The Push 3 User Mode adapter sends no pad LED colours, so on Push 3
-the display columns carry the empty, saved, selected and moved states. As for cue variations, a press
+positions. The Push 3 User Mode adapter sends no pad LED colours, so
+`tolglow.surface.push-3` lights the overlay's pads itself (#547): knob looks are
+dim grey when empty, green when saved, white when selected and blue when
+selected but moved (velocities 124, 126, 122 and 125 of the Push 2 palette
+scheme, unverified on Push 3), the other variation layouts use the nearest
+entry to their pad colours, and closing the overlay turns off only what it lit.
+As for cue variations, a press
 counts only once the pads (Push 2 LED acknowledgement) or the display frame
 (Push 3 presentation receipt) showing that slot have arrived. On Push 3 only the
 top-row pads in the captured layout are shown.

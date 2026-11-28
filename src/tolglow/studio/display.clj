@@ -6,7 +6,8 @@
             [afterglow.control.display :as presentation]
             [afterglow.control.devices.push-3.display :as push-3]
             [afterglow.control.devices.push-3.usb :as push-3-usb]
-            [afterglow.control.devices.transports :as transports])
+            [afterglow.control.devices.transports :as transports]
+            [tolglow.surface.push-2-display :as push-2-display])
   (:import [java.awt.image BufferedImage]
            [java.lang ProcessHandle]
            [java.io BufferedReader BufferedWriter ByteArrayInputStream File InputStreamReader OutputStreamWriter]
@@ -324,12 +325,13 @@
 
 (defn native-display
   "Build the asynchronous Push 2 display. Wayang renders the projected view
-  directly into its owned image on the display worker."
+  directly into its owned image on the display worker; linked knobs are
+  drawn by tolglow.surface.push-2-display."
   [options]
   (assoc (transport (assoc options
                            :capture {:open! (constantly nil) :close! (constantly nil)
                                      :capture! (fn [_ view] view)}
-                           :sink (transports/wayang-display)))
+                           :sink (transports/wayang-display {:renderer! (push-2-display/renderer)})))
          :device :push-2 :input :view
          :display-capabilities presentation/parameter-only-capabilities))
 

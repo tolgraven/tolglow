@@ -379,3 +379,7 @@
   #view-perform .cue-cell:not(.empty) { padding: 4px 1px; }
   #view-perform .cue-name { font-size: 11px; font-weight: 500; }
 }
+
+/* Pad preview and response-sample lease faults (#533), under the cue grid. */
+.cue-preview-faults { padding: 6px var(--cue-inset, 12px) 8px; color: var(--danger); font-size: 11px; line-height: 1.35; }
+.cue-preview-faults p { margin: 2px 0; color: inherit; overflow-wrap: anywhere; }
