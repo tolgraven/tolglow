@@ -402,9 +402,13 @@
   };
   Session.prototype.slotPathByIndex = function (index, slot) { return "live_set tracks " + index + " clip_slots " + slot; };
 
-  Session.prototype.inspectSet = function () {
+  Session.prototype.inspectSet = function (payload) {
     var song = this.object("live_set"), self = this;
     this.hostTrackId(true);
+    // Setup names its capture host: a reloaded companion whose track still
+    // has that name knows it again, without any write (#680).
+    var named = payload && payload["capture-host-name"];
+    if (typeof named === "string" && this.host && this.hostName === named) this.captureHost = this.host;
     var numerator = Number(this.read(song, "signature_numerator")), denominator = Number(this.read(song, "signature_denominator"));
     var app = this.api("live_app"), version = null;
     if (app && Number(app.id)) version = [app.call("get_major_version"), app.call("get_minor_version"), app.call("get_bugfix_version")].map(scalar).join(".");
@@ -1011,7 +1015,7 @@
 
   Session.prototype.run = function (op, payload, mark) {
     switch (op) {
-      case "inspect-set": return this.inspectSet();
+      case "inspect-set": return this.inspectSet(payload);
       case "ensure-launcher": return this.ensureLauncher(payload, mark);
       case "write-pads": return this.writePads(payload, mark);
       case "inspect-launcher": return this.inspectLauncher();

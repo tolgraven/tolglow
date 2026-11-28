@@ -90,6 +90,12 @@
         "time-signature": {numerator: numerator, denominator: denominator}},
       capabilities: {"observe-parameters?": !!this.parameters, "record-notes?": true, "record-cc?": false, "parameter-note-lanes?": true, "arrangement-placement?": true, "chain-colors?": true,
         "direct-pad-color?": false, "provisional-note-beats": this.provisionalDuration}};
+    // The capture host this device session adopted, and whether its clip
+    // plays (Live-mode forwarding, #680): a reloaded companion forgets it.
+    if (this.session) {
+      result["capture-host"] = this.session.captureHost ? "track:" + this.session.captureHost : null;
+      result["capture-playing?"] = this.session.capturePlaying();
+    }
     if (this.destination) {
       var objects = this.destinationObjects(), clip = objects.clip;
       result.destination = this.destination; result["destination-id"] = this.destination.id;

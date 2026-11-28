@@ -329,6 +329,8 @@
                :else (str "Capture tracks " names " · " (count (:problems setup))
                           (if (= 1 (count (:problems setup))) " problem in Live" " problems in Live")))
          (cond (:live-mode-return? playback) " · playback return active in Live mode"
+               (and (:bound? playback) (= "live" (some-> (:surface-mode playback) name)))
+               " · playback return paused in Live mode: the companion lost its capture track, set up again"
                (:bound? playback) " · playback returns to the show"
                (:stale playback) " · Live's tracks changed: set up again to bind playback")
          (let [dropped (+ (or (:dropped playback) 0) (or (:unbound-dropped playback) 0))]

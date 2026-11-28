@@ -83,6 +83,16 @@
 (defn- remember-handoff! [manager id receipt]
   (swap! (:state manager) update :handoff-receipts #(vec (take-last 16 (conj (or % []) [id receipt])))))
 
+(defn companion-capture
+  "What the companion said about its capture host in its last status:
+  {:capture-host track-id-or-nil :capture-playing? bool}, or nil before a
+  status that carries it. A companion that reloaded has forgotten its host
+  until setup runs again (#680)."
+  [manager]
+  (let [status (:recording @(:state manager))]
+    (when (contains? status :capture-host)
+      {:capture-host (:capture-host status) :capture-playing? (true? (:capture-playing? status))})))
+
 (defn handoff-receipt
   "The companion's receipt for a handoff! request-id, or nil while none has
   arrived. The last 16 are kept."
@@ -317,9 +327,12 @@
     (commands! manager run (:commands result))
     (doseq [event (:events result)] (emit! manager run event))
     (surface-changed! run mode)
-    (when-not (and (:live @(:resources run))
-                   (live-request! manager run (or request-id (str (UUID/randomUUID))) :handoff {:mode mode}))
-      (when request-id (remember-handoff! manager request-id {:id request-id :status :rejected :error {:code :not-connected}})))))
+    (let [id (or request-id (str (UUID/randomUUID)))]
+      ;; Only the receipt of the latest handoff may roll the surface back.
+      (swap! (:state manager) assoc :last-handoff-id id)
+      (when-not (and (:live @(:resources run))
+                     (live-request! manager run id :handoff {:mode mode}))
+        (when request-id (remember-handoff! manager request-id {:id request-id :status :rejected :error {:code :not-connected}}))))))
 
 (defn- receive-recording! [manager run {:keys [command ack]} at]
   (let [{:keys [config recording previous-recording]} @(:state manager)
@@ -375,7 +388,8 @@
     ;; surface back, so both sides agree on lighting. A lost one also tells
     ;; the companion, once.
     (when (and (not= :executed (:status response)) (= :live (some-> (:mode payload) name keyword))
-               (= :live (get-in @(:state manager) [:config :live :mode])))
+               (= :live (get-in @(:state manager) [:config :live :mode]))
+               (= (:id response) (:last-handoff-id @(:state manager))))
       (when-let [envelope (some-> (:envelope! (run-callbacks run)) (apply []))]
         (let [result (bridge-step! manager #(ableton/handoff % :lighting envelope))]
           (commands! manager run (:commands result))

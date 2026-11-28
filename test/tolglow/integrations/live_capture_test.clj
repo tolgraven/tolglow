@@ -49,8 +49,9 @@
       {:open! (fn [_] :bridge) :close! (fn [_])
        :request! (fn [handle id op payload]
                    (swap! requests conj op)
-                   (if (or (contains? live/operations op) (= :handoff op))
-                     ((:request! inner) handle id op payload)
+                   (if (or (contains? live/operations op) (#{:handoff :inspect} op))
+                     ;; Keyword statuses, as live-transport reads the companion's replies.
+                     (update ((:request! inner) handle id op payload) :status keyword)
                      {:id id :status :executed :result {}}))})))
 
 (defn- fixture
@@ -197,7 +198,7 @@
           (let [live (:live (show/capture-action! rt :status {}))]
             (is (= {:bound? true :tracks 1 :running 0 :pending 0 :queued 0 :dropped 0 :unbound-dropped 0 :events 0 :commands 0
                     :surface-mode :lighting :live-mode-return? false}
-                   (:playback live)))
+                   (dissoc (:playback live) :companion-host?)))
             (is (= "Tolglow Capture" (get-in live [:desired :tracks 0 :name])))
             (is (= clip-id (get-in live [:sent :clips 0 :clip-id])))))
         (testing "Live's playback of the clip launches each cue once, from the capture decoder only"
@@ -357,6 +358,16 @@
 
 (defn- playback [rt] (get-in (show/capture-action! rt :status {}) [:live :playback]))
 
+(defn- await-companion!
+  "Run the owner at show beat `beat` until the companion's status poll (every
+  500 ms of wall time) satisfies pred, bounded."
+  [{:keys [manager] :as f} beat pred]
+  (let [deadline (+ (System/currentTimeMillis) 5000)]
+    (while (and (not (pred (live-sync/companion-capture manager))) (< (System/currentTimeMillis) deadline))
+      (at! f beat)
+      (Thread/sleep 25)))
+  (is (pred (live-sync/companion-capture manager)) "the companion's status poll arrived"))
+
 (deftest a-setup-that-cannot-inspect-the-set-keeps-the-binding
   (let [{:keys [rt ls] :as f} (fixture)]
     (try
@@ -428,12 +439,33 @@
         (note! f :note-on 36)
         (at! f 12)
         (is (= [[:red :live-capture-clip]] (capture-instances rt)))
-        (testing "handing the surface to Live ends the runs playback started"
+        (testing "a handoff into Live mode while the companion forwards the playing capture clip keeps its runs"
+          (await-companion! f 12 #(and (= (:track-id host) (:capture-host %)) (:capture-playing? %)))
           (is (= :executed (:status (show/focus-capture! rt {:handoff? true}))))
           (at! f 13)
           (at! f 14)
-          (is (= [] (capture-instances rt)))
+          (is (= [[:red :live-capture-clip]] (capture-instances rt)))
           (is (= :live (:mode @ls)))
+          (is (true? (:live-mode-return? (playback rt))))
+          (note! f :note-off 36)
+          (at! f 15)
+          (is (= [] (capture-instances rt)) "the clip's own note-off, forwarded in Live mode, ended it"))
+        (testing "a companion that reloaded forgets its capture host: the indicator stops claiming the return and a handoff releases"
+          (show/sync-action! rt :handoff {:mode :lighting})
+          (at! f 16)
+          (note! f :note-on 36)
+          (at! f 17)
+          (is (= [[:red :live-capture-clip]] (capture-instances rt)))
+          (swap! ls assoc :capture-host nil)
+          (await-companion! f 17 #(and % (nil? (:capture-host %))))
+          (is (= :executed (:status (show/focus-capture! rt {:handoff? true}))))
+          (at! f 18)
+          (at! f 19)
+          (is (= [] (capture-instances rt)))
+          (is (= {:bound? true :surface-mode :live :live-mode-return? false :companion-host? false}
+                 (select-keys (playback rt) [:bound? :surface-mode :live-mode-return? :companion-host?])))
+          (is (:ready? (show/setup-live-capture! rt)) "a rerun of setup lets the companion adopt its track again")
+          (await-companion! f 19 #(= (:track-id host) (:capture-host %)))
           (is (true? (:live-mode-return? (playback rt)))))
         (testing "in Live mode the capture clip still plays into the show, from the decoder only"
           (forward! f 0 8 20)
@@ -507,6 +539,29 @@
         (is (some #(= {:type :live/capture-playback-dropped :dropped 1 :unbound-dropped 0} (select-keys % [:type :dropped :unbound-dropped]))
                   (get-in @(:state rt) [:model :variables :sync :events]))
             "the drop is announced as an event"))
+      (finally (show/stop! rt)))))
+
+(deftest a-controller-flood-never-costs-a-launch
+  (let [{:keys [rt ls] :as f} (fixture)]
+    (try
+      (let [[host] (sent! f)
+            ev (fn [e] (show/live-capture-playback! rt (merge {:channel 1 :origin :live-playback :track-id (:track-id host)
+                                                               :track-name (:name host) :time-ms 0} e)))]
+        (ev {:type :note-on :note 36 :velocity 127})
+        (dotimes [i 600] (ev {:type :cc :controller (if (even? i) 1 33) :value (mod i 128)}))
+        (let [p (playback rt)]
+          (is (= 512 (:queued p)))
+          (is (= 89 (:dropped p)) "superseded controller values went, the launch stayed"))
+        (at! f 12)
+        (is (= [[:red :live-capture-clip]] (capture-instances rt))))
+      (let [{:keys [inbox]} (#'show/enqueue-capture {:inbox (into [{:type :cc :channel 1 :controller 7 :value 1}
+                                                                   {:type :note-on :note 36 :velocity 9 :channel 1}]
+                                                                  (repeat 510 {:type :note-off :note 40 :channel 1}))
+                                                     :inbox-dropped 0}
+                                                    {:type :cc :channel 1 :controller 7 :value 2})]
+        (is (= [{:type :note-on :note 36 :velocity 9 :channel 1}] (filter #(= :note-on (:type %)) inbox)))
+        (is (= [2] (map :value (filter #(= :cc (:type %)) inbox)))
+            "a value a launch took is not coalesced; with nothing superseded the oldest controller still goes before the launch"))
       (finally (show/stop! rt)))))
 
 (deftest a-refused-end-is-sent-again
@@ -607,9 +662,55 @@
                  (assoc-in valid [:layout :cues :red :clip-id] "clip:9")]]
       (is (re-find #"Live session IDs are never saved"
                    (ex-message (is (thrown? clojure.lang.ExceptionInfo (live-capture/validate-saved bad)))))))
+    (testing "a migration step that does not raise the version is refused instead of looping"
+      (with-redefs [live-capture/saved-version 2]
+        (binding [live-capture/*migrations* {1 identity}]
+          (is (= :migration-without-progress
+                 (:code (ex-data (is (thrown? clojure.lang.ExceptionInfo (live-capture/migrate-saved valid))))))))))
     (let [e (is (thrown? clojure.lang.ExceptionInfo (live-capture/validate-saved (assoc valid :version 2))))]
       (is (re-find #"saved by a newer Tolglow" (ex-message e)))
       (is (= :newer-capture-data (:code (ex-data e)))))
     (is (= valid (live-capture/saved-state {:layout (-> layout (assoc :clip-id "clip:9") (assoc-in [:cues :red :track-id] "track:3"))
                                             :desired (assoc-in desired [:tracks 0 :track-id] "track:3")}))
         "saving keeps only the documented keys")))
+
+(deftest a-late-receipt-never-rolls-back-a-newer-handoff
+  (let [ls (fake/create {:tracks [] :envelope-lanes? true})
+        gate (promise)
+        first-handoff (atom true)
+        requests (atom [])
+        inner (bridge-factory ls requests)
+        ;; The first handoff's receipt is held back and then lost, as a slow
+        ;; companion would answer it after the operator handed the surface on.
+        factory (fn [settings]
+                  (let [t (inner settings)]
+                    (assoc t :request! (fn [handle id op payload]
+                                         (if (and (= :handoff op) (compare-and-set! first-handoff true false))
+                                           (do (deref gate 5000 nil) {:id id :status :indeterminate})
+                                           ((:request! t) handle id op payload))))))
+        rt (show/create-runtime
+            {:model (control/new-show {:show-id :late-receipt :transport {:playing? true :beat 0.0 :bpm 120.0}
+                                       :registry registry :pages {:pads page}
+                                       :rig {:fixtures [{:id :left :universe 1 :address 1 :channels {:dimmer 1}}]}})
+             :sink {:send! (fn [_ _])} :workspace-options nil :live-runs false
+             :sync-options {:live-factory factory}})
+        manager (connections/sync (:connections rt))
+        f {:rt rt :ls ls :manager manager :serial (atom 0)}
+        mode #(get-in (sync/export-state manager) [:config :live :mode])]
+    (try
+      (at! f 0)
+      (start-bridge! f)
+      (show/sync-action! rt :handoff {:mode :live})      ; A: its receipt is late
+      (show/sync-action! rt :handoff {:mode :lighting})  ; B
+      (show/sync-action! rt :handoff {:mode :live})      ; C
+      (session/flush! manager)
+      (deliver gate true)
+      (let [deadline (+ (System/currentTimeMillis) 5000)]
+        (while (and (not= 2 (count (filter #{:handoff} @requests))) (< (System/currentTimeMillis) deadline))
+          (Thread/sleep 10)))
+      (session/flush! manager)
+      (Thread/sleep 50)
+      (session/flush! manager)
+      (is (= :live (mode)) "A's lost receipt did not undo C")
+      (is (= :live (:mode @ls)))
+      (finally (show/stop! rt)))))

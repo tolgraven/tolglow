@@ -271,6 +271,23 @@ test("in Live mode only the capture host's clip playback is forwarded, and its s
   assert.ok(note(), "lighting mode forwards everything again");
 });
 
+test("the status poll reports the capture host, and a reloaded companion knows it again from setup's inspection (#680)", () => {
+  const live = liveSet({ tracks: [{ name: "Tolglow Capture", port: PORTS[1], channel: CHANNELS[16] }], host: 0 });
+  const track = "track:" + live.song.tracks[0].id;
+  const status = () => { const r = live.request("inspect").result; return [r["capture-host"], r["capture-playing?"]]; };
+  assert.deepEqual(status(), [null, false], "a freshly loaded companion has adopted nothing");
+  live.request("inspect-set", { "capture-host-name": "Somebody else" });
+  assert.deepEqual(status(), [null, false], "another name is not its capture host");
+  const writes = live.writes.length;
+  live.request("inspect-set", { "capture-host-name": "Tolglow Capture" });
+  assert.equal(live.writes.length, writes, "knowing the host again writes nothing");
+  assert.deepEqual(status(), [track, false]);
+  live.play(0, 0);
+  assert.deepEqual(status(), [track, true]);
+  live.request("handoff", { mode: "live" });
+  assert.equal(live.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 })["surface-mode"], "live");
+});
+
 test("lane read-back finds change points off the scan grid and keeps values for a late launch", () => {
   const live = liveSet({ tracks: [{ name: "Tolglow Capture" }] });
   const track = "track:" + live.song.tracks[0].id;

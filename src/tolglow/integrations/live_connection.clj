@@ -309,7 +309,9 @@
   executed. Returns {:ready? :tracks :problems :applied [[op status]] :set},
   plus :refused {:op :status :code} for the receipt that stopped it."
   [conn desired]
-  (let [inspect (fn [] (let [r (request! conn :inspect-set {})]
+  (let [host (first (filter :host? (:tracks desired)))
+        ;; Naming the capture host lets a reloaded companion know it again.
+        inspect (fn [] (let [r (request! conn :inspect-set (if host {:capture-host-name (:name host)} {}))]
                          (when-not (= :executed (:status r)) (fail! "Live Set could not be inspected" {:receipt r}))
                          (:result r)))
         before (inspect)

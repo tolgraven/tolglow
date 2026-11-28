@@ -127,7 +127,7 @@
                 (when (some #{:track-id :clip-id} unknown) " (Live session IDs are never saved)"))
            {:path path :keys (vec unknown)})))
 
-(def migrations
+(def ^:dynamic *migrations*
   "Steps that bring saved capture data of an older version to the next one,
   {from-version (fn [saved] saved')}. Version 1 is the first."
   {})
@@ -146,8 +146,13 @@
                   "); this build reads version " saved-version ". Open it in that Tolglow or update this one.")
              {:path saved-path :version version :supported saved-version :code :newer-capture-data})
       (= version saved-version) saved
-      :else (if-let [step (get migrations version)]
-              (recur (step saved))
+      :else (if-let [step (get *migrations* version)]
+              (let [next (step saved)]
+                ;; A step that does not raise the version would never end.
+                (when-not (and (map? next) (pos-int? (:version next)) (> (:version next) version))
+                  (fail! (str "The migration of saved capture data from version " version " did not raise the version")
+                         {:path saved-path :version version :code :migration-without-progress}))
+                (recur next))
               (fail! (str "Saved capture data version " version " has no migration") {:path saved-path :version version})))))
 
 (defn validate-saved

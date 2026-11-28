@@ -189,10 +189,16 @@
 (defn- execute [live op payload]
   (let [state @live]
     (case op
-      :inspect-set {:status :executed
-                    :result {:tracks (mapv public-track (:tracks state)) :tempo (:tempo state)
-                             :signature (:signature state) :can-capture-midi? (:can-capture-midi? state)
-                             :live-version "simulated"}}
+      :inspect-set (do
+                     ;; Like the companion: setup's capture host name lets a
+                     ;; reloaded device know its track again, writing nothing.
+                     (let [companion (first (filter :companion? (:tracks state)))]
+                       (when (and companion (= (:capture-host-name payload) (:name companion)))
+                         (swap! live assoc :capture-host (:track-id companion))))
+                     {:status :executed
+                      :result {:tracks (mapv public-track (:tracks state)) :tempo (:tempo state)
+                               :signature (:signature state) :can-capture-midi? (:can-capture-midi? state)
+                               :live-version "simulated"}})
       :ensure-track (if (:host? payload)
                       ;; Like the companion: the host is wherever the device is now. It
                       ;; is adopted only when it already has this exact name or is an
@@ -408,7 +414,13 @@
                                       (update :outbox conj {:kind "run-clip"
                                                             :event {:type "clip-stopped" :track-id (:capture-host s) :capture? true}}))))
                       {:status :executed :result {}})
-      ;; A bridge operation, not a Set one: the companion's surface mode.
+      ;; Bridge operations, not Set ones: the status poll's capture fields
+      ;; and the companion's surface mode.
+      :inspect (let [host (:capture-host state)
+                     companion (first (filter :companion? (:tracks state)))]
+                 {:status :executed
+                  :result {:capture-host (when (= host (:track-id companion)) host)
+                           :capture-playing? (boolean (and host (= host (:track-id companion)) (contains? (:playing state) host)))}})
       :handoff (if (#{:live :lighting "live" "lighting"} (:mode payload))
                  (let [mode (keyword (name (:mode payload)))]
                    (swap! live assoc :mode mode)

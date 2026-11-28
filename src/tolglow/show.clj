@@ -2320,6 +2320,16 @@
 
 (declare live-run-clip! live-parameter-device-value! live-capture-playback! release-capture-runs!)
 
+(defn- capture-forwarding?
+  "Does the companion's last status confirm it still knows the bound
+  capture host (and, with :playing, that a clip plays there)? A reloaded
+  companion forgets its host and forwards nothing in Live mode."
+  ([runtime] (capture-forwarding? runtime nil))
+  ([runtime playing]
+   (let [{:keys [capture-host capture-playing?]} (live-sync/companion-capture (connections/sync (:connections runtime)))]
+     (boolean (and capture-host (get-in @(:phrase-capture runtime) [:binding :tracks capture-host])
+                   (or (not= :playing playing) capture-playing?))))))
+
 (defn- capture-clip-event?
   "A clip start or stop the companion reports for the capture host, not a run track."
   [runtime event]
@@ -2357,9 +2367,13 @@
      ;; True when the event is clip playback from a capture track, which the
      ;; capture decoder takes instead of the pad mappings (#680).
      :capture-playback! (fn [event] (and (current?) (live-capture-playback! runtime event)))
-     ;; The bridge's surface changed hands (either way, refused handoffs
-     ;; rolled back included): capture playback runs end (#680).
-     :surface-mode! (fn [_mode] (when (current?) (release-capture-runs! runtime :surface-handoff)))
+     ;; The bridge's surface changed hands (refused handoffs rolled back
+     ;; included): capture playback runs end (#680), except on a handoff into
+     ;; Live mode while the companion confirms it forwards the bound capture
+     ;; clip, whose own note-offs will still arrive.
+     :surface-mode! (fn [mode]
+                      (when (and (current?) (not (and (= :live mode) (capture-forwarding? runtime :playing))))
+                        (release-capture-runs! runtime :surface-handoff)))
      :parameter-device! (fn [event] (when (current?) (live-parameter-device-value! runtime event)))
      :events! (fn [event]
                 (when (current?)
@@ -2733,17 +2747,37 @@
 (defn- capture-release? [{:keys [type velocity]}]
   (or (= ::release type) (= :note-off type) (and (= :note-on type) (not (pos? (or velocity 0))))))
 
+(defn- superseded-controller
+  "Index of the oldest controller value a later value of the same controller
+  and channel replaces before any launch (so no launch took it), counting
+  the incoming event as the latest, or nil."
+  [inbox event]
+  (let [key (juxt :channel :controller)
+        launch? #(and (= :note-on (:type %)) (pos? (or (:velocity %) 0)))]
+    (loop [i (dec (count inbox))
+           later (if (= :cc (:type event)) #{(key event)} #{})
+           found nil]
+      (if (neg? i)
+        found
+        (let [e (nth inbox i)]
+          (cond
+            (launch? e) (recur (dec i) #{} found)
+            (= :cc (:type e)) (recur (dec i) (conj later (key e)) (if (contains? later (key e)) i found))
+            :else (recur (dec i) later found)))))))
+
 (defn- enqueue-capture
   "Add one event (or a ::release marker) to the capture inbox, keeping
-  releases: on overflow the oldest launch goes first, then the oldest
-  controller, and a launch or controller that finds neither is itself dropped."
+  releases and launches: on overflow a controller value a later one replaces
+  goes first, then the oldest controller, then the oldest launch. An event
+  that finds none of them is itself dropped, unless it is a release."
   [s event]
   (let [inbox (:inbox s)
         oldest (fn [pred] (first (keep-indexed (fn [i e] (when (pred e) i)) inbox)))
         drop-at (fn [i] (-> s (assoc :inbox (conj (into (subvec inbox 0 i) (subvec inbox (inc i))) event))
                             (update :inbox-dropped inc)))
         launch? #(and (= :note-on (:type %)) (pos? (or (:velocity %) 0)))
-        i (or (oldest launch?) (oldest #(= :cc (:type %))))]
+        i (when (>= (count inbox) capture-inbox-limit)
+            (or (superseded-controller inbox event) (oldest #(= :cc (:type %))) (oldest launch?)))]
     (cond
       (< (count inbox) capture-inbox-limit) (update s :inbox conj event)
       i (drop-at i)
@@ -4943,7 +4977,7 @@
 (declare live-capture-setup! live-capture-send! live-capture-focus!)
 
 (defn- capture-live-status
-  [{:keys [desired setup sent focus player inbox inbox-dropped unbound-dropped playback binding stale]} surface-mode]
+  [{:keys [desired setup sent focus player inbox inbox-dropped unbound-dropped playback binding stale]} surface-mode companion?]
   (let [bound? (boolean (and binding (seq (:track-channels player))))]
     {:desired (when desired (select-keys desired [:route :tracks]))
      :setup setup :sent sent :focus focus
@@ -4954,8 +4988,10 @@
                               :queued (count (remove (comp #{::release} :type) inbox)) :dropped inbox-dropped
                               :unbound-dropped unbound-dropped
                               :surface-mode surface-mode
-                              ;; The companion forwards capture-clip playback in Live mode too.
-                              :live-mode-return? (and bound? (= :live surface-mode)))
+                              ;; The companion forwards capture-clip playback in Live mode
+                              ;; too, while its status shows it knows the bound host.
+                              :live-mode-return? (and bound? (= :live surface-mode) companion?)
+                              :companion-host? companion?)
                  stale (assoc :stale stale))}))
 
 (defn capture-action!
@@ -5001,7 +5037,8 @@
                         :max-us (/ (:max-ns cost) 1000.0) :last-us (/ (:last-ns cost) 1000.0)}
                  :captures captures :last (some-> last capture-summary)
                  :live (capture-live-status s (get-in (sync/export-state (connections/sync (:connections runtime)))
-                                                      [:config :live :mode]))})
+                                                      [:config :live :mode])
+                                            (capture-forwarding? runtime))})
       :capture (let [{:keys [buffer layout captures]} @state
                      {:keys [bars end-beat] :as options} payload
                      _ (when-not (or (nil? bars) (<= bars (:bars buffer)))

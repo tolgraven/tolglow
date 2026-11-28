@@ -381,7 +381,8 @@ operation). If the handoff is refused or never acknowledged, the clip is not
 focused and the result carries the handoff's status and code. A refused or
 lost handoff also takes the surface back: the bridge returns to lighting mode
 (and after a lost one tells the companion so), so Tolglow and the companion
-never disagree about who owns the surface. `:handoff?` defaults to false. The
+never disagree about who owns the surface. Only the receipt of the latest
+handoff can do that, so a late receipt never undoes a newer handoff. `:handoff?` defaults to false. The
 Push Capture button sends `{:handoff? true}`: Push then belongs to Live while
 the performer edits.
 
@@ -390,12 +391,37 @@ host that setup adopted in its session, and only while a Session clip plays
 there (`playing_slot_index` ≥ 0). A note heard while no clip plays (Live
 auditioning notes as the performer draws them in Clip View, or a performer
 playing the track) is not playback and stays in Live. The pad mappings make
-no commands in Live mode. Studio shows "playback return active in Live mode"
-(`:live :playback :live-mode-return?`). Every surface handoff, either way,
-ends the runs capture playback started, and so does the capture clip
-stopping: the companion reports that stop like a run-track stop, marked
-`capture?`. Releases are queued in order with playback, and a run whose
-launch receipt has not arrived yet is ended when it arrives.
+no commands in Live mode.
+
+Two limits of that rule:
+- **Auditioning while the clip plays.** Live previews notes through the
+  track's devices. While the capture clip plays, a previewed note looks
+  exactly like playback, so it launches its cue briefly. Turn off Clip View's
+  preview (the headphone button in the clip editor) while editing a looping
+  capture clip, or expect short cue blips. Lighting mode behaves the same.
+- **Arrangement playback.** Arrangement playback keeps `playing_slot_index`
+  at -1, so capture clips recorded to the Arrangement do not return in Live
+  mode. They return in lighting mode, and "Back to Arrangement" releases the
+  Session runs.
+
+The companion's status poll reports the capture host it knows and whether
+its clip plays (`capture-host`, `capture-playing?`;
+`live-sync/companion-capture`). A reloaded companion has forgotten its host.
+Setup's `inspect-set` names the capture host (`capture-host-name`), so the
+companion knows the host again without a write. Studio shows "playback
+return active in Live mode" only while the companion's status agrees
+(`:live :playback :live-mode-return?`, `:companion-host?`). Otherwise it says
+the return is paused and asks for setup to run again.
+
+When runs end:
+- A handoff back to lighting, and the capture clip stopping, end the runs
+  capture playback started. The companion reports that stop like a run-track
+  stop, marked `capture?`.
+- A handoff into Live mode keeps them only when the companion's last status
+  confirms it forwards the playing bound capture clip, because the clip's own
+  note-offs will still arrive. Otherwise it ends them too.
+- Releases are queued in order with playback, and a run whose launch receipt
+  has not arrived yet is ended when it arrives.
 
 Playback return: the show's `sync-callbacks` give the Live bridge a
 `:capture-playback!` callback (`show/live-capture-playback!`). For every
@@ -403,8 +429,11 @@ companion MIDI event, the bridge asks it first. An event with origin
 `:live-playback` from a track that the last setup bound is claimed. The bridge
 then leaves it out of its pad mappings, so a capture pitch that is also a pad
 note launches its cue once. Claimed events wait in a bounded inbox of 512.
-On overflow the oldest launch is dropped first, then the oldest controller;
-a release (note-off) is never dropped. Drops are counted in `:dropped`,
+On overflow a controller value is coalesced first: the oldest value that a
+later value of the same controller and channel replaces before any launch
+goes. Then the oldest controller goes, and only then the oldest launch. A
+release (note-off) is never dropped, so a launch is never lost to a
+controller flood. Drops are counted in `:dropped`,
 shown in Studio's status line and announced as a
 `:live/capture-playback-dropped` event. The owner decodes the events at its
 next cycle with `phrase-clip/player`, submits launches, values and releases
@@ -448,7 +477,8 @@ and feed, and the playback returns (a track's name and channel). Live track
 and clip IDs are session identities: saving keeps only the documented keys,
 and a file whose capture data carries any other key (`:track-id`, `:clip-id`
 or anything else) is refused. Loading a show runs `live-capture/migrate-saved`
-first. It applies registered steps from older versions, and refuses data from
+first. It applies registered steps from older versions (refusing a step that
+does not raise the version), and refuses data from
 a newer Tolglow with a message that names both versions, rather than loading
 the show and losing the layout on the next save. It then validates the data
 (`live-capture/validate-saved`: no pitch or controller twice, channels 1–16,
