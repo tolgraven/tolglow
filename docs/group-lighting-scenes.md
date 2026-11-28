@@ -114,4 +114,54 @@ A subscriber can also use the event value as the target with `:event-path [:data
 
 Try **“Vary the front washes to a third of their brightness, then tell me what they reached.”** Chat discovers groups and checks measurements with `inspect_lighting`. It can choose a look with `set_lighting_scene`, limit simultaneous light with `set_lighting_budget`, or register a recurring audio-energy crossing with `configure_energy_scene`. **Something different** preserves a continuously bound target. Explicitly setting a new fixed target disconnects its variable binding.
 
+### What Chat may change
+
+Chat may tighten the lighting budget but not loosen it past your setting. It
+can lower a limit, an active-source count or a standby level, add a group rule,
+switch budgets on, or change the strategy and fixture order. It cannot raise a
+limit or count above yours, remove one of your rules, switch budgets off, add
+standby light or change the estimated watts of unrated fixtures. After
+lowering a limit, the same conversation may raise it again up to your value;
+another conversation cannot undo it. Your setting is whatever you or the REPL
+last applied. A refused change leaves the budget unchanged and returns
+`{:status :rejected :details {:code :agent-budget-loosening :loosened [{:path [:global :limit] :ceiling 0.8 :proposed 0.9}]}}`,
+which Chat reads in its tool result.
+
+If your limit is bound to a cue parameter, a fixed limit from Chat caps the
+binding instead of replacing it. The limit becomes
+`{:op :min :args [<your binding> 0.5]}`, so it follows your binding and never
+rises above Chat's value. The **Output budget** panel reads it as
+*cue · parameter, at most 50%*.
+
+Chat also cannot change which fixtures a group your budget rule covers. A
+`set_lighting_scene` look whose `:fixture-ids` differ from the group's current
+fixtures, or a release that hands the group back to a different patch group,
+from Chat or from an event Chat scheduled, is refused the same way, with the
+path `[:groups <group> :members]`. Fewer fixtures would escape your rule; more,
+even dark ones, would raise its watt cap for the lit ones. This holds for a
+rule you keep while budgets are off. A look over the group's current fixtures
+is fine.
+
+Chat can still move the cue parameter a bound limit reads, which raises that
+limit. That is outside this rule until
+[#901](https://github.com/tolgraven/tolglow/issues/901) is closed.
+
+Studio's **Output budget** panel and REPL changes are not restricted. Studio
+always counts as the web operator surface, so a request cannot claim to be an
+agent, or anything else, to change which rule applies.
+
+```clojure
+@(show/submit! runtime :settings {:scope :lighting-budget :values {:enabled? true :global {:limit 0.8}}})
+;; An agent run through the same tool boundary Chat uses:
+(show/dispatch-tool! runtime "set_lighting_budget" {:limit 0.9} {:conversation-id "try" :run-id "try"})
+;; => {:status :rejected ... :details {:code :agent-budget-loosening ...}}
+(show/dispatch-tool! runtime "set_lighting_budget" {:limit 0.5} {:conversation-id "try" :run-id "try"})
+;; => {:status :accepted ...}
+```
+
+The rule is `tolglow.lighting-budget.agent-policy/policy`: `:tighten-only` by
+default, or `:unrestricted` to admit agent changes like yours. Change the
+default there, or for one running process with
+`(alter-var-root #'tolglow.lighting-budget.agent-policy/policy (constantly :unrestricted))`.
+
 With `:lighting-capacity` enabled, read rig-wide utilization at `[:lighting/rig :actual]` in the show variables. The corresponding scene-group reading lives under `[:lighting/groups group-id]`. These readings and the activity score can be used from the REPL or mapped to another effect. [Rig capacity](lighting-capacity.md) · [Headless configuration](headless-modules.md) · [Performance measurements](performance/lighting-controls.md)
