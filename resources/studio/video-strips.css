@@ -54,3 +54,54 @@
   #video-surfaces select, #video-surfaces input { font-size: 16px } }
 #video-surfaces .form-row > label, #video-surfaces .video-surface-contacts label { flex: 0 0 auto }
 #video-surfaces .form-row select { min-width: 12em }
+
+/* Video editing controls (#672-#674): parameter cards on the standard slot
+   grid, as Detail draws them (card-grid.css), outside the Perform view. */
+.video-slot-grid[data-slot-grid] {
+  --slot-col: 172px; --slot-row: 180px; --slot-gap: 8px;
+  display: grid; min-width: 0; overflow: visible; margin: 0;
+  grid-template-columns: repeat(var(--slot-columns, 1), var(--slot-col));
+  grid-auto-rows: var(--slot-row); grid-auto-flow: row;
+  gap: var(--slot-gap); justify-content: start; align-items: stretch;
+}
+@media (max-width: 600px) { .video-slot-grid[data-slot-grid] { --slot-col: 156px; --slot-row: 176px } }
+.video-slot-grid>.param-row {
+  position: relative; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
+  align-items: center; gap: 2px; min-width: 0; min-height: 0; margin: 0; padding: 4px 6px;
+  border: 1px solid color-mix(in srgb, var(--line) 75%, transparent); border-radius: 6px; overflow: clip;
+}
+.video-slot-grid>.param-row>label {
+  display: flex; flex-direction: row; align-items: baseline; justify-content: space-between; gap: 4px; min-width: 0; margin: 0;
+  font-size: 12px; font-weight: 550; line-height: 16px; color: var(--text);
+}
+.video-slot-grid>.param-row>label>span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.video-slot-grid>.param-row>label>output { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.video-slot-grid>.param-row>:not(label) { grid-row: 2; align-self: stretch; min-width: 0; min-height: 0; margin: 0 }
+.video-slot-grid .param-row>.parameter-number-layout {
+  container-type: size; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; justify-items: center; gap: 4px;
+}
+.video-slot-grid .parameter-number-layout>.parameter-rotary-control { width: min(50cqw - 2px, 100cqh * 100 / 94); height: auto; aspect-ratio: 100 / 94; max-width: none }
+.video-slot-grid .parameter-number-fields { display: grid; gap: 6px; width: 100%; min-width: 0 }
+.video-slot-grid .parameter-number-fields>input { width: 100%; min-width: 0; min-height: 40px; margin: 0 }
+.video-slot-grid .parameter-number-fields>input[type=range] { height: 30px; min-height: 30px }
+.video-slot-grid .param-row>select { align-self: center; width: 100%; min-height: 44px }
+.video-slot-grid .param-row>input[type=checkbox] { align-self: center; justify-self: center; width: 22px; height: 22px }
+.video-slot-grid[data-skin=ember] input[type=range]::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: linear-gradient(rgb(26 29 32), rgb(48 53 58)); box-shadow: inset 0 1px 2px rgb(0 0 0/.55), 0 0 0 1px rgb(20 20 20/.45) }
+.video-slot-grid[data-skin=ember] input[type=range]::-webkit-slider-thumb { width: 18px; height: 18px; margin-top: -6px; border-radius: 4px; background: linear-gradient(rgb(58 58 58), rgb(22 22 22)); box-shadow: 0 0 6px 1px rgb(150 70 55/.55), inset 0 1px 0 rgb(255 255 255/.08) }
+
+/* Rectangle gesture, history and fixture groups (#672) */
+.video-overlay .video-draw-area { fill: transparent; cursor: crosshair }
+.video-overlay .video-draw-rect, .video-overlay .video-pending-rect { fill: rgb(255 201 128 / .12); stroke: #ffc980; stroke-width: 2; stroke-dasharray: 8 6; pointer-events: none; vector-effect: non-scaling-stroke }
+.video-history { display: inline-flex; gap: 4px; margin-left: auto }
+.video-history button { min-height: 32px; font-size: 12px }
+.video-targets h4 { margin: 0 0 6px; font-size: 12px; font-weight: 500 }
+.video-target-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; max-height: 260px; overflow: auto }
+.video-target { display: grid; grid-template-columns: 2em minmax(0, 1fr) repeat(3, 44px); align-items: center; gap: 4px; font-size: 12px }
+.video-target-index { color: var(--muted); font-variant-numeric: tabular-nums }
+.video-target .icon-button { min-height: 36px }
+.video-group-builder summary { cursor: pointer; min-height: 32px; font-size: 12px }
+.video-group-choices { display: flex; flex-wrap: wrap; gap: 0 16px; max-height: 220px; overflow: auto }
+.video-surface-handles { display: grid; gap: 10px }
+/* The panels' own label layout must not reach the cards. */
+:is(#video-strips, #video-surfaces, #shader-cues, .rig-editor) .video-slot-grid>.param-row>label {
+  display: flex; flex-direction: row; align-items: baseline; justify-content: space-between; font-size: 12px; color: var(--text) }

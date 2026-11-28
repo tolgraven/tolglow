@@ -85,7 +85,7 @@ try {
   // Rotate, set sampling height and switch the filter from the editor.
   const editor = panel.locator('.video-strip-editor');
   await editor.getByRole('button', { name: '↻ 15°' }).click();
-  const height = editor.getByRole('slider', { name: 'Sampling height' });
+  const height = editor.getByRole('slider', { name: 'Sampling height', exact: true });
   await height.fill('0.2');
   for (let i = 0; i < 40; i++) {
     const strip = (await settings()).mappings['video/test-grid'].strips[1];

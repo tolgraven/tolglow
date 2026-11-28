@@ -56,6 +56,8 @@ The compiled output evaluates the placement and samples once per lighting frame.
 
 **Rig & space → Video surfaces** lists the surfaces with how many heads each touches at its saved pose. Add a plane, wavy sheet or sphere on the first source. The editor sets shape, position, rotation, size or radius, the wave, the crop, contact distance and feather, and the head footprint. It lists the heads in contact by pixel layout, with a source height field for each strip. **Remove surface** deletes it; a source a surface reads cannot be removed.
 
+**Move in the Room** opens the rig editor's **Move surface** tool. Each saved surface shows three handles: drag its centre to move it in the editing plane (floor, front or side, with the editor's snap), the cone above it to raise or lower it, and the ring beside it to turn it about the vertical. The Room draws the surface at the dragged pose at once; the heads in contact update when the show commits the drag. A drag is one `{:op :put-surface}` edit and one undo step. The tool's panel also has numeric position and yaw, and **Undo**/**Redo**, shared with the editor here and with the REPL. Size, pitch and roll stay numeric.
+
 The Room draws every running surface from its recorded pose, textured with the latched frame (refreshed up to twice a second). The rig editor's Room also draws saved surfaces nobody is running. A ring marks each head in contact and brightens with its contact weight. The disc inside the ring shows the colour that head is actually emitting in the committed output, so it can be read against the picture behind it. The Room receives committed values for the 128 brightest heads only, as for every fixture; a contact outside those keeps an empty ring.
 
 ## REPL
@@ -70,6 +72,7 @@ The Room draws every running surface from its recorded pose, textured with the l
 @(show/video-action! runtime :edit {:op :surface-cue :surface :sheet :priority 10})
 
 (get-in (show/video-action! runtime :status {}) [:surfaces :running 0 :count])  ; heads in contact
+@(show/video-action! runtime :edit {:op :undo})   ; undo the newest surface (or strip) edit
 ```
 
 `(:surfaces (show/video-action! runtime :status {}))` has `:authored` (each saved surface at its saved pose) and `:running` (each running surface output with `:instance-id`, `:resolved` pose and `:contacts`: id, surface uv, distance and weight). `tolglow.video.surface` holds the shared geometry: `resolve-surface`, `project`, `world-point`, `contacts`, `footprints` and `mesh`.

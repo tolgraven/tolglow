@@ -11,6 +11,7 @@
             [tolglow.studio.rig-fields :as fields]
             [tolglow.studio.camera-controls :as camera]
             [tolglow.studio.spatial-preview :as spatial-preview]
+            [tolglow.studio.video-surface-handles :as surface-handles]
             [tolglow.studio.volume-sculpt :as sculpt]))
 
 (defn identity-key [db]
@@ -198,6 +199,7 @@
     (cond
       (not= identity (identity-key db)) {}
       (#{"sculpt-begin" "sculpt-move" "sculpt-end" "sculpt-cancel"} type) {:dispatch [::sculpt/gesture detail]}
+      (#{"surface-begin" "surface-move" "surface-end" "surface-cancel"} type) {:dispatch [::surface-handles/gesture detail]}
       (= type "throw") {:dispatch [:tolglow.studio.spatial/throw identity point (:velocity detail)]}
       (= type "select-volume") {:dispatch [:tolglow.studio.spatial/select-preview (:volume-id detail)]}
       (= type "surface") (case (:tool (editor db))
@@ -558,8 +560,10 @@
           geometry (if (and (identical? spec (:spec @cached)) (= index (:index @cached)))
                      (:geometry @cached)
                      (:geometry (vreset! cached {:spec spec :index index :geometry (pixels/geometry spec index)})))
-          tool-data (if (= "pixels" (:tool state))
-                      (pixels/projection state spec geometry)
+          tool-data (case (:tool state)
+                      "pixels" (pixels/projection state spec geometry)
+                      ;; Video surface handles (#674).
+                      "video-surface" (surface-handles/projection db)
                       (assoc (select-keys state [:selection :points :selected-point]) :closed? (get-in state [:path :closed?])
                              :calibration-target (get-in state [:calibration :target])
                              :calibration-points (mapv :target (get-in state [:calibration :samples]))))
@@ -570,7 +574,7 @@
      [:div.rig-editor-toolbar
       [:div.rig-editor-tools {:role "group" :aria-label "3D editor tool"}
        (for [[tool label] [["navigate" "Explore"] ["place" "Place fixture"] ["move" "Move"] ["rotate" "Rotate"] ["mount" "Aim home"]
-                           ["calibrate" "Calibrate aim"] ["draw" "Draw path"] ["pixels" "Pixel layouts"] ["aim" "Aim at surface"] ["volume-select" "Select volume"] ["sculpt-volume" "Sculpt volume"]]]
+                           ["calibrate" "Calibrate aim"] ["draw" "Draw path"] ["pixels" "Pixel layouts"] ["aim" "Aim at surface"] ["volume-select" "Select volume"] ["sculpt-volume" "Sculpt volume"] ["video-surface" "Move surface"]]]
          ^{:key tool} [:button.button {:aria-pressed (= tool (:tool state)) :on-click #(dispatch! [:rig-editor/set [:tool] tool])} label])]
       [:div.rig-editor-actions
        [:button.button {:disabled (empty? (:undo state)) :on-click #(dispatch! [:rig-editor/undo])} "Undo"]
@@ -601,6 +605,7 @@
         "pixels" [pixels/panel rig state spec geometry]
         "throw" [:p.small "Drag from the launch point in the selected plane. Release to throw; Escape cancels."]
         "sculpt-volume" [sculpt/panel]
+        "video-surface" [surface-handles/panel]
         "volume-select" [:p.small "Tap the centre of a volume to edit it below."]
         "draw" [path-fields db state]
         nil)]])))

@@ -3,6 +3,7 @@
             [re-frame.core :as rf]
             [tolglow.studio.interop :as interop]
             [tolglow.studio.observations :as observations]
+            [tolglow.studio.video-surface-handles :as surface-handles]
             [tolglow.studio.video-surfaces :as video-surfaces]
             [tolglow.studio.volume-sculpt :as sculpt]
             [tolglow.studio.volume-geometry :as geometry]
@@ -66,6 +67,7 @@
                           (as-> s (let [video @(rf/subscribe [::video-surfaces/status])]
                                     (cond-> s (:surfaces video)
                                       (assoc :video-surfaces (video-surfaces/room-surfaces-cached
-                                                              surface-cache video @(rf/subscribe [::video-surfaces/rig]) (= owner :rig))))))
+                                                              surface-cache video @(rf/subscribe [::video-surfaces/rig]) (= owner :rig)
+                                                              (when (= owner :rig) @(rf/subscribe [::surface-handles/drafts])))))))
                           (seq (:objects optics))
                           (assoc :glass-meshes (:meshes optics) :glass-volumes (:objects optics))) owner changed (when @visible (observations/grant owner))]))))

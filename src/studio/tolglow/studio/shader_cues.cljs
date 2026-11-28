@@ -9,6 +9,7 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.events :as events]
+            [tolglow.studio.shader-uniforms :as uniforms]
             [tolglow.video.shader-examples :as examples]))
 
 (defn- wire-id [value] (events/wire-id value))
@@ -184,8 +185,12 @@
                          :on-click #(rf/dispatch [:studio/launch (:id cue) "persistent" {:grid "off"}])} "Launch"])
       [:button.text-button {:type "button" :on-click #(rf/dispatch [::ui [:enlarged] feed])} "Enlarge"]
       [:a.text-button {:href (output-url feed) :target "_blank" :rel "noopener"} "Projector output"]
-      [:button.text-button {:type "button" :on-click #(rf/dispatch [::ui [:editor (:id effect)] (or editing {})])} "Edit GLSL"]]
-     (when editing [editor effect editing])]))
+      [:button.text-button {:type "button" :on-click #(rf/dispatch [::ui [:editor (:id effect)] (or editing {})])} "Edit GLSL"]
+      [:button.text-button {:type "button" :aria-expanded (boolean (get-in ui [:uniforms-open (:id effect)]))
+                            :on-click #(rf/dispatch [::ui [:uniforms-open (:id effect)] (not (get-in ui [:uniforms-open (:id effect)]))])}
+       "Uniforms, size and rate"]]
+     (when editing [editor effect editing])
+     (when (get-in ui [:uniforms-open (:id effect)]) [uniforms/editor (:id effect) running])]))
 
 (rf/reg-event-fx ::stop
   (fn [{:keys [db]} [_ instance-id]] {:fx [(events/command db "instance/end" {:instance-id instance-id})]}))
